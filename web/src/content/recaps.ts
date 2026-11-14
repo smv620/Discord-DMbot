@@ -67,6 +67,21 @@ export const text = {
     "We can't find that recap. Open it again from your email, or pick it from your list.",
   onlyYou: "Only you can see this until you post it.",
   working: "DMbot is still writing this recap. Check back in a few minutes.",
+  // What DMbot is thinking about at each step of writing a recap (owner request, 2026-11-09): one fixed line for each step the
+  // API names (core `recaps/progress.py`), never made up as it goes. The first three are the owner's words.
+  scribe: {
+    recap_names: "Looking… which names came up?",
+    recap_reading: "Thinking… who was important in the scene?",
+    recap_beats: "Contemplating… what events were noteworthy?",
+    recap_writing: "Writing… turning those events into the story.",
+    recap_checking: "Considering… did I cover all the significant details?",
+    recap_final_read: "Reading it over… does it flow?",
+    recap_finishing: "Tidying up… a title and a few notes.",
+  } as Record<string, string>,
+  // The big mark over a draft DMbot is still checking (#3861): the owner's exact word.
+  draftMark: "DRAFT",
+  // What a screen reader is told instead of the mark: that the words are a draft still being checked.
+  draftNote: "Draft, still being checked.",
   // Written, but the checks that read it before the DM does can't run yet (#2297). One steady line:
   // it stays up through the short gaps between tries, until the recap is ready or has failed.
   waitingForCheck:
@@ -132,6 +147,23 @@ export const text = {
   /** The running time's label (the clock is not in a live region, so it is not read out each second). */
   clockLabel: "Time so far",
   postedLink: "Open it in Discord",
+  /** Said when a post has not moved for a while (`postingProgress.state` is stalled). Posting twice would put the recap in
+   * the chat twice, so it says to look at the channel first. */
+  postStalled:
+    "Nothing new for a while. You can leave this page; DMbot keeps going. If it has not moved in 5 more minutes, look at your table's channel in Discord before you press Post again.",
+  /** Why a post was refused (`postingProgress.reason`), each with what to do next. Nothing was posted in any of them. */
+  postWhy: {
+    plan: "Your plan doesn't include recaps right now, so nothing was posted. Your draft is saved here.",
+    no_table_chat:
+      "DMbot has no table chat to post in yet, so nothing was posted. Start a session in a voice channel, or pick a chat channel in ⚙️ Manage DMbot in Discord, then press Post.",
+    cannot_check_secrets: "DMbot couldn't check your secret names just now, so nothing was posted. Press Post to try again.",
+    secret_name: "The recap names something you keep secret, so nothing was posted. Change the text, then press Post.",
+    player_stopped:
+      "A player has stopped being recorded since this was written, so it can't be posted. Write a new recap, or leave this one out.",
+    send_failed:
+      "DMbot couldn't write in your table's chat, so nothing was posted. Check that it is allowed to post there, then press Post again.",
+    post_failed: "Nothing was posted. Press Post to try again. If it keeps failing, look at your table's channel in Discord first.",
+  } as Record<string, string>,
   /** The bot stopped trying to post and the recap is a draft again: nothing went to the table. */
   postFailed:
     "DMbot couldn't confirm this recap was posted. Look at your table's channel in Discord before you try again. The recap is still saved here as a draft; approve it again to post it.",
@@ -250,6 +282,9 @@ export const errors: Partial<Record<ApiErrorKind, string>> & { other: string } =
       "That isn't possible any more. Reload the page to see where this recap is now.",
     "not-editable":
       "This recap can't be changed any more. Reload the page to see where it is now.",
+    "no-lines":
+      "That session's transcript isn't kept any more, so DMbot has nothing to write this recap from. You can leave it unposted.",
+    "no-tries": "This recap has no Try again left. You can leave it unposted.",
     "bad-text": "The recap is empty or too long. Shorten it and save again.",
     "fixed-lines":
       "Nothing was saved. The first and last lines of a recap are DMbot's and can't be changed. Put them back as they were.",

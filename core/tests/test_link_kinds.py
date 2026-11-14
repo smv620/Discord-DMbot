@@ -41,6 +41,9 @@ EXPECTED = {
     "founded": GROUP,
     "captive_of": OTHER,
     "contains": WORK,
+    "next_to": WORK,
+    "route_to": WORK,
+    "travels_with": OTHER,  # (a companion; shown like any other tie, #3176)
     "disguised_as": OTHER,  # (secret by nature; drawn like any other connection, #3091)
 }
 
@@ -94,9 +97,22 @@ class TheGraphLinks(unittest.TestCase):
         (link,) = edge["links"]
         self.assertEqual(
             set(link),
-            {"id", "words", "back", "secret", "revealed", "pinned", "check", "direction", "kind"},
+            {
+                "id",
+                "words",
+                "back",
+                "backAfter",
+                "secret",
+                "revealed",
+                "pinned",
+                "check",
+                "direction",
+                "pairWords",  # (a two-way line said of both, #4154)
+                "kind",
+            },
         )
         self.assertFalse(link["secret"])  # (still masked for a player)
+        self.assertEqual(link["pairWords"], "know each other")  # (no feeling for a player, #3611)
 
 
 if __name__ == "__main__":

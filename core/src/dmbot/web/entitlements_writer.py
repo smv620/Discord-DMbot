@@ -22,7 +22,7 @@ import logging
 from dataclasses import dataclass
 from typing import Any, Literal
 
-from dmbot import plans
+from dmbot import person_key, plans
 from dmbot.db import Conn, Database
 from dmbot.web.payments import PaymentEvent
 
@@ -578,9 +578,9 @@ async def start_try_it(db: Database, user_id: int, *, now: int) -> TryItResult:
         if row is not None and row["status"] != "lapsed":
             return TryItResult(False, "has_plan")
         cur = await conn.execute(
-            "INSERT INTO try_it_used (user_id) VALUES (%s)"
+            "INSERT INTO try_it_used (user_id, person_key) VALUES (%s, %s)"
             " ON CONFLICT DO NOTHING RETURNING user_id",
-            (user_id,),
+            (user_id, person_key.key_for(user_id)),
         )
         if await cur.fetchone() is None:
             return TryItResult(False, "used")

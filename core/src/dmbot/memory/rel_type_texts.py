@@ -342,12 +342,12 @@ TYPES: tuple[RelType, ...] = (
         examples=(
             "Cerra owns the Sunbrand sword, left by her father.",
             "The Lantern Guild owns the Silver Tower.",
-            "Old Brin owns the ferry and the dock.",
+            "Old Brin owns the ferry Gull and the dock.",
             "The ring is an heirloom of the house of the grey owl.",
             "Lord Aldric owns the vast timber lands south of the river.",
-            "The wizard owns an ancient grimoire bound in brass.",
+            "The wizard owns the Brass Grimoire of Aldmoor.",
             "Master Joram bought the apothecary shop in town.",
-            "Vela owns a prize warhorse bred in the western plains.",
+            "Vela owns Stormhoof, a prize warhorse.",
         ),
         not_this=(
             "who has it in hand right now → carries",
@@ -363,19 +363,19 @@ TYPES: tuple[RelType, ...] = (
             "A person has an item with them right now, in hand or on their body or in their pack: "
             "carrying a weapon, wearing a cloak, holding a key, bearing a banner, wielding a "
             "staff, having a letter in their pocket. Words used: carries, wields, wears, holds, "
-            'has on them, bears, in their pack. It shows up in a fight ("she draws her longbow"), '
+            'has on them, bears, in their pack. It shows up in a fight ("she draws Heartseeker"), '
             "in a search, in who is holding the stolen thing at this moment, and it may differ "
             "from who owns it."
         ),
         examples=(
-            "Mira carries a longbow.",
+            "Mira carries Heartseeker.",
             "Tavin wears the charged cloak.",
-            "The messenger bears a sealed letter.",
+            "The messenger bears the Sealed Letter of Orrin Dace.",
             "Dorn wields his father's axe.",
             "Captain Vale carries the emblem of the silver watch.",
             "The scholar has the ancient map hidden in his pack.",
-            "Brother Tomas carries a carved wooden holy symbol.",
-            "The thief carries a ring of iron keys at her belt.",
+            "Brother Tomas carries the Holy Symbol of Lathander.",
+            "The thief carries the Keyring of the Grey Vault at her belt.",
         ),
         not_this=(
             "the item is theirs but elsewhere → owns",

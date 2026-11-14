@@ -51,7 +51,7 @@ function pageWith(g: WebGraph, changes: WebLinkChange[] = []): AccountApi {
 
 async function openPanel(api: AccountApi, suffix = "") {
   render(<Web api={api} path={`/account/web/100.cmp1${suffix}`} />);
-  await screen.findByText(/names?, \d+ lines?/);
+  await screen.findByText(/Showing \d+ names? and \d+ connections?/);
   fireEvent.click(screen.getAllByRole("button", { name: /^See the connections between/ })[0] as HTMLElement);
   return (await screen.findByRole("heading", { level: 2, name: /.+ and .+/ })).closest("section") as HTMLElement;
 }
@@ -85,7 +85,7 @@ describe("DMbot's check on a connection's card (#2859)", () => {
   it("not to a player who peeks, even if the API sent one", async () => {
     const api = pageWith(withCheck(false));
     render(<Web api={api} path="/account/web/100.cmp1.web-player" />);
-    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     fireEvent.click(screen.getByRole("switch", { name: "Peek behind the DM screen" }));
     fireEvent.click(await screen.findByRole("button", { name: w.peekYes }));
     await waitFor(() => expect(screen.getByText(w.peeking)).toBeTruthy());
@@ -146,7 +146,7 @@ describe("nobody else sees a pin", () => {
   it("not in the Players View, even if the API sent one", async () => {
     const api = pageWith(graph());
     render(<Web api={api} path="/account/web/100.cmp1" />);
-    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     fireEvent.click(screen.getByLabelText(w.playersView));
     await waitFor(() => expect(screen.queryByText(w.legendPinned)).toBeNull());
     fireEvent.click(screen.getAllByRole("button", { name: /^See the connections between/ })[0] as HTMLElement);
@@ -158,7 +158,7 @@ describe("nobody else sees a pin", () => {
   it("not to a player who peeks, even if the API sent one", async () => {
     const api = pageWith(graph({ canEdit: false }));
     render(<Web api={api} path="/account/web/100.cmp1.web-player" />);
-    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     fireEvent.click(screen.getByRole("switch", { name: "Peek behind the DM screen" }));
     fireEvent.click(await screen.findByRole("button", { name: w.peekYes }));
     await waitFor(() => expect(screen.getByText(w.peeking)).toBeTruthy());

@@ -758,7 +758,7 @@
   ],
   [
    "dmbot_import_store",
-   "dmbot_import_store(BIGINT, TEXT, TEXT, TEXT, BIGINT, JSONB, INT, TEXT)"
+   "dmbot_import_store(BIGINT, TEXT, TEXT, TEXT, BIGINT, JSONB, INT, TEXT, JSONB)"
   ],
   [
    "dmbot_import_suggest",

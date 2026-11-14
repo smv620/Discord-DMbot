@@ -26,15 +26,16 @@ from dmbot.memory import evidence
 GUESSES = ("theory", "accusation", "suspected_lie", "evasion_under_magic")
 
 
-async def forget(conn: Any, guild_id: int, user_id: int) -> int:
+async def forget(conn: Any, guild_id: int, user_id: int, campaign_id: str | None = None) -> int:
     """Forget the placed readings this person's words produced. Returns how many claims went."""
     # The campaigns first, then each one's lock (the one every memory write takes, held to the end
     # of this transaction), and only then the claims: a placement that was committing when this
     # started has finished by the time the lock is ours, so it is seen as the placed claim it is.
     cur = await conn.execute(
         "SELECT DISTINCT campaign_id FROM memory_claims WHERE guild_id = %s"
-        " AND %s = ANY(speaker_ids) AND reading IS NOT NULL",
-        (guild_id, user_id),
+        " AND %s = ANY(speaker_ids) AND reading IS NOT NULL"
+        " AND (%s::text IS NULL OR campaign_id = %s)",
+        (guild_id, user_id, campaign_id, campaign_id),
     )
     campaigns = sorted(str(r["campaign_id"]) for r in await cur.fetchall())
     guesses: dict[str, list[str]] = {}

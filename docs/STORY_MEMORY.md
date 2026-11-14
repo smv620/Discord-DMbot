@@ -151,7 +151,11 @@ ignore it. See docs/PLAN.md, "Players and the DM in the names".
   A name not in the rules data keeps its words and is marked "not in DMbot's rules".
 - Rules vocabulary (species, creature type, class, background, feat, spell, skill, ability) is
   not campaign memory: memory only links to it. Unnamed monsters are not entries: "three goblins
-  attack" is a reference to the goblin stat block; an organized band is a group.
+  attack" is a reference to the goblin stat block; an organized band is a group. Creatures met in
+  play are kept apart, in a quiet list the DM sees, until the DM names one (slice 5): one row for
+  each encounter (the two ambushers, the sled dogs), only from the DM's own words, at most 10 a
+  session, in `memory_met`, which no list of names reads; naming or joining one makes it an entry
+  at rank 0 (#3172, #4045).
 
 **Examples.** *Snot, son of Garg, the goblin prince*: character · NPC · species goblin (creature
 type humanoid) · stat block Goblin Warrior; he is a member of the Cragmaw tribe (a group). *Auril*:
@@ -441,7 +445,7 @@ Bryn Shander distrusts tabaxi (you set it), but has heard the party saved Ulfgar
 (Session 7)."
 - **Word spreads only with the DM's say-so:** a deed reaches groups and places beyond
   the witnesses as a "might have heard" suggestion the DM confirms.
-- **The DM always wins:** "Set standing…" works at any rung (a person, a group, a town,
+- **The DM always wins:** "Set reputation…" works at any rung (a person, a group, a town,
   a people) and is kept as a fact with its date.
 - Shown in the NPC channel and on name cards; never decides an NPC's behaviour, only
   reminds the DM.
@@ -1099,6 +1103,19 @@ characters know is always their own rows.
 Most "spoilers" are simply unknown to one or more player characters, not secret.
 
 **4. How knowledge gets in. DMbot makes its best guess live and asks nobody during play.**
+- **What is said at the table is known to the party** (owner, 2026-11-09, #3963): "If the info was given at the
+  table, unless the DM or players state explicitly that something is unknown to character X, anything revealed
+  at the table should be considered known to the party and therefore known to the individual player characters
+  by default." So after a live session or an import, a held-back name that is said is shown, and a held-back
+  connection is shown when both its ends are shown and the session reader states that same connection (its own
+  extracted claim; two names said near each other are not enough). The DM's or a player's explicit "X doesn't
+  know" (who learned what, "Who knows this?") is the exception. One change per session, with Undo, counted to
+  the DM.
+- **Uploads, the party's own story** (#3963): the smart guess sorts each lore statement into three kinds, not
+  two: **world** (any inhabitant knows it), **party** (what the player characters did, saw, heard or were told
+  together: the party's history, a job given to "the party"; known to every player character) and **spoiler**.
+  A backstory section in campaign lore (headed by a player character's name) is known to that character, as a
+  backstory upload is.
 - **In a scene:** what is said or shown in a scene is learned by **every character in the scene**, player
   characters and NPCs. Whether the *player* came to the session doesn't matter; whether the *character* is in the
   scene does. Who is in a scene: the party together unless the game clock says it is split (#1614), plus the NPCs
@@ -1147,6 +1164,21 @@ later sessions.
 - **Not every private thing matters.** A ranger who fails to find herbs in one spot and finds them in another, then
   uses them in front of everyone, is trivial and isn't cited. Privacy alone never makes a thing interesting.
 - **A private interaction between two player characters always matters, always.** It is cited, non-specifically.
+  **How a private scene is found** (Supervisor's ruling on #2996, 2026-11-10; behind `DMBOT_PRIVATE_SCENES`, off
+  until dev1 checks it): by code after the session, never by the AI. It is a stretch when the game clock has the party
+  split and one group holds exactly two player characters, played by two different people, who both speak in it (one
+  player with two characters is no scene). Another group's lines in between neither end it nor join it; the DM's lines
+  can't be placed, so they count in no scene. Each is kept as ids and times only (`memory_private_scenes`, migration
+  0419). The DM can say "Not private", and a later run never finds that scene again. A scene goes with its session's
+  transcript and with anyone who spoke in it; a backup carries both scenes and marks. The DM's list (🤫 Private scenes, under Names → More lists) has "Not private" (#4105).
+  The entries spoken of inside a scene by one of its two are kept with it (`memory_private_scene_entries`, ids only,
+  migration 0421), and an entry in a **kept** scene is never ranked below 2 (Recurring): a floor worked out on read,
+  like the other floors (Supervisor's ruling, #4110). Nothing is stored for it, so "Not private", a speaker who stops
+  being recorded and a deleted transcript undo it by themselves. Like every floor, it holds over a rank the DM set
+  lower; the DM lowers it with "Not private". Names are matched as whole words, confirmed and open ones only, never a
+  spelling two entries or a player character share (a one-word name that is an everyday word can still match). Scenes
+  found before 0421 have no entries until their session is read again. PlotBot is told ("private scene:" with the two
+  names) so it can rank such an entry higher. Next: the recap cites each scene without saying what (#2997).
 
 **8. One gate.** One function decides what a viewer may know, and every reader of story memory goes through it:
 - the Story Graph and its doors;
@@ -1285,7 +1317,7 @@ Each step is useful on its own and ships behind the existing phases.
    toward a people the subject is of, decides the step, and the rungs above are only reasons;
    otherwise the weighted mean decides, so direct evidence outweighs prejudice as it grows.
    Nothing found is shown as **No opinion yet**, never as Wary. A name card for an NPC, group or
-   place has **🤝 Standing** (DM only) with the reasons, **Set standing…** and, on a group or place,
+   place has **🤝 Reputation** (DM only) with the reasons, **Set reputation…** and, on a group or place,
    **Set attitude…**; a line says it only reminds the DM. Recall does not read these tables, and
    the players' audience and transcripts never get them. 30 pairs take well under 5 ms.
    **Slice 4b is built (#1732): deeds the DM confirms move standing** (no AI, no extractor, nothing
@@ -1303,7 +1335,7 @@ Each step is useful on its own and ships behind the existing phases.
    than ten sessions counts at half weight (old news fades; the DM can always set it); the sessions
    counted are the ones names were heard in (`memory_heard`) and the ones deeds were recorded for; a deed
    recorded with no session running takes the newest one. The DM's own word
-   on the exact pair still decides outright, and the deed shows only as a reason. **🤝 Standing**
+   on the exact pair still decides outright, and the deed shows only as a reason. **🤝 Reputation**
    lists it: "⚔️ Saved the mill (session 4, helped)". Because Helped them (+20) is exactly the
    Friendly line, deeds alone take "No opinion yet" to Friendly at once, and mixed with a Wary word
    they move it only as far as the mean goes. A later slice may propose deeds from claims for the DM
@@ -1550,14 +1582,48 @@ gods and royalty, even while their name is hidden), 5 player character.
   a link The party makes count for nothing; a worked-out family link counts once the DM has confirmed it.
   Every kind of entry has a rank, not only characters (places, items, events, groups), and a player
   character's companion (`travels_with`) has a floor of Significant.
+- **Why a rank changed is not what an entry is (owner, 2026-11-01).** Each assessment says why the rank
+  moved: `reading`, `dm_corrected`, `revealed`, `demoted` or `rule`. What the entry IS in the story is
+  its **roles**, several at once, from the owner's 30 (`memory/roles.py`: quest giver, mentor, minion,
+  god, plot artifact…, each with a description and examples the embedding match reads, and the role it
+  is not, which is never embedded). A role a connection shows is worked out on read (a mentor of a
+  player character, a ruler who leads a place); the rest are stored in `memory_roles` with the session
+  and line numbers that showed it. Each campaign has its own list of codes (`memory_role_codes`), so a
+  role its reading adds (at most 40) never crosses campaigns. Roles are for the DM only, like the rank,
+  and never add to it; `commoner` is the default and never stored.
+- **The reading (slice 3, Supervisor's ruling 2026-11-08):** after the story extractor reads a session (live
+  or imported), one more step in the same call limit (`memory/importance_step.py`) shows the AI the entries
+  the session touched, 60 per call, the rest in later calls and counted, never dropped: each with its kind,
+  rank, roles, connections, the session's connections of it, the DM's notes and at most three lines naming
+  it from people recorded now (never a sidebar, table question or shared text). It answers a rank and why
+  (reading, revealed, demoted), roles held and ended, and at most two new roles of the campaign's own; all
+  checked against fixed codes, never coerced. A reading never ends a role the DM set or corrected. The
+  scorer is `devtools/rank_key_check.py`, against the draft rank key until the owner corrects it.
+- **Companions (`travels_with`, #3176, owner 2026-11-01, Supervisor's ruling):** a companion (a familiar,
+  a hired guide, a rescued prisoner) is linked by the kind `travels_with` to a player character or to the
+  party group entry. **The party stays the players' point of view and only they are its members**: a
+  companion is a connection, never a member, and nothing about what the party knows comes from a
+  companion. The party entry may be the target of `travels_with` and of nothing else, for now; a
+  document (the lore and backstory readers) never points at it, because it is written before the party
+  exists, so a lore link goes to the player character it names. Only the session readers and the DM
+  propose it to the party. The span is the connection's own from-session and to-session: leaving the
+  party closes it, rejoining adds a new row, and one with no end is with the party now. The DM can
+  hide one (a spy posing as a guide) through the normal who-knows lists. Words for users: "travels with
+  the party" or "travels with Cerric". "Session events" ("the party was ambushed") are not defined
+  yet and need a design note before the party can be their end. Built so far: the kind, the target
+  rule (kept on every write, a merge and a change of kind), and the words. By convention only, not
+  enforced: nothing stops a `member_of` from an NPC to the party; the importance floor of Significant
+  applies to a companion of a player character, not yet to one linked to the party.
 - **Stored with codes, not words:** a fixed list of reasons (`importance_rank.BASES`), session and line
   numbers. A person's erased words leave the rank alone. A backup carries the table in its own section
   (`memory/importance_backup.py`): PlotBot's reading cannot be made again from a backup (the lines are not
   in it), so a restore would otherwise drop an off-stage villain to the floor. Line numbers stay out.
 - **Built in slices (#3172):** 1 the table, the floor and the reader (`memory/importance_rank.py`, this
   section); 2 the connection nudge; 3 PlotBot's call, behind a switch; 4 recaps pick by rank. Slice 5,
-  unnamed creatures as quiet rank-0 entries (the mouse in the dark), changes the rule in section 3 that
-  unnamed monsters are not entries; it is for play only and waits until slices 1 to 3 have merged.
+  unnamed creatures met in play (the mouse in the dark), changes the rule in section 3 that unnamed
+  monsters are not entries: they are kept apart in `memory_met` until the DM names one, which then
+  enters at rank 0 with the reason `met_in_play` (Supervisor's option C, 2026-11-10). Play only;
+  behind `DMBOT_MET_UNNAMED`, off until the DM's list of them (#4045) has merged.
 
 ### 9d. Knows and a reputation word instead of friend and enemy (owner, 2026-11-01; #3175)
 

@@ -50,7 +50,8 @@ WRONG_NAME = (
     "Press **Delete this campaign** to try again."
 )
 DELETED = (
-    "🗑 Deleted **{name}**. Its transcript and chat channels stay until a server admin removes them."
+    "🗑 Deleted **{name}**. Its transcript channel (and an old chat channel, if it has one) "
+    "stays until a server admin removes them."
 )
 TOLD = "🗑 {who} deleted **{name}**."
 NAME_LIMIT = 100  # a campaign name's longest length; the typed box holds as much
@@ -63,7 +64,7 @@ def holder_may(campaign: Campaign, user_id: int) -> bool:
     not have, and the campaign would be one nobody can remove."""
     if user_id not in campaign.dm_user_ids:
         return False
-    return campaign.owner_user_id is None or campaign.owner_user_id == user_id
+    return campaign.owner_user_id is None or campaign.is_owner(user_id)
 
 
 def same_name(typed: str, campaign: Campaign) -> bool:
@@ -244,7 +245,7 @@ async def delete_now(interaction: discord.Interaction, campaign_id: str, typed: 
     name = discord.utils.escape_markdown(campaign.name)
     who = discord.utils.escape_markdown(client.name_of(guild.id, user_id))
     await _tell(interaction, DELETED.format(name=name))  # first: the messages below can be slow
-    for other in sorted(campaign.dm_user_ids - {user_id}):
+    for other in sorted(campaign.dm_accounts - {campaign.dm_account_of(user_id)}):
         with contextlib.suppress(Exception):  # (messages off, left Discord: nothing to do)
             await client.dm_user(other, TOLD.format(who=who, name=name))
     return True

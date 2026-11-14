@@ -8,10 +8,13 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
+from dmbot.memory import link_edits
 from dmbot.memory.models import DM as DM_SOURCE
+from dmbot.memory.models import Relation
 from dmbot.web import all_names, relationships
 from dmbot.web.recaps import RecapError
 from dmbot.web.who_knows import who_text
+from tests.test_web_link_actions import Editing
 from tests.test_web_relationships import Web
 
 
@@ -155,3 +158,157 @@ class TheDoor(Web):
         got = await self.rows()
         self.assertEqual(len(got), 1)
         self.assertEqual(len(got[0]["text"]), 5 + 50 * 33 - 1)
+
+
+class TheBotAppliesIt(Editing):
+    """#4159: the bot never applied either answer (both ended `failed`). It now makes the name
+    card's own calls, with the website's whole list (NPCs included), and returns every change it
+    made so the page's Undo takes all of them back."""
+
+    async def stored(self, link_id: str) -> Relation:
+        found = await self.memory.relation(self.g, self.one.id, link_id)
+        assert found is not None
+        return found
+
+    async def knowers(self, link: str) -> list[str]:
+        return (await self.memory.connection_knowers(self.g, self.one.id, [link])).get(link, [])
+
+    async def test_a_connection_some_everyone_and_only_the_dm(self) -> None:
+        link = self.links["mira-rook"]
+        await self.edit(link, action="who", who="some", characters=[self.rook])
+        done = await self.apply_all()
+        self.assertEqual([o.error for o in done], [""])
+        self.assertTrue((await self.stored(link)).secret)
+        self.assertEqual(await self.knowers(link), [self.rook])
+        self.assertEqual(len(done[0].batches), 2)  # hidden, then who knows it: both, for Undo
+        await self.edit(link, action="who", who="dm")
+        await self.apply_all()
+        self.assertEqual(await self.knowers(link), [])
+        self.assertTrue((await self.stored(link)).secret)
+        await self.edit(link, action="who", who="everyone")
+        await self.apply_all()
+        self.assertFalse((await self.stored(link)).secret)
+
+    async def test_the_same_answer_again_writes_nothing(self) -> None:
+        link = self.links["mira-rook"]
+        await self.edit(link, action="who", who="some", characters=[self.rook])
+        await self.apply_all()
+        before = await self.memory.version(self.g, self.one.id)
+        await self.edit(link, action="who", who="some", characters=[self.rook])
+        again = await self.apply_all()
+        self.assertEqual([(o.error, o.batches) for o in again], [("", ())])
+        self.assertEqual(await self.memory.version(self.g, self.one.id), before)
+
+    async def test_undo_takes_it_back(self) -> None:
+        link = self.links["mira-rook"]
+        await self.edit(link, action="who", who="dm")
+        (done,) = await self.apply_all()
+        self.assertTrue((await self.stored(link)).secret)
+        await self.memory.undo(self.g, self.one.id, done.batches[0])
+        self.assertFalse((await self.stored(link)).secret)
+
+    async def test_the_websites_pick_is_the_whole_list(self) -> None:
+        link = self.links["mira-rook"]
+        npc = await self.add("Tran", "character", role="npc")
+        await self.edit(link, action="who", who="some", characters=[self.rook, npc])
+        await self.apply_all()
+        self.assertEqual(await self.gate_rows(link), 2)  # an NPC knower lives in the gate's table
+        await self.edit(link, action="who", who="some", characters=[self.rook])
+        await self.apply_all()
+        self.assertEqual(await self.gate_rows(link), 1)  # the NPC the DM left out stops knowing
+        self.assertEqual(await self.knowers(link), [self.rook])
+
+    async def gate_rows(self, link: str) -> int:
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM memory_knowers WHERE campaign_id = %s"
+                " AND relation_id = %s",
+                (self.one.id, link),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        return int(row["n"])
+
+    async def test_a_secret_other_name(self) -> None:
+        made = await self.memory.add_alias(
+            self.g, self.one.id, self.keep, "the old fort", kind="nickname",
+            source=DM_SOURCE, status="confirmed", secret=True,
+        )  # fmt: skip
+        alias = made.value.id
+        body = {"action": "alias-who", "alias": alias, "who": "some", "characters": [self.rook]}
+        await all_names.queue_action(self.web, self.session, self.cref, self.keep, body)
+        done = await self.apply_all()
+        self.assertEqual([o.error for o in done], [""])
+        knew = await self.memory.alias_knowers(self.g, self.one.id, [alias])
+        self.assertEqual(knew.get(alias, []), [self.rook])
+        body = {"action": "alias-who", "alias": alias, "who": "everyone"}
+        await all_names.queue_action(self.web, self.session, self.cref, self.keep, body)
+        self.assertEqual([o.error for o in await self.apply_all()], [""])
+        names = await self.memory.aliases(
+            self.g, self.one.id, entity_id=self.keep, include_secret=True
+        )
+        self.assertFalse(next(a for a in names if a.id == alias).secret)
+
+    async def test_a_non_dm_sender_is_refused(self) -> None:
+        await self.edit(self.links["mira-rook"], action="who", who="dm")
+        self.assertEqual([o.error for o in await self.apply_all(dms={999})], ["not_allowed"])
+
+    async def test_the_pages_undo_takes_back_both_changes(self) -> None:
+        link = self.links["mira-rook"]
+        self.assertFalse((await self.stored(link)).secret)
+        answer = await self.edit(link, action="who", who="some", characters=[self.rook])
+        (done,) = await self.apply_all()
+        self.assertEqual(len(done.batches), 2)  # hidden, then who knows it
+        batch = (await self.poll(answer))["batch"]
+        undo = await relationships.queue_link_undo(self.web, self.session, self.cref, str(batch))
+        self.assertEqual([o.error for o in await self.apply_all()], [""])
+        self.assertTrue((await self.poll(undo))["undone"])
+        self.assertFalse((await self.stored(link)).secret)
+        self.assertEqual(await self.knowers(link), [])
+
+    async def test_only_the_dm_alone_has_a_change_to_undo(self) -> None:
+        link = await self.stored(self.links["mira-rook"])
+        written = await link_edits.set_who_knows(self.memory, self.g, self.one.id, link, "dm")
+        self.assertIsNotNone(written.batch)  # (the name card's Undo has the hiding to take back)
+
+    async def secret_name(self, *, secret: bool = True) -> str:
+        made = await self.memory.add_alias(
+            self.g, self.one.id, self.keep, "the old fort", kind="nickname",
+            source=DM_SOURCE, status="confirmed", secret=secret,
+        )  # fmt: skip
+        return made.value.id
+
+    async def alias_who(self, alias: str, **body: Any) -> None:
+        await all_names.queue_action(
+            self.web, self.session, self.cref, self.keep,
+            {"action": "alias-who", "alias": alias, **body},
+        )  # fmt: skip
+
+    async def test_only_the_dm_on_a_shown_name_hides_it_and_undo_shows_it(self) -> None:
+        alias = await self.secret_name(secret=False)
+        await self.alias_who(alias, who="dm")
+        (done,) = await self.apply_all()
+        self.assertEqual((done.error, len(done.batches)), ("", 1))
+        names = await self.memory.aliases(
+            self.g, self.one.id, entity_id=self.keep, include_secret=True
+        )
+        self.assertTrue(next(a for a in names if a.id == alias).secret)
+        await self.memory.undo(self.g, self.one.id, done.batches[0])
+        names = await self.memory.aliases(
+            self.g, self.one.id, entity_id=self.keep, include_secret=True
+        )
+        self.assertFalse(next(a for a in names if a.id == alias).secret)
+
+    async def test_a_names_same_answer_again_writes_nothing(self) -> None:
+        alias = await self.secret_name()
+        await self.alias_who(alias, who="some", characters=[self.rook])
+        await self.apply_all()
+        before = await self.memory.version(self.g, self.one.id)
+        await self.alias_who(alias, who="some", characters=[self.rook])
+        self.assertEqual([(o.error, o.batches) for o in await self.apply_all()], [("", ())])
+        self.assertEqual(await self.memory.version(self.g, self.one.id), before)
+
+    async def test_a_name_from_a_non_dm_sender_is_refused(self) -> None:
+        alias = await self.secret_name()
+        await self.alias_who(alias, who="dm")
+        self.assertEqual([o.error for o in await self.apply_all(dms={999})], ["not_allowed"])

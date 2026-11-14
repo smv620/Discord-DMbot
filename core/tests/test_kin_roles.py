@@ -174,17 +174,21 @@ class TheWebEdges(unittest.TestCase):
 def relation(subject: str, object_: str, detail: str, directional: bool = True) -> Any:
     return SimpleNamespace(
         id="r1", subject_id=subject, object_id=object_, predicate="kin_of", detail=detail,
-        status="confirmed", secret=False, directional=directional,
+        status="confirmed", secret=False, directional=directional, both_ways=None,
+        knows_how="", assumed=False, route_state="",
     )  # fmt: skip
 
 
 def entity(entity_id: str, name: str) -> Any:
-    return SimpleNamespace(id=entity_id, name=name, status="confirmed", kind_key="npc")
+    return SimpleNamespace(
+        id=entity_id, name=name, status="confirmed", kind_key="npc", type="character"
+    )
 
 
 class TheCard(unittest.TestCase):
     lookup = SimpleNamespace(
-        entities={"mira": entity("mira", "Mira"), "aldric": entity("aldric", "Aldric")}
+        entities={"mira": entity("mira", "Mira"), "aldric": entity("aldric", "Aldric")},
+        guarded=frozenset(),
     )
 
     def words(self, card_of: str, detail: str) -> str:

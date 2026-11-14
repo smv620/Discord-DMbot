@@ -53,6 +53,7 @@ export const campaignPage = {
   pages: {
     recaps: "Recaps",
     timeline: "Story timeline",
+    pictures: "Pictures",
     graph: "Story Graph",
     names: "Names and NPCs",
     transcripts: "Transcripts",
@@ -65,6 +66,7 @@ export const campaignPage = {
   pageNotes: {
     recaps: "Read, edit and post session recaps.",
     timeline: "Every session in order, with its recap and the names that came out.",
+    pictures: "The pictures people posted in the table's chat, and their links.",
     graph: "How the names in this campaign are connected.",
     names: "Every name DMbot remembers. Search them and fix any that are wrong.",
     transcripts: "Read and download what was said. Everyone in the server can read these.",
@@ -138,6 +140,11 @@ export const campaignPage = {
     ],
   } as Record<string, [string, string][]>,
   saving: "Saving…",
+  // The wait for the bot's answer (#3347): DMbot's stage, how long it has run, and when it last moved (the shared panel).
+  stage: {
+    waiting: "Waiting for DMbot to pick it up.",
+    saving: "DMbot is saving it.",
+  } as Record<string, string>,
   slow: "This is taking longer than usual. Keep this page open.",
   offline: "DMbot isn't answering. It will make this change when it's back, if that is within an hour. Keep this page open, or reload it later to check.",
   saved: "Saved.",

@@ -221,8 +221,9 @@ def table_bot(*, consenting: set[int] | None = None, waiting: list[Any] | None =
     bot = SimpleNamespace(
         memory=memory,
         consent=SimpleNamespace(consenting=AsyncMock(return_value=consenting or {2})),
+        transcripts=None,  # (no stored session: no session start to record, #4043)
     )
-    for name in ("_note_spelling", "_record_spelled", "suggest_spelled"):
+    for name in ("_note_spelling", "_record_spelled", "suggest_spelled", "_session_start"):
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
     return bot
 
@@ -237,6 +238,7 @@ def a_table(secret: frozenset[str] = frozenset()) -> Any:
         hint_parts=SimpleNamespace(secret=secret),
         guild_id=1,
         campaign_id="c" * 32,
+        transcript_session_id=None,
     )
 
 

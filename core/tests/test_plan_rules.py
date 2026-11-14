@@ -543,6 +543,8 @@ class Buttons(base.UsageTest):
         )
 
     async def test_find_names_is_refused_to_an_ended_plan_and_nothing_is_confirmed(self) -> None:
+        # (the campaign adds by itself, the default: the plan gate comes before either path)
+        await self.campaigns.set_ask_before_adding(base.GUILD_A, self.a.id, False)
         bot = self.lore_bot()
         offer = self.offer()
         it = self.it(bot)
@@ -570,6 +572,8 @@ class Buttons(base.UsageTest):
         from dmbot.memory import lore_read
         from dmbot.ui import name_background
 
+        # These check the plan gate on the "Ask me before adding" path, which shows the summary.
+        await self.campaigns.set_ask_before_adding(base.GUILD_A, self.a.id, True)
         it = self.it(bot)
         with (
             patch.object(

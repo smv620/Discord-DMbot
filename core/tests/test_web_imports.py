@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import datetime as dt
 import json
 import time
 import unittest.mock
@@ -726,7 +727,10 @@ class TheStore(WithImports):
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
             cur = await conn.execute(
-                "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, %s, NULL) AS r",
+                (
+                    "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, %s, NULL,"
+                    " '[]'::jsonb, 6) AS r"
+                ),
                 (
                     THURSDAY.id,
                     self.one.id,
@@ -748,7 +752,10 @@ class TheStore(WithImports):
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
             cur = await conn.execute(
-                "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, 1, NULL) AS r",
+                (
+                    "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, 1, NULL,"
+                    " '[]'::jsonb, 6) AS r"
+                ),
                 (THURSDAY.id, self.one.id, "a" * 32, "x.txt", 1_700_000_000,
                  json.dumps([{"ms": 0, "user": MIRA, "text": "hi", "dur": 1}])),
             )  # fmt: skip
@@ -801,6 +808,27 @@ class TheStore(WithImports):
             [(m["userId"], m["agreed"]) for m in got["members"]], [(str(stranger), True)]
         )
 
+    async def test_the_members_search_marks_and_lists_first_the_players_the_dm_played_with(
+        self,
+    ) -> None:
+        early, late = 9201, 9202  # (by name "Zed Adams" sorts before "Zed Young")
+        for who, name in ((early, "Zed Adams"), (late, "Zed Young")):
+            await ConsentStore(self.db).grant(THURSDAY.id, who)
+            user = SimpleNamespace(id=who, name=name, email=None)
+            await web_sessions.sign_in(self.web, cast(Any, user), [THURSDAY], now=NOW, days=30)
+        async with self.db.unscoped() as conn:  # (the table has no writer but its own trigger)
+            await conn.execute("SELECT set_config('dmbot.owner_sync', 'dm_players_note', true)")
+            await conn.execute(
+                "INSERT INTO dm_players (dm_user_id, player_user_id, last_name, first_played_at,"
+                " last_played_at, campaigns) VALUES (%s, %s, 'Zed Young', 1, 1, 1)",
+                (self.session.user_id, late),
+            )
+        got = await imports.search_members(self.web, self.session, self.ref_c, "zed", **self.kw)
+        self.assertEqual(
+            [(m["name"], m["before"]) for m in got["members"]],
+            [("Zed Young", True), ("Zed Adams", False)],
+        )
+
     async def test_a_second_file_the_door_refuses_stores_nothing_at_all(self) -> None:
         await ConsentStore(self.db).grant(THURSDAY.id, TOMAS)
         original = imports._plans
@@ -842,14 +870,43 @@ class TheStore(WithImports):
         self.assertEqual(refused.exception.code, "no_lines_kept")
         self.assertEqual(await self.sessions(), 0)
 
-    async def test_session_dates_must_be_from_2000_to_2100(self) -> None:
-        cases = {"1999-12-31": False, "2000-01-01": True, "2100-01-01": True, "2100-01-02": False}
-        for day, ok in cases.items():
-            if ok:
-                self.assertIsInstance(imports._started_at(day, 0), int, day)
+    async def test_session_dates_must_be_from_2000_and_not_in_the_future(self) -> None:
+        now = int(dt.datetime(2026, 11, 5, 9, 30, tzinfo=dt.UTC).timestamp())
+        cases = {
+            "1999-12-31": "bad_date",
+            "2000-01-01": "",
+            "2026-11-05": "",
+            "2101-01-01": "bad_date",
+        }
+        for day, code in cases.items():
+            if not code:
+                self.assertIsInstance(imports._started_at(day, 0, now), int, day)
             else:
-                with self.assertRaises(RecapError, msg=day):
-                    imports._started_at(day, 0)
+                with self.assertRaises(RecapError, msg=day) as refused:
+                    imports._started_at(day, 0, now)
+                self.assertEqual(refused.exception.code, code, day)
+
+    async def test_a_day_that_has_not_happened_yet_is_refused_with_its_own_code(self) -> None:
+        """#3483: the page stops it, but an old tab or a direct call must not store one. The
+        server allows one day ahead of UTC (the DM's own calendar may be a day ahead) and refuses
+        anything later."""
+        now = int(dt.datetime(2026, 11, 5, 9, 30, tzinfo=dt.UTC).timestamp())
+        for day in ("2026-11-04", "2026-11-05", "2026-11-06"):  # past, today, one day ahead
+            self.assertIsInstance(imports._started_at(day, 0, now), int, day)
+        for day in ("2026-11-07", "2027-01-01"):  # tomorrow+1 and later
+            with self.assertRaises(RecapError, msg=day) as refused:
+                imports._started_at(day, 0, now)
+            self.assertEqual(refused.exception.code, "future_date", day)
+
+    async def test_the_import_refuses_a_future_date_before_anything_is_stored(self) -> None:
+        future = (dt.datetime.now(dt.UTC) + dt.timedelta(days=3)).date().isoformat()
+        with self.assertRaises(RecapError) as refused:
+            await self.confirm(
+                {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": future}]},
+                ("a.txt", CRAIG),
+            )
+        self.assertEqual(refused.exception.code, "future_date")
+        self.assertEqual(await self.sessions(), 0)
 
     async def test_a_new_session_is_stored_at_noon_utc_of_its_day(self) -> None:
         await self.confirm(
@@ -1205,6 +1262,8 @@ class TheProgress(WithImports):
                     "namesToAnswer": 0,
                     "namesUnchecked": False,
                     "recap": None,
+                    "story": None,  # (the story read has not started)
+                    "clock": None,  # (no offer to set the clock for it, #3199)
                     "progress": {
                         "stage": "cleaning",
                         "startedAt": got["sessions"][0]["progress"]["startedAt"],
@@ -1216,6 +1275,33 @@ class TheProgress(WithImports):
                 }
             ],
         )
+
+    async def test_the_clock_offer_of_a_session_rides_its_row_for_a_dm_only(self) -> None:
+        from dmbot.timebot import clock as game
+        from dmbot.transcript.import_clock import ImportClockOffers
+
+        done = await self.confirm(
+            {"mapping": MAPPING, "sessions": [{"file": "a.txt", "date": "2026-09-14"}]},
+            ("a.txt", CRAIG),
+        )
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT session_id FROM session_imports LIMIT 1")
+            row = await cur.fetchone()
+        assert row is not None
+        minute = game.from_day_and_time(5, 19)
+        offers = ImportClockOffers(self.db)
+        await offers.offer(THURSDAY.id, self.one.id, row["session_id"], minute)
+        got = await imports.progress(
+            self.web, self.session, self.ref_c, done["importId"], outside=None
+        )
+        shown = got["sessions"][0]["clock"]
+        self.assertEqual((shown["state"], shown["label"]), ("offered", game.short_label(minute)))
+        self.assertNotIn("setTo", shown)
+        await offers.settle(THURSDAY.id, self.one.id, row["session_id"], "set")
+        again = await imports.progress(
+            self.web, self.session, self.ref_c, done["importId"], outside=None
+        )
+        self.assertEqual(again["sessions"][0]["clock"]["setTo"], game.short_label(minute))
 
     async def stage(self, imp_id: str) -> dict[str, Any]:
         got = await imports.progress(self.web, self.session, self.ref_c, imp_id, outside=None)
@@ -1273,6 +1359,16 @@ class TheProgress(WithImports):
             await conn.execute("UPDATE recap_jobs SET state = 'failed'")
         self.assertEqual((await self.stage(imp))["stage"], "recap_failed")
 
+    async def test_the_words_and_calls_so_far_ride_in_the_progress_shape(self) -> None:
+        """#3534: `counts` appears once something was handled, counts only, and a session that
+        recorded nothing sends the shape it always did."""
+        imp, _, _ = await self.one_import(False)
+        self.assertNotIn("counts", (await self.stage(imp))["progress"])
+        await self.set_import(step_total=900, step_done=420, words_done=5300, calls_made=7)
+        got = (await self.stage(imp))["progress"]
+        self.assertEqual(got["counts"], {"words": 5300, "calls": 7})
+        self.assertEqual((got["done"], got["total"]), (420, 900))
+
     async def test_the_progress_shape_moves_with_the_stages_and_never_goes_back(self) -> None:
         """#2564: stage, counts, startedAt, updatedAt and serverNow, one shape per session and for
         the whole import."""
@@ -1296,6 +1392,40 @@ class TheProgress(WithImports):
             (whole["stage"], whole["state"], whole["done"], whole["total"], whole["unit"]),
             ("done", "done", 1, 1, "sessions"),
         )
+
+    async def test_the_story_read_shows_each_of_its_states(self) -> None:
+        imp, _, _ = await self.one_import(False)
+        self.assertIsNone((await self.stage(imp))["story"])  # not started
+        now = int(time.time())
+        await self.set_import(
+            story_state="reading", story_part=2, story_parts=5,
+            story_started_at=now - 90, story_moved_at=now - 10,
+        )  # fmt: skip
+        story = (await self.stage(imp))["story"]
+        self.assertEqual(
+            (story["stage"], story["state"], story["done"], story["total"], story["unit"]),
+            ("reading_connections", "running", 2, 5, "parts"),
+        )
+        self.assertGreaterEqual(story["updatedAt"], story["startedAt"])  # how long, and last move
+        await self.set_import(story_state="waiting", story_moved_at=now - 3 * 3600)
+        story = (await self.stage(imp))["story"]
+        self.assertEqual((story["stage"], story["state"]), ("waiting_for_limit", "running"))
+        await self.set_import(story_state="read")
+        story = (await self.stage(imp))["story"]
+        self.assertEqual((story["stage"], story["state"]), ("connections_read", "done"))
+
+    async def test_a_story_read_that_stops_moving_is_called_stalled_but_a_wait_for_the_limit_is_not(
+        self,
+    ) -> None:
+        imp, _, _ = await self.one_import(False)
+        long_ago = int(time.time()) - 3 * 3600
+        await self.set_import(
+            story_state="reading", story_part=1, story_parts=3,
+            story_started_at=long_ago, story_moved_at=long_ago,
+        )  # fmt: skip
+        self.assertEqual((await self.stage(imp))["story"]["state"], "stalled")
+        await self.set_import(story_state="waiting")
+        self.assertEqual((await self.stage(imp))["story"]["state"], "running")
 
     async def test_a_job_that_has_not_moved_for_its_stage_limit_is_stalled(self) -> None:
         imp, _, _ = await self.one_import(False)
@@ -1904,14 +2034,39 @@ class TheMemberDirectory(WithImports):
         assert row is not None
         self.assertEqual(row["n"], 0)
 
-    async def test_the_campaigns_own_person_comes_first_and_is_not_listed_twice(self) -> None:
+    async def test_a_discord_name_beats_the_player_placeholder_and_is_listed_once(self) -> None:
         from dmbot.members import MemberDirectory
 
         await MemberDirectory(self.db).remember(THURSDAY.id, MIRA, "Mira Real", "mira_v")
-        for q in ("", "mira_v", "real", "player 0"):  # whichever of her names is searched
+        for q in ("", "mira_v", "real"):  # whichever of her names is searched
             names = [n for n, _ in await self.find(q)]
-            self.assertEqual(names.count("Player 0"), 1, q)  # MIRA is "Player 0" here
-            self.assertNotIn("Mira Real", names, q)
+            self.assertEqual(names.count("Mira Real"), 1, q)  # MIRA's placeholder is "Player 0"
+            self.assertNotIn("Player 0", names, q)
+
+    async def test_the_username_is_sent_with_the_name(self) -> None:
+        from dmbot.members import MemberDirectory
+
+        await MemberDirectory(self.db).remember(THURSDAY.id, MIRA, "Mira Real", "mira_v")
+        got = await imports.search_members(self.web, self.session, self.ref_c, "", **self.kw)
+        mira = next(m for m in got["members"] if m["userId"] == str(MIRA))
+        self.assertEqual((mira["name"], mira["username"]), ("Mira Real", "mira_v"))
+
+    async def test_a_person_with_no_name_is_never_a_player_placeholder(self) -> None:
+        names = [n for n, _ in await self.find("")]
+        self.assertNotIn("Player 0", names)
+        self.assertTrue(any(n.startswith("Unknown member (…") for n in names), names)
+
+    async def test_a_person_who_is_not_in_discord_keeps_the_name_the_dm_gave(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name, description,"
+                " status, source, created_at, played_by, role) VALUES (%s, %s, %s, 'person',"
+                " 'Player 3 (no Discord)', '', 'confirmed', 'dm', 700, -3, 'npc')",
+                (THURSDAY.id, self.one.id, f"{700:032x}"),
+            )
+        names = [n for n, _ in await self.find("")]
+        self.assertIn("Player 3 (no Discord)", names)
+        self.assertFalse(any("-3" in n for n in names))
 
     async def test_forgetting_one_member_also_drops_rows_of_people_with_no_consent(self) -> None:
         from dmbot.members import MemberDirectory

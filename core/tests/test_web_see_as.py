@@ -242,7 +242,7 @@ class NamedAsTheBotNamesThem(SeeAs):
     async def test_a_hidden_persons_name_never_comes_through_a_joined_label(self) -> None:
         got = await self.seen(self.okra)
         self.assertNotIn("Bruno", str(got))
-        self.assertIn("someone's sister (name unknown)", self.names(got))
+        self.assertIn("unnamed - someone's sister", self.names(got))
 
 
 class WhoMayLook(SeeAs):

@@ -50,13 +50,16 @@ async def set_who_knows(
     characters: Sequence[str] = (),
     *,
     players_only: bool = False,
+    made: list[int] | None = None,
 ) -> Written[object]:
     """ "Who knows this?" for one connection (#2935), the one call the name card and the website
     share. Only the DM (hidden from the party, no knowers), only these player characters (hidden
     from the party, each of those characters' own point of view holds it), or everyone at the table
     (their knowers let go, then shown to the players: the same as the old "show to players").
-    The three keep the meaning of the old 🤫 and 👁️ switches. Returns the last change, which Undo
-    reverses."""
+    The three keep the meaning of the old 🤫 and 👁️ switches. Returns the last change that wrote
+    something. One answer can be two changes (hide it, then say who knows it): `made`, when given,
+    gets every change's batch in order, so an Undo can take back all of them (#4159)."""
+    log = made if made is not None else []
     if who not in WHO_KNOWS:
         raise MemoryRuleError("Pick who knows it: only you, some characters, or everyone.")
     if who == SOME_CHARACTERS and not characters:
@@ -68,11 +71,14 @@ async def set_who_knows(
             link.id, []
         )
         if before:
-            await memory.set_connection_knowers(
-                guild_id, campaign_id, link.id, [], source=DM, players_only=players_only
+            keep_batch(
+                log,
+                await memory.set_connection_knowers(
+                    guild_id, campaign_id, link.id, [], source=DM, players_only=players_only
+                ),
             )
         try:
-            return await set_secret(memory, guild_id, campaign_id, link, False)
+            return keep_batch(log, await set_secret(memory, guild_id, campaign_id, link, False))
         except MemoryRuleError:  # (refused until its names are shown): put who knew it back
             if before:
                 await memory.set_connection_knowers(
@@ -81,11 +87,24 @@ async def set_who_knows(
             raise
     chosen = list(characters) if who == SOME_CHARACTERS else []
     await memory.check_knowers(guild_id, campaign_id, chosen)  # nothing is hidden on a bad pick
+    hidden: Written[object] = Written(None, None)
     if not (link.secret or link.unrevealed):
-        await set_secret(memory, guild_id, campaign_id, link, True)
-    return await memory.set_connection_knowers(
-        guild_id, campaign_id, link.id, chosen, source=DM, players_only=players_only
+        hidden = keep_batch(log, await set_secret(memory, guild_id, campaign_id, link, True))
+    knew = keep_batch(
+        log,
+        await memory.set_connection_knowers(
+            guild_id, campaign_id, link.id, chosen, source=DM, players_only=players_only
+        ),
     )
+    # (hiding it with no one to know it is the only change: that one is what Undo takes back, #4159)
+    return knew if knew.batch is not None else hidden
+
+
+def keep_batch[T](log: list[int], written: Written[T]) -> Written[T]:
+    """Note a change's batch (none when it wrote nothing) and pass the change on."""
+    if written.batch is not None:
+        log.append(written.batch)
+    return written
 
 
 async def remove(
@@ -103,10 +122,13 @@ async def change_words(
     predicate: str,
     detail: str,
     first: str | None = None,
+    *,
+    dm_feeling: bool = False,
 ) -> Written[Relation] | None:
     """New words between the same two names, keeping who sees it, in ONE change (so one Undo
     puts the old words back). None when the words are the ones it already has, capitals aside:
-    nothing is written. The store does the work, for the website's edits too.
+    nothing is written (`dm_feeling`: unless the DM's Reputation changed, #3642). The store does
+    the work, for the website's edits too.
 
     A family role the DM types ("is the niece of") gives the connection a direction (#2457), even
     over an older connection that already says "niece" (its direction was arbitrary): `first` is
@@ -117,13 +139,19 @@ async def change_words(
     # Only a one-way role ("niece") has a side to be on; "cousin" reads the same both ways, so
     # retyping it must write nothing.
     swap = directional and first is not None and first == link.object_id
-    if (predicate, detail.casefold()) == (link.predicate, link.detail.casefold()) and not (
-        directional and (not link.directional or swap)
+    if (
+        (predicate, detail.casefold()) == (link.predicate, link.detail.casefold())
+        and not (directional and (not link.directional or swap))
+        and not dm_feeling  # (the same word picked again still sets the DM's Reputation, #3642)
     ):
         return None
     written = await memory.change_relation_words(
         guild_id, campaign_id, link.id, predicate, detail, source=DM,
-        directional=directional, swap=swap,
+        directional=directional, swap=swap, dm_feeling=dm_feeling,
     )  # fmt: skip
     unchanged = written.value.id == link.id and written.value.directional == link.directional
+    # (with `dm_feeling` the same words may still have set the DM's Reputation: an empty batch
+    # means nothing was written)
+    if dm_feeling:
+        return written if written.batch is not None else None
     return None if unchanged and not swap else written

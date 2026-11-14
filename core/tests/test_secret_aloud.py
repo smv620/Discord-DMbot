@@ -8,10 +8,8 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from dmbot.bot import DMBot
 from dmbot.memory.models import DM, MemoryRuleError
 from dmbot.memory.secret_aloud import (
-    MAX_ASKED,
     SecretName,
     said_lines,
     secret_names,
@@ -24,14 +22,13 @@ from dmbot.ui.secret_aloud import (
     NOT_YOURS,
     SecretAloudButton,
     kept_text,
-    more_text,
     opened_text,
     question_text,
     secret_aloud_view,
 )
 from tests.test_memory_store import GUILD_A, MemoryTest
 
-PLAYER, OTHER, DM_ID, BOT = 11, 12, 7, 99
+PLAYER, OTHER, DM_ID = 11, 12, 7
 AURIL = SecretName("a" * 32, "Auril")
 
 
@@ -241,107 +238,6 @@ class SharedSpelling(MemoryTest):
         self.assertEqual(left, {a, b})
 
 
-def fake_table(*, session: str | None = "s1") -> Any:
-    return SimpleNamespace(
-        guild_id=GUILD_A, campaign_id="c" * 32, transcript_session_id=session, screen_channel_id=55
-    )
-
-
-def fake_bot(
-    lines: list[Line], secrets: list[SecretName], agreed: set[int], visibility: str = "private"
-) -> Any:
-    memory = MagicMock()
-    bot = SimpleNamespace(
-        memory=memory,
-        transcripts=SimpleNamespace(lines=AsyncMock(return_value=lines)),
-        campaigns=SimpleNamespace(
-            get=AsyncMock(
-                return_value=SimpleNamespace(
-                    dm_user_ids=frozenset({DM_ID}),
-                    dm_screen_visibility=visibility,
-                    name="Frostmaiden",
-                )
-            )
-        ),
-        consent=SimpleNamespace(consenting=AsyncMock(return_value=agreed)),
-        post=AsyncMock(return_value=True),
-        sidebar_send_dm=AsyncMock(return_value="sent"),
-    )
-    return bot
-
-
-class AfterTheSession(unittest.IsolatedAsyncioTestCase):
-    async def run_step(self, bot: Any, secrets: list[SecretName], table: Any = None) -> None:
-        from unittest import mock
-
-        with mock.patch("dmbot.bot.secret_names", AsyncMock(return_value=secrets)):
-            await DMBot.ask_about_secrets(bot, table or fake_table())
-
-    async def test_a_player_saying_a_secret_name_asks_the_dm_on_the_dm_screen_only(self) -> None:
-        bot = fake_bot([line(PLAYER, "Ask Auril")], [AURIL], {PLAYER, DM_ID})
-        await self.run_step(bot, [AURIL])
-        bot.post.assert_awaited_once()
-        self.assertEqual(bot.post.await_args.args[0], 55)
-        self.assertEqual(bot.post.await_args.args[1], question_text("Auril"))
-        self.assertIsNotNone(bot.post.await_args.kwargs["view"])
-        self.assertIsNotNone(
-            bot.post.await_args.kwargs["secret_of"]
-        )  # pulled back if opened (#2097)
-
-    async def test_the_dm_alone_saying_it_asks_nothing(self) -> None:
-        bot = fake_bot([line(DM_ID, "Auril is the one")], [AURIL], {PLAYER, DM_ID})
-        await self.run_step(bot, [AURIL])
-        bot.post.assert_not_awaited()
-
-    async def test_dmbots_own_lines_never_count(self) -> None:
-        bot = fake_bot([line(BOT, "Auril", sidebar="answer")], [AURIL], {BOT, PLAYER})
-        await self.run_step(bot, [AURIL])
-        bot.post.assert_not_awaited()
-
-    async def test_someone_not_recorded_now_is_ignored(self) -> None:
-        bot = fake_bot([line(OTHER, "Auril")], [AURIL], {PLAYER, DM_ID})
-        await self.run_step(bot, [AURIL])
-        bot.post.assert_not_awaited()
-
-    async def test_consent_is_read_after_the_lines(self) -> None:
-        order: list[str] = []
-
-        async def read_lines(*_: Any) -> list[Line]:
-            order.append("lines")
-            return []
-
-        async def read_consent(*_: Any) -> set[int]:
-            order.append("consent")
-            return set()
-
-        bot = fake_bot([line(PLAYER, "Auril")], [AURIL], {PLAYER})
-        bot.transcripts.lines = read_lines
-        bot.consent.consenting = read_consent
-        await self.run_step(bot, [AURIL])
-        self.assertEqual(order, ["lines", "consent"])
-
-    async def test_no_secret_names_means_no_reads_and_no_posts(self) -> None:
-        bot = fake_bot([line(PLAYER, "Auril")], [], {PLAYER})
-        await self.run_step(bot, [])
-        bot.transcripts.lines.assert_not_awaited()
-        bot.post.assert_not_awaited()
-
-    async def test_no_stored_session_or_no_memory_does_nothing(self) -> None:
-        bot = fake_bot([], [AURIL], {PLAYER})
-        await self.run_step(bot, [AURIL], fake_table(session=None))
-        bot.memory = None
-        await self.run_step(bot, [AURIL])
-        bot.post.assert_not_awaited()
-
-    async def test_at_most_five_are_asked(self) -> None:
-        names = [SecretName(f"{n:032x}", f"Name{chr(97 + n)}x") for n in range(8)]
-        lines = [line(PLAYER, " ".join(n.text for n in names))]
-        bot = fake_bot(lines, names, {PLAYER})
-        await self.run_step(bot, names)
-        self.assertEqual(bot.post.await_count, MAX_ASKED + 1)  # five questions and a line
-        self.assertEqual(bot.post.await_args.args[1], more_text(3))  # saying there are 3 more
-
-
 def press(
     act: str,
     user: int,
@@ -354,6 +250,7 @@ def press(
         guild_id=GUILD_A,
         id="c" * 32,
         dm_user_ids=frozenset({DM_ID}),
+        dm_accounts=frozenset({DM_ID}),
         dm_screen_visibility=visibility,
     )
     bot = SimpleNamespace(
@@ -381,49 +278,6 @@ def press(
 
 
 class WhenTheScreenIsOpen(unittest.IsolatedAsyncioTestCase):
-    async def test_the_question_goes_to_the_dms_privately_when_players_may_peek(self) -> None:
-        bot = fake_bot([line(PLAYER, "Ask Auril")], [AURIL], {PLAYER, DM_ID}, visibility="peek")
-        from unittest import mock
-
-        with mock.patch("dmbot.bot.secret_names", AsyncMock(return_value=[AURIL])):
-            await DMBot.ask_about_secrets(bot, fake_table())
-        bot.post.assert_not_awaited()  # the name is not on the screen
-        bot.sidebar_send_dm.assert_awaited_once()
-        self.assertEqual(bot.sidebar_send_dm.await_args.args[0], DM_ID)
-
-    async def test_when_no_dm_can_be_reached_the_screen_says_so_without_the_name(self) -> None:
-        from dmbot.bot import SECRET_QUESTION_WAITING
-
-        bot = fake_bot([line(PLAYER, "Ask Auril")], [AURIL], {PLAYER, DM_ID}, visibility="peek")
-        bot.sidebar_send_dm = AsyncMock(return_value="forbidden")
-        from unittest import mock
-
-        with mock.patch("dmbot.bot.secret_names", AsyncMock(return_value=[AURIL])):
-            await DMBot.ask_about_secrets(bot, fake_table())
-        bot.post.assert_awaited_once()
-        self.assertEqual(bot.post.await_args.args[1], SECRET_QUESTION_WAITING)
-        self.assertNotIn("Auril", bot.post.await_args.args[1])
-
-    async def test_a_send_that_only_failed_says_nothing_on_the_screen(self) -> None:
-        bot = fake_bot([line(PLAYER, "Ask Auril")], [AURIL], {PLAYER, DM_ID}, visibility="peek")
-        bot.sidebar_send_dm = AsyncMock(return_value="failed")
-        from unittest import mock
-
-        with mock.patch("dmbot.bot.secret_names", AsyncMock(return_value=[AURIL])):
-            await DMBot.ask_about_secrets(bot, fake_table())
-        bot.post.assert_not_awaited()  # nothing for the DM to change; it is asked next time
-
-    async def test_the_private_question_carries_the_server_and_the_campaigns_name(self) -> None:
-        bot = fake_bot([line(PLAYER, "Ask Auril")], [AURIL], {PLAYER, DM_ID}, visibility="open")
-        from unittest import mock
-
-        with mock.patch("dmbot.bot.secret_names", AsyncMock(return_value=[AURIL])):
-            await DMBot.ask_about_secrets(bot, fake_table())
-        _dm, text, view = bot.sidebar_send_dm.await_args.args
-        self.assertIn("(campaign Frostmaiden)", text)
-        self.assertIn("Sent to you alone", text)
-        self.assertTrue(all(str(GUILD_A) in c.item.custom_id for c in view.children))
-
     async def test_a_button_pressed_on_a_screen_that_has_opened_up_writes_no_name(self) -> None:
         from dmbot.dm_screen import secret_posts
 
@@ -475,12 +329,6 @@ class InAPrivateMessage(unittest.IsolatedAsyncioTestCase):
         button.guild_id = GUILD_A + 1
         await button.callback(interaction)  # interaction.guild is GUILD_A
         bot.campaigns.get.assert_not_awaited()
-
-    def test_the_private_question_names_the_campaign_and_says_it_was_sent_alone(self) -> None:
-        text = question_text("Auril", private=True, campaign_name="Frostmaiden")
-        self.assertIn("(campaign Frostmaiden)", text)
-        self.assertIn("Sent to you alone", text)
-        self.assertNotIn("Sent to you alone", question_text("Auril"))
 
     def test_an_answered_keep_message_does_not_repeat_the_name(self) -> None:
         self.assertNotIn("Auril", kept_text())

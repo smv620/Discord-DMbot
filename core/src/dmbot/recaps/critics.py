@@ -79,14 +79,15 @@ APPROVED_UNCHECKED = (
 WAIT_REVISE_CALLS = 6
 
 
-def wait_budget(batches: int) -> int:
+def wait_budget(batches: int, musts: bool = False) -> int:
     """Calls a waiting try may make. A try that reads the draft: one for each batch of sentences
     and two for PlotBot (its second call, with more room when its answer was cut off, #2365, is
     counted). A try that revises it: `WAIT_REVISE_CALLS`. A try is one or the other, so this is
     the larger of the two, and never fewer than `WAIT_CALLS`, so a long recap is checked as surely
     as a short one. A documented bound, not a gate: the loop is written to stay inside it, and a
     test (the outage one) fails if a try ever spends more (#2308)."""
-    return max(WAIT_CALLS, batches + 2, WAIT_REVISE_CALLS)
+    # (a campaign with must-haves has a third call in a reading: the coverage check, #3328)
+    return max(WAIT_CALLS, batches + 2 + (1 if musts else 0), WAIT_REVISE_CALLS)
 
 
 def wait_for(waits: int, *, soon: bool = False) -> int:
@@ -280,6 +281,9 @@ class Loop:
     # The motive check's result for the draft being read, kept so a failed PlotBot call does not
     # make the next try pay for it again; None until it has run.
     motives: tuple[Change, ...] | None = None
+    # PlotBot's changes for the draft being read, kept once it has answered so that a failed
+    # coverage check (#3328) does not make the next try pay for PlotBot again; None until then.
+    plot: tuple[Change, ...] | None = None
     # While no draft can be read, the recap waits for its check (the pipeline's `_hold`): how many
     # waits so far (the backoff), when the first began, and whether the DM was told that it could
     # not be finished (once). All cleared when a reading gets through.
@@ -305,6 +309,7 @@ class Loop:
             "notes": list(self.notes),
             "cut": self.cut,
             "motives": None if self.motives is None else [c.to_json() for c in self.motives],
+            "plot": None if self.plot is None else [c.to_json() for c in self.plot],
             "waits": self.waits,
             "since": self.since,
             "told": self.told,
@@ -327,6 +332,10 @@ def loop_from_json(raw: object) -> Loop:
     motives: tuple[Change, ...] | None = None
     if isinstance(motives_raw, list):
         motives = tuple(c for c in map(change_from_json, motives_raw) if c is not None)
+    plot_raw = raw.get("plot")
+    plot: tuple[Change, ...] | None = None
+    if isinstance(plot_raw, list):
+        plot = tuple(c for c in map(change_from_json, plot_raw) if c is not None)
     return Loop(
         raw["round"] if type(raw.get("round")) is int else 0,
         pending,
@@ -335,6 +344,7 @@ def loop_from_json(raw: object) -> Loop:
         tuple(str(n) for n in notes) if isinstance(notes, list) else (),
         raw["cut"] if type(raw.get("cut")) is int else 0,
         motives,
+        plot,
         raw["waits"] if type(raw.get("waits")) is int and raw["waits"] >= 0 else 0,
         raw["since"] if type(raw.get("since")) is int and raw["since"] >= 0 else 0,
         raw.get("told") is True,

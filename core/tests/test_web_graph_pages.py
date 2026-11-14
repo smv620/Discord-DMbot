@@ -89,6 +89,35 @@ class Pages(Web):
         self.assertNotIn(other.value.id, {n["id"] for n in got["nodes"]})
         self.assertFalse(self.by_name(got["nodes"])["Mira Voss"])  # one's Mira has no page
 
+    async def test_the_version_door_gives_only_a_number_that_rises_with_every_graph_write(
+        self,
+    ) -> None:
+        """#3294: the cheap read the Story Graph page asks first. A player gets it too (it says only
+        that something changed), it carries nothing else, and a name added to the graph moves it."""
+        before = await relationships.read_version(self.web, self.player, self.cref)
+        self.assertEqual(set(before), {"version"})
+        same = await relationships.read_version(self.web, self.session, self.cref)
+        self.assertEqual(before, same)
+        await self.memory.add_entity(
+            self.g, self.one.id, type="npc", name="Harl Brandt", source="dm", status="confirmed"
+        )
+        after = await relationships.read_version(self.web, self.player, self.cref)
+        self.assertGreater(after["version"], before["version"])
+
+    async def test_the_version_door_refuses_an_outsider_and_another_campaign(self) -> None:
+        from dmbot.web.recaps import RecapError
+        from tests.test_recap_web import BOB
+        from tests.test_web_api import QUILLON
+
+        outsider = await self.signed(BOB, QUILLON)
+        for who, ref in (
+            (outsider, self.cref),
+            (self.player, f"{self.g}.{'f' * 32}"),
+        ):
+            with self.assertRaises(RecapError) as caught:
+                await relationships.read_version(self.web, who, ref)
+            self.assertEqual(caught.exception.code, "not_found")
+
     async def test_the_size_door_asks_nothing_extra(self) -> None:
         got = await relationships.read_size(self.web, self.player, self.cref, center=self.mira)
         self.assertEqual(set(got), {"names"})

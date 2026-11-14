@@ -42,7 +42,7 @@ export const RECAP_NAME_CHECKS_LIVE = false;
 // change_words answer and the cards' longerNames deployed and seen to work. It moves with the What's new
 // entry "Change a new name's words online" and can only be true with RECAP_NAME_CHECKS_LIVE.
 export const NAME_CHANGE_WORDS_LIVE = false;
-// NAME_PLACES_LIVE is "Where it was said" on a name to check (#2403; core #2329): two short windows of the
+// NAME_PLACES_LIVE is "Where it was said" on a name to check (#2403; core #2329): up to three short windows of the
 // session's transcript around where DMbot heard the name, for the DM, with a placeholder for a line a
 // player had removed. It needs the names-to-check list to send `places` (deployed and seen to work) and
 // moves with the What's new entry "See where a recap's new name was said". Only true with RECAP_NAME_CHECKS_LIVE.
@@ -103,7 +103,7 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
     text: "After a session, DMbot can write a short story-style recap of what happened, to read at the start of next time. Recaps are for paid plans.",
   },
   {
-    text: "A recap's length follows your session: about 250 words for a one-hour game, about 450 for three hours. A game of four and a half hours or more gets about 600 words, the longest.",
+    text: "A recap's length follows your session: about 400 words for a one-hour game, about 700 for three hours. A game of five hours or more gets about 1000 words, the longest.",
   },
   {
     text: "It is written only from what was said by people who said yes to being recorded, and DMbot checks the sentences against what was said, has it written again once if one doesn't match, and cuts any that still don't. If too little is left, there is no recap. It also takes out compass directions. It leaves out any name you marked secret. Anything said out loud at the table can still be in it, so read it before you post.",
@@ -130,7 +130,7 @@ export const recapSteps: { text: string; names?: { name: string; file: string }[
     text: "You read it first. You can change the words. Try again writes a new one and throws away your changes; you can do that up to twice. On your recap page you can also press Approve but don't post, to keep it without sending it. Nothing goes to your players until you press Post to the table or Approve and post text only.",
   },
   {
-    text: "Post to the table puts the recap in your table's chat channel, dmb-chat. It can also list hit points, items and conditions. DMbot checks again first: if a player has stopped being recorded since it was written, or it names something you keep secret, it won't post and tells you why. It can take about a minute.",
+    text: "Post to the table puts the recap in the table's chat (the voice channel's chat, or the channel your game master picked). It can also list hit points, items and conditions. DMbot checks again first: if a player has stopped being recorded since it was written, or it names something you keep secret, it won't post and tells you why. It can take about a minute.",
   },
   ...(RECAP_FIX_LIVE
     ? [

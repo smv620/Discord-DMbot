@@ -34,6 +34,7 @@ def campaign(cid: str = "c" * 32, target: str = "2024", fallback: str = "2014") 
         fallback_ruleset=fallback,
         optional_rules_default=True,
         dm_user_ids=frozenset({7}),
+        dm_accounts=frozenset({7}),
         dm_screen_channel_id=None,
         last_voice_channel_id=None,
         dm_screen_visibility="peek",

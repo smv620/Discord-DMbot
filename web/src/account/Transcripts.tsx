@@ -21,8 +21,13 @@ import {
 } from "./api";
 import CampaignNav from "./CampaignNav";
 import FixLine from "./FixLine";
-import SessionNotesPanel from "./SessionNotes";
+import MakeScript from "./MakeScript";
+import SessionNotesPanel, { Beats, beatsToText, type Opened } from "./SessionNotes";
+import SpeakerRemovalPanel from "./SpeakerRemoval";
 import { FIX_LINE_LIVE } from "../content/fix-line-switch";
+import { SCRIPT_MAKE_LIVE } from "../content/make-script-switch";
+import { SESSION_NOTES_LIVE } from "../content/session-notes-switch";
+import { THEATRE_DOWNLOAD_LIVE } from "../content/theatre-download-switch";
 
 /** Where in the pages the address points: `/account/transcripts`, `/<campaign>`, `/<campaign>/<n>`. */
 export function placeFromPath(path: string): { ref: string; number: number | null } | null {
@@ -208,6 +213,7 @@ function Sessions({ api, campaignRef }: { api: AccountApi; campaignRef: string }
             </ul>
           )}
           <SessionNotesPanel key={campaignRef} api={api} campaignRef={campaignRef} />
+          <SpeakerRemovalPanel key={`removal-${campaignRef}`} api={api} campaignRef={campaignRef} />
         </>
       )}
     </Shell>
@@ -223,11 +229,25 @@ function Reader({
   campaignRef: string;
   number: number;
 }) {
+  // Cleaned and As heard are read from the transcript; Script and Session notes (#3898) are game masters' views of the same
+  // session, each read on its own, so the transcript is asked for in the version last chosen of the first two.
+  const [tab, setTab] = useState<Tab>("cleaned");
   const [version, setVersion] = useState<TranscriptVersion>("cleaned");
   const load = useRead(
     api.transcript ? () => api.transcript!(campaignRef, number, version) : null,
     [api, campaignRef, number, version],
   );
+  const isDm = useIsDm(api, campaignRef);
+  const tabs: Tab[] = [
+    "cleaned",
+    "heard",
+    ...(isDm && THEATRE_DOWNLOAD_LIVE && api.transcriptScript ? (["script"] as const) : []),
+    ...(isDm && SESSION_NOTES_LIVE && api.sessionNotesList && api.sessionNotes ? (["notes"] as const) : []),
+  ];
+  const choose = (t: Tab): void => {
+    setTab(t);
+    if (t === "cleaned" || t === "heard") setVersion(t);
+  };
   return (
     <>
       <p>
@@ -247,7 +267,9 @@ function Reader({
           campaignRef={campaignRef}
           number={number}
           version={version}
-          setVersion={setVersion}
+          tab={tabs.includes(tab) ? tab : version}
+          tabs={tabs}
+          choose={choose}
           load={load}
         />
       )}
@@ -261,31 +283,35 @@ function Reading({
   campaignRef,
   number,
   version,
-  setVersion,
+  tab,
+  tabs,
+  choose,
   load,
 }: {
   api: AccountApi;
   campaignRef: string;
   number: number;
   version: TranscriptVersion;
-  setVersion: (v: TranscriptVersion) => void;
+  tab: Tab;
+  tabs: Tab[];
+  choose: (t: Tab) => void;
   load: Load<TranscriptView>;
 }) {
   return (
     <>
       <div class="row" role="group" aria-label={text.versionLabel}>
-        {(["cleaned", "heard"] as const).map((v) => (
-          <button
-            key={v}
-            type="button"
-            class={v === version ? "button" : "button secondary"}
-            aria-pressed={v === version}
-            onClick={() => setVersion(v)}
-          >
-            {text.versions[v]}
+        {tabs.map((t) => (
+          <button key={t} type="button" class={t === tab ? "button" : "button secondary"} aria-pressed={t === tab} onClick={() => choose(t)}>
+            {t === "script" || t === "notes" ? text.tabs[t] : text.versions[t]}
           </button>
         ))}
       </div>
+      {tab === "script" ? (
+        <ScriptTab key={`script-${number}`} api={api} campaignRef={campaignRef} number={number} />
+      ) : tab === "notes" ? (
+        <NotesTab key={`notes-${number}`} api={api} campaignRef={campaignRef} number={number} />
+      ) : (
+        <>
       <p class="small">{text.difference[version]}</p>
       <p class="small">{text.shareLine}</p>
       <p class="small">{text.names}</p>
@@ -293,6 +319,7 @@ function Reading({
         {(view: TranscriptView) => (
           <>
             <Download api={api} campaignRef={campaignRef} view={view} />
+            <ScriptDownload api={api} campaignRef={campaignRef} view={view} />
             <Lines key={`${version}-${number}`} api={api} campaignRef={campaignRef} view={view} />
             <details class="small muted">
               <summary>{text.about}</summary>
@@ -307,6 +334,118 @@ function Reading({
           </>
         )}
       </Shell>
+        </>
+      )}
+    </>
+  );
+}
+
+type Tab = TranscriptVersion | "script" | "notes";
+
+/** The script, read on the page (#3898): the same text the download gives, in the transcript's own reader, with Save beside it.
+ * A game master's view only (the tab is not offered to anyone else, and the API refuses a player). A session with no script
+ * says so; a failed read says what failed and has a retry. */
+function ScriptTab({ api, campaignRef, number }: { api: AccountApi; campaignRef: string; number: number }) {
+  const [tries, setTries] = useState(0);
+  const load = useRead<{ none: true } | { lines: string[] }>(
+    () =>
+      api.transcriptScript!(campaignRef, number).then(
+        async (blob) => ({ lines: (await blob.text()).split(/\r?\n/).filter((l, i, all) => l !== "" || i < all.length - 1) }),
+        (error: unknown) => {
+          if (error instanceof ApiError && error.kind === "no-script") return { none: true as const };
+          throw error;
+        },
+      ),
+    [api, campaignRef, number, tries],
+  );
+  return (
+    <>
+      <p class="small">{text.scriptTabNote}</p>
+      <Shell load={load}>
+        {(got) =>
+          "none" in got ? (
+            <>
+              <p class="panel" role="status">
+                {text.scriptNone}
+              </p>
+              {SCRIPT_MAKE_LIVE && api.scriptOffer && api.makeScript && (
+                <MakeScript api={api} campaignRef={campaignRef} number={number} onMade={() => setTries((n) => n + 1)} />
+              )}
+            </>
+          ) : (
+            <>
+              <ScriptDownload api={api} campaignRef={campaignRef} view={{ number, fileName: `session-${number}-cleaned.txt` } as TranscriptView} />
+              <ul class="transcript-lines" aria-label={text.tabs.script}>
+                {got.lines.map((line, i) => (
+                  <li key={i}>{line}</li>
+                ))}
+              </ul>
+            </>
+          )
+        }
+      </Shell>
+      {load.kind === "error" && (
+        <p>
+          <button type="button" class="button secondary" onClick={() => setTries((n) => n + 1)}>
+            {text.tryAgain}
+          </button>
+        </p>
+      )}
+    </>
+  );
+}
+
+/** The session notes (beat sheet), read on the page (#3898): the beats as the Session notes panel renders them, with Save. */
+function NotesTab({ api, campaignRef, number }: { api: AccountApi; campaignRef: string; number: number }) {
+  const [got, setGot] = useState<Opened | "none">("loading");
+  const [tries, setTries] = useState(0);
+  useEffect(() => {
+    let live = true;
+    setGot("loading");
+    void (async () => {
+      try {
+        const list = await api.sessionNotesList!(campaignRef);
+        const item = list.sessions.find((s) => s.sessionNumber === number);
+        if (!item) return live && setGot("none");
+        const notes = await api.sessionNotes!(campaignRef, item.sessionAt);
+        if (live) setGot(notes);
+      } catch {
+        if (live) setGot("failed");
+      }
+    })();
+    return () => {
+      live = false;
+    };
+  }, [api, campaignRef, number, tries]);
+  function save(notes: Exclude<Opened, "loading" | "failed">): void {
+    const href = URL.createObjectURL(new Blob([beatsToText(text.sessionTitle(number), notes)], { type: "text/plain" }));
+    const link = document.createElement("a");
+    link.href = href;
+    link.download = `session-${number}-notes.txt`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    URL.revokeObjectURL(href);
+  }
+  return (
+    <>
+      <p class="small">{text.notesTabNote}</p>
+      {got === "none" ? (
+        <p class="panel" role="status">
+          {text.notesNone}
+        </p>
+      ) : got === "loading" || got === "failed" ? (
+        <Beats got={got} onRetry={() => setTries((n) => n + 1)} />
+      ) : (
+        <>
+          <p>
+            <button type="button" class="button secondary" onClick={() => save(got)}>
+              {text.saveNotes}
+            </button>
+          </p>
+          <Beats got={got} onRetry={() => setTries((n) => n + 1)} />
+        </>
+      )}
     </>
   );
 }
@@ -349,9 +488,65 @@ function Download({
       <button type="button" class="button secondary" onClick={() => void save()}>
         {state === "busy" ? text.downloading : text.download}
       </button>{" "}
-      <span role="status" class="warn">
+      {/* The status stays on the page so a failure is read out; it is only drawn as a warning while it has words. */}
+      <span role="status" class={state === "failed" ? "warn" : undefined}>
         {state === "failed" ? text.downloadFailed : ""}
       </span>
+    </p>
+  );
+}
+
+/** The game master's button to save a session's script (#3244): a copy of the session where who and what is meant is
+ * written in brackets. Only for a game master, only while the switch is on and the API has the call; a session with
+ * none says so instead of failing. */
+function ScriptDownload({
+  api,
+  campaignRef,
+  view,
+}: {
+  api: AccountApi;
+  campaignRef: string;
+  view: TranscriptView;
+}) {
+  const isDm = useIsDm(api, campaignRef);
+  const [state, setState] = useState<"idle" | "busy" | "failed" | "none" | "big">("idle");
+  const busy = useRef(false);
+  if (!THEATRE_DOWNLOAD_LIVE || !api.transcriptScript || !isDm) return null;
+  async function save() {
+    if (busy.current) return;
+    busy.current = true;
+    setState("busy");
+    try {
+      const blob = await api.transcriptScript!(campaignRef, view.number);
+      const href = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = href;
+      link.download = view.fileName.replace(/-(cleaned|heard)\.txt$/, "-script.txt") || "script.txt";
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+      URL.revokeObjectURL(href);
+      setState("idle");
+    } catch (error) {
+      const kind = error instanceof ApiError ? error.kind : "";
+      setState(kind === "no-script" ? "none" : kind === "too-big" ? "big" : "failed");
+    } finally {
+      busy.current = false;
+    }
+  }
+  const said = { idle: "", busy: "", failed: text.scriptFailed, none: text.scriptNone, big: text.scriptTooBig }[state];
+  return (
+    <p>
+      <button type="button" class="button secondary" onClick={() => void save()}>
+        {state === "busy" ? text.scriptSaving : text.scriptDownload}
+      </button>{" "}
+      <span role="status" class={said ? "warn" : undefined}>
+        {said}
+      </span>
+      <details class="small muted">
+        <summary>{text.scriptAboutLabel}</summary>
+        <p>{text.scriptAbout}</p>
+      </details>
     </p>
   );
 }

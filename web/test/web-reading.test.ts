@@ -20,6 +20,12 @@ describe("reading a line from the name in focus", () => {
     expect(mapReadLink(edge([flipped]), flipped, "cerric")).toEqual({ verb: "is served by", arrow: true });
   });
 
+  it("keeps both parts of a reading with words after the name, for the map's short label (#3363)", () => {
+    const place = { id: "5", words: "is last seen at", secret: false, direction: "a-b" as const, back: "is where", backAfter: "was last seen" };
+    expect(mapReadLink(edge([place]), place, "glyph")).toEqual({ verb: "is where … was last seen", arrow: true });
+    expect(mapReadLink(edge([place]), place, "cerric")).toEqual({ verb: "is last seen at", arrow: true });
+  });
+
   it("says nothing and draws no arrowhead from an end that has no wording", () => {
     const bare = { id: "2", words: "owns", secret: false, direction: "a-b" as const };
     expect(mapReadLink(edge([bare]), bare, "glyph")).toEqual({ verb: null, arrow: false });

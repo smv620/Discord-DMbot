@@ -215,3 +215,323 @@ def keep(candidate: str, line: str = "", *, sentence_start: bool = False) -> boo
 def filtered(candidates: Iterable[str], line: str = "") -> list[str]:
     """The candidates that may be offered, in order."""
     return [c for c in candidates if keep(c, line)]
+
+
+# ---- shapes that are no name at all (#3394, #3385) ---------------------------------------------
+# The session reader sometimes hands over a number, a measure, a time, the weather or a form of
+# address as a subject or object. These are decided by their shape, not by capitals, so they are
+# never asked about. Counts only: the caller logs the reason key, never the words.
+NUMBER_WORDS = frozenset(
+    {
+        *("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"),
+        *("eleven", "twelve", "twenty", "thirty", "fifty", "hundred", "thousand", "dozen"),
+        *("half", "both", "several", "few", "many", "some", "any", "most", "each", "every"),
+        *("first", "second", "third", "fourth", "fifth", "last", "next", "another", "other"),
+    }
+)
+UNITS = frozenset(
+    {
+        *("mile", "miles", "hour", "hours", "minute", "minutes", "day", "days", "night", "nights"),
+        *("foot", "feet", "yard", "yards", "inch", "inches", "gold", "silver", "copper", "gp"),
+        *("sp", "cp", "pound", "pounds", "week", "weeks", "month", "months", "year", "years"),
+        *("mph", "round", "rounds", "turn", "turns", "ago", "per"),
+    }
+)
+TIME_WORDS = frozenset(
+    {*("afternoon", "morning", "evening", "midnight", "noon", "dawn", "dusk", "tonight")}
+)
+# A form of address or a title said alone. "Captain Vel", "Speaker Masthew" and "Sister Nora" are
+# names and are not caught: only the whole candidate being one of these is.
+ADDRESS_ALONE = frozenset(
+    {
+        *("friend", "friends", "stranger", "lad", "lass", "traveller", "traveler", "boss", "mate"),
+        *("sir", "madam", "ma'am", "miss", "mister", "buddy", "pal", "chief", "kid"),
+        *("captain", "father", "mother", "sister", "brother", "speaker", "lord", "lady", "master"),
+        *("elder", "priest", "priestess", "your grace", "my lord", "my lady", "your majesty"),
+        *("your highness", "good sir", "young man", "old man"),
+    }
+)
+# Titles and forms of address said before a name ("Lord Neverember", "Major Ursa", "Old Mother
+# Ashe"): a word that is never the name itself. The short-name rule (#3880) and the never-ask-about-
+# a-title rule (#3385, through TITLES_ALONE) both read it, so the two never disagree. Single words,
+# lower case; the one-word forms of ADDRESS_ALONE are all in it.
+# Words that describe a person before a name ("Old Mother Ashe", "Little John"): part of the title
+# list, never a title said alone ("Old" alone can be a nickname).
+DESCRIBING_TITLE_WORDS = frozenset(
+    {"the", "old", "young", "high", "grand", "great", "little", "big", "good", "saint", "st"}
+)
+# Titles that are also common first names (Sage, Earl, Bishop, Prince): a person may really be
+# called this, so said alone it is still asked about (only a title before a name is never theirs).
+NAME_LIKE_TITLES = frozenset({"sage", "earl", "bishop", "prince", "duke", "cardinal", "count"})
+TITLE_WORDS = frozenset(
+    {
+        *(w for w in ADDRESS_ALONE if " " not in w),
+        *DESCRIBING_TITLE_WORDS,
+        *("king", "queen", "prince", "princess", "emperor", "empress", "regent", "chancellor"),
+        *("duke", "duchess", "baron", "baroness", "count", "countess", "earl", "marquis", "jarl"),
+        *("dame", "knight", "squire", "mistress", "lord", "lady", "sir", "madam", "mister", "miss"),
+        *("mr", "mrs", "ms", "dr", "doctor", "professor", "sage", "archmage", "magister"),
+        *("general", "commander", "major", "colonel", "sergeant", "lieutenant", "admiral"),
+        *("marshal", "warden", "sheriff", "constable", "mayor", "speaker", "councillor"),
+        *("chief", "chieftain", "elder", "abbot", "abbess", "bishop", "cardinal", "reverend"),
+        *("friar", "brother", "sister", "father", "mother", "uncle", "aunt", "auntie", "cousin"),
+        *("granny", "grandma", "grandpa", "grandmother", "grandfather", "captain", "master"),
+    }
+)
+
+
+# The ones that are a title or a form of address said ALONE ("Hello, Friend", "Yes, Major", "Thank
+# you, Doctor"): never asked about as a name (#3385). Describing words are left out: "Old", "Little"
+# or "Grand" alone can be a nickname, and before a name they only describe it.
+TITLES_ALONE = TITLE_WORDS - DESCRIBING_TITLE_WORDS - NAME_LIKE_TITLES
+
+
+# The SRD's languages (#4227): rules vocabulary, never a name in the game, so "Elvish" and "speaks
+# Dwarvish" are never suggested; a campaign's own invented tongue still can be, and the DM keeps
+# one as an idea. Words as `_words_of` gives them (lower case, no apostrophe). The ones that are
+# nothing but a language are caught alone; the ones that are also a given name ("Sylvan"), a
+# creature ("the Giant", "a goblin") or a plain word ("Common") only after a speech word ("speaks
+# Sylvan"), so a character called Sylvan and an epithet like "the Giant" are still suggested.
+ONLY_LANGUAGES = frozenset(
+    {
+        "common sign language", "draconic", "dwarvish", "elvish", "gnomish", "abyssal",
+        "deep speech", "druidic", "infernal", "thieves cant", "undercommon",
+    }
+)  # fmt: skip
+NAME_LIKE_LANGUAGES = frozenset(
+    {
+        "common", "giant", "goblin", "halfling", "orc", "celestial", "primordial", "aquan",
+        "auran", "ignan", "terran", "sylvan",
+    }
+)  # fmt: skip
+LANGUAGES = ONLY_LANGUAGES | NAME_LIKE_LANGUAGES
+# Speech words that may lead a language ("speaks Elvish"). "in Elvish" is a clause already (below).
+_LANGUAGE_LEADS = frozenset({"speaks", "speak", "spoke", "spoken", "speaking"})
+
+
+def is_language(candidate: str) -> bool:
+    """Is this one of the SRD's languages, as a reader would cut it out (#4227)? One that is only
+    a language counts alone or after a speech word; one that is also a name or a creature counts
+    only after a speech word."""
+    words = _words_of(candidate)
+    led = False
+    while words and words[0] in _LANGUAGE_LEADS:
+        words.pop(0)
+        led = True
+    said = " ".join(words)
+    return said in ONLY_LANGUAGES or (led and said in NAME_LIKE_LANGUAGES)
+
+
+_CLOCK = re.compile(r"\b\d{1,2}[:.]\d{2}\b|\b\d+\s*(?:am|pm|o'?clock)\b", re.IGNORECASE)
+_ARTICLES = frozenset({"the", "a", "an", "of"})
+
+
+def _words_of(candidate: str) -> list[str]:
+    return [w for w in (_plain(x) for x in _GAP.split(candidate.strip())) if w]
+
+
+# A clause the reader cut out of a sentence is no name (#3394): "twenty miles from Targos",
+# "prophecy to Tavin", "in Elvish". A lower-case linking word after the first word, or one that
+# starts it. "of" is left out on purpose ("Tower of Joy"), and "in", "at", "on", "by" and "for"
+# count only at the start, so "Fort at the Pass" is a name.
+CLAUSE_LINKS = frozenset(
+    {*("to", "from", "past", "into", "toward", "towards", "who", "which", "that", "with", "about")}
+)
+CLAUSE_STARTS = CLAUSE_LINKS | frozenset({"in", "at", "on", "by", "for"})
+
+
+def _clause(candidate: str) -> bool:
+    tokens = candidate.split()
+    if len(tokens) < 2:
+        return False
+    if tokens[0].islower() and _plain(tokens[0]) in CLAUSE_STARTS:
+        return True
+    return any(t.islower() and _plain(t) in CLAUSE_LINKS for t in tokens[1:])
+
+
+def shape_of(candidate: str) -> str | None:
+    """Why this candidate is no name by its shape alone: `number`, `measure`, `time`, `address`,
+    `clause` or `language`;
+    None when the shape says nothing. Capitals do not decide any of these."""
+    words = _words_of(candidate)
+    if not words:
+        return None
+    if is_language(candidate):  # rules vocabulary, however it is capitalised (#4227)
+        return "language"
+    if " ".join(words) in ADDRESS_ALONE or (len(words) == 1 and words[0] in TITLES_ALONE):
+        return "address"
+    if _clause(candidate):
+        return "clause"
+    # "Area 51", "Third Tower": a capitalised word that is not itself a number or unit word
+    capitalised = any(
+        w[:1].isupper() and _plain(w) not in NUMBER_WORDS | UNITS | TIME_WORDS
+        for w in candidate.split()
+    )
+    if any(c.isdigit() for c in candidate) and not capitalised:
+        return "time" if _CLOCK.search(candidate) else "number"
+    raw = candidate.split()
+    if _CLOCK.search(candidate) or any(
+        _plain(w) in TIME_WORDS and w[:1].islower() for w in raw
+    ):  # "in the afternoon"; "the Dawn Court" and a person called Dawn are names
+        return "time"
+    if words == ["current", "time"]:
+        return "time"
+    if capitalised:
+        return None
+    if len(words) == 1 and candidate[:1].isupper():
+        return None  # a lone capitalised "Seven" or "Third" may be someone's name: ask
+    if words[-1] == "time" and len(words) <= 2:
+        return "time"
+    if set(words) & UNITS and (words[0] in NUMBER_WORDS or "per" in words or "ago" in words):
+        return "measure"
+    if words[0] in NUMBER_WORDS:
+        return "number"
+    if words[0] == "a" and len(words) > 1 and words[1] in NUMBER_WORDS:
+        return "number"  # "a few copper"
+    return None
+
+
+def _lower_everywhere(candidate: str, text: str) -> bool:
+    """Is the candidate found in the text only ever spelled in lower case? Not found at all counts
+    as no (it cannot be judged, so it is kept)."""
+    words = _words_of(candidate)
+    while words and words[0] in _ARTICLES:  # a leading "the" is not part of the name's spelling
+        words.pop(0)
+    if not words:
+        return False
+    spelled = re.compile(r"\b" + r"\W+".join(re.escape(w) for w in words) + r"\b", re.IGNORECASE)
+    found = [m.group(0) for m in spelled.finditer(text or "")]
+    return bool(found) and all(f == f.lower() for f in found)
+
+
+def why_not(
+    candidate: str,
+    *,
+    text: str = "",
+    offered: int = 1,
+    cued: frozenset[str] = frozenset(),
+) -> str | None:
+    """Why this candidate must not be asked about as a name, as a reason key for the log, or None.
+    Shapes (number, measure, time, a lone form of address or title) decide by themselves, except a
+    lone title from TITLES_ALONE that a naming cue in the text gives as a name. A
+    common noun ("the dogs", "snow", "the lady") is dropped only when it is lower case in every
+    cited line, the DM did not cue it as a name, fewer than two lines offer it, and the caller
+    knows no entry by it (the caller passes only unknown names). Capitals are one sign, not the
+    test: "Boy" capitalised, or "boy" offered by two lines, is kept."""
+    shape = shape_of(candidate)
+    words = _words_of(candidate)
+    if (
+        shape == "address"
+        and len(words) == 1
+        and words[0] in cued
+        and " ".join(words) not in ADDRESS_ALONE
+    ):
+        return None  # "her name is Major": the text names her so (a lone title, never "Friend")
+    if shape is not None:
+        return shape
+    if not words or _first(candidate) in cued or any(w in cued for w in words):
+        return None
+    if offered < 2 and candidate == candidate.lower() and _lower_everywhere(candidate, text):
+        return "common_noun"
+    return None
+
+
+# A kind of creature is not a name ("Goblin", "Owlbear"): said alone or before a name
+# ("Goblin Grik") it is the kind, never the person's own name. One list for the short-name reader
+# and for the upload auto-add (#3878, #3885); GraphEngineer owns what the readers mark.
+CREATURE_KINDS = frozenset(
+    [
+        "aberration",
+        "aboleth",
+        "banshee",
+        "basilisk",
+        "bat",
+        "bear",
+        "beast",
+        "beholder",
+        "boar",
+        "bugbear",
+        "celestial",
+        "centaur",
+        "chimera",
+        "cockatrice",
+        "construct",
+        "cultist",
+        "demon",
+        "devil",
+        "dire",
+        "dragon",
+        "drake",
+        "drow",
+        "dryad",
+        "duergar",
+        "dwarf",
+        "elemental",
+        "elf",
+        "ettin",
+        "fey",
+        "fiend",
+        "ghast",
+        "ghost",
+        "ghoul",
+        "giant",
+        "gnoll",
+        "gnome",
+        "goblin",
+        "golem",
+        "gorgon",
+        "griffon",
+        "hag",
+        "harpy",
+        "hellhound",
+        "hobgoblin",
+        "humanoid",
+        "hydra",
+        "imp",
+        "kenku",
+        "kobold",
+        "kraken",
+        "kuo-toa",
+        "lich",
+        "lizardfolk",
+        "manticore",
+        "medusa",
+        "merfolk",
+        "mimic",
+        "minotaur",
+        "monstrosity",
+        "mummy",
+        "naga",
+        "ogre",
+        "ogrillon",
+        "ooze",
+        "orc",
+        "otyugh",
+        "owlbear",
+        "pegasus",
+        "phoenix",
+        "pixie",
+        "plant",
+        "rat",
+        "roc",
+        "sahuagin",
+        "satyr",
+        "shadow",
+        "skeleton",
+        "sprite",
+        "stirge",
+        "troll",
+        "undead",
+        "unicorn",
+        "vampire",
+        "werewolf",
+        "wight",
+        "wolf",
+        "worg",
+        "wraith",
+        "wyvern",
+        "xorn",
+        "yeti",
+        "zombie",
+    ]
+)

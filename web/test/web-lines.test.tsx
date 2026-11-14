@@ -7,6 +7,7 @@ import Web from "../src/account/Web";
 import { mockApi } from "../src/account/mock";
 import type { WebEdge, WebGraph, WebLink } from "../src/account/api";
 import { connectionCounts, listLines, readLink } from "../src/account/webLines";
+import { webPage as pageWords } from "../src/content/web-words";
 
 const PATH = "/account/web/100.cmp1";
 const names: Record<string, string> = {
@@ -48,6 +49,24 @@ describe("readLink", () => {
     const e = edge("t", "c", [link("1", "is a member of", "a-b", "has as a member")]);
     const l = readLink(e, e.links[0]!, "c", nameOf);
     expect([l.from, l.words, l.to]).toEqual(["the Lantern Circle", "has as a member", "Tavin Ashgrove"]);
+  });
+
+  it("puts the words after the far name when the reading into the middle one has them (#3363)", () => {
+    const place = { ...link("5", "is last seen at", "a-b", "is where"), backAfter: "was last seen" };
+    const where = edge("t", "z", [place]); // Tavin was last seen at Zed Far (a stand-in for a place)
+    const into = readLink(where, place, "z", nameOf);
+    expect([into.from, into.words, into.to, into.after]).toEqual(["Zed Far", "is where", "Tavin Ashgrove", "was last seen"]);
+    // from the other end, and for any link with no such words, there is nothing after
+    expect(readLink(where, place, "t", nameOf).after).toBe("");
+    const plain = link("6", "has as a member", "a-b", "is a member of");
+    expect(readLink(edge("c", "t", [plain]), plain, "t", nameOf).after).toBe("");
+    const blank = { ...place, backAfter: "  " };
+    expect(readLink(where, blank, "z", nameOf).after).toBe("");
+  });
+
+  it("says the line with its words after the name, and as before without them (#3363)", () => {
+    expect(pageWords.lineText("Aldmoor", "is where", "Tavin", "was last seen")).toBe("Aldmoor is where Tavin was last seen");
+    expect(pageWords.lineText("Tavin", "lives in", "Aldmoor")).toBe("Tavin lives in Aldmoor");
   });
 
   it("reads a link whose stored order is the other way round the same", () => {

@@ -266,7 +266,9 @@ def press(act: str, user: int = DM, *, suggestion: Any = "default", consent: boo
         reopen=AsyncMock(),
         line=AsyncMock(return_value=sg.Own(MS + 1000, "I saw Beleros", "I saw Belleros", PLAYER)),
     )
-    campaign = SimpleNamespace(guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM}))
+    campaign = SimpleNamespace(
+        guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM})
+    )
     bot = SimpleNamespace(
         suggestions=store,
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),

@@ -18,12 +18,22 @@ class TheHooks(unittest.IsolatedAsyncioTestCase):
         return bot
 
     async def test_a_member_is_remembered_in_the_background_with_both_names(self) -> None:
-        directory = SimpleNamespace(remember=AsyncMock())
+        directory = SimpleNamespace(remember=AsyncMock(), set_avatar=AsyncMock())
         bot = self.bot(directory)
-        member = SimpleNamespace(id=7, global_name="Quill Ardent", name="quill_a")
+        member = SimpleNamespace(
+            id=7, global_name="Quill Ardent", name="quill_a", avatar=SimpleNamespace(key="k" * 32)
+        )
         DMBot.note_member(bot, 5, member)  # type: ignore[arg-type]
         await asyncio.gather(*bot._name_tasks)
         directory.remember.assert_awaited_once_with(5, 7, "Quill Ardent", "quill_a")
+        directory.set_avatar.assert_awaited_once_with(5, 7, "k" * 32)  # the hash only (#3621)
+
+    async def test_a_default_avatar_clears_the_kept_one(self) -> None:
+        directory = SimpleNamespace(remember=AsyncMock(), set_avatar=AsyncMock())
+        bot = self.bot(directory)
+        DMBot.note_member(bot, 5, SimpleNamespace(id=7, global_name=None, name="q", avatar=None))  # type: ignore[arg-type]
+        await asyncio.gather(*bot._name_tasks)
+        directory.set_avatar.assert_awaited_once_with(5, 7, None)
 
     async def test_a_failure_is_logged_and_never_raised(self) -> None:
         directory = SimpleNamespace(remember=AsyncMock(side_effect=RuntimeError("db blip")))

@@ -67,6 +67,13 @@ class TheCheck(unittest.IsolatedAsyncioTestCase):
         got = await cf.check(Fake(says((1, [99, 0, -1]))), [POTION_NEW], EXISTING)
         self.assertEqual((got.disagreements, got.unchecked), ((), False))
 
+    async def test_an_answer_about_a_new_rule_that_was_not_sent_is_dropped(self) -> None:
+        """Only 1..count are the rules sent (#2314): 0, a negative and count + 1 name nothing,
+        so an answer about a rule that does not exist cannot attach to another one."""
+        for stray in (0, -1, 2):
+            got = await cf.check(Fake(says((stray, [2]))), [POTION_NEW], EXISTING)
+            self.assertEqual(got.disagreements, (), stray)
+
     async def test_a_failing_call_leaves_the_rule_unchecked(self) -> None:
         got = await cf.check(Fake(RuntimeError("down")), [POTION_NEW], EXISTING)
         self.assertEqual((got.disagreements, got.unchecked), ((), True))

@@ -190,6 +190,20 @@ class AfterTheSession(WithTheStore):
         self.assertIsNotNone(bot.post.await_args.kwargs["view"])
         bot.lookup.drop.assert_called_once_with([self.c])
 
+    async def test_a_name_said_while_the_party_was_split_is_not_shown_to_everyone(self) -> None:
+        """#4037: one group heard it, never the whole table (the line is at second 1)."""
+        orla, _ = await self.held("Orla Finch", "Rook Pell")
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO game_clock_log (guild_id, campaign_id, position, at, minute)"
+                " VALUES (%s, %s, 1, 1, 0)",
+                (GUILD_A, self.c),
+            )
+        bot = fake_bot(self.memory, [line(PLAYER, "We met Orla Finch at the ford")], {PLAYER})
+        await DMBot.reveal_names_said(bot, self.table())
+        self.assertTrue(await self.hidden(orla))
+        bot.post.assert_not_awaited()
+
     async def test_the_sidebar_a_stopped_player_and_the_dm_screen_never_reveal(self) -> None:
         orla, _ = await self.held("Orla Finch", "Rook Pell")
         lines = [
@@ -237,6 +251,7 @@ class AfterTheSession(WithTheStore):
         bot.memory = SimpleNamespace(
             reveal_said=held_names,
             waiting_connections=self.memory.waiting_connections,
+            split_moments=self.memory.split_moments,  # (#4037: a split line shows nobody)
             _read=self.memory._read,
         )
         await DMBot.reveal_names_said(bot, self.table())
@@ -275,7 +290,12 @@ class AfterTheSession(WithTheStore):
 
 class TheButton(unittest.IsolatedAsyncioTestCase):
     def press(self, user: int, memory: Any) -> tuple[Any, Any]:
-        campaign = SimpleNamespace(guild_id=GUILD_A, id="c" * 32, dm_user_ids=frozenset({DM_ID}))
+        campaign = SimpleNamespace(
+            guild_id=GUILD_A,
+            id="c" * 32,
+            dm_user_ids=frozenset({DM_ID}),
+            dm_accounts=frozenset({DM_ID}),
+        )
         bot = SimpleNamespace(
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
             memory=memory,

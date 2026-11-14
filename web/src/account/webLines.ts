@@ -12,6 +12,8 @@ export interface WebLine {
   words: string;
   toId: string;
   to: string;
+  /** Words after `to` when the name goes in the middle of the line ("Aldmoor is where Tavin was last seen"), else "". */
+  after: string;
 }
 
 /** How many names each name is connected to in the drawn web: the order's measure of "relevant". */
@@ -42,7 +44,7 @@ export function readLink(edge: WebEdge, link: WebLink, fromId: string | null, na
   const key = `${edge.a}|${edge.b}|${link.id}`;
   const reads = readsFrom(link);
   const [subject, object] = reads === "b" ? [edge.b, edge.a] : [edge.a, edge.b];
-  const line = (from: string, words: string, to: string): WebLine => ({
+  const line = (from: string, words: string, to: string, after = ""): WebLine => ({
     key,
     edge,
     link,
@@ -51,12 +53,13 @@ export function readLink(edge: WebEdge, link: WebLink, fromId: string | null, na
     words,
     toId: to,
     to: nameOf(to),
+    after,
   });
   if (fromId !== edge.a && fromId !== edge.b) return line(subject, link.words, object);
   const far = fromId === edge.a ? edge.b : edge.a;
   if (reads === "both" || subject === fromId) return line(fromId, link.words, far);
   // It reads from the far name into the middle one.
-  return link.back ? line(fromId, link.back, far) : line(subject, link.words, object);
+  return link.back ? line(fromId, link.back, far, (link.backAfter ?? "").trim()) : line(subject, link.words, object);
 }
 
 /** The name in the middle's own connections, then the rest ("Further out"). Each is most relevant

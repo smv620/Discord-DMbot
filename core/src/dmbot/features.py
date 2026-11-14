@@ -10,10 +10,18 @@ table nor the named list of settings that are not switches.
 
 from __future__ import annotations
 
+import contextlib
+import json
+import logging
+import os
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
 
 from dmbot.config import Settings
+
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -50,6 +58,23 @@ FEATURES: tuple[Feature, ...] = (
         ("recaps_on",),
     ),
     Feature(
+        "AI feed",
+        "A window on what DMbot asks the AI",
+        "",
+        lambda s: s.ai_feed_on,
+        ("ai_feed_on",),
+        for_dms=False,  # for whoever runs DMbot: off until the website's windows are live (#3710)
+    ),
+    Feature(
+        "questions",
+        "Questions for you",
+        "DMbot gathers what it is waiting to ask you in one message, and reminds you less and "
+        "less often.",
+        lambda s: s.questions_on,
+        ("questions_on",),
+        for_dms=False,  # for whoever runs DMbot: the reminders are off until it turns them on
+    ),
+    Feature(
         "plot checks",
         "Story checks on recaps",
         "PlotBot compares each recap with the earlier ones and asks you about anything that "
@@ -63,8 +88,17 @@ FEATURES: tuple[Feature, ...] = (
         "Finding notes by meaning",
         "PlotBot also finds notes that mean the same thing in different words.",
         lambda s: s.meaning_search_on,
-        ("meaning_search", "voyage_key"),
+        # (`role_match`: new story roles matched by meaning, #3172; `scene_filter_on`: scene
+        # moves sent to the AI only for lines that look like one, #4173 slice 4; both parts of it)
+        ("meaning_search", "voyage_key", "role_match", "scene_filter_on"),
         for_dms=False,  # for whoever runs DMbot: it needs the Voyage key (#2664)
+    ),
+    Feature(
+        "say a name",
+        "Say a name to spell it",
+        "Say a name into the microphone on the website and DMbot writes how to say it.",
+        lambda s: s.said_as_voice and bool(s.said_as_model),
+        ("said_as_voice", "said_as_model"),
     ),
     Feature(
         "recap audio",
@@ -88,6 +122,14 @@ FEATURES: tuple[Feature, ...] = (
         lambda s: s.recap_final_read,
         ("recap_final_read",),
         for_dms=False,  # how the work is done, not something a DM chooses (#2952)
+    ),
+    Feature(
+        "recap reuse",
+        "Recap writer reuses its repeated text",
+        "",
+        lambda s: s.recap_cache,
+        ("recap_cache",),
+        for_dms=False,  # how the work is paid for, not something a DM chooses (#4054)
     ),
     Feature(
         "structured beats",
@@ -126,13 +168,32 @@ FEATURES: tuple[Feature, ...] = (
         (
             "story_extractor_on",
             "story_readings_on",
+            "story_scenes_on",
+            "story_deeds_on",
+            "story_reveals_on",
+            "story_reveals_precheck",
+            "met_unnamed_on",
+            "private_scenes_on",
+            "picture_names_on",
+            "story_who_on",
+            "story_who_apply_on",
             "story_family_only",
+            "theatre_on",
+            "rel_read_on",
             "story_contradictions_on",
             "story_report_on",
             "story_extractor_tier",
             "story_extractor_max_calls",
             "story_extractor_max_calls_day",
         ),
+    ),
+    Feature(
+        "wizard link",
+        "Set up a campaign step by step",
+        "＋ New campaign offers the step-by-step setup on the website first; "
+        "the short form stays one press away.",
+        lambda s: s.wizard_link_on,
+        ("wizard_link_on",),
     ),
     Feature(
         "live heads-up",
@@ -197,12 +258,36 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,  # not live yet: it is listed for whoever runs DMbot, not on the card
     ),
     Feature(
+        "kept pictures",
+        "Pictures kept with the campaign",
+        "A picture posted in the table's chat is kept with the campaign and gets a link.",
+        lambda s: s.pictures_ready,
+        ("pictures_kept",),
+        for_dms=False,  # not live until the consent wording is: for whoever runs DMbot
+    ),
+    Feature(
         "who is he",
         'Who "he" and "she" are in a document',
         "",
         lambda s: s.who_is_it,
         ("who_is_it",),
         for_dms=False,  # not live yet: on only after the calibration run on #2790
+    ),
+    Feature(
+        "npc guesses",
+        "Which NPCs and groups know what your lore says",
+        "",
+        lambda s: s.story_npc_guess_on,
+        ("story_npc_guess_on",),
+        for_dms=False,  # not live yet: on only after the smart-guess measure (#2959)
+    ),
+    Feature(
+        "recap by rank",
+        "Recaps pick the scenes with the characters that matter most",
+        "",
+        lambda s: s.recap_by_rank_on,
+        ("recap_by_rank_on",),
+        for_dms=False,  # not live yet: on only after the before-and-after scores (#3172)
     ),
     Feature(
         "test recordings",
@@ -221,10 +306,12 @@ NOT_A_SWITCH: dict[str, str] = {
     "ears_secret": "a secret, always needed",
     "ears_host": "where the voice service is",
     "ears_port": "where the voice service is",
+    "person_key": "a secret, always needed once account records use it (#4145)",
     "dev_guild_id": "the test server's commands, not a feature",
     "clear_guild_commands": "a one-time clean-up list of servers",
     "database_url": "a secret address, always needed",
     "database_pool_max": "a number",
+    "hear_credits_per_month": "a number: how many credits Hear it may spend a month",
     "data_dir": "a folder",
     "transcription": "how speech is turned into words, always on",
     "shards": "how the bot is split over processes",
@@ -236,6 +323,9 @@ NOT_A_SWITCH: dict[str, str] = {
     "log_level": "how much is logged",
     "memory_keep_days": "a number of days",
     "free_users": "the owner's own accounts: never listed",
+    "free_guilds": "the owner's own test server: never listed",
+    "disk_warn_pct": "a percentage: where the disk check starts to warn (#4075)",
+    "disk_alert_pct": "a percentage: where the disk check tells the owner (#4075)",
     "elevenlabs_speech_model": "which voice model, a choice",
     "voyage_embed_model": "which meaning-search model, a choice",
     "voyage_rerank_model": "which meaning-search ranking model, a choice",
@@ -245,6 +335,11 @@ NOT_A_SWITCH: dict[str, str] = {
     "continuity": "tuning numbers",
     "thread_stalled_sessions": "a number",
     "table_images_per_day": "a limit",
+    "picture_storage_mb": "a limit",
+    "r2_account_id": "which storage account, a setting; never listed",
+    "r2_access_key": "a key; never listed",
+    "r2_secret_key": "a key; never listed",
+    "r2_bucket": "which storage bucket, a setting; never listed",
     "admin_primary_id": "who is told of problems; never listed",
     "admin_secondary_id": "who is told of problems; never listed",
 }
@@ -281,3 +376,40 @@ def whats_on_text(settings: Settings) -> str:
         lines += [f"⬜ {f.dm_name}" for f in off]
         lines += ["", FOOTER]
     return "\n".join(lines)
+
+
+SNAPSHOT_FILE = "features.json"  # read by the web API (#3693): the DM-visible list, nothing else
+
+
+def whats_on_list(settings: Settings) -> dict[str, Any]:
+    """The same split as `whats_on_text`, as data for the web: what is on, with its sentence, and
+    what is off, by name. Names and sentences only, never a value, key or address."""
+    shown = [f for f in FEATURES if f.for_dms]
+    return {
+        "on": [{"name": f.dm_name, "words": f.dm_words} for f in shown if f.is_on(settings)],
+        "off": [f.dm_name for f in shown if not f.is_on(settings)],
+    }
+
+
+def write_snapshot(settings: Settings, directory: str | Path, now: float) -> bool:
+    """Write the DM-visible list to `<directory>/features.json` for the web (#3693). Written to a
+    temporary file, flushed to disk, then renamed, so a reader never sees half of it. Never raises:
+    a failure logs one line with the exception's class name only (never a path or message) and
+    returns False, so start-up goes on. On failure an earlier features.json is left in place
+    (its writtenAt shows when it was written), so the web can tell it is old."""
+    folder = Path(directory)
+    tmp = folder / (SNAPSHOT_FILE + ".tmp")
+    try:
+        folder.mkdir(parents=True, exist_ok=True)
+        body = {"version": 1, "writtenAt": int(now), **whats_on_list(settings)}
+        with tmp.open("w", encoding="utf-8") as handle:
+            handle.write(json.dumps(body))
+            handle.flush()
+            os.fsync(handle.fileno())  # a crash right after the rename must not leave it empty
+        os.replace(tmp, folder / SNAPSHOT_FILE)
+    except Exception as exc:
+        with contextlib.suppress(OSError):
+            tmp.unlink(missing_ok=True)
+        log.warning("Feature list: not written (%s)", type(exc).__name__)
+        return False
+    return True

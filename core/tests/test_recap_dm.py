@@ -60,7 +60,9 @@ def press(act: str, user: int = DM_ID, *, found: Any = "default", decided: bool 
         get=AsyncMock(return_value=job() if found == "default" else found),
         decide=AsyncMock(return_value=decided),
     )
-    campaign = SimpleNamespace(guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM_ID}))
+    campaign = SimpleNamespace(
+        guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM_ID}), dm_accounts=frozenset({DM_ID})
+    )
     bot = SimpleNamespace(
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
         recaps=recaps,

@@ -37,6 +37,7 @@ from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from dmbot import ai_feed
 from dmbot.db import Conn, Database
 
 # Bump whenever the consent request's wording changes what people agree to
@@ -144,6 +145,11 @@ class ConsentStore:
                     " outside_to = EXCLUDED.outside_to",
                     (guild_id, user_id, int(time.time()), TERMS_VERSION, method, outside_to),
                 )
+                # They said yes now, so an earlier "no" no longer stands (#3305).
+                await conn.execute(
+                    "DELETE FROM consent_refusals WHERE guild_id = %s AND user_id = %s",
+                    (guild_id, user_id),
+                )
                 users = await _select(conn, guild_id, self._outside)
             if self._stops.get((guild_id, user_id), 0) == stops_before:
                 self._held_back.get(guild_id, set()).discard(user_id)
@@ -181,6 +187,20 @@ class ConsentStore:
                     (guild_id, user_id),
                 )
                 removed = await cur.fetchone() is not None
+                # Every "no" is remembered (#3305), so an import cannot tick in someone who
+                # refused: `stopped` had agreed, `declined` never did. Written with the delete, in
+                # the same transaction. (Nothing earlier than this was recorded.)
+                await conn.execute(
+                    "INSERT INTO consent_refusals (guild_id, user_id, kind, refused_at)"
+                    " VALUES (%s, %s, %s, %s) ON CONFLICT (guild_id, user_id)"
+                    " DO UPDATE SET kind = EXCLUDED.kind, refused_at = EXCLUDED.refused_at",
+                    (guild_id, user_id, "stopped" if removed else "declined", int(self._wall())),
+                )
+                # A prompt kept for the DM's live window (#3710) may hold this person's lines, and a
+                # cut text cannot be cleaned line by line, so the server's whole AI feed goes, in
+                # this same step.
+                ai_feed.forget_server(guild_id)  # (a write already on its way is dropped too)
+                await conn.execute("SELECT dmbot_ai_feed_forget(%s)", (guild_id,))
                 if removed and in_transaction is not None:
                     await in_transaction(conn)
                 users = await _select(conn, guild_id, self._outside)
@@ -206,6 +226,40 @@ class ConsentStore:
     async def consenting(self, guild_id: int) -> frozenset[int]:
         """Who may be recorded now: those who agreed, minus anyone off the record."""
         return self._recordable(guild_id, await self._agreed(guild_id))
+
+    async def recorded_in(self, guild_id: int, campaign_id: str) -> frozenset[int]:
+        """Who counts as recorded in ONE campaign's imported sessions (#3305): everyone
+        `consenting` returns, plus the people the uploader confirmed for an import into this
+        campaign (a member who had not agreed, or a speaker without Discord, whose number is
+        negative), except anyone who has a "no" on record. (A "no" is removed when the person says
+        yes again, so any one on record is a current one; and a confirmation restored from a
+        backup made in another server never outweighs it.) It is for readers of a campaign's
+        stored sessions only. The live allowlist and `consenting` are unchanged: a confirmation
+        never lets a voice be recorded, and never counts in another campaign or server.
+        A stop whose revoke has not been saved yet (`_held_back`) is subtracted from the
+        confirmed people too, so a failed revoke never leaves them readable. An off-the-record
+        pause (`consenting`) does not apply to the confirmed people: it is about the live table,
+        and an imported session was recorded elsewhere, not now (so a paused person who is also
+        confirmed is in the result, though `consenting` leaves them out)."""
+        stops_before = {u: n for (g, u), n in self._stops.items() if g == guild_id}
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT DISTINCT c.user_id FROM import_consents c WHERE c.guild_id = %s"
+                " AND c.campaign_id = %s AND c.removed_at IS NULL"
+                " AND NOT EXISTS (SELECT 1 FROM consent_refusals r"
+                " WHERE r.guild_id = c.guild_id AND r.user_id = c.user_id)",
+                (guild_id, campaign_id),
+            )
+            confirmed = frozenset(int(r["user_id"]) for r in await cur.fetchall())
+        everyone = (await self.consenting(guild_id) | confirmed) - self._held_back.get(
+            guild_id, set()
+        )
+        # A stop that came, and was saved, while the read above ran is in neither the held-back
+        # list nor that read: the count of stops tells.
+        stopped = {
+            u for (g, u), n in self._stops.items() if g == guild_id and n != stops_before.get(u, 0)
+        }
+        return everyone - stopped
 
     async def _agreed(self, guild_id: int) -> frozenset[int]:
         if guild_id not in self._cache:
@@ -386,6 +440,21 @@ class ConsentStore:
         """When this player consented here (Unix seconds), or None if they haven't."""
         return (await self.granted_times(guild_id, [user_id])).get(user_id)
 
+    async def agreed_under(self, guild_id: int, user_id: int) -> tuple[int, int] | None:
+        """When this player said yes here and under which wording (granted_at, terms_version),
+        from the stored record; None when there is none. A kept picture records the poster's own
+        yes (#3274), not whatever the current wording is."""
+        if user_id in self._held_back.get(guild_id, set()):
+            return None
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT granted_at, terms_version FROM consent"
+                " WHERE guild_id = %s AND user_id = %s",
+                (guild_id, user_id),
+            )
+            row = await cur.fetchone()
+        return None if row is None else (int(row["granted_at"]), int(row["terms_version"]))
+
     def has_consent(self, guild_id: int, user_id: int) -> bool:
         """Fast, synchronous check for the audio path. Unknown servers deny, and so does anyone
         off the record."""
@@ -413,3 +482,32 @@ async def _select(conn: Conn, guild_id: int, outside: str | None) -> frozenset[i
         (guild_id, TERMS_VERSION, outside, outside),
     )
     return frozenset(int(r["user_id"]) for r in await cur.fetchall())
+
+
+async def still_recorded(
+    conn: Conn, guild_id: int, campaign_id: str, user_ids: Iterable[int]
+) -> frozenset[int]:
+    """Which of `user_ids` may still be cited, read inside the caller's own transaction (#4153):
+    an after-session writer reads who agreed before it starts, so a "Stop recording me" between
+    that read and its write would otherwise be missed. Per server, as the live check is: someone
+    with Discord counts while they have a consent row under the current wording, or (for one
+    campaign's imported sessions, as `recorded_in` says) an import confirmation not taken back
+    and no "no" on record. A speaker without Discord (a negative number) is never in `consent`,
+    so a missing row never reads as a stop for them: they are kept, and a DM's removal of one
+    deletes their lines instead (#4091). It only ever removes people: a caller keeps what it already
+    allowed and drops whoever this leaves out."""
+    ids = sorted(set(user_ids))
+    kept = {u for u in ids if u < 0}
+    asked = [u for u in ids if u > 0]
+    if asked:
+        cur = await conn.execute(
+            "SELECT u FROM unnest(%s::bigint[]) AS u WHERE EXISTS (SELECT 1 FROM consent c"
+            "   WHERE c.guild_id = %s AND c.user_id = u AND c.terms_version = %s)"
+            " OR (EXISTS (SELECT 1 FROM import_consents i WHERE i.guild_id = %s"
+            "   AND i.campaign_id = %s AND i.user_id = u AND i.removed_at IS NULL)"
+            "  AND NOT EXISTS (SELECT 1 FROM consent_refusals r"
+            "   WHERE r.guild_id = %s AND r.user_id = u))",
+            (asked, guild_id, TERMS_VERSION, guild_id, campaign_id, guild_id),
+        )
+        kept |= {int(r["u"]) for r in await cur.fetchall()}
+    return frozenset(kept)

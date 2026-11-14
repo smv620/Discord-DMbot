@@ -50,7 +50,9 @@ def press(
     store_get = AsyncMock(
         side_effect=RuntimeError("down") if store_error else None, return_value=notes
     )
-    campaign = SimpleNamespace(guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM_ID}))
+    campaign = SimpleNamespace(
+        guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM_ID}), dm_accounts=frozenset({DM_ID})
+    )
     decision_lines = MagicMock(spec=DecisionLines)  # remember_pressed is recorded, not run
     bot = SimpleNamespace(
         campaigns=SimpleNamespace(

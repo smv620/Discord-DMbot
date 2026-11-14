@@ -296,7 +296,6 @@ class CheckedBackups(unittest.TestCase):
             [_current(E1, "character", "Snot", role="demigod")],
             [_current(E1, "character", "Snot", role="npc", played_by=5)],  # only a PC is played
             [_current(E1, "character", "Snot", role="npc"), _link_row("4" * 32, E3)],  # no entry
-            [_current(E1, "place", "Tower"), _link_row("4" * 32, E1)],  # not a character
             [_current(E1, "character", "Snot"), _link_row("4" * 32, E1, "alignment")],
             [_current(E1, "character", "Snot"), _link_row("4" * 32, E1, edition="1999")],
             [_current(E1, "character", "Snot"), _link_row("4" * 32, E1, known=False)],  # has source
@@ -308,6 +307,12 @@ class CheckedBackups(unittest.TestCase):
         for rows in bad:
             with self.subTest(rows[-1]), self.assertRaises(CampaignError):
                 self.check(rows)
+
+    def test_a_link_on_an_entry_that_is_no_character_is_left_out(self) -> None:
+        # (an older build left them behind; a file downloaded then still loads, #4241)
+        got = self.check([_current(E1, "place", "Tower"), _link_row("4" * 32, E1)])
+        self.assertEqual(got["rule_link"], [])
+        self.assertEqual(len(got["entity"]), 1)
 
     def test_a_link_to_an_unknown_name_keeps_its_words(self) -> None:
         rows = [

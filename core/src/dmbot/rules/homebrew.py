@@ -734,7 +734,8 @@ def _timestamp(value: object) -> int:
 
 def _person(value: object) -> int:
     digits = isinstance(value, str) and value.isascii() and value.isdigit()
-    if not digits or not 0 < int(str(value)) <= INT64_MAX:
+    # (0 is "someone who has left": an author whose account was deleted, #4141)
+    if not digits or not 0 <= int(str(value)) <= INT64_MAX:
         raise CampaignError(DAMAGED)
     return int(str(value))
 

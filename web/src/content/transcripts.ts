@@ -85,6 +85,22 @@ export const text = {
   download: "Save as a text file",
   downloading: "Saving…",
   downloadFailed: "That didn't save. Try again.",
+  // The game master's script of a session (#3244): a copy with who and what is meant written in brackets.
+  scriptDownload: "Save the script",
+  scriptSaving: "Getting the script…",
+  scriptFailed: "Couldn't save it. Try again in a minute.",
+  scriptAboutLabel: "What is the script?",
+  scriptNone: "No script has been made for this session yet.",
+  // The Script and Session notes views beside Cleaned and As heard (#3898, owner request 2026-11-09): game masters only.
+  tabs: { script: "Script", notes: "Session notes" },
+  scriptTabNote: "Script: a copy of the session with each he, she or it explained in [brackets]. Only game masters see it.",
+  notesTabNote: "Session notes: a numbered list of what happened in this game. Only game masters see them. They are kept after the transcript is deleted.",
+  notesNone: "No session notes yet. They appear after DMbot makes the recap.",
+  tryAgain: "Try again",
+  saveNotes: "Save the notes",
+  scriptTooBig: "This script is too big to save in one file.",
+  scriptAbout:
+    "The script is a copy of this session's transcript where each he, she or it is replaced by who or what is meant, in [brackets], like: He [Bram] drew his sword [Bram's sword]. Only game masters can save it.",
   about: "About this version",
   // The bot's notes mention its /transcript command; on a web page say what to use here.
   webNote: "On this page, use the Cleaned and As heard buttons. The /transcript command is for Discord.",

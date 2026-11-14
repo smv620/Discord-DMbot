@@ -223,6 +223,14 @@ class ElevenLabs:
         self._music_model = music_model
         self.credits = 0
 
+    @property
+    def voice_id(self) -> str:
+        return self._voice
+
+    @property
+    def speech_model(self) -> str:
+        return self._speech_model
+
     @step("speech")
     async def speech(
         self,

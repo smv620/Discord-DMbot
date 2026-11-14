@@ -215,7 +215,7 @@ CASES: tuple[Case, ...] = (
     ),
     # --- owns's not_this
     c(
-        "Mira has the longbow in her hands right now and is aiming it.",
+        "Mira has Heartseeker in her hands right now and is aiming it.",
         "carries",
         ("owns", 0),
     ),

@@ -40,6 +40,7 @@ from dmbot.campaigns.models import (
 )
 from dmbot.campaigns.store import QUIET_STOP_CHOICES
 from dmbot.dm_screen import (
+    channel_sync_ui,
     handover,
     messages,
     quiet_stop,
@@ -57,6 +58,7 @@ from dmbot.dm_screen.table_chat_panel import TableChatButton
 from dmbot.dm_screen.transcript_keep import TranscriptsButton
 from dmbot.logs import set_log_context
 from dmbot.mentions import NO_PINGS
+from dmbot.questions import board as questions_board
 from dmbot.transcript.keep import KEEP_LABELS
 
 log = logging.getLogger(__name__)
@@ -235,7 +237,11 @@ def _row(item: discord.ui.Item[Any], row: int) -> discord.ui.Item[Any]:
 
 
 def settings_view(
-    campaign: Campaign, offer: HandoverOffer | None, viewer: int, site_url: str = ""
+    campaign: Campaign,
+    offer: HandoverOffer | None,
+    viewer: int,
+    site_url: str = "",
+    questions: int | None = None,
 ) -> discord.ui.View:
     """The ⚙️ Manage DMbot card's buttons (#2986). `viewer`: who it's for (it's private).
     Rows 0 and 1 hold only what needs Discord to be there: how much DMbot says, who can see the DM
@@ -243,12 +249,14 @@ def settings_view(
     switched on. From row 2 are the choices that wait here until the website has them; each leaves
     as its page lands. Nothing is drawn that the viewer could not use."""
     view = discord.ui.View(timeout=None)
+    is_dm = viewer in campaign.dm_user_ids
+    if is_dm:  # 📬 Questions for you (n) comes first (#3435); `questions` is only its label
+        view.add_item(_row(questions_board.QuestionsButton(campaign.id, questions), 0))
     for level in DM_SCREEN_LEVELS_OFFERED:
         view.add_item(
             _row(LevelButton(campaign.id, level, current=level == campaign.dm_screen_level), 0)
         )
     view.add_item(_row(VisibilityMenuButton(campaign.id), 0))
-    is_dm = viewer in campaign.dm_user_ids
     if is_dm:
         view.add_item(_row(RulesCardsButton(campaign.id, campaign.rules_cards), 0))
         view.add_item(_row(ClockButton(campaign.id, "open"), 1))  # the game clock (#965)
@@ -262,10 +270,14 @@ def settings_view(
         view.add_item(_row(story_mode.StoryButton(campaign.id), 2))  # Shared story (#1692)
         view.add_item(_row(HouseFileButton(campaign.id), 2))  # the house-rules file (#969)
         view.add_item(_row(InviteButton(campaign.id), 2))  # the D&D Beyond invite (#1119)
+        # (#3878) whether a lore upload asks first or adds what DMbot is sure of
+        view.add_item(_row(AskBeforeAddingButton(campaign.id, campaign.ask_before_adding), 2))
         view.add_item(_row(RecapStyleButton(campaign.id), 3))  # (the rest of Recaps: website)
         view.add_item(_row(SharedRulesButton(campaign.id), 3))  # shared house rules (#1190)
         view.add_item(_row(HomebrewButton(campaign.id), 3))  # the campaign's own homebrew (#1520)
         view.add_item(_row(BackstoryButton(campaign.id), 3))  # upload campaign lore
+        # who sees the DM Bot and transcript channels (#3891)
+        view.add_item(_row(channel_sync_ui.ChannelsMenuButton(campaign.id), 3))
     return view
 
 
@@ -336,14 +348,23 @@ def _site(interaction: discord.Interaction) -> str:
 
 
 def _drawn(
-    campaign: Campaign, offer: HandoverOffer | None, viewer: int, card: str, site_url: str = ""
+    campaign: Campaign,
+    offer: HandoverOffer | None,
+    viewer: int,
+    card: str,
+    site_url: str = "",
+    questions: int | None = None,
 ) -> tuple[str, discord.ui.View]:
     """A card as the campaign is now: "settings", "visibility" or "management"."""
     if card == "visibility":
         return visibility_text(campaign), visibility_view(campaign)
+    if card == "channels":
+        return channel_sync_ui.channels_text(campaign), channel_sync_ui.channels_view(campaign)
     if card == "management":
         return management_text(campaign, offer, viewer), management_view(campaign, offer, viewer)
-    return settings_text(campaign, offer, viewer), settings_view(campaign, offer, viewer, site_url)
+    return settings_text(campaign, offer, viewer), settings_view(
+        campaign, offer, viewer, site_url, questions
+    )
 
 
 async def _redraw(
@@ -352,7 +373,8 @@ async def _redraw(
     """Show the card as saved now (the press was deferred as an update). If the card
     can't be redrawn (it's too old), the change still is saved: say so."""
     offer = await _open_offer(interaction, campaign.id)
-    text, view = _drawn(campaign, offer, interaction.user.id, card, _site(interaction))
+    questions = await questions_board.total_for(interaction, campaign.id)
+    text, view = _drawn(campaign, offer, interaction.user.id, card, _site(interaction), questions)
     try:
         await interaction.edit_original_response(content=text, view=view, allowed_mentions=NO_PINGS)
     except discord.HTTPException:
@@ -389,14 +411,16 @@ class SettingsButton(
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         # Both at once: Discord waits 3 seconds for the card (#437 review).
-        campaign, offer = await asyncio.gather(
-            _allowed(interaction, self.campaign_id), _open_offer(interaction, self.campaign_id)
+        campaign, offer, questions = await asyncio.gather(
+            _allowed(interaction, self.campaign_id),
+            _open_offer(interaction, self.campaign_id),
+            questions_board.total_for(interaction, self.campaign_id),
         )
         if campaign is None:
             return
         await interaction.response.send_message(
             settings_text(campaign, offer, interaction.user.id),
-            view=settings_view(campaign, offer, interaction.user.id, _site(interaction)),
+            view=settings_view(campaign, offer, interaction.user.id, _site(interaction), questions),
             ephemeral=True,
             allowed_mentions=NO_PINGS,
         )
@@ -824,6 +848,64 @@ class RulesCardsButton(
         await _redraw(interaction, saved)
 
 
+class AskBeforeAddingButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:askfirst:{_ID}:(?P<to>on|off)",
+):
+    """⚙️ Ask me before adding: On or Off, one tap changes it (#3878). Off (the default), a lore
+    upload adds what DMbot is sure of by itself and says how many; on, it offers its names for a
+    yes with Add all, as it always did. Only the campaign's DMs have it."""
+
+    def __init__(self, campaign_id: str, on: bool) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=f"Ask me before adding: {'on' if on else 'off'}",
+                emoji="🙋",
+                style=discord.ButtonStyle.primary if on else discord.ButtonStyle.secondary,
+                row=2,
+                custom_id=f"dmbot:askfirst:{campaign_id}:{'off' if on else 'on'}",
+            )
+        )
+        self.campaign_id = campaign_id
+        self.turn_on = not on  # what a press does
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> AskBeforeAddingButton:
+        return cls(match["campaign"], on=match["to"] == "off")  # "to off" means it is on now
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        set_log_context(guild_id=interaction.guild_id)
+        store = getattr(interaction.client, "campaigns", None)
+        guild = interaction.guild
+        campaign: Campaign | None = None
+        if store is not None and guild is not None:
+            try:
+                campaign = await store.get(guild.id, self.campaign_id)
+            except Exception:
+                log.exception("Couldn't load a campaign for the ask-first choice")
+                await interaction.response.send_message(LOAD_FAILED, ephemeral=True)
+                return
+        if campaign is None:
+            await interaction.response.send_message(GONE, ephemeral=True)
+            return
+        if interaction.user.id not in campaign.dm_user_ids:  # checked on every press
+            await interaction.response.send_message(ONLY_DMS, ephemeral=True)
+            return
+        await interaction.response.defer()
+        assert store is not None  # (a campaign was loaded from it)
+        try:
+            saved: Campaign = await store.set_ask_before_adding(
+                campaign.guild_id, campaign.id, self.turn_on
+            )
+        except Exception:
+            log.exception("Couldn't change the ask-first choice")
+            await interaction.followup.send(FAILED, ephemeral=True)
+            return
+        await _redraw(interaction, saved)
+
+
 class LevelButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:level:{_ID}:(?P<level>{'|'.join(DM_SCREEN_LEVELS_OFFERED)})",
@@ -973,7 +1055,8 @@ async def _open_card(interaction: discord.Interaction, campaign_id: str, card: s
         return
     campaign = allowed[0]
     offer = await _open_offer(interaction, campaign_id) if card != "visibility" else None
-    text, view = _drawn(campaign, offer, interaction.user.id, card, _site(interaction))
+    questions = await questions_board.total_for(interaction, campaign_id)
+    text, view = _drawn(campaign, offer, interaction.user.id, card, _site(interaction), questions)
     try:
         await interaction.response.edit_message(content=text, view=view, allowed_mentions=NO_PINGS)
     except discord.HTTPException:  # the card is too old to edit: say so, don't leave "failed"

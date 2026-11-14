@@ -17,6 +17,8 @@ export const namesFixedWords = {
   // The wait (owner rule 2026-10-23). The bot gives no stages for an Undo, so the page shows how long it has
   // waited and, after a while, says plainly that it is not saved yet.
   working: (name: string, seconds: number): string => `Putting ${name} back… ${seconds} seconds so far.`,
+  /** The stage of an Undo (`progress.stage`), when the API says it (#3355). */
+  stage: { waiting: "Waiting for DMbot to take it", working: "Putting the name back", done: "Put back" } as Record<string, string>,
   slow: "Still working. This isn't saved yet. Please wait; there is no need to press Undo again.",
   undone: "Put back as it was heard.",
   putBack: (n: number): string => (n === 1 ? "Done. 1 place put back. DMbot will leave this spelling alone from now on." : `Done. ${n} places put back. DMbot will leave this spelling alone from now on.`),

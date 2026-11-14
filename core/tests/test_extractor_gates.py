@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import unittest
 from collections.abc import Collection
+from functools import partial
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -159,6 +160,30 @@ class Loading(ConfirmedMemoryTest):
         self.assertEqual((report.calls, len(ai.sent)), (15, 15))  # fifteen batches
         self.assertEqual(writes, 1)  # one hand-over, one read of the campaign's memory
 
+    async def test_the_progress_note_is_told_each_batch_and_a_failing_one_stops_nothing(
+        self,
+    ) -> None:
+        told: list[tuple[int, int]] = []
+
+        async def note(part: int, parts: int) -> None:
+            told.append((part, parts))
+            raise RuntimeError("secret words")
+
+        async def everyone() -> Collection[int]:
+            return {DM, 7}
+
+        ai = Canned()
+        report = await extractor.run(
+            ai, ClaimStore(self.memory), session(30, 7), guild_id=GUILD_A, campaign_id=self.c,
+            dm_ids={DM}, consenting=everyone, model=lambda: "m", session_started_at=1,
+            progress=note,
+        )  # fmt: skip
+        self.assertEqual(told, [(n, 3) for n in (1, 2, 3)])
+        self.assertEqual(report.calls, 3)  # (every batch was still sent)
+
+
+BOT: Any = DMBot  # (its methods are called on a stand-in)
+
 
 class Gates(unittest.IsolatedAsyncioTestCase):
     """`DMBot.extract_claims`, with the parts it asks canned."""
@@ -171,10 +196,18 @@ class Gates(unittest.IsolatedAsyncioTestCase):
             extractor_calls_since=AsyncMock(return_value=day),
             record_extraction=AsyncMock(),
             is_import=AsyncMock(return_value=False),
+            session_split=AsyncMock(return_value=None),  # (no split yet: every line is play)
         )
-        return SimpleNamespace(
+        me = SimpleNamespace(
             settings=SimpleNamespace(
-                story_extractor_on=True, story_readings_on=False, story_family_only=False,
+                story_extractor_on=True,
+                story_readings_on=False,
+                story_deeds_on=False,
+                story_reveals_on=False,
+                story_reveals_precheck=False,
+                met_unnamed_on=False,
+                story_who_on=False,
+                story_family_only=False,
                 story_extractor_max_calls=480,
                 story_extractor_max_calls_day=960,
             ),
@@ -183,15 +216,22 @@ class Gates(unittest.IsolatedAsyncioTestCase):
             transcripts=transcripts,
             campaigns=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id="c"))),
             plan_allows=AsyncMock(return_value=allowed),
+            _recap_lines=AsyncMock(return_value=frozenset()),  # (no split yet: every line is play)
+            add_short_names=AsyncMock(),  # (#3880: tested in test_short_names)
             consent=SimpleNamespace(consenting=AsyncMock(return_value=frozenset({7}))),
-            name_of=lambda gid, uid: f"<@{uid}>",
+            name_of=unittest.mock.Mock(side_effect=lambda gid, uid: f"<@{uid}>"),
             post=AsyncMock(),
         )  # fmt: skip
+        me._extract_session = partial(BOT._extract_session, me)  # (extract_claims calls it)
+        return me
 
     def table(self) -> Any:
         return SimpleNamespace(
             campaign_id="c", transcript_session_id="s", guild_id=1, dm_user_id=DM,
-            dm_user_ids=frozenset(), steward_tally=None, screen_channel_id=5,
+dm_user_ids=frozenset(),
+            dm_accounts=frozenset(),
+            steward_tally=None,
+            screen_channel_id=5,
         )  # fmt: skip
 
     async def test_the_family_only_mode_reaches_the_extractor(self) -> None:
@@ -202,6 +242,19 @@ class Gates(unittest.IsolatedAsyncioTestCase):
         call = run.await_args
         assert call is not None
         self.assertIs(call.kwargs["family_only"], True)
+
+    async def test_a_batch_that_failed_means_not_done_so_it_is_read_again_later(self) -> None:
+        me = self.fake()
+        for report, outcome in (
+            (extractor.Report(failed=1), "limit"),
+            (extractor.Report(stopped="call limit"), "limit"),
+            (extractor.Report(), "done"),
+        ):
+            with patch.object(extractor, "run", AsyncMock(return_value=report)):
+                got = await BOT._extract_session(
+                    me, 1, "c", "s", dm_ids={DM}, tally=None, notice_channel=None
+                )
+            self.assertEqual(got, outcome)
 
     async def test_a_campaign_whose_plan_has_no_story_memory_runs_nothing(self) -> None:
         me = self.fake(allowed=False)
@@ -256,6 +309,30 @@ class Gates(unittest.IsolatedAsyncioTestCase):
             await DMBot.extract_claims(me, self.table(), 0)
         run.assert_not_called()
 
+    async def test_an_import_reads_who_it_recorded_and_never_a_no(self) -> None:
+        """An import passes its own list (`ConsentStore.recorded_in`, Supervisor on #3918): a
+        speaker the uploader confirmed (no Discord, a negative number) is read, someone with a
+        "no" on record (left out of that list) is not, and the server's list isn't asked."""
+        from tests.test_extractor import line
+
+        confirmed, said_no = -3, 9
+        me = self.fake()
+        me.transcripts.lines = AsyncMock(
+            return_value=[line(1, confirmed, "Vale opens the gate."), line(2, said_no, "No.")]
+        )
+        recorded = AsyncMock(return_value=frozenset({DM, confirmed}))
+        with patch.object(extractor, "run", AsyncMock(return_value=extractor.Report())) as run:
+            await BOT._extract_session(
+                me, 1, "c", "s", dm_ids={DM}, tally=None, notice_channel=None,
+                consenting=recorded,
+            )  # fmt: skip
+        self.assertEqual(me.add_short_names.await_args.args[2], ["Vale opens the gate."])
+        call = run.await_args
+        assert call is not None
+        self.assertIs(call.kwargs["consenting"], recorded)  # (asked again per batch)
+        me.consent.consenting.assert_not_awaited()
+        self.assertNotIn(-3, [c.args[1] for c in me.name_of.call_args_list])  # (no placeholder)
+
 
 class Contradictions(unittest.IsolatedAsyncioTestCase):
     """`DMBot.grade_contradictions`, with the parts it asks canned (#2660)."""
@@ -267,6 +344,7 @@ class Contradictions(unittest.IsolatedAsyncioTestCase):
             extractor_calls_since=AsyncMock(return_value=day),
             record_extraction=AsyncMock(),
             is_import=AsyncMock(return_value=False),
+            session_split=AsyncMock(return_value=None),  # (no split yet: every line is play)
         )
         return SimpleNamespace(
             settings=SimpleNamespace(
@@ -351,7 +429,9 @@ class TellingContradictions(unittest.IsolatedAsyncioTestCase):
         visibility: str = "private",
         dm: list[str] | None = None,
     ) -> Any:
-        campaign = SimpleNamespace(id="c", dm_screen_visibility=visibility, dm_user_ids=[7, 8])
+        campaign = SimpleNamespace(
+            id="c", dm_screen_visibility=visibility, dm_user_ids=[7, 8], dm_accounts=[7, 8]
+        )
         return SimpleNamespace(
             settings=SimpleNamespace(story_extractor_on=True, story_contradictions_on=on),
             memory=SimpleNamespace(_db=object()),

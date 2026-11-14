@@ -1,0 +1,20 @@
+---
+import ClarifyIsland from "../../account/ClarifyIsland";
+import { clarifyWords } from "../../content/name-clarify-words";
+import Base from "../../layouts/Base.astro";
+import "../../styles/account.css";
+---
+
+<Base
+  title="Clear up one name"
+  description="Decide what one name DMbot is unsure about is, with the scene and where it was said."
+  noindex
+>
+  <div class="account">
+    <h1>{clarifyWords.heading}</h1>
+    <ClarifyIsland client:load />
+    <noscript>
+      <p>This page needs JavaScript to show the name. Turn it on, then reload the page.</p>
+    </noscript>
+  </div>
+</Base>

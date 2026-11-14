@@ -28,6 +28,7 @@ from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import (
     CONFIRMED,
     DM,
+    PLAYER_CHARACTER,
     PROPOSED,
     REJECTED,
     MemoryRuleError,
@@ -36,11 +37,13 @@ from dmbot.memory.models import (
     name_key,
 )
 from dmbot.memory.name_documents import (
-    MAX_DOCUMENT_BYTES,
     TYPES_HELP,
     DocumentError,
     decode_text,
     kind_of_file,
+    max_bytes_for,
+    picture_note,
+    too_big_words,
 )
 from dmbot.memory.name_list import (
     MAX_FILE_BYTES,
@@ -55,9 +58,10 @@ from dmbot.memory.name_list import (
     render_files,
     template,
 )
+from dmbot.memory.picture_read import PictureText
 from dmbot.memory.store import placeholder_name
 from dmbot.mentions import NO_PINGS
-from dmbot.ui import all_names, logic, name_unnamed
+from dmbot.ui import all_names, logic, name_unnamed, split_words
 from dmbot.ui.dmbot_commands import (
     _answer_first,
     _bot,
@@ -561,6 +565,11 @@ class Upload:
     text: str
     label: str  # "report.pdf", "your list", "the linked page or file"
     document: bool = False  # not meant as a names list: straight to the AI
+    source_id: str = ""  # the website's lore upload id (#3879); a Discord upload has none
+    note: str = ""  # pages that held only pictures, in counts (#4000); "" when none
+    # The words read from its pictures (#4003), one per picture in page order, given by the
+    # picture reading (CloudDev-lead's half); read only with DMBOT_PICTURE_NAMES on.
+    pictures: tuple[PictureText, ...] = ()
 
 
 _PARSING = READING  # the one limit on documents read at once, shared (document_reader)
@@ -569,7 +578,8 @@ _PARSING = READING  # the one limit on documents read at once, shared (document_
 async def _document(filename: str, raw: bytes, label: str) -> tuple[Upload | None, str | None]:
     async with _PARSING:
         try:
-            return Upload(await read_document(filename, raw), label, True), None
+            text = await read_document(filename, raw)
+            return Upload(text, label, True, note=picture_note(text)), None
         except DocumentError as exc:
             return None, str(exc)
 
@@ -581,8 +591,8 @@ async def read_attachment(file: discord.Attachment) -> tuple[Upload | None, str 
     kind = kind_of_file(file.filename)
     if kind == "unknown":
         return None, TYPES_HELP
-    if file.size > MAX_DOCUMENT_BYTES:
-        return None, "That file is too big (up to 10 MB). Split it into smaller files."
+    if file.size > max_bytes_for(file.filename):
+        return None, too_big_words(file.filename)
     try:
         raw = await file.read()
     except discord.HTTPException:
@@ -1115,11 +1125,18 @@ class KindQuestions(discord.ui.View):
             self.remove_item(select)
             what = f"Every **{_md(select.word)}**" if select.word else "The names with no kind"
             done = written.value
-            rest = "" if done == len(select.ids) else " (The rest were checked or changed already.)"
+            rest = (
+                ""
+                if done == len(select.ids)
+                # (one with a player, or a person never named, waits for its own card: #4244)
+                else " (The rest were checked already or need their own card.)"
+            )
             self.notes.append(
                 f"✅ {what}: {done} name{'' if done == 1 else 's'} set to **{_md(KINDS[kind])}**."
                 + rest
             )
+            if split := split_words.for_many(*written.split_counts):  # (#4037)
+                self.notes.append(split)
         finally:
             self.busy = False
             if not self.children:
@@ -1381,6 +1398,8 @@ class NearQuestions(_Questions):
             item.answer = f"couldn't join them. {exc}"
             return
         item.answer = f"🔗 now another name for **{_short(item.like)}**."
+        if secret := split_words.for_join(written.split):  # (#4043)
+            item.answer = f"{item.answer} {secret}"
         if one and written.batch is not None:  # its own message, so Undo outlives this one
             view = discord.ui.View(timeout=None)
             view.add_item(UndoButton(campaign.id, item.entity_id, written.batch))
@@ -1537,6 +1556,8 @@ class KindDiffQuestions(_Questions):
                             except MemoryRuleError:
                                 continue  # changed or removed since
                             done += 1
+                        if done and want == PLAYER_CHARACTER:  # each joins the party (#3995)
+                            await memory.party_on_assignment(campaign.guild_id, campaign.id)
                     except Exception:
                         log.exception("Changing kinds after a names list failed")
                     self.answers[i] = f"✅ Changed {done} to {KIND_SHORT.get(want, want)}." + (

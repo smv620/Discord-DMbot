@@ -27,13 +27,21 @@ from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
 from dmbot.images import (
     ALT_MAX,
+    CLOSE_FORMS,
+    CLOSE_LEVELS,
     LAYOUT_MAX,
+    LINK_KINDS,
+    LINK_WORD_MAX,
+    LINKS_MAX,
+    NEXT_TO,
     PLACE_NAME_MAX,
     PLACE_WHERE_MAX,
     PLACES_MAX,
+    ROUTE_TO,
     Place,
     Read,
 )
+from dmbot.memory import next_words, route_words
 
 log = logging.getLogger(__name__)
 
@@ -53,6 +61,26 @@ class MapNote:
     alt: str
     layout: str
     places: tuple[Place, ...]
+    close: dict[str, Any] | None = None  # the close read (#4173 slice 6b-1), or None
+
+
+def close_of(read: Read) -> dict[str, Any] | None:
+    """A read's close read as it is kept (`close_read`), or None when it had none: the map's
+    level, each place's size and form, and its links. The same shape `MapNotesSection` checks."""
+    if not (read.level or read.links or any(p.level or p.form for p in read.places)):
+        return None
+    return {
+        "level": read.level,
+        "places": [
+            {"name": p.name.strip()[:PLACE_NAME_MAX], "level": p.level, "form": p.form}
+            for p in read.places[:PLACES_MAX]
+            if p.name.strip()
+        ],
+        "links": [
+            {"a": k.a, "kind": k.kind, "b": k.b, "word": k.word, "sure": k.sure}
+            for k in read.links[:LINKS_MAX]
+        ],
+    }
 
 
 class MapNoteStore:
@@ -63,10 +91,17 @@ class MapNoteStore:
         self._clock = clock
 
     async def add(
-        self, guild_id: int, campaign_id: str, user_id: int, read: Read, message_id: int = 0
+        self,
+        guild_id: int,
+        campaign_id: str,
+        user_id: int,
+        read: Read,
+        message_id: int = 0,
+        picture_id: int | None = None,
     ) -> bool:
         """Keep a map's description. False for anything that is not a map with something in it.
-        The oldest note goes when the campaign is over `KEEP`. One transaction."""
+        The oldest note goes when the campaign is over `KEEP`. One transaction. `picture_id`: the
+        kept picture it is of, when kept (#4349: the close read finds its own note by it)."""
         if read.kind != "map" or not (read.places or read.layout):
             return False
         # The same rules a backup is checked by, so what is kept can always be restored.
@@ -85,17 +120,20 @@ class MapNoteStore:
                 (f"map_notes:{guild_id}:{campaign_id}",),
             )
             await conn.execute(
-                "INSERT INTO map_notes (guild_id, campaign_id, user_id, message_id, made_at, alt,"
-                " layout, places) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb)",
+                "INSERT INTO map_notes (guild_id, campaign_id, user_id, message_id, picture_id,"
+                " made_at, alt, layout, places, close_read) VALUES (%s, %s, %s, %s, %s, %s, %s,"
+                " %s, %s::jsonb, %s::jsonb)",
                 (
                     guild_id,
                     campaign_id,
                     user_id,
                     message_id,
+                    picture_id,
                     int(self._clock()),
                     alt[:ALT_MAX],
                     read.layout[:LAYOUT_MAX],
                     json.dumps(places),
+                    None if (close := close_of(read)) is None else json.dumps(close),
                 ),
             )
             await conn.execute(
@@ -105,6 +143,50 @@ class MapNoteStore:
                 (guild_id, campaign_id, guild_id, campaign_id, KEEP),
             )
         return True
+
+    async def close_known(
+        self, guild_id: int, campaign_id: str, picture_id: int, message_id: int
+    ) -> bool:
+        """Has this picture's note a close read already (one read when it was posted, #4173 6b-1)?
+        Then the sweep marks it read and pays for nothing again."""
+        async with self._db.guild(guild_id) as conn:
+            row = await _own_note(conn, guild_id, campaign_id, picture_id, message_id)
+        return row is not None and row["close_read"] is not None
+
+    async def set_close(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        user_id: int,
+        read: Read,
+        *,
+        picture_id: int,
+        message_id: int = 0,
+    ) -> bool:
+        """A kept map's close read (#4349), quietly onto its own note: the one that names this
+        picture (or, for a note from before notes named one, its message's only note). A map with
+        no note (none was kept at posting, or a website upload, `message_id` 0) gets a new one by
+        the rules `add` keeps. Only while the picture is still kept, checked in the same
+        transaction, so a picture deleted meanwhile gets no note. False when nothing was kept."""
+        close = close_of(read)
+        if close is None:
+            return False
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM campaign_pictures WHERE guild_id = %s AND campaign_id = %s"
+                " AND id = %s AND deleted_at IS NULL FOR SHARE",
+                (guild_id, campaign_id, picture_id),
+            )
+            if await cur.fetchone() is None:
+                return False
+            row = await _own_note(conn, guild_id, campaign_id, picture_id, message_id)
+            if row is not None:
+                await conn.execute(
+                    "UPDATE map_notes SET close_read = %s::jsonb, picture_id = %s WHERE id = %s",
+                    (json.dumps(close), picture_id, row["id"]),
+                )
+                return True
+        return await self.add(guild_id, campaign_id, user_id, read, message_id, picture_id)
 
     async def forget_message(self, guild_id: int, message_id: int) -> int:
         """The picture was deleted: so are the notes made from it. How many went."""
@@ -121,7 +203,7 @@ class MapNoteStore:
         """This campaign's notes, newest first."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT id, user_id, made_at, alt, layout, places FROM map_notes"
+                "SELECT id, user_id, made_at, alt, layout, places, close_read FROM map_notes"
                 " WHERE guild_id = %s AND campaign_id = %s ORDER BY id DESC",
                 (guild_id, campaign_id),
             )
@@ -134,6 +216,7 @@ class MapNoteStore:
                 str(r["alt"]),
                 str(r["layout"]),
                 tuple(Place(str(p["name"]), str(p["where"])) for p in r["places"]),
+                r["close_read"],
             )
             for r in rows
         ]
@@ -146,6 +229,54 @@ class _Checked:
     alt: str
     layout: str
     places: str  # already JSON
+    close: str | None = None  # the close read, already JSON (#4173 slice 6b-1)
+
+
+def _close(value: object) -> str:
+    """A backup's close read, checked as the store writes it, as JSON (`close_of`'s shape)."""
+    if not isinstance(value, dict) or set(value) != {"level", "places", "links"}:
+        raise CampaignError(DAMAGED)
+    level, places, links = value["level"], value["places"], value["links"]
+    if level not in ("", *CLOSE_LEVELS) or not isinstance(places, list):
+        raise CampaignError(DAMAGED)
+    if not isinstance(links, list) or len(places) > PLACES_MAX or len(links) > LINKS_MAX:
+        raise CampaignError(DAMAGED)
+    kept_places = []
+    for p in places:
+        if not isinstance(p, dict) or set(p) != {"name", "level", "form"}:
+            raise CampaignError(DAMAGED)
+        if p["level"] not in ("", *CLOSE_LEVELS) or p["form"] not in ("", *CLOSE_FORMS):
+            raise CampaignError(DAMAGED)
+        kept_places.append(
+            {"name": _text(p["name"], PLACE_NAME_MAX), "level": p["level"], "form": p["form"]}
+        )
+    kept_links = []
+    names = {p["name"].casefold() for p in kept_places}
+    for k in links:
+        if not isinstance(k, dict) or set(k) != {"a", "kind", "b", "word", "sure"}:
+            raise CampaignError(DAMAGED)
+        if k["kind"] not in LINK_KINDS or not isinstance(k["sure"], bool):
+            raise CampaignError(DAMAGED)
+        # the same lists the reader keeps to (a hand-edited file carries no free words into what
+        # 6b-2 will write): ends on the map's places, and a word only on its kind's list
+        ends = (k["a"], k["b"])
+        if not all(isinstance(e, str) and e.casefold() in names for e in ends):
+            raise CampaignError(DAMAGED)
+        if k["a"].casefold() == k["b"].casefold() or not isinstance(k["word"], str):
+            raise CampaignError(DAMAGED)
+        listed = {
+            NEXT_TO: next_words.word_of, ROUTE_TO: route_words.means_of,
+        }.get(k["kind"], lambda _w: "")  # fmt: skip
+        if k["word"] != listed(k["word"]):
+            raise CampaignError(DAMAGED)
+        kept_links.append(
+            {
+                "a": _text(k["a"], PLACE_NAME_MAX), "kind": k["kind"],
+                "b": _text(k["b"], PLACE_NAME_MAX),
+                "word": _text(k["word"], LINK_WORD_MAX, empty_ok=True), "sure": k["sure"],
+            }
+        )  # fmt: skip
+    return json.dumps({"level": level, "places": kept_places, "links": kept_links})
 
 
 def _text(value: object, limit: int, *, empty_ok: bool = False) -> str:
@@ -161,7 +292,7 @@ class MapNotesSection:
 
     async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
         cur = await conn.execute(
-            "SELECT user_id, made_at, alt, layout, places FROM map_notes"
+            "SELECT user_id, made_at, alt, layout, places, close_read FROM map_notes"
             " WHERE guild_id = %s AND campaign_id = %s ORDER BY id",
             (guild_id, campaign_id),
         )
@@ -172,6 +303,8 @@ class MapNotesSection:
                 "alt": r["alt"],
                 "layout": r["layout"],
                 "places": r["places"],
+                # (only when there is one, so a file of notes with none reads as before)
+                **({"close": r["close_read"]} if r["close_read"] is not None else {}),
             }
             for r in await cur.fetchall()
         ]
@@ -181,7 +314,8 @@ class MapNotesSection:
             raise CampaignError(DAMAGED)
         out: list[_Checked] = []
         for row in rows:
-            if not isinstance(row, dict) or set(row) != {"by", "at", "alt", "layout", "places"}:
+            keys = {"by", "at", "alt", "layout", "places"}
+            if not isinstance(row, dict) or set(row) - {"close"} != keys:
                 raise CampaignError(DAMAGED)
             by, at, places = row["by"], row["at"], row["places"]
             if (
@@ -214,6 +348,7 @@ class MapNotesSection:
                     _text(row["alt"], ALT_MAX),
                     layout,
                     json.dumps(kept),
+                    _close(row["close"]) if "close" in row else None,
                 )
             )
         return out
@@ -229,8 +364,8 @@ class MapNotesSection:
         for r in checked:
             await conn.execute(
                 "INSERT INTO map_notes (guild_id, campaign_id, user_id, made_at, alt, layout,"
-                " places) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb)",
-                (guild_id, campaign_id, r.user_id, r.made_at, r.alt, r.layout, r.places),
+                " places, close_read) VALUES (%s, %s, %s, %s, %s, %s, %s::jsonb, %s::jsonb)",
+                (guild_id, campaign_id, r.user_id, r.made_at, r.alt, r.layout, r.places, r.close),
             )
 
     async def clear(self, conn: Conn, guild_id: int, campaign_id: str) -> None:
@@ -238,3 +373,26 @@ class MapNotesSection:
             "DELETE FROM map_notes WHERE guild_id = %s AND campaign_id = %s",
             (guild_id, campaign_id),
         )
+
+
+async def _own_note(
+    conn: Conn, guild_id: int, campaign_id: str, picture_id: int, message_id: int
+) -> Any:
+    """A picture's own note: the one naming it, else (a note from before notes named their
+    picture) its message's one note with no picture; never one of several, which could be
+    another map's."""
+    cur = await conn.execute(
+        "SELECT id, close_read FROM map_notes WHERE guild_id = %s AND campaign_id = %s"
+        " AND picture_id = %s ORDER BY id DESC LIMIT 1",
+        (guild_id, campaign_id, picture_id),
+    )
+    row = await cur.fetchone()
+    if row is not None or not message_id:
+        return row
+    cur = await conn.execute(
+        "SELECT id, close_read FROM map_notes WHERE guild_id = %s AND campaign_id = %s"
+        " AND message_id = %s AND picture_id IS NULL",
+        (guild_id, campaign_id, message_id),
+    )
+    rows = await cur.fetchall()
+    return rows[0] if len(rows) == 1 else None

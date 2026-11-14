@@ -9,7 +9,8 @@ damaged, and a row for an entry that is not in the restored campaign is dropped 
 section loads first; a backup outlives its entries). Rows keep their order, so the newest
 assessment stays the newest. Like the rest of a backup it holds the DM's secrets (a backup is for
 the DM and warned about), and the rank is never read by a player-facing screen. An older backup
-has no such section and restores at the floor.
+has no such section and restores at the floor. A backup from before migration 0388 says `basis`
+where a newer one says `reason`; its code is read the way that migration read the stored rows.
 """
 
 from __future__ import annotations
@@ -18,14 +19,22 @@ from typing import Any
 
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn
-from dmbot.memory.importance_rank import BASES, PLAYER, SOURCE_PLOTBOT, SOURCE_RULE
+from dmbot.memory.importance_rank import (
+    OLD_BASIS,
+    PLAYER,
+    REASONS,
+    SOURCE_PLOTBOT,
+    SOURCE_RULE,
+    reason_of_old_basis,
+)
 from dmbot.memory.models import is_id
 
 DAMAGED = "This backup file is damaged (bad importance ranks)."
 # One row for each time a character is reassessed, at about 120 bytes: far below the size limit.
 ROWS_MAX = 50_000
 INT64_MAX = 2**63 - 1
-_KEYS = {"entity_id", "rank", "basis", "source", "session_started_at", "recorded_at"}
+_KEYS = {"entity_id", "rank", "reason", "source", "session_started_at", "recorded_at"}
+_OLD_KEYS = (_KEYS - {"reason"}) | {"basis"}  # a backup from before migration 0388
 
 Row = tuple[str, int, str, str, int | None, int]
 
@@ -40,12 +49,15 @@ def _checked(rows: object) -> list[Row]:
         raise CampaignError(DAMAGED)
     out: list[Row] = []
     for raw in rows:
+        if isinstance(raw, dict) and set(raw) == _OLD_KEYS and raw["basis"] in OLD_BASIS:
+            raw = {**{k: v for k, v in raw.items() if k != "basis"},
+                   "reason": reason_of_old_basis(raw["basis"])}  # fmt: skip
         if not (
             isinstance(raw, dict)
             and set(raw) == _KEYS
             and is_id(raw["entity_id"])
             and _int(raw["rank"], 0, PLAYER)
-            and raw["basis"] in BASES
+            and raw["reason"] in REASONS
             and raw["source"] in (SOURCE_PLOTBOT, SOURCE_RULE)
             and (raw["session_started_at"] is None or _int(raw["session_started_at"], 1, INT64_MAX))
             and _int(raw["recorded_at"], 1, INT64_MAX)
@@ -53,7 +65,7 @@ def _checked(rows: object) -> list[Row]:
             raise CampaignError(DAMAGED)
         out.append(
             (
-                raw["entity_id"], raw["rank"], raw["basis"], raw["source"],
+                raw["entity_id"], raw["rank"], raw["reason"], raw["source"],
                 raw["session_started_at"], raw["recorded_at"],
             )
         )  # fmt: skip
@@ -69,7 +81,7 @@ class ImportanceSection:
 
     async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
         cur = await conn.execute(
-            "SELECT entity_id, rank, basis, source, session_started_at, recorded_at"
+            "SELECT entity_id, rank, reason, source, session_started_at, recorded_at"
             " FROM memory_importance WHERE guild_id = %s AND campaign_id = %s"
             " ORDER BY seq DESC LIMIT %s",
             (guild_id, campaign_id, ROWS_MAX),
@@ -80,7 +92,7 @@ class ImportanceSection:
             {
                 "entity_id": r["entity_id"],
                 "rank": int(r["rank"]),
-                "basis": r["basis"],
+                "reason": r["reason"],
                 "source": r["source"],
                 "session_started_at": None
                 if r["session_started_at"] is None
@@ -100,7 +112,7 @@ class ImportanceSection:
             return
         cur = await conn.execute(
             "SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
-            " AND type = 'character' AND status IN ('proposed', 'confirmed')",
+            " AND type <> 'person' AND status IN ('proposed', 'confirmed')",  # (every kind, #3233)
             (guild_id, campaign_id),
         )
         live = {str(r["id"]) for r in await cur.fetchall()}
@@ -108,12 +120,12 @@ class ImportanceSection:
         # order of the history is the file's.
         async with conn.cursor() as cursor:
             await cursor.executemany(
-                "INSERT INTO memory_importance (guild_id, campaign_id, entity_id, rank, basis,"
+                "INSERT INTO memory_importance (guild_id, campaign_id, entity_id, rank, reason,"
                 " source, session_started_at, lines, recorded_at)"
                 " VALUES (%s, %s, %s, %s, %s, %s, %s, '{}', %s)",
                 [
-                    (guild_id, campaign_id, e, rank, basis, source, session, at)
-                    for e, rank, basis, source, session, at in checked
+                    (guild_id, campaign_id, e, rank, reason, source, session, at)
+                    for e, rank, reason, source, session, at in checked
                     if e in live
                 ],
             )

@@ -45,6 +45,8 @@ export const namesPage = {
   alsoCalled: "Also called",
   npcLink: "NPC page",
   webLink: "Open the Story Graph",
+  seeInGraph: "See in the Story Graph",
+  seeInGraphFor: (name: string): string => `See ${name} in the Story Graph`,
   npcLinkFor: (name: string): string => `Open the NPC page for ${name}`,
   readOnly: "Only this campaign's DM can change names.",
   undoNote: "A change made here can be undone with ↩️ Undo on the name's card in Discord.",
@@ -64,6 +66,9 @@ export const namesPage = {
   saveKind: "Save what it is",
   // Making a name a player character (#2985): who plays it can be added now or later, in Discord or here.
   playerLabel: "Who plays it? Their Discord ID (optional)",
+  playerPickLabel: "Who plays it? (optional)",
+  playerElsewhere: "Someone else: type their Discord ID…",
+  playerPickFailed: "Couldn't load the server's members. You can type their Discord ID instead.",
   playerNote: "Not sure yet? Leave this empty. It is still a player character, and you can add the player later. Adding an ID doesn't start recording anyone: they still choose that themselves.",
   playerInfoLabel: "How to find a Discord ID",
   playerInfoSteps: [
@@ -89,7 +94,6 @@ export const namesPage = {
   removeOther: (other: string): string => `Remove the other name ${other}`,
   hideCheck: "🙈 Hide from players",
   hideHint: "Players don't know this one yet, so it stays off the Story Graph for players, and out of answers and recaps. Untick it (👀 Players know it now on its card in Discord) when they find out.",
-  waiting: "Waiting for DMbot…",
   mergeHeading: "Same as another name",
   mergeLead: "Two names for the same thing? Pick the one to keep. This name and its other names are added to it, and this name is removed. Undo is on the name's card in Discord.",
   mergeSearch: "Find the other name",

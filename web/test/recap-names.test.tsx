@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, type AccountApi, type CampaignName } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
-import RecapNames, { campaignRefOf } from "../src/account/RecapNames";
+import RecapNames, { appearsIn, campaignRefOf } from "../src/account/RecapNames";
 import Recaps from "../src/account/Recaps";
 import { sayIt as sayWords } from "../src/content/say-it-words";
 import { nameWords as words } from "../src/content/recap-names";
@@ -26,6 +26,9 @@ vi.mock("../src/content/recap-words", async (original) => {
     },
   };
 });
+
+// The recap's words, naming every name the fixtures list, since the part shows the names used in it.
+const TEXT = "Ka'zeth met Brynwater and the rest at the gate.";
 
 afterEach(() => {
   cleanup();
@@ -60,7 +63,7 @@ describe("the address", () => {
 describe("the part", () => {
   it("is folded and loads nothing until it is opened", async () => {
     const api = mockApi("table");
-    render(<RecapNames api={api} recapRef={REF} />);
+    render(<RecapNames api={api} recapRef={REF} recapText={TEXT} />);
     expect(screen.getByText(words.heading)).toBeTruthy();
     expect(screen.queryByLabelText(words.label("Ka'zeth"))).toBeNull();
     expect((api as { calls: string[] }).calls).not.toContain(`campaignNames:200000000000000001.cmp1`);
@@ -72,7 +75,7 @@ describe("the part", () => {
   });
 
   it("says how Say it works once for the whole list, not under every name", async () => {
-    render(<RecapNames api={mockApi("table")} recapRef={REF} />);
+    render(<RecapNames api={mockApi("table")} recapRef={REF} recapText={TEXT} />);
     open();
     await screen.findByLabelText(words.label("Ka'zeth"));
     expect(screen.getAllByRole("textbox").length).toBeGreaterThan(1);
@@ -81,7 +84,7 @@ describe("the part", () => {
 
   it("saves one name with a one-line confirmation, and sends the tidied words", async () => {
     const api = mockApi("table");
-    render(<RecapNames api={api} recapRef={REF} />);
+    render(<RecapNames api={api} recapRef={REF} recapText={TEXT} />);
     open();
     const input = await screen.findByLabelText(words.label("Ka'zeth"));
     fireEvent.input(input, { target: { value: "  Kah-zeth  " } });
@@ -94,7 +97,7 @@ describe("the part", () => {
   });
 
   it("clears a spelling when the box is emptied, and says so", async () => {
-    render(<RecapNames api={mockApi("table")} recapRef={REF} />);
+    render(<RecapNames api={mockApi("table")} recapRef={REF} recapText={TEXT} />);
     open();
     const input = await screen.findByLabelText(words.label("Brynwater"));
     fireEvent.input(input, { target: { value: "" } });
@@ -104,7 +107,7 @@ describe("the part", () => {
 
   it("refuses more than 80 letters before asking, and keeps the words", async () => {
     const api = mockApi("table");
-    render(<RecapNames api={api} recapRef={REF} />);
+    render(<RecapNames api={api} recapRef={REF} recapText={TEXT} />);
     open();
     const input = await screen.findByLabelText(words.label("Ka'zeth"));
     fireEvent.input(input, { target: { value: "x".repeat(81) } });
@@ -126,7 +129,7 @@ describe("the part", () => {
         throw new ApiError(kind);
       },
     };
-    render(<RecapNames api={api} recapRef={REF} />);
+    render(<RecapNames api={api} recapRef={REF} recapText={TEXT} />);
     open();
     const input = await screen.findByLabelText(words.label("Ka'zeth"));
     fireEvent.input(input, { target: { value: "Kah" } });
@@ -144,7 +147,7 @@ describe("the part", () => {
         return new Promise<void>((resolve) => (release = resolve));
       },
     };
-    render(<RecapNames api={api} recapRef={REF} />);
+    render(<RecapNames api={api} recapRef={REF} recapText={TEXT} />);
     open();
     const input = await screen.findByLabelText(words.label("Ka'zeth"));
     fireEvent.input(input, { target: { value: "Kah" } });
@@ -163,12 +166,12 @@ describe("the part", () => {
         throw new ApiError("network");
       },
     };
-    const { unmount } = render(<RecapNames api={failing} recapRef={REF} />);
+    const { unmount } = render(<RecapNames api={failing} recapRef={REF} recapText={TEXT} />);
     open();
     expect((await alertNow()).textContent).toBe(words.loadFailed);
     unmount();
     const none: AccountApi = { ...mockApi("table"), campaignNames: async (): Promise<CampaignName[]> => [] };
-    render(<RecapNames api={none} recapRef={REF} />);
+    render(<RecapNames api={none} recapRef={REF} recapText={TEXT} />);
     open();
     expect(await screen.findByText(words.none)).toBeTruthy();
   });
@@ -184,7 +187,7 @@ describe("the switches and an older API", () => {
     for (const [recaps, audio] of cases) {
       live.recaps = recaps;
       live.audio = audio;
-      const { container, unmount } = render(<RecapNames api={mockApi("table")} recapRef={REF} />);
+      const { container, unmount } = render(<RecapNames api={mockApi("table")} recapRef={REF} recapText={TEXT} />);
       expect(container.querySelector("details")).toBeNull();
       unmount();
     }
@@ -193,7 +196,7 @@ describe("the switches and an older API", () => {
   it("shows nothing from an API without the routes", () => {
     const api = mockApi("table");
     delete api.campaignNames;
-    const { container } = render(<RecapNames api={api} recapRef={REF} />);
+    const { container } = render(<RecapNames api={api} recapRef={REF} recapText={TEXT} />);
     expect(container.querySelector("details")).toBeNull();
   });
 
@@ -201,5 +204,58 @@ describe("the switches and an older API", () => {
     render(<Recaps api={mockApi("table")} path={`/account/recaps/${REF}`} />);
     expect(await screen.findByText(words.heading)).toBeTruthy();
     await waitFor(() => expect(document.querySelector("details.names")).not.toBeNull());
+  });
+});
+
+describe("the recap's list (#3675)", () => {
+  const names = (sessions?: string[][]): CampaignName[] =>
+    ["Ka'zeth", "Al", "Brynwater"].map((text, i) => ({
+      id: `n${i}`,
+      text,
+      kind: "npc",
+      saidAs: null,
+      ...(sessions ? { sessions: sessions[i]! } : {}),
+    }));
+  const withNames = (list: CampaignName[]): AccountApi =>
+    ({ ...mockApi("table"), campaignNames: async () => list }) as unknown as AccountApi;
+  const open = async (api: AccountApi, text: string) => {
+    const { container } = render(<RecapNames api={api} recapRef={REF} recapText={text} />);
+    const details = container.querySelector("details")!;
+    details.open = true;
+    fireEvent(details, new Event("toggle"));
+    await screen.findByRole("link");
+    return container;
+  };
+
+  it("matches whole words only, in any case", () => {
+    expect(appearsIn("Al", "She also came.")).toBe(false);
+    expect(appearsIn("Al", "Then AL spoke.")).toBe(true);
+    expect(appearsIn("Ka'zeth", "Ka'zeth, the pale.")).toBe(true);
+    expect(appearsIn("  ", "anything")).toBe(false);
+    expect(appearsIn("Ka'zeth", "Ka’zeth, the pale.")).toBe(true); // a curly apostrophe
+  });
+
+  it("lists only the names used in the recap, with a link to all of them", async () => {
+    await open(withNames(names()), "Brynwater walked in. She also sat.");
+    expect(screen.getByLabelText(words.label("Brynwater"))).toBeTruthy();
+    expect(screen.queryByLabelText(words.label("Ka'zeth"))).toBeNull();
+    expect(screen.queryByLabelText(words.label("Al"))).toBeNull();
+    expect(screen.queryByLabelText(words.show)).toBeNull(); // the API sends no sessions: no second list
+    expect(screen.getByRole("link").getAttribute("href")).toBe(`/account/names/${campaignRefOf(REF)}`);
+  });
+
+  it("says so when no name is used", async () => {
+    await open(withNames(names()), "Nobody here.");
+    expect(await screen.findByText(words.noneUsedAlone)).toBeTruthy();
+  });
+
+  it("offers the names found in the episode when the API says which sessions", async () => {
+    await open(withNames(names([[REF], [], [REF]])), "Ka'zeth only.");
+    expect(screen.getByLabelText(words.label("Ka'zeth"))).toBeTruthy();
+    const pick = screen.getByLabelText(words.show) as HTMLSelectElement;
+    pick.value = "episode";
+    pick.dispatchEvent(new Event("change", { bubbles: true }));
+    expect(await screen.findByLabelText(words.label("Brynwater"))).toBeTruthy();
+    expect(screen.queryByLabelText(words.label("Al"))).toBeNull();
   });
 });

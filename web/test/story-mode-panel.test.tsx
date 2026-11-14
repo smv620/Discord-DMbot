@@ -10,6 +10,7 @@ import StoryModePanel from "../src/account/StoryModePanel";
 import { STORY_MODE_LIVE } from "../src/content/story-mode-switch";
 import { storyModePanel as words } from "../src/content/story-mode-words";
 import { entries, held } from "../src/content/whats-new";
+import { workWords } from "../src/content/work-progress";
 
 afterEach(() => {
   cleanup();
@@ -115,5 +116,17 @@ describe("The Shared story choice on the website", () => {
     fireEvent.click(screen.getByRole("checkbox", { name: words.rightLabel }));
     fireEvent.click(screen.getByRole("button", { name: words.confirm }));
     expect(await screen.findByText(words.problems["needs-confirm"]!)).toBeTruthy();
+  });
+});
+
+describe("the wait shows the API's own times (#3355)", () => {
+  it("uses the API's own times and says so when the choice has stalled (#3355)", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    render(<StoryModePanel api={mockApi("table")} campaignRef="100.cmp1.cs-stalled" mode="watch" />);
+    fireEvent.click(screen.getByRole("button", { name: words.choose("off") }));
+    await act(async () => { await vi.advanceTimersByTimeAsync(3_000); });
+    // (the choice was queued ten minutes ago by the server's clock: the wait says it stalled, not "just now")
+    expect(await screen.findByText(workWords.stalled)).toBeTruthy();
+    expect(screen.getAllByText(/10 min/).length).toBeGreaterThan(0);
   });
 });

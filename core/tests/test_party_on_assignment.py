@@ -45,7 +45,7 @@ class TheParty(ConfirmedMemoryTest):
         await self.pc("Bryn", PLAYERS[1])
         self.assertEqual(len(await self.rows("knows")), 1)
 
-    async def test_after_the_first_session_assigning_a_player_adds_nothing(self) -> None:
+    async def test_after_the_first_session_assigning_a_player_adds_membership_only(self) -> None:
         await self.pc("Aldric", PLAYERS[0])
         await self.pc("Bryn", PLAYERS[1])
         self.assertEqual(len(await self.rows("knows")), 1)
@@ -56,8 +56,8 @@ class TheParty(ConfirmedMemoryTest):
                 ("e" * 32, GUILD_A, self.c),
             )
         await self.pc("Cora", PLAYERS[2])
-        self.assertEqual(len(await self.rows("knows")), 1)  # (she joins at her first session)
-        self.assertEqual(len(await self.rows("member_of")), 2)
+        self.assertEqual(len(await self.rows("knows")), 1)  # (she meets them at a session)
+        self.assertEqual(len(await self.rows("member_of")), 3)  # (but she is in the party now)
 
     async def test_a_pair_the_dm_removed_is_not_added_again(self) -> None:
         await self.pc("Aldric", PLAYERS[0])

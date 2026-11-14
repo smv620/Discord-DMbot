@@ -34,7 +34,7 @@ import discord
 from dmbot import fetch
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
-from dmbot.memory.name_documents import DocumentError
+from dmbot.memory.name_documents import MAX_DOCUMENT_BYTES, MAX_PDF_BYTES, DocumentError
 from dmbot.mentions import NO_PINGS
 from dmbot.rules import house, house_ai, house_file, house_file_sync, house_reader
 from dmbot.rules.house_file_sync import Applied, Item
@@ -93,9 +93,19 @@ TOO_MANY_READS = (
     f"This server has reached today's limit for reading files ({HOUSE_AI_READS_PER_DAY}). Try "
     "again tomorrow, or use a file in DMbot's numbered list, which has no limit."
 )
-TOO_BIG = "That file is too big. Send just the house-rules part (up to 10 MB). Nothing was changed."
+_MB = 1024 * 1024
+# The words name the limits in force, so a changed limit changes them (#4068).
+TOO_BIG = (
+    f"That file is too big. Send just the house-rules part (up to {MAX_DOCUMENT_BYTES // _MB} MB)."
+    " Nothing was changed."
+)
+TOO_BIG_PDF = (
+    f"That PDF is too big. Send just the house-rules part (up to {MAX_PDF_BYTES // _MB} MB)."
+    " Nothing was changed."
+)
+WORKING = "⏳ Working on it… a few seconds."
+STUCK = " The card above may stay greyed out: press 🔄 Compare now to start again."
 SHARING = " Check that sharing is set to “Anyone with the link”, then press 🔄 Compare now."
-DEFER_AT = 5  # more than this many changes: answer Discord first, then do them
 BIG_REMOVALS = 6  # this many removals, or more than half of DMbot's rules, turns Accept all off
 LABELS = {
     "all": ("Accept all changes", "✅", discord.ButtonStyle.primary),
@@ -296,10 +306,15 @@ class HouseSyncButton(
             await press(interaction, self.guild_id, self.key, self.action, self.n)
         except Exception:
             log.exception("A house-rules file button failed")
-            if interaction.response.is_done():
-                await interaction.followup.send(FAILED, ephemeral=True)
-            else:
-                await interaction.response.send_message(FAILED, ephemeral=True)
+            put_back = await _restore(interaction)  # the card goes back to what it was, buttons on
+            words = FAILED if put_back else FAILED + STUCK
+            try:
+                if interaction.response.is_done():
+                    await interaction.followup.send(words, ephemeral=True)
+                else:
+                    await interaction.response.send_message(words, ephemeral=True)
+            except discord.HTTPException:  # (the press has expired: nothing more can be said)
+                log.warning("A house-rules failure message could not be sent")
 
 
 async def _show(interaction: discord.Interaction, text: str, view: discord.ui.View | None) -> None:
@@ -307,6 +322,8 @@ async def _show(interaction: discord.Interaction, text: str, view: discord.ui.Vi
     first (a long job), through the original response."""
     if interaction.response.is_done():
         await interaction.edit_original_response(content=text, view=view)
+        # The card is replaced for good: a failure after this must not put the old one back over it.
+        interaction.extras.pop("hrs_before", None)
     else:
         await interaction.response.edit_message(content=text, view=view, allowed_mentions=NO_PINGS)
 
@@ -319,11 +336,41 @@ def _origin(pending: Pending) -> tuple[str, str | None]:
     return "upload", pending.file_name
 
 
-async def _answer_long_job(interaction: discord.Interaction, how_many: int) -> None:
-    """Many changes take a while (each is its own step in the database), and Discord waits
-    3 seconds: answer first."""
-    if how_many > DEFER_AT and not interaction.response.is_done():
-        await interaction.response.defer()
+async def _working(interaction: discord.Interaction) -> None:
+    """Show at once that the press was heard (every wait shows that DMbot is working, CLAUDE.md):
+    the card stays as it was with "Working on it" under it and its buttons off, so nothing is
+    pressed twice. It is also the answer Discord waits 3 seconds for, which the AI check that
+    follows could miss. The card as it was is kept, so a failure can put it back (`_restore`)."""
+    message = interaction.message
+    if interaction.response.is_done() or message is None:
+        return
+    interaction.extras["hrs_before"] = (
+        message.content,
+        discord.ui.View.from_message(message, timeout=None),
+    )
+    view = discord.ui.View.from_message(message, timeout=None)
+    for child in view.children:
+        if isinstance(child, discord.ui.Button):
+            child.disabled = True
+    # (the card is cut to make room, so the working line is never the part that is lost)
+    card = fit_message(message.content, limit=TEXT_MAX - len(WORKING) - 2)
+    text = f"{card}\n\n{WORKING}"
+    await interaction.response.edit_message(content=text, view=view, allowed_mentions=NO_PINGS)
+
+
+async def _restore(interaction: discord.Interaction) -> bool:
+    """After a failure, put the card back as it was with its buttons on, so the DM can press again.
+    False only when the card was greyed out and could not be put back; the failure's own message
+    says so then. It is sent after this, never above a card still greyed out."""
+    before = interaction.extras.pop("hrs_before", None)
+    if before is None:
+        return True  # (nothing was greyed out)
+    try:
+        await interaction.edit_original_response(content=before[0], view=before[1])
+    except discord.HTTPException:
+        log.warning("A house-rules card could not be put back after a failure")
+        return False
+    return True
 
 
 async def _finish(interaction: discord.Interaction, key: str, pending: Pending) -> None:
@@ -401,7 +448,7 @@ async def press(
             await _show(interaction, f"📄 {pending.summary}\n{note}", None)
         elif action in ("all", "rest"):
             todo = pending.items[pending.index :]
-            await _answer_long_job(interaction, len(todo))
+            await _working(interaction)
             done = await house_file_sync.apply(
                 store,
                 guild_id,
@@ -417,6 +464,7 @@ async def press(
             await _finish(interaction, key, pending)
         else:  # "accept" or "skip": the item under review
             if action == "accept":
+                await _working(interaction)
                 one = [pending.items[pending.index]]
                 done = await house_file_sync.apply(
                     store,

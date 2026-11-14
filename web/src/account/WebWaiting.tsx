@@ -8,8 +8,12 @@
 // is read again after, so what shows is always the API's own.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { handBracket, handKeeps } from "../content/hand-over-words";
 import { waitingWords as w } from "../content/web-waiting";
 import { ApiError, type AccountApi, type Waiting, type WaitingAnswer, type WaitingLook } from "./api";
+import { currentItem, itemDomId, openItem, pairFromItem } from "./itemLink";
+import WaitingBulk from "./WaitingBulk";
+import { itemWords } from "../content/item-words";
 import WorkProgress from "./WorkProgress";
 
 /** A session's day for a person ("17 October"), from Unix seconds, the same in every time zone. */
@@ -39,9 +43,14 @@ function waitShown(sending: { since: number; stage: string; keepAll: boolean; lo
 /** Capitalises a line that opens a sentence, so "she grew up with Rook" reads "She grew up with Rook". */
 const startCap = (line: string): string => line.charAt(0).toUpperCase() + line.slice(1);
 
+/** The bracket for an item that changed hands, "Claude sold it", or "" for a plain connection or a previous holder the page cannot name. */
+const bracketOf = (b: Waiting["backstory"][number]): string => (b.handOver && b.handOverName ? handBracket(b.handOver, b.handOverName) : "");
+const handOf = bracketOf; // (no switch: the fields only arrive with the door that sends them, 0436)
 const KEEP_ALL_MAX = 50; // the API keeps at most this many named in one Keep all
 
-type Said = { ok: boolean; text: string; n: number } | null;
+type Said = { ok: boolean; text: string; n: number; more?: string } | null;
+/** What an answer said back: how many it kept, and whether the bot showed or kept hidden the connection (#3974, #3986). */
+type Answered = { kept?: number; shown?: number; held?: number; scene?: number; split?: number };
 
 const errorWords = (error: unknown): string => {
   if (error instanceof ApiError) return w.errors[error.kind] ?? w.errors.other!;
@@ -62,8 +71,15 @@ export default function WebWaiting({
   const [failed, setFailed] = useState(false);
   const [sending, setSending] = useState<{ since: number; stage: string; keepAll: boolean; look: WaitingLook | null } | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
+  // A private message's "Open on the website" names one waiting item (#3663): it is opened once the list is here, or the page
+  // says it has been answered (here or in Discord).
+  const wanted = useRef(((first) => (first !== null && pairFromItem(first) === null ? first : null))(currentItem())); // (a pair of names is a line: the graph opens that)
+  const [answered, setAnswered] = useState(false);
   const shown = useRef(campaignRef);
   const [said, setSaid] = useState<Said>(null);
+  const [bulkOn, setBulkOn] = useState(false); // an "All true" / "All secret" press is on: every own button waits
+  // The claim whose "Which one?" pick can still be taken back (#3463): only the latest pick offers Undo.
+  const [undo, setUndo] = useState<string | null>(null);
   const counter = useRef(0);
   const latest = useRef(0);
   // A second tap before the page redraws must not send a second answer.
@@ -89,6 +105,15 @@ export default function WebWaiting({
   }
 
   useEffect(() => {
+    if (wanted.current === null || list === null) return;
+    const item = wanted.current;
+    wanted.current = null; // (once: later reads never pull focus back)
+    setTimeout(() => {
+      if (!openItem(item)) setAnswered(true);
+    }, 0);
+  }, [list]);
+
+  useEffect(() => {
     shown.current = campaignRef;
     setList(null);
     setSaid(null);
@@ -98,16 +123,21 @@ export default function WebWaiting({
 
   async function send(
     answer: WaitingAnswer,
-    ok: string | ((kept?: number) => string),
+    ok: string | ((got: Answered) => string),
     stage: string = w.savingStage,
   ): Promise<void> {
     if (!api.answerWaiting || inFlight.current) return;
     inFlight.current = true;
+    setUndo(null);
     setSending({ since: Math.floor(Date.now() / 1000), stage, keepAll: answer.action === "keep_all", look: null });
     setSaid(null);
     try {
       const got = await api.answerWaiting(campaignRef, answer, (look) => setSending((now) => (now ? { ...now, look } : now)));
-      setSaid({ ok: true, text: typeof ok === "function" ? ok(got.kept) : ok, n: ++counter.current });
+      // A yes on one connection says whether it was shown to the players or kept hidden (the second line).
+      const more = answer.kind === "claim" && answer.action === "confirm"
+        ? got.shown ? w.shownOne : got.held ? w.heldOne : got.scene ? w.sceneOne : got.split ? w.splitOne : undefined
+        : undefined;
+      setSaid({ ok: true, text: typeof ok === "function" ? ok(got) : ok, n: ++counter.current, ...(more ? { more } : {}) });
       onChanged?.();
     } catch (error) {
       setSaid({ ok: false, text: errorWords(error), n: ++counter.current });
@@ -135,7 +165,7 @@ export default function WebWaiting({
     );
   if (!list) return null;
 
-  const busy = sending !== null;
+  const busy = sending !== null || bulkOn;
   const { counts } = list;
   const cut = list.claims.length < counts.claims || list.backstory.length < counts.backstory;
   // The DMbot's-check lines below are DM-only by the callers: Web.tsx draws this part for a DM alone, and the API
@@ -163,13 +193,39 @@ export default function WebWaiting({
       </p>
       {counts.all > 0 && <p class="small">{w.intro}</p>}
       {cut && <p class="small">{w.more}</p>}
+      {answered && (
+        <p class="note" role="status">
+          {itemWords.answered}
+        </p>
+      )}
 
       <p class={said?.ok ? "ok" : "visually-hidden"} role="status">
         {said?.ok ? <span key={said.n}>{said.text}</span> : ""}
       </p>
+      {said?.ok && said.more ? (
+        <p class="ok" role="status">
+          <span key={`${said.n}-more`}>{said.more}</span>
+        </p>
+      ) : null}
       <p class={said && !said.ok ? "warn" : "visually-hidden"} role="alert">
         {said && !said.ok ? <span key={said.n}>{said.text}</span> : ""}
       </p>
+      {undo && said?.ok && (
+        <p>
+          <button
+            type="button"
+            class="button secondary"
+            disabled={busy}
+            onClick={() => {
+              const id = undo;
+              setUndo(null);
+              void send({ kind: "claim", action: "unpick", id }, w.tiesUndone);
+            }}
+          >
+            {w.tiesUndo}
+          </button>
+        </p>
+      )}
       {sending && (() => {
         const wait = waitShown(sending);
         return (
@@ -191,7 +247,7 @@ export default function WebWaiting({
           <h4>{w.whichHeading}</h4>
           <p class="small">{w.whichNote}</p>
           {names.map((q) => (
-            <div key={q.id} class="panel">
+            <div key={q.id} class="panel" id={itemDomId(q.id)} tabIndex={-1}>
               <p>
                 <strong>{w.whichQuestion(q.word)}</strong>
               </p>
@@ -241,7 +297,7 @@ export default function WebWaiting({
           <h4>{w.pronounHeading}</h4>
           <p class="small">{w.pronounNote}</p>
           {pronouns.map((q) => (
-            <div key={q.id} class="panel">
+            <div key={q.id} class="panel" id={itemDomId(q.id)} tabIndex={-1}>
               <p>
                 <strong>{w.pronounQuestion(q.word)}</strong>
               </p>
@@ -292,12 +348,83 @@ export default function WebWaiting({
         </div>
       )}
 
-      {list.claims.length > 0 && (
+      {list.claims.some((c) => c.choices?.length) && (
+        <div class="stack">
+          <h4>{w.tiesHeading}</h4>
+          <p class="small">{w.tiesNote}</p>
+          {list.claims
+            .filter((c) => c.choices?.length)
+            .map((c) => (
+              <div key={c.id} class="panel" id={itemDomId(c.id)} tabIndex={-1}>
+                <p id={`wc-${c.id}`}>{c.statement}</p>
+                <p class="small muted">{w.tiesWhy}</p>
+                {typeof c.at === "number" && c.at > 0 && <p class="muted small">{w.saidAt(sessionDay(c.at))}</p>}
+                <p class="small">{w.tiesPickHelp}</p>
+                {c.choices?.map((q) => (
+                  <div key={q.side} class="stack">
+                    <p>
+                      <strong>{w.tiesQuestion(q.words)}</strong>
+                    </p>
+                    <div class="row">
+                      {q.entries.map((e) => (
+                        <button
+                          key={e.id}
+                          type="button"
+                          class="button"
+                          disabled={busy}
+                          aria-describedby={`wc-${c.id}`}
+                          onClick={() =>
+                            void send({ kind: "claim", action: "pick", id: c.id, side: q.side, entity: e.id }, () => {
+                              setUndo(c.id);
+                              return w.done.tiesPick;
+                            })
+                          }
+                        >
+                          {w.tiesPick(e.name, e.tag)}: {e.note || w.tiesNoNote}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                ))}
+                <div class="row">
+                  <button
+                    type="button"
+                    class="button secondary"
+                    disabled={busy}
+                    aria-describedby={`wc-${c.id}`}
+                    onClick={() => void send({ kind: "claim", action: "reject", id: c.id }, w.done.tiesNeither)}
+                  >
+                    {w.tiesNeither}
+                  </button>
+                </div>
+                <p class="small muted">{w.tiesNeitherHelp}</p>
+              </div>
+            ))}
+        </div>
+      )}
+
+      {list.claims.some((c) => !c.choices?.length) && (
         <div class="stack">
           <h4>{w.claimsHeading}</h4>
           <p class="small">{w.claimsNote}</p>
-          {list.claims.map((c) => (
-            <div key={c.id} class="panel">
+        </div>
+      )}
+      {/* Outside the claims list, so a press's summary and its "Undo all" stay after the answered claims have left it. */}
+      <WaitingBulk
+        api={api}
+        campaignRef={campaignRef}
+        claims={list.claims.filter((c) => !c.choices?.length)}
+        locked={sending !== null}
+        onRunning={setBulkOn}
+        onChanged={async () => {
+          await read();
+          onChanged?.();
+        }}
+      />
+      {list.claims.some((c) => !c.choices?.length) && (
+        <div class="stack">
+          {list.claims.filter((c) => !c.choices?.length).map((c) => (
+            <div key={c.id} class="panel" id={itemDomId(c.id)} tabIndex={-1}>
               <p id={`wc-${c.id}`}>{c.statement}</p>
               {typeof c.at === "number" && c.at > 0 && <p class="muted small">{w.saidAt(sessionDay(c.at))}</p>}
               <div class="row">
@@ -313,7 +440,7 @@ export default function WebWaiting({
                 {c.canSecret && (
                   <button
                     type="button"
-                    class="button secondary"
+                    class="button secret"
                     disabled={busy}
                     aria-describedby={`wc-${c.id}`}
                     onClick={() =>
@@ -343,7 +470,7 @@ export default function WebWaiting({
           <h4>{w.backstoryHeading}</h4>
           <p class="small">{w.backstoryNote}</p>
           {uploads.map((u) => {
-            const ready = u.items.filter((b) => b.ready);
+            const ready = u.items.filter((b) => b.ready && !handOf(b));
             const ids = ready.slice(0, KEEP_ALL_MAX).map((b) => b.id);
             const left = ready.length - ids.length;
             return (
@@ -357,7 +484,7 @@ export default function WebWaiting({
                       disabled={busy}
                       onClick={() =>
                         void send({ kind: "backstory", action: "keep_all", ids },
-                          (kept) => (left > 0 && kept !== undefined ? w.keepAllCut(kept, left) : w.kept(kept)),
+                          (got) => (left > 0 && got.kept !== undefined ? w.keepAllCut(got.kept, left) : w.kept(got.kept)),
                           w.keepingStage(ids.length),
                         )
                       }
@@ -367,11 +494,12 @@ export default function WebWaiting({
                   </div>
                 )}
                 {u.items.map((b) => (
-                  <div key={b.id} class="panel">
-                    <p id={`wb-${b.id}`}>{`${b.subject} ${b.how} ${b.object}`}</p>
+                  <div key={b.id} class="panel" id={itemDomId(b.id)} tabIndex={-1}>
+                    <p id={`wb-${b.id}`}>{`${b.subject} ${b.how} ${b.object}`}{handOf(b) ? ` (${handOf(b)})` : ""}</p>
                     {b.check && <p class="small muted">{w.checkLine(b.check)}</p>}
                     {b.quote && <p class="muted small">“{b.quote}”</p>}
                     {b.secret && <p class="small">{w.secretNote}</p>}
+                    {handOf(b) && b.ready && <p class="small">{handKeeps(b.handOver!, b.handOverName!, b.secret)}</p>}
                     {b.ready ? (
                       <div class="row">
                         <button

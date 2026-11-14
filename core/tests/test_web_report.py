@@ -6,6 +6,7 @@ Invented names throughout."""
 from __future__ import annotations
 
 import json
+import unittest
 from typing import Any
 from unittest.mock import patch
 
@@ -131,6 +132,34 @@ class Reading(Base):
         with self.assertRaises(RecapError) as err:
             await report.read_report(self.web, who or self.session, ref or self.cref, at)
         return err.exception.code
+
+
+class TheWords(unittest.TestCase):
+    """The pure part: a connection as one line, by its subject's kind (#3368, #3363)."""
+
+    def rel(self, subject: str, **kw: Any) -> dict[str, Any]:
+        return {
+            "subject": subject,
+            "predicate": "located_in",
+            "detail": "",
+            "object": "Far Hall",
+            **kw,
+        }
+
+    def test_a_character_is_never_in_a_place_but_a_place_is(self) -> None:
+        self.assertEqual(
+            report._words(self.rel("Rook", subjectKind="npc")), "Rook was last seen in Far Hall"
+        )
+        self.assertEqual(
+            report._words(self.rel("Rook", subjectKind="player_character", detail="lives in")),
+            "Rook lives in Far Hall",
+        )
+        self.assertEqual(
+            report._words(self.rel("Brass Ford", subjectKind="place")), "Brass Ford is in Far Hall"
+        )
+
+    def test_a_connection_with_no_kind_keeps_the_old_words(self) -> None:
+        self.assertEqual(report._words(self.rel("Rook")), "Rook is in Far Hall")
 
 
 class TheReport(Reading):

@@ -464,7 +464,8 @@ class TheDmsPage(Base):
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
             cur = await conn.execute(
-                "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, %s, NULL) AS r",
+                "SELECT dmbot_import_store(%s, %s, %s, %s, %s, %s::jsonb, %s, NULL,"
+                " '[]'::jsonb, 6) AS r",
                 (
                     THURSDAY.id,
                     self.one.id,
@@ -508,6 +509,32 @@ class TheDmsPage(Base):
         self.assertIsInstance(read["serverNow"], int)
         listed = await list_recaps(self.web, self.session)
         self.assertTrue(all("serverNow" in r for r in listed))
+
+    async def test_the_recap_view_carries_the_posting_progress_and_a_refusal_clears_on_an_edit(
+        self,
+    ) -> None:
+        """#3355: `postingProgress` is null with nothing under way, `posting_check` while a post
+        waits for the bot, and `failed` with a code (never the sentence) after a refusal; editing
+        the text or pressing Post again clears an old refusal."""
+        from dmbot.recaps import progress as rp
+
+        await self.speaker_agreed()
+        self.assertIsNone((await read_recap(self.web, self.session, self.ref))["postingProgress"])
+        posting = await decide(self.web, self.session, self.ref, "post")
+        self.assertEqual(posting["postingProgress"]["stage"], "posting_check")
+        self.assertEqual(posting["postingProgress"]["state"], "running")
+        async with self.db.guild(THURSDAY.id) as conn:  # the bot refused it
+            await conn.execute(
+                "UPDATE recap_jobs SET status = 'draft', last_error = %s",
+                (rp.POST_NOTES["secret_name"],),
+            )
+        refused = (await read_recap(self.web, self.session, self.ref))["postingProgress"]
+        self.assertEqual((refused["state"], refused["reason"]), ("failed", "secret_name"))
+        self.assertNotIn(rp.POST_NOTES["secret_name"], str(refused))
+        edited = await edit_recap(
+            self.web, self.session, self.ref, summary="A new line.", housekeeping=[]
+        )
+        self.assertIsNone(edited["postingProgress"])  # an edit clears the old refusal
 
     async def test_the_recap_view_carries_progress_for_a_recap_being_made_and_not_after(
         self,
@@ -625,11 +652,18 @@ class TheDmsPage(Base):
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
             for column in (
                 "leased_to", "decided_at", "updated_at", "attempt", "errors", "next_at",
-                "beats", "problems", "last_error", "restarts",
+                "beats", "problems", "restarts",
             ):  # fmt: skip
                 with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                     async with conn.transaction():
                         await conn.execute(f"UPDATE recap_jobs SET {column} = {column}")
+
+    async def test_the_website_may_clear_a_refusal_but_nothing_else_of_the_workers(self) -> None:
+        """#3355: `last_error` is writable only so an edit or a new Post can blank the old
+        "couldn't post" sentence; the lease columns above stay the worker's."""
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            await conn.execute("UPDATE recap_jobs SET last_error = last_error")
 
     async def test_the_website_cannot_write_the_bots_columns(self) -> None:
         async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
@@ -742,6 +776,28 @@ class TheRoutes(Base):
         self.assertEqual(got.status_code, 200, got.text)
         self.assertNotIn(BOB.email, got.text)  # never another DM's address (#2334)
         return dict(got.json()["recapEmail"])
+
+    async def test_try_again_with_no_body_retries_the_draft_it_does_not_start_over(self) -> None:
+        """#3387: the page's "Try again (2 left)" posts to `/again` with no body. That path was
+        taken by "make a new one" (#2608), which answered 409 `needs_confirm`, and the page said
+        "Something went wrong on our side". No body is the retry of a failed or finished draft."""
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_jobs SET state = 'failed'")
+        got = await self.client.post(f"/me/recaps/{self.ref}/again")
+        self.assertEqual(got.status_code, 200, got.text)
+        self.assertEqual((got.json()["state"], got.json()["triesLeft"]), ("queued", 1))
+        job = await self.state(self.one.id)
+        self.assertEqual((job.tries, job.state), (1, "queued"))
+        # "Make a new one" still sends its body and still asks first.
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute("UPDATE recap_jobs SET state = 'ready'")
+        asked = await self.client.post(f"/me/recaps/{self.ref}/again", json={"replace": False})
+        self.assertEqual(asked.status_code, 409)  # (this fixture has no lines: `no_lines`)
+        self.assertIn(asked.json()["error"], ("needs_confirm", "no_lines"))
+        junk = await self.client.post(f"/me/recaps/{self.ref}/again", json=[1])
+        self.assertEqual((junk.status_code, junk.json()["error"]), (422, "bad_action"))
+        job = await self.state(self.one.id)
+        self.assertEqual(job.tries, 1)  # neither of those spent a try
 
     async def test_approve_unchecked_answers_in_the_pages_words(self) -> None:
         from dmbot.recaps import critics as cr
@@ -954,7 +1010,10 @@ class TheAudio(Base):
     async def test_the_audio_under_way_carries_its_progress_in_the_shared_shape(self) -> None:
         await self.approved_with_audio()
         await self.store.set_audio(THURSDAY.id, self.one.id, 100, audio="queued")
-        await self.store.set_audio_progress(
+        # The page tells "running" from "stalled" against the real clock, so the progress is stamped
+        # by the real clock too. `self.store` stamps with `NOW`, read when this file was imported:
+        # in a long run that is more than the stall limit ago and the job read as stalled (#3231).
+        await RecapStore(self.db, clock=time.time).set_audio_progress(
             THURSDAY.id, self.one.id, 100, stage="voice", done=2, total=3
         )
         audio = (await self.client.get(f"/me/recaps/{self.ref}")).json()["audio"]
@@ -2073,7 +2132,7 @@ def fake_bot(job: Job | None, *, allowed: bool = True, secrets: list[str] | None
         to_post=AsyncMock(return_value=[("c" * 32, 100)]),
     )
     campaign = SimpleNamespace(
-        id="c" * 32, dmbchat_channel_id=55, dm_screen_channel_id=66,
+        id="c" * 32, table_chat_id=55, dm_screen_channel_id=66, dm_bot_channel_id=None,
         recaps_text=True, recaps_audio=True, recaps_email=True,
     )  # fmt: skip
     bot = SimpleNamespace(
@@ -2090,6 +2149,7 @@ def fake_bot(job: Job | None, *, allowed: bool = True, secrets: list[str] | None
         ),
     )
     bot.recap_audio_files = SimpleNamespace(present=lambda g, c, s: present or {})
+    bot._upkeep_channel = lambda camp: DMBot._upkeep_channel(cast(Any, bot), camp)
     bot._post_one_recap = lambda g, c, a: DMBot._post_one_recap(cast(Any, bot), g, c, a)
     bot._recap_audio_files = lambda g, camp, j, ch: DMBot._recap_audio_files(
         cast(Any, bot), g, camp, j, ch

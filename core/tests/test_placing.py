@@ -712,6 +712,22 @@ class ReadersAndWriters(Placing):
         mine = [b for b in await self.beliefs_of(placed.relation_id) if b["kind"] == "pc"]
         self.assertEqual([b["confidence"] for b in mine], [0.5])
 
+    async def test_keeping_a_waiting_carrying_settles_the_items_whereabouts(self) -> None:
+        # (#3375) a guess waited, a place then kept the item; the DM keeping the reading makes the
+        # carrying live, and the item has one current whereabouts
+        chest = await self.add("Old Chest", type="place")
+        await self.place(
+            await self.waiting_reading(belief("pc:Mira", "theory", 0.5), "player_said")
+        )
+        await self.relate(self.sword, "located_in", chest, status="confirmed", detail="is kept in")
+        await self.place(await self.waiting_reading(belief("party", "revealed_fact", 1.0)))
+        held = {
+            r["predicate"]: r["detail"]
+            for r in await self.connections()
+            if r["status"] == "confirmed"
+        }
+        self.assertEqual(held, {"carries": "", "located_in": "was kept in"})
+
     async def test_a_theory_does_not_raise_flags_on_facts_and_facts_do_not_flag_it(self) -> None:
         # a place can be inside only one place; a theory of a second is no clash with the fact
         keep, inn, hall = [await self.add(n, type="place") for n in ("Keep", "Inn", "Hall")]

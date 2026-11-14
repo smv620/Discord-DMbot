@@ -25,7 +25,7 @@ def update(n: int) -> rule_sets.Update:
 
 
 def campaign() -> Any:
-    return SimpleNamespace(guild_id=1, id=CAMPAIGN, dm_user_ids=[DM])
+    return SimpleNamespace(guild_id=1, id=CAMPAIGN, dm_user_ids=[DM], dm_accounts=[DM])
 
 
 def follow_at(version: int, previous: int | None = 3) -> rule_sets.Follow:

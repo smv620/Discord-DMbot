@@ -71,6 +71,10 @@ class Problem(enum.Enum):
         "DMbot couldn't send an email (the mail service refused it). Check the mail settings in "
         "the server's .env and the mail provider's dashboard."
     )
+    DISK_FULL = (
+        "The server's disk is almost full. Free some space on it before the database stops. "
+        "Details: issue #4075 on GitHub."
+    )
     DATABASE_DOWN = (
         "DMbot couldn't start its database (it wouldn't connect, or its role or tables were "
         "wrong). Check that Postgres is running and that DATABASE_URL in .env is right."

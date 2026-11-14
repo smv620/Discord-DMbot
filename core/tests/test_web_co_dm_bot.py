@@ -16,6 +16,7 @@ from dmbot.campaigns import Campaign, CampaignError
 from dmbot.campaigns.store import LAST_DM, MAX_DMS, TOO_MANY_DMS
 from dmbot.dm_screen import game_masters
 from dmbot.dm_screen import web_settings as ws
+from dmbot.ui import dm_links
 from dmbot.web import campaign_settings
 from tests.test_recap_web import BOB
 from tests.test_web_api import ALICE
@@ -313,10 +314,17 @@ class TheMessage(Settings):
 
         member = SimpleNamespace(send=send)
         guild = SimpleNamespace(
-            name="Thursday", get_member=lambda uid: member, fetch_member=AsyncMock()
+            id=5, name="Thursday", get_member=lambda uid: member, fetch_member=AsyncMock()
         )
         self.assertTrue(await game_masters.tell_new(cast(Any, guild), self.one, DANA, "Alice"))
         self.assertEqual(len(sent), 1)
+        self.assertIs(sent[0][1]["view"], discord.utils.MISSING)  # no website address configured
+        dm_links.configure_site("https://getdmbot.com")
+        self.addCleanup(dm_links.configure_site, "")
+        await game_masters.tell_new(cast(Any, guild), self.one, DANA, "Alice")
+        links = [c.url for c in sent[1][1]["view"].children]
+        self.assertEqual(links, [f"https://getdmbot.com/account/campaigns/5.{self.one.id}"])
+        sent.pop()
         self.assertIn("This doesn't start any recording of you.", sent[0][0])
         self.assertIn("allowed_mentions", sent[0][1])
         failing = SimpleNamespace(

@@ -147,6 +147,24 @@ export const featureSteps: FeatureStep[] = [
       { name: "Resume now", file: "dm_screen/table_pause.py" },
     ],
   },
+  {
+    audience: "gameMaster",
+    whatsNew: "A script of your session",
+    text: "After a session, press 📜 Make a script. DMbot writes a copy of the transcript with every \"he\", \"it\" and \"that one\" named in brackets. It tells you what it will cost before it starts and does nothing until you say yes, and only the campaign's game masters can read it. It comes with a paid campaign.",
+    names: [
+      { name: "Make a script", file: "ui/theatre_button.py" },
+    ],
+  },
+  {
+    audience: "gameMaster",
+    whatsNew: "Split a list of names, or say it is a group",
+    text: "When a name in Names to check is really several names, like \"Mira and Cerric\", press ✂️ These are separate names and DMbot splits it into one name for each part; the new names wait in the list for your answer. If DMbot suggests a group the name may belong to, press 👥 Yes, that group; if not, press 👥 They're a group and type what the group is called. Undo takes it back until you answer one of the new names.",
+    names: [
+      { name: "✂️ These are separate names", file: "ui/names.py" },
+      { name: "👥 Yes, that group", file: "ui/names.py" },
+      { name: "👥 They're a group", file: "ui/names.py" },
+    ],
+  },
 ];
 
 /** The steps for one audience that are live now, in order. */

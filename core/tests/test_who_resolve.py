@@ -164,6 +164,57 @@ class TheAnswers(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pick.candidates, ("Mara", "Bram"))  # (never the named end, Ken)
         self.assertEqual(pick.word, "She")
 
+    def test_a_player_character_comes_first_in_the_question(self) -> None:
+        out = who_resolve.Settled()
+        who_resolve._use(
+            unsettled_of(), asked(("Bram", 55), ("Mara", 45), ("Ken", 30)), out, players={"mara"}
+        )
+        (pick,) = out.picks
+        self.assertEqual(pick.candidates, ("Mara", "Bram"))
+
+    def test_with_the_check_off_an_open_pronoun_naming_a_player_character_waits(self) -> None:
+        out = who_resolve.pc_picks([unsettled_of()], ["Mara", "Ken", "Bram"], {"mara"})
+        (pick,) = out.picks
+        self.assertEqual(
+            pick.candidates, ("Mara", "Bram")
+        )  # (the player character first; never Ken)
+        self.assertEqual((out.unresolved, out.counts["asked"]), (0, 1))
+        self.assertEqual(pick.decided, "who-is-it: not checked")
+
+    def test_a_player_character_that_is_only_the_named_end_is_no_reason_to_wait(self) -> None:
+        out = who_resolve.pc_picks([unsettled_of()], ["Mara", "Ken"], {"ken"})  # (Ken is named)
+        self.assertEqual((out.picks, out.unresolved), ([], 1))
+
+    def test_a_player_character_the_passage_does_not_name_does_not_reorder_the_check(self) -> None:
+        out = who_resolve.Settled()
+        who_resolve._use(
+            unsettled_of(), asked(("Bram", 55), ("Mara", 45), ("Ken", 30)), out, players={"zed"}
+        )
+        (pick,) = out.picks
+        self.assertEqual(pick.candidates, ("Bram", "Mara"))  # (the check's own order)
+
+    def test_the_check_off_holds_an_open_pronoun_only_when_there_are_player_characters(
+        self,
+    ) -> None:
+        from dmbot.memory import lore_read
+
+        for players, held in ((frozenset({"mara"}), 1), (frozenset(), 0)):
+            stats = lore_read.Stats(unsettled=[] if players else None)
+            lines = reply(sister())
+            bg.read_connections(lines, TEXT, set(), stats.dropped, None, stats.unsettled)
+            self.assertEqual(len(stats.unsettled or []), held)
+            self.assertEqual(stats.dropped["not_in_text"], 1 - held)
+
+    def test_with_the_check_off_any_other_open_pronoun_is_left_out_and_counted(self) -> None:
+        out = who_resolve.pc_picks([unsettled_of()], ["Mara", "Ken"], {"bram"})
+        self.assertEqual((out.picks, out.unresolved), ([], 1))
+
+    def test_with_the_check_off_at_most_twenty_wait_and_the_rest_are_counted(self) -> None:
+        many = [unsettled_of() for _ in range(who_resolve.PC_PICKS_PER_READ + 3)]
+        out = who_resolve.pc_picks(many, ["Mara", "Ken"], {"mara"})
+        self.assertEqual(len(out.picks), who_resolve.PC_PICKS_PER_READ)
+        self.assertEqual((out.counts["over_cap"], out.unresolved), (3, 3))
+
     def test_a_doubt_with_only_one_name_to_offer_asks_with_that_name_and_someone_else(self) -> None:
         out = who_resolve.Settled()
         who_resolve._use(unsettled_of(), asked(("Mara", 50), (NOT_LISTED, 30), checked=False), out)
@@ -396,7 +447,7 @@ class ThePath(NamesTest):
         queued, lost = await self.run_links(Scripted([(NOT_LISTED, 95)], NOT_LISTED))
         self.assertEqual((queued, lost["not_in_text"]), (1, 0))
         ((entity, label),) = await self.memory.unnamed(GUILD, self.campaign.id)
-        self.assertEqual(label, "someone (name unknown)")
+        self.assertEqual(label, "unnamed - someone")
         self.assertFalse(entity.hidden_from_players)
 
     async def test_two_pronouns_for_nobody_are_two_people_never_one_invented_one(self) -> None:
@@ -420,6 +471,25 @@ class ThePath(NamesTest):
     async def test_the_check_off_changes_nothing_but_the_one_count(self) -> None:
         queued, lost = await self.run_links(None)
         self.assertEqual((queued, dict(lost)), (0, {"not_in_text": 1}))
+
+    async def test_the_check_off_with_a_player_character_in_it_waits_as_a_question(self) -> None:
+        lost: Counter[str] = Counter()
+        await ui_bg.queue_links(
+            self.bot, self.memory, self.campaign, [], [[]], set(), dropped=lost,
+            unsettled=[unsettled_of()], players={"mara"},
+        )  # fmt: skip
+        self.assertEqual(lost["which_waiting"], 1)
+        (q,) = await self.store.which_waiting(GUILD, self.campaign.id)
+        self.assertEqual([name for _, name in q.candidates], ["Mara"])
+        self.assertEqual(lost["not_in_text"], 0)
+
+    async def test_the_check_off_without_a_player_character_changes_nothing(self) -> None:
+        lost: Counter[str] = Counter()
+        await ui_bg.queue_links(
+            self.bot, self.memory, self.campaign, [], [[]], set(), dropped=lost,
+            unsettled=[unsettled_of()], players={"bram"},
+        )  # fmt: skip
+        self.assertEqual(dict(lost), {"not_in_text": 1})
 
     async def test_a_doubt_with_one_name_is_a_question_with_someone_else(self) -> None:
         await self.run_links(Scripted([("Mara", 90), (NOT_LISTED, 5)], None))
@@ -487,7 +557,7 @@ class ThePath(NamesTest):
             known_by="everyone",
         )  # fmt: skip
         ((person, label),) = await self.memory.unnamed(GUILD, self.campaign.id)
-        self.assertEqual(label, "Ken's stern mother (name unknown)")
+        self.assertEqual(label, "unnamed - Ken's stern mother")
         self.assertEqual((person.unnamed_what, person.unnamed_role), ("stern mother", "parent"))
         self.assertEqual(person.unnamed_anchor, self.ken)
         self.assertTrue(person.unseen_by_players)
@@ -495,6 +565,38 @@ class ThePath(NamesTest):
         # (she is the parent: first end; Ken is the second)
         self.assertEqual((w.subject_id, w.object_id), (person.id, self.ken))
         self.assertEqual((w.predicate, w.detail), ("kin_of", "parent"))
+
+    async def test_someone_on_their_own_with_two_ties_is_one_person(self) -> None:
+        """Owner's rule (#3736): a barmaid who warned Ken and works at the inn is kept, named on
+        her own (not hung off either), and the two lines of one read are one person (the lore
+        read gives someone on their own no role, `unnamed_read`)."""
+        await self.memory.add_names(
+            GUILD, self.campaign.id, [NewName("Three Flags Sailing", "place", CONFIRMED)],
+            source="dm",
+        )  # fmt: skip
+        links = [
+            who_resolve.UnnamedLink(
+                "Ken", False, "knows", "a barmaid with red hair warned Ken", "friendly",
+                "barmaid with red hair", False, "",
+            ),
+            who_resolve.UnnamedLink(
+                "Three Flags Sailing", False, "located_in",
+                "At the Three Flags Sailing, a barmaid with red hair", "works in",
+                "barmaid with red hair", False, "",
+            ),
+        ]  # fmt: skip
+        await ui_bg.queue_links(
+            self.bot, self.memory, self.campaign, [], [[]], set(), unnamed=links
+        )  # fmt: skip
+        ((person, label),) = await self.memory.unnamed(GUILD, self.campaign.id)
+        self.assertEqual(label, "unnamed - barmaid with red hair")
+        self.assertEqual((person.unnamed_anchor, person.unnamed_role), (None, None))
+        waiting = await self.store.waiting(GUILD, self.campaign.id)
+        self.assertEqual(
+            sorted((w.predicate, w.detail) for w in waiting),
+            [("knows", "friendly"), ("located_in", "works in")],
+        )
+        self.assertTrue(all(w.subject_id == person.id for w in waiting))  # (she reads first)
 
     async def test_a_secret_spelling_as_the_named_end_keeps_the_link_secret(self) -> None:
         await self.memory.add_names(

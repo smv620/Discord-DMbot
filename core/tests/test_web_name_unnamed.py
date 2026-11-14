@@ -58,14 +58,14 @@ class Naming(MemoryTest):
         self.assertRegex(out.result_other, r"^[0-9]{1,32}$")
         now = await self.status(self.sis)
         self.assertEqual((now.name, now.unnamed), ("Ilse Voss", False))  # a name of its own now
-        self.assertNotIn("name unknown", now.name)
+        self.assertNotIn("unnamed - ", now.name)
 
     async def test_a_name_dmbot_knows_writes_nothing_and_names_the_entry(self) -> None:
         ilse = await self.add("Ilse", status=CONFIRMED)
         out = await self.go("name", text="Ilse")
         self.assertEqual((out.error, out.result_id), (wa.KNOWN_NAME, ilse))
         self.assertEqual(out.result_other, "")
-        self.assertIn("name unknown", (await self.status(self.sis)).name)
+        self.assertIn("unnamed - ", (await self.status(self.sis)).name)
 
     async def test_more_than_one_entry_with_that_name_is_ambiguous_and_nothing_is_written(
         self,
@@ -77,7 +77,7 @@ class Naming(MemoryTest):
         )
         out = await self.go("name", text="Ilse")
         self.assertEqual((out.error, out.result_id), (wa.AMBIGUOUS, ""))
-        self.assertIn("name unknown", (await self.status(self.sis)).name)
+        self.assertIn("unnamed - ", (await self.status(self.sis)).name)
 
     async def test_gone_or_already_named_or_missing_is_gone(self) -> None:
         out = await self.go("name", "f" * 32, text="Ilse")
@@ -105,7 +105,7 @@ class Naming(MemoryTest):
         other = (await self.campaigns.create(GUILD_A, "Elsewhere", DM)).id
         out = await self.go("name", campaign_id=other, text="Ilse")
         self.assertEqual(out.error, wa.GONE)  # (the id is not in that campaign)
-        self.assertIn("name unknown", (await self.status(self.sis)).name)
+        self.assertIn("unnamed - ", (await self.status(self.sis)).name)
 
     # ---- name-join --------------------------------------------------------------------------
 
@@ -149,7 +149,7 @@ class Naming(MemoryTest):
         self.batches[named.id] = int(done.result_other)
         out = await self.go("name-undo", target_id=named.id)
         self.assertEqual(out.error, "")
-        self.assertIn("name unknown", (await self.status(self.sis)).name)
+        self.assertIn("unnamed - ", (await self.status(self.sis)).name)
 
     async def test_undo_of_a_join_brings_the_person_back(self) -> None:
         ilse = await self.add("Ilse", status=CONFIRMED)
@@ -178,7 +178,7 @@ class Naming(MemoryTest):
         self.assertEqual((await self.go("name-undo", target_id=named.id)).error, "")
         again = await self.go("name-undo", target_id=named.id)  # the same batch, undone already
         self.assertEqual((again.error, again.result_id), ("", self.sis))
-        self.assertIn("name unknown", (await self.status(self.sis)).name)
+        self.assertIn("unnamed - ", (await self.status(self.sis)).name)
 
     async def test_an_undo_without_the_batch_reader_is_gone(self) -> None:
         act = action("name-undo", self.sis, campaign_id=self.c, target_id="d" * 32)

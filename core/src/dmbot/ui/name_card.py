@@ -13,10 +13,11 @@ checks again.
 from __future__ import annotations
 
 import asyncio
+import dataclasses
 import logging
 import re
 import time
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -25,30 +26,53 @@ from discord import app_commands
 
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX
-from dmbot.memory import kin, link_edits, name_edits
+from dmbot.memory import (
+    hand_over,
+    kin,
+    link_edits,
+    name_edits,
+    next_words,
+    place_levels,
+    route_words,
+    tags,
+)
+from dmbot.memory.gate import NameGuard, safe_label
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.link_words import (
     CARD_BACK,
     CONNECTION_BACK,
     CONNECTION_WORDS,
     KIN,
+    KNOWS_HOW_BACK,
+    OLD_FEELINGS,
+    ONE_WAY_BACK,
+    back_after,
     back_words,
+    campaign_back,
     connection_words,
+    for_reader,
     link_words,
+    pair_words,
     reads_both_ways,
 )
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
+    CLASS,
     CONFIRMED,
     DM,
     DM_ONLY_TYPES,
+    LINK_LABELS,
     MERGED,
+    PLAYERS_TEXT_MAX,
     PRONOUNCED,
+    PROPOSED,
     REJECTED,
+    SPECIES,
     Alias,
     Entity,
     MemoryRuleError,
     Relation,
+    RuleLink,
     TooLateToUndo,
     Written,
     days,
@@ -57,10 +81,23 @@ from dmbot.memory.models import (
 )
 from dmbot.memory.ontology import CORE_TYPES, DISGUISED_AS, FALLBACK_PREDICATE
 from dmbot.memory.search import MAX_RESULTS, Match, find, said_lately
-from dmbot.memory.store import SAID_AS_MAX, MemoryStore
+from dmbot.memory.standing import dm_line_word
+from dmbot.memory.store import NO_LENGTH, SAID_AS_MAX, SETTING_LEVELS, MemoryStore
 from dmbot.mentions import NO_PINGS
+from dmbot.said_as import suggest as said_as_suggest
 from dmbot.transcript.respell import contains, done_note, left_note, recaps_note, undone_note
-from dmbot.ui import all_names, logic, player_id
+from dmbot.ui import (
+    all_names,
+    languages_card,
+    logic,
+    place_links,
+    place_size,
+    place_world,
+    player_id,
+    split_words,
+    told_name,
+)
+from dmbot.ui import companion as companion_ui
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
     _answer_first,
@@ -87,6 +124,8 @@ from dmbot.ui.names import (
     already_known,
     changed,
     known_as,
+    scene_line,
+    scene_of,
     sees_secrets,
     split_names,
 )
@@ -123,7 +162,7 @@ PROMISE_TO_BUTTON = "🤝 Promised to"
 PROMISE_DUE_BUTTON = "📅 Due"
 BOOK_BUTTON = "📖 In my adventure…"  # the DM says who in the adventure this is (#1715)
 DEED_BUTTON = "⚔️ Record a deed"  # a player character or the party did something (#1732)
-STANDING_BUTTON = "🤝 Standing"  # how an NPC, group or place feels about the party (#1655)
+STANDING_BUTTON = "🤝 Reputation"  # how an NPC, group or place feels about the party (#1655)
 CLUE_BUTTON = "🔒 Only some know this"  # a clue's list of who knows it (#1649)
 ALSO_CALLED = "🏷️ Also called…"  # adds another name; its own icon, not Add a name's (#393)
 NOTHING_CHANGED = (
@@ -150,22 +189,58 @@ NAME_LIMIT = 100  # what a form field may hold
 BACK = ":back"  # a "how" picked from the other name's side ("has as members…")
 
 
-def fact_words(r: Relation) -> str:
+def fact_words(r: Relation, subject_kind: str = "", *, feeling: bool = False) -> str:
     """How one fact reads between its two names. On the catch-all, the words it was said in
-    ("sworn on the ashes of") are the fact's own label (#1303); otherwise the relationship's."""
+    ("sworn on the ashes of") are the fact's own label (#1303); otherwise the relationship's.
+    `subject_kind` is the first name's kind, so a character's place reads "was last seen in",
+    never "is in" (#3363). `feeling`: the reader is the DM, who alone is told how a name feels about
+    another (#3610)."""
     if r.predicate == FALLBACK_PREDICATE and r.detail:
-        return _md(r.detail)  # transcript words: never let them format or ping
+        # transcript words: never let them format or ping. In quotes, so the table's own words are
+        # not taken for DMbot's wording (#3033); the back side reads "is linked (“…”) to".
+        return f"“{_md(r.detail)}”"
     return link_words(
-        r.predicate, r.detail, r.directional
-    )  # (family reads with its role: "is the niece of")
+        r.predicate,
+        r.detail,
+        r.directional,
+        subject_kind,
+        feeling=feeling,
+        knows_how=r.knows_how if r.predicate == "knows" else None,
+        route_state=r.route_state,  # (a journey or a plan, #4173 slice 6d)
+    )  # (family reads with its role: "is the niece of"; a knows says whether they met, #3881)
 
 
-def sentence(lookup: CampaignLookup, r: Relation) -> str | None:
-    """ "Ulfgar is a member of Frostwolf tribe", or None if either end is gone."""
+def _guard(lookup: CampaignLookup) -> NameGuard:
+    """The names this card's reader must not be told (#3153), ready to check a label against. Empty
+    for a DM, who is given the whole lookup."""
+    return NameGuard(lookup.guarded, allowed=(e.name for e in lookup.entities.values()))
+
+
+def _safe(r: Relation, guard: NameGuard) -> Relation:
+    """The connection, its own catch-all words blanked when they name an entry or a spelling the
+    reader may not be told ("swore on Veil's grave" with Veil hidden)."""
+    if r.predicate != FALLBACK_PREDICATE or not r.detail or not guard:
+        return r
+    safe = safe_label(r.detail, guard)
+    return r if safe == r.detail else dataclasses.replace(r, detail=safe)
+
+
+def sentence(lookup: CampaignLookup, r: Relation, *, feeling: bool = False) -> str | None:
+    """ "Ulfgar is a member of Frostwolf tribe", or None if either end is gone. One that reads both
+    ways says it of the two together, "Cerric and Wit are rivals" (#4154: `pair_words`, the same
+    words as the website's)."""
     subject, obj = lookup.entities.get(r.subject_id), lookup.entities.get(r.object_id)
     if subject is None or obj is None:
         return None
-    return f"{subject.name} {fact_words(r)} {obj.name}"
+    shown = _safe(r, _guard(lookup))
+    # (as this reader is shown it, as on the website: a player's old friend line is a one-way
+    # "knows", #3611)
+    predicate, detail = for_reader(shown.predicate, shown.detail, feeling=feeling)
+    if reads_both_ways(predicate, detail, r.directional, r.both_ways, r.route_state):
+        words = pair_words(predicate, _md(detail), r.knows_how if predicate == "knows" else None)
+        return f"{subject.name} and {obj.name} {words}"
+    words = fact_words(shown, subject.type, feeling=feeling)
+    return f"{subject.name} {words} {obj.name}"
 
 
 # Kinds whose "other way round" reading is not offered in the menu: Discord allows 25 options, and
@@ -174,11 +249,22 @@ def sentence(lookup: CampaignLookup, r: Relation) -> str | None:
 NO_BACK_OPTION = frozenset({"located_in", "sworn_to", "captive_of", "founded", "disguised_as"})
 
 
+# Kinds with words but not in the "How is it connected?" menu: Discord's menu holds 25 options and
+# is full. A companion travels with a player character or the party (#3176): the session readers
+# and the DM's own button propose it, not this menu.
+# Not in the generic menu: a companion's is proposed by the readers, and so are two places beside
+# each other (#4173 slice 6a), which the DM confirms like any suggestion; a place card's own control
+# for them follows (Discord's menu holds 25, and this one is full).
+NOT_IN_MENU = frozenset({"travels_with", "next_to", "route_to"})  # (route_to: 6d part 3)
+
+
 def connect_choices(name: str) -> list[tuple[str, str, str | None]]:
     """(value, label, description) for "How is it connected?": each connection from this
     name's side, each followed by the same one the other way round."""
     out: list[tuple[str, str, str | None]] = []
     for p, w in CONNECTION_WORDS.items():
+        if p in NOT_IN_MENU:
+            continue
         out.append((p, logic.shorten(f"{name} {w}…", logic.OPTION_LABEL_MAX), None))
         if p in CONNECTION_BACK and p not in NO_BACK_OPTION:
             label = logic.shorten(f"{name} {CONNECTION_BACK[p]}…", logic.OPTION_LABEL_MAX)
@@ -219,50 +305,139 @@ class Row:
     other: str  # the other name, as typed
     secret: bool
     relation: Relation
+    after: str = (
+        ""  # words after the name, for the few that read "is where **Tavin** was last seen"
+    )
+
+
+# A place's parent DMbot assumed from where the story was (#4173 slice 3): the DM's card only
+# (players never get the row), with ✅ That's right on the place's own card.
+ASSUMED_MARK = " (assumed)"
+LENGTH_READ_MARK = " (DMbot read this)"  # (the same words as a place's land or climate, #4255)
+
+
+def length_after(r: Relation) -> str:
+    """A route's stated length after its line (#4255): " · two days by cart", marked when it is
+    DMbot's read (only the DM's card ever has one: `_rows` takes it off a player's)."""
+    if r.length_words is None:
+        return ""
+    mark = LENGTH_READ_MARK if r.length_from == place_levels.READ else ""
+    return f" · {_md(r.length_words)}{mark}"
+
+
+RIGHT_BUTTON = "✅ That's right"
+RIGHT_NOTE = "📍 Noted: **{place}** is in **{parent}**."
+ONLY_DM_RIGHT = "Only the DM can say where a place is."
+USED_TO_HAVE = "used to have"  # an ended owns or carries, in the DM's edit menus (#4115)
+USED_TO_HAVE_BACK = "used to be with"
 
 
 def _rows(
-    lookup: CampaignLookup, entity_id: str, connections: list[Relation], secrets: bool
+    lookup: CampaignLookup,
+    entity_id: str,
+    connections: list[Relation],
+    secrets: bool,
+    standing: Mapping[tuple[str, str], int] | None = None,
+    *,
+    history: bool = False,
 ) -> list[Row]:
     """The connections the card shows, in its order: those that read the same together, in the
     order each reading first appears. A secret one is left out unless `secrets`. This is the one
-    list the card, Show all and the Edit a connection menu all read, so they never disagree."""
+    list the card, Show all and the Edit a connection menu all read, so they never disagree.
+    `standing`: the DM's own Reputation for pairs (`MemoryStore.dm_line_scores`), whose word wins
+    on a `knows` line (#3642); read only when `secrets`, so a player's card never shows it."""
     found: dict[str, list[Row]] = {}
+    guard = _guard(lookup)
     for r in connections:
         if r.status != CONFIRMED or (r.secret and not secrets):
             continue
+        if r.assumed and not secrets:
+            continue  # (DMbot's assumption is the DM's until they say it's right: #4173 slice 3)
+        ended_holding = r.predicate in hand_over.HELD and r.to_session_at is not None
+        if ended_holding and not history:
+            # (an item sold or stolen is no longer had (#4115): the item's own card tells it in
+            # its "How it changed hands" line, never as a holding now, on any card or Show all.
+            # The DM's edit menus pass `history`: a wrong step must stay fixable)
+            continue
+        if not secrets and r.predicate in OLD_FEELINGS:
+            r = dataclasses.replace(r, predicate="knows", detail="")  # (the DM's Reputation, #3611)
         if r.predicate == "led_to":
             continue  # shown as the "Came from" / "Led to" lines instead (#1679)
-        ahead = r.subject_id == entity_id or reads_both_ways(r.predicate, r.detail, r.directional)
+        ahead = r.subject_id == entity_id or reads_both_ways(
+            r.predicate, r.detail, r.directional, r.both_ways, r.route_state
+        )
         other = lookup.entities.get(r.object_id if r.subject_id == entity_id else r.subject_id)
         if other is None or other.status != CONFIRMED or other.id == entity_id:
             continue
+        first = lookup.entities.get(r.subject_id)  # the connection's own first name
+        subject_kind = first.type if first is not None else ""
+        shown = _safe(r, guard)  # (the words as this reader may read them; the row keeps `r`)
+        # (only the line's own side words a feeling: from the other end it reads "is known to")
+        if secrets and standing and ahead and shown.predicate == "knows":
+            word = dm_line_word(standing, r.subject_id, r.object_id, r.detail)
+            if word is not None:  # the DM's word always wins over a reader's (#3642)
+                shown = dataclasses.replace(shown, detail=word)
         words = (
-            fact_words(r)
+            fact_words(shown, subject_kind, feeling=secrets)
             if ahead
             else (
-                f"is linked (“{_md(r.detail)}”) to"
-                if r.predicate == FALLBACK_PREDICATE and r.detail
+                f"is linked (“{_md(shown.detail)}”) to"
+                if shown.predicate == FALLBACK_PREDICATE and shown.detail
                 else (
-                    (back_words(r.predicate, r.detail, r.directional) or "is connected to")
-                    if r.predicate == "kin_of"
-                    else CARD_BACK.get(r.predicate, "is connected to")
+                    (
+                        back_words(
+                            r.predicate,
+                            r.detail,
+                            r.directional,
+                            subject_kind,
+                            both_ways=r.both_ways,
+                            route_state=r.route_state,
+                        )
+                        or "is connected to"
+                    )
+                    # (and a route: "is where the party arrived by road from", #4173 slice 6d)
+                    if r.predicate in ("kin_of", "located_in", "route_to")
+                    # a two-way kind the DM made one-way: "is seen as a rival by" (#4154)
+                    else (ONE_WAY_BACK.get(r.predicate) if r.both_ways is False else None)
+                    or (KNOWS_HOW_BACK.get(r.knows_how) if r.predicate == "knows" else None)
+                    or CARD_BACK.get(r.predicate)  # (whether they met reads back too, #3881)
+                    or campaign_back(r.predicate)
+                    or "is connected to"
                 )
             )
         )
-        found.setdefault(words, []).append(Row(r.id, words, other.name, r.secret, r))
+        if ended_holding:  # (in the DM's edit menu, as what it was: never a holding now)
+            words = USED_TO_HAVE if ahead else USED_TO_HAVE_BACK
+        after = (
+            ""
+            if ahead or r.predicate != "located_in"
+            else back_after(r.predicate, r.detail, r.directional, subject_kind)
+        )
+        if not secrets and r.length_from != "dm":
+            # (a route's length DMbot only read is the DM's until kept: a player never sees it,
+            # #4255)
+            r = dataclasses.replace(r, **NO_LENGTH)
+        found.setdefault(words, []).append(Row(r.id, words, other.name, r.secret, r, after))
     return [row for group in found.values() for row in group]
 
 
 def _groups(
-    lookup: CampaignLookup, entity_id: str, connections: list[Relation], secrets: bool
+    lookup: CampaignLookup,
+    entity_id: str,
+    connections: list[Relation],
+    secrets: bool,
+    standing: Mapping[tuple[str, str], int] | None = None,
 ) -> dict[str, list[str]]:
     """Connections grouped by how they're connected, read from this name's side: "is a member of
     **Frostwolf tribe**; knows **Bell**, **Kesh**". A secret one is left out unless `secrets`."""
     groups: dict[str, list[str]] = {}
-    for row in _rows(lookup, entity_id, connections, secrets):
+    for row in _rows(lookup, entity_id, connections, secrets, standing):
         groups.setdefault(row.words, []).append(
-            f"**{_md(row.other)}**" + (" 🤫" if row.secret else "")
+            f"**{_md(row.other)}**"
+            + (f" {row.after}" if row.after else "")
+            + (ASSUMED_MARK if row.relation.assumed else "")
+            + length_after(row.relation)
+            + (" 🤫" if row.secret else "")
         )
     return groups
 
@@ -270,7 +445,13 @@ def _groups(
 def connection_line(row: Row) -> str:
     """ "is a member of **Frostwolf tribe**", with " 🤫" only when it is secret (a known one has no
     icon: the quiet case stays quiet)."""
-    return f"{row.words} **{_md(row.other)}**" + (" 🤫" if row.secret else "")
+    return (
+        f"{row.words} **{_md(row.other)}**"
+        + (f" {row.after}" if row.after else "")
+        + (ASSUMED_MARK if row.relation.assumed else "")
+        + length_after(row.relation)
+        + (" 🤫" if row.secret else "")
+    )
 
 
 # What Show all can open, in the card's order: key -> how the select names it.
@@ -280,7 +461,12 @@ PAGE_LINES = 25  # most lines in one Show all message, then Earlier / Later
 
 
 def sections(
-    lookup: CampaignLookup, entity_id: str, connections: list[Relation], *, secrets: bool
+    lookup: CampaignLookup,
+    entity_id: str,
+    connections: list[Relation],
+    *,
+    secrets: bool,
+    standing: Mapping[tuple[str, str], int] | None = None,
 ) -> dict[str, list[str]]:
     """Every entry of each section the card cuts, in the card's words and order. A section with
     nothing in it is left out, and the secret names and secret connections only when `secrets`
@@ -295,7 +481,7 @@ def sections(
         SECRETS: [_md(e.text) for e in mine if e.secret] if secrets else [],
         LINKS: [
             f"{words} {who}"
-            for words, group in _groups(lookup, entity_id, connections, secrets).items()
+            for words, group in _groups(lookup, entity_id, connections, secrets, standing).items()
             for who in group
         ],
     }
@@ -303,10 +489,15 @@ def sections(
 
 
 def cut_sections(
-    lookup: CampaignLookup, entity_id: str, connections: list[Relation], *, secrets: bool
+    lookup: CampaignLookup,
+    entity_id: str,
+    connections: list[Relation],
+    *,
+    secrets: bool,
+    standing: Mapping[tuple[str, str], int] | None = None,
 ) -> list[tuple[str, str]]:
     """(key, "Other names (12)") for each section the card shows only the start of."""
-    full = sections(lookup, entity_id, connections, secrets=secrets)
+    full = sections(lookup, entity_id, connections, secrets=secrets, standing=standing)
     # (the connections are one line each and the card cuts them only at Discord's limit, where
     # show_card offers every section)
     cut_keys = [key for key, lines in full.items() if key != LINKS and len(lines) > SHOWN]
@@ -340,6 +531,45 @@ def _with_connections(head: str, rows: list[Row], limit: int, url: str) -> str:
     return "\n".join([top, *shown])
 
 
+def traits_line(links: Sequence[RuleLink]) -> str:
+    """ "🧬 Lineage: Dwarf · Class: Cleric" from a character's rules links (#2959 item 3), or "".
+    "Lineage" is the owner's word; a 2014-only entry is tagged `[Legacy 2014]`, and words the rules
+    don't have say so."""
+
+    def one(link: RuleLink) -> str:
+        tag = " [Legacy 2014]" if link.edition == "2014" else ""
+        return _md(link.name) + tag + ("" if link.known else " (not in DMbot's rules)")
+
+    parts = []
+    for kind in (SPECIES, CLASS):
+        mine = [one(r) for r in links if r.kind == kind]
+        if mine:
+            parts.append(f"**{LINK_LABELS[kind].capitalize()}:** {', '.join(mine)}")
+    return "\n🧬 " + " · ".join(parts) if parts else ""
+
+
+def history_line(
+    lookup: CampaignLookup, entity_id: str, connections: Sequence[Relation], *, secrets: bool
+) -> str:
+    """How an item changed hands (#4115): "🔁 **How it changed hands:** Claude sold it to
+    Belleros · Belleros has it now", or "" when no holder's tie to it has ended. A secret tie is
+    left out unless `secrets`, and a holder the reader may not see is never named."""
+
+    def name(holder: str) -> str | None:
+        e = lookup.entities.get(holder)
+        return _md(e.name) if e is not None and e.status == CONFIRMED else None
+
+    ties = [r for r in connections if r.object_id == entity_id and (secrets or not r.secret)]
+    steps = hand_over.history(ties, name)
+    if not steps:
+        return ""
+    steps[0] = steps[0][:1].upper() + steps[0][1:]  # ("It was stolen from Claude" leads)
+    return f"{HISTORY_HEAD} {' · '.join(steps)}"
+
+
+HISTORY_HEAD = "🔁 **How it changed hands:**"  # (the question card's icon, so the two link up)
+
+
 def card_text(
     lookup: CampaignLookup,
     entity_id: str,
@@ -353,11 +583,15 @@ def card_text(
     thread_lines: list[str] | None = None,
     book_line: str | None = None,
     more_url: str = "",
+    title: str = "",
+    standing: Mapping[tuple[str, str], int] | None = None,
 ) -> str | None:
     """The card for one name, or None if it's gone. `player`: who plays it (a player's
     character); `sheet`: its D&D Beyond sheet line (#723). `item`: it is an item, of the core
-    kind or one a campaign added under it (None: only the core kind counts). `more_url`: the
-    website page that lists every connection, for the ones that don't fit (#2323)."""
+    kind or one a campaign added under it (None: only the core kind counts). `title`: the name with
+    its tag for the DM's card, when it is only a description (#3431). `more_url`: the
+    website page that lists every connection, for the ones that don't fit (#2323). `standing`: the
+    DM's own Reputation for pairs, whose word wins on a `knows` line (#3642; DMs only)."""
     entity = lookup.entities.get(entity_id)
     if entity is None or entity.status != CONFIRMED:
         return None
@@ -382,9 +616,22 @@ def card_text(
     )
     phrase = kind_phrase(entity, lookup.links.get(entity_id, ()))
     what = f"{phrase} · played by **{_md(player)}**" if player else phrase
-    lines = [f"🪪 **{_md(entity.name)}** · {what} · {when}"]
-    if (entity.type == ITEM if item is None else item) and entity.is_unique:
+    lines = [f"🪪 **{_md(title or entity.name)}** · {what} · {when}"]
+    is_item = entity.type == ITEM if item is None else item
+    if is_item and entity.is_unique:
         lines.append(ONLY_ONE if entity.unique_item else ONLY_ONE_GUESS)
+    steps = history_line(lookup, entity_id, connections, secrets=secrets) if is_item else ""
+    if steps:  # (the ended ties it tells are not listed again as connections below)
+        lines.append(steps)
+        connections = [
+            r
+            for r in connections
+            if not (
+                r.predicate in hand_over.HELD
+                and r.object_id == entity_id
+                and r.to_session_at is not None
+            )
+        ]
     if thread_lines:  # a story thread (#1662): its state, who is involved, what moved it
         lines.extend(thread_lines)
     if book_line and secrets:  # who this is in the DM's adventure: the DM's alone (#1715)
@@ -413,10 +660,20 @@ def card_text(
     if secrets and hidden:
         lines.append(f"**🤫 Secret:** {_more(hidden)} (hidden from players)")
     text = "\n".join(lines)
-    rows = _rows(lookup, entity_id, connections, secrets)
+    rows = _rows(lookup, entity_id, connections, secrets, standing)
     if rows:
         text = _with_connections(text, rows, limit, more_url)
     return cut(text, limit)
+
+
+async def _dm_standing(
+    memory: MemoryStore, campaign: Campaign, entity_id: str, secrets: bool
+) -> dict[tuple[str, str], int]:
+    """The DM's own Reputation for the pairs this card's `knows` lines join (#3642): read only for
+    a reader who sees secrets, so a player's card is never handed it."""
+    if not secrets:
+        return {}
+    return await memory.dm_line_scores(campaign.guild_id, campaign.id, entity_id)
 
 
 async def _names(interaction: discord.Interaction, campaign: Campaign) -> CampaignLookup | None:
@@ -437,6 +694,38 @@ async def _names(interaction: discord.Interaction, campaign: Campaign) -> Campai
 
 def _a_person_or_place(onto: Any, type_key: str) -> bool:
     return any(onto.is_a(type_key, kind) for kind in ("character", "faction", "place"))
+
+
+async def confirm_assumed(
+    interaction: discord.Interaction, campaign_id: str, entity_id: str, relation_id: str
+) -> None:
+    """The DM's ✅ That's right on a place's assumed parent (#4173 slice 3): the "(assumed)" mark
+    goes, and from then on the usual rule for what players see applies. One change, one Undo; the
+    card is drawn again with a note."""
+    await _answer_first(interaction, in_place=True)
+    campaign = await _campaign_for(interaction, campaign_id)
+    memory = _memory(interaction)
+    if campaign is None or memory is None:
+        return
+    if not sees_secrets(campaign, interaction.user.id):  # asked again on every press
+        await _tell(interaction, ONLY_DM_RIGHT)
+        return
+    try:
+        written = await memory.confirm_assumed(
+            campaign.guild_id, campaign.id, relation_id, source=DM
+        )
+    except MemoryRuleError:  # (gone meanwhile: the card is drawn as it is now)
+        await show_card(interaction, campaign_id, entity_id, replace=True)
+        return
+    changed(interaction, campaign)
+    place = await memory.entity(campaign.guild_id, campaign.id, written.value.subject_id)
+    parent = await memory.entity(campaign.guild_id, campaign.id, written.value.object_id)
+    note = (
+        RIGHT_NOTE.format(place=_md(place.name), parent=_md(parent.name))
+        if place is not None and parent is not None
+        else None
+    )
+    await show_card(interaction, campaign_id, entity_id, replace=True, note=note)
 
 
 async def show_card(
@@ -469,6 +758,7 @@ async def show_card(
     connections = await memory.relations(
         campaign.guild_id, campaign.id, entity_id=entity_id, include_secret=secrets
     )
+    dm_standing = await _dm_standing(memory, campaign, entity_id, secrets)
     entity = names.entities.get(entity_id)
     player = sheet = None
     has_sheet = False
@@ -538,6 +828,12 @@ async def show_card(
                     for m in mine[:3]
                 )
     site = str(getattr(getattr(_bot(interaction), "settings", None), "site_url", "") or "")
+    title = ""
+    if entity is not None and secrets and tags.needs_tag(entity):
+        # The DM's card tells two look-alike entries apart (#3431); a player's keeps the plain name.
+        ties = await memory.tag_ties(campaign.guild_id, campaign.id, [entity_id])
+        tagged = tags.tag_for(entity, ties.get(entity_id, ()), dm=True)
+        title = "" if tagged == entity.name else tagged
     text = card_text(
         names,
         entity_id,
@@ -550,6 +846,8 @@ async def show_card(
         thread_lines=lines_of_thread,
         book_line=book_line,
         more_url=all_names.page_url(site, campaign.guild_id, campaign.id),
+        title=title,
+        standing=dm_standing,
     )
     if text is None or entity is None:
         if replace:  # never leave the message pressed on a step that's over
@@ -557,14 +855,15 @@ async def show_card(
         else:
             await _tell(interaction, GONE)
         return
-    cuts = cut_sections(names, entity_id, connections, secrets=secrets)
+    cuts = cut_sections(names, entity_id, connections, secrets=secrets, standing=dm_standing)
     if not cuts and text != card_text(
         names, entity_id, connections, secrets=secrets, player=player, sheet=sheet,
-        limit=10**6, item=is_item, thread_lines=lines_of_thread, book_line=book_line,
+        limit=10**6, item=is_item, thread_lines=lines_of_thread, book_line=book_line, title=title,
+        standing=dm_standing,
     ):  # fmt: skip
         # Every section is short, but the whole card still didn't fit one message (a long note,
         # a sheet line, many groups): offer every section that has anything in it.
-        everything = sections(names, entity_id, connections, secrets=secrets)
+        everything = sections(names, entity_id, connections, secrets=secrets, standing=dm_standing)
         cuts = [(k, f"{SECTION_WORDS[k]} ({len(v)})") for k, v in everything.items()]
     own = name_key(entity.name)
     others = any(
@@ -573,6 +872,76 @@ async def show_card(
     )
     if note:
         text = f"{note}\n\n{text}"
+    # How big a place is (#4173) and whether it is water or a road (slice 6a): not secrets once the
+    # DM has said them. One DMbot only read is the DM's to check, so a player never sees it, nor the
+    # hint to a button only the DM has (#4286, as #4256 does for land, climate and ruler).
+    size = (
+        place_size.size_line(entity.place_level, entity.place_level_read)
+        if entity.type == "place" and (secrets or not entity.place_level_read)
+        else ""
+    )
+    if size and len(text) + len(size) <= CARD_MAX:
+        text += size
+    form = (
+        place_size.form_line(entity.form, entity.form_read)
+        if entity.type == "place" and (secrets or not entity.form_read)
+        else ""
+    )
+    if form and len(text) + len(form) <= CARD_MAX:
+        text += form
+    # a route's stated length (#4255): players see only the DM's, or one the DM kept
+    route = entity.type == "place" and entity.form == place_levels.ROUTE
+    read_length = entity.length_from == place_levels.READ
+    shown = route and (secrets or not read_length)
+    length = place_size.length_line(entity.length_words, read_length) if shown else ""
+    if length and len(text) + len(length) <= CARD_MAX:
+        text += length
+    if entity is not None and entity.type == "place":  # land, climate, ruler (#4256)
+        seen_names = {e.id: e.name for e in names.entities.values()}  # (this viewer's names)
+        held = await memory.map_facts_up(
+            campaign.guild_id, campaign.id, entity_id, place_world.viewer_for(secrets),
+            shown=None if secrets else set(seen_names),
+        )  # fmt: skip
+        world = place_world.card_lines(held, seen_names, dm=secrets)
+        if world and len(text) + len(world) <= CARD_MAX:
+            text += world
+    # the campaign's setting (#4173 slice 2): a mark left on a removed place says nothing
+    whole = place_size.setting_line(
+        entity.setting and entity.status == CONFIRMED, entity.setting_guessed, dm=secrets
+    )
+    if whole and len(text) + len(whole) <= CARD_MAX:
+        text += whole
+    if secrets and entity.players_text:  # the DM sees what the players are told (#2967)
+        line = (
+            f"\n💬 **Line for the players:** {_md(entity.players_text)} "
+            "(they read this in recaps and answers)"
+        )
+        if len(text) + len(line) <= CARD_MAX:
+            text += line
+    if secrets:  # lineage and class (#2959 item 3): the DM's alone (a spoiler upload gives them)
+        try:
+            links = await memory.rule_links(campaign.guild_id, campaign.id, [entity_id])
+        except Exception as exc:  # the type only; the card shows without the line
+            log.warning("Name card: lineage and class not read (%s)", type(exc).__name__)
+            links = []
+        line = traits_line(links)
+        if line and len(text) + len(line) <= CARD_MAX:
+            text += line
+    if secrets and entity.type == "character":  # what it speaks (#4229): sheet, else story
+        try:
+            known = await memory.languages_known(campaign.guild_id, campaign.id, [entity_id])
+        except Exception as exc:  # the type only; the card shows without the line
+            log.warning("Name card: languages not read (%s)", type(exc).__name__)
+            known = {}
+        line = languages_card.languages_line(known.get(entity_id, []))
+        if line and len(text) + len(line) <= CARD_MAX:
+            text += line
+    if secrets and (entity.status == PROPOSED or entity.unnamed):
+        # The scene (#3596): DMbot's summary of who, where and what, for a question still open;
+        # read after the sweep and the consent check, DM-only, "Where was it said?" is the source.
+        line = scene_line(await scene_of(interaction, campaign, entity))
+        if line and len(text) + len(line) <= CARD_MAX:
+            text += line
     # The narrator's spelling: DMs only, spoken recaps on, and not for a secret main name (the
     # narrator's dictionary goes to the voice company; the store refuses it too).
     say = (
@@ -580,6 +949,20 @@ async def show_card(
         and not any(e.entity_id == entity_id and e.key == own and e.secret for e in names.names)
         and await _spoken_recaps(interaction, campaign)
     )
+    # A place's own parent DMbot assumed (#4173 slice 3): ✅ That's right, for a DM only
+    assumed_parent = (
+        next(
+            (
+                r.id
+                for r in connections
+                if r.assumed and r.subject_id == entity_id and r.status == CONFIRMED
+                and r.to_session_at is None
+            ),
+            None,
+        )
+        if secrets and entity.type == "place"
+        else None
+    )  # fmt: skip
     view = NameCard(
         campaign.id,
         entity_id,
@@ -588,12 +971,15 @@ async def show_card(
         sheet=has_sheet,
         item=is_item,
         unique=entity.is_unique,
+        assumed=assumed_parent,
         clue=entity.type == "clue",
         thread=is_thread and secrets,
         promise=entity.type == "promise" and secrets,
         led=secrets and (is_thread or entity.type in ("clue", "event")),
         book=book_ok,
         say=say,
+        suggest=say and getattr(interaction.client, "said_as_ai", None) is not None,
+        players_line=(sees_secrets(campaign, interaction.user.id) and entity.type != "person"),
         say_it_url=(
             all_names.say_it_url(site, campaign.guild_id, campaign.id, entity.name)
             if secrets
@@ -611,8 +997,36 @@ async def show_card(
             and not entity.party
             and sees_secrets(campaign, interaction.user.id)
         ),
+        companion=(
+            entity.type == "character"
+            and not entity.is_player_character
+            and sees_secrets(campaign, interaction.user.id)
+        ),
         deed=(
             (entity.is_player_character or entity.party)
+            and sees_secrets(campaign, interaction.user.id)
+        ),
+        # (the card's own kinds: a place is the core kind "place", as `standing` reads it above)
+        size=entity.type == "place" and sees_secrets(campaign, interaction.user.id),
+        # the campaign's setting (#4173 slice 2): a confirmed place, a region or bigger, or the
+        # setting itself (so the DM can always undo it); None draws no button
+        setting=(
+            entity.setting
+            if entity.type == "place"
+            and sees_secrets(campaign, interaction.user.id)
+            and entity.status == CONFIRMED
+            and (entity.setting or entity.place_level in SETTING_LEVELS)
+            else None
+        ),
+        setting_guessed=entity.setting_guessed,
+        route_length=(
+            (entity.length_words or "", read_length)
+            if route and sees_secrets(campaign, interaction.user.id)
+            else None
+        ),
+        languages=(
+            entity.type == "character"
+            and not has_sheet
             and sees_secrets(campaign, interaction.user.id)
         ),
         undo_connection=undo_connection,
@@ -666,11 +1080,12 @@ async def show_section(
     connections = await memory.relations(
         campaign.guild_id, campaign.id, entity_id=entity_id, include_secret=secrets
     )
+    dm_standing = await _dm_standing(memory, campaign, entity_id, secrets)
     entity = names.entities.get(entity_id)
     if entity is None or entity.status != CONFIRMED:
         await _tell(interaction, GONE)
         return
-    lines = sections(names, entity_id, connections, secrets=secrets).get(key)
+    lines = sections(names, entity_id, connections, secrets=secrets, standing=dm_standing).get(key)
     if not lines:  # changed since the card was drawn, or a secret section for someone who can't
         await _tell(interaction, NOTHING_MORE)
         return
@@ -749,12 +1164,21 @@ class NameCard(_Menu):
         clue: bool = False,
         standing: bool = False,
         deed: bool = False,
+        companion: bool = False,
+        size: bool = False,
+        assumed: str | None = None,
+        setting: bool | None = None,
+        setting_guessed: bool = False,
+        route_length: tuple[str, bool] | None = None,
+        languages: bool = False,
         thread: bool = False,
         promise: bool = False,
         led: bool = False,
         book: bool = False,
         say: bool = False,
+        suggest: bool = False,
         say_it_url: str = "",
+        players_line: bool = False,
         hide: bool | None = None,
         undo_connection: int | None = None,
         undo_spelling: int | None = None,
@@ -821,8 +1245,75 @@ class NameCard(_Menu):
             self.add_item(_Button(self._standing, label=STANDING_BUTTON, style=grey, row=3))
         if deed:  # a player character or the party: a deed the DM records (#1732)
             self.add_item(_Button(self._deed, label=DEED_BUTTON, style=grey, row=3))
+        if companion:  # a character who is not a player character: who it travels with (#3505)
+            self.add_item(_Button(self._travels, label=companion_ui.BUTTON, style=grey, row=3))
+        if size:  # a place: how big it is (#4173), beside its standing button
+            self.add_item(_Button(self._place_size, label=place_size.BUTTON, style=grey, row=3))
+            for row in (3, 2, 1):  # its land, climate and ruler (#4256), first row with room
+                if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                    self.add_item(
+                        _Button(self._place_world, label=place_world.BUTTON, style=grey, row=row)
+                    )
+                    break
+        # a route place's stated length (#4255): its words, and ✅ for DMbot's read
+        self.length_words = route_length[0] if route_length is not None else ""
+        if route_length is not None:
+            presses = [(self._route_length, place_size.LENGTH_BUTTON)]
+            if route_length[0] and route_length[1]:
+                presses.append((self._keep_route_length, place_size.KEEP_LENGTH_BUTTON))
+            for press, label in presses:
+                for row in (3, 2, 1):
+                    if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                        self.add_item(_Button(press, label=label, style=grey, row=row))
+                        break
+        self.assumed = assumed  # the place's assumed parent, its connection's id (#4173 slice 3)
+        if assumed is not None:  # (DMbot's guess of where it is: the DM says it's right)
+            for row in (3, 2, 1, 0):  # (row 0 too, so a full card still lets the DM clear it)
+                if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                    self.add_item(_Button(self._assumed_right, label=RIGHT_BUTTON, row=row))
+                    break
+        self.is_setting = bool(setting)
+        if setting is not None:  # the campaign's setting (#4173 slice 2), first row with room
+            # (DMbot's guess from the adventure gets ✅ / ✖ in its place: #4173 slice 2b)
+            presses = (
+                [
+                    (self._keep_setting, place_size.KEEP_SETTING_BUTTON),
+                    (self._not_setting, place_size.NOT_SETTING_BUTTON),
+                ]
+                if setting and setting_guessed
+                else [
+                    (
+                        self._flip_setting,
+                        place_size.SETTING_OFF_BUTTON if setting else place_size.SETTING_ON_BUTTON,
+                    )
+                ]
+            )
+            for press, label in presses:
+                for row in (3, 2, 1):
+                    if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                        self.add_item(_Button(press, label=label, style=grey, row=row))
+                        break
+        if languages:  # a character with no sheet: the languages the story gives it (#4229)
+            for row in (3, 2):  # (the first row with room, as the players' line below)
+                if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                    self.add_item(
+                        _Button(
+                            self._languages,
+                            label=languages_card.LANGUAGES_BUTTON,
+                            style=grey,
+                            row=row,
+                        )
+                    )
+                    break
         if clue:  # a clue or secret: who knows it (#1649); an item has the row-3 button instead
             self.add_item(_Button(self._who_knows, label=CLUE_BUTTON, style=grey, row=3))
+        if players_line:  # the DM's line for the players (#2967), on the first row with room
+            for row in (2, 3):
+                if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                    self.add_item(
+                        _Button(self._players_line, label=PLAYERS_LINE_BUTTON, style=grey, row=row)
+                    )
+                    break
         if cut:
             # One select for every cut section, not a button each: Discord allows five rows.
             self.show_all = _Select(
@@ -836,6 +1327,11 @@ class NameCard(_Menu):
             # thread's five buttons, made the card fail to build (#2339: "item would not fit at
             # row 4 (6 > 5 width)").
             self.add_item(self.show_all)
+        if suggest:  # on the first row with room, as the players' line is: row 2 can be full
+            for row in (2, 3, 1):
+                if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                    self.add_item(_Button(self._suggest, label=SUGGEST_BUTTON, style=grey, row=row))
+                    break
         if say_it_url:  # the DM's private card only: opens the name on the website (#2580)
             try:  # placed wherever there is room; a card that is full simply goes without it
                 self.add_item(discord.ui.Button(label=all_names.SAY_IT, url=say_it_url))
@@ -913,6 +1409,51 @@ class NameCard(_Menu):
             await _tell(interaction, "Only the DM can change a story thread.")
             return
         await interaction.response.send_modal(LinkForm(self.campaign_id, self.entity_id))
+
+    async def _keep_setting(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await place_size.answer_guess(interaction, self.campaign_id, self.entity_id, keep=True)
+
+    async def _not_setting(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await place_size.answer_guess(interaction, self.campaign_id, self.entity_id, keep=False)
+
+    async def _flip_setting(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await place_size.flip_setting(
+            interaction, self.campaign_id, self.entity_id, not self.is_setting
+        )
+
+    async def _assumed_right(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        if self.assumed is not None:
+            await confirm_assumed(interaction, self.campaign_id, self.entity_id, self.assumed)
+
+    async def _place_size(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await place_size.show_sizes(interaction, self.campaign_id, self.entity_id)
+
+    async def _route_length(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await place_size.ask_length(
+            interaction, self.campaign_id, self.entity_id, self.length_words
+        )
+
+    async def _keep_route_length(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await place_size.set_length(interaction, self.campaign_id, self.entity_id, "", keep=True)
+
+    async def _place_world(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await place_world.show_world(interaction, self.campaign_id, self.entity_id)
+
+    async def _languages(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await languages_card.show_languages(interaction, self.campaign_id, self.entity_id)
+
+    async def _travels(self, interaction: discord.Interaction) -> None:
+        if await companion_ui.start(interaction, self.campaign_id, self.entity_id):
+            self.stop()  # (only when the menu replaced the card; a refusal leaves it working)
 
     async def _deed(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.deeds import start
@@ -1064,6 +1605,9 @@ class NameCard(_Menu):
                 include_secret=secrets,
             ),
             secrets,
+            # (the menu reads the card's words, the DM's Reputation included, #3642)
+            await _dm_standing(memory, campaign, self.entity_id, secrets),
+            history=secrets,  # (the DM can still fix an ended holding, #4115)
         )
         self.stop()
         back = " Or use ✏️ Edit a connection… to change one that's there." if rows else ""
@@ -1091,6 +1635,23 @@ class NameCard(_Menu):
                 )
             )
 
+    async def _players_line(self, interaction: discord.Interaction) -> None:
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign, name = found
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, "Only a DM of this campaign can do that.")
+            return
+        entity = await memory.entity(campaign.guild_id, campaign.id, self.entity_id)
+        self.origin = None  # the form's answer replaces this message; cancel keeps it
+        await interaction.response.send_modal(
+            PlayersLineForm(
+                self.campaign_id, self.entity_id, name, entity.players_text if entity else None
+            )
+        )
+
     async def _say(self, interaction: discord.Interaction) -> None:
         found = await _current(interaction, self.campaign_id, self.entity_id)
         memory = _memory(interaction)
@@ -1105,6 +1666,43 @@ class NameCard(_Menu):
         said = await memory.said_as(campaign.guild_id, campaign.id, self.entity_id)
         self.origin = None  # the form's answer replaces this message; cancel keeps it
         await interaction.response.send_modal(SayForm(self.campaign_id, self.entity_id, name, said))
+
+    async def _suggest(self, interaction: discord.Interaction) -> None:
+        """💡 Suggest (#2316): DMbot offers how to say this name, from the name and its kind
+        alone. Nothing is saved until the DM presses Use this."""
+        await _answer_first(interaction, in_place=False)
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        memory = _memory(interaction)
+        ai = getattr(interaction.client, "said_as_ai", None)
+        if found is None or memory is None:
+            return
+        campaign, name = found
+        if not sees_secrets(campaign, interaction.user.id):
+            await _tell(interaction, "Only a DM of this campaign can do that.")
+            return
+        if ai is None or not await _spoken_recaps(interaction, campaign):
+            await _tell(interaction, SAY_NOT_ON)
+            return
+        entity = await memory.entity(campaign.guild_id, campaign.id, self.entity_id)
+        if entity is None:
+            await _tell(interaction, GONE)
+            return
+        try:
+            # (A spoken-recaps plan always includes a working one, so no separate AI-plan check.)
+            async with asyncio.timeout(SUGGEST_WAIT_S):
+                spelling = await said_as_suggest.suggest(ai, name, entity.type)
+        except (said_as_suggest.SuggestFailed, TimeoutError):
+            await _tell(interaction, SUGGEST_FAILED)
+            return
+        if not spelling:
+            await _tell(interaction, SUGGEST_NONE)
+            return
+        view = SuggestOffer(self.campaign_id, self.entity_id, spelling)
+        await _send(
+            interaction,
+            f"💡 DMbot suggests the narrator say **{_md(name)}** as **{_md(spelling)}**. Use it?",
+            view,
+        )
 
     async def _add(self, interaction: discord.Interaction) -> None:
         found = await _current(interaction, self.campaign_id, self.entity_id)
@@ -1374,7 +1972,115 @@ class FixSpellingForm(discord.ui.Modal, title="Fix spelling"):
 
 
 SAY_BUTTON = "🔊 How to say it"
+SUGGEST_BUTTON = "💡 Suggest saying"  # DMbot offers a spelling for the DM to take or not (#2316)
+PLAYERS_LINE_BUTTON = "💬 Line for the players"  # the players' line for an entry (#2967)
 SAY_NOT_ON = "Spoken recaps aren't on for this campaign, so there's nothing to set."
+
+
+class PlayersLineForm(discord.ui.Modal, title="Line for the players"):
+    """Sets or clears the one short line the players are told about an entry (#2967): what they
+    know it is or does. It is not the DM's note, which players never see; it is shown to a player
+    only where the card of that name is, and never when it names something they may not know."""
+
+    line: discord.ui.TextInput[PlayersLineForm] = discord.ui.TextInput(
+        label="Players will be told this. No secrets.",
+        placeholder="One short line. Example: The lantern glows green when a monster is near.",
+        max_length=PLAYERS_TEXT_MAX,
+        required=False,
+    )
+
+    def __init__(self, campaign_id: str, entity_id: str, name: str, line: str | None) -> None:
+        super().__init__(title=logic.shorten(f"Line for the players: {name}", 45))
+        self.campaign_id = campaign_id
+        self.entity_id = entity_id
+        self.line.default = (line or "")[:PLAYERS_TEXT_MAX]
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign, _ = found
+        if not sees_secrets(campaign, interaction.user.id):  # after the wait, as on a press
+            await _tell(interaction, "Only a DM of this campaign can do that.")
+            return
+        text = " ".join(self.line.value.split())
+        try:
+            await memory.set_players_text(
+                campaign.guild_id, campaign.id, self.entity_id, text, source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't save it. {exc} Try again.")
+            return
+        note = (
+            f"💬 Saved. Players will read this in recaps and answers, only where they can see "
+            f"this entry: “{_md(text)}”. Left out if it names something they don't know yet."
+            if text
+            else "💬 Line for the players removed. Your own note is unchanged."
+        )
+        changed(interaction, campaign)
+        await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
+
+
+SUGGEST_WAIT_S = 30  # a hung AI call ends with the failure words, not an endless "thinking"
+SUGGEST_NONE = "No suggestion for this name. Press 🔊 How to say it to type your own."
+SUGGEST_FAILED = (
+    "Couldn't get a suggestion. Try 💡 again in a minute, or press 🔊 How to say it to type "
+    "your own."
+)
+
+
+class SuggestOffer(_Menu):
+    """DMbot's suggested spelling, for the DM to take or leave (#2316). The DM decides: Use this
+    saves it exactly as ✏️ would (a DM only, spoken recaps still on, checked again now)."""
+
+    def __init__(self, campaign_id: str, entity_id: str, spelling: str) -> None:
+        super().__init__()
+        self.campaign_id = campaign_id
+        self.entity_id = entity_id
+        self.spelling = spelling
+        self.add_item(_Button(self._use, label="✅ Use this", style=discord.ButtonStyle.success))
+        self.add_item(_Button(self._no, label="Skip", style=discord.ButtonStyle.secondary))
+
+    async def _no(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await _replace(interaction, "👍 Left as it was.", None)
+
+    async def _use(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        found = await _current(interaction, self.campaign_id, self.entity_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign, _name = found
+        if not sees_secrets(campaign, interaction.user.id):  # after the wait, as on any press
+            await _tell(interaction, "Only a DM of this campaign can do that.")
+            return
+        if not await _spoken_recaps(interaction, campaign):  # the plan may have lapsed meanwhile
+            await _tell(interaction, SAY_NOT_ON)
+            return
+        try:
+            await memory.set_said_as(
+                campaign.guild_id, campaign.id, self.entity_id, self.spelling, source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change it. {exc}")
+            return
+        changed(interaction, campaign)
+        self.stop()
+        await show_card(
+            interaction,
+            campaign.id,
+            self.entity_id,
+            replace=True,
+            note=f"🔊 Saved. The narrator will say it like **{_md(self.spelling)}**.",
+        )
 
 
 class SayForm(discord.ui.Modal, title="How to say it"):
@@ -1777,7 +2483,7 @@ class UndoConnectionButton(
             return
         changed(interaction, campaign)
         names = await _names(interaction, campaign)
-        said = sentence(names, written.value) if names is not None else None
+        said = sentence(names, written.value, feeling=True) if names is not None else None
         note = f"Put back: {_md(said or 'that connection')}."
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
 
@@ -2135,37 +2841,7 @@ class OneName(_Menu):
     async def _who(self, interaction: discord.Interaction) -> None:
         """Open the three-way answer for this other name (#2935): the old keep-it-secret and stop
         keeping it secret, and the middle one between them, some player characters."""
-        await _answer_first(interaction, in_place=True)
-        found = await _one_name(interaction, self.campaign_id, self.entity_id, self.alias_id)
-        memory = _memory(interaction)
-        if found is None or memory is None:
-            return
-        campaign, alias, _ = found
-        if not sees_secrets(campaign, interaction.user.id):
-            await _tell(interaction, "Only the campaign's DMs can change secret names.")
-            return
-        pcs = await player_characters(memory, campaign)
-        knowing = (await memory.alias_knowers(campaign.guild_id, campaign.id, [alias.id])).get(
-            alias.id, []
-        )
-        who = name_edits.who_knows_now(alias, knowing)
-        names = dict(pcs)
-        view = WhoKnowsName(
-            self.campaign_id, self.entity_id, alias.id, pcs,
-            chosen=[c for c in knowing if c in names], now=who,
-        )  # fmt: skip
-        await _replace(
-            interaction,
-            who_text(
-                f"**{_md(alias.text)}**",
-                who,
-                knowing,
-                names,
-                has_characters=bool(names),
-                thing="name",
-            ),
-            view,
-        )
+        await show_who_page(interaction, self.campaign_id, self.entity_id, self.alias_id)
 
     async def _not_this(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -2194,6 +2870,47 @@ class OneName(_Menu):
         await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
 
 
+async def show_who_page(
+    interaction: discord.Interaction,
+    campaign_id: str,
+    entity_id: str,
+    alias_id: str,
+    *,
+    note: str = "",
+) -> None:
+    """The "Who knows this?" page of a secret other name (#2935), with, for the DM, who was told
+    the name is its entry and who still can be (#3542). `note`: what was just done, on top."""
+    await _answer_first(interaction, in_place=True)
+    found = await _one_name(interaction, campaign_id, entity_id, alias_id)
+    memory = _memory(interaction)
+    if found is None or memory is None:
+        return
+    campaign, alias, entry = found
+    if not sees_secrets(campaign, interaction.user.id):
+        await _tell(interaction, "Only the campaign's DMs can change secret names.")
+        return
+    pcs = await player_characters(memory, campaign)
+    knowing = (await memory.alias_knowers(campaign.guild_id, campaign.id, [alias.id])).get(
+        alias.id, []
+    )
+    told = await memory.told_characters(campaign.guild_id, campaign.id, alias.id)
+    who = name_edits.who_knows_now(alias, knowing)
+    names = dict(pcs)
+    view = WhoKnowsName(
+        campaign_id, entity_id, alias.id, pcs,
+        chosen=[c for c in knowing if c in names], now=who,
+        holders=[c for c in knowing if c in names and c not in told],
+        told=[c for c in told if c in names], alias_text=alias.text, entry_name=entry,
+    )  # fmt: skip
+    text = who_text(
+        f"**{_md(alias.text)}**", who, knowing, names, has_characters=bool(names), thing="name"
+    )
+    lines = told_name.told_lines(told, names, alias.text, entry)
+    if lines:
+        text = f"{text}\n{lines}"
+    await _replace(interaction, f"{note}\n\n{text}" if note else text, view)
+
+
 class WhoKnowsName(WhoKnowsMenu):
     """The other name's page (#2935): 🤫 Only the DM, 👥 Only some characters, 👁️ Everyone at the
     table. Every press checks the campaign, the DM and the name again, and reads where it stands
@@ -2208,9 +2925,40 @@ class WhoKnowsName(WhoKnowsMenu):
         *,
         chosen: Sequence[str] = (),
         now: str = "",
+        holders: Sequence[str] = (),
+        told: Sequence[str] = (),
+        alias_text: str = "",
+        entry_name: str = "",
     ) -> None:
         super().__init__(pcs, chosen=chosen, now=now)
         self.campaign_id, self.entity_id, self.alias_id = campaign_id, entity_id, alias_id
+        # Telling one character the name is the entry, and taking it back (#3542): a menu each,
+        # on the two rows under the buttons, only when there is someone to offer.
+        names = dict(pcs)
+        tell_choices = told_name.tell_options(holders, names, alias_text, entry_name)
+        if tell_choices:
+            self.add_item(
+                _Select(self._tell, placeholder=told_name.TELL_PLACEHOLDER, options=tell_choices,
+                        row=3)
+            )  # fmt: skip
+        back_choices = told_name.take_back_options(told, names, alias_text, entry_name)
+        if back_choices:
+            self.add_item(
+                _Select(self._take_back, placeholder=told_name.TAKE_BACK_PLACEHOLDER,
+                        options=back_choices, row=4)
+            )  # fmt: skip
+
+    async def _tell(self, interaction: discord.Interaction) -> None:
+        data: Any = interaction.data or {}
+        chosen = str((data.get("values") or [""])[0])
+        await told_name.tell(interaction, self.campaign_id, self.entity_id, self.alias_id, chosen)
+
+    async def _take_back(self, interaction: discord.Interaction) -> None:
+        data: Any = interaction.data or {}
+        chosen = str((data.get("values") or [""])[0])
+        await told_name.ask_take_back(
+            interaction, self.campaign_id, self.entity_id, self.alias_id, chosen
+        )
 
     async def _back(self, interaction: discord.Interaction) -> None:
         self.stop()
@@ -2316,6 +3064,8 @@ def _asked(name: str, how: str) -> str:
     """The question being answered: "Belleros is the same as…", "Ulfgar is a member of…"."""
     if how == SAME:
         return f"{name} is the same as…"
+    if how in (place_links.NEXT_TO, place_links.TRAVEL_TO):  # (#4173 slice 6d)
+        return place_links.asked(name, how)
     predicate = how.removesuffix(BACK)
     words = CONNECTION_BACK.get(predicate) if how.endswith(BACK) else None
     return f"{name} {words or connection_words(predicate)}…"
@@ -2474,6 +3224,35 @@ async def choose_other(
             ),
         )
         return
+    if how in (place_links.NEXT_TO, place_links.TRAVEL_TO):
+        # two places only, then how they sit or the way between them (#4173 slice 6d); the DM's
+        # alone, asked again here. The list is stopped only once the place is right, so after
+        # "isn't a place" it still works.
+        found = await _current(interaction, campaign_id, entity_id)
+        other = await _current(interaction, campaign_id, other_id) if found else None
+        memory = _memory(interaction)
+        if found is None or other is None or memory is None:
+            return
+        if not sees_secrets(found[0], interaction.user.id):
+            await _tell(interaction, place_size.ONLY_DM)
+            return
+        gid, cid = found[0].guild_id, found[0].id
+        onto = await memory.ontology(gid, cid)
+        ends = [await memory.entity(gid, cid, e) for e in (entity_id, other_id)]
+        if any(e is None or not onto.is_a(e.type, "place") for e in ends):
+            await _tell(interaction, place_links.NOT_A_PLACE.format(name=_md(other[1])))
+            return
+        view.stop()
+        await _replace(
+            interaction,
+            place_links.ask_words(found[1], other[1], how),
+            place_links.PlaceWords(
+                campaign_id, entity_id, other_id, how, (found[1], other[1]),
+                # (found through a secret name: saying it on the other's card would give it away)
+                secret=secret or other_id in hidden, forced=other_id in hidden,
+            ),
+        )  # fmt: skip
+        return
     view.stop()
     if how.removesuffix(BACK) == KIN:  # "is family of": ask the role first, save after (#3102)
         found = await _current(interaction, campaign_id, entity_id)
@@ -2598,6 +3377,8 @@ class SameConfirm(_Menu):
             return
         changed(interaction, campaign)
         note = f"🔗 Done: **{_md(gone[1])}** is now another name for **{_md(kept[1])}**."
+        if secret := split_words.for_join(written.split):  # (#4043)
+            note = f"{note}\n{secret}"
         await show_card(interaction, campaign.id, keep_id, replace=True, note=note)
         if written.batch is not None:
             # Its own message, so Undo outlives the card's menu (and a restart).
@@ -2721,6 +3502,11 @@ async def connect(
     if predicate not in CONNECTION_WORDS:
         await _tell(interaction, "Pick how they're connected again.")
         return
+    if predicate in (place_links.NEXT_TO, place_links.TRAVEL_TO) and not sees_secrets(
+        campaign, interaction.user.id
+    ):  # (the DM's own place links, #4173 slice 6d: asked again as it is saved)
+        await _tell(interaction, place_size.ONLY_DM)
+        return
     denied = secret and not sees_secrets(campaign, interaction.user.id)
     if denied and forced:
         # Found through a secret name, and no longer a DM: saving it in the open would point at
@@ -2732,7 +3518,20 @@ async def connect(
     subject, obj = (other, found) if how.endswith(BACK) else (found, other)
     subject_id, object_id = (other_id, entity_id) if how.endswith(BACK) else (entity_id, other_id)
     # A family role (#3102) is stored with its words' direction, the way the edit menu stores it.
-    detail = (kin.role_of(detail) or "") if predicate == KIN else ""
+    # Two places' word or way (#4173 slice 6d, `place_links`) keeps its own words, as stored.
+    if predicate == KIN:
+        detail = kin.role_of(detail) or ""
+    elif predicate == place_links.NEXT_TO:
+        detail = next_words.word_of(detail)
+    elif predicate == place_links.TRAVEL_TO:
+        detail = route_words.means_of(detail)
+    else:
+        detail = ""
+    if predicate == place_links.NEXT_TO and await _next_to_changed(
+        interaction, memory, campaign, entity_id, (subject_id, subject[1]), (object_id, obj[1]),
+        detail, secret=secret,
+    ):  # fmt: skip
+        return
     try:
         written = await memory.add_relation(
             campaign.guild_id,
@@ -2746,6 +3545,7 @@ async def connect(
             secret=secret,
             detail=detail,
             directional=kin.directional(detail),
+            by_hand=True,  # the DM's own, so the newest thing the table knows (#3363)
         )
     except MemoryRuleError as exc:
         await _tell(interaction, f"Couldn't connect them. {exc}")
@@ -2754,7 +3554,7 @@ async def connect(
     relation, flags = written.value
     words = (
         link_words(predicate, detail, kin.directional(detail))
-        if predicate == KIN
+        if predicate in (KIN, place_links.NEXT_TO, place_links.TRAVEL_TO)
         else (connection_words(predicate))
     )
     said = f"**{_md(subject[1])}** {words} **{_md(obj[1])}**"
@@ -2776,6 +3576,62 @@ async def connect(
         )
         note += f" {why}, so DMbot will ask you about it after the session."
     await show_card(interaction, campaign.id, entity_id, replace=True, note=note)
+
+
+async def _next_to_changed(
+    interaction: discord.Interaction,
+    memory: MemoryStore,
+    campaign: Campaign,
+    entity_id: str,
+    first: tuple[str, str],
+    second: tuple[str, str],
+    detail: str,
+    *,
+    secret: bool = False,
+) -> bool:
+    """Two places already next to each other with other words, or one-way words the other way
+    round (#4284): the DM's new pick changes the words in one change, so one Undo puts the old words
+    back, rather than adding a second "next to" beside it. `first` is the DM's own subject (the
+    card's place), so the new words read from it. A link the story ended is history and is left;
+    a proposal is the DM's to answer, so it is left too (the pick is saved beside it, as before).
+    Only the oldest open link between the pair is changed, the usual one: two is a rare leftover.
+    The link keeps who may see it. True when it handled the press (changed, or refused)."""
+    pair = {first[0], second[0]}
+    current = [
+        r
+        for r in await memory.relations(
+            campaign.guild_id, campaign.id, entity_id=first[0], confirmed_only=True,
+            include_secret=True,
+        )
+        if r.predicate == place_links.NEXT_TO
+        and {r.subject_id, r.object_id} == pair
+        and r.to_session_at is None
+    ]  # fmt: skip
+    if not current or any(
+        r.detail.casefold() == detail.casefold()
+        and (not next_words.one_way(detail) or r.subject_id == first[0])
+        for r in current
+    ):
+        return False  # (nothing beside them yet, or these words already: the usual save)
+    old = current[0]
+    try:
+        written = await memory.change_relation_words(
+            campaign.guild_id, campaign.id, old.id, place_links.NEXT_TO, detail, source=DM,
+            swap=old.subject_id != first[0],
+        )  # fmt: skip
+    except MemoryRuleError as exc:
+        await _tell(interaction, f"Couldn't change it. {exc}")
+        return True
+    changed(interaction, campaign)
+    said = f"**{_md(first[1])}** {link_words(place_links.NEXT_TO, detail)} **{_md(second[1])}**"
+    if written.value.secret:
+        note = f"🧭 Changed: {said} 🤫 Secret: players can't see it."
+    else:
+        note = f"🧭 Changed: {said}."
+        if secret:  # (it keeps who may see it: the change never hides a shown link by the way)
+            note += " Players can still see it."
+    await show_card(interaction, campaign.id, entity_id, replace=True, note=note)
+    return True
 
 
 # ---- finding a name --------------------------------------------------------------------

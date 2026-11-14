@@ -14,6 +14,18 @@ export const notNamedWords = {
   // DMbot knows someone with that name: the game master decides whether they are the same person.
   known: (who: string, other: string): string =>
     `DMbot already knows someone called ${other}. Is ${who} the same person? Yes joins the two into one. No changes nothing.`,
+  // Picking a name DMbot already knows instead of typing one (#3597, owner request).
+  samePick: "Same as someone DMbot knows…",
+  findLabel: "Find the name they match",
+  findHint: "Type part of a name or a nickname.",
+  findNone: "DMbot doesn't know a name like that. Try fewer letters.",
+  findWorking: "Looking…",
+  findCount: (n: number): string => (n === 1 ? "1 name found." : `${n} names found.`),
+  findMore: "Showing the first 8. Type more to narrow it.",
+  findBack: "Okay, nothing changed. Pick another name, or search again.",
+  findFailed: "DMbot couldn't look that up. Try again.",
+  pickFor: (name: string): string => `Same person as ${name}`,
+  findClose: "Never mind",
   sameYes: "Yes, the same person",
   sameNo: "No, a different person",
   sameNoNote: (who: string): string => `Okay, nothing changed. Pick a different name for ${who}.`,
@@ -23,6 +35,14 @@ export const notNamedWords = {
   undo: "Undo the name",
   undoJoin: "Undo the join",
   undoHint: "You can undo this until your next change.",
+  /** What the Undo button undoes: the sentence said when the name was given ("Ken's sister is now called Ilse."). */
+  undoWhat: (what: string): string => `Just now: ${what}`,
+  // Removing someone who is not worth keeping (a passer-by the story mentioned), from their own row.
+  removeButton: "Remove this person",
+  removeAsk: (who: string): string => `Remove ${who}? DMbot will forget this person.`,
+  removeYes: "Yes, remove them",
+  removeKeep: "Keep them",
+  removed: (who: string): string => `Removed ${who}.`,
   // The wait (owner rule, 2026-10-23): what DMbot is doing, how long, and when it last moved.
   stage: {
     waiting: "Waiting for DMbot to pick it up.",

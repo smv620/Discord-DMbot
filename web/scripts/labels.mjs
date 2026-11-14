@@ -126,6 +126,7 @@ export const hiddenBotLabels = [
 
 /** Buttons and menu items of the website itself, which the bot's code can't hold. */
 export const siteButtons = [
+  "Met but not named", // the Names page's list of who the party met (#4084, #4045); Discord's button counts them ("👣 Met but not named (n)"), so its label is built in code
   "Download a backup", // the campaign page's Keep a copy (#3148), a website button, not in Discord
   "Save the link", // the campaign invite panel (#2985), a website button, not in Discord
   "Remove the link", // the campaign invite panel (#2985), a website button, not in Discord
@@ -157,7 +158,8 @@ export const siteButtons = [
 /** Buttons the site names before the bot has them: a held Help step written ahead of the code that
  * ships the button (#1958 for #1957). The test fails once core has the label, so the entry is
  * removed in the same change that sees it, and a typo here can't hide a wrong name for long. */
-export const pendingBotLabels = /** @type {{ label: string; issue: number }[]} */ ([]);
+export const pendingBotLabels = /** @type {{ label: string; issue: number }[]} */ ([
+]);
 
 /** Discord's own controls, which the bot doesn't label. */
 export const discordControls = ["Save Changes", "Reset Token"];

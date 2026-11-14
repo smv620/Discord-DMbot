@@ -227,8 +227,9 @@ class TheSet(_Base):
         for n in range(6):
             await self.session(1000 + n * 100, 5)
         with (
-            patch.object(pt, "PART_TEXT_BYTES", 2500),
-            patch("dmbot.campaigns.store.PART_TEXT_BYTES", 2500),
+            # (each row now also carries its `made_by_commit`, #3739, so a part holds fewer lines)
+            patch.object(pt, "PART_TEXT_BYTES", 4000),
+            patch("dmbot.campaigns.store.PART_TEXT_BYTES", 4000),
         ):
             main, files = await self.campaigns.export_set(GUILD_A, self.cid)
         self.assertGreater(len(files), 1)

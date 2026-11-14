@@ -8,6 +8,7 @@ import { useRef, useState } from "preact/hooks";
 
 import { text } from "../content/recaps";
 import { ApiError, type AccountApi, type Recap } from "./api";
+import DraftPreview from "./DraftPreview";
 import { keepFocus } from "./focus";
 
 export default function RecapUnchecked({
@@ -64,19 +65,21 @@ export default function RecapUnchecked({
         {text.uncheckedHeading}
       </h3>
       <p>{text.uncheckedLead}</p>
-      <p class="recap-unchecked-text">
-        {draft.map((sentence, i) =>
-          marked.has(i + 1) ? (
-            <span key={i}>
-              <mark>
-                <strong>{text.uncheckedMark}</strong> {sentence}
-              </mark>{" "}
-            </span>
-          ) : (
-            <span key={i}>{sentence} </span>
-          ),
-        )}
-      </p>
+      <DraftPreview checking={recap.working && recap.status === "draft"}>
+        <p class="recap-unchecked-text">
+          {draft.map((sentence, i) =>
+            marked.has(i + 1) ? (
+              <span key={i}>
+                <mark>
+                  <strong>{text.uncheckedMark}</strong> {sentence}
+                </mark>{" "}
+              </span>
+            ) : (
+              <span key={i}>{sentence} </span>
+            ),
+          )}
+        </p>
+      </DraftPreview>
       {canUse ? (
         <>
           <p>{text.uncheckedAfter}</p>

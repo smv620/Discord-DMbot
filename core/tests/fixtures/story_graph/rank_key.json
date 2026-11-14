@@ -1,0 +1,666 @@
+{
+ "campaign": "test of the frostmaiden (sample)",
+ "status": "draft",
+ "how_to_read": {
+  "status": "draft: GraphEngineer's reading of the public sample (lore and session), for the owner to correct (#3172). The scorer says 'against the draft key' until the owner has corrected it.",
+  "rank": "0 background, 1 minor, 2 recurring, 3 significant, 4 major, 5 player character (the owner's levels, docs/STORY_MEMORY.md 9c)",
+  "roles": "codes from memory/roles.py; several at once; commoner (the default) is never listed",
+  "names": "each entry of master_key.json, by its name"
+ },
+ "entries": [
+  {
+   "name": "Cerric Vanya'elen",
+   "rank": 5,
+   "roles": [],
+   "note": "player character"
+  },
+  {
+   "name": "Belleros Stormgrace",
+   "rank": 5,
+   "roles": [],
+   "note": "player character"
+  },
+  {
+   "name": "Okthandom Korran",
+   "rank": 5,
+   "roles": [],
+   "note": "player character"
+  },
+  {
+   "name": "Claude Ambere",
+   "rank": 5,
+   "roles": [],
+   "note": "player character"
+  },
+  {
+   "name": "The party",
+   "rank": 4,
+   "roles": [],
+   "note": "the four player characters as a group: the story's point of view"
+  },
+  {
+   "name": "Roceran",
+   "rank": 2,
+   "roles": [],
+   "note": "Cerric's father, named in his backstory"
+  },
+  {
+   "name": "Shafina",
+   "rank": 2,
+   "roles": [],
+   "note": "Cerric's mother, named in his backstory"
+  },
+  {
+   "name": "Valyra",
+   "rank": 2,
+   "roles": [],
+   "note": "Cerric's sister, named in his backstory"
+  },
+  {
+   "name": "Kelfir Ama'Kiir",
+   "rank": 1,
+   "roles": [],
+   "note": "Valyra's employer, named once"
+  },
+  {
+   "name": "Qinric",
+   "rank": 1,
+   "roles": [],
+   "note": "Cerric's uncle, named once"
+  },
+  {
+   "name": "Syllar Sparkwalker",
+   "rank": 3,
+   "roles": [
+    "mentor"
+   ],
+   "note": "Cerric's master; his disappearance starts Cerric's story"
+  },
+  {
+   "name": "Emmerich",
+   "rank": 2,
+   "roles": [
+    "rival"
+   ],
+   "note": "Cerric's rival apprentice"
+  },
+  {
+   "name": "Wit",
+   "rank": 2,
+   "roles": [
+    "rival",
+    "witness"
+   ],
+   "note": "rival apprentice who returns with the warning"
+  },
+  {
+   "name": "Danneth",
+   "rank": 3,
+   "roles": [
+    "quest_target"
+   ],
+   "note": "the name in the tome's note that Cerric follows north"
+  },
+  {
+   "name": "Vaelrith",
+   "rank": 3,
+   "roles": [
+    "quest_target"
+   ],
+   "note": "Okthandom's vanished brother; the curse on his line"
+  },
+  {
+   "name": "Nyssara",
+   "rank": 2,
+   "roles": [],
+   "note": "Okthandom's sister, hearing the same whispers"
+  },
+  {
+   "name": "Lee",
+   "rank": 2,
+   "roles": [],
+   "note": "Claude's father"
+  },
+  {
+   "name": "Hlin Trollbane",
+   "rank": 3,
+   "roles": [
+    "quest_giver"
+   ],
+   "note": "gives the party the contract on Sephek"
+  },
+  {
+   "name": "Sephek Kaltro",
+   "rank": 4,
+   "roles": [
+    "antagonist",
+    "quest_target"
+   ],
+   "note": "the bodyguard the party is hired to stop"
+  },
+  {
+   "name": "Torrga Icevein",
+   "rank": 2,
+   "roles": [],
+   "note": "Sephek's employer, leader of the caravan the party follows"
+  },
+  {
+   "name": "Speaker Masthew",
+   "rank": 3,
+   "roles": [
+    "quest_giver",
+    "ruler"
+   ],
+   "note": "Termalaine's Speaker; hires the party for the mine"
+  },
+  {
+   "name": "Veron Braig",
+   "rank": 1,
+   "roles": [
+    "worker"
+   ],
+   "note": "owner of The Blue Clam"
+  },
+  {
+   "name": "Brewner",
+   "rank": 1,
+   "roles": [],
+   "note": "argued with Belleros once"
+  },
+  {
+   "name": "Thorin",
+   "rank": 1,
+   "roles": [
+    "worker"
+   ],
+   "note": "mine worker the party speaks with"
+  },
+  {
+   "name": "Bruni Stonewake",
+   "rank": 1,
+   "roles": [
+    "worker"
+   ],
+   "note": "miner the party speaks with"
+  },
+  {
+   "name": "Grek",
+   "rank": 1,
+   "roles": [
+    "captive"
+   ],
+   "note": "the kobold who surrendered"
+  },
+  {
+   "name": "Trex",
+   "rank": 3,
+   "roles": [
+    "mini_boss"
+   ],
+   "note": "the kobold leader in the mine"
+  },
+  {
+   "name": "Fizzlebomb",
+   "rank": 1,
+   "roles": [],
+   "note": "the ship's owner pushed overboard"
+  },
+  {
+   "name": "Keegan Velryn",
+   "rank": 3,
+   "roles": [
+    "quest_giver"
+   ],
+   "note": "hires the party to find Garret"
+  },
+  {
+   "name": "Garret Velryn",
+   "rank": 3,
+   "roles": [
+    "quest_target"
+   ],
+   "note": "the missing explorer the party is sent to find"
+  },
+  {
+   "name": "Jebidiah",
+   "rank": 1,
+   "roles": [
+    "worker"
+   ],
+   "note": "kennel master"
+  },
+  {
+   "name": "Cerric's paternal grandfather",
+   "rank": 1,
+   "roles": [],
+   "note": "named in backstory, died in a storm"
+  },
+  {
+   "name": "Okthandom's child",
+   "rank": 1,
+   "roles": [],
+   "note": "mentioned once"
+  },
+  {
+   "name": "Brewner's daughter",
+   "rank": 0,
+   "roles": [],
+   "note": "leads Brewner home"
+  },
+  {
+   "name": "The minotaur captain",
+   "rank": 0,
+   "roles": [],
+   "note": "captain of the first ship, eaten by the troll"
+  },
+  {
+   "name": "The beggar woman",
+   "rank": 2,
+   "roles": [
+    "prophet"
+   ],
+   "note": "her prophecy saves the party"
+  },
+  {
+   "name": "Auril the Frostmaiden",
+   "rank": 4,
+   "roles": [
+    "god",
+    "antagonist"
+   ],
+   "note": "the goddess whose winter drives the setting"
+  },
+  {
+   "name": "Glyph",
+   "rank": 3,
+   "roles": [
+    "companion"
+   ],
+   "note": "Cerric's familiar"
+  },
+  {
+   "name": "Boy",
+   "rank": 3,
+   "roles": [
+    "companion"
+   ],
+   "note": "the sled dog Belleros befriended, travels with the party"
+  },
+  {
+   "name": "The ghost",
+   "rank": 2,
+   "roles": [],
+   "note": "the ghost that rose from the backpack"
+  },
+  {
+   "name": "Penolopi",
+   "rank": 1,
+   "roles": [],
+   "note": "the ghost's pet plant"
+  },
+  {
+   "name": "The wind spirit",
+   "rank": 3,
+   "roles": [
+    "ally"
+   ],
+   "note": "the spirit that guides and guards Okthandom"
+  },
+  {
+   "name": "Yeti",
+   "rank": 0,
+   "roles": [],
+   "note": "a danger on the road (a kind of creature)"
+  },
+  {
+   "name": "Ice troll",
+   "rank": 1,
+   "roles": [],
+   "note": "ate the first ship's captain"
+  },
+  {
+   "name": "Mind flayer",
+   "rank": 1,
+   "roles": [],
+   "note": "its petrified skull held the psi crystal"
+  },
+  {
+   "name": "Lord's Alliance",
+   "rank": 1,
+   "roles": [],
+   "note": "Qinric's alliance, named once"
+  },
+  {
+   "name": "Explorer's League",
+   "rank": 1,
+   "roles": [],
+   "note": "named once"
+  },
+  {
+   "name": "Torg's Caravan",
+   "rank": 2,
+   "roles": [],
+   "note": "the caravan the party follows"
+  },
+  {
+   "name": "The circus",
+   "rank": 2,
+   "roles": [],
+   "note": "held Claude captive in his backstory"
+  },
+  {
+   "name": "The Brotherhood",
+   "rank": 4,
+   "roles": [
+    "antagonist"
+   ],
+   "note": "the threat in the note: 'knows who you are'"
+  },
+  {
+   "name": "Icewind Dale",
+   "rank": 4,
+   "roles": [
+    "key_location"
+   ],
+   "note": "where the whole campaign takes place"
+  },
+  {
+   "name": "Ten-Towns",
+   "rank": 3,
+   "roles": [
+    "key_location"
+   ],
+   "note": "the towns the story moves between"
+  },
+  {
+   "name": "Targos",
+   "rank": 2,
+   "roles": [],
+   "note": "visited"
+  },
+  {
+   "name": "Bryn Shander",
+   "rank": 2,
+   "roles": [],
+   "note": "passed and mentioned"
+  },
+  {
+   "name": "Easthaven",
+   "rank": 3,
+   "roles": [
+    "key_location"
+   ],
+   "note": "where Sephek and Danneth lead"
+  },
+  {
+   "name": "Termalaine",
+   "rank": 3,
+   "roles": [
+    "key_location"
+   ],
+   "note": "where the mine quest begins"
+  },
+  {
+   "name": "Bremen",
+   "rank": 1,
+   "roles": [],
+   "note": "named in the sacrifices"
+  },
+  {
+   "name": "Good Mead",
+   "rank": 1,
+   "roles": [],
+   "note": "named in the sacrifices"
+  },
+  {
+   "name": "Caer-Dineval",
+   "rank": 1,
+   "roles": [],
+   "note": "named in the sacrifices"
+  },
+  {
+   "name": "Caer-Konig",
+   "rank": 1,
+   "roles": [],
+   "note": "named in the sacrifices"
+  },
+  {
+   "name": "Lonelywood",
+   "rank": 2,
+   "roles": [],
+   "note": "where the party met"
+  },
+  {
+   "name": "Waterdeep",
+   "rank": 1,
+   "roles": [],
+   "note": "Cerric's home city"
+  },
+  {
+   "name": "Temple of the Seldarine",
+   "rank": 1,
+   "roles": [],
+   "note": "Cerric's birthplace"
+  },
+  {
+   "name": "Castle Ward",
+   "rank": 1,
+   "roles": [],
+   "note": "where Cerric lived"
+  },
+  {
+   "name": "Sparkwalker Spire",
+   "rank": 2,
+   "roles": [],
+   "note": "Syllar's spire, where Cerric served"
+  },
+  {
+   "name": "Blackstaff Tower",
+   "rank": 1,
+   "roles": [],
+   "note": "named once"
+  },
+  {
+   "name": "Neverwinter",
+   "rank": 1,
+   "roles": [],
+   "note": "where Cerric fled"
+  },
+  {
+   "name": "Spine of the World",
+   "rank": 1,
+   "roles": [],
+   "note": "Claude's homeland"
+  },
+  {
+   "name": "The Lucky Liar",
+   "rank": 2,
+   "roles": [],
+   "note": "the inn where the party met"
+  },
+  {
+   "name": "The Blue Clam",
+   "rank": 2,
+   "roles": [],
+   "note": "the inn where the party rested"
+  },
+  {
+   "name": "The gemstone mine",
+   "rank": 3,
+   "roles": [
+    "key_location"
+   ],
+   "note": "the mine the party cleared"
+  },
+  {
+   "name": "Maer Dualdon",
+   "rank": 2,
+   "roles": [],
+   "note": "the lake the party crossed"
+  },
+  {
+   "name": "Three Flags Sailing",
+   "rank": 1,
+   "roles": [],
+   "note": "the tavern where they sheltered"
+  },
+  {
+   "name": "Kelvin's Cairn",
+   "rank": 3,
+   "roles": [
+    "key_location"
+   ],
+   "note": "where Garret vanished"
+  },
+  {
+   "name": "Eastway Road",
+   "rank": 1,
+   "roles": [],
+   "note": "the road to Easthaven"
+  },
+  {
+   "name": "The Underdark",
+   "rank": 0,
+   "roles": [],
+   "note": "named once in passing"
+  },
+  {
+   "name": "Sacrifice of souls",
+   "rank": 2,
+   "roles": [
+    "central_event"
+   ],
+   "note": "one of the towns' sacrifices to Auril"
+  },
+  {
+   "name": "Sacrifice of warmth",
+   "rank": 2,
+   "roles": [
+    "central_event"
+   ],
+   "note": "one of the towns' sacrifices to Auril"
+  },
+  {
+   "name": "Sacrifice of food",
+   "rank": 2,
+   "roles": [
+    "central_event"
+   ],
+   "note": "one of the towns' sacrifices to Auril"
+  },
+  {
+   "name": "The Everlasting Rime",
+   "rank": 4,
+   "roles": [
+    "central_event"
+   ],
+   "note": "the endless winter the campaign is about"
+  },
+  {
+   "name": "Azure tome",
+   "rank": 3,
+   "roles": [
+    "plot_artifact"
+   ],
+   "note": "holds the warning that starts Cerric's story"
+  },
+  {
+   "name": "Ancestral journal",
+   "rank": 2,
+   "roles": [],
+   "note": "tells Okthandom of the curse"
+  },
+  {
+   "name": "Wolf figurine",
+   "rank": 2,
+   "roles": [],
+   "note": "Claude's figurine, sold to Belleros"
+  },
+  {
+   "name": "Aurora's Wind",
+   "rank": 1,
+   "roles": [],
+   "note": "Fizzlebomb's ship"
+  },
+  {
+   "name": "Wand of Conducting",
+   "rank": 1,
+   "roles": [],
+   "note": "found in the mine"
+  },
+  {
+   "name": "Lantern of Greater Tracking",
+   "rank": 2,
+   "roles": [],
+   "note": "Okthandom's lantern, used in play"
+  },
+  {
+   "name": "Chardalyn spear",
+   "rank": 2,
+   "roles": [],
+   "note": "found in the mine"
+  },
+  {
+   "name": "Psi crystal",
+   "rank": 2,
+   "roles": [],
+   "note": "gives telepathy; Cerric carries it"
+  },
+  {
+   "name": "Heart of chardalyn",
+   "rank": 3,
+   "roles": [
+    "plot_artifact"
+   ],
+   "note": "chardalyn ties to the winter's plot"
+  },
+  {
+   "name": "Garret's clients",
+   "rank": 1,
+   "roles": [],
+   "note": "hired Garret; never met"
+  },
+  {
+   "name": "Clan Battlehammer",
+   "rank": 1,
+   "roles": [],
+   "note": "dwarves Belleros wants to ask"
+  },
+  {
+   "name": "Dwarven Valley",
+   "rank": 1,
+   "roles": [],
+   "note": "named in play"
+  },
+  {
+   "name": "The kennel",
+   "rank": 1,
+   "roles": [],
+   "note": "Jebidiah's kennel"
+  },
+  {
+   "name": "The windbreak shelter",
+   "rank": 1,
+   "roles": [],
+   "note": "where they spent the blizzard"
+  },
+  {
+   "name": "Garret's old sled",
+   "rank": 1,
+   "roles": [],
+   "note": "the sled Keegan lends"
+  },
+  {
+   "name": "The barbarian with the maul",
+   "rank": 1,
+   "roles": [],
+   "note": "one of the two raiders"
+  },
+  {
+   "name": "The barbarian with the morningstar",
+   "rank": 1,
+   "roles": [],
+   "note": "one of the two raiders"
+  }
+ ]
+}

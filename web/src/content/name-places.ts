@@ -1,10 +1,14 @@
-// The words for "Where it was said" on a name to check (#2403; core #2329): up to two short windows of
-// the session's own transcript around where DMbot heard the name, as Discord's name card shows them. The
+// The words for "Where it was said" on a name to check (#2403; core #2329; #3384): up to three short windows of
+// the session's own transcript around where DMbot heard the name, newest first, behind a button, as Discord's
+// name question shows them. The
 // lines are the campaign's transcript, shown only to its DM, who may read transcripts. A line whose
 // words were removed (a player pressed Stop recording me) is shown as a placeholder, never with its words
 // or its speaker. Shown only while NAME_PLACES_LIVE is true (recap-words.ts).
 export const namePlaceWords = {
-  heading: "Where it was said",
+  // The button on every name question that has a place (the owner's words, #3384; the same label as Discord's).
+  button: "Where was it said?",
+  // Shown before the label and hidden from a screen reader, which would read it out as "scroll".
+  buttonIcon: "📜",
   session: (n: number): string => `Session ${n}`,
   // Seconds into the session, as the transcript pages show them.
   time: (seconds: number): string => {
@@ -22,8 +26,7 @@ export const namePlaceWords = {
   gone: (n: number): string =>
     `Session ${n}: this part of the transcript is no longer available.`,
   openTranscriptFor: (n: number): string => `Open session ${n} transcript`,
-  more: (n: number): string =>
-    n === 1
-      ? "1 more place in the transcripts."
-      : `${n} more places in the transcripts.`,
+  // Said first when there are more places than are shown; the same words as Discord's.
+  heard: (total: number, shown: number): string =>
+    `Heard ${total} times. Showing ${shown}.`,
 } as const;

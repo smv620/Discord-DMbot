@@ -22,6 +22,7 @@ from tests.pg import DatabaseTest
 
 GUILD, OTHER, DM, SPEAKER = 111, 222, 9, 31
 A, B = sorted((new_id(), new_id()))  # two names ("a" sorts first, as some tables require)
+PLACE = new_id()  # a place, for its land, climate or ruler (#4256)
 REL, ST, DOC = new_id(), new_id(), new_id()
 
 
@@ -34,7 +35,8 @@ class EveryClaimedTableComesBack(DatabaseTest):
             forget_audio=lambda g, c: None,
             consenting=cast(
                 Callable[[int], Awaitable[frozenset[int]]],
-                AsyncMock(return_value=frozenset({SPEAKER})),
+                # (4242: a private scene's second speaker, so its entries come back, #4110)
+                AsyncMock(return_value=frozenset({SPEAKER, 4242})),
             ),
         )
         self.campaign = await self.store.create(GUILD, "Frostmaiden", DM)
@@ -71,8 +73,9 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " status, source, created_at, played_by, role)"
                 " VALUES (%s, %s, %s, 'character', 'Aaa', '', 'confirmed', 'dm', 1, NULL, NULL),"
                 " (%s, %s, %s, 'character', 'Bbb', '', 'confirmed', 'dm', 1, %s,"
-                " 'player_character')",
-                (g, c, A, g, c, B, DM),
+                " 'player_character'),"
+                " (%s, %s, %s, 'place', 'Ccc', '', 'confirmed', 'dm', 1, NULL, NULL)",
+                (g, c, A, g, c, B, DM, g, c, PLACE),
             ),
             "memory_relations": (
                 "INSERT INTO memory_relations (guild_id, campaign_id, id, subject_id, predicate,"
@@ -137,6 +140,16 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " perspective_id, created_at) SELECT %s, %s, %s, al.id, p.id, 1 FROM al, p",
                 (g, c, new_id(), A, g, c, new_id(), B, g, c, new_id()),
             ),
+            "memory_told": (
+                # a secret name and the character the DM told it is an entry (#3089)
+                "WITH al AS (INSERT INTO memory_aliases (guild_id, campaign_id, id, entity_id,"
+                " text, key, kind, secret, status, sound_codes, source, created_at)"
+                " VALUES (%s, %s, %s, %s, 'Yy', 'yy', 'title', true, 'confirmed', '{}', 'dm', 1)"
+                " RETURNING id)"
+                " INSERT INTO memory_told (guild_id, campaign_id, id, alias_id, character_id,"
+                " added_entry, created_at) SELECT %s, %s, %s, al.id, %s, true, 1 FROM al",
+                (g, c, new_id(), A, g, c, new_id(), B),
+            ),
             "memory_knowers": (
                 # a character's point of view (the one the secret-name seed made) that knows an
                 # entry exists (#2995)
@@ -172,6 +185,18 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " VALUES (%s, %s, %s, %s, 'species', 'srd', 'Goblin', true, 1)",
                 (g, c, new_id(), A),
             ),
+            "memory_story_languages": (  # an NPC's language from the story (#4229)
+                "INSERT INTO memory_story_languages (guild_id, campaign_id, id, entity_id, name,"
+                " name_key, srd, given_by, created_at)"
+                " VALUES (%s, %s, %s, %s, 'Elvish', 'elvish', true, 'dm', 1)",
+                (g, c, new_id(), A),
+            ),
+            "memory_map_facts": (  # a place's climate (#4256)
+                "INSERT INTO memory_map_facts (guild_id, campaign_id, id, entity_id, layer, value,"
+                " status, source, created_at) VALUES (%s, %s, %s, %s, 'climate', 'cold',"
+                " 'confirmed', 'dm', 1)",
+                (g, c, new_id(), PLACE),
+            ),
             "character_sheets": (
                 "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, url, sheet, source,"
                 " fetched_at, player_id, ask_mismatch) VALUES (%s, %s, %s,"
@@ -184,10 +209,70 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 (g, c, A, SPEAKER),
             ),
             "memory_importance": (
-                "INSERT INTO memory_importance (guild_id, campaign_id, entity_id, rank, basis,"
+                "INSERT INTO memory_importance (guild_id, campaign_id, entity_id, rank, reason,"
                 " source, session_started_at, lines, recorded_at)"
-                " VALUES (%s, %s, %s, 3, 'mentor', 'plotbot', 100, '{}', 5)",
+                " VALUES (%s, %s, %s, 3, 'reading', 'plotbot', 100, '{}', 5)",
                 (g, c, A),
+            ),
+            "memory_role_codes": (
+                "INSERT INTO memory_role_codes (guild_id, campaign_id, code, label, description,"
+                " examples, not_this, source, created_at) VALUES (%s, %s, 'smuggler', 'smuggler',"
+                " 'Moves goods past the law.', '{a,b,c}', 'minion', 'reading', 5)",
+                (g, c),
+            ),
+            "memory_roles": (
+                "INSERT INTO memory_roles (guild_id, campaign_id, id, entity_id, role, reason,"
+                " recorded_at) VALUES (%s, %s, %s, %s, 'smuggler', 'reading', 5)",
+                (g, c, "d" * 32, A),
+            ),
+            "pc_icons": (
+                "INSERT INTO pc_icons (guild_id, campaign_id, entity_id, choice, set_by, updated_at)"
+                " VALUES (%s, %s, %s, 'hidden', %s, 5)",
+                (g, c, A, DM),
+            ),
+            "memory_deed_proposals": (
+                "INSERT INTO memory_deed_proposals (guild_id, campaign_id, id, doer, text, viewers,"
+                " effect, lines, speaker_ids, session_started_at, prompt_version, model, status,"
+                " created_at) VALUES (%s, %s, %s, 'Cerric', 'Saved the mill', ARRAY['Brindle'],"
+                " 'Helped them', ARRAY['1'], ARRAY[%s::bigint], 100, 'deeds-1', 'm', 'proposed', 5)",
+                (g, c, "d" * 32, SPEAKER),
+            ),
+            "memory_reveal_proposals": (
+                "INSERT INTO memory_reveal_proposals (guild_id, campaign_id, id, character_id,"
+                " statement_kind, statement_id, how, check_name, lines, speaker_ids,"
+                " session_started_at, prompt_version, model, status, created_at) VALUES (%s, %s,"
+                " %s, %s, 'entry', %s, 'check', 'Insight', ARRAY['1'], ARRAY[%s::bigint], 100,"
+                " 'reveals-1', 'm', 'proposed', 5)",
+                (g, c, "e" * 32, A, A, SPEAKER),
+            ),
+            "memory_private_scenes": (
+                "INSERT INTO memory_private_scenes (guild_id, campaign_id, id, first_id,"
+                " second_id, session_started_at, from_ms, to_ms, line_count, speaker_ids, status,"
+                " created_at) VALUES (%s, %s, %s, %s, %s, 100, 1000, 2000, 2,"
+                " ARRAY[%s::bigint, 4242], 'kept', 5)",
+                (g, c, "d" * 32, A, B, SPEAKER),
+            ),
+            "memory_private_scene_entries": (
+                "INSERT INTO memory_private_scene_entries (guild_id, campaign_id, scene_id,"
+                " entity_id) VALUES (%s, %s, %s, %s)",
+                (g, c, "d" * 32, A),
+            ),
+            "memory_scenes": (
+                "INSERT INTO memory_scenes (guild_id, campaign_id, subject_kind, subject_id,"
+                " scene, lines_n, speaker_ids, session_started_at, prompt_version, model,"
+                " created_at) VALUES (%s, %s, 'entity', %s, 'A scene.', 2, ARRAY[%s::bigint], 100,"
+                " 'scenes-1', 'm', 5)",
+                (g, c, A, SPEAKER),
+            ),
+            "memory_story_chain": (
+                "INSERT INTO memory_story_chain (guild_id, campaign_id, chain, rank, entity_id,"
+                " updated_at) VALUES (%s, %s, 'main', 0, %s, 5)",
+                (g, c, A),
+            ),
+            "memory_kind_offers": (
+                "INSERT INTO memory_kind_offers (guild_id, campaign_id, words_key, state, seen,"
+                " created_at) VALUES (%s, %s, 'sworn on the ashes of', 'never', 3, 5)",
+                (g, c),
             ),
             "house_rules": (
                 "INSERT INTO house_rules (guild_id, campaign_id, number, rule, created_by,"
@@ -234,6 +319,22 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " %s, 1)",
                 (g, c, text_hash("T", "S"), DM),
             ),
+            "campaign_speakers": (
+                "INSERT INTO campaign_speakers (guild_id, campaign_id, user_id, name, created_by,"
+                " created_at) VALUES (%s, %s, -1, 'Old Greg', %s, 1)",
+                (g, c, DM),
+            ),
+            "import_consents": (
+                "INSERT INTO import_consents (guild_id, campaign_id, id, import_id, user_id, basis,"
+                " confirmed_by, confirmed_at, terms_version, lines)"
+                " VALUES (%s, %s, repeat('c', 32), 'batch', -1, 'uploader_confirmed', %s, 1, 7, 3)",
+                (g, c, DM),
+            ),
+            "speaker_erasures": (  # (-2: -1 is the speaker above, who stays)
+                "INSERT INTO speaker_erasures (guild_id, campaign_id, user_id, erased_at)"
+                " VALUES (%s, %s, -2, 5)",
+                (g, c),
+            ),
             "session_notes": (
                 "INSERT INTO session_notes (guild_id, campaign_id, session_at, beats, written_at,"
                 " job_created_at) VALUES (%s, %s, 1,"
@@ -262,6 +363,11 @@ class EveryClaimedTableComesBack(DatabaseTest):
             "recap_style_notes": (
                 "INSERT INTO recap_style_notes (guild_id, campaign_id, position, text, created_by,"
                 " created_at) VALUES (%s, %s, 1, 'Short', %s, 1)",
+                (g, c, DM),
+            ),
+            "recap_must_haves": (
+                "INSERT INTO recap_must_haves (guild_id, campaign_id, position, text, created_by,"
+                " created_at) VALUES (%s, %s, 1, 'Name the tavern.', %s, 1)",
                 (g, c, DM),
             ),
             "recap_style_examples": (

@@ -28,6 +28,7 @@ from psycopg.conninfo import make_conninfo
 from psycopg.rows import DictRow, dict_row
 from psycopg_pool import AsyncConnectionPool
 
+from dmbot import lineage
 from dmbot.schema import (
     MIGRATIONS,
     WEB_ROLE,
@@ -36,6 +37,7 @@ from dmbot.schema import (
     WEB_ROLE_OFFER_POLICY,
     WEB_ROLE_POLICIES,
     WEB_ROLE_RECAP_POLICY,
+    WEB_ROLE_REFUSALS_POLICY,
     WEB_ROLE_SHEET_POLICY,
     Migration,
 )
@@ -138,15 +140,30 @@ class Database:
         await self._pool.close()
 
     @asynccontextmanager
-    async def guild(self, guild_id: int, *, snapshot: bool = False) -> AsyncIterator[Conn]:
+    async def guild(
+        self,
+        guild_id: int,
+        *,
+        snapshot: bool = False,
+        by_dmbot: bool = False,
+        restoring: bool = False,
+    ) -> AsyncIterator[Conn]:
         """A transaction that can only see one Discord server's rows.
 
         `snapshot=True` makes every read in the transaction see the same moment (for
         backups). The transaction commits when the block ends, or rolls back on error.
+
+        Lineage (#3739, `dmbot.lineage`): the transaction names the running build, so rows it
+        inserts are stamped with it. `by_dmbot=True` is for DMbot rewriting its own work: updated
+        rows take the running build's stamp too. `restoring=True` (for code that loads rows carrying
+        their own stamp; the campaign restore sets the same setting itself, around its section
+        loads only) keeps every stamp exactly as the row carries it.
         """
         async with self._pool.connection() as conn, conn.transaction():
             if snapshot:
                 await conn.execute("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            # (after the isolation level: that must be the transaction's first statement)
+            await self._stamp(conn, by_dmbot=by_dmbot, restoring=restoring)
             await conn.execute(
                 "SELECT set_config('dmbot.guild_id', %s, true)", (str(int(guild_id)),)
             )
@@ -156,6 +173,17 @@ class Database:
                     (value,),
                 )
             yield conn
+
+    @staticmethod
+    async def _stamp(conn: Conn, *, by_dmbot: bool = False, restoring: bool = False) -> None:
+        """Open the lineage settings for this transaction (all dropped when it ends)."""
+        commit = lineage.running_commit()
+        if commit:
+            await conn.execute("SELECT set_config('dmbot.commit', %s, true)", (commit,))
+        if by_dmbot:
+            await conn.execute("SELECT set_config('dmbot.rewrites', 'on', true)")
+        if restoring:
+            await conn.execute("SELECT set_config('dmbot.restoring', 'on', true)")
 
     @asynccontextmanager
     async def recap_mail(self, guild_id: int) -> AsyncIterator[Conn]:
@@ -170,6 +198,7 @@ class Database:
     async def _with(self, **settings: str) -> AsyncIterator[Conn]:
         """A transaction with these `dmbot.*` settings, all cleared when it ends."""
         async with self._pool.connection() as conn, conn.transaction():
+            await self._stamp(conn)
             for name, value in settings.items():
                 await conn.execute(
                     sql.SQL("SELECT set_config({}, %s, true)").format(sql.Literal(f"dmbot.{name}")),
@@ -433,18 +462,19 @@ async def _grant_web_role(conn: AsyncConnection[Any]) -> None:
     # cross: the owner's campaign count (0034), account deletion making campaigns ownerless
     # (0047) and the hours used in a month (0048). REVOKE first, so a run on every start leaves
     # exactly these; each only once it exists.
-    for name, signature in WEB_ROLE_FUNCTIONS:
-        cur = await conn.execute(
-            "SELECT 1 FROM pg_proc WHERE proname = %s"
-            " AND pronamespace = current_schema()::regnamespace",
-            (name,),
-        )
-        if await cur.fetchone() is not None:
+    for _name, signature in WEB_ROLE_FUNCTIONS:
+        # By its whole signature, not its name: a function that was given another set of
+        # arguments by a later migration (#3305) is not there yet in a database migrated only part
+        # of the way.
+        cur = await conn.execute("SELECT to_regprocedure(%s) IS NOT NULL AS found", (signature,))
+        if (await cur.fetchone() or {}).get("found"):
             door = sql.SQL(signature)  # constants from schema.py, never input
             await conn.execute(sql.SQL("REVOKE ALL ON FUNCTION {} FROM {}").format(door, role))
             await conn.execute(sql.SQL("GRANT EXECUTE ON FUNCTION {} TO {}").format(door, role))
     if "recap_jobs" in existing:
         await conn.execute(WEB_ROLE_RECAP_POLICY)  # #1382
+    if "consent_refusals" in existing:
+        await conn.execute(WEB_ROLE_REFUSALS_POLICY)  # #3305
     for privileges, tables in WEB_ROLE_GRANTS:
         present = [t for t in tables if t in existing]
         if privileges.startswith("INSERT (") and not offers_ready:

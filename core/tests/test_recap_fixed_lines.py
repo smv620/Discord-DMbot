@@ -189,7 +189,9 @@ class TheNextRecapIsNotShownThem(unittest.IsolatedAsyncioTestCase):
         before = [SimpleNamespace(started_at=t, id=f"e{t}") for t in (50, 120)]
         got = await load_inputs(
             campaigns=SimpleNamespace(
-                get=AsyncMock(return_value=SimpleNamespace(name=NAME, dm_user_ids={7}))
+                get=AsyncMock(
+                    return_value=SimpleNamespace(name=NAME, dm_user_ids={7}, dm_accounts={7})
+                )
             ),
             lookup=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(names=[]))),
             transcripts=SimpleNamespace(

@@ -35,6 +35,7 @@ async def read_campaign(
     ref: str,
     *,
     imports_for: Callable[[int], bool] = lambda guild_id: False,
+    features: Callable[[], dict[str, Any] | None] = lambda: None,
 ) -> dict[str, Any]:
     """The campaign's name, its server's name, the person's role in it ("owner", "co-dm" or
     "player") and whether importing works in its server. Raises `not_found` for anyone not in the
@@ -47,7 +48,7 @@ async def read_campaign(
         cur = await conn.execute(
             "SELECT c.name, c.owner_user_id, c.dm_screen_visibility, c.dm_screen_level,"
             " c.transcript_keep_days, c.paused, c.story_mode, c.dndbeyond_invite,"
-            " c.target_ruleset, c.fallback_ruleset,"
+            " c.target_ruleset, c.fallback_ruleset, c.share_improve,"
             " (SELECT count(*) FROM campaign_dms m WHERE m.guild_id = c.guild_id"
             "    AND m.campaign_id = c.id) AS dm_count"
             " FROM campaigns c"
@@ -73,6 +74,8 @@ async def read_campaign(
                 "mainRules": str(mine["target_ruleset"]),
                 "fallbackRules": str(mine["fallback_ruleset"]),
                 "gameMasters": int(mine["dm_count"]),
+                # "Share this campaign's story to improve DMbot" (#3741), off by default.
+                "shareImprove": bool(mine["share_improve"]),
             }
         else:
             settings = None
@@ -95,4 +98,8 @@ async def read_campaign(
     }
     if settings is not None:
         page["settings"] = settings
+        # What the bot has switched on (#3693): server-wide, so not secret, but a DM's page only.
+        listed = features()
+        if listed is not None:
+            page["features"] = listed
     return page

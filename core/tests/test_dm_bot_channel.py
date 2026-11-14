@@ -106,7 +106,19 @@ class Setup(DatabaseTest):
         guild.get_channel = lambda cid: self.new if cid == NEW else None
         self.guild = guild
 
+    async def test_by_default_only_the_campaigns_people_see_a_new_channel(self) -> None:
+        await setup_dm_bot_channel(self.guild, self.campaign.id, self.store, people=[77])
+        created: dict[Any, discord.PermissionOverwrite] = (
+            self.guild.create_text_channel.call_args.kwargs["overwrites"]
+        )
+        everyone = next(ow for key, ow in created.items() if key.id == GUILD)
+        self.assertIs(everyone.view_channel, False)
+        person = next(ow for key, ow in created.items() if key.id == 77)
+        self.assertTrue(person.view_channel)
+        self.assertFalse(person.send_messages)  # only DMbot posts
+
     async def test_a_new_channel_is_named_saved_and_view_only_for_everyone(self) -> None:
+        await self.store.set_channels_visibility(GUILD, self.campaign.id, "everyone")  # (#3891)
         channel = await setup_dm_bot_channel(self.guild, self.campaign.id, self.store)
         assert channel is self.new
         call = self.guild.create_text_channel.call_args

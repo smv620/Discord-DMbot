@@ -30,7 +30,12 @@ SET = rule_sets.SharedSet("s", "Red Table", True, 4)
 
 def campaign(dms: tuple[int, ...] = (DM,), screen: int | None = 99) -> Any:
     return SimpleNamespace(
-        name="Far Away", guild_id=1, id=CAMPAIGN, dm_user_ids=list(dms), dm_screen_channel_id=screen
+        name="Far Away",
+        guild_id=1,
+        id=CAMPAIGN,
+        dm_user_ids=list(dms),
+        dm_accounts=list(dms),
+        dm_screen_channel_id=screen,
     )
 
 
@@ -62,6 +67,7 @@ def bot_with(s: Any, *, refusal: str | None = None, camp: Any = None, rules: Any
         plan_gate=AsyncMock(return_value=refusal),
         post=AsyncMock(return_value=True),
         post_message=AsyncMock(return_value=object()),
+        ask_privately=AsyncMock(return_value=False),  # (no DM reachable: the screen is used)
         house_rules=SimpleNamespace(list=AsyncMock(return_value=rules or [])),
         tasks=[],
     )
@@ -184,6 +190,14 @@ class Posting(unittest.IsolatedAsyncioTestCase):
         channel, text, _ = bot.post_message.await_args.args
         self.assertEqual(channel, 99)
         self.assertNotIn("Far Away", text)
+        s.mark_noted.assert_awaited_once_with(1, CAMPAIGN, SID)
+
+    async def test_a_note_goes_to_the_dms_privately(self) -> None:
+        s = store()
+        bot = bot_with(s)
+        bot.ask_privately = AsyncMock(return_value=True)
+        self.assertTrue(await set_suggestion.post_note(bot, 1, CAMPAIGN, OPEN, "Red Table"))
+        bot.post_message.assert_not_awaited()
         s.mark_noted.assert_awaited_once_with(1, CAMPAIGN, SID)
 
     async def test_no_screen_or_a_failed_post_is_tried_again_later(self) -> None:

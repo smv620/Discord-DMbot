@@ -5,6 +5,7 @@ database; the made-up Discord link uses invented numbers."""
 from __future__ import annotations
 
 import time
+from typing import Any
 
 from dmbot.recaps.store import Job
 from tests import recap_fixtures as fx
@@ -199,3 +200,99 @@ class TheWebRead(TheClock):
             (row["posting_since"], row["posting_step"], row["posted_url"]),
             (job.posting_since, "post", None),
         )
+
+
+class ThePostingProgress(TheClock):
+    """The posting half in the shared progress shape (#3355): the step, when it began and last
+    moved, a stall, and a refusal as a code. Times and codes only."""
+
+    async def test_nothing_under_way_and_nothing_refused_reads_none(self) -> None:
+        from dmbot.recaps import progress as rp
+
+        at = await self.ready()
+        async with self.db.guild(1) as conn:
+            cur = await conn.execute("SELECT * FROM recap_jobs WHERE session_at = %s", (at,))
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertIsNone(rp.posting_of(row, now=int(time.time())))
+
+    async def test_a_post_under_way_shows_its_step_and_moves_with_each_step(self) -> None:
+        from dmbot.recaps import progress as rp
+
+        at = await self.ready()
+        await self.store.decide(1, self.one.id, at, "post")
+        await self.store.posting_step(1, self.one.id, at, "post")
+
+        async def row() -> dict[str, Any]:
+            async with self.db.guild(1) as conn:
+                cur = await conn.execute("SELECT * FROM recap_jobs WHERE session_at = %s", (at,))
+                found = await cur.fetchone()
+            assert found is not None
+            return dict(found)
+
+        now = int(time.time())
+        shown = rp.posting_of(await row(), now=now)
+        assert shown is not None
+        self.assertEqual(
+            (shown["stage"], shown["state"], shown["reason"]), ("posting_post", "running", None)
+        )
+        self.assertLessEqual(shown["startedAt"], shown["updatedAt"])
+        self.assertEqual(
+            set(shown), {"stage", "startedAt", "updatedAt", "serverNow", "state", "reason"}
+        )
+        raw = await row()
+        moved = max(int(raw["updated_at"]), int(raw["posting_since"]))  # (the store's clock)
+        later = rp.posting_of(raw, now=moved + 6 * 60)  # five minutes with no move
+        assert later is not None
+        self.assertEqual((later["state"], later["reason"]), ("stalled", "stalled"))
+
+    async def test_a_long_narration_that_keeps_moving_is_not_stalled(self) -> None:
+        """The audio worker stamps `audio_moved_at` for each part, not `updated_at`: the posting
+        half takes the later of the two, so a 16-minute narration with parts still finishing
+        reads running."""
+        from dmbot.recaps import progress as rp
+
+        at = await self.ready()
+        await self.store.decide(1, self.one.id, at, "post")
+        await self.store.posting_step(1, self.one.id, at, "post")
+        async with self.db.guild(1) as conn:
+            cur = await conn.execute("SELECT * FROM recap_jobs WHERE session_at = %s", (at,))
+            found = await cur.fetchone()
+        assert found is not None
+        raw = dict(found)
+        raw["posting_step"] = "audio"
+        since = int(raw["posting_since"])
+        raw["updated_at"] = since
+        raw["audio_moved_at"] = since + 15 * 60  # a part finished a minute ago
+        busy = rp.posting_of(raw, now=since + 16 * 60)
+        assert busy is not None
+        self.assertEqual((busy["stage"], busy["state"]), ("posting_audio", "running"))
+        raw["audio_moved_at"] = 0  # nothing finished in all that time
+        quiet = rp.posting_of(raw, now=since + 16 * 60)
+        assert quiet is not None
+        self.assertEqual(quiet["state"], "stalled")
+
+    async def test_a_refused_post_reads_failed_with_a_code_and_never_the_sentence(self) -> None:
+        from dmbot.recaps import progress as rp
+
+        at = await self.ready()
+        await self.store.decide(1, self.one.id, at, "post")
+        await self.store.back_to_draft(1, self.one.id, at, note=rp.POST_NOTES["no_table_chat"])
+        async with self.db.guild(1) as conn:
+            cur = await conn.execute("SELECT * FROM recap_jobs WHERE session_at = %s", (at,))
+            found = await cur.fetchone()
+        assert found is not None
+        shown = rp.posting_of(dict(found), now=int(time.time()))
+        assert shown is not None
+        self.assertEqual((shown["state"], shown["reason"]), ("failed", "no_table_chat"))
+        self.assertNotIn(rp.POST_NOTES["no_table_chat"], str(shown))
+
+    def test_every_refusal_has_its_own_code_and_a_sentence_the_bot_says(self) -> None:
+        from dmbot.recaps import progress as rp
+
+        self.assertEqual(
+            set(rp.POST_NOTES),
+            {"plan", "no_table_chat", "cannot_check_secrets", "secret_name", "player_stopped",
+             "send_failed", "post_failed"},
+        )  # fmt: skip
+        self.assertEqual(len(set(rp.POST_NOTES.values())), len(rp.POST_NOTES))  # codes read back

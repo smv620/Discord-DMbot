@@ -42,7 +42,7 @@ class Probes(MyCharacters):
         s = await self.unnamed_on(self.ken)
         rel = await self.link("knows", s, self.mira, "s-m", secret=True)
         await self.know(CONNECTION, rel, [self.okra])
-        self.assertEqual((await self.shown([s]))[s], ("someone's sister (name unknown)",) * 2)
+        self.assertEqual((await self.shown([s]))[s], ("unnamed - someone's sister",) * 2)
         self.assertNotIn("Ken", await self.everything())
 
     async def test_a_sister_joined_into_a_hidden_lira_leaks_neither_name(self) -> None:
@@ -50,7 +50,7 @@ class Probes(MyCharacters):
         s = await self.unnamed_on(self.ken)
         await self.memory.join_same_person(self.g, self.one.id, s, lira)
         found = await self.memory.aliases(self.g, self.one.id, entity_id=lira, include_secret=True)
-        label = next(a.id for a in found if a.text.endswith("(name unknown)"))
+        label = next(a.id for a in found if a.text.startswith("unnamed - "))
         await self.know(ALIAS, label, [self.okra])
         await self.know(ENTRY, lira, [])
         everything = await self.everything()
@@ -63,7 +63,7 @@ class Probes(MyCharacters):
         self.assertNotIn("Ken", await self.everything())
         await self.know(ENTRY, friend, [self.okra])
         self.assertNotIn("Ken", await self.everything())
-        self.assertEqual((await self.shown([sister]))[sister][0], "someone's sister (name unknown)")
+        self.assertEqual((await self.shown([sister]))[sister][0], "unnamed - someone's sister")
 
     async def test_an_anchor_known_by_another_name_or_another_player_leaks_nothing(self) -> None:
         await self.alias(self.ken, "Old Greycloak", secret=True)
@@ -94,11 +94,11 @@ class Probes(MyCharacters):
             anchor = await self.add(name, "character", role="npc")
             s = await self.unnamed_on(anchor)
             await self.sql("UPDATE memory_entities SET status = %s WHERE id = %s", status, anchor)
-            self.assertEqual((await self.shown([s]))[s][1], "someone's sister (name unknown)")
+            self.assertEqual((await self.shown([s]))[s][1], "unnamed - someone's sister")
         zed = await self.add("Zed", "character", role="npc")
         await self.alias(zed, "Zed", secret=True)
         s = await self.unnamed_on(zed)
-        self.assertEqual((await self.shown([s]))[s][1], "someone's sister (name unknown)")
+        self.assertEqual((await self.shown([s]))[s][1], "unnamed - someone's sister")
 
     async def test_a_note_on_an_unnamed_persons_connection_never_names_ken(self) -> None:
         s = await self.unnamed_on(self.ken)

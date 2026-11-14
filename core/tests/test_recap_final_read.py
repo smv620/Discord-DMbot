@@ -175,3 +175,9 @@ class FinalRead(WorkerHarness):
         self.assertTrue(message.rstrip().endswith("</draft>"))
         for tag in ("<transcript>", "<who_and_what>", "<threads>", "<story_so_far>"):
             self.assertIn(tag, message)
+
+
+def test_the_final_read_is_not_told_to_describe_every_name() -> None:
+    # (#2967, #3943: "use what it says" on every sheet line cut must-haves covered from 10 to 6 on
+    # dev1's sample; the players' line reaches the draft through the away check's pointer only)
+    assert "what the players know" not in fr.FINAL_SYSTEM

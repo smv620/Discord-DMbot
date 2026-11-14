@@ -29,13 +29,27 @@ const LIST_LIMIT = 200;
 
 const letters = (text: string): number => [...text].length;
 
+/** True when `name` appears in `text` as a whole word, in any case (so "Al" is not found in "also"). */
+export function appearsIn(name: string, text: string): boolean {
+  // A curly apostrophe (’) in the recap is the same letter as a straight one in the name.
+  const escaped = name.trim().replace(/’/g, "'").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  if (escaped === "") return false;
+  return new RegExp(`(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`, "iu").test(text.replace(/’/g, "'"));
+}
+
+type Filter = "used" | "episode";
+
 export default function RecapNames({
   api,
   recapRef,
+  recapText = "",
 }: {
   api: AccountApi;
   recapRef: string;
+  /** The recap's words, for "names used in this recap". */
+  recapText?: string;
 }) {
+  const [filter, setFilter] = useState<Filter>("used");
   const [load, setLoad] = useState<Load>({ kind: "idle" });
   const [drafts, setDrafts] = useState<Record<string, string>>({});
   const [rows, setRows] = useState<Record<string, Row>>({});
@@ -106,6 +120,12 @@ export default function RecapNames({
     );
   };
 
+  const hasSessions = load.kind === "ready" && load.names.some((n) => n.sessions);
+  const shown = (names: CampaignName[]): CampaignName[] =>
+    filter === "used"
+      ? names.filter((n) => appearsIn(n.text, recapText))
+      : names.filter((n) => n.sessions?.includes(recapRef));
+
   return (
     <details class="panel names" onToggle={open}>
       <summary>{words.heading}</summary>
@@ -123,14 +143,37 @@ export default function RecapNames({
           {words.loadFailed}
         </p>
       )}
+      {load.kind === "ready" && load.names.length > 0 && (
+        <p>
+          {/* Only offered when the API says which sessions mention each name. */}
+          {load.names.some((n) => n.sessions) && (
+            <>
+              <label for="recap-names-filter">{words.show}</label>
+              <select
+                id="recap-names-filter"
+                value={filter}
+                onChange={(e) => setFilter((e.target as HTMLSelectElement).value as Filter)}
+              >
+                <option value="used">{words.usedInRecap}</option>
+                <option value="episode">{words.foundInEpisode}</option>
+              </select>{" "}
+            </>
+          )}
+          <a href={`/account/names/${encodeURIComponent(ref)}`}>{words.seeAll}</a>
+        </p>
+      )}
       {load.kind === "ready" &&
         (load.names.length === 0 ? (
           <p class="muted" role="status">
             {words.none}
           </p>
+        ) : shown(load.names).length === 0 ? (
+          <p class="muted" role="status">
+            {filter === "used" ? (hasSessions ? words.noneUsed : words.noneUsedAlone) : words.noneFound}
+          </p>
         ) : (
           <ul class="campaigns">
-            {load.names.map((name) => {
+            {shown(load.names).map((name) => {
               const row = rows[name.id];
               const inputId = `said-as-${name.id}`;
               return (

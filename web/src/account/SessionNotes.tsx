@@ -9,7 +9,16 @@ import { SESSION_NOTES_LIVE } from "../content/session-notes-switch";
 import { sessionNotesWords as w } from "../content/session-notes-words";
 import type { AccountApi, SessionNotes, SessionNotesItem } from "./api";
 
-type Opened = "loading" | "failed" | SessionNotes;
+export type Opened = "loading" | "failed" | SessionNotes;
+
+/** The notes as a plain text file, for Save (#3898): a title and the numbered beats with who and where. */
+export function beatsToText(title: string, got: SessionNotes): string {
+  const lines = got.beats.map((b) => {
+    const details = [b.who.length > 0 ? w.who(b.who.join(", ")) : "", b.where ? w.where(b.where) : ""].filter(Boolean);
+    return `${b.number}. ${b.what}${details.length > 0 ? ` (${details.join("; ")})` : ""}`;
+  });
+  return `${title}\n\n${lines.join("\n")}\n`;
+}
 
 export default function SessionNotesPanel({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
   const [list, setList] = useState<SessionNotesItem[] | "loading" | "hidden">("loading");
@@ -105,7 +114,7 @@ function Opening() {
   );
 }
 
-function Beats({ got, onRetry }: { got: Opened | undefined; onRetry: () => void }) {
+export function Beats({ got, onRetry }: { got: Opened | undefined; onRetry: () => void }) {
   if (got === undefined || got === "loading") return <Opening />;
   if (got === "failed") {
     return (

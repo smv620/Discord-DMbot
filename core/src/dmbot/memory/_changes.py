@@ -17,10 +17,12 @@ from dmbot.db import Conn
 from dmbot.memory import merge_restore
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.memory.ontology import MIGRATED_KINDS, god_is_an_npc
+from dmbot.pictures.store import _lock as pictures_lock
 
 NOT_FOUND = "DMbot doesn't remember that any more."
 ALREADY_UNDONE = "That was already undone."
 CHANGED_SINCE = "That was changed again since, so it can't be undone on its own."
+MAP_PICTURE_GONE = "That map's picture was deleted since, so this can't be undone."
 
 
 @dataclass(frozen=True, slots=True)
@@ -84,6 +86,18 @@ ENTITIES = Table(
         "unnamed_anchor",
         "unnamed_role",
         "unnamed_what",
+        "players_text",
+        "place_level",
+        "place_level_from",
+        "setting",
+        "setting_from",
+        "form",
+        "form_from",
+        "length_words",
+        "length_amount",
+        "length_unit",
+        "length_approx",
+        "length_from",
     ),
     # a clue's switch (#1649), the party, "players don't know this one yet" (#2321); a row written
     # now is after the pronoun gate (#2358)
@@ -98,6 +112,19 @@ ENTITIES = Table(
         "unnamed_anchor": None,
         "unnamed_role": None,
         "unnamed_what": None,
+        "players_text": None,  # the players' line (#2967): none until the DM writes one
+        "place_level": None,  # how big a place is: nobody knows until said (#4173)
+        "place_level_from": None,  # ... and who said it: DMbot read it, or the DM
+        "setting": False,  # the campaign's setting (#4173): one place at most
+        "setting_from": None,  # ... and who said it (#4173 slice 2b)
+        "form": None,  # an area, until said to be water or a route (#4173 slice 6a)
+        "form_from": None,  # ... and who said it
+        # a route's stated length (#4255): none until a source or the DM gives one
+        "length_words": None,
+        "length_amount": None,
+        "length_unit": None,
+        "length_approx": False,
+        "length_from": None,
     },
 )
 # What a being or thing is now, with the history of what it was (#1267): one current row for
@@ -116,9 +143,11 @@ CLAIMS = Table(
     "id",
     ("id", "subject", "relationship", "object", "details", "how", "lines", "speaker_ids",
      "source", "prompt_version", "model", "status", "reason", "session_started_at",
-     "created_at", "decided_at", "fact_id", "reading"),
+     "created_at", "decided_at", "fact_id", "reading", "subject_picked", "object_picked"),
     logged=False,
-    defaults={"reading": None},  # a claim that is a belief for the DM to place (#2412)
+    # a claim that is a belief for the DM to place (#2412); the entries the DM picked for a name
+    # that could mean two (#3238)
+    defaults={"reading": None, "subject_picked": None, "object_picked": None},
 )  # fmt: skip
 # A character's links to the rules (#1034): species, creature type, stat block, class,
 # background.
@@ -127,6 +156,34 @@ RULE_LINKS = Table(
     "id",
     ("id", "entity_id", "kind", "rules_source", "name", "edition", "known", "created_at"),
 )
+# The languages a character knows from the story (#4229), beside the sheets: never in the graph.
+STORY_LANGUAGES = Table(
+    "memory_story_languages",
+    "id",
+    ("id", "entity_id", "name", "name_key", "srd", "given_by", "created_at"),
+)
+# A place's land, climate and who rules it (#4256, MapBot layers slice 2), beside the graph: a
+# layer row never says one place is in, next to or reachable from another (design §13.2).
+MAP_FACTS = Table(
+    "memory_map_facts",
+    "id",
+    ("id", "entity_id", "layer", "value", "words", "faction_id", "how", "part",
+     "from_session_at", "to_session_at", "from_game_time", "to_game_time", "status", "source",
+     "also_text", "table_knows", "created_at"),
+)  # fmt: skip
+# One map: a kept picture DMbot knows is a map (#4344, MapBot layers slice 3a). It is in the log so
+# that each DM action on a map (keep, yes or no to using it, show to the table, remove) is one Undo
+# (#4346, design rule 8). Only the store in `maps/store.py` writes it, through `Changes`; the one
+# exception is the close-read sweep's own marks (`close_read_at`, `close_read_tries`, #4349),
+# housekeeping that is no DM action and so not among the columns below.
+MAPS = Table(
+    "campaign_maps",
+    "id",
+    ("id", "picture_id", "title", "covers", "kind", "width", "height", "scale_value",
+     "scale_unit", "scale_from", "grid_kind", "grid_cell_px", "grid_cell_distance", "north_angle",
+     "north_from", "audience", "came_from", "import_tool", "right_by", "right_at", "use_ok",
+     "use_by", "use_at", "as_of", "replaces", "created_at"),
+)  # fmt: skip
 # A player character's sheet (#723): not in the undo log, but read and backed up like
 # the rest of the campaign's memory.
 SHEETS = Table(
@@ -153,10 +210,18 @@ RELATIONS = Table(
     ("id", "subject_id", "predicate", "object_id", "detail", "confidence", "status", "source",
      "mention_ids", "from_session_at", "to_session_at", "from_game_time", "to_game_time",
      "secret", "created_at", "definition_version", "unrevealed", "directional", "decided",
-     "via_alias_id"),
+     "via_alias_id", "knows_how", "end_reason", "both_ways", "assumed", "route_state",
+     "length_words", "length_amount", "length_unit", "length_approx", "length_from"),
     # unrevealed: held back from the players until said at the table (#2404). directional: an
-    # older row's role has no direction (#2457)
-    defaults={"unrevealed": False, "directional": False, "decided": None, "via_alias_id": None},
+    # older row's role has no direction (#2457). knows_how: the story didn't say (#3881).
+    # end_reason: an end from before #4115 has none. both_ways: its kind's default (#4154).
+    # assumed: stated, the only kind before #4173 slice 3. route_state: known (#4173 slice 6d)
+    defaults={
+        "unrevealed": False, "directional": False, "decided": None, "via_alias_id": None,
+        "knows_how": "", "end_reason": None, "both_ways": None, "assumed": False,
+        "route_state": "", "length_words": None, "length_amount": None, "length_unit": None,
+        "length_approx": False, "length_from": None,  # (no length before #4255)
+    },
 )  # fmt: skip
 CORRECTIONS = Table(
     "memory_corrections",
@@ -195,6 +260,10 @@ PERSPECTIVES = Table(
 ALIAS_KNOWERS = Table(
     "memory_alias_knowers", "id", ("id", "alias_id", "perspective_id", "created_at")
 )
+# Which character was told that a secret other name is an entry (#3089): one row for each (name,
+# character). Logged, so Undo takes a telling back, and carried in backups. Gone with its name or
+# its character by the database.
+TOLD = Table("memory_told", "id", ("id", "alias_id", "character_id", "added_entry", "created_at"))
 # Who knows each statement (#2995; STORY_MEMORY §9b): one row for each (statement, character), the
 # statement being an entry, a state, a connection or an other name (one column set). Logged, so Undo
 # takes a change of who knows back, and an Undo of removing a statement brings who knew it back.
@@ -254,8 +323,9 @@ PLAN_POSITION = Table(
     "plan_position", "id", ("id", "document_id", "chapter_id", "set_by", "created_at")
 )
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
+       STORY_LANGUAGES, MAP_FACTS, MAPS,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
-       BELIEFS, EVIDENCE, ALIAS_KNOWERS, KNOWERS)  # fmt: skip
+       BELIEFS, EVIDENCE, ALIAS_KNOWERS, KNOWERS, TOLD)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
 
 # The columns whose change can change whether the players are shown a statement (#2995).
@@ -297,6 +367,10 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_relations", "object_id", False),
         ("memory_corrections", "entity_id", False),
         ("memory_rule_links", "entity_id", False),
+        ("memory_story_languages", "entity_id", False),  # (#4229)
+        ("memory_map_facts", "entity_id", False),  # a place's facts (#4256)
+        ("memory_map_facts", "faction_id", False),  # the group that rules it (#4256)
+        ("campaign_maps", "covers", False),  # the place a map covers (#4346)
         ("memory_states", "entity_id", False),
         ("memory_impressions", "viewer_id", False),
         ("memory_impressions", "subject_id", False),
@@ -308,6 +382,11 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_entities", "unnamed_anchor", False),
         # (`plan_divergences` is not listed on purpose: it is derived from the plan and the table
         # and unlogged, so it simply goes with the entry and is worked out again when needed.)
+    ),
+    # (the database would set these to NULL outside the log: #4346)
+    "campaign_maps": (
+        ("memory_map_facts", "map_id", False),
+        ("campaign_maps", "replaces", False),
     ),
     "memory_mentions": (("memory_relations", "mention_ids", True),),
     "memory_relations": (
@@ -324,17 +403,24 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
 
 
 def scoped_select(
-    table: Table, where: sql.Composable | None = None, *, awake_only: bool = False
+    table: Table,
+    where: sql.Composable | None = None,
+    *,
+    awake_only: bool = False,
+    stamp: bool = False,
 ) -> sql.Composed:
     """SELECT a table's columns for one server and campaign, plus `where`. `awake_only`: leave out
-    the rows put to sleep (`hidden_by` set, see KNOWERS)."""
+    the rows put to sleep (`hidden_by` set, see KNOWERS). `stamp`: also read the build that made the
+    row (`made_by_commit`, #3739), for a backup; the row readers never need it."""
     asleep = (
         sql.SQL(" AND cardinality(hidden_by) = 0")
         if awake_only and table.name == "memory_knowers"
         else sql.SQL("")
     )
     return sql.SQL("SELECT {} FROM {} WHERE guild_id = %s AND campaign_id = %s{}{}").format(
-        sql.SQL(", ").join(sql.Identifier(c) for c in table.columns),
+        sql.SQL(", ").join(
+            sql.Identifier(c) for c in (*table.columns, *(("made_by_commit",) if stamp else ()))
+        ),
         sql.Identifier(table.name),
         asleep,
         where if where is not None else sql.SQL(""),
@@ -410,6 +496,9 @@ class Changes(Scope):
         # Beliefs the DM's write added, (point of view, connection): The truth taking up a
         # connection is how the DM fixes a "denied" difference (#2661).
         self.belief_additions: list[tuple[str, str]] = []
+        # The DM's own writes to entries, (before, after): a merge ("Same as…") or a name given to
+        # someone the story never named, which the graph clean-up's careful check reads (#3741).
+        self.entity_changes: list[tuple[dict[str, Any] | None, dict[str, Any] | None]] = []
         # Items that name a connection the DM deleted, found before the delete takes them with it
         # (the database cascades them away), and connections an Undo brought back (#2661).
         self.deleted_items: set[tuple[str, str]] = set()
@@ -449,6 +538,13 @@ class Changes(Scope):
         before = await self.get(table, row_id)
         if before is None:
             raise MemoryRuleError(NOT_FOUND)
+        if (
+            table is RELATIONS
+            and "to_session_at" in changes
+            and changes["to_session_at"] is None
+            and before.get("end_reason") is not None
+        ):  # (a tie reopened is current again: why it once ended no longer holds, #4115)
+            changes = {"end_reason": None, **changes}
         changes = {k: v for k, v in changes.items() if before[k] != v}
         if not changes:
             return before
@@ -518,6 +614,12 @@ class Changes(Scope):
         if table is ALIASES:  # who knows an other name goes with it (#2935)
             for knower in await self.select(ALIAS_KNOWERS, " AND alias_id = %s", [row_id]):
                 await self.delete(ALIAS_KNOWERS, knower["id"])
+        if table is ALIASES:  # who was told it is an entry goes with it (#3089)
+            for told in await self.select(TOLD, " AND alias_id = %s", [row_id]):
+                await self.delete(TOLD, told["id"])
+        if table is ENTITIES:  # and so does what a character was told, each logged (#3089)
+            for told in await self.select(TOLD, " AND character_id = %s", [row_id]):
+                await self.delete(TOLD, told["id"])
         if table.name in _KNOWN_COLUMN:  # who knows a statement goes with it, each logged (#2995)
             column = _KNOWN_COLUMN[table.name]
             for knower in await self.select(KNOWERS, f" AND {column} = %s", [row_id], dormant=True):
@@ -757,6 +859,8 @@ class Changes(Scope):
         self.tables.add(table.name)
         if table.name == "memory_relations" and self.source == "dm" and self.undoes is None:
             self.relation_changes += [(op, b, a) for _, b, a in rows]
+        if table.name == "memory_entities" and self.source == "dm" and self.undoes is None:
+            self.entity_changes += [(b, a) for _, b, a in rows]
         if self.undoes is not None:
             for _, before, after in rows:
                 self._note_undone(table, op, before, after)
@@ -800,6 +904,8 @@ class Changes(Scope):
         if self.source == "dm" and self.undoes is None:
             if table.name == "memory_relations":
                 self.relation_changes.append((op, before, after))
+            elif table.name == "memory_entities":
+                self.entity_changes.append((before, after))
             elif table.name == "memory_beliefs" and op == "insert" and after is not None:
                 self.belief_additions.append(
                     (str(after["perspective_id"]), str(after["relation_id"]))
@@ -837,6 +943,16 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "directional": False,
         "decided": None,
         "via_alias_id": None,  # no connection came through a name before a join said so (#3037)
+        "knows_how": "",  # how two people know each other was not kept before #3881
+        "end_reason": None,  # why a tie ended was not kept before #4115
+        "both_ways": None,  # no DM set a direction before #4154: the kind's default
+        "assumed": False,  # nothing was assumed before #4173 slice 3
+        "route_state": "",  # no route had a state before #4173 slice 6d
+        "length_words": None,  # no route had a stated length before #4255
+        "length_amount": None,
+        "length_unit": None,
+        "length_approx": False,
+        "length_from": None,
     },
     # unique_item: nobody said, the name decides (#1267). audience_limited: off (#1649).
     # made_before_name_gate: a snapshot from before the column is a row from before it (#2358)
@@ -851,6 +967,17 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "unnamed_anchor": None,
         "unnamed_role": None,
         "unnamed_what": None,
+        "players_text": None,  # no line before #2967
+        "place_level": None,  # no place had a size before #4173
+        "place_level_from": None,
+        "setting": False,
+        "form": None,  # every place was an area before #4173 slice 6a
+        "form_from": None,
+        "length_words": None,  # no route had a stated length before #4255
+        "length_amount": None,
+        "length_unit": None,
+        "length_approx": False,
+        "length_from": None,
     },
     # nothing was pinned before the pin (#2447); nothing slept before a hide could put it to sleep
     # (#3082), so an Undo across the migration still finds the row as the batch left it
@@ -874,8 +1001,16 @@ def _filled(table: Table, snapshot: Any) -> Any:
     (#1189), so Undo across a migration puts back what the row is now."""
     if not isinstance(snapshot, dict):
         return snapshot
+    if "made_by_commit" in snapshot:
+        # The build's stamp (#3739) is never part of a change: the web's SQL doors log the whole
+        # row (`to_jsonb`), which now carries it, but the row readers and Undo name their columns.
+        # With it in, "changed again since" would always be true for such a row.
+        snapshot = {k: v for k, v in snapshot.items() if k != "made_by_commit"}
     if table.name in _ADDED_LATER:
         snapshot = {**_ADDED_LATER[table.name], **snapshot}
+    if table.name == "memory_entities" and "setting_from" not in snapshot:
+        # (#4173 slice 2b: a setting from before `setting_from` was the DM's own, as 0459 set it)
+        snapshot = {**snapshot, "setting_from": "dm" if snapshot.get("setting") else None}
     if table.name == "memory_entities" and snapshot.get("role") == "god":
         # a god is an NPC now (#2562), with the word kept in its description
         return {
@@ -950,6 +1085,7 @@ async def undo_batch(changes: Changes, batch: int) -> None:
     if not rows:
         raise TooLateToUndo(NOT_FOUND)  # pruned (#164); the store says how long Undo works
     rows = await _without_lost_parents(conn, ids, rows)
+    pictures = await _map_pictures_kept(conn, ids, rows)
     start = 0
     while start < len(rows):
         end = start + 1
@@ -960,6 +1096,18 @@ async def undo_batch(changes: Changes, batch: int) -> None:
         if len(run) == 1 or not await _undo_run_or_not(changes, run):
             await _undo_rows(changes, run)
         start = end
+    # A map's picture is kept permanent exactly while it is a map (#4346). Undoing an add clears a
+    # pin the DM set before it was a map, as removing a map does (Supervisor's ruling on #4344).
+    # An Undo that pins again does not re-check the 80% share: the picture was permanent until the
+    # change it undoes, and the share's size is a setting the log doesn't see (put to Supervisor).
+    if pictures:
+        await conn.execute(
+            "UPDATE campaign_pictures p SET permanent = EXISTS (SELECT 1 FROM campaign_maps m"
+            " WHERE m.guild_id = p.guild_id AND m.campaign_id = p.campaign_id"
+            " AND m.picture_id = p.id)"
+            " WHERE p.guild_id = %s AND p.campaign_id = %s AND p.id = ANY(%s)",
+            (*ids, pictures),
+        )
     # a merge's notes and sheet live outside the log: they come back with the name (#2438)
     await merge_restore.restore(conn, ids, batch, changes.batch)
     await merge_restore.redo(conn, ids, batch, changes.batch)
@@ -1067,6 +1215,37 @@ async def _without_lost_parents(
     ]
 
 
+async def _map_pictures_kept(
+    conn: Conn, ids: tuple[int, str], rows: Sequence[dict[str, Any]]
+) -> list[int]:
+    """The pictures of the maps a batch changed, each still kept: a map's Undo needs its picture
+    (#4346). Deleting a picture takes its map with it
+    outside the log (`PictureStore.delete`), and a deleted picture's row stays behind with
+    `deleted_at` set, so without this check an Undo could bring back a map of a picture that is
+    gone, or report a plain "changed since" for a map the picture took with it."""
+    pictures = {
+        int(side["picture_id"])
+        for r in rows
+        if r["table_name"] == MAPS.name
+        for side in (r["before"], r["after"])
+        if isinstance(side, dict) and side.get("picture_id") is not None
+    }
+    if not pictures:
+        return []
+    # (the picture store's lock first, as `MapStore` and `PictureStore.delete` take it before any
+    # picture or map row: one order, so an Undo racing a delete waits instead of deadlocking, and a
+    # picture store making room never soft-deletes a picture this Undo is pinning again)
+    await pictures_lock(conn, *ids)
+    cur = await conn.execute(
+        "SELECT id FROM campaign_pictures WHERE guild_id = %s AND campaign_id = %s"
+        " AND id = ANY(%s) AND deleted_at IS NULL FOR UPDATE",
+        (*ids, sorted(pictures)),
+    )
+    if len(await cur.fetchall()) < len(pictures):
+        raise MemoryRuleError(MAP_PICTURE_GONE)
+    return sorted(pictures)
+
+
 async def _undo_rows(changes: Changes, run: Sequence[dict[str, Any]]) -> None:
     """One row at a time: the general way.
 
@@ -1074,24 +1253,38 @@ async def _undo_rows(changes: Changes, run: Sequence[dict[str, Any]]) -> None:
     another takes its words to E). Rows written in one statement are logged in key
     order, not in the order such a chain needs, so a row that trips a unique rule waits
     for the others and is tried again (#342 review). A row with nothing left to wait
-    for has really been blocked since: CHANGED_SINCE."""
-    for change in run:
+    for has really been blocked since: CHANGED_SINCE.
+
+    The same row may be changed twice in one batch (a kind change, then the size or form only a
+    place has cleared from it, #4173): the newest change is checked against the row as it is now,
+    and each older one against the "before" of the change after it, which is what the row will
+    hold once that one is undone."""
+    expected: dict[tuple[str, str], dict[str, Any] | None] = {}
+    for change in run:  # (newest first)
         table = BY_NAME[change["table_name"]]
-        current = await changes.get(table, change["row_id"])
+        key = (table.name, str(change["row_id"]))
+        current = expected[key] if key in expected else await changes.get(table, change["row_id"])
         if not _unchanged_since(table, current, change["after"]):
             raise MemoryRuleError(CHANGED_SINCE)
+        expected[key] = _filled(table, change["before"])
     if len(run) == 1:
         await _undo_row(changes, run[0])
         return
     pending = list(run)
     while pending:
         waiting = []
+        held: set[tuple[str, str]] = set()  # rows whose newer change waits: their older ones too
         for change in pending:
+            key = (change["table_name"], str(change["row_id"]))
+            if key in held:  # (a row's changes are undone newest first, never out of order)
+                waiting.append(change)
+                continue
             try:
                 async with changes.conn.transaction():  # a savepoint
                     await _undo_row(changes, change)
             except errors.UniqueViolation:
                 waiting.append(change)
+                held.add(key)
         if len(waiting) == len(pending):
             raise MemoryRuleError(CHANGED_SINCE)
         pending = waiting

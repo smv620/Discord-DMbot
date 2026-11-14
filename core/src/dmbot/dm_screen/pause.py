@@ -42,7 +42,7 @@ LINE_PAUSED_OTHER = "• **Paused:** yes. It can't start. Ask the campaign's own
 
 
 def pause_line(campaign: Campaign, viewer: int | None) -> str:
-    owner = viewer is not None and viewer == campaign.owner_user_id
+    owner = viewer is not None and campaign.is_owner(viewer)
     if campaign.paused:
         return LINE_PAUSED_OWNER if owner else LINE_PAUSED_OTHER
     return LINE_RUNNING_OWNER if owner else LINE_RUNNING_OTHER
@@ -50,7 +50,7 @@ def pause_line(campaign: Campaign, viewer: int | None) -> str:
 
 def pause_buttons(campaign: Campaign, viewer: int) -> list[discord.ui.Item[Any]]:
     """The owner's button for the card (it is private, so `viewer` is who is looking)."""
-    if campaign.owner_user_id is None or viewer != campaign.owner_user_id:
+    if campaign.owner_user_id is None or not campaign.is_owner(viewer):
         return []
     return [PauseButton(campaign.id, paused=campaign.paused)]
 
@@ -97,7 +97,7 @@ class PauseButton(
                 return
             # Checked here as well as in the store, which is the last word: the owner's
             # card is private, but a button can outlive a hand-over.
-            if campaign.owner_user_id != interaction.user.id:
+            if not campaign.is_owner(interaction.user.id):
                 await interaction.followup.send(ONLY_OWNER, ephemeral=True)
                 return
             saved: Campaign = await change(

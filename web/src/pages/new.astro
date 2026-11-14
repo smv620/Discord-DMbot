@@ -1,0 +1,16 @@
+---
+import WizardIsland from "../account/WizardIsland";
+import { wizardWords } from "../content/wizard-words";
+import Base from "../layouts/Base.astro";
+import "../styles/account.css";
+---
+
+<Base title="Set up a campaign" description="Set up a new campaign step by step, or skip any step." noindex>
+  <div class="account">
+    <h1>{wizardWords.title}</h1>
+    <WizardIsland client:load />
+    <noscript>
+      <p>This page needs JavaScript to set up a campaign. Turn it on, then reload the page.</p>
+    </noscript>
+  </div>
+</Base>

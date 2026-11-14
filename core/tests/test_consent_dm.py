@@ -661,7 +661,7 @@ class ConsentDMTests(DatabaseTest):
     async def test_pausing_takes_a_player_off_the_allowlist_and_resume_puts_them_back(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
         await self.bot.push_allowlist(GUILD)
-        self.table.dmbchat_channel_id = 555  # the table's DMbot chat
+        self.table.chat_channel_id = 555  # the table's DMbot chat
         assert str(PLAYER) in self.allowlists()[-1]
         press = self.button_press(PLAYER)
         await c.OffRecordButton(GUILD).callback(press)
@@ -712,7 +712,7 @@ class ConsentDMTests(DatabaseTest):
         await self.consent.grant(GUILD, DM)
         await self.bot.push_allowlist(GUILD)
         self.table.campaign_id = "ab" * 16
-        self.table.dmbchat_channel_id = 555
+        self.table.chat_channel_id = 555
         player = self.button_press(PLAYER, self.guild)
         await tp.PauseTableButton(self.table.campaign_id).callback(player)
         assert tp.ONLY_DMS in player.response.send_message.await_args.args  # a player is refused
@@ -742,7 +742,7 @@ class ConsentDMTests(DatabaseTest):
 
     async def test_a_stop_cancels_the_pause_timer_so_nobody_is_said_to_be_back(self) -> None:
         await self.consent.grant(GUILD, PLAYER)
-        self.table.dmbchat_channel_id = 555
+        self.table.chat_channel_id = 555
         await self.bot.pause_recording(GUILD, PLAYER, 5)
         assert (GUILD, PLAYER) in self.bot.off_the_record._timers
         self.bot.stop_recording(GUILD, PLAYER)

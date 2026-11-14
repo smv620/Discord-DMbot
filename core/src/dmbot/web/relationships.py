@@ -16,17 +16,30 @@ from __future__ import annotations
 
 import hashlib
 import re
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Mapping
 from typing import Any
 
+from dmbot import progress
+from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
-from dmbot.memory import gate, kin
+from dmbot.memory import gate, kin, reputation_words, web_actions
 from dmbot.memory.claims import Extracted, condition_of
 from dmbot.memory.link_kinds import link_kind
-from dmbot.memory.link_words import back_words, link_words, reads_both_ways
+from dmbot.memory.link_words import (
+    back_after,
+    back_words,
+    for_reader,
+    link_words,
+    own_words,
+    pair_words,
+    quoted,
+    reads_both_ways,
+)
+from dmbot.memory.standing import dm_line_word
+from dmbot.memory.voice import split_effect_note
 from dmbot.memory.web_actions import RETAKE_AFTER_S
 from dmbot.memory.who_resolve import checked_line
-from dmbot.web import all_names, graph_view
+from dmbot.web import all_names, graph_view, link_sources, pc_icons, which_choices
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -74,30 +87,104 @@ def who_knows(link: dict[str, Any]) -> dict[str, Any]:
 
 
 def edges_from(
-    rows: list[dict[str, Any]], *, can_edit: bool, is_dm: bool = False
+    rows: list[dict[str, Any]],
+    *,
+    can_edit: bool,
+    is_dm: bool = False,
+    kinds: Mapping[str, str] | None = None,
+    standing: Mapping[tuple[str, str], int] | None = None,
 ) -> list[dict[str, Any]]:
     """The door's connections grouped one edge for each pair of names (`a` the smaller ID), each
     with its `label` (the words of the label connection), `more` (how many others there are) and
     every connection as `links`: {id, words, secret, revealed, direction, kind}. `direction` says
     which way the words read between the pair: "a-b", "b-a", or "both" for the ones that read
     the same either way. A connection's `secret` (and whether it is `revealed` yet) is only sent
-    to a DM (the door sends none to anyone else). `kind` is for the map's colours (#2942)."""
+    to a DM (the door sends none to anyone else). `kind` is for the map's colours (#2942).
+    `kinds` maps a name's id to its kind (from the same answer's `nodes`), so a place tie reads
+    "lives in" or "was last seen in" for a character and keeps "is in" for a place (#3363). A
+    subject missing from it (a kind the gate left out) reads the old, safe "is in". `standing`: the
+    DM's own Reputation for pairs (`dmbot_web_dm_standings`), whose word wins on a `knows` line and
+    is sent as the link's `standing` (#3642); read only when `is_dm`, so no one else is given it."""
+    kinds = kinds or {}
     pairs: dict[tuple[str, str], list[dict[str, Any]]] = {}
     for row in rows:
         a, b = sorted((str(row["a"]), str(row["b"])))
+        subject_kind = kinds.get(str(row["a"]), "")  # (the words read from row["a"])
         directional = bool(row.get("directional", False))
-        if reads_both_ways(str(row["predicate"]), str(row["detail"] or ""), directional):
+        both_ways = row.get("both_ways")  # (the DM's direction for it, #4154: None is the default)
+        # a journey or a plan on a route (#4173 slice 6d), from the doors since migration 0469
+        state = str(row.get("route_state") or "")
+        if reads_both_ways(
+            str(row["predicate"]), str(row["detail"] or ""), directional, both_ways, state
+        ):
             direction = "both"
         else:
             direction = "a-b" if str(row["a"]) == a else "b-a"
+        own = own_words(str(row["predicate"]), str(row["detail"] or ""))
+        # the DM's own word for the pair wins over the reader's on a `knows` line (#3642; the same
+        # function as the Discord card), and only the words change: the stored detail stays
+        dm_word = (
+            dm_line_word(standing, str(row["a"]), str(row["b"]), str(row.get("detail") or ""))
+            if is_dm and standing and row["predicate"] == "knows"
+            else None
+        )
+        how = str(row.get("knows_how") or "") if row["predicate"] == "knows" else None
         pairs.setdefault((a, b), []).append(
             {
                 "id": row["id"],
-                "words": link_words(str(row["predicate"]), str(row["detail"] or ""), directional),
+                # the table's own words (a connection with no kind of its own) are shown in quotes,
+                # for display only: `rawWords` is what the edit form and the stored words keep
+                # (#3574)
+                "words": quoted(str(row["detail"]))
+                if own
+                else link_words(
+                    str(row["predicate"]),
+                    dm_word or str(row["detail"] or ""),
+                    directional,
+                    subject_kind,
+                    feeling=is_dm,
+                    # "has met" / "has heard of" leads a knows line (#3882), feeling kept
+                    knows_how=how,
+                    route_state=state,
+                ),
+                "rawWords": str(row["detail"]) if own else None,
+                "standing": dm_word,
                 # how it reads from the second name when that differs ("has a niece", "has as a
                 # member"), else None; every connection that has a reading back sends it (#2666),
                 # so the page can write each line from the name in the middle
-                "back": back_words(str(row["predicate"]), str(row["detail"] or ""), directional),
+                "back": f"is linked ({quoted(str(row['detail']))}) to"
+                if own
+                else back_words(
+                    # (as this reader is shown it: a non-DM never reads an old friend or enemy
+                    # line's feeling, not even from the other end, #3611)
+                    for_reader(str(row["predicate"]), "", feeling=is_dm)[0],
+                    str(row["detail"] or ""),
+                    directional,
+                    subject_kind,
+                    knows_how=how,
+                    both_ways=both_ways,
+                    route_state=state,
+                ),
+                # "are rivals" for a line that reads both ways, said of the two names together
+                # (#4154): the page writes "Cerric ↔ Wit · are rivals" and never works words out.
+                # From the words this reader is shown, so a non-DM's old friend line is "know each
+                # other", as its `words` are plain "knows" (#3611)
+                "pairWords": pair_words(
+                    *for_reader(str(row["predicate"]), str(row["detail"] or ""), feeling=is_dm),
+                    knows_how=how,
+                )
+                if direction == "both"
+                else None,
+                # whether two people have met, for the page's "Have they met?" (#3882)
+                "knowsHow": how,  # None: not a knows line, and the field is not sent
+                # the words that follow the name for the two place readings that need them ("is
+                # where Tavin was last seen"): empty for every other connection (#3363)
+                "backAfter": back_after(
+                    str(row["predicate"]),
+                    str(row["detail"] or ""),
+                    directional,
+                    subject_kind,
+                ),
                 "secret": bool(row["secret"]),  # (the real flag; masked on the way out)
                 "revealed": bool(row.get("revealed", True)),  # (the party believes it; masked too)
                 "pinned": bool(row.get("pinned", False)),  # (the DM's 📌; only a DM ever sees it)
@@ -109,6 +196,9 @@ def edges_from(
                 # view carries them (the door sends nothing otherwise)
                 "known_by": row.get("knownBy"),
                 "held": row.get("held"),
+                # a place's parent DMbot assumed from where the story was (#4173 slice 3, #4304);
+                # only the DM's full view door sends it
+                "assumed": bool(row.get("assumed", False)),
                 "at": int(row["at"]),
             }
         )
@@ -126,14 +216,21 @@ def edges_from(
                     {
                         "id": x["id"],
                         "words": x["words"],
+                        **({"rawWords": x["rawWords"]} if x["rawWords"] is not None else {}),
                         "back": x["back"],
+                        "backAfter": x["backAfter"],
                         "secret": x["secret"] if can_edit else False,
                         "revealed": x["revealed"] if can_edit else True,
                         "pinned": x["pinned"] if can_edit else False,
                         "check": x["check"] if can_edit else "",
                         "direction": x["direction"],
+                        **({"pairWords": x["pairWords"]} if x["pairWords"] is not None else {}),
                         "kind": x["kind"],
+                        # (a knows line only, one this reader is shown, #3882)
+                        **({"knowsHow": x["knowsHow"]} if x["knowsHow"] is not None else {}),
                         **(who_knows(x) if is_dm else {}),
+                        **({"assumed": True} if is_dm and x["assumed"] else {}),
+                        **({"standing": x["standing"]} if is_dm and x["standing"] else {}),
                     }
                     for x in links
                 ],
@@ -245,14 +342,17 @@ async def source_of(
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
         cur = await conn.execute(
-            "SELECT dmbot_web_graph_source(%s, %s) AS s, dmbot_web_knowers_data(%s, %s) AS k",
-            (guild_id, campaign_id, guild_id, campaign_id),
+            "SELECT dmbot_web_graph_source(%s, %s) AS s, dmbot_web_knowers_data(%s, %s) AS k,"
+            " dmbot_web_told(%s, %s) AS t",
+            (guild_id, campaign_id) * 3,
         )
         found = await cur.fetchone()
         pages = await _page_ids(conn, guild_id, campaign_id)
-    if found is None or found["s"] is None or found["k"] is None:
+    if found is None or found["s"] is None or found["k"] is None or found["t"] is None:
         raise RecapError("not_found")
-    return dict(found["s"]), dict(found["k"]), pages
+    # who was told a secret name is an entry (#3089), already cut to the caller's own characters by
+    # the door; it joins the knowers, which go to the gate and no further
+    return dict(found["s"]), {**found["k"], "told": found["t"]["told"]}, pages
 
 
 def viewer_of(known: dict[str, Any]) -> gate.Viewer:
@@ -297,10 +397,54 @@ async def read_web(
         got, known = await _door(
             db, session, ref, center, hops, size_only=False, view=view, with_knowers=True
         )
-    page = page_of(got)
-    if got["canEdit"] and got["seesAll"]:
+    own_view = got["canEdit"] and got["seesAll"]
+    # the DM's own Reputation wins on a `knows` line, in the DM's own Full View only (#3642)
+    page = page_of(got, await dm_standings(db, session, ref) if own_view else None)
+    if own_view:
         await with_know_words(db, session, ref, page, known)
+    if own_view:
+        await with_histories(db, session, ref, page)
+    # where each connection came from (#2946): the DM's own view gets the full value, any other
+    # look (a player's, or Players View) the player's
+    await link_sources.with_link_sources(db, session, ref, page, full=bool(own_view))
+    # each player character's picture, for the nodes this person may see (#3621)
+    # (the DM's Players view is what a player gets, so it carries no tools for the picture)
+    await pc_icons.with_icons(db, session, ref, page, tools=view != "players")
     return page
+
+
+async def with_histories(db: Database, session: Session, ref: str, page: dict[str, Any]) -> None:
+    """Adds `history` to each item of a DM's own Full View (#4122): how it changed hands, in
+    Discord's words (`graph_view.history_line`). This view is read from the database as a whole,
+    not through the gate, so the ties come from their own DM-only door for the names on the page.
+    Changes `page` in place; an item nobody let go of gets none."""
+    # only the items can have a history; the door takes 500 of them, more than a page draws
+    ids = [
+        str(n["id"])
+        for n in page.get("nodes", [])
+        if n.get("kind") == "item" and not str(n["id"]).startswith("alias:")
+    ]
+    if not ids:
+        return
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_item_ties(%s, %s, %s) AS r", (guild_id, campaign_id, ids[:500])
+        )
+        found = await cur.fetchone()
+    rows = found["r"] if found else None
+    if not rows:
+        return
+    names = {str(r["a"]): r["name"] for r in rows if r.get("name")}
+    by_item: dict[str, list[Any]] = {}
+    for row in rows:
+        by_item.setdefault(str(row["b"]), []).append(graph_view.tie_of(row))
+    for node in page["nodes"]:
+        line = graph_view.history_line(by_item.get(str(node["id"]), []), names.get)
+        if line:
+            node["history"] = line
 
 
 def _knowers(
@@ -396,7 +540,9 @@ async def with_know_words(
                 link["knownBy"] = now if held and now else []
 
 
-def page_of(got: dict[str, Any]) -> dict[str, Any]:
+def page_of(
+    got: dict[str, Any], standing: Mapping[tuple[str, str], int] | None = None
+) -> dict[str, Any]:
     """A graph answer (the door's, or the gate's in the door's shape) as the page gets it: each
     name with whether it has an NPC page, and the connections between two names grouped into one
     edge with its words. `pageIds` is dropped."""
@@ -408,6 +554,14 @@ def page_of(got: dict[str, Any]) -> dict[str, Any]:
         }
         for n in got["nodes"]
     ]
+    for node in nodes:
+        # every door node carries `unnamed` (true only for a DM's person the story never named,
+        # #3732); a node worked out by the gate has none and is left as the gate named it. An
+        # unnamed one is labelled from the anchor's present name, as the All names page and Discord
+        if "unnamed" in node:
+            all_names._label_unnamed(node)
+    waiting = got.get("waitingUnnamed")
+    extra = {} if waiting is None else {"waitingUnnamed": int(waiting)}  # (a DM's only, #3732)
     return {
         "center": got["center"],
         "nodes": nodes,
@@ -417,6 +571,8 @@ def page_of(got: dict[str, Any]) -> dict[str, Any]:
             # "Who knows this?" is the DM's alone, in the full view: a player who peeks sees
             # everything the DM screen shows, but not which characters know what (#2935)
             is_dm=bool(got["canEdit"]) and bool(got["seesAll"]),
+            kinds={str(n["id"]): str(n.get("kind") or "") for n in got["nodes"]},
+            standing=standing,
         ),
         "truncated": bool(got["truncated"]),
         "maxHops": MAX_HOPS,
@@ -424,7 +580,24 @@ def page_of(got: dict[str, Any]) -> dict[str, Any]:
         "view": got["view"],
         "visibility": got["visibility"],
         "canPeek": bool(got["canPeek"]),
+        **extra,
     }
+
+
+async def dm_standings(db: Database, session: Session, ref: str) -> dict[tuple[str, str], int]:
+    """The DM's own Reputation for each pair, (viewer, subject) to score (#3642), from a door that
+    answers only a DM of the campaign (anyone else: nothing). Ids and scores only; they go to
+    `edges_from` and no further."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_dm_standings(%s, %s) AS s", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    rows = found["s"] if found is not None and found["s"] is not None else []
+    return {(str(v), str(s)): int(score) for v, s, score in rows}
 
 
 async def read_size(
@@ -446,6 +619,25 @@ async def read_size(
         return {"names": int(shaped["names"])}
     got, _known = await _door(db, session, ref, center, hops, size_only=True, view=view)
     return {"names": int(got["names"])}
+
+
+async def read_version(db: Database, session: Session, ref: str) -> dict[str, int]:
+    """The Story Graph's version number and nothing else (#3294): it goes up in the same
+    transaction as every graph write, so the page can read the whole graph only when it, or the
+    viewer, has changed. Members of the server only, as the graph doors; anyone else gets
+    `not_found`. A player who polls it learns only that something changed: the full read they then
+    make shows only what they may see."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_graph_version(%s, %s) AS v", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    if found is None or found["v"] is None:
+        raise RecapError("not_found")
+    return {"version": int(found["v"])}
 
 
 # The overview's order for the "Not connected yet" tray: the kinds a table asks about first.
@@ -666,6 +858,9 @@ def _words(value: object) -> str:
     if not isinstance(value, str):
         raise RecapError("bad_name")
     clean = " ".join(value.split())
+    # the quotes the page shows around the table's own words are never part of them (#3574)
+    if len(clean) > 2 and clean[0] == "\u201c" and clean[-1] == "\u201d":
+        clean = clean[1:-1].strip()
     if not clean or not clean.isprintable():
         raise RecapError("bad_name")
     if len(clean) > WORDS_MAX:
@@ -735,9 +930,10 @@ async def queue_add(db: Database, session: Session, ref: str, body: object) -> s
 
 
 async def queue_edit(db: Database, session: Session, ref: str, link_id: str, body: object) -> str:
-    """Queue a change to one connection: `{action: "words", words}`, `{action: "secret",
-    secret}`, `{action: "who", who, characters}`, `{action: "pin", pinned}` or
-    `{action: "remove", confirm: true}`. Returns the answer's id."""
+    """Queue a change to one connection: `{action: "words", words}`, `{action: "feeling", feeling}`
+    (one of the nine words, #3606), `{action: "secret", secret}`, `{action: "who", who,
+    characters}`, `{action: "pin", pinned}`, `{action: "direction", direction}` ("a-b", "b-a" or
+    "both", #4154) or `{action: "remove", confirm: true}`. Returns the answer's id."""
     if not ID_PATTERN.match(link_id):
         raise RecapError("not_found")
     if not isinstance(body, dict):
@@ -747,6 +943,17 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
         return await _queue(
             db, session, ref, entity=None, action="link-words", target=link_id,
             text=_words(body.get("words")), flag=False,
+        )  # fmt: skip
+    if action == "feeling":  # a feeling picked for a `knows` line (#3606): one of the nine words
+        feeling = reputation_words.word_of(body.get("feeling"))
+        if feeling is None:
+            raise RecapError("bad_action")
+        # the same change as typing "knows (wary)" into the words box (`predicate_for` reads it
+        # back as a feeling) but only on a `knows` connection (checked when it is applied), so the
+        # connection stays a "knows" and Undo is the words' own
+        return await _queue(
+            db, session, ref, entity=None, action="link-words", target=link_id,
+            text=f"{web_actions.FEELING_TEXT}{feeling}", flag=False,
         )  # fmt: skip
     if action == "secret":
         if not isinstance(body.get("secret"), bool):
@@ -767,6 +974,18 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
             db, session, ref, entity=None, action="link-pin", target=link_id,
             text="", flag=bool(body["pinned"]),
         )  # fmt: skip
+    if action == "direction":  # A → B, B → A or A ↔ B (#4154), named as the page's edge names them
+        if body.get("direction") not in web_actions.DIRECTIONS:
+            raise RecapError("bad_action")
+        return await _queue(
+            db, session, ref, entity=None, action=web_actions.DIRECTION_ACTION, target=link_id,
+            text=str(body["direction"]), flag=False,
+        )  # fmt: skip
+    if action == "right":  # ✅ That's right on an assumed parent (#4304); the door lets only a DM
+        return await _queue(
+            db, session, ref, entity=None, action=web_actions.RIGHT_ACTION, target=link_id,
+            text="", flag=False,
+        )  # fmt: skip
     if action == "remove":
         if body.get("confirm") is not True:
             raise RecapError("needs_confirm")
@@ -782,16 +1001,33 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
 # "backstory" (from the DM's own backstory; actions keep, skip; `secret` is "keep as secret";
 # `keep_all` keeps the ones named in `ids` (at most 50) that are ready now, and no others), or
 # "which" (a "Which Mara?" question, #2652; actions pick, with `entity` the candidate chosen, and
-# neither).
+# neither). A fact kept for "Which one?" (#3463, Family ties) is answered as `claim`: `pick` with
+# `side` ("subject" or "object") and `entity` (the entry chosen), `unpick` (Undo, while it waits),
+# and "None of these" is the ordinary `reject`.
 WAITING_QUEUE = {
     ("claim", "confirm"): "claim-confirm",
     ("claim", "reject"): "claim-reject",
+    ("claim", "pick"): "claim-pick",
+    ("claim", "unpick"): "claim-unpick",
+    ("claim", "undo"): "claim-undo",
     ("backstory", "keep"): "backstory-keep",
     ("backstory", "skip"): "backstory-skip",
     ("backstory", "keep_all"): "backstory-keep-all",
     ("which", "pick"): "backstory-which-pick",
     ("which", "neither"): "backstory-which-neither",
 }
+
+
+async def queue_link_undo(db: Database, session: Session, ref: str, batch: str) -> str:
+    """Queue the Undo of one connection edit (#4156), by the change number its answer carried. The
+    door checks the caller is a DM of the campaign and that the batch is one their own done
+    connection edit made there (`not_found` otherwise); the bot checks again and may say `gone`,
+    `changed` or `too_late`. Nothing is written until then."""
+    if not (batch.isascii() and batch.isdigit()) or len(batch) > 12:
+        raise RecapError("not_found")
+    return await _queue(
+        db, session, ref, entity=None, action="link-undo", target=batch, text="", flag=False
+    )
 
 
 async def queue_waiting(db: Database, session: Session, ref: str, body: object) -> str:
@@ -831,6 +1067,17 @@ async def queue_waiting(db: Database, session: Session, ref: str, body: object) 
         if not ID_PATTERN.match(picked):
             raise RecapError("not_found")
         text = picked
+    if action == "claim-undo":
+        # `batch`: the change number the answer gave back (#3645); the door checks it is theirs
+        batch = body.get("batch")
+        if isinstance(batch, bool) or not isinstance(batch, int) or not 0 < batch < 10**12:
+            raise RecapError("not_found")
+        text = str(batch)
+    if action == "claim-pick":
+        side, entry = body.get("side"), str(body.get("entity") or "")
+        if side not in ("subject", "object") or not ID_PATTERN.match(entry):
+            raise RecapError("not_found")
+        text = f"{side}:{entry}"  # the door checks the shape; the bot checks the choice
     return await _queue(
         db, session, ref, entity="", action=action, target=target, text=text,
         flag=secret and action in ("claim-confirm", "backstory-keep"),
@@ -877,9 +1124,28 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         found = await cur.fetchone()
     got = found["r"] if found else None
     if got is None or not str(got["action"]).startswith(
-        ("link-", "claim-", "backstory-", "reading-", "names-fixed-")
+        ("link-", "claim-", "backstory-", "reading-", "names-fixed-", "world-", "maps-")
     ):
         raise RecapError("not_found")
+    if str(got["action"]).startswith("maps-"):
+        # a Maps page press (#4347): how it ended, and the change it made for the page's Undo
+        made = got.get("resultBatches") or []
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "batch": int(made[0]) if got["state"] == "done" and made else None,
+        }
+    if str(got["action"]).startswith("world-"):
+        # a World notes ✅, 🚫 or ↩ Undo (#4285): how it ended, how many a Keep kept, and the change
+        # it made for the page's Undo (none when it changed nothing)
+        made = got.get("resultBatches") or []
+        counts = str(got.get("counts") or "")
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "kept": int(counts.removeprefix("kept:")) if counts.startswith("kept:") else None,
+            "batch": int(made[0]) if got["state"] == "done" and made else None,
+        }
     if str(got["action"]).startswith("reading-"):
         return _reading_answer(got)
     if str(got["action"]).startswith("names-fixed-"):
@@ -892,6 +1158,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             if got["state"] == "done" and str(got["resultOther"] or "").isdigit()
             else None,
             "waits": waited["waits"],
+            "progress": _name_action_progress(got),
         }
     edge = None
     if str(got["action"]).startswith(("claim-", "backstory-")):
@@ -905,6 +1172,15 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "edge": None,
             "removed": False,
             "kept": int(got["resultId"]) if keeping and got["resultId"] else None,
+            # the change a kept fact made, for the Undo of an All true press (#3645)
+            "batch": int(got["resultOther"])
+            if got["action"] == "claim-confirm"
+            and got["state"] == "done"
+            and str(got["resultOther"] or "").isdigit()
+            else None,
+            # what the bot also did with it, for the page to say: "shown:1" (the players can see
+            # it now, #3973) or "held:1" (kept hidden beside another hidden one, #3979); "" if none
+            "counts": str(got.get("counts") or ""),
             "waits": _reading_answer(got)["waits"],
             "progress": {"done": int(got.get("progressDone") or 0), "total": total}
             if keeping and total > 0
@@ -914,11 +1190,17 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         around = await read_web(db, session, ref, center=got["resultId"], hops=1)
         pair = sorted((got["resultId"], got["resultOther"]))
         edge = next((e for e in around["edges"] if [e["a"], e["b"]] == pair), None)
+    if got["action"] == "link-undo":
+        # the page's ↩ Undo of one of its edits (#4156): it only needs to know it went back
+        return {"state": got["state"], "error": got["error"], "undone": got["state"] == "done"}
+    batches = got.get("resultBatches") or []
     return {
         "state": got["state"],
         "error": got["error"],
         "edge": edge,
         "removed": got["state"] == "done" and edge is None,
+        # the change this edit made, for the page's ↩ Undo (#4156); absent when it changed nothing
+        "batch": int(batches[0]) if got["state"] == "done" and batches else None,
     }
 
 
@@ -962,16 +1244,23 @@ def _sureness(status: str, confidence: object) -> str:
     }.get(status, "a guess")
 
 
-async def read_readings(db: Database, session: Session, ref: str) -> dict[str, Any]:
+async def read_readings(
+    db: Database, session: Session, ref: str, *, outside_engine: str | None = None
+) -> dict[str, Any]:
     """What people believe, waiting for the signed-in DM (#2412): claims that carry a reading, not
     yet kept as a belief or turned down. DM only (the door answers anyone else with nothing, here
     `not_found`). The words are the claim's own (names and a relationship), never a transcript
-    line or a quote. Read-only."""
+    line or a quote. Read-only. Only readings whose every speaker is recorded now: under the
+    current wording and, while an outside company hears the voices, for that company
+    (`outside_engine`, as for the recap checks), the bot's rule (#3462)."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
-        cur = await conn.execute("SELECT dmbot_web_readings(%s, %s) AS r", (guild_id, campaign_id))
+        cur = await conn.execute(
+            "SELECT dmbot_web_readings(%s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, TERMS_VERSION, outside_engine),
+        )
         found = await cur.fetchone()
     got = found["r"] if found else None
     if got is None or got.get("status") != "ok":
@@ -1019,6 +1308,24 @@ async def queue_reading(db: Database, session: Session, ref: str, body: object) 
     )
 
 
+def _name_action_progress(got: dict[str, Any]) -> dict[str, Any]:
+    """The same wait in the shared progress shape (#3355): the stage, when the page queued it, when
+    it last moved and whether it has stalled, times and codes only. A queue row waits for the bot
+    (`waiting`), then is taken (`working`, then the bot stamps its own progress), then ends."""
+    state = str(got["state"])
+    created = int(got.get("createdAt") or 0)
+    taken = int(got.get("claimedAt") or 0) // 1000  # (the queue marks pickups in milliseconds)
+    moved = max(taken, int(got.get("progressAt") or 0))
+    stage = {"waiting": "waiting", "working": "working", "done": "done"}.get(state, "failed")
+    return progress.shape(
+        stage,
+        started_at=created,
+        updated_at=moved if state != "waiting" and moved else created,
+        now=int(got.get("now") or created),
+        reason=(str(got.get("error") or "") or "undo_failed") if stage == "failed" else None,
+    )
+
+
 def _reading_answer(got: dict[str, Any]) -> dict[str, Any]:
     """Where one answer about a reading stands, with the wait shown (CLAUDE.md: every wait says
     what stage it is at, how long it has run and when it last moved): counts and stages only."""
@@ -1052,7 +1359,7 @@ def _can_be_secret(row: dict[str, Any]) -> bool:
     screen's own rule (`claims.condition_of`), so both read it the same way."""
     said = Extracted(
         str(row["subject"]), str(row["relationship"]), str(row["object"]),
-        str(row.get("details") or ""), (), str(row["how"]),
+        split_effect_note(str(row.get("details") or ""))[0], (), str(row["how"]),
     )  # fmt: skip
     return condition_of(said) is None
 
@@ -1061,34 +1368,63 @@ def _claim_statement(row: dict[str, Any]) -> str:
     """A claim as one plain line, "Mira Voss knows Far Hall" (the DM's page shows the line and the
     session's date; the words are the claim's own, as the DM screen shows them)."""
     base = f"{row['subject']} {row['relationship']} {row['object']}".strip()
-    details = str(row.get("details") or "").strip()
+    details, _ = split_effect_note(str(row.get("details") or ""))  # (the note is not a detail)
+    details = details.strip()
     return f"{base} ({details})" if details else base
 
 
-async def read_waiting(db: Database, session: Session, ref: str) -> dict[str, Any]:
+async def read_waiting(
+    db: Database, session: Session, ref: str, *, outside_engine: str | None
+) -> dict[str, Any]:
     """What waits for the signed-in DM of this campaign (#2652): the claims PlotBot found at the
     table, the connections a backstory found (ready, or waiting on a name, with the upload each came
     from) and the "Which Mara?" questions, with the counts the overview's "waiting for you" needs.
     DM only (the door answers anyone else with nothing, `not_found` here). Read-only, and nothing
-    from a transcript: a name, a short quote the DM's own text, a label the DM typed."""
+    from a transcript: a name, a short quote the DM's own text, a label the DM typed. A claim is
+    listed and counted only while every one of its speakers is recorded now: under the current
+    wording and, while an outside company hears the voices, for that company (`outside_engine`,
+    as for the recap checks), the bot's rule (#3466)."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
-        cur = await conn.execute("SELECT dmbot_web_waiting(%s, %s) AS r", (guild_id, campaign_id))
+        cur = await conn.execute(
+            "SELECT dmbot_web_waiting(%s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, TERMS_VERSION, outside_engine),
+        )
         found = await cur.fetchone()
-    got = found["r"] if found else None
+        got = found["r"] if found else None
+        info = None
+        if got is not None and got.get("status") == "ok" and got["claims"]:
+            # The claims kept for a "Which one?" answer (#3463): the choices come from the
+            # store's own function, run on the facts this door sends for the ids the list showed.
+            ids = [str(c["id"]) for c in got["claims"]][:200]
+            cur = await conn.execute(
+                "SELECT dmbot_web_which_info(%s, %s, %s) AS r", (guild_id, campaign_id, ids)
+            )
+            info = (await cur.fetchone() or {}).get("r")
     if got is None or got.get("status") != "ok":
         raise RecapError("not_found")
+    choices = which_choices.choices_by_claim(info) if info else {}
     claims = [
-        {**c, "statement": _claim_statement(c), "canSecret": _can_be_secret(c)}
+        {
+            **c,
+            "details": split_effect_note(str(c.get("details") or ""))[0],  # (never the note)
+            "statement": _claim_statement(c),
+            "canSecret": _can_be_secret(c),
+            **({"choices": choices[str(c["id"])]} if str(c["id"]) in choices else {}),
+        }
         for c in got["claims"]
     ]
     backstory = [
         {
             **{k: v for k, v in b.items() if k != "decided"},
             "how": link_words(
-                str(b["predicate"]), str(b["detail"]), kin.directional(str(b["detail"]))
+                str(b["predicate"]),
+                str(b["detail"]),
+                kin.directional(str(b["detail"])),
+                str(b.get("subjectKind") or ""),
+                feeling=True,  # (the waiting page is the DM's alone)
             ),
             "check": check_words(b.get("decided")),
         }
@@ -1098,7 +1434,13 @@ async def read_waiting(db: Database, session: Session, ref: str) -> dict[str, An
         {
             **{k: v for k, v in w.items() if k != "decided"},
             "how": link_words(
-                str(w["predicate"]), str(w["detail"]), kin.directional(str(w["detail"]))
+                str(w["predicate"]),
+                str(w["detail"]),
+                kin.directional(str(w["detail"])),
+                # the named name is the subject only when the door says so; otherwise the subject
+                # is a list the DM has yet to choose from, and its kind is not known (old words)
+                str(w.get("otherKind") or "") if w.get("otherIsSubject") else "",
+                feeling=True,
             ),
             "check": check_words(w.get("decided")),
         }

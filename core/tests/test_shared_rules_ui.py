@@ -13,7 +13,7 @@ from dmbot.ui import shared_rules
 
 
 def campaign(dms: tuple[int, ...] = (7,)) -> Any:
-    return SimpleNamespace(guild_id=1, id="c1", dm_user_ids=list(dms))
+    return SimpleNamespace(guild_id=1, id="c1", dm_user_ids=list(dms), dm_accounts=list(dms))
 
 
 def interaction(user: int, bot: Any) -> Any:

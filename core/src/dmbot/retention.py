@@ -424,7 +424,7 @@ class RetentionJob:
     def _recipients(self, campaign: Campaign) -> list[int]:
         if campaign.owner_user_id is not None:
             return [campaign.owner_user_id]
-        return sorted(campaign.dm_user_ids)
+        return sorted(campaign.dm_accounts)
 
     async def _remember(self, campaign: Campaign, stage: int, announced: int | None) -> bool:
         try:

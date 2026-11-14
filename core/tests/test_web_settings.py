@@ -109,6 +109,10 @@ class FakeBot:
         await self.store.set_rulesets(campaign.guild_id, campaign.id, main, fallback)
         return self.live
 
+    async def apply_share_improve(self, campaign: Campaign, on: bool) -> None:
+        self.calls.append(("share_improve", f"{on}"))
+        await self.store.set_share_improve(campaign.guild_id, campaign.id, on)
+
     async def optional_overrides(self, campaign: Campaign) -> dict[str, bool]:
         return await self.store.optional_rule_overrides(campaign.guild_id, campaign.id)
 
@@ -170,6 +174,48 @@ class Settings(Base):
         found = await self.campaigns.get(self.g, (which or self.one).id)
         assert found is not None
         return found
+
+
+class ShareToImprove(Settings):
+    """ "Share this campaign's story to improve DMbot" (#3741): off by default, queued like every
+    setting, and off deletes every waiting check and every report not yet posted."""
+
+    async def page_says(self) -> bool:
+        from dmbot.web import campaign_page
+
+        got = await campaign_page.read_campaign(self.web, self.session, self.cref)
+        return bool(got["settings"]["shareImprove"])
+
+    async def test_off_by_default_on_from_the_website_and_off_deletes_what_waits(self) -> None:
+        self.assertFalse(await self.page_says())
+        await self.queue(setting="share_improve", value="on")
+        self.assertEqual([o.error for o in await self.run_bot()], [""])
+        self.assertTrue(await self.page_says())
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO graph_review_pending (guild_id, campaign_id, fixes, first_fix_at,"
+                " last_fix_at) VALUES (%s, %s, '[]'::jsonb, 1, 1)",
+                (self.g, self.one.id),
+            )
+            for rid, posted in (("a" * 32, None), ("b" * 32, 5)):
+                await conn.execute(
+                    "INSERT INTO graph_reviews (guild_id, campaign_id, id, created_at, checked,"
+                    " missed, report, prompt_version, model, posted_at)"
+                    " VALUES (%s, %s, %s, 1, 1, 1, 'r', 'p', 'm', %s)",
+                    (self.g, self.one.id, rid, posted),
+                )
+        await self.queue(setting="share_improve", value="off")
+        self.assertEqual([o.error for o in await self.run_bot()], [""])
+        self.assertFalse(await self.page_says())
+        self.assertEqual(self.bot.calls, [("share_improve", "True"), ("share_improve", "False")])
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM graph_review_pending")
+            self.assertEqual((await cur.fetchone() or {})["n"], 0)
+            cur = await conn.execute("SELECT id FROM graph_reviews")
+            self.assertEqual([r["id"] for r in await cur.fetchall()], ["b" * 32])  # (posted)
+
+    async def test_only_on_or_off(self) -> None:
+        self.assertEqual(await self.refused(setting="share_improve", value="yes"), "bad_value")
 
 
 class TheChoices(Settings):
@@ -476,6 +522,57 @@ class TheChoices(Settings):
         # The DM is told in Discord's own words.
         self.assertEqual(done["note"], messages.visibility_changed("open", was="peek"))
 
+    async def test_a_choice_shows_how_long_it_has_waited_in_the_shared_progress_shape(self) -> None:
+        """#3355: stage, when it began, when it last moved, the server's clock and whether it
+        stalled: times and codes only, beside every old field."""
+        answer = await self.queue(setting="visibility", value="open")
+        waiting = (await self.poll(answer))["progress"]
+        self.assertEqual((waiting["stage"], waiting["state"]), ("waiting", "running"))
+        for key in ("startedAt", "updatedAt", "serverNow"):
+            self.assertIsInstance(waiting[key], int, key)
+        self.assertLessEqual(waiting["startedAt"], waiting["updatedAt"])
+        self.assertLessEqual(waiting["updatedAt"], waiting["serverNow"])
+        self.assertEqual(
+            set(waiting), {"stage", "startedAt", "updatedAt", "serverNow", "state", "reason"}
+        )  # (nothing but codes and times)
+        self.assertIsNone(waiting["reason"])  # none while it runs
+        await self.run_bot()
+        done = (await self.poll(answer))["progress"]
+        self.assertEqual((done["stage"], done["state"]), ("done", "done"))
+
+    async def test_a_taken_choice_moves_at_the_millisecond_stamp_and_a_refusal_reads_failed(
+        self,
+    ) -> None:
+        answer = await self.queue(setting="visibility", value="open")
+        now_s = int(time.time())
+        async with self.db.guild(self.g) as conn:  # taken 30 seconds ago (the queue stamps ms)
+            await conn.execute(
+                "UPDATE setting_actions SET state = 'working', created_at = %s, claimed_at = %s"
+                " WHERE id = %s",
+                (now_s - 60, (now_s - 30) * 1000, answer),
+            )
+        working = (await self.poll(answer))["progress"]
+        self.assertEqual((working["stage"], working["state"]), ("working", "running"))
+        self.assertAlmostEqual(working["updatedAt"], now_s - 30, delta=3)  # seconds, not ms
+        async with self.db.guild(self.g) as conn:  # a choice that needs the DM's yes first
+            await conn.execute(
+                "UPDATE setting_actions SET state = 'failed', error = 'needs_confirm'"
+                " WHERE id = %s",
+                (answer,),
+            )
+        failed = (await self.poll(answer))["progress"]
+        self.assertEqual((failed["state"], failed["reason"]), ("failed", "needs_confirm"))
+
+    async def test_a_choice_the_bot_never_takes_reads_as_stalled(self) -> None:
+        answer = await self.queue(setting="visibility", value="open")
+        async with self.db.guild(self.g) as conn:  # queued ten minutes ago, still waiting
+            await conn.execute(
+                "UPDATE setting_actions SET created_at = created_at - 600 WHERE id = %s", (answer,)
+            )
+        stalled = (await self.poll(answer))["progress"]
+        self.assertEqual((stalled["state"], stalled["reason"]), ("stalled", "stalled"))
+        self.assertEqual((await self.poll(answer))["state"], "waiting")  # the old field stands
+
     async def test_how_much_dmbot_says_follows_the_store_call_of_the_discord_button(self) -> None:
         await self.queue(setting="level", value="quiet")
         await self.run_bot()
@@ -640,7 +737,11 @@ class TheDoor(Settings):
         }
         # (the Shared story switch, #2985, is checked below: its three choices would fill the
         # campaign's ten open places together with these nine)
-        self.assertEqual(campaign_settings.CHOICES, {**offered, "story_mode": STORY_MODES})
+        # (and "share to improve DMbot", on or off, #3741: the website's own switch)
+        self.assertEqual(
+            campaign_settings.CHOICES,
+            {**offered, "story_mode": STORY_MODES, "share_improve": ("on", "off")},
+        )
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
             for setting, values in offered.items():

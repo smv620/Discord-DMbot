@@ -135,7 +135,9 @@ class Disagreeing(UITest):
     async def test_a_dm_removed_since_the_question_was_shown_can_no_longer_answer(self) -> None:
         _, it = await self.add()
         _, view = self.question(it)
-        self.campaigns["c1"] = replace(self.campaigns["c1"], dm_user_ids=frozenset({PLAYER}))
+        self.campaigns["c1"] = replace(
+            self.campaigns["c1"], dm_user_ids=frozenset({PLAYER}), dm_accounts=frozenset({PLAYER})
+        )
         self.assertFalse(await view.interaction_check(self.it(DM)))  # the stale copy had them
         self.assertTrue(await view.interaction_check(self.it(PLAYER)))
 
@@ -416,7 +418,7 @@ class TheQuotedWords(unittest.TestCase):
 
         view = hc.DisagreeView(
             SimpleNamespace(),
-            SimpleNamespace(dm_user_ids={DM}),  # type: ignore[arg-type]
+            SimpleNamespace(dm_user_ids={DM}, dm_accounts={DM}),  # type: ignore[arg-type]
             "A *potion* is a _bonus_ action",
             [Existing(4, "A **potion** is an item interaction", None)],
             save=AsyncMock(),

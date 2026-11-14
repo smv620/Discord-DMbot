@@ -7,7 +7,7 @@ same refusal. Needs the database (skipped without one, like the other web tests)
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, ClassVar
 
 import httpx
 
@@ -83,6 +83,7 @@ class TheCampaignPage(Base):
                 "mainRules",
                 "fallbackRules",
                 "gameMasters",
+                "shareImprove",
             },
         )
         self.assertEqual(got["settings"]["gameMasters"], 1)
@@ -110,7 +111,7 @@ class TheCampaignPage(Base):
             co["settings"],
             {"visibility": "private", "level": "quiet", "keepDays": 90, "paused": True,
              "storyMode": "guide", "dndbeyondInvite": "", "mainRules": "2024",
-             "fallbackRules": "2014", "gameMasters": 2},
+             "fallbackRules": "2014", "gameMasters": 2, "shareImprove": False},
         )  # fmt: skip
 
     async def test_importing_is_said_for_the_campaigns_server(self) -> None:
@@ -191,6 +192,7 @@ class TheCampaignRoute(Base):
                     "mainRules": "2024",
                     "fallbackRules": "2014",
                     "gameMasters": 1,
+                    "shareImprove": False,
                 },
             },
         )
@@ -209,3 +211,29 @@ class TheCampaignRoute(Base):
     async def test_signed_out_gets_nothing(self) -> None:
         got = await self.client.get(f"/me/campaigns/{self.ref}")
         self.assertEqual(got.status_code, 401)
+
+
+class FeaturesOnThePage(TheCampaignPage):
+    """The bot's list of switched-on features (#3693) rides on a DM's page, never a player's."""
+
+    LISTED: ClassVar[dict[str, Any]] = {
+        "writtenAt": 1,
+        "on": [{"name": "Written recaps", "words": "x."}],
+        "off": ["Spoken recaps"],
+    }
+
+    async def test_a_dm_gets_the_list_and_a_player_does_not(self) -> None:
+        got = await read_campaign(
+            self.web, self.session, self.ref_of(self.one), features=lambda: self.LISTED
+        )
+        self.assertEqual(got["features"], self.LISTED)
+        bob = await self.session_of(BOB)
+        got = await read_campaign(
+            self.web, bob, self.ref_of(self.one), features=lambda: self.LISTED
+        )
+        self.assertEqual(got["role"], "player")
+        self.assertNotIn("features", got)
+
+    async def test_no_list_means_no_key_at_all(self) -> None:
+        got = await read_campaign(self.web, self.session, self.ref_of(self.one))
+        self.assertNotIn("features", got)

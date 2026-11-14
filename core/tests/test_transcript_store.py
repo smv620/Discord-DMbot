@@ -10,10 +10,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import discord
 
 from dmbot.audio.segmenter import Segmenter, Utterance
-from dmbot.bot import NO_PRIVATE_MESSAGE, DMBot
+from dmbot.bot import DMBot
 from dmbot.campaigns import CampaignStore
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
+from dmbot.dm_questions import NO_PRIVATE_MESSAGE
 from dmbot.dm_screen import messages as screen_messages
 from dmbot.sessions import SessionStore
 from dmbot.table import Table
@@ -48,6 +49,21 @@ class StoreTests(DatabaseTest):
         self.assertEqual(len(ids), 2)
         lines = await self.store.lines(GUILD, sid)
         self.assertEqual([(x.heard, x.text) for x in lines], [("first",) * 2, ("second",) * 2])
+
+    async def test_a_sessions_split_is_kept_once_and_read_back(self) -> None:
+        sid = await self.store.open_session(GUILD, self.campaign.id, START)
+        self.assertIsNone(await self.store.session_split(GUILD, sid))  # not made yet
+        recap = {"parts": [["recap", 1, 2], ["play", 3, 9]], "unsure": False, "method": "ai"}
+        self.assertTrue(await self.store.save_session_split(GUILD, sid, recap))
+        other = {"parts": [["play", 1, 9]], "unsure": False, "method": "fallback"}
+        self.assertFalse(await self.store.save_session_split(GUILD, sid, other))  # first one kept
+        self.assertEqual(await self.store.session_split(GUILD, sid), recap)
+
+    async def test_a_split_is_never_read_across_servers_or_for_a_missing_session(self) -> None:
+        sid = await self.store.open_session(GUILD, self.campaign.id, START)
+        await self.store.save_session_split(GUILD, sid, {"parts": [["recap", 1, 2]]})
+        self.assertIsNone(await self.store.session_split(GUILD + 1, sid))
+        self.assertIsNone(await self.store.session_split(GUILD, "0" * 32))
 
     async def test_the_next_session_start_counts_only_later_sessions_with_lines(self) -> None:
         first = await self.store.open_session(GUILD, self.campaign.id, START)
@@ -709,7 +725,10 @@ class BotTests(DatabaseTest):
         outsider = 999
         self.campaigns.get = AsyncMock(  # type: ignore[method-assign]
             return_value=SimpleNamespace(
-                id=campaign.id, owner_user_id=outsider, dm_user_ids=campaign.dm_user_ids
+                id=campaign.id,
+                owner_user_id=outsider,
+                dm_user_ids=campaign.dm_user_ids,
+                dm_accounts=campaign.dm_user_ids,
             )
         )
 
@@ -725,7 +744,10 @@ class BotTests(DatabaseTest):
         assert campaign is not None
         self.campaigns.get = AsyncMock(  # type: ignore[method-assign]
             return_value=SimpleNamespace(
-                id=campaign.id, owner_user_id=None, dm_user_ids=campaign.dm_user_ids
+                id=campaign.id,
+                owner_user_id=None,
+                dm_user_ids=campaign.dm_user_ids,
+                dm_accounts=campaign.dm_user_ids,
             )
         )
         users = await self.end_with_gate(
@@ -758,7 +780,10 @@ class BotTests(DatabaseTest):
         assert campaign is not None
         self.campaigns.get = AsyncMock(  # type: ignore[method-assign]
             return_value=SimpleNamespace(
-                id=campaign.id, owner_user_id=outsider, dm_user_ids=campaign.dm_user_ids
+                id=campaign.id,
+                owner_user_id=outsider,
+                dm_user_ids=campaign.dm_user_ids,
+                dm_accounts=campaign.dm_user_ids,
             )
         )
         self.bot.settings = dataclasses.replace(

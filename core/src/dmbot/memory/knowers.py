@@ -16,7 +16,7 @@ from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from dmbot.memory import beliefs, gate
+from dmbot.memory import beliefs, gate, unnamed
 from dmbot.memory._changes import (
     ALIAS_KNOWERS,
     ALIASES,
@@ -26,6 +26,7 @@ from dmbot.memory._changes import (
     PERSPECTIVES,
     RELATIONS,
     STATES,
+    TOLD,
     Changes,
     Scope,
 )
@@ -65,6 +66,7 @@ async def _view_of(w: Changes, entity_id: str) -> str:
 
 
 NOT_A_CHARACTER = "Pick characters from this campaign."
+PARTY_NOT_A_KNOWER = "The party can't know something as a group. Pick its characters instead."
 NO_SUCH_STATEMENT = "That is gone or was never here."
 BAD_CERTAINTY = "How sure someone is goes from 0 to 1."
 _COLUMNS = {
@@ -84,14 +86,16 @@ async def _known_characters(w: Scope, character_ids: Sequence[str]) -> dict[str,
         raise MemoryRuleError(NOT_A_CHARACTER)
     if not chosen:
         return {}
-    found = {
-        r["id"]: r["role"] == PLAYER_CHARACTER
-        for r in await w.select(
-            ENTITIES,
-            " AND id = ANY(%s) AND type IN ('character', 'faction') AND status = %s",
-            [chosen, CONFIRMED],
-        )
-    }
+    rows = await w.select(
+        ENTITIES,
+        " AND id = ANY(%s) AND type IN ('character', 'faction') AND status = %s",
+        [chosen, CONFIRMED],
+    )
+    if any(r["party"] for r in rows):
+        # Never a knower (STORY_MEMORY 9b, #3954): what the party's characters know stays each
+        # one's own, so a row on the party could never be told apart from all of them knowing.
+        raise MemoryRuleError(PARTY_NOT_A_KNOWER)
+    found = {r["id"]: r["role"] == PLAYER_CHARACTER for r in rows}
     if len(found) != len(chosen):
         raise MemoryRuleError(NOT_A_CHARACTER)
     return {i: found[i] for i in chosen}
@@ -156,6 +160,137 @@ async def set_statement_knowers(
         if view_id not in views.values():
             await w.delete(KNOWERS, row["id"])
     return list(chosen)
+
+
+GUESS_SURE, GUESS_LIKELY = 0.9, 0.6  # DMbot's guess of an NPC's knowledge: never 1.0 (#2959)
+
+
+async def add_guessed(
+    w: Changes, kind: str, statement_id: str, guesses: Mapping[str, float]
+) -> int:
+    """DMbot's guesses of which NPCs and groups know a statement the DM just confirmed or kept
+    (#2959, STORY_MEMORY 9b item 4): each confirmed NPC or group of these gets a knower row at its
+    certainty, below 1.0, so it reads as DMbot's guess, never the DM's word (the DM's own edit
+    writes 1.0). Never a player character (what they know is the upload's choice), never the
+    statement's own entry, and never over a row that is there already: the DM's word, or an
+    earlier guess, stays. A knower row of an NPC or a group never shows a hidden statement to a
+    player: the gate reads players' points of view and the party's, never an NPC's. Returns how
+    many rows were added."""
+    # The mark of a guess is its certainty below 1.0 (Supervisor, #3941): today only DMbot writes a
+    # row below 1.0 for an NPC. Before any control lets a DM set a certainty below 1.0, add a
+    # `guessed` column to `memory_knowers` first, so a DM's own 0.6 never reads as DMbot's guess.
+    if kind not in ("entry", "connection") or not guesses:
+        return 0
+    column, table = _COLUMNS[kind]
+    statement = await w.get(table, statement_id)
+    if statement is None or statement.get("status") != CONFIRMED:
+        return 0
+    wanted = {i: c for i, c in guesses.items() if 0.0 < c < 1.0 and i != statement_id}
+    if not wanted:
+        return 0
+    rows = await w.select(
+        ENTITIES,
+        " AND id = ANY(%s) AND type IN ('character', 'faction') AND status = %s"
+        " AND role IS DISTINCT FROM %s AND NOT party",  # (never the party: #3954)
+        [sorted(wanted), CONFIRMED, PLAYER_CHARACTER],
+    )
+    have = {
+        str(r["perspective_id"])
+        for r in await w.select(KNOWERS, f" AND {column} = %s", [statement_id])
+    }
+    added = 0
+    for r in rows:
+        view = await _view_for(w, str(r["id"]), False)
+        if view in have:
+            continue
+        await w.insert(
+            KNOWERS,
+            {"id": new_id(), "perspective_id": view, "about_entity_id": None, "state_id": None,
+             "relation_id": None, "alias_id": None, column: statement_id, "created_at": w.now,
+             "confidence": wanted[str(r["id"])]},
+        )  # fmt: skip
+        have.add(view)
+        added += 1
+    return added
+
+
+async def apply_waiting_guesses(w: Changes, entity_id: str) -> int:
+    """The guesses a lore read left waiting for a name (`memory_npc_guesses`, #2959), written once
+    the DM confirms it, in the same change (its Undo takes them back). The waiting rows stay: a
+    knower row that is there already is never added twice."""
+    cur = await w.conn.execute(
+        "SELECT knower_id, confidence FROM memory_npc_guesses"
+        " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s",
+        (*w.ids, entity_id),
+    )
+    guesses = {str(r["knower_id"]): float(r["confidence"]) for r in await cur.fetchall()}
+    return await add_guessed(w, "entry", entity_id, guesses)
+
+
+NOT_ONE_CHARACTER = "Only a character can learn something this way."
+
+
+async def learn(w: Changes, kind: str, statement_id: str, character_id: str) -> bool:
+    """One character learns one statement (#2996, part 2 slice 1: the DM keeps a "who learned
+    what" proposal). Unlike `set_statement_knowers`, which sets the whole list, this adds ONE row,
+    at the character's own point of view and sure (1.0), and leaves everyone else as they were:
+    nothing spreads past the one who learned it. It never lowers a certainty. Only the DM, and only
+    a character (never a group, never the party: the party is never a knower). A row a hide put to
+    sleep for this character is replaced, as the DM's word is final (`_drop_asleep`).
+
+    The old tables the DM's "Who knows this?" menus still read are kept level in the same write: a
+    player character's belief in a held-back connection (`connection_knowers`), and a secret other
+    name's own list (`alias_knowers`). Otherwise the menu would show the character as not knowing
+    it, and saving the menu would erase what was learned. Returns whether anything changed for
+    this character's own rows (False: they already knew it surely, in every table)."""
+    if w.source != DM:
+        raise MemoryRuleError(ONLY_THE_DM)
+    if kind not in _COLUMNS:
+        raise MemoryRuleError(NO_SUCH_STATEMENT)
+    column, table = _COLUMNS[kind]
+    statement = await w.get(table, statement_id)
+    if statement is None or statement.get("status") in ("rejected", "merged"):
+        raise MemoryRuleError(NO_SUCH_STATEMENT)
+    found = await w.select(ENTITIES, " AND id = %s AND status = %s", [character_id, CONFIRMED])
+    if not found or found[0]["type"] not in ("character", "faction"):
+        raise MemoryRuleError(NOT_A_CHARACTER)
+    if found[0]["type"] != "character":
+        raise MemoryRuleError(NOT_ONE_CHARACTER)
+    player = found[0]["role"] == PLAYER_CHARACTER
+    view = await _view_for(w, character_id, player)
+    await _drop_asleep(w, column, statement_id, [view])
+    changed = False
+    have = await w.select(
+        KNOWERS, f" AND {column} = %s AND perspective_id = %s", [statement_id, view]
+    )
+    if not have:
+        await w.insert(KNOWERS, _row(column, statement_id, view, w.now))
+        changed = True
+    elif have[0]["confidence"] < KNOWN:
+        await w.update(KNOWERS, have[0]["id"], {"confidence": 1.0})  # (never down: up to sure)
+        changed = True
+    held_back = statement.get("status") == CONFIRMED and bool(
+        statement.get("secret") or statement.get("unrevealed")
+    )
+    if kind == "connection" and player and held_back:
+        listed = (await connection_knowers(w, [statement_id])).get(statement_id, [])
+        if character_id not in listed:
+            await beliefs.add_belief(w, view, statement_id, KNOWN, REVEALED_FACT)
+            changed = True
+    if (
+        kind == "alias"
+        and statement.get("secret")
+        and not await w.select(
+            ALIAS_KNOWERS, " AND alias_id = %s AND perspective_id = %s", [statement_id, view]
+        )
+    ):
+        await w.insert(
+                ALIAS_KNOWERS,
+                {"id": new_id(), "alias_id": statement_id, "perspective_id": view,
+                 "created_at": w.now},
+            )  # fmt: skip
+        changed = True
+    return changed
 
 
 async def know_own_disguise(w: Changes, relation_id: str, entity_id: str) -> None:
@@ -505,6 +640,11 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
     # drawn on that name; through a name that is not secret, on the entry; through a name that was
     # rejected or is gone, or a secret one they do not hold, it is not shown.
     owner_of = {str(a["id"]): str(a["entity_id"]) for a in aliases}
+    # the names one of these characters was told are an entry (#3089): no person of their own
+    told_names = {
+        str(t["alias_id"])
+        for t in await scope.select(TOLD, " AND character_id = ANY(%s)", [list(mine)])
+    }
     via_ids = sorted({str(r["via_alias_id"]) for r in hidden if r.get("via_alias_id")})
     via_rows = (
         {str(a["id"]): a for a in await scope.select(ALIASES, " AND id = ANY(%s)", [via_ids])}
@@ -567,14 +707,18 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
 
     connections = []
     for r in hidden:
-        through = r.get("via_alias_id") if r.get("via_alias_id") in owner_of else None
+        through = (
+            r.get("via_alias_id")
+            if r.get("via_alias_id") in owner_of and r.get("via_alias_id") not in told_names
+            else None
+        )
         alias_end = owner_of.get(through) if through else None
 
         def end(
             entity_id: str, through: str | None = through, alias_end: str | None = alias_end
         ) -> str | None:
             if through is not None and entity_id == alias_end:
-                return safe_texts.get(through, "someone (name unknown)")
+                return safe_texts.get(through, unnamed.SOMEONE)
             return name(entity_id)
 
         subject, target = end(r["subject_id"]), end(r["object_id"])
@@ -607,11 +751,11 @@ async def what_my_characters_know(scope: Scope, user_id: int) -> Mine:
     )
     names = []
     for a in aliases:
-        if str(a["id"]) in joined_names:
+        if str(a["id"]) in joined_names and str(a["id"]) not in told_names:
             continue  # a person of their own for them (#3037): "a name of Ken" would say who
         owner = name(a["entity_id"])
         if owner is not None:
-            text = safe_texts.get(str(a["id"]), "someone (name unknown)")
+            text = safe_texts.get(str(a["id"]), unnamed.SOMEONE)
             names.append(MineName(a["id"], text, owner, others(a_who.get(a["id"], []))))
     return Mine(
         characters=tuple(sorted(str(entries[c]["name"]) for c in mine if c in entries)),
@@ -770,15 +914,19 @@ def _row(column: str, statement_id: str, view_id: str, now: int) -> dict[str, An
     }  # fmt: skip
 
 
-async def _drop_asleep(w: Changes, column: str, statement_id: str) -> None:
+async def _drop_asleep(
+    w: Changes, column: str, statement_id: str, views: Collection[str] | None = None
+) -> None:
     """The DM names who knows a statement: the rows a hide put to sleep for it are final now, the
     DM's list replaces them (they go, Undo brings them back), and a hide's 0.0 belief in a
     connection becomes the DM's own, so nothing the hide marked comes back over what the DM said
-    (#3082). A (statement, point of view) is one thing: the row and the belief change together."""
+    (#3082). A (statement, point of view) is one thing: the row and the belief change together.
+    `views`: only these points of view (one character learning it, `learn`), else all."""
     asleep = await w.select(
         KNOWERS,
-        f" AND {column} = %s AND cardinality(hidden_by) > 0",
-        [statement_id],
+        f" AND {column} = %s AND cardinality(hidden_by) > 0"
+        + ("" if views is None else " AND perspective_id = ANY(%s)"),
+        [statement_id] if views is None else [statement_id, list(views)],
         dormant=True,
     )
     if not asleep:

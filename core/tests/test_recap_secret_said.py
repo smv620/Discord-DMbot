@@ -196,6 +196,10 @@ class TheOtherWays(unittest.IsolatedAsyncioTestCase):
         block = message.split("<apart>")[1].split("</apart>")[0]
         self.assertNotIn("Stranger", block)  # (a secret spelling never goes to the writer)
         self.assertNotIn("daughter", message)
+        # #3664: the connection may be hinted at cryptically, but never stated or explained
+        self.assertIn("hint at the connection cryptically", message)
+        self.assertIn("never state it", message)
+        self.assertIn("never explain how they know each other", " ".join(message.split()))
         self.assertEqual(rd.apart_pairs(TIES, ["Mira"]), [])  # an end with no usable name
         self.assertNotIn("<apart>", rd.prose_message([BEAT], "", ["Mira"], None))
 

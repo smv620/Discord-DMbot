@@ -15,7 +15,7 @@ const REF = "100.cmp1";
 const at = (suffix = ""): string => `/account/web/${REF}${suffix}`;
 async function open(api = mockApi("table")) {
   render(<Web api={api} path={at()} />);
-  await screen.findByText(/names?, \d+ lines?/);
+  await screen.findByText(/Showing \d+ names? and \d+ connections?/);
   return api;
 }
 /** The names and connections the mock's full view carries a state for, read the same way the page reads them. */

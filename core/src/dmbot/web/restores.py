@@ -109,7 +109,7 @@ async def authorize(
                 payer = int(owner)
     if not enforce_plans:
         return
-    _plan, _grant, access = await plan_grant_access(db, payer, now)
+    _plan, _grant, access = await plan_grant_access(db, payer, now, guild_id=server_id)
     if plan_rules.refusal("restore", access, is_owner=True) is not None:
         raise RecapError("plan")
 

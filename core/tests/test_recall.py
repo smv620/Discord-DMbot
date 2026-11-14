@@ -318,6 +318,58 @@ class Recalling(MemoryTest):
                 GUILD_A, self.c, link.id, source="dm", status="rejected"
             )
 
+    async def test_a_one_way_kind_the_dm_made_two_way_is_given_as_a_pair(self) -> None:
+        """#4164: the AI is given the card's own pair words for it, never one-way words."""
+        names = {e.name: e.id for e in await self.memory.entities(GUILD_A, self.c)}
+        made = await self.memory.add_relation(
+            GUILD_A, self.c, names["Mira"], "serves", names["Ulfgar"], source="dm",
+            confidence=1.0, status="confirmed",
+        )  # fmt: skip
+        before = self.texts(await self.recall(PLAYERS, "Ulfgar", hops=1))
+        self.assertIn("Mira serves Ulfgar", before)  # (the fact is there, one way)
+        self.assertNotIn("Mira and Ulfgar", before)
+        await self.memory.set_direction(GUILD_A, self.c, made.value[0].id, None, source="dm")
+        after = self.texts(await self.recall(PLAYERS, "Ulfgar", hops=1))
+        self.assertIn("Mira and Ulfgar are connected (“works for”)", after)
+
+    async def test_a_campaigns_own_two_way_kind_keeps_its_label(self) -> None:
+        """#4388: its rows carry the two-way mark now; the AI still reads the kind's own words."""
+        from dmbot.memory.ontology import PredicateTerm
+
+        term = PredicateTerm(
+            "oath_kin_of", "is oath-bound to", "Two sworn to each other.", ("character",),
+            ("character",), symmetric=True, core=False,
+        )  # fmt: skip
+        await self.memory.add_predicate(
+            GUILD_A, self.c, term, examples=["Mira is oath-bound to Ulfgar."],
+            reason="the table uses it", source="dm",
+        )  # fmt: skip
+        await self.fact(self.mira, "oath_kin_of", self.ulfgar)
+        text = self.texts(await self.recall(PLAYERS, "Ulfgar", hops=1))
+        self.assertIn("is oath-bound to", text)
+        self.assertNotIn("are connected (“oath kin of”)", text)
+
+    async def test_a_two_way_family_role_stored_undirected_keeps_its_role(self) -> None:
+        """#3111: a sibling, cousin or spouse is true of both names, so the roster tie and the
+        recall line carry the role from either side even though the link is not directional."""
+        names = {e.name: e.id for e in await self.memory.entities(GUILD_A, self.c)}
+        for role in ("sibling", "cousin", "spouse"):
+            made = await self.memory.add_relation(
+                GUILD_A, self.c, names["Mira"], "kin_of", names["Ulfgar"], source="dm",
+                confidence=1.0, status="confirmed", detail=role, directional=False,
+            )  # fmt: skip
+            ties = await self.roster_ties()
+            self.assertIn(f"is the {role} of Ulfgar", ties["Mira"])
+            self.assertIn(f"is the {role} of Mira", ties["Ulfgar"])
+            text = self.texts(await self.recall(PLAYERS, "Mira", hops=1))
+            # (a two-way link is stored id-sorted, so either name may come first)
+            self.assertTrue(
+                f"Mira is the {role} of Ulfgar" in text or f"Ulfgar is the {role} of Mira" in text
+            )
+            await self.memory.update_relation(
+                GUILD_A, self.c, made.value[0].id, source="dm", status="rejected"
+            )
+
     async def lookup_ids(self) -> tuple[set[str], set[str]]:
         data = await self.memory.lookup_data(GUILD_A, self.c)
         return {r.id for r in data.relations}, {r.id for r in data.secret_relations}
@@ -777,7 +829,9 @@ class Speed(MemoryTest):
                 "INSERT INTO memory_relations (guild_id, campaign_id, id, subject_id, predicate,"
                 " object_id, detail, confidence, status, source, mention_ids, from_session_at,"
                 " secret, created_at)"
-                " SELECT %s, %s, md5('r' || n), md5('e' || s), 'ally_of', md5('e' || o), '', 1.0,"
+                " SELECT %s, %s, md5('r' || n), md5('e' || s),"
+                " CASE WHEN n %% 5 = 0 THEN 'associated_with' ELSE 'ally_of' END, md5('e' || o),"
+                " CASE WHEN n %% 5 = 0 THEN 'swore a vow to guard' ELSE '' END, 1.0,"
                 " 'confirmed', 'dm', ARRAY[md5('m' || n)], 1000 + n, (n %% 50 = 0), 1"
                 f" FROM (SELECT n, {subject} AS s, 1 + (n * 7) %% (%s - 1) AS o"
                 " FROM generate_series(0, %s - 1) AS n) x WHERE s <> o",

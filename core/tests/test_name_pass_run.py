@@ -284,7 +284,32 @@ class ThePass(NamesTest):
         from dmbot.transcript.import_job import ImportStore, Ready
 
         self.bot.import_job = SimpleNamespace(store=ImportStore(self.db))  # type: ignore[assignment]
-        self.bot.consent = SimpleNamespace(consenting=AsyncMock(return_value={PLAYER}))  # type: ignore[assignment]
+        self.bot.consent = SimpleNamespace(  # type: ignore[assignment]
+            consenting=AsyncMock(return_value={PLAYER}),
+            recorded_in=AsyncMock(return_value={PLAYER}),
+        )
+        self.ai.complete.return_value = reply({"n": 1, "answer": "is", "name": "Kethrandil"})
+        self.bot.lookup.mark_all_stale()  # type: ignore[union-attr]
+        ready = Ready(self.campaign.id, self.session, START, False, "imp")
+        await self.bot._scan_import(GUILD, ready)
+        self.assertEqual((await self.texts())[0], "Kethrandil drew his bow.")
+        self.assertTrue(await self.done())
+        proposed = [
+            e.name
+            for e in await self.memory.entities(GUILD, self.campaign.id)
+            if "Keirandal" in e.name
+        ]
+        self.assertEqual(proposed, [])  # the repaired spelling is not offered as a new name
+
+    async def test_an_imported_speaker_only_the_import_records_gets_the_pass_too(self) -> None:
+        from dmbot.transcript.import_job import ImportStore, Ready
+
+        self.bot.import_job = SimpleNamespace(store=ImportStore(self.db))  # type: ignore[assignment]
+        self.bot.consent = SimpleNamespace(  # type: ignore[assignment]
+            # #3962: never agreed in Discord, but confirmed for this campaign's import
+            consenting=AsyncMock(return_value=frozenset()),
+            recorded_in=AsyncMock(return_value={PLAYER}),
+        )
         self.ai.complete.return_value = reply({"n": 1, "answer": "is", "name": "Kethrandil"})
         self.bot.lookup.mark_all_stale()  # type: ignore[union-attr]
         ready = Ready(self.campaign.id, self.session, START, False, "imp")

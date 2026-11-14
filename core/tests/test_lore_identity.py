@@ -477,3 +477,141 @@ class TheSecrecyEdges(NamesTest):
         _ = done
         waiting = await self.store.waiting(GUILD, self.campaign.id)
         self.assertFalse([w for w in waiting if not w.secret])  # (never a public row)
+
+
+class ThePlaceSpellingQuestion(NamesTest):
+    """One place written two ways (#3037): asked in the words for a place, never joined silently."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.bot.plan_gate = AsyncMock(return_value=None)  # type: ignore[method-assign]
+        made = await self.memory.add_entity(
+            GUILD, self.campaign.id, name="Northhaven", type="place", status=CONFIRMED, source="dm"
+        )
+        self.haven = made.value.id
+        await ui_bg.save_place_spellings(
+            self.memory, self.campaign, {self.haven: ("North Haven",)}, None, "", ""
+        )
+
+    async def card(self) -> Any:
+        from dmbot.ui.name_questions import NameQuestions
+
+        view = NameQuestions(self.campaign.id)
+        self.assertTrue(await view.load(self.it(DM)))
+        return view
+
+    async def test_it_is_asked_in_the_words_for_a_place(self) -> None:
+        view = await self.card()
+        self.assertIn(
+            "**North Haven** looks like another way of writing **Northhaven**.", view.text()
+        )
+        self.assertEqual(
+            [b.label for b in view.children][:2], ["✅ Yes, the same place", "❌ No, two places"]
+        )
+
+    async def test_yes_makes_it_another_way_of_writing_the_same_place(self) -> None:
+        view = await self.card()
+        await next(b for b in view.children if b.label == "✅ Yes, the same place").callback(
+            self.it(DM)
+        )
+        found = await self.memory.aliases(GUILD, self.campaign.id, entity_id=self.haven)
+        self.assertEqual({(a.text, a.status) for a in found}, {
+            ("Northhaven", CONFIRMED), ("North Haven", CONFIRMED),
+        })  # fmt: skip
+
+    async def test_no_makes_a_second_place_and_is_never_asked_again(self) -> None:
+        view = await self.card()
+        await next(b for b in view.children if b.label == "❌ No, two places").callback(self.it(DM))
+        names = {e.name for e in await self.memory.entities(GUILD, self.campaign.id)}
+        self.assertEqual(names, {"Northhaven", "North Haven"})
+        self.assertEqual(await self.memory.suggested_names(GUILD, self.campaign.id), [])
+        self.assertIn("1 kept as places of their own", view.text())
+        again, _names, rest = await ui_bg._near_places(
+            self.memory, self.campaign, [lore_found("North Haven")]
+        )
+        self.assertEqual((again, len(rest)), ({}, 1))
+
+
+class TheWordsByKind(NamesTest):
+    """The button words follow the kind of the entry (#4097): a person says person, a place says
+    place, a group or anything else says one. A place known by an epithet is not a second place."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.bot.plan_gate = AsyncMock(return_value=None)  # type: ignore[method-assign]
+
+    async def ask(self, entry: str, kind: str, other: str) -> Any:
+        """A confirmed entry of this kind, with one other name an earlier text gave it."""
+        from dmbot.ui.name_questions import NameQuestions
+
+        if kind == "character":
+            made = await self.memory.add_entity(
+                GUILD, self.campaign.id, name=entry, type="character", role="npc",
+                status=CONFIRMED, source="dm",
+            )  # fmt: skip
+        else:
+            made = await self.memory.add_entity(
+                GUILD, self.campaign.id, name=entry, type=kind, status=CONFIRMED, source="dm"
+            )
+        await ui_bg.save_earlier_names(
+            self.memory, self.campaign, {entry: (other,)}, {name_key(other)}
+        )
+        view = NameQuestions(self.campaign.id)
+        self.assertTrue(await view.load(self.it(DM)))
+        self.assertIsNotNone(made.value)
+        return view
+
+    def labels(self, view: Any) -> list[str]:
+        return [b.label for b in view.children][:2]
+
+    async def test_a_person_keeps_the_person_words(self) -> None:
+        view = await self.ask("Ash Morrow", "character", "Tamsin Vell")
+        self.assertEqual(self.labels(view), ["✅ Yes, the same person", "❌ No, someone else"])
+
+    async def test_a_place_epithet_is_asked_in_place_words(self) -> None:
+        view = await self.ask("Neverwinter", "place", "City of Skilled Hands")
+        self.assertEqual(self.labels(view), ["✅ Yes, the same place", "❌ No, somewhere else"])
+
+    async def test_no_on_a_place_epithet_does_not_make_a_second_place(self) -> None:
+        view = await self.ask("Neverwinter", "place", "City of Skilled Hands")
+        await view.no_button.callback(self.it(DM))
+        names = {e.name for e in await self.memory.entities(GUILD, self.campaign.id)}
+        self.assertEqual(names, {"Neverwinter"})
+        self.assertEqual(await self.memory.suggested_names(GUILD, self.campaign.id), [])
+
+    async def test_a_failed_read_gives_the_person_words(self) -> None:
+        from unittest.mock import patch
+
+        view = await self.ask("Neverwinter", "place", "City of Skilled Hands")
+        self.assertEqual(self.labels(view)[0], "✅ Yes, the same place")
+        with patch.object(self.memory, "resolve", AsyncMock(side_effect=RuntimeError("x"))):
+            await view._mark_spelling(self.it(DM))
+        self.assertEqual(self.labels(view), ["✅ Yes, the same person", "❌ No, someone else"])
+
+    async def test_an_item_is_asked_in_thing_words(self) -> None:
+        view = await self.ask("The Amulet", "item", "Amulet of Vell")
+        self.assertEqual(self.labels(view), ["✅ Yes, the same thing", "❌ No, a different thing"])
+
+    async def test_a_group_is_asked_with_the_one_words(self) -> None:
+        view = await self.ask("Lantern Council", "faction", "The Lantern Circle")
+        self.assertEqual(self.labels(view), ["✅ Yes, the same one", "❌ No, a different one"])
+
+    async def test_a_card_after_a_place_card_goes_back_to_the_person_words(self) -> None:
+        view = await self.ask("Neverwinter", "place", "City of Skilled Hands")
+        self.assertEqual(self.labels(view)[0], "✅ Yes, the same place")
+        await self.memory.add_entity(
+            GUILD, self.campaign.id, name="Ash Morrow", type="character", role="npc",
+            status=CONFIRMED, source="dm",
+        )  # fmt: skip
+        await ui_bg.save_earlier_names(
+            self.memory, self.campaign, {"Ash Morrow": ("Tamsin Vell",)}, {name_key("Tamsin Vell")}
+        )
+        await view.yes_button.callback(self.it(DM))  # the place card is answered: the next one
+        self.assertEqual(view.current[1], "Ash Morrow")
+        self.assertEqual(self.labels(view), ["✅ Yes, the same person", "❌ No, someone else"])
+
+
+def lore_found(name: str) -> Any:
+    from dmbot.memory.background import Found
+
+    return Found(name, "place", (), (), "")

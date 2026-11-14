@@ -276,7 +276,7 @@ class StyleTest(DatabaseTest):
             [{**good, "extra": 1}],
             [{**good, "text": ""}],
             [{**good, "text": "word " * 601}],
-            [{**good, "by": "0"}],
+            [{**good, "by": "-1"}],
             [{**good, "at": True}],
             [good] * 4,
             ["text"],

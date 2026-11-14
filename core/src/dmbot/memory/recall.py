@@ -38,13 +38,14 @@ from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping, 
 from dataclasses import dataclass, field
 from typing import Any
 
-from dmbot.memory import kin
+from dmbot.memory import kin, link_words
 from dmbot.memory._changes import Scope
 from dmbot.memory.beliefs import party_id, party_knows_by
 from dmbot.memory.continuity import _predicate_words
+from dmbot.memory.gate import NameGuard, safe_label
 from dmbot.memory.kinds import KIND_LABELS
 from dmbot.memory.models import DM_ONLY_TYPES, ROLE_LABELS, name_key
-from dmbot.memory.ontology import Ontology
+from dmbot.memory.ontology import FALLBACK_PREDICATE, Ontology
 from dmbot.memory.store import MemoryStore, _load_ontology
 
 log = logging.getLogger(__name__)
@@ -216,6 +217,7 @@ class _Fact:
     near: str  # the end already reached when this fact was found
     far: str
     directional: bool = False  # a family role that reads one way (#2457)
+    both_ways: bool | None = None  # the DM's own direction for it (#4154; None: the kind's)
 
 
 def _fact_of(r: Mapping[str, Any], hops: int, near: str, far: str) -> _Fact:
@@ -223,7 +225,7 @@ def _fact_of(r: Mapping[str, Any], hops: int, near: str, far: str) -> _Fact:
         str(r["id"]), str(r["subject_id"]), str(r["object_id"]), str(r["predicate"]),
         str(r["detail"]), r["from_session_at"], bool(r["secret"]),
         tuple(str(m) for m in r["mention_ids"] or ()), hops, near, far,
-        bool(r.get("directional", False)),
+        bool(r.get("directional", False)), r.get("both_ways"),
     )  # fmt: skip
 
 
@@ -299,7 +301,8 @@ class RecallService:
             heard = await self._heard(scope, reached, agreed)
             notes = await self._conditions(scope, reached, as_of) if audience == DM_SCREEN else {}
             onto = await self._ontology(scope)
-            found = _Found(walk, heard, notes, onto, as_of, audience)
+            guard = await self._label_guard(scope, walk) if audience == PLAYERS else None
+            found = _Found(walk, heard, notes, onto, as_of, audience, guard)
             # Rank and cut first: the items come before their evidence, and evidence is looked
             # up only for the best few facts, so it can fill what is left but never crowd out
             # an item.
@@ -318,6 +321,32 @@ class RecallService:
         return Recall(
             audience, as_of, items, first.seeds, first.cut, first.size + size, walk.truncated
         )
+
+    async def _label_guard(self, scope: Scope, walk: _Walk) -> NameGuard | None:
+        """The names the players may not be told, for blanking a catch-all fact's own words
+        (#3153: "swore on Veil's grave to guard" names an entry the players cannot see). Read
+        only when such a fact is in the walk, and only names: the entries the players may not
+        see, their other names, and any secret or unconfirmed name of a visible entry."""
+        if not any(
+            f.predicate == FALLBACK_PREDICATE and f.detail for f in walk.facts.values()
+        ) and not any(e.get("players_text") for e in walk.entities.values()):
+            return None
+        cur = await scope.conn.execute(
+            "SELECT e.name AS word FROM memory_entities e WHERE e.guild_id = %s"
+            " AND e.campaign_id = %s AND e.type <> 'person' AND NOT (e.status = 'confirmed'"
+            " AND NOT e.audience_limited AND NOT e.hidden_from_players AND NOT e.unnamed"
+            " AND NOT e.type = ANY(%s))"
+            " UNION ALL SELECT a.text FROM memory_aliases a JOIN memory_entities e"
+            " ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id AND e.id = a.entity_id"
+            " WHERE a.guild_id = %s AND a.campaign_id = %s AND e.type <> 'person'"
+            " AND (a.secret OR a.status <> 'confirmed' OR NOT (e.status = 'confirmed'"
+            " AND NOT e.audience_limited AND NOT e.hidden_from_players AND NOT e.unnamed"
+            " AND NOT e.type = ANY(%s)))",
+            (*scope.ids, list(DM_ONLY_TYPES), *scope.ids, list(DM_ONLY_TYPES)),
+        )
+        forbidden = [str(r["word"]) for r in await cur.fetchall()]
+        shown = [str(e["name"]) for e in walk.entities.values()]
+        return NameGuard(forbidden, allowed=shown)
 
     async def _ontology(self, scope: Scope) -> Ontology:
         key = scope.ids
@@ -393,6 +422,12 @@ class RecallService:
                 # one, "has a niece: Mira" on the other
                 ties.setdefault(a, []).append(f"{kin.forward(family)} {names[b]}")
                 ties.setdefault(b, []).append(f"{kin.backward(family)}: {names[a]}")
+            elif predicate == "kin_of" and kin.role_of(str(r["detail"] or "")) in kin.MUTUAL:
+                # sibling, cousin, spouse: true of both names alike, so it reads the same from
+                # either side whatever the stored direction is (#3102, #3111)
+                family = kin.role_of(str(r["detail"])) or ""
+                ties.setdefault(a, []).append(f"{kin.forward(family)} {names[b]}")
+                ties.setdefault(b, []).append(f"{kin.forward(family)} {names[a]}")
             else:
                 ties.setdefault(a, []).append(names[b])
                 ties.setdefault(b, []).append(names[a])
@@ -457,7 +492,8 @@ class RecallService:
             ends = sorted(frontier)
             cur = await scope.conn.execute(
                 "SELECT id, subject_id, predicate, object_id, detail, from_session_at,"
-                " to_session_at, secret, source, mention_ids, directional FROM memory_relations"
+                " to_session_at, secret, source, mention_ids, directional, both_ways"
+                " FROM memory_relations"
                 " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
                 f" AND (subject_id = ANY(%s) OR object_id = ANY(%s)) AND {when}{secret}"
                 " ORDER BY from_session_at DESC NULLS LAST, id LIMIT %s",
@@ -563,6 +599,8 @@ class RecallService:
         live = ["confirmed"] if audience == PLAYERS or confirmed_only else list(_LIVE)
         # An entry's note is the DM's own: the players' audience never even reads it.
         note = "description" if audience == DM_SCREEN else "'' AS description"
+        # The players' line (#2967) is theirs to be told; the DM's own note never stands in for it.
+        line = "players_text" if audience == PLAYERS else "NULL AS players_text"
         # A clue only some people know (#1649), or an entry the DM hasn't told the players of
         # (#2321), is the DM's alone: the players' audience gets neither it nor, because a fact
         # needs both ends, anyone's fact to it.
@@ -574,7 +612,7 @@ class RecallService:
             else ""
         )
         cur = await scope.conn.execute(
-            f"SELECT id, type, name, {note}, role FROM memory_entities"
+            f"SELECT id, type, name, {note}, {line}, role FROM memory_entities"
             " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)"
             f" AND status = ANY(%s) AND type <> 'person'{hide_clue}",
             (*scope.ids, list(ids), live, *([list(DM_ONLY_TYPES)] if hide_clue else [])),
@@ -710,6 +748,7 @@ class _Found:
     onto: Ontology
     as_of: AsOf
     audience: str
+    guard: NameGuard | None = None  # players only: names a catch-all fact's words may not carry
 
     def items(self) -> list[Item]:
         walk = self.walk
@@ -752,12 +791,34 @@ class _Found:
         words += ")"
         if self.audience == DM_SCREEN and e["description"]:
             words += f": {e['description']}"
+        if self.audience == PLAYERS and e.get("players_text"):
+            # the players' line (#2967), unless it names an entry or a spelling they may not be
+            # told: then it is left out whole, never shown with a hole
+            line = safe_label(str(e["players_text"]), self.guard) if self.guard else ""
+            if line or not self.guard:
+                words += f": {e['players_text']}"
         return words
 
     def _fact_text(self, f: _Fact) -> str:
         walk = self.walk
-        what = _predicate_words(self.onto, f.predicate, f.detail, f.directional)
-        return f"{walk.entities[f.subject_id]['name']} {what} {walk.entities[f.object_id]['name']}"
+        detail = f.detail
+        if self.guard and f.predicate == FALLBACK_PREDICATE:
+            detail = safe_label(detail, self.guard)
+        a, b = walk.entities[f.subject_id]["name"], walk.entities[f.object_id]["name"]
+        # (a kind that reads one way, made two-way by the DM, #4164: the AI is given the card's own
+        # pair words, "A and B are connected (“sworn to”)", never one-way words that leave B out)
+        # (a campaign's own two-way kind reads two way by its own nature, mark or not: it keeps its
+        # label, as before #4388 stored its mark, "Cerric is oath-bound to Wit")
+        own = self.onto.predicates.get(f.predicate)
+        if (
+            f.both_ways
+            and not (own is not None and not own.core and own.symmetric)
+            and not link_words.reads_both_ways(f.predicate, detail, f.directional)
+            and link_words.reads_both_ways(f.predicate, detail, f.directional, True)
+        ):
+            return f"{a} and {b} {link_words.pair_words(f.predicate, detail)}"
+        what = _predicate_words(self.onto, f.predicate, detail, f.directional)
+        return f"{a} {what} {b}"
 
 
 def _cut(

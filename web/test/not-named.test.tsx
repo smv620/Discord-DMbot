@@ -12,16 +12,23 @@ import Names from "../src/account/Names";
 import { namesPage as names } from "../src/content/names-words";
 import { notNamedWords as w } from "../src/content/not-named-words";
 
-const live = vi.hoisted(() => ({ on: false }));
+const live = vi.hoisted(() => ({ on: false, remove: true }));
 vi.mock("../src/content/not-named-switch", () => ({
   get NOT_NAMED_LIVE() {
     return live.on;
   },
 }));
 
+vi.mock("../src/content/remove-unnamed-switch", () => ({
+  get REMOVE_UNNAMED_LIVE() {
+    return live.remove;
+  },
+}));
+
 afterEach(() => {
   cleanup();
   live.on = false;
+  live.remove = true;
 });
 
 const slow = { timeout: 8000 };
@@ -152,6 +159,50 @@ describe("a name DMbot already knows", () => {
     await waitFor(() => expect(screen.queryByText("Ken's sister")).toBeNull());
   });
 
+  it("finds a name DMbot knows, asks once, and joins them on Yes", async () => {
+    const api = await open();
+    openEditor("Ken's sister");
+    fireEvent.click(screen.getByRole("button", { name: w.samePick }));
+    fireEvent.input(screen.getByLabelText(w.findLabel), { target: { value: "mira" } });
+    fireEvent.click(await screen.findByRole("button", { name: w.pickFor("Mira Voss") }, slow));
+    expect(await screen.findByText(w.known("Ken's sister", "Mira Voss"), {}, slow)).toBeTruthy();
+    expect(calls(api, "nameThem")).toHaveLength(0); // asking changes nothing
+    fireEvent.click(screen.getByRole("button", { name: w.sameYes }));
+    expect(await screen.findByText(w.joined("Ken's sister", "Mira Voss"), {}, slow)).toBeTruthy();
+    expect(calls(api, "nameThem")[0]).toContain('"action":"name-join"');
+  });
+
+  it("never offers an unnamed person, and Never mind closes the search", async () => {
+    await open();
+    openEditor("Ken's sister");
+    fireEvent.click(screen.getByRole("button", { name: w.samePick }));
+    fireEvent.input(screen.getByLabelText(w.findLabel), { target: { value: "sister" } });
+    await new Promise((r) => setTimeout(r, 600));
+    expect(screen.queryByRole("button", { name: w.pickFor("Ken's sister") })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: w.findClose }));
+    expect(screen.queryByLabelText(w.findLabel)).toBeNull();
+  });
+
+  it("goes back to the search, list kept, on No after a pick", async () => {
+    const api = await open();
+    openEditor("Ken's sister");
+    fireEvent.click(screen.getByRole("button", { name: w.samePick }));
+    fireEvent.input(screen.getByLabelText(w.findLabel), { target: { value: "mira" } });
+    fireEvent.click(await screen.findByRole("button", { name: w.pickFor("Mira Voss") }, slow));
+    fireEvent.click(await screen.findByRole("button", { name: w.sameNo }, slow));
+    expect((screen.getByLabelText(w.findLabel) as HTMLInputElement).value).toBe("mira");
+    expect(await screen.findByText(w.findBack, {}, slow)).toBeTruthy();
+    expect(calls(api, "nameThem")).toHaveLength(0);
+  }, 20000);
+
+  it("says so when no known name matches", async () => {
+    await open();
+    openEditor("Ken's sister");
+    fireEvent.click(screen.getByRole("button", { name: w.samePick }));
+    fireEvent.input(screen.getByLabelText(w.findLabel), { target: { value: "zzzzqq" } });
+    expect(await screen.findByText(w.findNone, {}, slow)).toBeTruthy();
+  });
+
   it("goes back to the name box on No, and sends nothing more", async () => {
     const api = await open();
     openEditor("Ken's sister");
@@ -191,5 +242,49 @@ describe("accessibility", () => {
     openEditor("Ken's sister");
     const found = await axe.run(document.body, { rules: { "color-contrast": { enabled: false }, region: { enabled: false } } });
     expect(found.violations).toEqual([]);
+  });
+});
+
+describe("removing a person who is not worth keeping", () => {
+  it("shows no Remove button while its switch is off", async () => {
+    live.remove = false;
+    await open();
+    openEditor("Ken's sister");
+    await screen.findByLabelText(w.nameLabel);
+    expect(screen.queryByRole("button", { name: w.removeButton })).toBeNull();
+  });
+
+  it("asks once, removes them from the list and says so", async () => {
+    const api = await open();
+    openEditor("Ken's sister");
+    fireEvent.click(await screen.findByRole("button", { name: w.removeButton }));
+    expect(screen.getByText(/^Remove .*\? DMbot will forget this person\.$/)).toBeTruthy();
+    expect(calls(api, "changeName")).toHaveLength(0);
+    fireEvent.click(screen.getByRole("button", { name: w.removeYes }));
+    await waitFor(() => expect(calls(api, "changeName")).toHaveLength(1));
+    expect(calls(api, "changeName")[0]).toContain('"action":"remove"');
+    expect(calls(api, "changeName")[0]).toContain('"confirm":true');
+    await waitFor(() => expect(screen.queryByText("Ken's sister")).toBeNull(), slow);
+  });
+
+  it("keeps them when the DM says keep, and sends nothing", async () => {
+    const api = await open();
+    openEditor("Ken's sister");
+    fireEvent.click(await screen.findByRole("button", { name: w.removeButton }));
+    fireEvent.click(screen.getByRole("button", { name: w.removeKeep }));
+    expect(screen.getByRole("button", { name: w.removeButton })).toBeTruthy();
+    expect(calls(api, "changeName")).toHaveLength(0);
+  });
+});
+
+describe("what Undo undoes", () => {
+  it("says in words what was just done, next to the button", async () => {
+    await open();
+    openEditor("Ken's sister");
+    give("Ilse Voss");
+    const undo = await screen.findByRole("button", { name: w.undo }, slow);
+    // (the sentence said when the name was given, shown beside the button: the news line itself is only read out)
+    const said = screen.getByText(/^Just now: .* is now called Ilse Voss\.$/);
+    expect(said.nextElementSibling?.contains(undo)).toBe(true);
   });
 });

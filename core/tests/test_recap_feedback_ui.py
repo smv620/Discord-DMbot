@@ -33,7 +33,9 @@ class FakeAI:
 
 
 def bot_with(*points: tuple[str, str], status: str = "draft", state: str = "ready") -> Any:
-    campaign = SimpleNamespace(guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM_ID}))
+    campaign = SimpleNamespace(
+        guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM_ID}), dm_accounts=frozenset({DM_ID})
+    )
     return SimpleNamespace(
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
         recaps=SimpleNamespace(
@@ -273,7 +275,9 @@ class Spoken(unittest.IsolatedAsyncioTestCase):
         bot.recap_feedback_ai.complete = AsyncMock()
         self.assertTrue(await self.call(bot))
         bot.recap_feedback_ai.complete.assert_not_awaited()
-        bot.sidebar_send_dm.assert_awaited_once_with(DM_ID, fb.TOO_OFTEN)
+        bot.sidebar_send_dm.assert_awaited_once_with(
+            DM_ID, fb.TOO_OFTEN, None, link_to_itself=True
+        )  # (no site: no website link; both buttons when there is one)
 
     async def test_with_no_recap_waiting_it_is_an_ordinary_question(self) -> None:
         bot = self.host(("style", "x"), draft=False)

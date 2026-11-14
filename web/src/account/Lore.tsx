@@ -4,9 +4,12 @@
 // shown back; the page keeps nothing of them. Only a campaign's DM gets a page; the door says so too.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { AUTO_ADD_LIVE } from "../content/auto-add-switch";
+import { AI_FEED_LIVE } from "../content/ai-feed-switch";
 import { lorePage as words, LORE_TEXT_MAX } from "../content/lore-words";
 import { stageWords } from "../content/work-progress";
 import { type AccountApi, ApiError, type LoreInput, type LoreUpload, type NameRow } from "./api";
+import LazyPanel from "./LazyPanel";
 import WorkProgress from "./WorkProgress";
 import AddAll from "./AddAll";
 
@@ -180,16 +183,20 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
     const done = upload.state === "done";
     const quiet = upload.serverNow - upload.updatedAt;
     // Quiet this long, waiting for the bot or working, is a stall (the panel's `waiting` is for waiting on the person, not on DMbot).
-    const state = failed ? "failed" : done ? "done" : quiet > STALLED_S ? "stalled" : "running";
+    // The server's own word on stalled wins when it sends the shared shape (a queued upload never reads as stalled, #3535).
+    const p = upload.progress;
+    const state = failed ? "failed" : done ? "done" : p ? (p.state === "stalled" ? "stalled" : "running") : quiet > STALLED_S ? "stalled" : "running";
+    const counted = p ? typeof p.done === "number" && typeof p.total === "number" && p.total > 0 : upload.total > 0;
     return (
       <div class="stack">
         {back}
         {opened && open && <p>{words.openNote}</p>}
         <WorkProgress
-          stage={stageWords(words.stages, upload.stage)}
-          done={upload.total > 0 ? upload.done : null}
-          total={upload.total > 0 ? upload.total : null}
-          unit={words.unit}
+          stage={stageWords(words.stages, p?.stage ?? upload.stage)}
+          done={counted ? (p ? p.done : upload.done) : null}
+          total={counted ? (p ? p.total : upload.total) : null}
+          unit={p?.unit ? (words.units[p.unit] ?? words.unit) : words.unit}
+          counts={p?.counts}
           startedAt={upload.createdAt}
           updatedAt={upload.updatedAt}
           serverNow={upload.serverNow}
@@ -197,6 +204,9 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
           frozen={stopped}
           reason={failed ? (words.failedReasons[upload.error] ?? words.failedFallback) : null}
         />
+        {AI_FEED_LIVE && api.aiFeed && (
+          <LazyPanel load={() => import("./AiFeed")} what="what DMbot asked the AI" props={{ api, campaignRef: ref, kind: "lore" as const, job: upload.id, running: open }} />
+        )}
         {done && (
           <div class="stack">
             <p role="status">{upload.namesFound + upload.linksFound === 0 ? words.foundNothing : words.found(upload.namesFound, upload.linksFound)}</p>
@@ -211,6 +221,13 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
               </>
             )}
           </div>
+        )}
+        {AUTO_ADD_LIVE && done && api.uploadNotice && (
+          <LazyPanel
+            load={() => import("./UploadNotice")}
+            what="what DMbot added"
+            props={{ api, campaignRef: ref, source: { kind: "lore" as const, id: upload.id }, onChanged: () => void api.loreRead?.(ref, upload.id).then((got) => got && setUpload(got)).catch(() => undefined) }}
+          />
         )}
         {done && (
           <AddAll

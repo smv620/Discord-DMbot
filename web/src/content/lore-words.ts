@@ -54,12 +54,16 @@ export const lorePage = {
   stages: {
     waiting: "Waiting for DMbot to pick it up.",
     reading: "Reading it.",
+    lore_waiting: "Waiting for DMbot to pick it up.",
+    lore_reading: "Reading it.",
     finding_names: "Finding names.",
     finding_links: "Finding how they connect.",
     sorting: "Working out what the players know.",
     done: "Done.",
   } as Record<string, string>,
   unit: "parts",
+  /** What the API's count is of, by its unit code (#3534). */
+  units: { parts: "parts", names: "names", checks: "checks" } as Record<string, string>,
   found: (names: number, links: number): string =>
     `DMbot found ${names} ${names === 1 ? "name" : "names"} and ${links} ${links === 1 ? "connection" : "connections"}.`,
   foundNothing: "DMbot didn't find any names in that. Try a longer piece.",

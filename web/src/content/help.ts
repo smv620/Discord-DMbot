@@ -284,9 +284,9 @@ export const STANDING_LIVE = false;
 
 export const standingSteps: Step[] = [
   {
-    text: "To see how an NPC, a group or a place feels about the party, open its name card and press 🤝 Standing. It shows Hostile, Unfriendly, Wary, Friendly or Devoted for each player character, and for the party as a whole, with the reasons. Press Toward a character… to set it yourself, for one character or the party. DMbot only reminds you. You decide how they act. Players never see it.",
+    text: "To see how an NPC, a group or a place feels about the party, open its name card and press 🤝 Reputation. It shows Hostile, Unfriendly, Wary, Friendly or Devoted for each player character, and for the party as a whole, with the reasons. Press Toward a character… to set it yourself, for one character or the party. DMbot only reminds you. You decide how they act. Players never see it.",
     names: [
-      { name: "🤝 Standing", file: "ui/standing.py" },
+      { name: "🤝 Reputation", file: "ui/standing.py" },
       { name: "Hostile", file: "memory/standing.py" },
       { name: "Unfriendly", file: "memory/standing.py" },
       { name: "Wary", file: "memory/standing.py" },
@@ -371,7 +371,7 @@ export const sharedStorySteps: Step[] = [
     ],
   },
   {
-    text: "To give DMbot your adventure, press 📖 Give your adventure on the Shared story card, then Give a file. It takes a PDF, Word (.docx) or text (.txt, .md) file up to 10 MB. DMbot keeps the text, not the file, for this campaign only. Players can't open it. Press 🗑 Remove to make DMbot forget one.",
+    text: "To give DMbot your adventure, press 📖 Give your adventure on the Shared story card, then Give a file. It takes a PDF (up to 100 MB), Word (.docx) or text (.txt, .md) file (up to 10 MB). DMbot keeps the text, not the file, for this campaign only. Players can't open it. Press 🗑 Remove to make DMbot forget one.",
     names: [
       { name: "Give your adventure", file: "dm_screen/adventure_card.py" },
       { name: "Give a file", file: "dm_screen/adventure_card.py" },
@@ -446,14 +446,14 @@ export const deedSteps: Step[] = [
     ],
   },
   {
-    text: "DMbot records only what you type. It never listens for deeds. A deed shows on the Standing screen as a reason, like \"(session 4, helped)\". It counts for less after ten sessions, and a feeling you set yourself always wins. ↩ Undo that works for a short while after you record. DMbot only reminds you; you decide how they act. Players never see deeds, and they are never in a transcript.",
+    text: "DMbot records only what you type. It never listens for deeds. A deed shows on the Reputation screen as a reason, like \"(session 4, helped)\". It counts for less after ten sessions, and a feeling you set yourself always wins. ↩ Undo that works for a short while after you record. DMbot only reminds you; you decide how they act. Players never see deeds, and they are never in a transcript.",
     names: [{ name: "↩ Undo that", file: "ui/deeds.py" }],
   },
 ];
 
 export const WHERE_ARE_WE_LIVE = false;
 
-// The players' game clock moves from its own channel into a small 🕰️ line in dmb-chat (owner, 2026-10-28; core
+// The players' game clock moves from its own channel into a small 🕰️ line in the table's chat (owner, 2026-10-28; core
 // #2877). The new sentences are true only once that is deployed, so they wait behind this switch (#2875).
 export const GAMETIME_IN_CHAT_LIVE = false;
 
@@ -576,7 +576,7 @@ export const FIGHT_AND_ITEM_RULES_LIVE = false;
 // ENCOUNTER_NOTE), so the words promise neither.
 export const fightRuleSteps: Step[] = [
   {
-    text: "To check how hard a fight is, ask for the XP budget. Type /dmbot rule, then \"xp budget\", or ask out loud or in chat: \"Hey DMbot, what's the XP budget for level 3 characters?\" DMbot shows the rule for the levels you name, with its source. It doesn't add up the monsters or say if the fight is easy or deadly: that's your call. /dmbot rule answers only you; if a player asks, DMbot says \"That's one for your DM.\"",
+    text: "To check how hard a fight is, ask for the XP budget. Type /dmbot rule, then \"xp budget\", or ask out loud or in the voice channel's chat: \"Hey DMbot, what's the XP budget for level 3 characters?\" DMbot shows the rule for the levels you name, with its source. It doesn't add up the monsters or say if the fight is easy or deadly: that's your call. /dmbot rule answers only you; if a player asks, DMbot says \"That's one for your DM.\"",
   },
 ];
 
@@ -725,8 +725,7 @@ export const dmSteps: Step[] = [
     ],
   },
   {
-    text: 'Ask a quick question out loud: "Hey DMbot, how long does Bless last?" The short answer is posted in the table\'s dmb-chat channel and says how sure DMbot is. You have the final say.',
-    names: [{ name: "dmb-chat", file: "dm_screen/dmbchat_channel.py" }],
+    text: 'Ask a quick question out loud: "Hey DMbot, how long does Bless last?" The short answer is posted in the voice channel\'s chat and says how sure DMbot is. You have the final say.',
   },
   {
     text: "When the game is over, type /dmbot stop.",
@@ -835,7 +834,7 @@ export const dmSteps: Step[] = [
   ...(DEEDS_LIVE ? deedSteps : []),
   // Where the rules are now that the rules channel is gone (#2875).
   {
-    text: "Your house rules are on the House rules page here, and anyone can ask DMbot about a rule in the dmb-chat channel.",
+    text: "Your house rules are on the House rules page here, and anyone can ask DMbot about a rule in the voice channel's chat.",
     link: { text: "Read your table's house rules", href: "/account/house-rules" },
   },
   ...(STORY_MODE_LIVE ? storyModeHelpSteps : []),
@@ -908,6 +907,11 @@ export const dmSteps: Step[] = [
   },
   // Website and table features built on 2026-10-22/23 (#2498); each shows once its What's new entry is out of `held`.
   ...liveFeatureSteps("gameMaster"),
+  {
+    text: DM_BOT_CHANNEL_LIVE
+      ? `After you set up a campaign: open your campaign's DM Bot channel. Start DMbot at the table with /dmbot start, ask each player to press "${consent}", and watch for DMbot's private message when something needs checking.`
+      : `After you set up a campaign: start DMbot at the table with /dmbot start, ask each player to press "${consent}", and watch for DMbot's private message when something needs checking.`,
+  },
 ];
 
 // The "What I looked at" button under a rules answer (#1957) is not deployed yet, so its What's new
@@ -934,7 +938,7 @@ export const quickAnswers: Step[] = [
     text: "Quick answers work while your game is running and you have said yes to being recorded.",
   },
   {
-    text: 'Message DMbot privately, by voice or by typing, and the answer comes to you alone. Say "Hey DMbot" when the table has a dmb-chat channel, and the answer is posted there for everyone. It then uses only the free rules, your house rules and what was just said. If it needs your story, you get that answer privately.',
+    text: 'Message DMbot privately, by voice or by typing, and the answer comes to you alone. Say or type "Hey DMbot", and the answer is posted in the voice channel\'s chat for everyone. It then uses only the free rules, your house rules and what was just said. If it needs your story, you get that answer privately.',
   },
   {
     text: "DMbot answers from the free rules, your house rules, what was said in the last few minutes, and the story facts you have confirmed about the names in your question. It leaves out names you marked secret, and your own notes on names and places.",
@@ -994,8 +998,7 @@ export const transcriptStep: Step = {
 };
 
 export const heyDmBotStep: Step = {
-  text: 'Anyone at the table who said yes can ask DMbot a quick rules question: say "Hey DMbot" or type it in the dmb-chat channel. Your question is posted there with your name. Your game master has the final say.',
-  names: [{ name: "dmb-chat", file: "dm_screen/dmbchat_channel.py" }],
+  text: 'Anyone at the table who said yes can ask DMbot a quick rules question: say or type "Hey DMbot" (or just "DMbot" at the start of a message). Your question is posted in the voice channel\'s chat with your name. Your game master has the final say.',
 };
 
 export const fightBotStep: Step = {
@@ -1012,7 +1015,7 @@ export const playerSteps: Step[] = [
   },
   heyDmBotStep,
   {
-    text: "When you ask DMbot a question in dmb-chat, it shows the name of the character you play once your game master has said yes to it. Until then it shows your server nickname.",
+    text: "When you ask DMbot a question in the voice channel's chat, it shows the name of the character you play once your game master has said yes to it. Until then it shows your server nickname.",
   },
   transcriptStep,
   {
@@ -1106,7 +1109,7 @@ export const emailNote = "Emails are sent through Resend, a company that sends e
 
 /** Not a step to do: what players may notice at the table. */
 export const playerNote = GAMETIME_IN_CHAT_LIVE
-  ? "The game time shows in the dmb-chat channel as a small 🕰️ line whenever it changes. You do not need to do anything."
+  ? "The game time shows in the voice channel's chat as a small 🕰️ line whenever it changes. You do not need to do anything."
   : 'Your game master may show the story\'s day and time, like "Day 5, morning", in your own channel. You do not need to do anything.';
 
 /** The one support address (docs/EMAIL.md, owner's setup, #1341). Every other place on the site
@@ -1129,7 +1132,7 @@ const whatsOnSnag: Snag = {
   question: "Something on What's new isn't there for me.",
   text: "Press ℹ️ What's switched on in ⚙️ Manage DMbot to see what is on for your table. If something you read about is still missing a day later, ask us in Support.",
   names: [{ name: "What's switched on", file: "features.py" }],
-  link: { text: "Getting help", href: "#getting-help" },
+  link: { text: "Getting help", href: "/help#getting-help" },
 };
 
 export const snags: Snag[] = [
@@ -1137,7 +1140,7 @@ export const snags: Snag[] = [
     question: "I typed /dmbot start and nothing happened.",
     text: "Pick /dmbot start from the list that pops up, then send it. If no list shows, wait a minute, or fully close and reopen Discord, then try again.",
     names: [{ name: "/dmbot start", file: "bot.py" }],
-    link: { text: "The first steps for the game master", href: "#dm-heading" },
+    link: { text: "The first steps for the game master", href: "/help#dm-heading" },
   },
   {
     question: "DMbot isn't hearing someone.",
@@ -1147,7 +1150,7 @@ export const snags: Snag[] = [
   {
     question: "A button says \"This interaction failed\".",
     text: "That is Discord's own message: DMbot didn't answer in time. Wait a few seconds and press the button again. If it keeps happening, tell us.",
-    link: { text: "Getting help", href: "#getting-help" },
+    link: { text: "Getting help", href: "/help#getting-help" },
   },
   {
     question: "DMbot left the voice channel or stopped listening.",
@@ -1208,6 +1211,13 @@ export const playerHeading = "For players";
 export const accountHeading = "Your account";
 export const emailsHeading = "Emails from DMbot";
 export const onThisPageHeading = "On this page";
+
+/** The two pages the Help page was split into (#4235), linked from the top of /help. */
+export const otherHelpPages = [
+  { href: "/help/questions", label: "Quick answers" },
+  { href: "/help/snags", label: "If something doesn't work" },
+] as const;
+export const movedNote = "Quick answers and the fixes for snags have their own pages now:";
 export const backToTop = "Back to top";
 
 /** The "On this page" list: each section that is shown, in page order, linking to its heading.
@@ -1215,12 +1225,10 @@ export const backToTop = "Back to top";
 export function onThisPage(recapsLive: boolean, recapsHeading: string): { id: string; label: string }[] {
   return [
     { id: "dm-heading", label: dmHeading },
-    { id: "quick-heading", label: quickAnswersHeading },
     ...(recapsLive ? [{ id: "recaps-heading", label: recapsHeading }] : []),
     { id: "player-heading", label: playerHeading },
     { id: "account-heading", label: accountHeading },
     { id: "emails-heading", label: emailsHeading },
-    { id: "snags-heading", label: snagsHeading },
     { id: gettingHelp.id, label: gettingHelp.heading },
   ];
 }

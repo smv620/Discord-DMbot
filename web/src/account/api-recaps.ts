@@ -4,6 +4,7 @@
 import type {
   FixResult,
   ImportCheck,
+  ImportConsent,
   ImportMember,
   ImportPreview,
   ImportProgress,
@@ -29,6 +30,7 @@ import {
   busyAsBusy,
   recapFrom,
   withLinks,
+  wireMapping,
 } from "./api";
 import type { AccountApi, ApiHelpers } from "./api";
 
@@ -178,17 +180,22 @@ export default function recapsArea({ call, url }: ApiHelpers): Partial<AccountAp
           `/me/campaigns/${encodeURIComponent(ref)}/imports/members?q=${encodeURIComponent(q)}`,
         )) as { members: ImportMember[] }
       ).members,
-    importCheck: async (ref, files, mapping, links) =>
+    importCheck: async (ref, files, mapping, links, confirm) =>
       (await call(
         "POST",
         `/me/campaigns/${encodeURIComponent(ref)}/imports/check`,
-        withLinks({ files, mapping }, links),
+        withLinks({ files, mapping: wireMapping(mapping, confirm?.confirmed) }, links),
       )) as ImportCheck,
+    importConsent: async (ref) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/imports/consent`)) as ImportConsent,
     importStart: async (ref, files, plan, links) =>
       (await call(
         "POST",
         `/me/campaigns/${encodeURIComponent(ref)}/imports`,
-        withLinks({ files, plan }, links),
+        withLinks(
+          { files, plan: { mapping: wireMapping(plan.mapping, plan.confirmed), sessions: plan.sessions, ...(plan.consentVersion !== undefined ? { consentVersion: plan.consentVersion } : {}) } },
+          links,
+        ),
       )) as ImportStarted,
     importProgress: async (ref, importId) =>
       (await call(

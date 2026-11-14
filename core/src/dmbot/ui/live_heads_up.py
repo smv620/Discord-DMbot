@@ -3,7 +3,8 @@ Captain Rook died in Session 4. They were just voiced talking." with three answe
 points; the DM decides what is true in their story, and nothing is written without their press.
 
 DM screen only (it follows the screen's visibility like every post there): never a transcript,
-`dmb-chat` or a players' channel. Only the campaign's own DM may press, asked again on every press.
+a chat channel or a players' channel. Only the campaign's own DM may press, asked again on every
+press.
 The name is the one the table knows, never a secret name, and no line of speech is quoted.
 """
 

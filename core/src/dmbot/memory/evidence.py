@@ -289,15 +289,21 @@ async def audit(conn: Conn, guild_id: int, campaign_id: str) -> Audit:
 
 
 async def scrub_claim_lines(
-    conn: Conn, guild_id: int, *, refs: Collection[str] = (), user_id: int | None = None
+    conn: Conn,
+    guild_id: int,
+    *,
+    refs: Collection[str] = (),
+    user_id: int | None = None,
+    campaign_id: str | None = None,
 ) -> int:
     """Take a removed person out of every claim, in every campaign of the server (#2676, #2679): a
     claim the DM confirmed stays (it is the DM's fact) but no longer names who said what. Their
     line references leave `lines` and their id leaves `speaker_ids`.
     `refs`: these exact references (a line reference is "session:started_ms:user"). The speaker
     they name leaves `speaker_ids` too, unless the claim still cites another line of theirs.
-    `user_id`: every reference that ends in this speaker, and the id itself. Returns how many
-    claims changed."""
+    `user_id`: every reference that ends in this speaker, and the id itself. `campaign_id`: only
+    that campaign's claims (a speaker without Discord has a number other campaigns use for someone
+    else, #3305). Returns how many claims changed."""
     changed = 0
     ordered = sorted(set(refs))
     affected: set[str] = set()
@@ -327,8 +333,17 @@ async def scrub_claim_lines(
             "  SELECT x FROM unnest(lines) AS x WHERE x !~ %s),"
             " speaker_ids = array_remove(speaker_ids, %s)"
             " WHERE guild_id = %s AND (%s = ANY(speaker_ids) OR EXISTS ("
-            "  SELECT 1 FROM unnest(lines) AS y WHERE y ~ %s))",
-            (f":{int(user_id)}$", int(user_id), guild_id, int(user_id), f":{int(user_id)}$"),
+            "  SELECT 1 FROM unnest(lines) AS y WHERE y ~ %s))"
+            " AND (%s::text IS NULL OR campaign_id = %s)",
+            (
+                f":{int(user_id)}$",
+                int(user_id),
+                guild_id,
+                int(user_id),
+                f":{int(user_id)}$",
+                campaign_id,
+                campaign_id,
+            ),
         )
         changed += cur.rowcount
     return changed

@@ -61,19 +61,32 @@ export default function RecapProgress({ recap }: { recap: Recap }) {
   if (!going && !audio) return null;
 
   // From the server's own start when it says so; otherwise from when this page first saw it.
+  const shared = recap.postingProgress;
   const start =
-    typeof recap.postingSince === "number" && recap.postingSince > 0
-      ? recap.postingSince
-      : (activeSince.current ?? Date.now() / 1000);
+    typeof shared?.startedAt === "number" && shared.startedAt > 0
+      ? shared.startedAt
+      : typeof recap.postingSince === "number" && recap.postingSince > 0
+        ? recap.postingSince
+        : (activeSince.current ?? Date.now() / 1000);
   const now = Date.now() / 1000 + (typeof recap.serverNow === "number" ? gap.current : 0);
-  const step = going ? (recap.postingStep === "audio" ? null : (recap.postingStep ?? null)) : "audio";
+  // The step from the shared stage when the old field is missing (the API sends both from #3497).
+  const sharedStep = ({ posting_check: "check", posting_post: "post", posting_audio: "audio" } as const)[shared?.stage as "posting_check"];
+  const said = recap.postingStep ?? sharedStep ?? null;
+  const step = going ? (said === "audio" ? null : said) : "audio";
+  const stalled = shared?.state === "stalled";
   return (
     <section class="panel" aria-labelledby="recap-progress">
       <h3 id="recap-progress">{going ? text.posting : text.audioMaking}</h3>
       <p class="small" role="status" aria-live="polite">
         {step ? text.step[step] : ""}
       </p>
-      {now - start >= SLOW_SECONDS && <p class="small muted">{text.slow}</p>}
+      {stalled ? (
+        <p class="small" role="status">
+          {text.postStalled}
+        </p>
+      ) : (
+        now - start >= SLOW_SECONDS && <p class="small muted">{text.slow}</p>
+      )}
       <p class="small muted">
         {text.clockLabel}: <span role="timer" aria-live="off">{clock(now - start)}</span>
       </p>

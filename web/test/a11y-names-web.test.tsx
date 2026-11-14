@@ -72,7 +72,7 @@ describe("Story Graph", () => {
 
   it("the big-web question", async () => {
     render(<Web api={mockApi("table")} path="/account/web/100.cmp1.web-big" />);
-    await screen.findByText(/names?, \d+ lines?/);
+    await screen.findByText(/Showing \d+ names? and \d+ connections?/);
     fireEvent.input(screen.getByLabelText("Steps out from the middle"), { target: { value: "6" } });
     await screen.findByText(/This will draw \d+ names and may be slow/);
     expect(await serious()).toEqual([]);

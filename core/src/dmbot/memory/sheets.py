@@ -44,6 +44,12 @@ PAUSE_MAX_S = 900.0  # never longer than this, whatever D&D Beyond asks
 HOLD_MAX_S = 5.0  # a read held by the limit this long or less waits; longer is refused as busy
 SNAPSHOT_MAX_BYTES = 32 * 1024  # a kept snapshot (the database allows 64 KB)
 SHEET_URL = "https://www.dndbeyond.com/characters/{id}"
+# A character's portrait on the Story Graph (#3621): the public link in the character data
+# (`decorations.avatarUrl`), kept only when it points at D&D Beyond's own picture hosts, as a plain
+# https link with no query. The image is never fetched or kept; the page loads it from there.
+PORTRAIT = re.compile(
+    r"^https://(?:www\.dndbeyond\.com|media-waterdeep\.cursecdn\.com)/avatars/[A-Za-z0-9_./-]{1,200}$"
+)
 _LINK = re.compile(
     r"^\s*<?https://(?:www\.)?dndbeyond\.com/characters/(\d{1,12})(?:[/?#][^\s>]*)?>?\s*$",
     re.IGNORECASE,
@@ -156,6 +162,7 @@ def parse(answer: Mapping[str, Any]) -> dict[str, Any]:
         "v": SNAPSHOT_VERSION,
         "source": SOURCE_DNDBEYOND,
         "name": _name(data.get("name")),
+        "portrait": portrait_url(_get(data, "decorations", "avatarUrl")),
         "species": _name(_get(data, "race", "fullName")),
         "classes": classes,
         "level": level,
@@ -485,6 +492,11 @@ def _int(value: Any, low: int, high: int) -> int | None:
     return number if low <= number <= high else None
 
 
+def portrait_url(value: Any) -> str | None:
+    """The portrait link if it is one of D&D Beyond's own picture addresses, else None."""
+    return value if isinstance(value, str) and PORTRAIT.fullmatch(value) else None
+
+
 def _name(value: Any) -> str | None:
     """A short single-line name, or None (anything long is likely text, not a name)."""
     if not isinstance(value, str):
@@ -659,6 +671,7 @@ def clean(snapshot: Any) -> dict[str, Any] | None:
         "v": SNAPSHOT_VERSION,
         "source": source,
         "name": name,
+        "portrait": portrait_url(snapshot.get("portrait")),
         "species": _name(snapshot.get("species")),
         "classes": classes,
         "level": _int(snapshot.get("level"), 0, LEVEL_MAX) or 0,

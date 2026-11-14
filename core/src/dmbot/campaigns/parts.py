@@ -26,17 +26,22 @@ import io
 import json
 import uuid
 import zlib
+from collections import Counter
 from collections.abc import AsyncIterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 from psycopg.types.json import Jsonb
 
+from dmbot import lineage
 from dmbot.campaigns.models import CampaignError
+from dmbot.campaigns.snowflakes import read_ids, write_ids
 from dmbot.db import Conn
 
 PART_FORMAT = "dmbot-transcripts"
-PART_VERSION = 1
+# 2: Discord ids are written as strings, as in the campaign file (#4060). An older part's numbers
+# are still read; a DMbot that expects numbers refuses a part of this version as too new.
+PART_VERSION = 2
 PART_TEXT_BYTES = 16 * 1024 * 1024  # text a part is filled to; a restore reads up to 25 MB
 PART_READ_BYTES = 25 * 1024 * 1024  # the most a part may unpack to
 SESSIONS_MAX = 5000  # sessions in one part
@@ -58,7 +63,17 @@ _SESSION_DROP = ("id", "guild_id", "campaign_id")
 _LINE_DROP = ("id", "guild_id", "session_id")
 _SUGGESTION_DROP = ("id", "guild_id", "campaign_id", "session_id")
 _RESPELL_DROP = ("id", "guild_id", "campaign_id", "session_id", "line_id")
-_IMPORT_DROP = ("guild_id", "campaign_id", "session_id")
+_IMPORT_DROP = (
+    "guild_id",
+    "campaign_id",
+    "session_id",
+    # where the story read is: a restored session starts blank (0325)
+    "story_state",
+    "story_part",
+    "story_parts",
+    "story_started_at",
+    "story_moved_at",
+)
 _SESSION_KEYS = ("session", "lines", "suggestions", "respells", "import")
 
 
@@ -140,6 +155,10 @@ class TranscriptParts:
     @staticmethod
     def check(data: object) -> dict[str, Any]:
         """The shape of one part, checked. Pure. Raises CampaignError."""
+        try:
+            data = read_ids(data)  # ids written as strings (#4060) back to numbers
+        except RecursionError as exc:  # (a hostile file nested past Python's limit)
+            raise CampaignError(DAMAGED) from exc
         if not isinstance(data, dict) or data.get("format") != PART_FORMAT:
             raise CampaignError(DAMAGED)
         version, backup, part = data.get("version"), data.get("backup"), data.get("part")
@@ -159,8 +178,16 @@ class TranscriptParts:
         if not isinstance(sessions, list) or len(sessions) > SESSIONS_MAX:
             raise CampaignError(DAMAGED)
         for s in sessions:
-            if not isinstance(s, dict) or set(s) != set(_SESSION_KEYS):
+            if not isinstance(s, dict) or set(s) - {"made_by_commit"} != set(_SESSION_KEYS):
                 raise CampaignError(DAMAGED)
+            default = s.pop("made_by_commit", None)
+            if default is not None and (not isinstance(default, str) or not lineage.valid(default)):
+                raise CampaignError(
+                    DAMAGED
+                )  # (a default is 40 lower-case hex characters or absent)
+            if default is not None:
+                for r in _stamped_rows(s):
+                    r.setdefault("made_by_commit", default)  # a row with the key keeps its own
             if not isinstance(s["session"], dict) or not _keys_ok(s["session"]):
                 raise CampaignError(DAMAGED)
             for name in ("lines", "suggestions", "respells"):
@@ -209,9 +236,12 @@ class TranscriptParts:
         (#2605). The count goes to `left_out`."""
         allowed = await _columns(conn)
         erased = await self._erased(conn, guild_id, part)
+        removed = await self._removed(conn, guild_id, campaign_id)
         for s in part["sessions"]:
             if erased:
                 s = _without_erased(s, erased, left_out)
+            if removed:  # a DM removed these speakers from THIS campaign (#3305)
+                s = _without_erased(s, removed, left_out, by_import=True)
             sid = uuid.uuid4().hex
             await self._insert(
                 conn, "transcript_sessions", allowed, [s["session"]],
@@ -267,6 +297,18 @@ class TranscriptParts:
         return out
 
     @staticmethod
+    async def _removed(conn: Conn, guild_id: int, campaign_id: str) -> dict[int, int]:
+        """speaker -> when a DM removed their lines from THIS campaign (`speaker_erasures`, #3305).
+        Read on every restore path (this is the one place a restore writes lines), and for this
+        campaign only: the same number in another campaign is someone else."""
+        cur = await conn.execute(
+            "SELECT user_id, erased_at FROM speaker_erasures"
+            " WHERE guild_id = %s AND campaign_id = %s",
+            (guild_id, campaign_id),
+        )
+        return {int(r["user_id"]): int(r["erased_at"]) for r in await cur.fetchall()}
+
+    @staticmethod
     async def _erased_in(conn: Conn, server: int, speakers: list[int]) -> dict[int, int]:
         cur = await conn.execute(
             "SELECT user_id, erased_at FROM dmbot_erased_speakers(%s, %s)", (server, speakers)
@@ -307,11 +349,17 @@ class TranscriptParts:
 
 
 def _without_erased(
-    s: dict[str, Any], erased: dict[int, int], left_out: LeftOut | None
+    s: dict[str, Any], erased: dict[int, int], left_out: LeftOut | None, by_import: bool = False
 ) -> dict[str, Any]:
     """One session of a part with the erased people's rows taken out (#2605): only people who
-    erased after the session began lose it (a session after they came back stays whole)."""
+    erased after the session began lose it (a session after they came back stays whole).
+    `by_import`: a session loaded from a file counts from the day it was imported, not from the
+    day it was played, so a speaker a DM removed and then confirmed again in a new import keeps the
+    new lines (#3305)."""
     began = s["session"].get("started_at")
+    imported = (s.get("import") or {}).get("imported_at")
+    if by_import and type(imported) is int:
+        began = imported
     gone = {u for u, at in erased.items() if type(began) is int and began <= at}
     if not gone:
         return s
@@ -379,18 +427,53 @@ _ALWAYS_MADE_HERE = frozenset({"id", "guild_id", "campaign_id", "session_id", "l
 # ---- the files ---------------------------------------------------------------------------
 
 
+# The part's tables that carry a build stamp (`dmbot.lineage`), by where they are in a session.
+_STAMPED_ROWS = ("session", "lines", "import")
+
+
+def _stamped_rows(session: dict[str, Any]) -> list[dict[str, Any]]:
+    """The rows of one session whose table carries `made_by_commit`."""
+    found: list[dict[str, Any]] = []
+    for name in _STAMPED_ROWS:
+        got = session.get(name)
+        if isinstance(got, dict):
+            found.append(got)
+        elif isinstance(got, list):
+            found.extend(r for r in got if isinstance(r, dict))
+    return found
+
+
+def _session_text(text: str) -> str:
+    """One session's JSON as the file carries it (#4060). A Discord id is a string. The build stamp
+    most of its rows share is written once, on the session, and left off the rows that have it; a
+    row that differs keeps its own (a null for "none"). The database made the text with numbers and
+    a stamp on every row; it is read and written again here, in the worker thread."""
+    data = write_ids(json.loads(text))
+    rows = _stamped_rows(data)
+    stamps = Counter(r["made_by_commit"] for r in rows if r.get("made_by_commit"))
+    if stamps:
+        default = stamps.most_common(1)[0][0]
+        data["made_by_commit"] = default
+        for r in rows:
+            if r.get("made_by_commit") == default:
+                del r["made_by_commit"]
+    return json.dumps(data)
+
+
 def encode_part(
     backup_id: str, number: int, sessions: Sequence[str], guild_id: int | None = None
 ) -> bytes:
     """One part as a gzip file: `sessions` are the JSON texts `TranscriptParts.sessions` made."""
     head = json.dumps(
         {"format": PART_FORMAT, "version": PART_VERSION, "backup": backup_id, "part": number}
-        | ({} if guild_id is None else {"guild": guild_id})  # (where the copy came from, #2605)
+        | (
+            {} if guild_id is None else {"guild": str(guild_id)}
+        )  # (where the copy came from, #2605)
     )
     out = io.BytesIO()
     with gzip.GzipFile(fileobj=out, mode="wb", compresslevel=6, mtime=0) as packed:
         packed.write(head[:-1].encode() + b', "sessions": [')
-        packed.write(",".join(sessions).encode("utf-8"))
+        packed.write(",".join(_session_text(s) for s in sessions).encode("utf-8"))
         packed.write(b"]}")
     return out.getvalue()
 

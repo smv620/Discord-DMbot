@@ -646,7 +646,7 @@ class TheBotsEar(unittest.TestCase):
 
         bot = mock.MagicMock(spec=DMBot)
         bot.clocks = None
-        table: Any = SimpleNamespace(dm_user_ids={DM}, guild_id=1)
+        table: Any = SimpleNamespace(dm_user_ids={DM}, dm_accounts={DM}, guild_id=1)
         with mock.patch.object(fightbot, "note_line", return_value=False) as heard:
             DMBot._act_on_line(bot, table, user, "players go first", typed=typed, held=held)
         return list(heard.call_args_list)

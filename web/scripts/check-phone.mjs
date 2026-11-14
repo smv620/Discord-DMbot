@@ -158,7 +158,7 @@ const pages = [
   ["a recap's page", `/account/recaps/${REF}?demo=table`],
   ["a recap unchecked for 3 days (#2297)", "/account/recaps/200000000000000001.cmp9.1789000000?demo=table"],
   ["a recap's names, with how to say each (#2317)", `/account/recaps/${REF}?demo=table`, async (page) => {
-    await page.getByText("Names in this campaign").first().click();
+    await page.getByText("Names in this recap").first().click();
     await page.getByRole("button", { name: /Suggest/ }).first().waitFor();
     await page.getByRole("button", { name: /Say it/ }).first().waitFor();
     // A suggestion fills the box, which brings the Hear it button.
@@ -184,6 +184,11 @@ const pages = [
       { name: "second-session.txt", mimeType: "text/plain", buffer: Buffer.from("Cerric: again") },
     ]);
     await page.getByRole("button", { name: "Preview" }).click();
+    // The consent step is on: every name needs a choice. Ash is left out; Mira is kept as someone not in Discord, with the
+    // tick, so the tick's layout is measured at phone width too.
+    await page.getByLabel("Ash: Who is who?").selectOption("drop");
+    await page.getByLabel("Mira: Who is who?").selectOption("new");
+    await page.getByLabel(/I confirm Mira agreed to this/).check();
     await page.getByRole("button", { name: /Check what will be kept/ }).click();
     await page.getByText(/^Checked:/).first().waitFor();
   }],

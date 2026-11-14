@@ -22,10 +22,11 @@ from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
-from dmbot.memory import kin
+from dmbot.memory import kin, next_words, place_words, quote_kind, route_words, unique_item
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.backstory_links import QUOTE_MAX
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
+from dmbot.memory.list_names import split_list
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import DISGUISED_AS, FALLBACK_PREDICATE, SYNONYMS
 from dmbot.memory.pronouns import PRONOUNS, speaker_end
@@ -41,6 +42,9 @@ MAX_ALSO = 4
 # What the AI calls a kind, and the kind DMbot keeps it as (the same words Add many reads).
 KINDS = {
     "person": "npc",  # (the AI's word for any named character; a named monster is one too)
+    # a character the text plainly says is one of the players' own (#3553): proposed as a player
+    # character; who plays it is the DM's to say, never guessed from the text
+    "player": "player_character",
     "place": "place",
     "group": "faction",
     "god": "npc",  # a god is an NPC (#2562)
@@ -50,6 +54,7 @@ KINDS = {
 }
 LABELS = {  # for "Yes to all 14 places"
     "npc": ("NPC", "NPCs"),
+    "player_character": ("player character", "PCs"),
     "place": ("place", "places"),
     "faction": ("group", "groups"),
     "item": ("item", "items"),
@@ -69,6 +74,8 @@ CONNECTIONS = {
     "friend": "ally_of",
     "enemy": "enemy_of",
     "owns": "owns",
+    # (who has an item with them now, as the story graph keeps it apart from owning, #3619)
+    "carries": "carries",
     "works for": "serves",
     "knows": "knows",
     "sworn to": "sworn_to",  # an oath, vow, pact or fealty
@@ -82,6 +89,18 @@ CONNECTIONS = {
     # A second character posing as another (a doppelganger, an impostor): two people, never a name
     # of one (#3091). A secret identity of ONE person stays a secret name; this is a connection.
     "disguised as": "disguised_as",  # a is disguised as b
+    # A companion goes along with a player character (#3176). A document never points at the
+    # party (it is written before there is one), so the store refuses any other end and the
+    # suggestion is dropped with the rest of the refused ones.
+    "travels with": "travels_with",  # a travels with b (a player character)
+    # Two places beside each other (#4173 slice 6a): a town on a lake's shore, two lands that share
+    # a border, a village at the foot of a mountain, a town on a named road. Never one place inside
+    # another (that is "in"). The way it is said rides in "words" (`next_words`).
+    "next to": "next_to",  # a is next to b
+    # Two places with a way between them (#4173 slice 6d): a road, a river, a sea route, an
+    # airship, a portal, a path through the wild. Both places are named with the way between them;
+    # a way word alone is not a route. The means rides in "words" (`route_words`).
+    "route to": "route_to",  # a is connected to b
 }
 # The relationships lore is mostly made of (#2757), built in so the AI never has to word them
 # itself (a free label may use only the quote's own words, which "mentors" or "is a rival of"
@@ -95,6 +114,8 @@ LORE_KEPT = {"serves": "serves", "ally": "ally_of"}
 LEGACY_FEELING = {"friend": "friendly", "ally": "friendly", "enemy": "hostile"}
 LORE_WORDS = {
     "worships": "worships",
+    # (a past fact, "a found b": never a holding, so it is no `owns` or `carries`, #3619)
+    "found": "found",
 }
 # Family by role: kept as a family connection whose detail is the role (#2457), read "a is the
 # parent of b" (the role belongs to the first name, as `kin` reads it).
@@ -122,6 +143,29 @@ OTHER = "other"
 WORDS_CHARS = 40
 
 
+INFERRED_CHARS = 80  # why DMbot inferred a connection (#2959 item 5): one short reason
+
+# How an item changed hands (#4115; Supervisor's ruling, 2026-11-10): the `change` a connection
+# may carry, with `from` the one who had it before. A sale, a gift or a trade moves the owning
+# (and the holding); a theft or a loss moves only the holding, so its owner still owns it.
+SALES = ("sold", "gave", "traded")
+TAKEN = ("stolen", "lost")
+HAND_OVERS = (*SALES, *TAKEN)
+
+
+def _family_words(label: str) -> bool:
+    """Whether a free label names family ("half-brother", "his aunt"): never an inference."""
+    return any(w in kin.ROLES or w in KIN_NEUTRAL for w in re.findall(r"[a-z]+", label.casefold()))
+
+
+def inferred_reason(raw: object) -> str:
+    """The reason a shaped line says DMbot inferred it, or "" (a stated one, or nothing readable):
+    one line, at most `INFERRED_CHARS`, cut at a word."""
+    if not isinstance(raw, str):
+        return ""
+    return at_word_end(" ".join(raw.split()), INFERRED_CHARS)
+
+
 def schema(own: Mapping[str, str] | None = None) -> dict[str, Any]:
     """The answer's shape; the campaign's own relationships are allowed kinds too."""
     return {
@@ -137,8 +181,9 @@ def schema(own: Mapping[str, str] | None = None) -> dict[str, Any]:
                         "also": {"type": "array", "items": {"type": "string"}},
                         "secret": {"type": "array", "items": {"type": "string"}},
                         "quote": {"type": "string"},
+                        "about": {"type": "string"},
                     },
-                    "required": ["name", "kind", "also", "secret", "quote"],
+                    "required": ["name", "kind", "also", "secret", "quote", "about"],
                     "additionalProperties": False,
                 },
             },
@@ -157,8 +202,12 @@ def schema(own: Mapping[str, str] | None = None) -> dict[str, Any]:
                         "words": {"type": "string"},
                         "b": {"type": "string"},
                         "quote": {"type": "string"},
+                        "inferred": {"type": "string"},
+                        # (who had the item before, and how it moved, #4115: "" for none)
+                        "from": {"type": "string"},
+                        "change": {"type": "string", "enum": ["", *HAND_OVERS]},
                     },
-                    "required": ["a", "how", "words", "b", "quote"],
+                    "required": ["a", "how", "words", "b", "quote", "inferred", "from", "change"],
                     "additionalProperties": False,
                 },
             },
@@ -178,6 +227,9 @@ class Found:
     also: tuple[str, ...]
     secret: tuple[str, ...]  # disguises and secret identities: never a public name
     quote: str  # at most QUOTE_WORDS words, as written; "" when the AI's quote was not in the text
+    # What the text says it is or does, one short line (#2967 slice a): stored as the players'
+    # line only when the DM said the players know all of the upload; "" when none was given.
+    about: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,6 +248,26 @@ class Connection:
     variant_a: str = ""
     variant_b: str = ""
     decided: str = ""  # how a pronoun was settled (#2790), kept with the waiting connection
+    # Why DMbot inferred it (#2959 item 5): the text implies it without saying it. "" for a stated
+    # connection. Never kept without the DM's own press on it.
+    inferred: str = ""
+    # A hand-over (#4115): who had the item before (a name as written, then the name it stands
+    # for) and how it moved, one of HAND_OVERS. "" for none. Only on an `owns` or `carries`.
+    from_holder: str = ""
+    change: str = ""
+
+
+def hand_over_of(how: str, raw_from: object, raw_change: object) -> tuple[str, str, str]:
+    """The kind and the hand-over a line says (#4115), as (how, from, change): a sale, a gift or a
+    trade is an `owns`, a theft or a loss a `carries` (a thief has it without owning it:
+    Supervisor's ruling), whichever of the two the AI wrote. A line that is no `owns` or
+    `carries`, names no one it came from, or gives no known change is the line as it was, with no
+    hand-over. Pure."""
+    change = str(raw_change or "").strip().lower()
+    holder = " ".join(str(raw_from or "").split()) if isinstance(raw_from, str) else ""
+    if how not in ("owns", "carries") or change not in HAND_OVERS or not holder:
+        return how, "", ""
+    return ("owns" if change in SALES else "carries"), holder, change
 
 
 @dataclass(frozen=True, slots=True)
@@ -584,6 +656,7 @@ def read_answer(reply: str, piece: str) -> list[Found]:
             or "|" in name
             or not _in_text(haystack, name, piece)
             or not not_names.allowed(name, cued)
+            or not_names.shape_of(name) is not None  # a number, time or address: no name (#3394)
         ):
             continue
         # A disguise is read first, so the same spelling is never also a public one.
@@ -596,7 +669,11 @@ def read_answer(reply: str, piece: str) -> list[Found]:
             words = quote.split()[:QUOTE_WORDS]  # the front of a verbatim quote is still verbatim
             if words and _has(haystack, " ".join(words)):
                 kept = " ".join(words)
-        out.append(Found(name, kind, tuple(also[:MAX_ALSO]), tuple(secret[:MAX_ALSO]), kept))
+        about = item.get("about")
+        about = " ".join(about.split()) if isinstance(about, str) else ""
+        if not about.isprintable():  # (as the website's own box refuses one, all_names.py)
+            about = ""
+        out.append(Found(name, kind, tuple(also[:MAX_ALSO]), tuple(secret[:MAX_ALSO]), kept, about))
     return out
 
 
@@ -615,21 +692,78 @@ def in_the_rules(name: str, kind: str, target: str, fallback: str) -> bool:
     return False
 
 
+def _led_by_a_group(item: Found, parts: list[str], others: dict[str, Found]) -> Found | None:
+    """The group this list is led by (#3383, part 2): its first part is another name of the same
+    read, of the kind faction ("the Ash Wolves, Tavin and Mira": the group, then its members)."""
+    if len(parts) < 2:
+        return None
+    group = others.get(name_key(parts[0]))
+    return group if group is not None and group.kind == "faction" and group is not item else None
+
+
+def _split_lists(answers: Iterable[list[Found]], held: Collection[str]) -> list[list[Found]]:
+    """A name that is a list ("Aldmoor, Quillgate, Fenwick") as one name for each part (#3383),
+    each with the list's kind and quote, so a list is never offered as one name. A bare "and"
+    splits only when each part is held or another entry of the same read names it alone. A list
+    led by a group of the same read ("the Ash Wolves, Tavin and Mira") gives its members as
+    people (`group_connections` makes their ties)."""
+    pieces = [list(a) for a in answers]
+    alone = {name_key(i.name) for found in pieces for i in found}
+    named = {name_key(i.name): i for found in pieces for i in found}
+    out: list[list[Found]] = []
+    for found in pieces:
+        kept: list[Found] = []
+        for item in found:
+            parts = split_list(item.name, known=held, offered=alone - {name_key(item.name)})
+            if len(parts) == 1:
+                kept.append(item)
+            elif _led_by_a_group(item, parts, named) is not None:
+                kept.extend(Found(p, "npc", (), (), item.quote) for p in parts[1:])
+            else:
+                kept.extend(Found(p, item.kind, (), (), item.quote) for p in parts)
+        out.append(kept)
+    return out
+
+
+def group_connections(
+    answers: Iterable[list[Found]], held: Collection[str] = ()
+) -> list[Connection]:
+    """The `member_of` ties of every list a group of the same read leads (#3383, part 2): "the Ash
+    Wolves, Tavin and Mira" gives Tavin and Mira each a tie to the Ash Wolves, in the words of the
+    list's own quote. Nothing else is guessed: a list no group of this read leads gives none."""
+    pieces = [list(a) for a in answers]
+    alone = {name_key(i.name) for found in pieces for i in found}
+    named = {name_key(i.name): i for found in pieces for i in found}
+    out: list[Connection] = []
+    for found in pieces:
+        for item in found:
+            parts = split_list(item.name, known=held, offered=alone - {name_key(item.name)})
+            group = _led_by_a_group(item, parts, named) if len(parts) > 1 else None
+            if group is not None:
+                out.extend(Connection(p, "member_of", group.name, item.quote) for p in parts[1:])
+    return out
+
+
 def merge(
     answers: Iterable[list[Found]],
     skip_keys: Collection[str] = (),
     *,
     cap: int = MAX_NAMES,
     rules: tuple[str, str] | None = None,
+    dropped: Counter[str] | None = None,
 ) -> list[Found]:
     """The pieces' names as one list, each once (other spellings joined, the first quote kept),
     leaving out names DMbot already has, ordinary words and game terms, at most `cap`. A name
     that is a disguise of another entry folds into it, and its other spellings become that
     entry's secret spellings. `rules`
-    (target, fallback ruleset): names the rules hold as a monster or spell are left out too."""
+    (target, fallback ruleset): names the rules hold as a monster or spell are left out too. An
+    item that is not one particular thing (a dagger, arrows) is left out and counted in `dropped`
+    as `item_not_unique` (#3373)."""
     skip = {name_key(k) for k in skip_keys} | COMMON | GAME_TERMS
+    answers = _split_lists(answers, skip_keys)
     order: list[str] = []
     merged: dict[str, Found] = {}
+    generic: set[str] = set()
     for found in answers:
         for item in found:
             key = name_key(item.name)
@@ -637,12 +771,19 @@ def merge(
                 continue
             if rules is not None and in_the_rules(item.name, item.kind, *rules):
                 continue
+            if item.kind == "item" and not any(
+                unique_item.keeps(spelling, item.quote)
+                for spelling in (item.name, *item.also, *item.secret)
+            ):
+                generic.add(key)  # (not one particular thing under any of its spellings)
+                continue
             item = Found(  # a spelling DMbot already holds (a secret one too) is not offered again
                 item.name,
                 item.kind,
                 tuple(a for a in item.also if name_key(a) not in skip),
                 tuple(a for a in item.secret if name_key(a) not in skip),
                 item.quote,
+                item.about,
             )
             old = merged.get(key)
             if old is None:
@@ -658,7 +799,10 @@ def merge(
                 (*old.also, *more)[:MAX_ALSO],
                 (*old.secret, *more_secret)[:MAX_ALSO],
                 old.quote or item.quote,
+                old.about or item.about,
             )
+    if dropped is not None and (left_out := generic - merged.keys()):
+        dropped["item_not_unique"] += len(left_out)  # (a count of names, never the names)
     out = [merged[k] for k in order]
     # A disguise is a secret spelling of the real one. When the AI also lists the disguise as a
     # name of its own (as it is told to), that entry folds into the real one's secret spelling:
@@ -719,7 +863,7 @@ def merge(
                 have.add(name_key(a))
                 carried.append(a)
         joined.append(
-            Found(f.name, f.kind, f.also, (*f.secret, *carried)[:MAX_ALSO], f.quote)
+            Found(f.name, f.kind, f.also, (*f.secret, *carried)[:MAX_ALSO], f.quote, f.about)
             if carried
             else f
         )
@@ -738,10 +882,33 @@ def merge(
             ),
             f.secret,
             f.quote,
+            f.about,
         )
         for f in out
     ]
     return out
+
+
+def _once_words(c: Connection) -> tuple[str, bool] | None:
+    """What besides the pair and kind makes a line one fact (`keep_connections`): a place tie's
+    word, a route's means, nothing for the rest."""
+    if c.how == "located_in":
+        return place_words.slot(c.words)
+    if c.how == route_words.ROUTE_TO:
+        return (route_words.canonical(c.words), False)
+    return None
+
+
+def _own_label(raw: str, quote: str) -> str:
+    """The text's own words as a connection's label, or "" when they can't be one. The label is the
+    one free text of a connection: its words must be the quote's own, so nothing carried in from
+    the document or the list can ride in as a label; no "|" (the stored lists' separator). Used by
+    the catch-all and a route's way off the list (#4173 slice 6d)."""
+    label = at_word_end(raw, WORDS_CHARS)
+    if not label or "|" in label:
+        return ""
+    quoted = set(re.findall(r"\w+", _squash(quote)))
+    return label if set(re.findall(r"\w+", _squash(label))) <= quoted else ""
 
 
 def counts_by_kind(found: Iterable[Found]) -> dict[str, int]:
@@ -757,7 +924,11 @@ def counts_by_kind(found: Iterable[Found]) -> dict[str, int]:
 # empty, too long or doubled name, or a quote of no words or too many; `not_in_text`: a name or
 # the quote is not in the text, or the quote does not hold both names; `name_not_found`: an end is
 # not a name DMbot will have; `same_pair`: the pair was already offered; `already_have`: the
-# campaign has it; `over_cap`: past the most one reading offers.
+# campaign has it; `over_cap`: past the most one reading offers; `in_and_next_to`: two places read
+# as both inside and beside each other, the "in" kept (#4173 slice 6a); `next_word_off_list`: a
+# "next to" said with a word off `next_words`' list, kept as plain "next to"; `route_word_off_list`:
+# a route's way off `route_words`' list and not the quote's own words, kept as a plain route;
+# `route_means_not_said`: a means on the list the quote never says, kept as a plain route.
 Dropped = Counter[str]
 
 
@@ -858,6 +1029,36 @@ def read_connections(
             or next((k for k in own if k.lower() == word), None)
         )
         label = ""
+        stepped = False  # a strong feeling word was brought down to fit its quote (#3606)
+        if how == "located_in":
+            # The place tie keeps the word the text used, as one wording ("lives in"), or none for
+            # a place inside a place (#3363); anything else the AI wrote there is dropped.
+            raw_place = str(item.get("words") or "").strip()
+            label = place_words.canonical(raw_place) or ""
+            if raw_place and not label:
+                lost["place_word_off_list"] += 1  # (kept without it, as an off-list feeling is)
+        if how == "next_to":
+            # How the two places sit, one of `next_words`' wordings ("on the shore of"), or none
+            # for plain "next to". One off the list is dropped and counted; the link is kept.
+            raw_next = " ".join(str(item.get("words") or "").split())
+            label = next_words.word_of(raw_next)
+            if raw_next and not label:
+                lost["next_word_off_list"] += 1
+        if how == "route_to":
+            # The way between them, one of `route_words`' means ("road"); a way off the list keeps
+            # the text's own words only when they are the quote's own (the one free text, as for
+            # "other"), else it is kept as a plain route and counted.
+            # A means on the list must be stated in the quote itself ("a highway runs"): the
+            # AI's word alone is not a stated way, so it is kept as a plain route and counted.
+            raw_way = " ".join(str(item.get("words") or "").split())
+            label = route_words.means_of(raw_way)
+            if label and not route_words.said_in(str(quote), label):
+                label = ""
+                lost["route_means_not_said"] += 1
+            elif raw_way and not label:
+                label = _own_label(raw_way, str(quote))
+                if not label:
+                    lost["route_word_off_list"] += 1
         if how == "knows":
             # How the one feels about the other: one of nine words (a reputation, #3175), in the
             # line's "words". One off the list is dropped and counted; the connection is kept
@@ -871,6 +1072,8 @@ def read_connections(
             ):
                 lost["feeling_off_list"] += 1  # (a word off the list, or not even text)
             said_feeling = said_feeling or old_feeling
+            if said_feeling is not None:  # a strong word needs a cue in the quote (#3606)
+                said_feeling, stepped = feeling_words.held_to_the_quote(said_feeling, str(quote))
             label = "" if said_feeling in (None, feeling_words.NEUTRAL) else said_feeling
         if how is None and word in LORE_WORDS:  # a lore word with its own fixed words (#2757)
             how, label = FALLBACK_PREDICATE, LORE_WORDS[word]
@@ -879,14 +1082,8 @@ def read_connections(
         elif how is None and SYNONYMS.get("_".join(word.split())) == DISGUISED_AS:
             how = DISGUISED_AS  # "poses as", "impersonates": a disguise, never a public link
         if word == OTHER:  # the catch-all, kept with the words the text used
-            label = at_word_end(" ".join(str(item.get("words") or "").split()), WORDS_CHARS)
-            if not label or "|" in label:
-                lost["word_not_allowed"] += 1
-                continue
-            # The label is the one free text of a connection: its words must be the quote's own,
-            # so nothing carried in from the document or the list can ride in as a label.
-            quoted = set(re.findall(r"\w+", _squash(str(quote))))
-            if not set(re.findall(r"\w+", _squash(label))) <= quoted:
+            label = _own_label(" ".join(str(item.get("words") or "").split()), str(quote))
+            if not label:
                 lost["word_not_allowed"] += 1
                 continue
             how = FALLBACK_PREDICATE
@@ -897,6 +1094,11 @@ def read_connections(
             continue
         if not all(isinstance(x, str) for x in (a, b, quote)):
             lost["unreadable"] += 1
+            continue
+        inferred = inferred_reason(item.get("inferred"))
+        if inferred and (how == "kin_of" or _family_words(label)):
+            # (family is never an inference: DMbot works it out from confirmed links, #2959 item 2)
+            lost["inferred_family"] += 1
             continue
         # A name is never shortened (#2607): a cut one is another name, so a long one is dropped.
         a, b = " ".join(str(a).split()), " ".join(str(b).split())
@@ -930,6 +1132,7 @@ def read_connections(
         words = _quote_window(spoken, seen[0], seen[1], holds)
         said = " ".join(words)
         said_squashed = _squash(said)
+        kept_before = len(out) + len(unsettled or ())
         made = Connection(
             a,
             how,
@@ -938,7 +1141,14 @@ def read_connections(
             words=label,
             variant_a=seen[0] if seen[0] != a else "",
             variant_b=seen[1] if seen[1] != b else "",
-        )
+            inferred=inferred,
+            # (checked once the quote is settled: `_handed`)
+            from_holder=" ".join(str(item.get("from") or "").split())
+            if how in ("owns", "carries")
+            else "",
+            change=str(item.get("change") or "").strip().lower() if how in ("owns", "carries")
+            else "",
+        )  # fmt: skip
         if not (
             _in_text(haystack, seen[0], piece)
             and _in_text(haystack, seen[1], piece)
@@ -956,13 +1166,57 @@ def read_connections(
             lost["quote_widened"] += 1
             joined = replace(made, quote=" ".join(wide))
             out.append(_via(joined, _squash(" ".join(wide)), seen, forms))
+        elif (
+            made.inferred
+            and unsettled is not None
+            and _unsettled(piece, words, said_squashed, made, seen, holds) is not None
+        ):
+            # (an inference about a pronoun is two guesses in one: never offered, #2959 item 5)
+            lost["inferred_pronoun"] += 1
         elif unsettled is not None and (
             open_ := _unsettled(piece, words, said_squashed, made, seen, holds)
         ):
-            unsettled.append(open_)
+            # (held to its quote before it waits for the who-is-it check, as the kept ones are;
+            # `missing_is_a` follows the ends when an apprentice's are turned round, and an end the
+            # check moved is left where it was, since the missing end is not settled yet)
+            seen_kind: Counter[str] = Counter()  # (counted only when the change is applied)
+            kind = quote_kind.held(open_.made, seen_kind, waiting=True) or open_.made
+            if (kind.a, kind.b) == (open_.made.b, open_.made.a):
+                unsettled.append(replace(open_, made=kind, missing_is_a=not open_.missing_is_a))
+                lost.update(seen_kind)
+            elif (kind.a, kind.b) == (open_.made.a, open_.made.b):
+                unsettled.append(replace(open_, made=kind))
+                lost.update(seen_kind)
+            else:
+                unsettled.append(open_)
         else:
             lost["not_in_text"] += 1
-    return out
+        if stepped and len(out) + len(unsettled or ()) > kept_before:
+            lost["feeling_demoted"] += 1  # (counted only for a line that was kept or is waiting)
+    # (the kind held to the quote's own words, the same way on every read, #3780; a hand-over
+    # then sets it, since "sold" in the quote says which of the two it is, #4115)
+    return [
+        _handed(held, holds, lost)
+        for made in out
+        if (held := quote_kind.held(made, lost)) is not None
+    ]
+
+
+def _handed(made: Connection, holds: Callable[[str, str], bool], lost: Counter[str]) -> Connection:
+    """A connection with its hand-over checked (#4115): the one it came from must be in the quote
+    as written and be neither end, or the hand-over is dropped (counted) and the line kept plain."""
+    if not made.change:
+        return made
+    how, holder, change = hand_over_of(made.how, made.from_holder, made.change)
+    if (
+        not change
+        or name_key(holder) in (name_key(made.a), name_key(made.b))
+        or len(holder) > NAME_CHARS
+        or not holds(_squash(made.quote), holder)
+    ):
+        lost["hand_over_dropped"] += 1
+        return replace(made, from_holder="", change="")
+    return replace(made, how=how, from_holder=holder, change=change)
 
 
 def _own_ends(seen: Sequence[str], forms: Callable[[str], list[str]]) -> set[str]:
@@ -1045,7 +1299,7 @@ def keep_connections(
     pair is offered once, whichever way round or how it was said (one fact per pair and kind;
     friends and family read the same both ways). At most `cap`. `dropped` counts why each one that
     was not kept was not (`name_not_found`, `which_one`, `same_pair`, `already_have`,
-    `over_cap`).
+    `over_cap`, `in_and_next_to`).
 
     An end is matched the way a reader would (`end_match`, #2642): a first or last name, with a
     title or "my brother" taken off. An end that fits two names equally ("Mara") is left out as
@@ -1072,18 +1326,24 @@ def keep_connections(
         # a spelling that two names claim is no end: DMbot would be guessing which one is meant
         if key not in ends and len(owners) == 1:
             ends[key] = next(iter(owners))
-    both_ways = {"kin_of", "ally_of", "enemy_of", "rival_of"}
+    # (a route read from either town is one route: a reader writes no one-way route, #4173 6d)
+    both_ways = {"kin_of", "ally_of", "enemy_of", "rival_of", route_words.ROUTE_TO}
     # (a public other spelling fits an end by its words too, for the name it belongs to; a secret
     # one never does)
     spellings = {
         sp: f.name for f in names for sp in f.also if len(claimed.get(name_key(sp), ())) == 1
     }
     reader = Ends(ends, {*ends.values()}, spellings)
-    seen: set[tuple[str, str, str]] = set()
+    seen: set[tuple[str, str, str, tuple[str, bool] | None]] = set()
     # kin_of, by unordered pair: (its place in `out` or None, its role or "", the order it was said)
     kin_held: dict[tuple[str, str], tuple[int | None, str, tuple[str, str]]] = {}
     contradicted: set[tuple[str, str]] = set()
     knows_held: dict[tuple[str, str], int] = {}  # a kept `knows` line, by direction (#3175)
+    # an `owns` or `carries` line's place in `out`, by its `once` key: a later twin with a
+    # hand-over gives it the hand-over (#4115)
+    held_lines: dict[tuple[str, str, str, tuple[str, bool] | None], int] = {}
+    # an inferred line's place in `out`, by its `once` key: a stated twin read later clears it
+    inferred_at: dict[tuple[str, str, str, tuple[str, bool] | None], int] = {}
     # kin_of picks ("Which Mara?") with a role, by (the end that is a name, the end as written):
     # the pick itself and the way round it was said, so opposite roles are caught here too
     kin_picks: dict[tuple[str, str], tuple[Pick, bool]] = {}
@@ -1122,6 +1382,9 @@ def keep_connections(
                     }
                     & hidden
                 )
+                if c.inferred:  # (an inference with an end that fits two names: two guesses)
+                    lost["inferred_which"] += 1
+                    continue
                 word = c.b if second.ambiguous else c.a
                 again = (name_key(fixed.name or ""), c.how, name_key(word), bool(second.ambiguous))
                 if again in seen_picks:
@@ -1195,7 +1458,31 @@ def keep_connections(
                 ),
                 c.words,
                 decided=c.decided,
+                inferred=c.inferred,
             )
+            if c.change:  # (who it came from is a name DMbot has, and no end, or no hand-over)
+                prev_end, no_prev = speaker_end(c.from_holder, speaker)
+                prev = reader.match(prev_end)
+                # (checked again here, whichever way the line came: one a pronoun check settled
+                # never went through `_handed`, so the kind and the quote are held to it now)
+                said_how, _, said_change = hand_over_of(c.how, c.from_holder, c.change)
+                if (
+                    not said_change
+                    or said_how != c.how
+                    or not quote_holds(c.quote, c.from_holder)
+                    or no_prev
+                    or prev.ambiguous
+                    or prev.name is None
+                    or name_key(prev.name) in (ka, kb)
+                ):
+                    lost["hand_over_dropped"] += 1
+                else:
+                    made = replace(
+                        made,
+                        from_holder=prev.name,
+                        change=c.change,
+                        secret=made.secret or bool({name_key(c.from_holder), prev.key} & hidden),
+                    )
             role = c.words if c.how == "kin_of" and kin.directional(c.words) else ""
             # A shared role (sibling, spouse, cousin) has no order to contradict, but it still
             # beats a plain "family" line for the pair, whichever was read first.
@@ -1245,7 +1532,13 @@ def keep_connections(
                     # words for the same direction clash: the first stays and the clash is counted.
                     held_at = knows_held[(ka, kb)]
                     held_words = out[held_at].words
-                    if c.words and not held_words:
+                    if out[held_at].inferred and not c.inferred:
+                        # (the text states what DMbot had only inferred: it is stated now)
+                        out[held_at] = replace(out[held_at], inferred="")
+                        lost["inferred_stated"] += 1
+                    if c.inferred:  # (an inferred feeling is never added to a stated line)
+                        lost["same_pair"] += 1
+                    elif c.words and not held_words:
                         out[held_at] = replace(out[held_at], words=c.words)
                         lost["feeling_added"] += 1
                     elif c.words and held_words != c.words:
@@ -1257,10 +1550,28 @@ def keep_connections(
                     ka, kb = kb, ka
                 # One fact per pair and kind: the queue's key has no words, so a second
                 # catch-all line for the pair (a mentor who is also a rival) is not offered.
-                if (ka, c.how, kb) in seen:
+                # (the place tie is one fact for each of its words: lives in and worked in the
+                # same town are both kept, #3363)
+                # and a route is one fact for each means: a road and a river between two towns are
+                # both kept (#4173 slice 6d, the queue keys on it since migration 0468)
+                once = (ka, c.how, kb, _once_words(c))
+                if once in seen:
+                    handed_at = held_lines.get(once)
+                    if made.change and handed_at is not None and not out[handed_at].change:
+                        # (a plain line read first takes the later one's hand-over, #4115)
+                        out[handed_at] = replace(
+                            out[handed_at], from_holder=made.from_holder, change=made.change,
+                            secret=out[handed_at].secret or made.secret,
+                        )  # fmt: skip
+                        lost["hand_over_added"] += 1
+                    at = inferred_at.pop(once, None)
+                    if at is not None and not c.inferred:
+                        # (the text states what DMbot had only inferred: it is stated now)
+                        out[at] = replace(out[at], inferred="")
+                        lost["inferred_stated"] += 1
                     lost["same_pair"] += 1
                     continue
-                seen.add((ka, c.how, kb))
+                seen.add(once)
             if role:
                 # A "Which X?" question asked earlier with the opposite role for one of this
                 # line's two names contradicts it the same way: both end as plain family.
@@ -1290,8 +1601,28 @@ def keep_connections(
                 lost["over_cap"] += 1
                 continue
             out.append(made)
+            if made.inferred:  # (never family: those are refused when read)
+                inferred_at[once] = len(out) - 1
+            if made.how in ("owns", "carries"):
+                held_lines[once] = len(out) - 1
             if c.how == "kin_of":
                 kin_held[pair] = (len(out) - 1, role, (ka, kb))
             if c.how == "knows":
                 knows_held[(ka, kb)] = len(out) - 1
-    return out
+    return _in_beats_next_to(out, lost)
+
+
+def _in_beats_next_to(out: list[Connection], lost: Dropped) -> list[Connection]:
+    """Two places read as both "in" and "next to" each other (#4173 slice 6a): the same two places
+    can't be both. Until MapBot's one grouped question asks the DM which (slice 6b), the "in" is
+    offered, as before slice 6a, and the "next to" is dropped and counted (`in_and_next_to`)."""
+    inside = {frozenset((name_key(c.a), name_key(c.b))) for c in out if c.how == "located_in"}
+    if not inside:
+        return out
+    kept = [
+        c
+        for c in out
+        if c.how != "next_to" or frozenset((name_key(c.a), name_key(c.b))) not in inside
+    ]
+    lost["in_and_next_to"] += len(out) - len(kept)
+    return kept

@@ -34,9 +34,12 @@ public_paths=(
   /mail/inbound
   /support
   /support/mine
+  /site/ask
   /recap-audio/ref/voice
   /recaps/token
   /recaps/token/audio/voice
+  /pictures/code
+  /pictures/code/preview
 )
 # END-PUBLIC-PATHS
 closed_paths=(/health /personal /not-a-route-at-all)

@@ -97,6 +97,11 @@ describe("states", () => {
     expect((await screen.findByRole("alert")).textContent).toBe(text.signInFailed);
   });
 
+  it("signed out after a Discord account was taken off a DMbot account: says which one to use (#3849)", async () => {
+    show("signed-out", "?signin=removed");
+    expect((await screen.findByRole("alert")).textContent).toBe(text.signInRemoved);
+  });
+
   it("signed out after too many sign-in tries: says to wait", async () => {
     show("signed-out", "?signin=slow");
     expect((await screen.findByRole("alert")).textContent).toBe(text.tooManyTries);

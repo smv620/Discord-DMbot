@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { pausePanel as words } from "../content/pause-words";
-import { type AccountApi, ApiError, type CampaignSettingAnswer } from "./api";
+import { type AccountApi, ApiError, type CampaignSettingAnswer, type JobProgress } from "./api";
 import WorkProgress from "./WorkProgress";
 
 /** Discord's words with its `**bold**` and `code` marks taken out: the page shows plain text. */
@@ -14,7 +14,15 @@ const plain = (note: string): string => note.replaceAll("**", "").replaceAll("`"
 const POLL_MS = 1500;
 const POLLS = 40;
 
-type Wait = { on: boolean; state: CampaignSettingAnswer["state"] | "sending" | "timed_out"; note: string; error: string; since: number };
+type Wait = {
+  on: boolean;
+  state: CampaignSettingAnswer["state"] | "sending" | "timed_out";
+  note: string;
+  error: string;
+  since: number;
+  /** The API's own times and state for the wait (#3355); absent from an older server, then the page's clock is used. */
+  progress?: JobProgress | null | undefined;
+};
 
 // The bot's note already says why it refused; the plan hint is only for a failure that came with no words of its own.
 function failedReason(wait: Wait, isPaused: boolean): string {
@@ -54,7 +62,7 @@ export default function PausePanel({ api, campaignRef, paused, onChanged }: { ap
         await new Promise((r) => setTimeout(r, POLL_MS));
         const got = await api.campaignSettingAnswer(campaignRef, id);
         if (!live.current) return;
-        setWait({ on, state: got.state, note: got.note, error: got.error, since });
+        setWait({ on, state: got.state, note: got.note, error: got.error, since, progress: got.progress });
         if (got.state === "done") {
           setPaused(on);
           onChanged?.(on);
@@ -84,8 +92,10 @@ export default function PausePanel({ api, campaignRef, paused, onChanged }: { ap
       {wait && wait.state !== "timed_out" && (
         <WorkProgress
           stage={wait.state === "done" ? words.done[kind] : wait.state === "working" ? words.working[kind] : words.waiting[kind]}
-          startedAt={wait.since}
-          state={wait.state === "failed" ? "failed" : wait.state === "done" ? "done" : "running"}
+          startedAt={wait.progress?.startedAt ?? wait.since}
+          updatedAt={wait.progress?.updatedAt}
+          serverNow={wait.progress?.serverNow}
+          state={wait.progress?.state ?? (wait.state === "failed" ? "failed" : wait.state === "done" ? "done" : "running")}
           reason={wait.state === "failed" ? failedReason(wait, isPaused) : null}
         />
       )}

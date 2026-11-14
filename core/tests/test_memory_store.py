@@ -17,7 +17,7 @@ from psycopg import errors as pg_errors
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.memory import evidence, importance_rank, knowers
-from dmbot.memory._changes import ALIASES, ALL, Changes, scoped_select
+from dmbot.memory._changes import ALIASES, ALL, TOLD, Changes, scoped_select
 from dmbot.memory._changes import ENTITIES as ENTITIES_TABLE
 from dmbot.memory._changes import FLAGS as FLAGS_TABLE
 from dmbot.memory.backup import MemorySection
@@ -33,11 +33,14 @@ from dmbot.memory.models import (
     NewName,
     TooLateToUndo,
     Written,
+    new_id,
 )
 from dmbot.memory.ontology import PredicateTerm, TypeTerm
 from dmbot.memory.sounds import sound_codes
 from dmbot.memory.store import MemoryStore
+from dmbot.memory.who_answers import NEW, StoredAnswer, WhoAnswers
 from dmbot.schema import ISOLATED_TABLES
+from tests import speed
 from tests.pg import DatabaseTest
 
 GUILD_A, GUILD_B = 111, 222
@@ -144,14 +147,55 @@ class Isolation(MemoryTest):
         )
         async with self.memory._write(GUILD_A, self.c, "dm") as w:
             await knowers.set_alias_knowers(w, shade.value.id, [view])
+        # and a character the DM told that the secret name is an entry (#3089)
+        async with self.memory._write(GUILD_A, self.c, "dm") as w:
+            await w.insert(
+                TOLD,
+                {"id": new_id(), "alias_id": shade.value.id, "character_id": view,
+                 "added_entry": False, "created_at": w.now},
+            )  # fmt: skip
         # and an internal importance assessment of a character (#3172)
         await importance_rank.ImportanceStore(self.db).add(
-            GUILD_A, self.c, [importance_rank.Assessment(a, 2, "recurring")]
+            GUILD_A, self.c, [importance_rank.Assessment(a, 2, "reading")]
         )
+        # and a story role no connection shows, with its campaign's codes (#3172)
+        from collections import Counter
+
+        from dmbot.memory.role_store import NewRole, RoleStore
+
+        await RoleStore(self.db).add(GUILD_A, self.c, [NewRole(a, "god", "reading")], Counter())
+        # and the AI's scene of a waiting question (#3596)
+        from dmbot.memory.scenes import ENTITY, Scene, Scenes
+
+        await Scenes(self.memory).keep(
+            GUILD_A, self.c, [Scene(ENTITY, a, "A scene.", 2, (DM,), 1)], opted_in={DM},
+            prompt_version="scenes-1", model="m",
+        )  # fmt: skip
+        # and the AI's ranked answers for a name waiting on "Who is this?" (#3602)
+        await WhoAnswers(self.memory).keep(
+            GUILD_A, self.c, a, [StoredAnswer(NEW, "maybe", new_kind="character")],
+            speaker_ids=(DM,), opted_in={DM}, session_started_at=1, prompt_version="who-1",
+            model="m",
+        )  # fmt: skip
+        # and the DM's answer about turning some words into a kind (#3033)
+        await self.memory.answer_kind_offer(
+            GUILD_A, self.c, "sworn on the ashes of", "never", seen=3
+        )
+        # and a deed the session reader proposed, waiting for the DM (#3175)
+        from dmbot.memory.deed_proposals import DeedProposals
+        from dmbot.memory.deed_reading import DeedProposal
+
+        proposal = DeedProposal("Cerric", "Saved the mill", ("Brindle",), "Helped them", ("1",))
+        await DeedProposals(self.memory).store(
+            GUILD_A, self.c, [(proposal, (DM,))], opted_in={DM}, session_started_at=1,
+            prompt_version="deeds-1", model="m",
+        )  # fmt: skip
         # and a character who knows an entry exists (#2995)
         await self.memory.set_statement_knowers(GUILD_A, self.c, "entry", b, [view], source="dm")
         await self.relate(a, "located_in", b)  # flagged: Cerric isn't a place
         known = await self.relate(a, "knows", b, status="confirmed")  # and its beliefs (#2409)
+        # and the upload a kept connection came from (#2946)
+        await self.memory.record_link_source(GUILD_A, self.c, known.value[0].id, "Upload, 1 Jan")
         clue = await self.add("A map", type="clue")
         async with self.memory._write(GUILD_A, self.c, "dm") as w:  # and what it stands on (#2662)
             await evidence.add_in(
@@ -217,6 +261,82 @@ class Isolation(MemoryTest):
             "voyage-3.5",
             [vectors.Item(vectors.ASSERTION, "x", vectors.text_hash("x"), [1.0, 0.0])],
         )
+        # and a "who learned what" the session reader proposed (#2996): ids only
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_reveal_proposals (guild_id, campaign_id, id, character_id,"
+                " statement_kind, statement_id, how, check_name, lines, speaker_ids,"
+                " prompt_version, model, status, created_at) VALUES (%s, %s, %s, %s, 'entry', %s,"
+                " 'check', 'Insight', ARRAY['1'], ARRAY[%s::bigint], 'reveals-1', 'm',"
+                " 'proposed', 5)",
+                (GUILD_A, self.c, "e" * 32, a, b, DM),
+            )
+        # and a private scene between two player characters (#2996 rule 5): ids and times only
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_private_scenes (guild_id, campaign_id, id, first_id, second_id,"
+                " session_started_at, from_ms, to_ms, line_count, speaker_ids, status, created_at)"
+                " VALUES (%s, %s, %s, %s, %s, 77, 1000, 2000, 2, ARRAY[%s::bigint, 4242], 'kept',"
+                " 5)",
+                (GUILD_A, self.c, "d" * 32, min(a, b), max(a, b), DM),
+            )
+            # and the entries said in it (#4110): ids only
+            await conn.execute(
+                "INSERT INTO memory_private_scene_entries (guild_id, campaign_id, scene_id,"
+                " entity_id) VALUES (%s, %s, %s, %s)",
+                (GUILD_A, self.c, "d" * 32, a),
+            )
+        # and the session a waiting name was made in (#4043): a time and an id only
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_name_sessions (guild_id, campaign_id, entity_id,"
+                " session_started_at) VALUES (%s, %s, %s, 77)",
+                (GUILD_A, self.c, a),
+            )
+        # and a being met in play that nobody named yet (#3172 slice 5), on its session
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at)"
+                " VALUES ('met-session', %s, %s, 77)",
+                (GUILD_A, self.c),
+            )
+            await conn.execute(
+                "INSERT INTO memory_met (guild_id, campaign_id, id, session_id, what, what_key,"
+                " count, line_ms, speaker_ids, created_at) VALUES (%s, %s, %s, 'met-session',"
+                " 'barbarians', 'barbarian', 2, ARRAY[1000::bigint], ARRAY[%s::bigint], 5)",
+                (GUILD_A, self.c, "f" * 32, DM),
+            )
+        # and the DM's "Yes, both have it" about a one-of-a-kind item (#4115): ids only
+        brand = await self.add("Frost Brand", type="item")
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_hand_over_both (guild_id, campaign_id, item_id, first_id,"
+                " second_id, created_at) VALUES (%s, %s, %s, %s, %s, 5)",
+                (GUILD_A, self.c, brand, min(a, b), max(a, b)),
+            )
+        # and which upload a name was read from (#3675): an id and a label only
+        await self.memory.record_name_sources(GUILD_A, self.c, [a], upload_key="up", label="Notes")
+        # and DMbot's guess that one knows of the other, waiting for the DM (#2959): ids only
+        await self.memory.add_npc_guesses(GUILD_A, self.c, [(a, b, 0.6)])
+        # and a lore upload's lineage for a confirmed character, waiting for the DM (#3926)
+        from dmbot.memory.models import SPECIES, Trait
+        from dmbot.memory.trait_offers import Offer, TraitOfferStore
+
+        await TraitOfferStore(self.memory._db).offer(
+            GUILD_A, self.c, [Offer(view, Trait(SPECIES, "Dwarf"), "is a dwarf", "Notes")]
+        )
+        # and a language from the story (#4229)
+        await self.memory.add_story_language(GUILD_A, self.c, view, "Dwarvish", source="dm")
+        # and a place's climate (#4256)
+        dale = await self.add("Icewind Dale", type="place", status="confirmed")
+        await self.memory.set_map_fact(GUILD_A, self.c, dale, "climate", "cold", source="dm")
+        # and where the story is (#4173 slice 4): ids only
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_story_chain (guild_id, campaign_id, chain, rank, entity_id,"
+                " updated_at) VALUES (%s, %s, 'main', 0, %s, 5)",
+                (GUILD_A, self.c, dale),
+            )
         return a, b
 
     async def test_another_server_sees_nothing(self) -> None:
@@ -1045,7 +1165,9 @@ class Undo(MemoryTest):
         # execute, so the savepoints around bulk undo runs (their own round trips) aren't. (59
         # before the people who hang off a merged entry were moved with it, #2790: one statement;
         # 60 before who-knows moved with it, #2995: one read for the whole list.)
-        self.assertLess(merge_statements, 62)
+        # (62 before a merged entry's languages from the story moved with it, #4229: one read;
+        # 63 before a place's land, climate and ruler moved with it, #4256: one read)
+        self.assertLess(merge_statements, 64)
         self.assertLess(undo_statements, 60)
         self.assertEqual(await self.snapshot(), before)  # undo split them again exactly
         # Still one log row per changed row, so undo and redo work as before.
@@ -1168,8 +1290,9 @@ class Undo(MemoryTest):
             assert merged.batch is not None
             await self.memory.undo(GUILD_A, self.c, merged.batch, source="dm")
         self.assertLess(
-            merge_statements, 61
-        )  # (60 with #2790: one statement for the people who hang off a merge)
+            merge_statements, 63
+        )  # (60 with #2790: one statement for the people who hang off a merge; 61 with #4229; 62
+        # with #4256's places)
         self.assertLess(statements, 60)
         self.assertEqual(await self.snapshot(), before)
 
@@ -1190,7 +1313,8 @@ class Undo(MemoryTest):
             )
         started = time.perf_counter()
         await self.memory.merge(GUILD_A, fresh, keep.value.id, gone.value.id, source="dm")
-        self.assertLess(time.perf_counter() - started, 2.0)  # the bad plan took over 3 s
+        # The bad plan took over 3 s; the limit stretches with how busy this machine is (#3525).
+        self.assertLess(time.perf_counter() - started, speed.allowed(2.0))
 
     async def fill_names(self, campaign: str, count: int) -> None:
         """`count` entries with one name each, written directly (quicker than the API)."""
@@ -1666,7 +1790,9 @@ class Lists(MemoryTest):
         # Names, then entries: a few runs, not row by row. Undo checks each table that links to an
         # entry before it deletes one (DEPENDENTS), so a new linked table adds a few to this (it
         # was 30 before beliefs, #2409: the perspectives and the manipulated-by link).
-        self.assertLess(statements, 35)  # (34 with #2790's unnamed-anchor link to check)
+        # (35 with #4229's story languages; 37 with #4256's places: one read per kind written;
+        # 38 with #4346's maps, which name the place they cover)
+        self.assertLess(statements, 39)
         self.assertEqual(await self.snapshot(), before)
 
     async def test_a_2000_line_list_saves_faster_than_row_by_row(self) -> None:

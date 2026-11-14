@@ -12,6 +12,7 @@ import CampaignPageView from "../src/account/CampaignPage";
 import GameMastersSection from "../src/account/GameMasters";
 import { mockApi } from "../src/account/mock";
 import { gameMasterWords as w } from "../src/content/game-masters-words";
+import { workWords } from "../src/content/work-progress";
 
 const live = vi.hoisted(() => ({ on: false }));
 vi.mock("../src/content/game-masters-switch", () => ({
@@ -273,4 +274,14 @@ it("has no serious accessibility problem", async () => {
   await screen.findByText("Dana", { selector: "strong" });
   const result = await axe.run(document.body, { runOnly: { type: "tag", values: ["wcag2a", "wcag2aa"] }, rules: { "color-contrast": { enabled: false } } });
   expect(result.violations.filter((v) => v.impact === "serious" || v.impact === "critical")).toEqual([]);
+});
+
+describe("the wait shows the API's own times (#3355)", () => {
+  it("uses the API's own times and says so when the choice has stalled (#3355)", async () => {
+    await section("100.cmp1.cs-stalled");
+    fireEvent.click(await screen.findByRole("button", { name: w.addLabel("Dana") }));
+    // (the choice was queued ten minutes ago by the server's clock: the wait says it stalled, not "just now")
+    expect(await screen.findByText(workWords.stalled, {}, slow)).toBeTruthy();
+    expect(screen.getAllByText(/10 min/).length).toBeGreaterThan(0);
+  });
 });

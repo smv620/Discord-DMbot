@@ -12,13 +12,16 @@ A campaign is named by `<server>.<campaign>`, as for the recap and transcript pa
 
 from __future__ import annotations
 
+import hashlib
 import re
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory import map_facts, place_levels
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.background import LABELS
-from dmbot.memory.models import MERGE_MANY_MAX, PRONOUNCED
+from dmbot.memory.models import MERGE_MANY_MAX, PLAYERS_TEXT_MAX, PRONOUNCED
+from dmbot.web import scenes
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -73,6 +76,41 @@ def kinds_from(counts: dict[str, int]) -> list[dict[str, Any]]:
     )
 
 
+# An upload choice: `l` and 16 hex of md5(its key) (0420), or `u` and the website upload's own
+# 32-hex id, which is what the upload notice knows (#3879); the second is turned into the first
+# before the door is asked.
+SOURCE_ID = re.compile(r"^(l[0-9a-f]{16}|u[0-9a-f]{32})$")
+
+
+def _choice_id(given: str) -> str:
+    return (
+        "l" + hashlib.md5(given[1:].encode(), usedforsecurity=False).hexdigest()[:16]
+        if given[0] == "u"
+        else given
+    )
+
+
+SOURCES_MAX = 40  # most uploads ticked at once
+
+
+async def list_sources(db: Database, session: Session, ref: str) -> dict[str, Any]:
+    """`{sources: [{id, kind, label}]}`: the uploads the campaign's names were read from, newest
+    first, for the Names page's "found in" filter (#3675). A DM of the campaign only: an upload's
+    label can name a private backstory, so anyone else gets "not found"."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_name_sources(%s, %s) AS r", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_found")
+    return {"sources": list(got["sources"])}
+
+
 async def read_page(
     db: Database,
     session: Session,
@@ -85,6 +123,7 @@ async def read_page(
     size: int = PAGE_SIZE,
     only: str | None = None,
     unnamed: bool = False,
+    sources: list[str] | None = None,
 ) -> dict[str, Any]:
     """One page of the campaign's confirmed names, `size` to a page (one of `PAGE_SIZES`); `kind` is
     one kind or several joined with commas. "not_found" for anyone who may not see the list (or
@@ -102,6 +141,19 @@ async def read_page(
         raise RecapError("bad_page")
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
+        if sources:
+            if only is not None:
+                raise RecapError("bad_page")  # (two ways to pick the same names: one would be lost)
+            # Only the names found in the chosen uploads (#3675): a DM's choice, so the door gives
+            # nothing to anyone else. An empty result is "", which matches no name, never all.
+            cur = await conn.execute(
+                "SELECT dmbot_web_name_source_ids(%s, %s, %s) AS r",
+                (guild_id, campaign_id, [_choice_id(s) for s in sources]),
+            )
+            found_ids = await cur.fetchone()
+            if found_ids is None or found_ids["r"] is None:
+                raise RecapError("not_found")
+            only = ",".join(str(i) for i in found_ids["r"])
         # "Not named yet" (#2803) is in the list, the counts and the totals only when the page asks
         # for it, so a DM's numbers are right whatever the page's switch says; the door still lets
         # only a DM of the campaign see them. Local to this transaction, like the guild.
@@ -134,6 +186,7 @@ async def read_page(
         _label_unnamed(row)
     if got["canEdit"] and names:
         await _add_said_as(db, session, guild_id, campaign_id, names)
+        await _add_scenes(db, session, guild_id, campaign_id, names)
     return {
         "campaign": got["campaign"],
         "canEdit": bool(got["canEdit"]),
@@ -148,7 +201,7 @@ async def read_page(
 
 def _label_unnamed(row: dict[str, Any]) -> None:
     """A person the story never named: their name is the label built from the parts with the
-    anchor's name as it is now ("Ken's sister (name unknown)"), as Discord builds it; the anchor
+    anchor's name as it is now ("unnamed - Ken's sister"), as Discord builds it; the anchor
     goes to the page as a plain name, and the raw parts stay out of the row. An anchor that is
     itself unnamed is built the same way ("the king's sister")."""
     anchor = row.pop("unnamedAnchor", None)
@@ -187,9 +240,23 @@ async def _add_said_as(
             row["saidAs"] = mine["saidAs"]
 
 
+async def _add_scenes(
+    db: Database, session: Session, guild_id: int, campaign_id: str, names: list[dict[str, Any]]
+) -> None:
+    """Give a DM's unnamed people their `scene` (#3644), when DMbot kept one: a short summary of
+    where the story mentioned them. Only the unnamed rows are asked about (a named entry's question
+    is not open), through the DM-only door, so a player's list never carries one."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        await scenes.attach(
+            conn, guild_id, campaign_id, names, only=lambda r: bool(r.get("unnamed"))
+        )
+
+
 # ---- the DM's actions: queued for the bot, read back by polling ----------------------------------
 
 NAME_MAX = 100  # a name or another name: the same limit as the bot's
+OFFER_WORDS_MAX = 300  # the words of a kind offer: the table's own limit (memory_kind_offers)
 KIND_PATTERN = re.compile(r"^[a-z][a-z _-]{0,39}$")
 ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 PLAYER_ID = re.compile(r"^[1-9][0-9]{14,18}$")  # a Discord user ID (a snowflake)
@@ -209,6 +276,19 @@ ACTIONS = (
     "alias-who",  # who knows an other name (#2999): {alias, who, characters}
     "confirm-kinds",  # "Add all" for what an upload found (#3207): {upload, kinds | "all"}
     "confirm-undo",  # takes back one press of it: {answer}
+    "spelling-yes",  # "Is this the same place?" (#3533): confirm the proposed other name: {alias}
+    "spelling-no",  # ... or turn it down for good: {alias}
+    "told-add",  # tell one character a secret other name is this entry (#3542): {alias, character}
+    "told-remove",  # ... or take that telling back: {alias, character}
+    "players-line",  # the line the players are told about this entry (#3568): {line}, blank clears
+    "offer-clear",  # lift a Never or Not now on words (#3577): {words}; filed under no name
+    "place-size",  # how big a place is (#4173): {size}, one of place_levels.LEVELS; null clears
+    "place-setting",  # the campaign's setting (#4173 slice 2): {setting: true | false}
+    "place-form",  # land, water or a road (#4173 slice 6a): {form}, water or route; null is land
+    "map-terrain",  # a place's land (#4287): {value, how}; null value is "Not sure"
+    "map-climate",  # its climate (#4287): {value, how}
+    "map-control",  # who rules it (#4287): {group, how}; null group is "Not sure"
+    "map-show",  # whether players who can see it see its land, climate and ruler: {shown}
 )
 
 KIND_WORD = re.compile(
@@ -320,6 +400,76 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
             if len(set(kinds)) != len(kinds):
                 raise RecapError("bad_target")
             text = " ".join(kinds)
+    elif (
+        action == "offer-clear"
+    ):  # the words exactly as the list sent them; the door checks the row
+        words_ = body.get("words")
+        if not isinstance(words_, str):
+            raise RecapError("bad_name")
+        text = " ".join(words_.split())
+        if not text or not text.isprintable():
+            raise RecapError("bad_name")
+        if len(text) > OFFER_WORDS_MAX:
+            raise RecapError("too_long")
+    elif action == "players-line":  # the column's own limit; over it is refused, never cut
+        line = body.get("line")
+        if not isinstance(line, str):
+            raise RecapError("bad_name")
+        text = " ".join(line.split())
+        if text and not text.isprintable():
+            raise RecapError("bad_name")
+        if len(text) > PLAYERS_TEXT_MAX:
+            raise RecapError("too_long")
+    elif action == "place-setting":  # make it the setting, or stop it being one (the flag)
+        if not isinstance(body.get("setting"), bool):
+            raise RecapError("bad_action")
+        flag = bool(body["setting"])
+    elif action == "place-size":  # one size word, or null for "Not sure" (the door checks too)
+        size = body.get("size")
+        if size is not None and size not in place_levels.LEVELS:
+            raise RecapError("bad_name")
+        text = size or ""
+    elif action == "place-form":  # one form word, or null for land (the door checks too)
+        form = body.get("form")
+        if form is not None and form not in place_levels.FORMS:
+            raise RecapError("bad_name")
+        text = form or ""
+    elif action in ("map-terrain", "map-climate", "map-control"):  # (#4287) a value and its shade
+        layer = action[4:]
+        how = body.get("how") or ""
+        if not isinstance(how, str) or (how and how not in map_facts.HOWS[layer]):
+            raise RecapError("bad_name")
+        if layer == "control":
+            group = body.get("group")
+            if group is None:  # "Not sure"
+                if how:
+                    raise RecapError("bad_name")
+            elif not isinstance(group, str) or not ID_PATTERN.match(group) or not how:
+                raise RecapError("bad_name")
+            text = f"{group} {how}" if group else ""
+        else:
+            value = body.get("value")
+            if value is None:  # "Not sure"
+                if how:
+                    raise RecapError("bad_name")
+            elif not isinstance(value, str) or value not in map_facts.VALUES[layer]:
+                raise RecapError("bad_name")
+            text = f"{value} {how}".strip() if value else ""
+    elif action == "map-show":  # 🙈 / 👁️ (#4287)
+        if not isinstance(body.get("shown"), bool):
+            raise RecapError("bad_action")
+        flag = bool(body["shown"])
+    elif action in ("spelling-yes", "spelling-no"):  # the proposed other name is the target
+        target = str(body.get("alias") or "")
+        if not ID_PATTERN.match(target):
+            raise RecapError("not_found")
+    elif action in ("told-add", "told-remove"):  # the other name is the target; the text is who
+        target = str(body.get("alias") or "")
+        text = str(body.get("character") or "")  # (only its shape here; the door and bot look)
+        if not ID_PATTERN.match(target):
+            raise RecapError("not_found")
+        if not ID_PATTERN.match(text):
+            raise RecapError("bad_target")
     elif action == "confirm-undo":  # the answer of the press to take back
         target = str(body.get("answer") or "")
         if not ID_PATTERN.match(target):
@@ -362,8 +512,12 @@ async def queue_action(
 async def queue_confirm(db: Database, session: Session, ref: str, body: object) -> str:
     """Queue "Add all" for the names an upload found, or the Undo of one press (#3207), for the
     signed-in DM: the same door and the same answer as any name action, with no name to file it
-    under. Only the two actions are taken here."""
-    if not isinstance(body, dict) or body.get("action") not in ("confirm-kinds", "confirm-undo"):
+    under. Only these actions are taken here: "Add all", its Undo, and lifting a kind offer."""
+    if not isinstance(body, dict) or body.get("action") not in (
+        "confirm-kinds",
+        "confirm-undo",
+        "offer-clear",
+    ):
         raise RecapError("bad_action")
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
@@ -373,6 +527,86 @@ async def queue_confirm(db: Database, session: Session, ref: str, body: object) 
         cur = await conn.execute(
             "SELECT dmbot_web_name_action_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
             (guild_id, campaign_id, None, action, kind, target, text, flag),
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_allowed")
+    if got["status"] != "ok":
+        raise RecapError("bad_name" if got["status"] == "bad_text" else str(got["status"]))
+    return str(got["id"])
+
+
+async def queue_clock(
+    db: Database, session: Session, ref: str, session_id: str, action: str
+) -> str:
+    """Queue the DM's answer to an imported session's clock offer (`clock-set`, `clock-skip`;
+    #3199): the same door and the same answer as any name action, with no name to file it under
+    and the imported session as the target. The door checks again that the offer is waiting."""
+    if action not in ("clock-set", "clock-skip"):
+        raise RecapError("bad_action")
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_name_action_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, None, action, "", session_id, "", False),
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_allowed")
+    if got["status"] != "ok":
+        raise RecapError(str(got["status"]))
+    return str(got["id"])
+
+
+async def read_matches(db: Database, session: Session, ref: str) -> dict[str, Any]:
+    """DMbot's own matches that the DM has not answered yet (#3602), for the DM only: names, the
+    batch to answer by and when, never a line of the transcript. Anyone who is not a DM of the
+    campaign gets "not allowed" before anything is read."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_waiting_matches(%s, %s) AS r", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_allowed")
+    return {
+        "matches": [
+            {
+                "batch": str(m["batch"]),
+                "keepId": str(m["keepId"]),
+                "keepName": str(m["keepName"]),
+                "spelling": str(m["spelling"]),
+                "at": int(m["at"]),
+            }
+            for m in got["matches"]
+        ]
+    }
+
+
+async def queue_match(db: Database, session: Session, ref: str, batch: str, answer: str) -> str:
+    """Queue "yes, that's right" or the Undo of one of DMbot's own matches for the bot and return
+    the action's id (polled like any name action). The batch is digits as an Undo number; one that
+    DMbot did not make in this campaign is "not found" (the door checks; the bot checks again and
+    re-reads that the match is still waiting)."""
+    if answer not in ("confirm", "undo"):
+        raise RecapError("bad_action")
+    if not (batch.isascii() and batch.isdecimal() and 1 <= len(batch) <= 12):
+        raise RecapError("not_found")
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_name_action_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, None, f"match-{answer}", "", batch, "", None),
         )
         found = await cur.fetchone()
     got = found["r"] if found else None

@@ -19,6 +19,7 @@ import logging
 import time
 from typing import Any
 
+from dmbot import ai_feed
 from dmbot.ai import AIError
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import lore_queue as q
@@ -55,6 +56,7 @@ _STAGES = {
     "reading": q.READING,
     "looking": q.READING,
     "shaping": q.FINDING_NAMES,
+    "pictures": q.FINDING_NAMES,  # (the words in its pictures, #4003: names too)
     "who": q.FINDING_LINKS,
     "sorting": q.FINDING_LINKS,
 }
@@ -68,22 +70,44 @@ class _Reporter:
     def __init__(self, queue: LoreQueue, guild_id: int, claim: Claim) -> None:
         self._queue, self._guild, self._claim = queue, guild_id, claim
         self._latest: tuple[str, int, int] = (q.READING, 0, 0)
+        self._counts: tuple[int, int] = (0, 0)  # words and AI calls so far (#3534)
         self._task: asyncio.Task[None] | None = None
         self._reader: asyncio.Task[Any] | None = None  # the read this reports on
         self.lost = False  # the sweep gave the claim to another worker: this read must stop
 
     def __call__(self, stage: str, done: int, total: int) -> None:
+        if stage == "counts":  # not a stage: the words and calls so far (#3534)
+            self._counts = (done, total)
+            return
         self._latest = (_STAGES.get(stage, q.READING), done, total)
+        # The next AI calls the read makes in its own task belong to this step (the part being
+        # worked on, so one after the last finished). Its shaping and second-look tasks name their
+        # own step (`lore_read._in_step`): a step set here does not reach a task already made, and a
+        # call from a task's done-callback changes nothing. Outside a feed job this does nothing.
+        ai_feed.step(lore_read.step_words(stage, min(done + 1, total), total))
 
     async def __aenter__(self) -> _Reporter:
         self._reader = asyncio.current_task()
         self._task = asyncio.ensure_future(self._run())
         return self
 
-    async def __aexit__(self, *_: object) -> None:
+    async def __aexit__(self, exc_type: object, *_: object) -> None:
         if self._task is not None:
             self._task.cancel()
             await asyncio.gather(self._task, return_exceptions=True)
+        if exc_type is None:
+            # One last write, so a quick read still leaves its counts for the page (#3534); the
+            # row is ended by `finish` right after, which keeps them.
+            stage, done, total = self._latest
+            words, calls = self._counts
+            try:
+                await self._queue.progress(
+                    self._guild, self._claim, stage, done, total, words, calls
+                )
+            except Exception as exc:  # the type only: the counts are a nicety
+                log.warning(
+                    "A lore upload's last counts could not be written: %s", type(exc).__name__
+                )
 
     async def _run(self) -> None:
         while True:
@@ -91,7 +115,10 @@ class _Reporter:
             # taken for a dead one)
             stage, done, total = self._latest
             try:
-                if not await self._queue.progress(self._guild, self._claim, stage, done, total):
+                words, calls = self._counts
+                if not await self._queue.progress(
+                    self._guild, self._claim, stage, done, total, words, calls
+                ):
                     # Not its row any more (a quiet claim was taken back): reading on would
                     # propose every name twice.
                     self.lost = True
@@ -107,11 +134,12 @@ async def run_upload(bot: Any, queue: LoreQueue, claim: Claim, guild_id: int) ->
     """Read one claimed upload and end it. Never raises: the row must never stay "working" for a
     bug. Counts only in the log."""
     error, names, links = q.FAILED, 0, 0
+    found: dict[str, list[str]] = {}  # the names this read proposed, kind by kind (#3207)
     try:
         # The whole read has a limit: a hung call must not hold the claim (the reporter keeps it
         # alive) or the server's queue for good.
         async with asyncio.timeout(lore_read.LORE_TIME_LIMIT_S + READ_MARGIN_S):
-            error, names, links = await _read(bot, queue, claim, guild_id)
+            error, names, links = await _read(bot, queue, claim, guild_id, found)
     except TimeoutError:
         error = q.OUT_OF_TIME
     except asyncio.CancelledError:
@@ -127,7 +155,9 @@ async def run_upload(bot: Any, queue: LoreQueue, claim: Claim, guild_id: int) ->
         return
     for attempt in (1, 2):  # once more: a row left working is read again, and proposed twice
         try:
-            if not await queue.finish(guild_id, claim, error=error, names=names, links=links):
+            if not await queue.finish(
+                guild_id, claim, error=error, names=names, links=links, found=found
+            ):
                 log.warning("A lore upload was ended by another worker")
                 return
             break
@@ -147,8 +177,11 @@ async def _put_back(queue: LoreQueue, claim: Claim, guild_id: int) -> None:
         log.warning("A lore upload could not be put back: %s", type(exc).__name__)
 
 
-async def _read(bot: Any, queue: LoreQueue, claim: Claim, guild_id: int) -> tuple[str, int, int]:
-    """(error word or "", names, connections). An error word is an upload that read nothing."""
+async def _read(
+    bot: Any, queue: LoreQueue, claim: Claim, guild_id: int, found: dict[str, list[str]]
+) -> tuple[str, int, int]:
+    """(error word or "", names, connections). An error word is an upload that read nothing.
+    `found` is filled with the names the read proposed, by kind, for the website's Add all."""
     campaign = await bot.campaigns.get(guild_id, claim.campaign_id)
     if campaign is None:
         return q.NOT_ALLOWED, 0, 0
@@ -197,28 +230,36 @@ async def _read(bot: Any, queue: LoreQueue, claim: Claim, guild_id: int) -> tupl
         await bot.campaigns.record_confirmation(
             guild_id, campaign.id, claim.rights_by, OWN_WRITING, fingerprint(text)
         )
-        upload = Upload(text, LABELS.get(claim.source, "your lore"), document=True)
+        upload = Upload(
+            text, LABELS.get(claim.source, "your lore"), document=True, source_id=claim.id
+        )
         # (`claim.choice` is what the players know of it: world, spoilers or smart, #2959)
         report = _Reporter(queue, guild_id, claim)
         try:
-            async with report:
-                done = await read_background(
-                    bot,
-                    campaign,
-                    upload,
-                    truth=False,
-                    speaker=speaker,
-                    known_by=known_by,
-                    started=time.monotonic(),
-                    progress=report,
-                    choice=claim.choice,
-                )
+            # Every AI call of this read belongs to this upload, for the DM's live window (#3710):
+            # the upload's id is the one the lore page polls. With the feed off, nothing is kept.
+            with ai_feed.job(
+                guild_id, campaign.id, "lore", claim.id, step=lore_read.step_words("reading", 0, 0)
+            ):
+                async with report:
+                    done = await read_background(
+                        bot,
+                        campaign,
+                        upload,
+                        truth=False,
+                        speaker=speaker,
+                        known_by=known_by,
+                        started=time.monotonic(),
+                        progress=report,
+                        choice=claim.choice,
+                    )
         except asyncio.CancelledError:
             if (
                 report.lost
             ):  # the claim is another worker's: it ends the row, this one writes nothing
                 return _LOST, 0, 0
             raise
+        found.update({kind: list(ids) for kind, ids in done.stored.items()})
         return _outcome(done)
     finally:
         end_ai_read(guild_id)

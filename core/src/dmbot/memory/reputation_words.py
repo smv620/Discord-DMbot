@@ -88,3 +88,78 @@ def sign_of(detail: str) -> int:
     word = word_of(detail)
     score = score_of(word) if word is not None else None
     return 0 if not score else (score > 0) - (score < 0)
+
+
+# The strong words need a cue in the line the reader quoted (#3606): a heated debate is "wary" at
+# most, not "hostile". The cues are plain stems, read in the quote only (never in the reader's own
+# word), so a model that over-reads is still held. They cannot read a negation ("never hated him"):
+# that errs toward keeping the strong word, and the DM's Reputation has the last word anyway.
+_CUES = {
+    SWORN_ENEMY: re.compile(
+        r"\bsworn\s+(?:enem|foe)|\bvow\w*\s+(?:to\s+)?(?:kill|destroy|avenge|against)|"
+        r"\bnemesis|\barch-?enem|\bblood feud|\bvendetta",
+        re.I,
+    ),
+    HOSTILE: re.compile(
+        r"\bhate|\bhatr|\benem|\bfoe|\bhostil|\bnemesis|\bkill|\bmurder|\bfight(?!er)|"
+        r"\bfought|\bwar\b|\battack|\bhunt(?!er)|\bdespis|\bloath|\bfeud|\brevenge|"
+        r"\bvengeance|\bthreat|\bassault|\bbetray",
+        re.I,
+    ),
+    DEVOTED: re.compile(r"\blove|\bloyal|\bdevot|\badore|\bworship|\bfaithful|\bfealty", re.I),
+}
+_DEMOTED = {SWORN_ENEMY: HOSTILE, HOSTILE: DISTRUSTS, DEVOTED: CLOSE}
+
+
+def held_to_the_quote(word: str, quote: str) -> tuple[str, bool]:
+    """(the word to keep, whether it was demoted): a strong word (sworn enemy, hostile, devoted)
+    stays only when the reader's quote holds one of its cues, else it steps down toward the
+    milder word, and that is checked in turn. Any other word is kept as it is."""
+    demoted = False
+    while word in _CUES and not _CUES[word].search(quote):
+        word = _DEMOTED[word]
+        demoted = True
+    return word, demoted
+
+
+EXACT, ONE_STEP, OVER_READ, UNDER_READ, WRONG_SIDE = (
+    "exact", "one_step_off", "over_read", "under_read", "wrong_side",
+)  # fmt: skip
+
+
+def _position(word: str) -> int:
+    """Where a word sits on the nine-word scale, negative for a bad feeling and positive for a good
+    one, neutral 0 (the order of `WORDS`)."""
+    return WORDS.index(word) - WORDS.index(NEUTRAL)
+
+
+def _strength(word: str) -> int:
+    """How far from "no opinion" a word is. "wary" is a real opinion of 0 on the DM's scale, so it
+    counts as 0 here, like neutral: it is the mildest feeling, not a bad one."""
+    return 0 if word in (WARY, NEUTRAL) else abs(_position(word))
+
+
+def compare(wanted: str, got: str) -> str:
+    """How a stored feeling word sits against the one a key expects (#3606's score): `exact`, one
+    step off on the nine-word scale, `wrong_side` (a good word where the key says bad or the other
+    way round), `over_read` (stronger than the key says) or `under_read` (milder). The key may give
+    a sign ("+", "-", "0") instead of a word: then only the side is scored. Both words go through
+    `word_of`; a stored word off the list is `under_read` (nothing was kept)."""
+    key = wanted.strip()
+    sign = {"+": 1, "-": -1, "0": 0}.get(key)
+    want = word_of(key)
+    have = word_of(got)
+    if have is None or (want is None and sign is None):
+        return UNDER_READ
+    if want is None:
+        if sign_of(have) == sign:
+            return EXACT
+        return WRONG_SIDE if sign and sign_of(have) else (UNDER_READ if sign else OVER_READ)
+    gap = _position(have) - _position(want)
+    if gap == 0:
+        return EXACT
+    if abs(gap) == 1:
+        return ONE_STEP
+    if sign_of(have) * sign_of(want) < 0:
+        return WRONG_SIDE
+    return OVER_READ if _strength(have) > _strength(want) else UNDER_READ

@@ -17,6 +17,7 @@ import logging
 from collections.abc import Iterable, Mapping
 from typing import Any
 
+from dmbot.memory.importance_rank import ImportanceStore
 from dmbot.memory.models import name_key
 
 log = logging.getLogger(__name__)
@@ -97,11 +98,18 @@ def beat_score(who: Iterable[str], importance: Mapping[str, float]) -> float:
 
 class ImportanceCache:
     """The scores per campaign, kept in memory and refreshed after each session. Campaigns never
-    share an entry: the key is the server and the campaign."""
+    share an entry: the key is the server and the campaign.
 
-    def __init__(self, store: Any) -> None:
+    With `ranks_on` (DMBOT_RECAP_BY_RANK, #3172 slice 4) it also keeps each name's importance rank
+    (`importance_rank.ImportanceStore.by_name`), which then sorts a recap's beats before the score
+    does. Kept with the scores and refreshed with them, so every stage of one recap picks the same
+    beats. Off, no rank is read and recaps rank as before."""
+
+    def __init__(self, store: Any, *, ranks_on: bool = False) -> None:
         self._store = store
+        self._ranks_on = ranks_on
         self._by_campaign: dict[tuple[int, str], dict[str, float]] = {}
+        self._ranks: dict[tuple[int, str], dict[str, int]] = {}
 
     async def get(self, guild_id: int, campaign_id: str) -> Mapping[str, float]:
         """The scores; computed on first use. Never raises: with no scores the recap simply ranks
@@ -111,13 +119,28 @@ class ImportanceCache:
             await self.refresh(guild_id, campaign_id)
         return self._by_campaign.get(key, {})
 
+    async def ranks(self, guild_id: int, campaign_id: str) -> Mapping[str, int]:
+        """name key -> rank, or nothing when the switch is off; read on first use. Never raises."""
+        if not self._ranks_on:
+            return {}
+        key = (guild_id, campaign_id)
+        if key not in self._ranks:
+            await self.refresh(guild_id, campaign_id)
+        return self._ranks.get(key, {})
+
     async def refresh(self, guild_id: int, campaign_id: str) -> None:
+        key = (guild_id, campaign_id)
         try:
-            self._by_campaign[(guild_id, campaign_id)] = await by_name(
-                self._store, guild_id, campaign_id
-            )
+            self._by_campaign[key] = await by_name(self._store, guild_id, campaign_id)
         except Exception:
             log.exception("Importance: couldn't read the campaign's connections")
             # Kept as no scores until the next session's refresh, so a failing read is not
             # repeated for every recap call.
-            self._by_campaign.setdefault((guild_id, campaign_id), {})
+            self._by_campaign.setdefault(key, {})
+        if not self._ranks_on:
+            return
+        try:
+            self._ranks[key] = await ImportanceStore(self._store._db).by_name(guild_id, campaign_id)
+        except Exception as exc:  # the type only: a database error can quote a row
+            log.warning("Importance: couldn't read the campaign's ranks (%s)", type(exc).__name__)
+            self._ranks.setdefault(key, {})  # (no ranks: beats sort by the score, as before)

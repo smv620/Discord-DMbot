@@ -380,7 +380,7 @@ def owner_buttons(
         )
     if campaign.owner_user_id is None:
         return [TakeOnButton(campaign.id, row=2)] if viewer in campaign.dm_user_ids else []
-    return [HandoverButton(campaign.id)] if viewer == campaign.owner_user_id else []
+    return [HandoverButton(campaign.id)] if viewer is not None and campaign.is_owner(viewer) else []
 
 
 class HandoverButton(
@@ -432,7 +432,7 @@ class HandoverButton(
             await _say(interaction, ENDED_CAMPAIGN)
         elif campaign.owner_user_id is None:
             await _say(interaction, NO_OWNER_YET)
-        elif campaign.owner_user_id != interaction.user.id:
+        elif not campaign.is_owner(interaction.user.id):
             await _say(interaction, NOT_THE_OWNER)
         elif by_email:
             await interaction.response.send_modal(HandoverEmailForm(self.campaign_id))
@@ -566,7 +566,7 @@ class HandoverEmailForm(discord.ui.Modal, title="Hand over by email"):
         if campaign.owner_user_id is None:
             await _say(interaction, NO_OWNER_YET)
             return
-        if campaign.owner_user_id != interaction.user.id:
+        if not campaign.is_owner(interaction.user.id):
             await _say(interaction, NOT_THE_OWNER)
             return
         outcome = await handover_email.offer_by_email(
@@ -733,7 +733,7 @@ class AcceptOfferButton(
             campaign=md(campaign.name), server=md(guild.name), owner=md(offer.from_name)
         )
         if offer.status == "accepted":  # pressed again: say it again, if it's still theirs
-            mine = campaign.owner_user_id == me
+            mine = campaign.is_owner(me)
             await _end_message(interaction, accepted if mine else ENDED.format(days=HANDOVER_DAYS))
             return
         if not offer.is_open(now):  # taken back, declined or out of time: nothing to check
@@ -994,7 +994,7 @@ class TakeOnButton(
         elif result == "gone":
             # Pressed again (or twice at once): say "yours" only if it really is.
             fresh = await store.get(guild.id, self.campaign_id)
-            mine = fresh is not None and fresh.owner_user_id == me
+            mine = fresh is not None and fresh.is_owner(me)
             await _end_message(
                 interaction, TAKEN.format(campaign=md(campaign.name)) if mine else TAKE_GONE
             )

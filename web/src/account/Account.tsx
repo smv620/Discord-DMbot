@@ -32,6 +32,8 @@ import {
   type RecordingEntry,
 } from "./api";
 import CampaignDelete from "./CampaignDelete";
+import { QUESTIONS_LIVE } from "../content/questions-switch";
+import QuestionsLink from "./QuestionsLink";
 import { takeDeleted } from "./deleted-notice";
 import { campaignHref } from "./campaignLinks";
 import { foldCampaigns } from "./campaign-fold";
@@ -136,7 +138,9 @@ export default function Account({
             ? text.tooManyTries
             : why === "moved"
               ? text.signInMoved
-              : null;
+              : why === "removed"
+                ? text.signInRemoved
+                : null;
       setState(me ? { kind: "signed-in", me } : { kind: "signed-out", notice });
     } catch {
       setState({ kind: "down" });
@@ -413,7 +417,7 @@ function SignedIn({
           onNews={setOfferNews}
         />
       )}
-      <CampaignsSection me={me} />
+      <CampaignsSection me={me} api={api} />
       <CharactersSection />
       <SharedRulesSection me={me} />
       <PlanSection me={me} />
@@ -877,7 +881,7 @@ function OfferRow({
   );
 }
 
-function CampaignsSection({ me }: { me: Me }) {
+function CampaignsSection({ me, api }: { me: Me; api: AccountApi }) {
   const { refresh } = useShared();
   // A campaign the page has just deleted leaves its line here once (#2879).
   const [done, setDone] = useState<string | null>(() => {
@@ -961,6 +965,7 @@ function CampaignsSection({ me }: { me: Me }) {
       )}
       {RECAPS_LIVE && me.campaigns.some((c) => c.role !== "player") && <a href="/account/recaps">{recapCard.linkToList}</a>}
       {WEB_RESTORE_LIVE && <a href="/account/restore">{restoreLink}</a>}
+      {QUESTIONS_LIVE && <QuestionsLink api={api} show={me.campaigns.some((c) => c.role !== "player")} />}
     </section>
   );
 }

@@ -28,7 +28,7 @@ class Places(WithChecks):
     async def say(self, sid: str, lines: list[Line]) -> None:
         await self.tx.add_lines(GUILD, sid, lines)
 
-    async def point(self, entity: str, sid: str, line: Line, *, at: int = AT) -> None:
+    async def point(self, entity: str, sid: str, line: Line, *, at: int | None = AT) -> None:
         """A mention pointing at the line, as the scan leaves it."""
         start = line.text.lower().index("harrow")
         await self.memory.add_mention(
@@ -162,7 +162,8 @@ class Places(WithChecks):
         (place,) = (await self.card())["places"]
         self.assertEqual((place["session"], place["available"], place["lines"]), (1, False, []))
 
-    async def test_two_windows_at_first_and_the_rest_counted(self) -> None:
+    async def test_three_windows_newest_first_and_the_rest_counted(self) -> None:
+        """#3384: the newest three places, the newest first (as Discord's button shows them)."""
         harrow = await self.suggest("Harrow")
         await self.agree(ALICE.id)
         sids = []
@@ -173,13 +174,42 @@ class Places(WithChecks):
             await self.point(harrow, sid, line, at=AT + n * 1000)
             sids.append(sid)
         card = await self.card()
-        # the earliest, and the middle one of five (as Discord's card picks them)
         self.assertEqual(
             [p["lines"][0]["text"] for p in card["places"]],
-            ["Harrow, number 0.", "Harrow, number 2."],
+            ["Harrow, number 4.", "Harrow, number 3.", "Harrow, number 2."],
         )
-        self.assertEqual([p["session"] for p in card["places"]], [1, 3])
-        self.assertEqual(card["morePlaces"], 3)
+        self.assertEqual([p["session"] for p in card["places"]], [5, 4, 3])
+        self.assertEqual(card["morePlaces"], 2)
+
+    async def test_two_places_are_both_shown_newest_first(self) -> None:
+        harrow = await self.suggest("Harrow")
+        await self.agree(ALICE.id)
+        for n in range(2):
+            sid = await self.open(at=AT + n * 1000)
+            line = Line(10_000 + n, ALICE.id, f"Harrow, number {n}.", f"Harrow, number {n}.")
+            await self.say(sid, [line])
+            await self.point(harrow, sid, line, at=AT + n * 1000)
+        card = await self.card()
+        self.assertEqual([p["session"] for p in card["places"]], [2, 1])
+        self.assertEqual(card["morePlaces"], 0)
+
+    async def test_a_place_with_no_session_date_is_the_oldest_not_the_newest(self) -> None:
+        """#3384: a mention with no `session_started_at` must not crowd out the dated places."""
+        harrow = await self.suggest("Harrow")
+        await self.agree(ALICE.id)
+        undated = await self.open(at=AT + 9_000)
+        line = Line(9_000, ALICE.id, "Harrow, undated.", "Harrow, undated.")
+        await self.say(undated, [line])
+        await self.point(harrow, undated, line, at=None)
+        for n in range(3):
+            sid = await self.open(at=AT + n * 1_000)
+            line = Line(10_000 + n, ALICE.id, f"Harrow, number {n}.", f"Harrow, number {n}.")
+            await self.say(sid, [line])
+            await self.point(harrow, sid, line, at=AT + n * 1_000)
+        card = await self.card()
+        texts = [p["lines"][0]["text"] for p in card["places"]]
+        self.assertEqual(texts, ["Harrow, number 2.", "Harrow, number 1.", "Harrow, number 0."])
+        self.assertEqual(card["morePlaces"], 1)
 
     async def test_a_pointer_to_a_vanished_session_does_not_hide_the_earliest_place(self) -> None:
         harrow = await self.suggest("Harrow")

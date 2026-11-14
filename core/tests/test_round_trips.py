@@ -86,7 +86,11 @@ class RoundTrips(DatabaseTest):
             removed = await self.store.remove_dm(GUILD, self.campaign.id, 99)
         self.assertEqual(added.dm_user_ids, frozenset({DM, CO, 99}))
         self.assertEqual(removed.dm_user_ids, frozenset({DM, CO}))
-        self.assertEqual(tally, [3, 3])  # the locked read, the DMs, the write
+        # Add: the locked read (campaign, then its people), the account door check, the write, and a
+        # read for the new people (#2533: a DM is stored as an account, so the roster is read again
+        # rather than patched), plus once the question whether the account doors exist. Remove: the
+        # same without that question.
+        self.assertEqual(tally, [6, 5])
 
     async def test_the_results_match_what_is_stored(self) -> None:
         """The shortcuts return the same campaign a fresh read would."""

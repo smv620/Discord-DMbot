@@ -13,6 +13,7 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any
 
+from dmbot.memory import link_words
 from dmbot.memory.ontology import CORE_PREDICATES
 
 CONNECTIONS_MAX = 10  # connections in the text: a long list drowns what the entry is
@@ -21,16 +22,30 @@ _CORE = {t.key: (t.label, t.symmetric) for t in CORE_PREDICATES}
 
 def _connection(link: Mapping[str, Any]) -> str | None:
     """One connection in plain words ("is an ally of Brannoc"), or None for a connection that
-    reads from the other side and is not the same both ways (it is that entry's to carry)."""
+    reads from the other side and is not the same both ways (it is that entry's to carry).
+
+    The DM's own direction (`both_ways`, #4154; None: the kind's) decides which ends carry it
+    (#4164). A kind that reads one way, made two-way by the DM, is given to its second entry in
+    the card's words from that side ("is the boss of Mira", `link_words.back_words`), never the
+    first entry's ("serves Mira", which would be the wrong way round)."""
     key = str(link["predicate"])
     core = _CORE.get(key)
     label = link.get("label") or (core[0] if core else key.replace("_", " "))
     symmetric = link.get("symmetric")
     if symmetric is None:
         symmetric = core[1] if core else False
-    if not link.get("outgoing") and not symmetric:
+    mark = link.get("both_ways")
+    both = bool(symmetric) if mark is None else bool(mark)
+    if link.get("outgoing"):
+        return f"{label} {link['other']}"
+    if not both:
         return None
-    return f"{label} {link['other']}"
+    if symmetric:
+        return f"{label} {link['other']}"
+    back = link_words.back_words(key, "")
+    if back:
+        return f"{back} {link['other']}"
+    return f"is connected to {link['other']} (“{label}”)"
 
 
 def compose(parts: Mapping[str, Any]) -> str:

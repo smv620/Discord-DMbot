@@ -4,8 +4,9 @@
 // and are shown only to a campaign's DM; the API says so too. Nothing is kept on this page after it is sent.
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { recapStylePage as words, STYLE_EXAMPLE_WORDS, STYLE_MAX_EXAMPLES, STYLE_MAX_NOTES, STYLE_NOTE_CHARS } from "../content/recap-style-words";
+import { RECAP_MUSTS_LIVE, recapStylePage as words, STYLE_EXAMPLE_WORDS, STYLE_MAX_EXAMPLES, STYLE_MAX_NOTES, STYLE_NOTE_CHARS } from "../content/recap-style-words";
 import { type AccountApi, ApiError, type RecapStyle, type RecapStyleAction } from "./api";
+import RecapMustsPanel from "./RecapMusts";
 import WorkProgress from "./WorkProgress";
 
 /** The campaign's address, read from `/account/recap-style/<server>.<campaign>`. */
@@ -41,6 +42,9 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
   const [problem, setProblem] = useState("");
   const [open, setOpen] = useState<{ id: string; action: Change; at: RecapStyleAction | null } | null>(null);
   const [stopped, setStopped] = useState(false);
+  // True from a change's end until the list read after it has come back: the controls keep resting, so a keystroke is
+  // never typed over a list that is about to be replaced.
+  const [reloading, setReloading] = useState(false);
   // A delete that is waiting for "Yes": nothing is sent until then, because a deleted example cannot come back.
   const [ask, setAsk] = useState<{ action: Change; arg: string; text: string; yes: string } | null>(null);
   const alertBox = useRef<HTMLParagraphElement>(null);
@@ -77,7 +81,8 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
           // What was typed is cleared only now, so a change that fails loses none of a long paste.
           if (open.action === "add_example") setExample("");
           if (open.action === "add_note") setNote("");
-          void load();
+          setReloading(true);
+          void load().finally(() => live && setReloading(false));
           return;
         }
         if (got.state === "failed") return;
@@ -103,12 +108,13 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
 
   if (!ref) return <p>{words.notFound}</p>;
 
-  const send = async (action: Change, arg = ""): Promise<boolean> => {
-    if (!api.changeRecapStyle || !ref) return false;
+  /** Sends one change (any kind) and starts following it; false when it did not go through. */
+  const start = async (action: Change, call: () => Promise<{ id: string }>): Promise<boolean> => {
+    if (!ref) return false;
     setBusy(true);
     setProblem("");
     try {
-      const got = await api.changeRecapStyle(ref, action, arg);
+      const got = await call();
       seen.current = -1;
       idle.current = 0;
       setStopped(false);
@@ -122,6 +128,8 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
       setBusy(false);
     }
   };
+  const send = (action: Change, arg = ""): Promise<boolean> =>
+    api.changeRecapStyle && ref ? start(action, () => api.changeRecapStyle!(ref, action, arg)) : Promise.resolve(false);
 
   const failed = open?.at?.state === "failed";
   const done = open?.at?.state === "done";
@@ -154,6 +162,15 @@ export default function RecapStyleView({ api, path }: { api: AccountApi; path: s
         <p role="alert" ref={alertBox} tabIndex={-1}>
           {problem}
         </p>
+      )}
+
+      {RECAP_MUSTS_LIVE && style?.musts && api.saveRecapMusts && api.recapMustsDefaults && (
+        <RecapMustsPanel
+          musts={style.musts}
+          disabled={busy || pending || reloading}
+          onSave={(lines) => void start("save_musts", () => api.saveRecapMusts!(ref, lines))}
+          onDefaults={() => void start("musts_defaults", () => api.recapMustsDefaults!(ref))}
+        />
       )}
 
       <section class="stack" aria-labelledby="rs-examples">

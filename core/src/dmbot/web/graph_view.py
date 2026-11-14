@@ -15,10 +15,15 @@ characters. The DM's own full graph is not this: it comes straight from the grap
 from __future__ import annotations
 
 from collections import deque
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
+from types import SimpleNamespace
 from typing import Any
 
-from dmbot.memory import gate
+from dmbot.memory import gate, hand_over
+from dmbot.memory.link_words import for_reader
+from dmbot.memory.models import CONFIRMED
+from dmbot.memory.ontology import FALLBACK_PREDICATE
 
 ALIAS = "alias:"  # the id of a node that stands for a secret other name
 
@@ -49,7 +54,17 @@ def statements_of(data: dict[str, Any]) -> gate.Statements:
         connections=connections,
         aliases=aliases,
         player_characters=frozenset(data["playerCharacters"]),
+        told=_told(data),
     )
+
+
+def _told(data: dict[str, Any]) -> dict[str, frozenset[str]]:
+    """Who was told that a secret other name is an entry (#3089): the door's `told` pairs (other
+    name, character), if the caller's data carries them (the DM's own page does not need them)."""
+    told: dict[str, set[str]] = {}
+    for alias, character in data.get("told", ()):
+        told.setdefault(str(alias), set()).add(str(character))
+    return {a: frozenset(c) for a, c in told.items()}
 
 
 @dataclass(frozen=True, slots=True)
@@ -112,6 +127,13 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
         }
         for i, name in shown.items()
     }
+    if not src.get(
+        "limited", False
+    ):  # (a source cut at its limits may lack a holder: no line then)
+        for item, line in _histories(src["links"], seen, viewer, shown).items():
+            if item in nodes:
+                nodes[item]["history"] = line
+    guard = _name_guard(kn, seen, shown)
     edges: list[dict[str, Any]] = []
     touched: set[str] = set()
     for link in live:
@@ -130,12 +152,26 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
         changed = via is not None or any(
             end.startswith(ALIAS) or shown[end] != mains[end] for end in (a, b)
         )
+        # a non-DM never gets the old friend or enemy kind (the feeling is the DM's, #3611)
+        predicate = for_reader(link["predicate"], "", feeling=viewer.dm)[0]
         edges.append(
             {
-                "id": link["id"], "a": a, "b": b, "predicate": link["predicate"],
-                "detail": "" if changed else link["detail"], "directional": link["directional"],
+                "id": link["id"], "a": a, "b": b, "predicate": predicate,
+                "detail": "" if changed else _label(link, guard, viewer),
+                "directional": link["directional"],
+                # the DM's direction for it (#4154): None is its kind's default
+                "both_ways": link.get("both_ways"),
+                # a journey or a plan on a route (#4173 slice 6d): `relationships.edges_from` words
+                # it from where the party set out, so it is never read as a road
+                "route_state": str(link.get("route_state") or ""),
                 "secret": link["secret"], "at": link["at"], "held": None, "knownBy": None,
                 "decided": None, "revealed": True, "pinned": False,
+                # whether two people have met (#3882), under the door's own key, as
+                # `relationships.edges_from` reads both views: it rides on a connection this viewer
+                # is already shown, so a secret meeting is as hidden as its line
+                **(
+                    {"knows_how": str(link.get("knows_how") or "")} if predicate == "knows" else {}
+                ),
             }
         )  # fmt: skip
     for via in sorted(touched):
@@ -152,6 +188,96 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
         bool(src["isDm"]) or src["visibility"] in ("peek", "open"),
         bool(src.get("limited", False)),
     )
+
+
+def _histories(
+    links: Sequence[dict[str, Any]],
+    seen: gate.Visible,
+    viewer: gate.Viewer,
+    shown: Mapping[str, str],
+) -> dict[str, str]:
+    """How each item changed hands (#4122, the web half of #4115): item id -> "Claude sold it to
+    Belleros · Belleros has it now", from the item's confirmed `owns` and `carries` ties, the ended
+    ones included. The words are `memory/hand_over.history`'s, the same as Discord's name card.
+    Only a tie this viewer knows counts (a secret one only for the DM), and a holder the viewer is
+    not shown is left out and never replaced. Absent for an item no holder has let go of."""
+    by_item: dict[str, list[Any]] = {}
+    for link in links:
+        if link["predicate"] not in hand_over.HELD or link["plan"]:
+            continue
+        known = seen.knows(gate.CONNECTION, str(link["id"]))
+        if not known or not (viewer.dm or not link["secret"]):
+            continue
+        by_item.setdefault(str(link["b"]), []).append(tie_of(link))
+    out: dict[str, str] = {}
+    for item, ties in by_item.items():
+        line = history_line(ties, shown.get)
+        if line:
+            out[item] = line
+    return out
+
+
+def history_line(ties: Sequence[Any], name: Callable[[str], str | None]) -> str:
+    """One item's line, "Claude sold it to Belleros · Belleros has it now", or "" when no holder has
+    let go of it. The steps are `memory/hand_over.history`'s; the first starts with a capital
+    ("It was stolen from Claude" leads)."""
+    steps = hand_over.history(ties, name)
+    if not steps:
+        return ""
+    steps[0] = steps[0][:1].upper() + steps[0][1:]
+    return " · ".join(steps)
+
+
+def tie_of(row: Mapping[str, Any]) -> SimpleNamespace:
+    """A connection as `hand_over.history` reads it, from a door's row (`id`, `a` the holder, `b`
+    the item, `predicate`, `at`, `from_at`, `to_at`, `end_reason`); every one is confirmed."""
+    return SimpleNamespace(
+        id=str(row["id"]), predicate=row["predicate"], status=CONFIRMED,
+        subject_id=str(row["a"]), object_id=str(row["b"]),
+        from_session_at=row.get("from_at"), to_session_at=row.get("to_at"),
+        created_at=int(row["at"]), end_reason=row.get("end_reason"),
+    )  # fmt: skip
+
+
+def _name_guard(kn: dict[str, Any], seen: gate.Visible, shown: Mapping[str, str]) -> gate.NameGuard:
+    """The names this viewer may not be told (#3153), from the knowers door's every entry (the
+    source door leaves out merged ones, quests and mysteries, and is cut on a very large campaign):
+    the main name of an entry they do not know or know only by another name, the old name of a
+    merged one unless it lives on under that name, and every other name they do not hold that is
+    secret, not confirmed, or an entry they do not know. A catch-all connection's words are checked
+    against them, so a label cannot name what the page itself would not show."""
+    if seen.everything:
+        return gate.NameGuard(())  # (the DM)
+    forbidden: list[str] = []
+    for row in kn["entities"]:
+        entity = str(row["id"])
+        if row["status"] == "rejected":
+            continue
+        name = str(row["name"])
+        survivor = row["merged_into"]
+        if survivor is not None:
+            if shown.get(str(survivor)) != name:
+                forbidden.append(name)
+        elif shown.get(entity) != name:
+            forbidden.append(name)
+    for alias in kn["aliasRows"]:
+        held = str(alias["id"]) in seen.aliases
+        public = alias["status"] == "confirmed" and not alias["secret"]
+        if not held and (not public or str(alias["entity_id"]) not in shown):
+            forbidden.append(str(alias["text"]))
+    return gate.NameGuard(forbidden, allowed=shown.values())
+
+
+def _label(link: Mapping[str, Any], guard: gate.NameGuard, viewer: gate.Viewer) -> str:
+    """The link's own words, blanked when the catch-all's free text names something the viewer may
+    not be told. A `knows` link's detail is how one name feels about the other: that is the DM's
+    Reputation, so it goes to the DM alone (#3610). Other kinds carry fixed words."""
+    detail = str(link["detail"] or "")
+    if link["predicate"] == "knows" and not viewer.dm:
+        return ""
+    if link["predicate"] != FALLBACK_PREDICATE or not detail:
+        return detail
+    return gate.safe_label(detail, guard)
 
 
 def _plain(graph: Graph) -> list[dict[str, Any]]:

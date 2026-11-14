@@ -238,7 +238,7 @@ class HiddenAnchors(MyCharacters):
         got = await self.bob()
         self.assertNotIn("Ken", str(got))
         names = await self.overview_names(self.player)
-        self.assertEqual(names[sister], "someone's sister (name unknown)")
+        self.assertEqual(names[sister], "unnamed - someone's sister")
         self.assertNotIn("Ken", str(names))
 
     async def test_the_joined_label_is_rebuilt_too(self) -> None:
@@ -250,10 +250,10 @@ class HiddenAnchors(MyCharacters):
         found = await self.memory.aliases(
             self.g, self.one.id, entity_id=self.ken, include_secret=True
         )
-        label_alias = next(a.id for a in found if a.text.endswith("(name unknown)"))
+        label_alias = next(a.id for a in found if a.text.startswith("unnamed - "))
         await self.know("alias", label_alias, [self.okra])
         names = await self.overview_names(self.player)
-        self.assertEqual(names[self.ken], "someone's sister (name unknown)")
+        self.assertEqual(names[self.ken], "unnamed - someone's sister")
         self.assertNotIn("Ken", str(names))
 
 
@@ -370,7 +370,7 @@ class ProposedAnchors(MyCharacters):
         )
         await self.know(ENTRY, made.entity.id, [self.okra])
         names = await self.overview_names(self.player)
-        self.assertEqual(names[str(made.entity.id)], "someone's sister (name unknown)")
+        self.assertEqual(names[str(made.entity.id)], "unnamed - someone's sister")
         self.assertNotIn("Vex", str(names))
 
 
@@ -389,7 +389,7 @@ class ByFact(MyCharacters):
         got = await self.bob()
         self.assertEqual(self.names(got).get(ken), None)  # (no public fact brings Kenneth here)
         self.assertNotIn("Kenneth", str(got))
-        self.assertTrue(any(n.startswith("porter") for n in self.names(got).values()))
+        self.assertTrue(any(n.startswith("unnamed - porter") for n in self.names(got).values()))
 
     async def test_the_connection_records_its_name_and_undo_takes_it_back(self) -> None:
         written = await self.join()

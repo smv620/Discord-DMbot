@@ -26,7 +26,7 @@ from fastapi.responses import RedirectResponse
 from dmbot.account_id import to_dmbot_id
 from dmbot.db import Database
 from dmbot.entitlements import GRANT_LEVELS
-from dmbot.web import grants, sessions, support, tokens
+from dmbot.web import admin_costs, grants, sessions, support, tokens
 from dmbot.web.admin import (
     CSRF_HEADER,
     MAX_SECONDS,
@@ -70,6 +70,7 @@ def router(
     tries: FailedTries,
     client_address: Callable[[Request], str],
     clock: Callable[[], int],
+    costs_fetch: admin_costs.Fetch = admin_costs.fetch_json,
 ) -> APIRouter:
     api = APIRouter(prefix="/admin")
     checking = asyncio.Semaphore(1)
@@ -127,6 +128,25 @@ def router(
             return json.loads(body)
         except (ValueError, RecursionError):
             return None
+
+    costs_cache: admin_costs.Cache = {}
+
+    @api.get("/costs")
+    async def costs(session: Admin, month: str | None = None) -> dict[str, Any]:
+        """What each paid service has charged in a month (default: this one), #3671."""
+        now = clock()
+        if month is None:
+            month = admin_costs.this_month(now)
+        if not admin_costs.MONTH.fullmatch(month):
+            raise HTTPException(status_code=400, detail="bad_month")
+        return await admin_costs.read_costs(
+            month=month,
+            now=now,
+            deepgram_key=settings.costs_deepgram_key,
+            elevenlabs_key=settings.costs_elevenlabs_key,
+            cache=costs_cache,
+            fetch=costs_fetch,
+        )
 
     @api.get("/me")
     async def me(session: Admin) -> dict[str, str]:

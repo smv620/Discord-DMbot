@@ -26,12 +26,13 @@ from psycopg.types.json import Jsonb
 
 # Re-exported with the `as` form, which mypy strict needs: the worker reads AUDIO_MAX_TRIES from
 # here, and the tests read both.
+from dmbot import lineage
 from dmbot.audio_due import AUDIO_DUE_WHERE as AUDIO_DUE_WHERE
 from dmbot.audio_due import AUDIO_MAX_TRIES as AUDIO_MAX_TRIES
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn, Database
 from dmbot.memory.models import name_key
-from dmbot.recaps import notes
+from dmbot.recaps import notes, post_notes
 from dmbot.recaps.allowance import Usage, month_bounds
 from dmbot.recaps.approval import CHOICES, TEXT, text_hash
 from dmbot.recaps.fixed_lines import STORY_COLUMN_MAX
@@ -39,6 +40,7 @@ from dmbot.recaps.fixed_lines import STORY_COLUMN_MAX
 # Re-exported with the `as` form, which mypy strict needs: the tests import it from here.
 from dmbot.transcript.respell import RecapRespelled as RecapRespelled
 from dmbot.transcript.respell import respell
+from dmbot.transcript.theatre_runs import AUTO_SINCE_S
 
 DAMAGED = "That backup file's recaps are damaged, so nothing was restored."
 MAX_TRIES = 2  # "Try again" at most this many times for one session
@@ -222,6 +224,9 @@ _AUDIO_CLOCK_OFF = (
 LOG_KEPT_S = 2 * 86400  # how long a call's date is kept (the daily tally needs only the last day)
 
 # The columns a stage may write: a fixed list, so a value never decides a column name.
+# The columns that hold what DMbot wrote for the recap: a write of any of them is DMbot generating
+# its own work, so the row takes the running build's stamp (#3739, `dmbot.lineage`).
+_CONTENT = frozenset({"title", "summary", "original", "housekeeping", "music", "beats", "critics"})
 _WRITABLE = frozenset(
     {
         "state",
@@ -277,14 +282,59 @@ class SavedLists:
     kept: bool | None = None
 
 
+# How long a recap waits for its session's script (#3901): from the later of the session's end and
+# the recap being queued. After that, or if the script fails, the recap goes ahead without it.
+SCRIPT_WAIT_S = 10 * 60
+
+# True for a job whose session is still getting its script: scripts are on, the session has lines
+# and ended, no run has finished (done or failed) and the wait is not over. Used in `due` and
+# `lease`, so a gated job is skipped, never failed; it needs no column of its own. Parameters: the
+# earliest session time that still gets a script by itself, the wait in seconds, and now.
+_SCRIPT_PENDING = (
+    "EXISTS (SELECT 1 FROM transcript_sessions ts"
+    " LEFT JOIN theatre_runs tr ON tr.guild_id = ts.guild_id AND tr.session_id = ts.id"
+    " LEFT JOIN session_imports i ON i.guild_id = ts.guild_id AND i.session_id = ts.id"
+    " WHERE ts.guild_id = recap_jobs.guild_id AND ts.campaign_id = recap_jobs.campaign_id"
+    " AND ts.started_at = recap_jobs.session_at AND ts.line_count > 0"
+    " AND ts.ended_at > 0 AND COALESCE(ts.transcripts_deleted_at, 0) = 0"
+    " AND COALESCE(tr.state, 'none') IN ('none', 'running')"
+    " AND COALESCE(i.imported_at, ts.ended_at) >= %s"  # the same window as the script round
+    " AND GREATEST(ts.ended_at, recap_jobs.created_at) + %s > %s)"
+)
+
+
 class RecapStore:
     def __init__(self, db: Database, *, clock: Callable[[], float] = time.time) -> None:
         self._db = db
         self._now = clock
+        # Set by the bot when scripts are made by themselves (DMBOT_THEATRE_ON): then a recap
+        # waits for its script, at most SCRIPT_WAIT_S. Off, nothing changes.
+        self.script_wait = False
 
     @property
     def db(self) -> Database:
         return self._db
+
+    async def waiting_for_script(self, guild_id: int, campaign_id: str, session_at: int) -> bool:
+        """Whether this recap is being held for its session's script right now (for the progress
+        line "Waiting for the script"). False when scripts are off or the wait is over."""
+        if not self.script_wait:
+            return False
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"SELECT {_SCRIPT_PENDING} AS held FROM recap_jobs"
+                " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s",
+                (
+                    int(self._now()) - AUTO_SINCE_S,
+                    SCRIPT_WAIT_S,
+                    int(self._now()),
+                    guild_id,
+                    campaign_id,
+                    session_at,
+                ),
+            )
+            row = await cur.fetchone()
+        return bool(row and row["held"])
 
     async def get(self, guild_id: int, campaign_id: str, session_at: int) -> Job | None:
         async with self._db.guild(guild_id) as conn:
@@ -345,7 +395,13 @@ class RecapStore:
                     Jsonb(beats), now, now, now,
                 ),
             )  # fmt: skip
-            return bool(cur.rowcount)
+            if not cur.rowcount:
+                return False
+            # The beat sheet is this session's notes, as for a recap the pipeline wrote (#3026).
+            # This row skips the pipeline, so without this the Session notes tab stayed empty
+            # for a finished recap kept by `recap_run --keep` or the sample run (#3959).
+            await notes.keep_from_job(conn, guild_id, campaign_id, session_at)
+            return True
 
     async def due(self, guild_id: int, *, limit: int = 20) -> list[tuple[str, int]]:
         """(campaign, session) of the unfinished jobs in a server that may run now: not leased,
@@ -360,8 +416,19 @@ class RecapStore:
                 " AND NOT EXISTS (SELECT 1 FROM recap_jobs r2"
                 "   WHERE r2.guild_id = recap_jobs.guild_id"
                 "   AND r2.campaign_id = recap_jobs.campaign_id AND r2.leased_to > %s)"
+                f" AND (NOT %s OR NOT {_SCRIPT_PENDING})"
                 " ORDER BY campaign_id, session_at LIMIT %s",
-                (guild_id, now, now, now, limit),
+                (
+                    guild_id,
+                    now,
+                    now,
+                    now,
+                    self.script_wait,
+                    now - AUTO_SINCE_S,
+                    SCRIPT_WAIT_S,
+                    now,
+                    limit,
+                ),
             )
             return [(r["campaign_id"], int(r["session_at"])) for r in await cur.fetchall()]
 
@@ -374,7 +441,8 @@ class RecapStore:
                 " AND session_at = %s AND leased_to <= %s AND next_at <= %s AND status = 'draft'"
                 " AND state NOT IN ('ready', 'failed')"
                 " AND NOT EXISTS (SELECT 1 FROM recap_jobs r2 WHERE r2.guild_id = %s"
-                "   AND r2.campaign_id = %s AND r2.leased_to > %s)",
+                "   AND r2.campaign_id = %s AND r2.leased_to > %s)"
+                f" AND (NOT %s OR NOT {_SCRIPT_PENDING})",
                 (
                     now + LEASE_S,
                     guild_id,
@@ -384,6 +452,10 @@ class RecapStore:
                     now,
                     guild_id,
                     campaign_id,
+                    now,
+                    self.script_wait,
+                    now - AUTO_SINCE_S,
+                    SCRIPT_WAIT_S,
                     now,
                 ),
             )
@@ -459,7 +531,9 @@ class RecapStore:
                 values.append(None if value is None else Jsonb(value))
             else:
                 values.append(value)
-        async with self._db.guild(guild_id) as conn:
+        # Lineage (#3739): restamp only when a stage writes the recap's own content; bookkeeping
+        # (a wait, an email time, the spend) must not make an older text look made by this build.
+        async with self._db.guild(guild_id, by_dmbot=bool(set(fields) & _CONTENT)) as conn:
             cur = await conn.execute(
                 f"UPDATE recap_jobs SET {', '.join(parts)}, updated_at = %s WHERE guild_id = %s"
                 " AND campaign_id = %s AND session_at = %s AND status = 'draft'" + guard,
@@ -507,12 +581,14 @@ class RecapStore:
                 # (the database's own clock, as the trigger uses, so the two never differ)
                 " posting_since = COALESCE(posting_since,"
                 " floor(extract(epoch FROM clock_timestamp()))::BIGINT)"
+                ", updated_at = %s"
                 " WHERE guild_id = %s AND campaign_id = %s"
                 f" AND session_at = %s AND leased_to <= %s AND {AUDIO_DUE_WHERE}"
                 " AND NOT EXISTS (SELECT 1 FROM recap_jobs r2 WHERE r2.guild_id = %s"
                 "   AND r2.campaign_id = %s AND r2.leased_to > %s)",
                 (
                     now + AUDIO_LEASE_S,
+                    now,  # updated_at: the narration's first move
                     guild_id,
                     campaign_id,
                     session_at,
@@ -565,6 +641,11 @@ class RecapStore:
             "audio_total = 0", _AUDIO_CLOCK_OFF,
         ]  # fmt: skip
         values: list[Any] = [audio, error[:200]]
+        # The voiceover has its own stamp (#3739): a later build's narration of an older text must
+        # not overwrite the text's stamp. Set when the audio is finished, empty on a failure or a
+        # re-queue; readers show it only while the audio is ready.
+        sets.append("audio_made_by_commit = %s")
+        values.append(lineage.running_commit() if audio == "ready" else None)
         if how is not None:
             sets += ["audio_how = %s", "audio_why = %s"]
             values += [how, why]
@@ -649,7 +730,8 @@ class RecapStore:
                 return "too_soon"
             await conn.execute(
                 "UPDATE recap_jobs SET audio = 'queued', audio_tries = 0, audio_next_at = 0,"
-                " audio_error = '', audio_credits = 0, audio_asked_at = %s, updated_at = %s"
+                " audio_error = '', audio_credits = 0, audio_asked_at = %s, updated_at = %s,"
+                " audio_made_by_commit = NULL"
                 " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s",
                 (now, now, guild_id, campaign_id, session_at),
             )
@@ -762,7 +844,7 @@ class RecapStore:
         # apostrophe or dash, which a prefilter on a whole word would miss.
         word = max(re.findall(r"\w+", old), key=len, default="")
         like = "%" + word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_") + "%"
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             cur = await conn.execute(
                 "SELECT session_at, status, title, summary, original, to_confirm, approved_hash,"
                 " audio, audio_text_hash FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
@@ -841,7 +923,8 @@ class RecapStore:
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "UPDATE recap_jobs SET audio = 'off', audio_tries = 0, audio_next_at = 0,"
-                f" audio_credits = 0, audio_error = '', audio_text_hash = '', {_AUDIO_CLOCK_OFF}"
+                " audio_credits = 0, audio_error = '', audio_text_hash = '',"
+                f" audio_made_by_commit = NULL, {_AUDIO_CLOCK_OFF}"
                 " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s",
                 (guild_id, campaign_id, session_at),
             )
@@ -860,7 +943,7 @@ class RecapStore:
     async def save_dictionary(
         self, guild_id: int, campaign_id: str, dictionary_id: str, version_id: str, rules_hash: str
     ) -> None:
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             await conn.execute(
                 "INSERT INTO recap_dictionaries (guild_id, campaign_id, dictionary_id, version_id,"
                 " rules_hash, updated_at) VALUES (%s, %s, %s, %s, %s, %s)"
@@ -923,8 +1006,9 @@ class RecapStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 # (a recap written by the table is not one of DMbot's recaps: it costs nothing and
-                # is not counted; its narration still is)
-                "SELECT COALESCE(sum(CASE WHEN uploaded_by > 0 THEN 0 ELSE"
+                # is not counted; its narration still is. `written_by`, not `uploaded_by`: that
+                # one goes to 0 when the uploader's account is deleted, #4148)
+                "SELECT COALESCE(sum(CASE WHEN written_by <> '' THEN 0 ELSE"
                 " (CASE WHEN state = 'ready' THEN 1 ELSE 0 END) + tries END), 0)"
                 " AS recaps, COALESCE(sum((CASE WHEN audio = 'ready' THEN 1 ELSE 0 END)"
                 " + (CASE WHEN audio <> 'off' THEN tries ELSE 0 END)), 0)"
@@ -1039,7 +1123,7 @@ class RecapStore:
         from dmbot.recaps import critics as cr  # (the loop's own JSON, for the page's notes)
 
         notes = (note,) if note else ()
-        async with self._db.guild(guild_id) as conn:
+        async with self._db.guild(guild_id, by_dmbot=True) as conn:
             cur = await conn.execute(
                 "UPDATE recap_jobs SET to_confirm = %s, checked_at = %s, critics = %s"
                 " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
@@ -1232,9 +1316,10 @@ class RecapStore:
             raise ValueError(step)
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
-                "UPDATE recap_jobs SET posting_step = %s WHERE guild_id = %s AND campaign_id = %s"
-                " AND session_at = %s AND status = 'posting' AND posting_step IS NOT NULL",
-                (step, guild_id, campaign_id, session_at),
+                "UPDATE recap_jobs SET posting_step = %s, updated_at = %s WHERE guild_id = %s"
+                " AND campaign_id = %s AND session_at = %s AND status = 'posting'"
+                " AND posting_step IS NOT NULL",
+                (step, int(self._now()), guild_id, campaign_id, session_at),
             )
 
     async def decide(
@@ -1253,7 +1338,11 @@ class RecapStore:
         `require_current`: only if the DM's approval is of the text as it is now, in the same
         statement (an edit after approving, or a draft never approved, posts nothing)."""
         if action == "post":
-            sql = "status = 'posting' WHERE state = 'ready' AND status = 'draft'"
+            sql = (
+                "status = 'posting', "
+                + post_notes.CLEAR_REFUSAL
+                + " WHERE state = 'ready' AND status = 'draft'"
+            )
             if require_current:  # an approval of other words than these ends here, in SQL
                 sql += (
                     " AND approved_hash = encode(sha256(convert_to("
@@ -1274,11 +1363,13 @@ class RecapStore:
             sql = "status = 'dropped' WHERE status = 'draft'"
         else:
             raise ValueError(action)
+        # (a new post clears an old refusal's sentence, so it never reads as a current failure)
+        first: tuple[Any, ...] = (post_notes.REFUSALS,) if action == "post" else ()
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 f"UPDATE recap_jobs SET {sql} AND guild_id = %s AND campaign_id = %s"
                 " AND session_at = %s",
-                (guild_id, campaign_id, session_at),
+                (*first, guild_id, campaign_id, session_at),
             )
             return bool(cur.rowcount)
 
@@ -1372,10 +1463,10 @@ class RecapStore:
         on the page."""
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
-                "UPDATE recap_jobs SET status = 'draft', decided_at = NULL, last_error = %s"
-                " WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
+                "UPDATE recap_jobs SET status = 'draft', decided_at = NULL, last_error = %s,"
+                " updated_at = %s WHERE guild_id = %s AND campaign_id = %s AND session_at = %s"
                 " AND status = 'posting'",
-                (note[:200], guild_id, campaign_id, session_at),
+                (note[:200], int(self._now()), guild_id, campaign_id, session_at),
             )
 
     async def address(self, guild_id: int, user_id: int) -> str | None:

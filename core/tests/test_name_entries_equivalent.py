@@ -46,13 +46,13 @@ def world(size: int, seed: int) -> tuple[NameRows, list[str], Visible]:
             anchor = f"e{rng.randrange(i)}"
             entities[f"e{i}"] = row(
                 i, unnamed=True, unnamed_anchor=anchor, unnamed_what="the guard",
-                name=f"the guard at {anchor} (name unknown)",
+                name=f"unnamed - the guard at {anchor}",
             )  # fmt: skip
         elif kind < 0.18 and i > 3:  # an unnamed person joined into an earlier entry
             into = f"e{rng.randrange(i)}"
             entities[f"e{i}"] = row(
                 i, unnamed=True, merged_into=into, status="merged", unnamed_what="a hooded one",
-                unnamed_anchor=None, name="someone (name unknown)",
+                unnamed_anchor=None, name="unnamed - someone",
             )  # fmt: skip
         else:
             entities[f"e{i}"] = row(i, hidden_from_players=rng.random() < 0.15)
@@ -126,12 +126,12 @@ class JoinedPerson(unittest.TestCase):
     def test_a_joined_unnamed_persons_label_is_rebuilt_for_a_player(self) -> None:
         keen = row(1, name="Ken")
         gone = row(
-            2, name="the guard (name unknown)", unnamed=True, merged_into="e1", status="merged",
+            2, name="unnamed - the guard", unnamed=True, merged_into="e1", status="merged",
             unnamed_anchor=None, unnamed_what="the guard",
         )  # fmt: skip
         rows = NameRows(
             {"e1": keen, "e2": gone},
-            [alias(1, "e1", "Ken"), alias(2, "e1", "the guard (name unknown)")],
+            [alias(1, "e1", "Ken"), alias(2, "e1", "unnamed - the guard")],
         )
         seen = Visible(
             entries=frozenset({"e1"}),

@@ -9,7 +9,8 @@ import unittest
 from types import SimpleNamespace
 from typing import Any, cast
 
-from dmbot.bot import NO_PRIVATE_MESSAGE, DMBot
+from dmbot.bot import DMBot
+from dmbot.dm_questions import NO_PRIVATE_MESSAGE
 from dmbot.dm_screen import links_ready
 from dmbot.memory.models import CONFIRMED, REJECTED
 from tests.asking import with_asking

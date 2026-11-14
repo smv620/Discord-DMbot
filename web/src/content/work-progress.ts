@@ -9,6 +9,17 @@ export const workWords = {
   unknownStage: "DMbot is working on it.",
   /** "3 of 10 sessions", "part 1 of 2". */
   progress: (done: number, total: number, unit?: string): string => (unit ? `${done} of ${total} ${unit}` : `${done} of ${total}`),
+  /** A count that is an estimate between two real readings (#3534): "about 42 of 100 lines". */
+  progressAbout: (done: number, total: number, unit?: string): string => `about ${done} of ${total}${unit ? ` ${unit}` : ""}`,
+  /** The running counts line (#3534), one phrase per count the API sends; a code the page doesn't know is left out. */
+  countPhrase: {
+    words: (n: number): string => `${n.toLocaleString()} ${n === 1 ? "word" : "words"} processed`,
+    calls: (n: number): string => `${n.toLocaleString()} ${n === 1 ? "call" : "calls"} made`,
+    checks: (n: number): string => `${n.toLocaleString()} ${n === 1 ? "check" : "checks"} completed`,
+    names: (n: number): string => `${n.toLocaleString()} ${n === 1 ? "name" : "names"} found`,
+  } as Record<string, (n: number) => string>,
+  /** A running count that is an estimate between two readings. */
+  aboutCount: (phrase: string): string => `about ${phrase}`,
   running: (elapsed: string): string => `Running for ${elapsed}.`,
   lastChange: (ago: string): string => `Last progress ${ago} ago.`,
   justNow: "Last progress just now.",
@@ -42,3 +53,9 @@ export const workWords = {
 export function stageWords(stages: Record<string, string>, code: string | null | undefined): string {
   return code && Object.hasOwn(stages, code) ? (stages[code] as string) : workWords.unknownStage;
 }
+
+/** The words of `SavingWait` (#3347): a change DMbot has to apply, with no progress from the bot to show. */
+export const savingWait = {
+  stage: "Waiting for DMbot to save it.",
+  quiet: "DMbot is slow to answer. Your change may still go through: check the page in a minute before you try again.",
+};

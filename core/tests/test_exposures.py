@@ -211,7 +211,11 @@ class AfterTheSession(unittest.IsolatedAsyncioTestCase):
             exposures=SimpleNamespace(record=AsyncMock(return_value=1)),
             transcripts=SimpleNamespace(lines=AsyncMock(return_value=lines)),
             campaigns=SimpleNamespace(
-                get=AsyncMock(return_value=SimpleNamespace(dm_user_ids=frozenset({DM_ID})))
+                get=AsyncMock(
+                    return_value=SimpleNamespace(
+                        dm_user_ids=frozenset({DM_ID}), dm_accounts=frozenset({DM_ID})
+                    )
+                )
             ),
             consent=SimpleNamespace(consenting=AsyncMock(return_value={PLAYER, DM_ID})),
         )

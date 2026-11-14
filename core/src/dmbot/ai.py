@@ -36,6 +36,7 @@ from typing import Any, Protocol
 
 import aiohttp
 
+from dmbot import ai_feed, credits
 from dmbot.alerts import Problem, raise_alert
 
 log = logging.getLogger(__name__)
@@ -122,6 +123,9 @@ class Feature(enum.StrEnum):
     # The game time an imported session ended at (#2979): a background call, so unlike the live
     # suggestion above it is not a live feature and gets the generous floor (#2596).
     IMPORT_TIME = "import_time"
+    # A session recast as a script with every reference resolved (#3244): a background call for the
+    # DM alone, scene by scene, so it gets the generous floor like the other background jobs.
+    THEATRE = "theatre"
     RECAP_WRITE = "recap_write"  # the recap written as plain text by the creative model (#2074)
     RECAP_FORMAT = "recap_format"  # that text shaped into sections by the small model (#2074)
     RULE_CONFLICTS = "rule_conflicts"  # a saved house rule that disagrees with another (#2284)
@@ -129,6 +133,9 @@ class Feature(enum.StrEnum):
     IMAGE_MAP = "image_map"  # a map's places and layout, read again by the careful model (#2450)
     PLOT_CHECK = "plot_check"  # a recap against the earlier accepted ones, for the DM (#2122)
     PLOT_TALK = "plot_talk"  # the DM talks an issue of that check through with PlotBot (#2123)
+    # How to say a name, suggested to a DM on the website (#3806): one short answer they press for.
+    SAID_AS = "said_as"
+    GRAPH_REVIEW = "graph_review"  # did DMbot miss what the DM fixed on the clean-up page (#3741)
     # PlotBot's name pass on a finished transcript (#2628): which list name a misheard word means.
     NAME_PASS = "name_pass"
     # Who "he", "the king" or "his sister" is in a lore or story read (#2790): scored candidates
@@ -181,6 +188,7 @@ FEATURE_TIERS = {
     Feature.RECAP: AIModelTier.FAST,
     Feature.PLAN_READER: AIModelTier.CAREFUL,  # read once and kept; it must not make things up
     Feature.IMPORT_TIME: AIModelTier.FAST,  # one small answer over a session's cue lines
+    Feature.THEATRE: AIModelTier.FAST,  # a scene recast as a script; checked in code (#3244)
     Feature.TIME_SUGGEST: AIModelTier.FAST,  # one short line, one small answer, a DM presses
     Feature.SUPPORT: AIModelTier.DEEP,  # a person is reading the answer, and it must not mislead
     Feature.RECAP_RETRY: AIModelTier.CAREFUL,
@@ -197,6 +205,8 @@ FEATURE_TIERS = {
     Feature.PLOT_CHECK: AIModelTier.CAREFUL,
     # Short advice and proposals the DM saves or declines; code checks every quotation (#2123).
     Feature.PLOT_TALK: AIModelTier.CAREFUL,
+    Feature.SAID_AS: AIModelTier.FAST,  # one spelling, shown to the DM who presses; they decide
+    Feature.GRAPH_REVIEW: AIModelTier.CAREFUL,  # the owner's "careful" call (#3741)
     # Written into the transcript the whole server reads, but only a sure answer naming one of the
     # offered list names, and the DM can Undo (#2628).
     Feature.NAME_PASS: AIModelTier.CAREFUL,
@@ -491,9 +501,13 @@ class TierClient:
         max_tokens: int = 8000,
         schema: dict[str, Any] | None = None,
         images: Sequence[Image] = (),
+        cache_prefix: str = "",
     ) -> Reply:
         """`schema`: ask for the answer as JSON of this shape (structured outputs, #2039).
-        `images`: sent with the text, for a job that reads a picture (#2450)."""
+        `images`: sent with the text, for a job that reads a picture (#2450).
+        `cache_prefix`: text that comes first in the user's message and is the same on every call
+        of a job (a session's transcript), marked to be remembered between calls (#4054)."""
+        extra: dict[str, Any] = {"cache_prefix": cache_prefix} if cache_prefix else {}
         return await self._client.complete(
             system,
             text,
@@ -503,6 +517,7 @@ class TierClient:
             cache_system=self.cache_system,
             schema=schema,
             images=images,
+            **extra,  # (only when used, so a stand-in client without it is unaffected)
         )
 
 
@@ -749,12 +764,59 @@ class AnthropicClient:
         cache_system: bool = False,
         schema: dict[str, Any] | None = None,
         images: Sequence[Image] = (),
+        cache_prefix: str = "",
     ) -> Reply:
         """One request on `tier`: `system` instructions, `text` as the user's message (after any
-        `images`, #2450).
+        `images`, #2450). `cache_prefix`: the front of that message, marked to be remembered
+        between calls (#4054); the Gemini path sends it in front of `text`, uncached.
         Returns the answer's text, and whether it was cut off at `max_tokens`. If the
         tier's model is refused, the next tier down answers instead. Raises AIError in
         plain words (AIOutOfFunds never falls back)."""
+        # A lore read or an import also notes the first 500 characters of the prompt and the reply
+        # for the DM's live window (#3710). `begin`, `done` and `failed` only schedule a short write
+        # on a connection of their own and never raise, so the call is exactly what it was.
+        entry = ai_feed.begin(cache_prefix + text, tier.value, images)
+        try:
+            reply = await self._complete(
+                system,
+                text,
+                tier=tier,
+                max_tokens=max_tokens,
+                feature=feature,
+                cache_system=cache_system,
+                schema=schema,
+                images=images,
+                cache_prefix=cache_prefix,
+            )
+        except BaseException as exc:
+            ai_feed.failed(
+                entry,
+                str(exc)  # (an AIError's words are fixed plain sentences, never the service's text)
+                if isinstance(exc, AIError)
+                else "Stopped before it answered."
+                if isinstance(exc, asyncio.CancelledError)
+                else FAILED,
+            )
+            raise
+        ai_feed.done(entry, reply.text)
+        # Charged for what the service reported, even when the answer was cut: it billed DMbot for
+        # those tokens. Free outside a job that prepares material (#4005).
+        await credits.record(reply, feature)
+        return reply
+
+    async def _complete(
+        self,
+        system: str,
+        text: str,
+        *,
+        tier: AIModelTier,
+        max_tokens: int = 8000,
+        feature: str | None = None,
+        cache_system: bool = False,
+        schema: dict[str, Any] | None = None,
+        images: Sequence[Image] = (),
+        cache_prefix: str = "",
+    ) -> Reply:
         chain = self._chain(tier)
         unavailable: list[tuple[AIModelTier, str]] = []  # refused on this call (tier, model)
         live = feature in LIVE_FEATURES
@@ -768,7 +830,7 @@ class AnthropicClient:
                     # against this limit) and never past what Gemini takes, or it refuses (#2575).
                     reply = await self._gemini.request(
                         system,
-                        text,
+                        cache_prefix + text,
                         min(room, max_output(model)),
                         step,
                         model,
@@ -792,6 +854,7 @@ class AnthropicClient:
                         schema=schema,
                         images=images,
                         live=live,
+                        cache_prefix=cache_prefix,
                     )
             except _ModelRefused as refused:
                 if lower is None:
@@ -844,6 +907,7 @@ class AnthropicClient:
         schema: dict[str, Any] | None = None,
         images: Sequence[Image] = (),
         live: bool = False,
+        cache_prefix: str = "",
     ) -> Reply:
         # `live`: a table answer keeps the short wait (`LIVE_TIMEOUT_S`).
         # `images`: each goes in as an image block before the text, base64 (#2450).
@@ -853,19 +917,31 @@ class AnthropicClient:
         # `cache_system`: ask the service to remember the system text between calls, which it
         # charges much less to read again. It only does so above a minimum length that depends on
         # the model, and otherwise just answers as usual; the log line's cache_read says if it did.
+        # `cache_prefix` (#4054): the same front for every call of a job, sent as the first block of
+        # the user's message and marked to be remembered, then the part that changes. The service
+        # reuses only an identical front, so the caller keeps the words and their order exact.
         content: Any = text
+        if cache_prefix:
+            content = [
+                {"type": "text", "text": cache_prefix, "cache_control": {"type": "ephemeral"}}
+            ]
         if images:
             content = [
-                {
-                    "type": "image",
-                    "source": {
-                        "type": "base64",
-                        "media_type": image.media_type,
-                        "data": base64.b64encode(image.data).decode("ascii"),
-                    },
-                }
-                for image in images
+                *(content if cache_prefix else []),
+                *(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": image.media_type,
+                            "data": base64.b64encode(image.data).decode("ascii"),
+                        },
+                    }
+                    for image in images
+                ),
+                *([{"type": "text", "text": text}] if text else []),
             ]
+        elif cache_prefix and text:  # (the service refuses an empty block: a prefix alone is fine)
             content.append({"type": "text", "text": text})
         body: dict[str, Any] = {
             "model": model,
@@ -955,8 +1031,13 @@ class AnthropicClient:
             stop=data["stop_reason"] if isinstance(data.get("stop_reason"), str) else "",
         )
         if self._watch is not None:
-            # `input_tokens` leaves out what the cache wrote or read. Count a write in full and
-            # a read at a tenth (what it is charged about), so the spend watch does not undercount.
-            billed = reply.input_tokens + reply.cache_write_tokens + reply.cache_read_tokens // 10
+            # `input_tokens` leaves out what the cache wrote or read. A write is charged 1.25
+            # times an input token and a read a tenth (#4054), so the spend watch does not
+            # undercount.
+            billed = (
+                reply.input_tokens
+                + reply.cache_write_tokens * 5 // 4
+                + reply.cache_read_tokens // 10
+            )
             self._watch.record(billed, reply.output_tokens, feature)
         return reply

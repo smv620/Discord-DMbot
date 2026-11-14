@@ -1,0 +1,42 @@
+/** @jsxImportSource preact */
+// The parts of joining two names that only show when it is on (#4155): the "Joining X" banner, and the "Connect to another name" button
+// with its Ctrl/⌘ hint. A separate file so the Story Graph page's first download stays within its budget.
+import { useEffect, useRef } from "preact/hooks";
+
+import { pairingWords as w } from "../content/connection-pairing-words";
+
+export default function WebPairing({ kind, name, onPair, id }: { kind: "banner" | "button"; name: string; onPair: (id: string) => void; id: string }) {
+  // While the banner is up, Escape cancels the pending join, as Cancel does. The listener is only there for the banner, and goes when it does.
+  // The latest onPair is read through a ref, so the page's new callback on each render does not re-add the listener.
+  const latest = useRef(onPair);
+  latest.current = onPair;
+  useEffect(() => {
+    if (kind !== "banner") return;
+    const escape = (e: KeyboardEvent): void => {
+      if (e.key !== "Escape" || e.defaultPrevented) return;
+      // In full screen, Escape leaves full screen (the map's own key); a text box or a dialog keeps its Escape for itself.
+      if (document.querySelector(".web-map.web-full")) return;
+      if ((e.target as Element | null)?.closest?.('input, textarea, select, [contenteditable="true"], [role="alertdialog"], [role="dialog"]')) return;
+      latest.current(id);
+    };
+    window.addEventListener("keydown", escape);
+    return () => window.removeEventListener("keydown", escape);
+  }, [kind, id]);
+  if (kind === "banner")
+    return (
+      <p class="web-side note" role="status">
+        {w.pickSecond(name)}{" "}
+        <button type="button" class="button secondary" onClick={() => onPair(id)}>
+          {w.cancel}
+        </button>
+      </p>
+    );
+  return (
+    <>
+      <button type="button" class="button secondary" onClick={() => onPair(id)}>
+        {w.connectTo}
+      </button>
+      <p class="small muted">{w.ctrlHint}</p>
+    </>
+  );
+}

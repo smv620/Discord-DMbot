@@ -10,8 +10,9 @@ import time
 from typing import Any
 from unittest.mock import AsyncMock, patch
 
-from dmbot import lore_upload
+from dmbot import ai_feed, lore_upload
 from dmbot.memory import lore_queue as q
+from dmbot.memory import lore_read
 from dmbot.memory.lore_queue import LoreQueue
 from dmbot.memory.lore_read import LORE_TIME_LIMIT_S
 from dmbot.ui import name_background as ui_bg
@@ -93,6 +94,18 @@ class TheWorker(NamesTest):
         self.assertGreater(await self.entries(), 0)  # names wait in Check new names
         self.assertIsNone(await self.queue.claim_next(GUILD))  # nothing is read a second time
 
+    async def test_the_names_a_read_proposed_are_kept_on_the_row_for_add_all(self) -> None:
+        uid = await self.add()
+        await self.work()
+        found = (await self.row(uid))["found"]  # ids by kind, never a name (#3207)
+        waiting = {
+            e.id for e in await self.memory.entities(GUILD, self.campaign.id, statuses=["proposed"])
+        }
+        kept = {i for ids in found.values() for i in ids}
+        self.assertTrue(kept)
+        self.assertEqual(kept, waiting)
+        self.assertEqual(sum(len(v) for v in found.values()), (await self.row(uid))["names_found"])
+
     async def test_the_claims_choice_reaches_the_read_and_the_flags(self) -> None:
         await self.add()  # (the page said: world general knowledge)
         asked: list[dict[str, Any]] = []
@@ -107,6 +120,50 @@ class TheWorker(NamesTest):
         self.assertEqual([k["choice"] for k in asked], ["world"])
         names = await self.memory.entities(GUILD, self.campaign.id, statuses=["proposed"])
         self.assertTrue(names and not any(e.hidden_from_players for e in names))
+
+    async def test_every_ai_call_of_the_read_is_filed_under_this_upload_and_its_step(self) -> None:
+        """#3710: each AI call the read makes carries this upload (the id the lore page polls) and
+        the step it belongs to, the shaping calls included (they run in tasks of their own); the job
+        is gone once the read ends."""
+        uid = await self.add()
+        seen: list[tuple[bool, Any]] = []
+        real = self.ai.complete.side_effect
+
+        async def watching(system: str, text: str, **kw: Any) -> Any:
+            seen.append((kw.get("schema") is not None, ai_feed._current.get()))
+            return await real(system, text, **kw)
+
+        self.ai.complete.side_effect = watching
+        await self.work()
+        self.assertTrue(seen)
+        for _shaping, ctx in seen:
+            assert ctx is not None
+            self.assertEqual(
+                (ctx.guild_id, ctx.campaign_id, ctx.kind, ctx.job_id),
+                (GUILD, self.campaign.id, "lore", uid),
+            )
+        first = [ctx.step for shaping, ctx in seen if not shaping]
+        shaped = [ctx.step for shaping, ctx in seen if shaping]
+        self.assertTrue(first and shaped)
+        self.assertTrue(all(step.startswith("Reading it.") for step in first))
+        self.assertTrue(all(step.startswith("Finding names. (part ") for step in shaped))
+        self.assertIsNone(ai_feed._current.get())
+
+    def test_the_step_words_are_the_pages_and_hold_counts_only(self) -> None:
+        self.assertEqual(lore_read.step_words("reading", 0, 0), "Reading it.")
+        self.assertEqual(
+            lore_read.step_words("who", 3, 10), "Finding how they connect. (part 3 of 10)"
+        )
+        self.assertEqual(lore_read.step_words("shaping", 0, 4), "Finding names.")
+        self.assertEqual(lore_read.step_words("odd", 0, 0), "Reading it.")
+
+    def test_the_reporter_names_the_part_being_worked_on(self) -> None:
+        with ai_feed.job(GUILD, "c", "lore", "u" * 32):
+            report = lore_upload._Reporter(self.queue, GUILD, None)  # type: ignore[arg-type]
+            report("who", 0, 4)  # (before the first call)
+            self.assertEqual(ai_feed._current.get().step, "Finding how they connect. (part 1 of 4)")  # type: ignore[union-attr]
+            report("who", 4, 4)  # (all done: no part 5)
+            self.assertEqual(ai_feed._current.get().step, "Finding how they connect. (part 4 of 4)")  # type: ignore[union-attr]
 
     async def test_a_sender_who_stopped_being_a_dm_reads_nothing(self) -> None:
         uid = await self.add(user=MANAGER)  # (a manager is no DM of the campaign)
@@ -218,6 +275,26 @@ class TheWorker(NamesTest):
         everything = "\n".join(r.getMessage() for r in logged.records)
         for word in ("Mirelle", "Grey Hand", "Brannoch", SECRET_WORDS):
             self.assertNotIn(word, everything)
+
+    async def test_a_read_leaves_the_words_and_calls_it_handled(self) -> None:
+        """#3534: counts only; written one last time as the read ends, so a quick read keeps
+        them too."""
+        uid = await self.add()
+        await self.work()
+        row = await self.row(uid)
+        self.assertEqual(row["words_done"], len(TEXT.split()))
+        self.assertGreaterEqual(row["calls_made"], 1)
+
+    async def test_a_count_never_goes_back_and_a_lost_claim_writes_nothing(self) -> None:
+        uid = await self.add()
+        claim = await self.queue.claim_next(GUILD)
+        assert claim is not None
+        self.assertTrue(await self.queue.progress(GUILD, claim, "reading", 0, 0, 10, 2))
+        self.assertTrue(await self.queue.progress(GUILD, claim, "reading", 0, 0, 4, 1))
+        row = await self.row(uid)
+        self.assertEqual((row["words_done"], row["calls_made"]), (10, 2))
+        stale = dataclasses.replace(claim, claimed_at=claim.claimed_at + 1)
+        self.assertFalse(await self.queue.progress(GUILD, stale, "reading", 0, 0, 99, 9))
 
     async def test_a_cancelled_read_puts_the_claim_back_for_the_next_start(self) -> None:
         import asyncio

@@ -34,7 +34,9 @@ import {
 } from "./api";
 import { CueProblems, CueWordsHelp } from "./CueParts";
 import CuedText, { hasCues } from "./CuedText";
+import DraftPreview from "./DraftPreview";
 import RecapUnchecked from "./RecapUnchecked";
+import ScribeHand from "./ScribeHand";
 import RecapApprove from "./RecapApprove";
 import RecapEmailLine from "./RecapEmail";
 import RecapFixName from "./RecapFixName";
@@ -112,6 +114,14 @@ export default function Recaps({
       {ref ? <Review api={api} recapRef={ref} /> : <List api={api} campaign={campaignFromSearch(search)} />}
     </div>
   );
+}
+
+/** Why a post was refused, in words, when the API says so (#3355): the reason code of a failed posting progress. A code the
+ * page has no words for gives null, and the general "couldn't confirm" line is used. */
+function refusal(recap: Recap): string | null {
+  const shared = recap.postingProgress;
+  if (shared?.state !== "failed" || !shared.reason) return null;
+  return text.postWhy[shared.reason] ?? null;
 }
 
 function SignedOut() {
@@ -620,7 +630,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
   const refresh = async (error: unknown) => {
     if (
       !(error instanceof ApiError) ||
-      !["not-allowed", "not-editable"].includes(error.kind)
+      !["not-allowed", "not-editable", "no-tries", "no-lines"].includes(error.kind)
     )
       return;
     try {
@@ -769,9 +779,9 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         </p>
       )}
       <RecapProgress recap={recap} />
-      {recap.status === "draft" && sawPosting.current && !recap.working && (
+      {recap.status === "draft" && !recap.working && (sawPosting.current || refusal(recap) !== null) && (
         <p class="warn" role="alert">
-          {text.postFailed}
+          {refusal(recap) ?? text.postFailed}
         </p>
       )}
       {recap.status === "dropped" && <p role="status">{text.dropped}</p>}
@@ -781,9 +791,13 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
         </p>
       )}
       {recap.working && (
-        <p class="panel" role="status">
-          {recap.waitingForCheck || sawWaiting.current ? text.waitingForCheck : text.working}
-        </p>
+        <div class="panel" role="status">
+          <p>{recap.waitingForCheck || sawWaiting.current ? text.waitingForCheck : text.working}</p>
+          <ScribeHand
+            stage={recap.progress?.stage}
+            moving={!recap.waitingForCheck && !sawWaiting.current && recap.progress?.state !== "stalled" && recap.progress?.state !== "failed"}
+          />
+        </div>
       )}
       <RecapUnchecked api={api} recap={recap} onRecap={setRecap} pageFocus={() => headingRef.current} />
       {/* The only place the page says an email is coming, so the only place it names the address. */}
@@ -855,9 +869,11 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           <>
             <section class="panel">
               <h3>{text.textHeading}</h3>
-              {recap.text.split(/\n{2,}/).map((p, i) => (
-                <p key={i}>{p}</p>
-              ))}
+              <DraftPreview checking={recap.working && recap.status === "draft"}>
+                {recap.text.split(/\n{2,}/).map((p, i) => (
+                  <p key={i}>{p}</p>
+                ))}
+              </DraftPreview>
             </section>
             {RECAP_AUDIO_LIVE && recap.audio && hasCues(recap.summary) && (
               <section class="panel" aria-labelledby="recap-cues">
@@ -936,6 +952,38 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           }}
         />
       )}
+      {/* Edit and Try again sit above the approve choices, so they are the first thing a reader can do to the text (owner, 2026-11-06). */}
+      {!editing &&
+        !recap.working &&
+        (recap.canEdit || recap.canTryAgain || !decided) && (
+          <div class="row">
+            {recap.canEdit && (
+              <button
+                type="button"
+                class="button secondary"
+                onClick={startEdit}
+                disabled={busy !== null}
+              >
+                <span aria-hidden="true">✍️ </span>
+                {text.edit}
+              </button>
+            )}
+            {!decided && (
+              <button
+                type="button"
+                class="button secondary"
+                onClick={() => decide("again")}
+                disabled={busy !== null || !recap.canTryAgain}
+              >
+                <span aria-hidden="true">🔂 </span>
+                {busy === "again" ? text.busy : againLabel(recap.triesLeft)}
+              </button>
+            )}
+          </div>
+        )}
+      {!decided && !recap.working && !recap.canTryAgain && recap.triesLeft === 0 && recap.state !== "failed" && (
+        <p class="small">{text.noTriesLeft}</p>
+      )}
       {!editing && <RecapApprove
           key={recap.ref}
           api={api}
@@ -957,7 +1005,7 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
       {!editing && <AudioPanel api={api} recap={recap} onRecap={setRecap} remake={remake} />}
       {!editing && <AudioOffer api={api} />}
       {!editing && <RecapChoicesPart api={api} recapRef={recap.ref} email={recap.recapEmail} working={recap.working} onEmail={setEmailOn} />}
-      {!editing && <LazyPanel load={() => import("./RecapNames")} what="the names in this campaign" props={{ api, recapRef: recap.ref }} />}
+      {!editing && <LazyPanel load={() => import("./RecapNames")} what="the names in this recap" props={{ api, recapRef: recap.ref, recapText: recap.text }} />}
       {PRESENT_PER_SCENE_LIVE && !editing && (
         <LazyPanel
           key={`present-${recap.ref}`}
@@ -981,35 +1029,6 @@ function Review({ api, recapRef }: { api: AccountApi; recapRef: string }) {
           what="the after-session report"
           props={{ api, campaignRef: recap.campaign, sessionAt: recap.sessionAt }}
         />
-      )}
-      {!editing &&
-        !recap.working &&
-        (recap.canEdit || recap.canTryAgain || !decided) && (
-          <div class="row">
-            {recap.canEdit && (
-              <button
-                type="button"
-                class="button secondary"
-                onClick={startEdit}
-                disabled={busy !== null}
-              >
-                {text.edit}
-              </button>
-            )}
-            {!decided && (
-              <button
-                type="button"
-                class="button secondary"
-                onClick={() => decide("again")}
-                disabled={busy !== null || !recap.canTryAgain}
-              >
-                {busy === "again" ? text.busy : againLabel(recap.triesLeft)}
-              </button>
-            )}
-          </div>
-        )}
-      {!decided && !recap.working && !recap.canTryAgain && recap.triesLeft === 0 && recap.state !== "failed" && (
-        <p class="small">{text.noTriesLeft}</p>
       )}
         </>
       )}

@@ -21,6 +21,7 @@ still be a DM of the campaign.
 
 from __future__ import annotations
 
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -30,7 +31,7 @@ from typing import Any
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Database
 from dmbot.recaps import feedback as fb
-from dmbot.recaps import style
+from dmbot.recaps import must_haves, style
 from dmbot.rules.house import HouseRuleError
 
 log = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ KEEP_FOR_S = 86400  # nothing stays longer than a day
 
 ADD_EXAMPLE, REMOVE_EXAMPLE, USE_DEFAULTS = "add_example", "remove_example", "use_defaults"
 ADD_NOTE, REMOVE_NOTE = "add_note", "remove_note"
+SAVE_MUSTS, MUSTS_DEFAULTS = "save_musts", "musts_defaults"  # the must-have list (#3328)
 
 # Why a choice failed: one word each. The page knows `full`, `gone`, `too_long`, `empty` and
 # `not_a_note`, and says "Nothing was changed" for the rest.
@@ -158,6 +160,9 @@ _WORDS: dict[str, str] = {
     style.NOTE_GONE: GONE,
     style.TOO_LONG: TOO_LONG,
     style.EMPTY: EMPTY,
+    must_haves.EMPTY: EMPTY,
+    must_haves.TOO_LONG: TOO_LONG,
+    must_haves.TOO_MANY: FULL,
 }
 
 
@@ -211,6 +216,8 @@ async def apply(bot: Any, queue: StyleQueue, guild_id: int, claim: Claim) -> str
             if not await queue.hold(guild_id, claim):
                 return ""
             await styles.use_defaults(guild_id, cid, uid)
+        elif action in (SAVE_MUSTS, MUSTS_DEFAULTS):
+            return await _musts(bot, queue, guild_id, claim)
         else:
             return FAILED
     except (CampaignError, HouseRuleError) as exc:
@@ -246,4 +253,29 @@ async def _add_note(bot: Any, queue: StyleQueue, guild_id: int, claim: Claim, ca
         await bot.recap_notes.add(guild_id, campaign.id, claim.user_id, words)
     except (CampaignError, HouseRuleError) as exc:
         return error_of(exc, words)
+    return ""
+
+
+async def _musts(bot: Any, queue: StyleQueue, guild_id: int, claim: Claim) -> str:
+    """Save the whole must-have list, or go back to DMbot's own (#3328). The list is the DM's own
+    words, so `arg` is blanked as for a pasted example. The store checks the DM and the limits
+    again; a list that is the defaults word for word is stored as no list."""
+    musts = bot.recap_musts
+    if musts is None:
+        return FAILED
+    texts: list[str] = []
+    if claim.action == SAVE_MUSTS:
+        try:
+            loaded = json.loads(claim.arg)
+        except ValueError:
+            return FAILED
+        if not isinstance(loaded, list) or not all(isinstance(t, str) for t in loaded):
+            return FAILED
+        texts = loaded
+    if not await queue.hold(guild_id, claim):
+        return ""
+    try:
+        await musts.replace(guild_id, claim.campaign_id, claim.user_id, texts)
+    except (CampaignError, HouseRuleError) as exc:
+        return error_of(exc, claim.arg)
     return ""

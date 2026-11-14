@@ -27,8 +27,19 @@ from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
 ACTIONS = frozenset(
-    {"publish", "stop_sharing", "look_code", "follow_here", "follow_code", "unfollow"}
+    {
+        "publish",
+        "stop_sharing",
+        "look_code",
+        "follow_here",
+        "follow_code",
+        "unfollow",
+        "decide_clash",
+        "clear_clash",
+    }
 )
+# `W:L` or `A:B`: two different numbers of the campaign's own rules (#3697); the door checks again.
+CLASH_ARG = re.compile(r"^[1-9][0-9]{0,8}:[1-9][0-9]{0,8}$")
 ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 NAME_MAX = 60
 
@@ -71,14 +82,16 @@ def shape(got: dict[str, Any], *, can_share: bool) -> dict[str, Any]:
     }
 
 
-async def _can_share(db: Database, owner: str | None, now: int, *, enforce_plans: bool) -> bool:
+async def _can_share(
+    db: Database, owner: str | None, now: int, *, enforce_plans: bool, guild_id: int | None = None
+) -> bool:
     """Whether the campaign's plan lets it share house rules: the owner's plan, the check Discord
     makes (`plan_rules` "share"). A campaign with no owner has no plan."""
     if not enforce_plans:
         return True
     if owner is None or not owner.isdecimal():
         return False
-    _plan, _grant, access = await plan_grant_access(db, int(owner), now)
+    _plan, _grant, access = await plan_grant_access(db, int(owner), now, guild_id=guild_id)
     return plan_rules.allowed(plan_rules.RULE_OF["share"], access)
 
 
@@ -98,7 +111,9 @@ async def read_sharing(
     got = found["r"] if found else None
     if got is None:
         raise RecapError("not_allowed")
-    can_share = await _can_share(db, got.get("owner"), now, enforce_plans=enforce_plans)
+    can_share = await _can_share(
+        db, got.get("owner"), now, enforce_plans=enforce_plans, guild_id=guild_id
+    )
     return shape(got, can_share=can_share)
 
 
@@ -120,7 +135,30 @@ def _choice(body: object) -> tuple[str, str]:
             raise RecapError("bad_arg")
     elif action in ("stop_sharing", "unfollow"):
         arg = ""
+    elif action in ("decide_clash", "clear_clash"):
+        first, _, second = arg.partition(":")
+        if not CLASH_ARG.match(arg) or first == second:
+            raise RecapError("bad_arg")
     return action, arg
+
+
+async def read_decisions(db: Database, session: Session, ref: str) -> list[dict[str, Any]]:
+    """The campaign's decided rule clashes for a DM of it (#3697): each pair as `a` and `b`
+    (`set` is "" for the campaign's own rule, else the followed set's name, and `number`), the
+    `winner` (`"a"` or `"b"`) and when. No rule's words: the page has them from the rules read. A
+    server the person is not in is "not found"; anyone who is not a DM is "not allowed"."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_rule_decisions(%s, %s) AS r", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_allowed")
+    return list(got)
 
 
 async def queue_action(

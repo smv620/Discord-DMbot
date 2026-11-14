@@ -227,7 +227,9 @@ class ThePresser(unittest.IsolatedAsyncioTestCase):
         memory.entity = AsyncMock(return_value=SimpleNamespace(hidden_from_players=False))
         memory.set_hidden_from_players = AsyncMock()
         told = AsyncMock()
-        campaign = SimpleNamespace(guild_id=1, id="c" * 32, dm_user_ids=frozenset({7}))
+        campaign = SimpleNamespace(
+            guild_id=1, id="c" * 32, dm_user_ids=frozenset({7}), dm_accounts=frozenset({7})
+        )
         interaction = MagicMock()
         interaction.user.id = user_id
         with (

@@ -64,11 +64,11 @@ Add one made-up person on the Names list first (type `/dmbot names`, press ➕ A
 For Check 6 you also need a player character: press 🧑 Add a player's character on the Names list if you
 have none.
 
-### 5. How an NPC feels about the party (Standing)
-**You'll do:** open Captain Rook's name card and press 🤝 Standing. Then press **Toward a character…** and set
+### 5. How an NPC feels about the party (Reputation)
+**You'll do:** open Captain Rook's name card and press 🤝 Reputation. Then press **Toward a character…** and set
 a feeling.
 
-**It worked if:** Standing shows Hostile, Unfriendly, Wary, Friendly or Devoted with the reason, and only you
+**It worked if:** Reputation shows Hostile, Unfriendly, Wary, Friendly or Devoted with the reason, and only you
 can see it.
 
 Unlocks: #1655
@@ -77,7 +77,7 @@ Unlocks: #1655
 **You'll do:** open a player character's name card, press ⚔️ Record a deed, type what happened, pick the person (Captain
 Rook) and **Helped them**, and press ✅ Record it.
 
-**It worked if:** Standing now shows the deed as a reason, for example "(session 1, helped)", and ↩ Undo that
+**It worked if:** Reputation now shows the deed as a reason, for example "(session 1, helped)", and ↩ Undo that
 works for a short while.
 
 Unlocks: #1732
@@ -240,5 +240,9 @@ Unlocks: #1831
 - **Heads-up when a fallen character speaks (#2068, #2078):** off until `DMBOT_LIVE_HEADS_UP=1`. It also needs a
   character confirmed as dead, and today only the story extractor (#1282) starts that, so there is nothing to check yet.
 - **Bring in older sessions (#2105, #2106, #2107):** not built yet, so there is nothing to check yet.
+- **A script of your session (#3244):** dev1 checks the button on the test server before the entry leaves held. It spends real AI money, so DMbot shows the cost first, and nothing needs the owner until dev1 has seen it work.
+- **Split and group names on the website (#3406):** dev1 checks it on the test server before the What's new entry leaves held; nothing needs the owner until dev1 has seen it work.
+- **Questions for you on the website (#3438):** dev1 opens the Questions list in Discord and the Questions page on the test site for one campaign and sees the same counts and words; a player gets neither. Then the entry leaves held. Nothing needs the owner until dev1 has seen it work.
+- **See where a name was said (#3384):** dev1 presses 📜 Where was it said? on a name question in the test campaign and sees up to three places with a line either side; a player who presses it is refused. Then the entry leaves held. Nothing needs the owner until dev1 has seen it work.
 
 The reasons are in `docs/GO_LIVE.md`.

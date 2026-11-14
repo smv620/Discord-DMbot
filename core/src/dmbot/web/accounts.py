@@ -3,6 +3,7 @@ from here, so every public name is re-exported with the `as` form (mypy strict n
 
 from dmbot.accounts import NAME_MAX as NAME_MAX
 from dmbot.accounts import account_email as account_email
+from dmbot.accounts import account_of as account_of
 from dmbot.accounts import active_subscription as active_subscription
 from dmbot.accounts import customer_id as customer_id
 from dmbot.accounts import delete_person as delete_person

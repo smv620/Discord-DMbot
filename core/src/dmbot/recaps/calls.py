@@ -76,6 +76,8 @@ class CallEvent:
     # pc_form, heard_as, plural, ordinary_word, unknown. Counts only, never the names.
     names: dict[str, int] = field(default_factory=dict)
     outcome: str = ""  # on the prose call whose draft became the recap
+    # runs copied from an earlier recap: counted only, never a retry reason (#2965)
+    copies: int | None = None
 
 
 def line(event: CallEvent) -> str:

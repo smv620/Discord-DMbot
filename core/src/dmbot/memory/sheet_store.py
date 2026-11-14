@@ -109,7 +109,9 @@ class SheetStore:
         cleaned = sheets.clean(snapshot)
         if cleaned is None:
             raise SheetRefused("That isn't a character sheet DMbot can keep.")
-        async with self._db.guild(guild_id) as conn:
+        # Lineage (#3739): a snapshot read from a link is DMbot's work and takes the running build's
+        # stamp; one the DM typed is theirs and keeps it.
+        async with self._db.guild(guild_id, by_dmbot=url is not None) as conn:
             if url is not None:
                 cur = await conn.execute(
                     "UPDATE character_sheets SET sheet = %s, source = %s, fetched_at = %s"
@@ -223,7 +225,9 @@ class SheetStore:
                 "  AND e.id = s.entity_id"
                 " WHERE s.guild_id = %s AND s.campaign_id = %s"
                 "  AND (%s::text IS NULL OR s.entity_id = %s)"
-                "  AND e.status NOT IN ('merged', 'rejected') AND e.played_by IS NOT NULL"
+                "  AND e.status NOT IN ('merged', 'rejected') AND e.played_by > 0"
+                # (`> 0`: a player without Discord has a negative number, #3690, and DMbot never
+                # asks or messages one, so its character has no sheet to re-read)
                 # Only the sheet of whoever plays it now: never a previous player's.
                 "  AND s.player_id = e.played_by"
                 " ORDER BY lower(e.name), s.entity_id",
@@ -292,6 +296,7 @@ class SheetStore:
             row is None
             or row["status"] in ("merged", "rejected")
             or row["played_by"] is None
+            or int(row["played_by"]) < 0  # a player without Discord: no sheet to ask about (#3690)
             or row["type"] == "person"  # a player, not their character (#1188)
             or (player is not None and row["played_by"] != player)
         ):

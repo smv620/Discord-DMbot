@@ -146,7 +146,9 @@ def rows_of(recasts: Sequence[th.Recast], said: Mapping[int, th.Said]) -> list[t
     return rows
 
 
-def _labels(raw: Sequence[tuple[int, int, str, bool]], names: Mapping[int, str]) -> dict[int, str]:
+def speaker_labels(
+    raw: Sequence[tuple[int, int, str, bool]], names: Mapping[int, str]
+) -> dict[int, str]:
     """A distinct label for each speaker, in the order they first speak: their display name, or
     "Speaker 2" when there is none (never a Discord id), and "Alex 2" for a second person with the
     same name, so a script line can always be traced to one person."""
@@ -187,7 +189,7 @@ async def run(
     started = clock()
     report = Report()
     raw = await ts.script_input(db, guild_id, session_id, agreed)
-    labels = _labels(raw, names)
+    labels = speaker_labels(raw, names)
     said = [th.Said(i, u, labels[u], text, typed) for i, u, text, typed in raw]
     report.lines = len(said)
     scenes = th.scenes(said, agreed, size=scene_size)
@@ -207,11 +209,23 @@ async def run(
     await tell(STAGE_READING, 0)
     parts: list[tuple[list[th.Recast], set[int]]] = []  # (script lines, everyone the scene held)
     for n, scene in enumerate(scenes, 1):
+        people = {x.user_id for x in (*scene.context, *scene.lines)}
+        # Consent is asked again before a scene is sent and after the AI answered (Supervisor,
+        # #3244): a person who stopped while an earlier scene was away is never sent, and one who
+        # stopped during this call has the whole scene left out.
+        if people & (set(agreed) - set(await still_agreed())):
+            report.counts["scene_left_out_no_longer_agreed"] += 1
+            await tell(STAGE_READING, n)
+            continue
         got = await read_scene(ask, scene, table, report.counts)
         if got is None:
             report.failed_parts += 1
             break  # the result can never be saved: no more spend
-        parts.append((got, {x.user_id for x in (*scene.context, *scene.lines)}))
+        if people & (set(agreed) - set(await still_agreed())):
+            report.counts["scene_left_out_no_longer_agreed"] += 1
+            await tell(STAGE_READING, n)
+            continue
+        parts.append((got, people))
         await tell(STAGE_READING, n)
     if report.failed_parts or not any(got for got, _ in parts):
         await tell(STAGE_STOPPED if report.failed_parts else STAGE_DONE, len(parts))

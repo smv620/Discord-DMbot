@@ -41,6 +41,11 @@ def _text(value: Any, limit: int, *, empty: bool = True) -> bool:
     return isinstance(value, str) and (empty or bool(value)) and len(value) <= limit
 
 
+def _author(value: Any) -> bool:
+    """A person, or 0: someone who has left (their account was deleted, #4148)."""
+    return value == "0" or _user(value)
+
+
 def _user(value: Any) -> bool:
     return (
         isinstance(value, str)
@@ -111,7 +116,7 @@ class PlotIssuesSection:
                 and (row["answer_kind"] in ANSWERS if answered else True)
                 and _text(row["answer_note"], 500)
                 and (
-                    (_user(row["answered_by"]) and _int(row["answered_at"]))
+                    (_author(row["answered_by"]) and _int(row["answered_at"]))
                     if answered
                     else (row["answered_by"] is None and row["answered_at"] is None)
                 )
@@ -170,7 +175,7 @@ class PlotFineSection:
                 _word(row["fine_key"])
                 and row["fine_key"] not in seen
                 and _text(row["note"], 500)
-                and _user(row["by_user"])
+                and _author(row["by_user"])
                 and _int(row["at"])
             ):
                 raise CampaignError(DAMAGED)

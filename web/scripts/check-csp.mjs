@@ -14,6 +14,7 @@ import { effectiveApiBase, htmlFiles, inlineScriptHashes, mockLeaks, TURNSTILE_O
 // account/import.html: the Import sessions page; it always loads its island and decides in the page
 //   whether it is open, for the site or for a test server's campaign (#2260).
 // account/names.html: the Names page, every name in a campaign, searched and fixed by its DMs (#2295).
+// account/questions.html: the Questions page, what DMbot waits on, by kind (#3438).
 // unsubscribe.html: an offer email's unsubscribe link (#1229).
 // help.html: the search box that filters the steps in the page (#1939); it sends nothing anywhere.
 const SCRIPTED = new Set([
@@ -29,12 +30,19 @@ const SCRIPTED = new Set([
   "account/lore.html", // Upload lore (#3022)
   "account/recap-style.html", // Recap style (#2985)
   "account/names.html", // the Names page (#2295)
+  "account/clarify.html", // one name to check, with its best guesses (#3604)
+  "account/questions.html", // the Questions page (#3438)
   "account/web.html", // the relationship web (#2324)
   "account/campaigns.html", // a campaign's own page (#2416)
   "account/npc.html", // an NPC's page and my notes (#2266)
+  "account/pictures.html", // the Pictures page (#3276)
+  "account/players.html", // People you play with (#4226)
+  "new.html", // the start-up wizard (#3956)
   "handover.html", // the hand-over accept page (#2534)
   "r.html", // a shared recap (#2119): the island that reads the recap by its link
   "help.html",
+  "help/questions.html", // the same search box (#4235)
+  "help/snags.html", // the same search box (#4235)
   "hello.html",
   "admin.html",
   "pricing.html",
@@ -78,4 +86,4 @@ if (problems.length > 0) {
   console.error(problems.join("\n"));
   process.exit(1);
 }
-console.log("Every inline script is allowed by its hash; only /account, /account/recaps, /account/house-rules, /account/homebrew, /account/sharing, /account/timeline, /account/transcripts, /account/import, /account/lore, /account/recap-style, /account/names, /account/web, /account/campaigns, /account/npc, /handover, /hello, /help, /admin, /pricing and /unsubscribe have scripts.");
+console.log("Every inline script is allowed by its hash; only /account, /account/recaps, /account/house-rules, /account/homebrew, /account/sharing, /account/timeline, /account/transcripts, /account/import, /account/lore, /account/recap-style, /account/names, /account/questions, /account/web, /account/campaigns, /account/npc, /account/pictures, /handover, /hello, /help, /admin, /pricing and /unsubscribe have scripts.");

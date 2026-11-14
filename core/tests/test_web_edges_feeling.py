@@ -1,8 +1,8 @@
 """The Story Graph's words for a `knows` connection that carries a feeling (#3180, #3175).
 
-Pure (no database): the website's edges are worded by the same `link_words` as Discord's cards, so a
-`knows` with one of the nine feeling words reads "knows (hostile)" and the old friend and enemy
-connections read as they always did."""
+Pure (no database): the website's edges are worded by the same `link_words` as Discord's cards. For
+the DM a `knows` with one of the nine feeling words reads "knows (hostile)" and the old friend and
+enemy connections read as they always did; a player reads plain "knows" (#3610)."""
 
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ def _words(predicate: str, detail: str) -> str:
         "secret": False,
         "at": 1,
     }
-    edge = edges_from([row], can_edit=False)[0]
+    edge = edges_from([row], can_edit=True, is_dm=True)[0]
     return str(edge["links"][0]["words"])
 
 

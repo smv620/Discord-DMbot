@@ -81,7 +81,7 @@ class Finding(unittest.TestCase):
 def fake_table(*, level: str = "normal", dms: frozenset[int] = frozenset({DM_ID})) -> Any:
     table = SimpleNamespace(
         guild_id=GUILD, campaign_id=CID, screen_level=level, screen_channel_id=55,
-        dm_user_ids=dms, dm_user_id=None, reveal=RevealSession(),
+        dm_user_ids=dms, dm_accounts=dms, dm_user_id=None, reveal=RevealSession(),
     )  # fmt: skip
     table.is_dm = lambda u: u in dms
     return table
@@ -89,7 +89,11 @@ def fake_table(*, level: str = "normal", dms: frozenset[int] = frozenset({DM_ID}
 
 def fake_bot(table: Any, *, visibility: str = "private", consenting: bool = True) -> Any:
     campaign = SimpleNamespace(
-        guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM_ID}), dm_screen_visibility=visibility
+        guild_id=GUILD,
+        id=CID,
+        dm_user_ids=frozenset({DM_ID}),
+        dm_accounts=frozenset({DM_ID}),
+        dm_screen_visibility=visibility,
     )
     lookup = SimpleNamespace(
         get=AsyncMock(return_value=SimpleNamespace(names=[])), drop=MagicMock()
@@ -360,7 +364,11 @@ class TheHook(unittest.TestCase):
 
 def press(act: str, user: int, *, in_server: bool = True, guild: int = GUILD) -> Any:
     campaign = SimpleNamespace(
-        guild_id=GUILD, id=CID, dm_user_ids=frozenset({DM_ID}), dm_screen_visibility="private"
+        guild_id=GUILD,
+        id=CID,
+        dm_user_ids=frozenset({DM_ID}),
+        dm_accounts=frozenset({DM_ID}),
+        dm_screen_visibility="private",
     )
     written = SimpleNamespace(value=[object()])
     bot = SimpleNamespace(
@@ -516,7 +524,10 @@ class YesClearsItAndUndoRestoresIt(MemoryTest):
         )  # fmt: skip
         before = await secret_names(self.memory, GUILD_A, self.c)
         campaign = SimpleNamespace(
-            guild_id=GUILD_A, id=self.c, dm_user_ids=frozenset({DM_ID}),
+guild_id=GUILD_A,
+            id=self.c,
+            dm_user_ids=frozenset({DM_ID}),
+            dm_accounts=frozenset({DM_ID}),
             dm_screen_visibility="private",
         )  # fmt: skip
         bot = SimpleNamespace(

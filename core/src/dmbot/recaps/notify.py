@@ -64,11 +64,11 @@ async def tell_the_dm(
     guild_id: int,
     campaign_id: str,
     job: Job,
-    dm_user_ids: Iterable[int] = (),
+    dm_accounts: Iterable[int] = (),
 ) -> str:
     """Email the DMs that the job is ready or has failed: the job's own DM and the campaign's
-    other DMs (`dm_user_ids`), each once (#2237: the same people as the waiting email). Returns
-    what the mailer said to the job's DM (`sent`, `no_address`, …); never raises."""
+    other DM accounts (`dm_accounts`), each once (#2237: the same people as the waiting email).
+    Returns what the mailer said to the job's DM (`sent`, `no_address`, …); never raises."""
     if not site:
         return "not_ready"
     link = page_link(site, guild_id, campaign_id, job.session_at)
@@ -91,7 +91,7 @@ async def tell_the_dm(
         body = f"{job.last_error or 'Something went wrong.'}{again}"
         kind = _kind("failed", guild_id, campaign_id, job.session_at, job.updated_at)
     result = "no_address"
-    for user_id in dict.fromkeys((job.dm_user_id, *sorted(dm_user_ids))):  # the job's DM first
+    for user_id in dict.fromkeys((job.dm_user_id, *sorted(dm_accounts))):  # the job's DM first
         try:
             address = await store.address(guild_id, user_id)
         except Exception:  # one DM's lookup failing must not stop the others

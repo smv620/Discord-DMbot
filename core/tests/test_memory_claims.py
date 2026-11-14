@@ -27,6 +27,7 @@ from dmbot.memory.ontology import (
     REASON_BETWEEN,
     REASON_RULES_WORD,
     Ontology,
+    PredicateTerm,
     Tally,
 )
 from dmbot.schema import MIGRATIONS
@@ -153,11 +154,74 @@ class Judging(unittest.TestCase):
         )
         self.assertEqual(self.judge(said("Bram", "is", "dead", "plan")), claims.PLAN_REASON)
 
+    def test_a_single_action_is_not_a_tie(self) -> None:
+        # (#3244) a blow, a swing, a sighting or a feeding lasts one moment
+        for words in ("hits", "swings at", "can see", "cannot catch", "feeds and waters", "shot"):
+            self.assertEqual(
+                self.judge(said("Bram", words, "Hesper")), claims.ONE_OFF_REASON, words
+            )
+
+    def test_a_group_that_only_swings_at_someone_is_never_made_into_a_name(self) -> None:
+        # the check runs before the names, so "the attackers" cannot become an unknown name
+        self.assertEqual(
+            self.judge(said("The attackers", "swings at", "Hesper")), claims.ONE_OFF_REASON
+        )
+
+    def test_a_lasting_state_is_still_kept(self) -> None:
+        # held, carried, owned and served keep their own kinds, and an unknown verb that is
+        # not on the closed list goes on to the DM as before
+        self.assertEqual(self.judge(said("Heartseeker", "is held by", "Bram")), "")
+        self.assertEqual(self.judge(said("Bram", "carries", "Heartseeker")), "")
+        self.assertEqual(self.judge(said("Bram", "hold", "Hesper")), "")  # "the bandits hold her"
+        self.assertEqual(self.judge(said("Bram", "can survive", "Veldmoor")), "")
+
+    def test_a_prediction_is_never_a_fact_even_from_the_dm(self) -> None:
+        for words in ("will likely go to", "is going to reach", "shall return to"):
+            self.assertEqual(
+                self.judge(said("Bram", words, "Veldmoor")), claims.PREDICTION_REASON, words
+            )
+
+    def test_a_belief_or_a_reading_is_a_clue_not_a_one_off(self) -> None:
+        # "Hesper believes Bram shot the duke" and "Hesper expects Bram will strike at midnight"
+        # are what someone thinks, which a mystery runs on: only claims are filtered (#3364)
+        belief = {"view": "Hesper", "status": "believed"}
+        self.assertEqual(
+            self.judge(Extracted("Bram", "shot", "Hesper", "", ("1",), "player_said", belief)), ""
+        )
+        self.assertEqual(
+            self.judge(
+                Extracted("Bram", "will strike at", "Veldmoor", "", ("1",), "player_said", belief)
+            ),
+            "",
+        )
+        # the same words as a claim are still dropped
+        self.assertEqual(self.judge(said("Bram", "shot", "Hesper")), claims.ONE_OFF_REASON)
+
+    def test_a_hedge_or_a_promise_is_not_a_prediction(self) -> None:
+        for words in ("might be the brother of", "may know", "would die for"):
+            self.assertNotEqual(
+                self.judge(said("Bram", words, "Hesper")), claims.PREDICTION_REASON, words
+            )
+
+    def test_a_term_a_campaign_made_for_a_moment_word_is_kept(self) -> None:
+        # the guard: a relationship DMbot does place is never dropped, whatever its first word
+        mine = PredicateTerm(
+            key="watched_by", label="watches", description="a standing watch",
+            subject_types=("character",), object_types=("character",), core=False,
+        )  # fmt: skip
+        onto = Ontology.build(extra_predicates=[mine])
+        kept = judge(said("Bram", "watches", "Hesper"), onto, NAMES, [7], {7})
+        self.assertEqual(kept, "")
+        # and without that term, the same words are one moment
+        self.assertEqual(self.judge(said("Bram", "watches", "Hesper")), claims.ONE_OFF_REASON)
+
     def test_an_unknown_name_or_the_wrong_kind_is_dropped(self) -> None:
         self.assertEqual(self.judge(said("Nobody", "knows", "Hesper")), claims.UNKNOWN_NAME_REASON)
         self.assertEqual(self.judge(said("Bram", "knows", "Ash")), claims.TWO_ENTRIES_REASON)
         self.assertEqual(self.judge(said("Bram", "knows", "Bram")), claims.SAME_ENTRY_REASON)
-        self.assertIn("doesn't fit", self.judge(said("Veldmoor", "carries", "Chapel")))
+        # (a known word between kinds it doesn't take is kept on the catch-all, not dropped, #3033;
+        # a kind that takes no such pair at all, like a condition, is still refused)
+        self.assertEqual(self.judge(said("Veldmoor", "carries", "Chapel")), "")
         self.assertEqual(self.judge(said("Veldmoor", "is", "dead")), claims.STATE_REASON)  # a place
 
     def test_a_claim_that_reads_like_an_instruction_is_dropped(self) -> None:
@@ -191,7 +255,10 @@ class Steward(unittest.TestCase):
 
     def test_a_near_spelling_reuses_the_existing_term(self) -> None:
         tally = Tally()
-        self.assertEqual(self.place("locatedin", tally), ("located_in", False, ""))
+        term, from_object, label = place_relationship(
+            ONTO, "locatedin", "character", "place", tally
+        )  # (a place tie, so the ends fit it: two characters would keep the words, #3033)
+        self.assertEqual((term.key, from_object, label), ("located_in", False, ""))
         self.assertEqual((tally.reused, tally.accepted, sum(tally.refused.values())), (1, 0, 0))
 
     def test_a_term_nobody_can_vouch_for_goes_on_the_catch_all_with_its_words_as_the_label(
@@ -245,6 +312,34 @@ class Steward(unittest.TestCase):
         self.assertEqual(term.synonyms, ())  # no word is ever taken for it by accident
 
 
+class PlaceWordsOnTheSteward(unittest.TestCase):
+    """The place words are the place tie (#3363), and only where the two ends fit it."""
+
+    def place(self, text: str, subject: str, obj: str) -> tuple[str, str]:
+        term, _, label = place_relationship(ONTO, text, subject, obj)
+        return term.key, label
+
+    def test_a_place_word_between_a_character_and_a_place_is_the_place_tie(self) -> None:
+        for text in ("works at", "lives in", "worked in", "grew up in", "lives_in", "visited"):
+            self.assertEqual(self.place(text, "character", "place"), ("located_in", ""), text)
+        self.assertEqual(self.place("is kept in", "item", "place"), ("located_in", ""))
+
+    def test_the_same_word_between_other_kinds_is_not_made_a_place_tie(self) -> None:
+        # nothing is lost: it goes on the catch-all with its words, as before
+        for subject, obj in (("character", "character"), ("character", "faction")):
+            key, label = self.place("works at", subject, obj)
+            self.assertEqual((key, label), (FALLBACK_PREDICATE, "works at"), (subject, obj))
+
+    def test_a_longer_phrase_is_not_taken_for_a_place_word(self) -> None:
+        self.assertEqual(self.place("works for", "character", "faction")[0], "serves")
+        self.assertEqual(
+            self.place("kept prisoner in", "character", "place")[0], FALLBACK_PREDICATE
+        )
+        self.assertEqual(
+            self.place("visited the court of", "character", "faction")[0], FALLBACK_PREDICATE
+        )
+
+
 class Stored(ConfirmedMemoryTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
@@ -263,6 +358,283 @@ class Stored(ConfirmedMemoryTest):
             opted_in={7} if opted_in is None else opted_in, prompt_version="p1", model="m1",
             session_started_at=500,
         )  # fmt: skip
+
+    async def test_a_new_name_about_a_player_character_is_made_past_the_limit(self) -> None:
+        # (#3238) a family member narrated about a player character is never left for next time
+        await self.add("Mira", type="player_character")
+        got = await self.claims.propose(
+            GUILD_A, self.c,
+            [said("Mira", "is the sister of", "Ilsa"), said("Bram", "is in", "Zed"),
+             said("Bram", "knows", "Zed")],
+            {"1": 7, "2": 8, "3": 7}, opted_in={7}, prompt_version="p1", model="m1",
+            session_started_at=500, new_names=1,
+        )  # fmt: skip
+        self.assertIn("Ilsa", got.new)
+        self.assertNotIn("Zed", got.new)  # the limit still holds for everyone else
+        self.assertEqual(got.pc_named, 1)
+
+    async def test_a_new_name_records_the_session_it_was_made_in(self) -> None:
+        # (#4043) the split-party check reads this session, never a guess by time
+        got = await self.propose(said("Bram", "is in", "Zed"), said("Bram", "knows", "Zed"))
+        self.assertIn("Zed", got.new)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT s.session_started_at FROM memory_name_sessions s JOIN memory_entities e"
+                " ON e.guild_id = s.guild_id AND e.campaign_id = s.campaign_id"
+                " AND e.id = s.entity_id"
+                " WHERE s.guild_id = %s AND e.name = 'Zed'",
+                (GUILD_A,),
+            )
+            rows = await cur.fetchall()
+        self.assertEqual([r["session_started_at"] for r in rows], [500])
+
+    async def test_the_count_of_the_list_is_what_the_list_shows(self) -> None:
+        # (#3435) a claim naming a still-proposed entry is waiting for that name, not listed
+        await self.add("Zed", type="character", status="proposed")
+        await self.propose(said("Bram", "knows", "Zed"), said("Bram", "is in", "Veldmoor"))
+        listed = await self.claims.waiting(GUILD_A, self.c, opted_in={7})
+        self.assertEqual(len(listed), 1)
+        self.assertEqual(await self.claims.listed_count(GUILD_A, self.c, opted_in={7}), 1)
+        self.assertEqual(await self.claims.waiting_for_check(GUILD_A, self.c, opted_in={7}), 2)
+        # someone not recorded now: left out of both
+        self.assertEqual(await self.claims.listed_count(GUILD_A, self.c, opted_in=set()), 0)
+
+    async def _two_maras(self) -> None:
+        for name in ("Mara Ashgrove", "Mara Vell"):
+            made = await self.add(name, type="character")
+            await self.memory.add_alias(
+                GUILD_A, self.c, made, "Mara", kind="short", source="dm", status="confirmed"
+            )
+
+    async def test_an_ambiguous_claim_about_a_player_character_is_kept_with_its_lines(self) -> None:
+        await self.add("Mira", type="player_character")
+        await self._two_maras()
+        got = await self.propose(
+            said("Mira", "is the sister of", "Mara"), said("Bram", "is the brother of", "Mara")
+        )
+        self.assertEqual((got.kept_unplaced, got.dropped), (1, 1))  # only the player's is kept
+        self.assertEqual(await self.claims.unplaced_count(GUILD_A, self.c), 1)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT subject, lines, status FROM memory_claims WHERE reason = %s",
+                (claims.UNPLACED_REASON,),
+            )
+            (row,) = await cur.fetchall()
+        self.assertEqual((row["subject"], row["status"]), ("Mira", "proposed"))
+        self.assertTrue(row["lines"])  # its quote is kept
+
+    async def _two_miras(self) -> tuple[str, str]:
+        """Two entries with the very same main name (#3238): no wording tells them apart."""
+        one = await self.add("Mira", type="character", description="the ferrywoman")
+        two = await self.add("Mira", type="character", description="a smuggler's daughter")
+        return one, two
+
+    async def _kept(self) -> str:
+        await self.add("Tavin", type="player_character")
+        await self._two_miras()
+        await self.propose(said("Tavin", "is the sister of", "Mira"))
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM memory_claims WHERE reason = %s", (claims.UNPLACED_REASON,)
+            )
+            (row,) = await cur.fetchall()
+        return str(row["id"])
+
+    async def test_which_one_tells_two_entries_with_the_same_name_apart(self) -> None:
+        claim_id = await self._kept()
+        (choice,) = await self.claims.which_one(GUILD_A, self.c, claim_id)
+        self.assertEqual((choice.words, choice.side), ("Mira", "object"))
+        self.assertEqual(
+            sorted((o.name, o.kind, o.note) for o in choice.entries),
+            [
+                ("Mira", "character", "a smuggler's daughter"),
+                ("Mira", "character", "the ferrywoman"),
+            ],
+        )
+
+    async def test_picking_records_the_id_and_the_ordinary_keep_uses_it(self) -> None:
+        claim_id = await self._kept()
+        (choice,) = await self.claims.which_one(GUILD_A, self.c, claim_id)
+        smuggler = next(o.id for o in choice.entries if o.note.startswith("a smuggler"))
+        picked = await self.claims.pick_one(GUILD_A, self.c, claim_id, "object", smuggler)
+        self.assertEqual(
+            (picked.object_picked, picked.reason, picked.object), (smuggler, "", "Mira")
+        )
+        self.assertEqual(await self.claims.which_one(GUILD_A, self.c, claim_id), [])
+        self.assertEqual(await self.claims.unplaced_count(GUILD_A, self.c), 0)
+        done = await self.claims.confirm(GUILD_A, self.c, claim_id, opted_in={7})
+        self.assertEqual(done.claim.status, "confirmed")
+        facts = await self.memory.relations(GUILD_A, self.c, entity_id=smuggler)
+        self.assertEqual(len(facts), 1)  # the fact is about the one picked, not the other Mira
+
+    async def test_unpick_restores_the_same_choices_and_the_family_count(self) -> None:
+        claim_id = await self._kept()
+        before = await self.claims.which_one(GUILD_A, self.c, claim_id)
+        picked = await self.claims.pick_one(
+            GUILD_A, self.c, claim_id, "object", before[0].entries[0].id
+        )
+        self.assertEqual(await self.claims.unplaced_count(GUILD_A, self.c), 0)
+        self.assertTrue(await self.claims.unpick(GUILD_A, self.c, picked.id))
+        self.assertEqual(await self.claims.which_one(GUILD_A, self.c, claim_id), before)
+        self.assertEqual(await self.claims.unplaced_count(GUILD_A, self.c), 1)
+        again = await self.claims.get(GUILD_A, self.c, claim_id)
+        assert again is not None
+        self.assertEqual((again.object_picked, again.reason), (None, claims.UNPLACED_REASON))
+
+    async def test_unpick_does_nothing_after_a_keep_a_no_or_with_no_pick(self) -> None:
+        claim_id = await self._kept()
+        self.assertFalse(await self.claims.unpick(GUILD_A, self.c, claim_id))  # nothing picked
+        (choice,) = await self.claims.which_one(GUILD_A, self.c, claim_id)
+        await self.claims.pick_one(GUILD_A, self.c, claim_id, "object", choice.entries[0].id)
+        await self.claims.confirm(GUILD_A, self.c, claim_id, opted_in={7})
+        self.assertFalse(await self.claims.unpick(GUILD_A, self.c, claim_id))  # kept since
+        again = await self.claims.get(GUILD_A, self.c, claim_id)
+        assert again is not None
+        self.assertEqual((again.status, again.object_picked), ("confirmed", choice.entries[0].id))
+
+    async def test_unpick_does_nothing_after_the_dm_turned_the_claim_down(self) -> None:
+        claim_id = await self._kept()
+        (choice,) = await self.claims.which_one(GUILD_A, self.c, claim_id)
+        await self.claims.pick_one(GUILD_A, self.c, claim_id, "object", choice.entries[0].id)
+        await self.claims.reject(GUILD_A, self.c, claim_id)
+        self.assertFalse(await self.claims.unpick(GUILD_A, self.c, claim_id))
+
+    async def test_unpick_never_touches_a_claim_of_another_campaign(self) -> None:
+        claim_id = await self._kept()
+        (choice,) = await self.claims.which_one(GUILD_A, self.c, claim_id)
+        await self.claims.pick_one(GUILD_A, self.c, claim_id, "object", choice.entries[0].id)
+        other = (await self.campaigns.create(GUILD_A, "Sunken City", 7)).id
+        self.assertFalse(await self.claims.unpick(GUILD_A, other, claim_id))
+        again = await self.claims.get(GUILD_A, self.c, claim_id)
+        assert again is not None
+        self.assertEqual(again.object_picked, choice.entries[0].id)  # (still picked)
+
+    async def test_a_choice_that_is_not_one_of_the_entries_is_refused_and_changes_nothing(
+        self,
+    ) -> None:
+        claim_id = await self._kept()
+        with self.assertRaises(MemoryRuleError):
+            await self.claims.pick_one(GUILD_A, self.c, claim_id, "object", self.bram)
+        with self.assertRaises(MemoryRuleError):
+            await self.claims.pick_one(GUILD_A, self.c, claim_id, "nonsense", self.bram)
+        (choice,) = await self.claims.which_one(GUILD_A, self.c, claim_id)
+        self.assertEqual(len(choice.entries), 2)
+
+    async def test_a_picked_id_in_a_backup_survives_and_an_older_file_has_none(self) -> None:
+        claim_id = await self._kept()
+        (choice,) = await self.claims.which_one(GUILD_A, self.c, claim_id)
+        await self.claims.pick_one(GUILD_A, self.c, claim_id, "object", choice.entries[0].id)
+        rows = await self.claims.get(GUILD_A, self.c, claim_id)
+        assert rows is not None
+        self.assertEqual(rows.object_picked, choice.entries[0].id)
+
+    async def test_the_claims_kept_for_an_answer_are_capped_for_a_session(self) -> None:
+        await self.add("Mira", type="player_character")
+        await self._two_maras()
+        found = [said("Mira", f"is kin number {i} of", "Mara") for i in range(25)]
+        got = await self.propose(*found)
+        self.assertEqual((got.kept_unplaced, got.unplaced_over_cap), (20, 5))
+        self.assertEqual(await self.claims.unplaced_count(GUILD_A, self.c), 20)
+
+    async def test_numbers_times_and_addresses_are_never_made_into_names(self) -> None:
+        # (#3394, #3385) none of these is asked about; a real new place still is
+        got = await self.propose(
+            said("Bram", "is in", "four miles per hour"),
+            said("Bram", "is in", "five days ago"),
+            said("Bram", "is in", "Friend"),
+            said("Bram", "is in", "two"),
+            said("Bram", "is in", "Aldmoor"),
+        )
+        self.assertEqual(got.reasons.get(claims.NOT_A_NAME_REASON), 4)
+        self.assertEqual(got.new, ("Aldmoor",))
+
+    async def test_an_old_waiting_claim_with_a_shape_for_a_name_is_dropped(self) -> None:
+        # (#3394) the waiting queue clears of a time or a number; a plain word is still asked
+        # about (its lines are not part of this read, so it cannot be judged)
+        from dmbot.memory.models import new_id
+
+        async with self.db.guild(GUILD_A) as conn:
+            for obj in ("five days ago", "snow"):
+                await conn.execute(
+                    "INSERT INTO memory_claims (guild_id, campaign_id, id, subject, relationship,"
+                    " object, details, how, lines, speaker_ids, source, prompt_version, model,"
+                    " status, reason, session_started_at, created_at) VALUES (%s, %s, %s, 'Bram',"
+                    " 'is in', %s, '', 'dm_said', ARRAY['1'], ARRAY[7]::bigint[], 'extractor',"
+                    " 'v', 'm', 'proposed', %s, 1, 1)",
+                    (GUILD_A, self.c, new_id(), obj, claims.WAITING_NAME_REASON),
+                )
+        await self.propose()
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT object, status, reason FROM memory_claims WHERE campaign_id = %s"
+                " ORDER BY object",
+                (self.c,),
+            )
+            rows = [(r["object"], r["status"], r["reason"]) for r in await cur.fetchall()]
+        self.assertEqual(
+            rows,
+            [
+                ("five days ago", "dropped", claims.NOT_A_NAME_REASON),
+                ("snow", "proposed", ""),  # still a name to ask about: it cannot be judged here
+            ],
+        )
+
+    async def test_a_kind_of_creature_the_rules_hold_is_no_entry_but_a_named_one_is(self) -> None:
+        # (#3634) "owlbears" and "an owlbear" are kinds the rules hold; "Owlbear Mama" is one
+        got = await self.propose(
+            said("Bram", "fights", "owlbears"),
+            said("Bram", "fights", "an owlbear"),
+            said("Bram", "fights", "Owlbear Mama"),
+        )
+        self.assertEqual(got.reasons, {claims.RULES_REASON: 2})
+        self.assertEqual(got.rules_dropped, 2)
+        self.assertEqual(got.new, ("Owlbear Mama",))
+
+    async def test_a_leading_a_and_a_bracketed_note_are_not_part_of_a_name(self) -> None:
+        got = await self.propose(
+            said("Bram", "knows", "Okthandom's cousin Ren (no name given yet)"),
+            said("Bram", "knows", "an old hermit named Garrick"),
+        )
+        self.assertEqual(got.tidied, 2)
+        self.assertEqual(sorted(got.new), ["Okthandom's cousin Ren", "old hermit named Garrick"])
+
+    async def test_only_a_unique_item_is_made_an_entry_from_a_session_claim(self) -> None:
+        # (#3373) "Bram carries a dagger" makes no entry and no tie; a named or owned item does
+        got = await self.propose(
+            said("Bram", "carries", "a dagger"),
+            said("Bram", "carries", "Mira's arrows"),
+            said("Bram", "carries", "Moonblade"),
+            said("Bram", "carries", "Garret's sled"),
+        )
+        self.assertEqual(got.reasons, {claims.ITEM_REASON: 2})
+        self.assertEqual(sorted(got.new), ["Garret's sled", "Moonblade"])
+        # one that is later named is tracked from then on
+        later = await self.propose(said("Bram", "carries", "the Widowmaker"))
+        self.assertEqual(later.new, ("the Widowmaker",))
+        # an item that is already an entry is unaffected, whatever it is called
+        await self.add("a rusty dagger", type="item")
+        known = await self.propose(said("Bram", "carries", "a rusty dagger"))
+        self.assertEqual((known.waiting, known.dropped), (1, 0))
+
+    async def test_a_single_action_is_dropped_and_never_makes_a_name_or_a_tie(self) -> None:
+        got = await self.propose(
+            said("The attackers", "swings at", "Bram"),
+            said("Bram", "will likely go to", "Veldmoor"),
+        )
+        self.assertEqual((got.waiting, got.dropped, got.new), (0, 2, ()))
+        self.assertEqual(got.reasons, {claims.ONE_OFF_REASON: 1, claims.PREDICTION_REASON: 1})
+        self.assertEqual(await self.memory.relations(GUILD_A, self.c), [])
+        # the same words in a later session are counted as repeated, not asked again
+        again = await self.propose(said("The attackers", "swings at", "Bram"))
+        self.assertEqual((again.waiting, again.dropped, again.repeated), (0, 0, 1))
+
+    async def test_a_belief_about_a_shot_is_kept_and_placed_as_before(self) -> None:
+        belief = Extracted(
+            "Bram", "shot", "Veldmoor", "", ("1",), "player_said",
+            {"view": "Bram", "status": "believed"},
+        )  # fmt: skip
+        got = await self.propose(belief)
+        self.assertEqual((got.waiting, got.dropped), (1, 0))
 
     async def test_what_passes_waits_as_a_proposal_and_nothing_is_a_fact_yet(self) -> None:
         got = await self.propose(
@@ -283,6 +655,430 @@ class Stored(ConfirmedMemoryTest):
         counts = await self.claims.counts(GUILD_A, self.c, opted_in=EVERYONE)
         self.assertEqual(counts, {"proposed": 1, "names": 1, "dropped": 1})
 
+    async def held_back(self, *, end_hidden: bool = False) -> str:
+        """Bram is in Veldmoor, a connection the story holds back (#2404), between two names the
+        players have been shown (or, with `end_hidden`, one they have not)."""
+        made = await self.memory.add_relation(
+            GUILD_A, self.c, self.bram, "located_in", self.town, source="dm",
+            status="confirmed", confidence=1.0, unrevealed=True,
+        )  # fmt: skip
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET hidden_from_players = (id = %s AND %s)"
+                " WHERE guild_id = %s AND campaign_id = %s AND id IN (%s, %s)",
+                (self.town, end_hidden, GUILD_A, self.c, self.bram, self.town),
+            )
+        return made.value[0].id
+
+    async def unrevealed(self, relation_id: str) -> bool:
+        (rel,) = [r for r in await self.memory.relations(GUILD_A, self.c, include_secret=True)
+                  if r.id == relation_id]  # fmt: skip
+        return rel.unrevealed
+
+    async def test_a_held_back_connection_the_table_states_is_shown_and_undo_hides_it(self) -> None:
+        """#3963 (c): the session reader extracted it and the claim became it, so the party knows
+        it now; one Undo takes back the claim and the showing together."""
+        rel = await self.held_back()
+        await self.propose(said("Bram", "is in", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        self.assertEqual(done.claim.fact_id, rel)
+        self.assertFalse(await self.unrevealed(rel))
+        self.assertTrue(done.shown)  # (the DM is told)
+        assert done.batch is not None
+        await self.memory.undo(GUILD_A, self.c, done.batch)
+        self.assertTrue(await self.unrevealed(rel))
+
+    async def clock_row(self, at: int, position: int | None) -> None:
+        """The game clock's log as the trigger writes it (0305): `position` is a split group's,
+        None the table's one clock."""
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO game_clock_log (guild_id, campaign_id, position, at, minute)"
+                " VALUES (%s, %s, %s, %s, 0)",
+                (GUILD_A, self.c, position, at),
+            )
+
+    async def test_a_held_back_connection_said_while_the_party_was_split_stays_held(
+        self,
+    ) -> None:
+        """#2996, the leak in #3963 (c): only one group was in the scene, so the whole party is
+        never shown it (the session began at 500, inside the split)."""
+        await self.clock_row(100, None)
+        await self.clock_row(400, 1)  # (the party split before the session)
+        rel = await self.held_back()
+        await self.propose(said("Bram", "is in", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        self.assertEqual((done.claim.fact_id, done.shown), (rel, False))
+        self.assertTrue(await self.unrevealed(rel))
+
+    async def session_lines(self) -> None:
+        """The session the claims cite (it began at 500), its lines spoken at 510, 520 and 650 s,
+        written in reverse so their ids don't give the spoken order."""
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at)"
+                " VALUES ('s500', %s, %s, 500)",
+                (GUILD_A, self.c),
+            )
+            for ms in (650_000, 520_000, 510_000):
+                await conn.execute(
+                    "INSERT INTO transcript_lines (guild_id, session_id, started_ms, user_id,"
+                    " heard) VALUES (%s, 's500', %s, 7, 'x')",
+                    (GUILD_A, ms),
+                )
+
+    async def confirm_in_veldmoor(self, *lines: str) -> Any:
+        await self.propose(said("Bram", "is in", "Veldmoor", "dm_said", *lines))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        return await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+
+    async def test_the_cited_lines_moment_decides_not_the_sessions_start(self) -> None:
+        """Together at 500, split at 600: line 3 (650 s) was in one group's scene."""
+        await self.session_lines()
+        await self.clock_row(100, None)
+        await self.clock_row(600, 2)
+        rel = await self.held_back()
+        done = await self.confirm_in_veldmoor("3")
+        self.assertFalse(done.shown)
+        self.assertTrue(await self.unrevealed(rel))
+
+    async def test_a_line_after_the_party_rejoined_is_shown(self) -> None:
+        """Split at the session's start (400), together again at 600: line 3 (650 s) is shown,
+        so the line, not the start, decided."""
+        await self.session_lines()
+        await self.clock_row(400, 1)
+        await self.clock_row(600, None)
+        rel = await self.held_back()
+        done = await self.confirm_in_veldmoor("3")
+        self.assertTrue(done.shown)
+        self.assertFalse(await self.unrevealed(rel))
+
+    async def test_one_cited_line_in_a_split_holds_it(self) -> None:
+        await self.session_lines()
+        await self.clock_row(100, None)
+        await self.clock_row(600, 2)
+        rel = await self.held_back()
+        done = await self.confirm_in_veldmoor("1", "3")
+        self.assertFalse(done.shown)
+        self.assertTrue(await self.unrevealed(rel))
+
+    async def test_a_line_no_longer_there_holds_it_when_the_session_was_ever_split(self) -> None:
+        """Fails closed: the cited line is gone, and a split began during the session."""
+        await self.session_lines()
+        await self.clock_row(100, None)
+        await self.clock_row(600, 2)
+        rel = await self.held_back()
+        await self.propose(said("Bram", "is in", "Veldmoor", "dm_said", "1"))
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute("DELETE FROM transcript_lines WHERE guild_id = %s", (GUILD_A,))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        self.assertFalse(done.shown)
+        self.assertTrue(await self.unrevealed(rel))
+
+    async def split_into_groups(self) -> tuple[str, str]:
+        """Wren (played by 7, who speaks lines 1 and 3) in group 1 and Ash (played by 8) in group
+        2, from 600 on; together before."""
+        made = []
+        for name, player in (("Wren", 7), ("Ash", 8)):
+            pc = await self.memory.add_entity(
+                GUILD_A, self.c, name=name, type="character", role="player_character",
+                played_by=player, status="confirmed", source="dm",
+            )  # fmt: skip
+            made.append(pc.value.id)
+        await self.clock_row(100, None)
+        await self.clock_row(600, 1)
+        async with self.db.guild(GUILD_A) as conn:
+            for character, group in zip(made, (1, 2), strict=True):
+                await conn.execute(
+                    "INSERT INTO game_clock_group_log (guild_id, campaign_id, character_id,"
+                    " position, at) VALUES (%s, %s, %s, %s, 600)",
+                    (GUILD_A, self.c, character, group),
+                )
+        return made[0], made[1]
+
+    async def test_the_group_in_the_scene_learns_it_and_nobody_else(self) -> None:
+        """#2996 rule 1, slice 2a: Wren's group was there, Ash's wasn't; the whole party is not
+        shown it, and one Undo takes the learning back."""
+        await self.session_lines()
+        wren, ash = await self.split_into_groups()
+        rel = await self.held_back()
+        done = await self.confirm_in_veldmoor("3")
+        self.assertEqual((done.shown, done.split, done.scene), (False, True, 1))
+        self.assertTrue(await self.unrevealed(rel))
+        knows = await self.memory.statement_knowers(GUILD_A, self.c, "connection", [rel])
+        self.assertIn(wren, knows.get(rel, []))
+        self.assertNotIn(ash, knows.get(rel, []))
+        assert done.batch is not None
+        await self.memory.undo(GUILD_A, self.c, done.batch)
+        knows = await self.memory.statement_knowers(GUILD_A, self.c, "connection", [rel])
+        self.assertNotIn(wren, knows.get(rel, []))
+
+    async def test_a_new_connection_said_in_one_groups_scene_is_held_for_that_group(self) -> None:
+        await self.session_lines()
+        wren, _ash = await self.split_into_groups()
+        done = await self.confirm_in_veldmoor("3")
+        new = await self.relation(done.claim.fact_id)
+        self.assertEqual((new.unrevealed, done.split, done.scene), (True, True, 1))
+        knows = await self.memory.statement_knowers(GUILD_A, self.c, "connection", [new.id])
+        self.assertEqual(knows.get(new.id), [wren])
+
+    async def test_when_the_group_cant_be_told_nobody_learns_it(self) -> None:
+        """Only the DM (no player character) spoke: never a guess."""
+        await self.session_lines()
+        await self.split_into_groups()
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET played_by = NULL WHERE guild_id = %s"
+                " AND campaign_id = %s AND played_by = 7",
+                (GUILD_A, self.c),
+            )
+        rel = await self.held_back()
+        done = await self.confirm_in_veldmoor("3")
+        self.assertEqual((done.shown, done.split, done.scene), (False, True, 0))
+        self.assertTrue(await self.unrevealed(rel))
+
+    async def test_speakers_in_two_groups_teach_nobody(self) -> None:
+        await self.session_lines()
+        wren, ash = await self.split_into_groups()
+        # (line 2, spoken by Ash's player (8), moves after the split, so both lines are split)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE transcript_lines SET started_ms = 640000"
+                " WHERE guild_id = %s AND started_ms = 520000",
+                (GUILD_A,),
+            )
+        rel = await self.held_back()
+        await self.propose(said("Bram", "is in", "Veldmoor", "dm_said", "2", "3"), opted_in={7, 8})
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7, 8})
+        self.assertEqual((done.shown, done.split, done.scene), (False, True, 0))
+        knows = await self.memory.statement_knowers(GUILD_A, self.c, "connection", [rel])
+        self.assertFalse({wren, ash} & set(knows.get(rel, [])))
+
+    async def test_a_secret_or_hidden_ended_connection_teaches_the_group_nothing(self) -> None:
+        """The split path refuses what the together rule refuses (the reviewer): a secret
+        held-back connection, or one with an end the players haven't been shown."""
+        await self.session_lines()
+        wren, _ash = await self.split_into_groups()
+        rel = await self.held_back(end_hidden=True)
+        done = await self.confirm_in_veldmoor("3")
+        self.assertEqual((done.split, done.scene), (True, 0))
+        knows = await self.memory.statement_knowers(GUILD_A, self.c, "connection", [rel])
+        self.assertNotIn(wren, knows.get(rel, []))
+
+    async def test_a_connection_already_shown_stays_as_it_is_in_a_split_scene(self) -> None:
+        await self.session_lines()
+        await self.split_into_groups()
+        made = await self.memory.add_relation(
+            GUILD_A, self.c, self.bram, "located_in", self.town, source="dm",
+            status="confirmed", confidence=1.0,
+        )  # fmt: skip
+        rel = made.value[0].id
+        done = await self.confirm_in_veldmoor("3")
+        self.assertEqual((done.claim.fact_id, done.split, done.scene), (rel, False, 0))
+        self.assertFalse(await self.unrevealed(rel))
+
+    async def test_an_item_said_carried_in_a_split_scene_keeps_its_public_whereabouts(
+        self,
+    ) -> None:
+        """Written held back from the start (the reviewer): a shown "carries" would end the item's
+        public whereabouts, and the other group would see it move."""
+        await self.session_lines()
+        await self.split_into_groups()
+        hesper = await self.add("Hesper", type="character")
+        blade = self.bow
+        old = await self.memory.add_relation(
+            GUILD_A, self.c, hesper, "carries", blade, source="dm",
+            status="confirmed", confidence=1.0,
+        )  # fmt: skip
+        await self.propose(said("Bram", "carries", "Heartseeker", "dm_said", "3"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        self.assertTrue(done.split)
+        kept = await self.relation(old.value[0].id)
+        self.assertIsNone(kept.to_session_at)  # (still where the table last saw it)
+
+    async def test_a_new_connection_said_together_is_shown_as_before(self) -> None:
+        await self.session_lines()
+        done = await self.confirm_in_veldmoor("3")
+        new = await self.relation(done.claim.fact_id)
+        self.assertEqual((new.unrevealed, done.split), (False, False))
+
+    async def test_a_party_together_again_is_shown_as_before(self) -> None:
+        await self.clock_row(100, 1)
+        await self.clock_row(450, None)  # (rejoined before the session)
+        rel = await self.held_back()
+        await self.propose(said("Bram", "is in", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        self.assertTrue(done.shown)
+        self.assertFalse(await self.unrevealed(rel))
+
+    async def test_a_secret_claim_shows_nothing(self) -> None:
+        rel = await self.held_back()
+        await self.propose(said("Bram", "is in", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7}, secret=True)
+        self.assertTrue(await self.unrevealed(rel))
+        self.assertFalse(done.shown)
+
+    async def test_an_end_the_players_have_not_seen_keeps_it_held_back(self) -> None:
+        rel = await self.held_back(end_hidden=True)
+        await self.propose(said("Bram", "is in", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        self.assertTrue(await self.unrevealed(rel))
+
+    async def test_a_held_back_secret_or_ended_connection_stays_held_back(self) -> None:
+        rel = await self.held_back()
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_relations SET secret = TRUE WHERE guild_id = %s AND id = %s",
+                (GUILD_A, rel),
+            )
+        await self.propose(said("Bram", "is in", "Veldmoor"))
+        for waiting in await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE):
+            done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+            self.assertFalse(done.shown)
+        self.assertTrue(await self.unrevealed(rel))
+
+    def test_the_all_true_line_counts_what_it_showed(self) -> None:
+        from dmbot.ui import claims_review
+
+        self.assertIn("1 of them was said at the table", claims_review.shown_line(1))
+        self.assertIn("3 of them were said at the table", claims_review.shown_line(3))
+        self.assertIn("1 of them is kept hidden from your players", claims_review.held_line(1))
+        self.assertIn("To show them: open either name", claims_review.held_line(2))
+        both = claims_review.split_line(1, 2)  # (#2996: said while the party was split)
+        self.assertIn("1 of them was said while the party was split", both)
+        self.assertIn("2 of them are kept hidden from your players", both)
+        self.assertNotIn("kept hidden", claims_review.split_line(3, 0))
+
+    async def test_a_claim_that_makes_a_new_connection_shows_nothing_held_back(self) -> None:
+        await self.propose(said("Bram", "is in", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        self.assertFalse(done.shown)
+
+    async def catch_all_over_held_back(self, *, secret: bool = False) -> tuple[str, Any, Any]:
+        """Confirms "Bram is blood-bound to Veldmoor" (the catch-all) where the story holds "Bram
+        is in Veldmoor" back; returns the held row's id, the new row and what confirm said."""
+        rel = await self.held_back()
+        await self.propose(said("Bram", "is blood-bound to", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7}, secret=secret)
+        (new,) = [r for r in await self.memory.relations(GUILD_A, self.c, include_secret=True)
+                  if r.id != rel]  # fmt: skip
+        return rel, new, done
+
+    async def test_a_catch_all_claim_over_a_held_back_row_is_written_held_back_too(self) -> None:
+        """#3975: it may be the held-back connection in other words, so it is never shown beside
+        it; it keeps its own words and Undo, and the held row is untouched."""
+        rel, new, done = await self.catch_all_over_held_back()
+        self.assertEqual(done.claim.fact_id, new.id)
+        self.assertEqual((done.shown, done.held), (False, True))  # (the DM is told, #3979)
+        self.assertEqual((new.predicate, new.detail), ("associated_with", "is blood-bound to"))
+        self.assertTrue(new.unrevealed)
+        self.assertFalse(new.secret)
+        self.assertTrue(await self.unrevealed(rel))
+        assert done.batch is not None
+        await self.memory.undo(GUILD_A, self.c, done.batch)
+        live = [r.id for r in await self.memory.relations(GUILD_A, self.c, include_secret=True)]
+        self.assertEqual(live, [rel])
+
+    async def test_a_secret_catch_all_claim_over_a_held_back_row_stays_secret(self) -> None:
+        rel, new, done = await self.catch_all_over_held_back(secret=True)
+        self.assertEqual((new.secret, new.unrevealed, done.shown), (True, True, False))
+        self.assertFalse(done.held)  # (the DM's own secret press says so already)
+        self.assertTrue(await self.unrevealed(rel))
+
+    async def test_a_held_back_row_the_other_way_round_holds_the_catch_all_back_too(self) -> None:
+        rel = await self.held_back()
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_relations SET subject_id = object_id, object_id = subject_id"
+                " WHERE guild_id = %s AND id = %s",
+                (GUILD_A, rel),
+            )
+        await self.propose(said("Bram", "is blood-bound to", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        (new,) = [r for r in await self.memory.relations(GUILD_A, self.c, include_secret=True)
+                  if r.id != rel]  # fmt: skip
+        self.assertEqual((new.unrevealed, done.shown, done.held), (True, False, True))
+        self.assertTrue(await self.unrevealed(rel))
+
+    async def confirm_blood_bound(self) -> Any:
+        await self.propose(said("Bram", "is blood-bound to", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        return await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+
+    async def relation(self, relation_id: str | None) -> Any:
+        (rel,) = [r for r in await self.memory.relations(GUILD_A, self.c, include_secret=True)
+                  if r.id == relation_id]  # fmt: skip
+        return rel
+
+    async def test_a_twin_the_dm_turned_down_comes_back_held_back_beside_a_held_row(self) -> None:
+        """#3975, the reviewer's case: the reader said it in an earlier session and the DM said
+        no; brought back now, it was shown then and must be held back now."""
+        rel = await self.held_back()
+        made = await self.memory.add_relation(
+            GUILD_A, self.c, self.bram, "associated_with", self.town, source="dm",
+            status="confirmed", confidence=1.0, detail="is blood-bound to",
+        )  # fmt: skip
+        twin = made.value[0].id
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_relations SET status = 'rejected' WHERE guild_id = %s AND id = %s",
+                (GUILD_A, twin),
+            )
+        done = await self.confirm_blood_bound()
+        back = await self.relation(done.claim.fact_id)
+        self.assertEqual((back.id, back.status), (twin, "confirmed"))
+        self.assertEqual((back.unrevealed, done.shown, done.held), (True, False, True))
+        self.assertTrue(await self.unrevealed(rel))
+
+    async def test_a_held_catch_all_said_in_the_same_words_is_shown_as_said(self) -> None:
+        """#3963 (c) still holds when the held-back row is the claim's exact twin."""
+        made = await self.memory.add_relation(
+            GUILD_A, self.c, self.bram, "associated_with", self.town, source="dm",
+            status="confirmed", confidence=1.0, unrevealed=True, detail="is blood-bound to",
+        )  # fmt: skip
+        rel = made.value[0].id
+        done = await self.confirm_blood_bound()
+        self.assertEqual((done.claim.fact_id, done.shown, done.held), (rel, True, False))
+        self.assertFalse(await self.unrevealed(rel))
+
+    async def test_an_ended_held_back_row_holds_nothing_back(self) -> None:
+        rel = await self.held_back()
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_relations SET to_session_at = 1 WHERE guild_id = %s AND id = %s",
+                (GUILD_A, rel),
+            )
+        done = await self.confirm_blood_bound()
+        self.assertFalse((await self.relation(done.claim.fact_id)).unrevealed)
+        self.assertFalse(done.held)
+
+    async def test_a_claim_of_its_own_kind_beside_a_held_row_is_written_as_before(self) -> None:
+        """Only the catch-all is held back: a claim the reader named a kind for is its own
+        connection, and the existing rules decide it."""
+        rel = await self.held_back()
+        await self.propose(said("Bram", "leads", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        done = await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        new = await self.relation(done.claim.fact_id)
+        self.assertEqual((new.predicate, new.unrevealed, done.held), ("leads", False, False))
+        self.assertTrue(await self.unrevealed(rel))
+
+    async def test_a_catch_all_claim_with_nothing_held_back_is_shown_as_before(self) -> None:
+        done = await self.confirm_blood_bound()
+        (new,) = await self.memory.relations(GUILD_A, self.c, include_secret=True)
+        self.assertEqual((new.unrevealed, done.held), (False, False))
+
     async def test_a_claim_on_the_catch_all_is_confirmed_with_its_words_as_the_label(self) -> None:
         self.hesper = await self.add("Hesper", type="character")
         await self.propose(said("Bram", "is blood-bound to", "Hesper"))
@@ -297,9 +1093,47 @@ class Stored(ConfirmedMemoryTest):
         from dmbot.ui.name_card import sentence
 
         lookup = SimpleNamespace(
-            entities={e.id: e for e in await self.memory.entities(GUILD_A, self.c)}
+            entities={e.id: e for e in await self.memory.entities(GUILD_A, self.c)},
+            guarded=frozenset(),
         )
-        self.assertEqual(sentence(lookup, rel), "Bram is blood-bound to Hesper")  # type: ignore[arg-type]
+        self.assertEqual(sentence(lookup, rel), "Bram “is blood-bound to” Hesper")  # type: ignore[arg-type]
+
+    async def test_a_place_word_is_the_place_tie_with_that_word_kept(self) -> None:
+        # (#3363) "works at" is no new relationship: it is `located_in` with its one wording
+        await self.propose(
+            said("Bram", "works at", "Veldmoor"), said("Bram", "was last seen in", "Chapel")
+        )
+        waiting = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        self.assertEqual(len(waiting), 2)
+        for claim in waiting:
+            await self.claims.confirm(GUILD_A, self.c, claim.id, opted_in={7})
+        rels = await self.memory.relations(GUILD_A, self.c)
+        got = {r.detail: (r.predicate, r.subject_id, r.object_id) for r in rels}
+        self.assertEqual(
+            got,
+            {
+                "works in": ("located_in", self.bram, self.town),
+                "was last seen in": ("located_in", self.bram, self.chapel),
+            },
+        )
+
+    async def test_an_item_last_seen_in_a_place_is_kept_there(self) -> None:
+        # (owner, 2026-11-04) "the bow was last seen in Veldmoor" is the bow kept in Veldmoor
+        await self.propose(said("Heartseeker", "was last seen in", "Veldmoor"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7})
+        (rel,) = await self.memory.relations(GUILD_A, self.c)
+        self.assertEqual((rel.predicate, rel.detail), ("located_in", "is kept in"))
+
+    async def test_a_character_last_seen_is_unchanged_and_an_item_with_no_word_is_kept(
+        self,
+    ) -> None:
+        await self.propose(said("Bram", "was last seen in", "Veldmoor"))
+        await self.propose(said("Heartseeker", "is in", "Chapel"))
+        for claim in await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE):
+            await self.claims.confirm(GUILD_A, self.c, claim.id, opted_in={7})
+        got = {r.subject_id: r.detail for r in await self.memory.relations(GUILD_A, self.c)}
+        self.assertEqual(got, {self.bram: "was last seen in", self.bow: ""})
 
     async def test_such_a_fact_and_its_label_survive_a_backup_and_restore(self) -> None:
         await self.add("Hesper", type="character")

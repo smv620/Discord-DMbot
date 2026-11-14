@@ -93,12 +93,15 @@ def reference_name_entries(
 
     def safe_text(entity_id: str, text: str) -> str:
         """An other name as this viewer may read it: a joined person's label is rebuilt."""
-        if not text.endswith(" (name unknown)") or seen.everything:
+        if (
+            not (text.startswith("unnamed - ") or text.endswith(" (name unknown)"))
+            or seen.everything
+        ):
             return text
         for gone in merged:
             if str(gone["merged_into"]) == entity_id and str(gone["name"]) == text:
                 return _unnamed_label(gone, anchor_name(gone))
-        return "someone (name unknown)"
+        return "unnamed - someone"
 
     out: dict[str, str | None] = {}
     for entity_id in entity_ids:

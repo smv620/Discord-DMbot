@@ -289,6 +289,60 @@ class Checks(unittest.TestCase):
         now = rel(A, "located_in", C, span=(200, None))
         self.assertEqual(check_relation(self.onto, now, "character", "place", [then]), [])
 
+    def place(self, obj: str, detail: str = "", *, rid: str = "f" * 32) -> Relation:
+        return replace(rel(A, "located_in", obj, rid=rid, status=CONFIRMED), detail=detail)
+
+    def test_each_word_of_a_place_tie_has_its_own_place(self) -> None:
+        # (#3363) a home, a workplace and a last sighting are three facts, not one place
+        home = self.place(B, "lives in", rid="1" * 32)
+        work = self.place(C, "works in", rid="2" * 32)
+        seen = self.place(B, "", rid="3" * 32)  # no word: a sighting for something that moves
+        for new, others in [
+            (self.place(C, "was last seen in"), [home, work]),
+            (self.place(C, "lives in", rid="4" * 32), [work, seen]),
+            (self.place(C, "comes from", rid="5" * 32), [home, work, seen]),
+        ]:
+            self.assertEqual(check_relation(self.onto, new, "character", "place", others), [])
+
+    def test_a_new_word_ends_only_its_own_old_fact(self) -> None:
+        home = self.place(B, "lives in", rid="1" * 32)
+        work = self.place(B, "works in", rid="2" * 32)
+        moved = self.place(C, "lives in")
+        problems = check_relation(self.onto, moved, "character", "place", [home, work])
+        self.assertEqual([(p.kind, p.other_id) for p in problems], [(TOO_MANY, home.id)])
+        later_sighting = self.place(C, "was last seen in", rid="6" * 32)
+        seen = self.place(B, "", rid="7" * 32)
+        problems = check_relation(self.onto, later_sighting, "character", "place", [home, seen])
+        self.assertEqual([(p.kind, p.other_id) for p in problems], [(TOO_MANY, seen.id)])
+
+    def test_an_item_has_one_place_whatever_word_it_was_said_in(self) -> None:
+        kept = self.place(B, "is kept in", rid="1" * 32)
+        seen = self.place(C, "was last seen in")
+        problems = check_relation(self.onto, seen, "item", "place", [kept])
+        self.assertEqual([(p.kind, p.other_id) for p in problems], [(TOO_MANY, kept.id)])
+
+    def test_an_item_past_keeping_is_never_limited(self) -> None:
+        was = self.place(B, "was kept in", rid="1" * 32)
+        also = self.place(C, "lived in")  # any past word on an item is a past keeping
+        self.assertEqual(check_relation(self.onto, also, "item", "place", [was]), [])
+
+    def test_a_past_home_never_ends_the_present_one(self) -> None:
+        lived = self.place(B, "lived in", rid="1" * 32)
+        now = self.place(C, "lives in")
+        self.assertEqual(check_relation(self.onto, now, "character", "place", [lived]), [])
+
+    def test_past_words_are_never_limited_so_two_past_homes_both_stay(self) -> None:
+        lived = self.place(B, "lived in", rid="1" * 32)
+        again = self.place(C, "lived in", rid="8" * 32)
+        self.assertEqual(check_relation(self.onto, again, "character", "place", [lived]), [])
+        worked = self.place(B, "worked in", rid="9" * 32)
+        also = self.place(C, "worked in", rid="a" * 32)
+        self.assertEqual(check_relation(self.onto, also, "character", "place", [worked]), [])
+        kept = self.place(B, "was kept in", rid="b" * 32)
+        self.assertEqual(
+            check_relation(self.onto, self.place(C, "was kept in"), "item", "place", [kept]), []
+        )
+
     def test_rejected_facts_dont_count(self) -> None:
         old = rel(A, "born_in", B, rid="1" * 32, status=REJECTED)
         self.assertEqual(

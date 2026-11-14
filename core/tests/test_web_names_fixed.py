@@ -159,10 +159,14 @@ class Undoing(Fixed):
             (early["state"], early["waits"]["stage"], early["putBack"]),
             ("waiting", "queued", None),
         )
+        self.assertEqual(
+            (early["progress"]["stage"], early["progress"]["state"]), ("waiting", "running")
+        )  # the shared progress shape too (#3355)
         (outcome,) = await self.run_bot()
         self.assertEqual(outcome.error, "")
         done = await self.poll(answer)
         self.assertEqual((done["state"], done["error"], done["putBack"]), ("done", "", 2))
+        self.assertEqual((done["progress"]["stage"], done["progress"]["state"]), ("done", "done"))
         self.assertEqual(
             await self.texts(sid), ["Keirandal drew his bow.", "We followed Kethrandel."]
         )

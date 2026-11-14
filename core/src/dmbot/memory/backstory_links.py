@@ -14,12 +14,16 @@ dropped.
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Collection, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass, field
 from typing import Any
 
+from psycopg.types.json import Jsonb
+
 from dmbot.db import Database
-from dmbot.memory import reputation_words
+from dmbot.memory import reputation_words, route_words
+from dmbot.memory.models import END_REASONS as HAND_OVERS
+from dmbot.memory.models import is_id
 from dmbot.memory.pronouns import is_pronoun
 
 MAX_WAITING = 300  # per campaign: a hostile text cannot grow the table
@@ -29,6 +33,9 @@ MAX_CANDIDATES = 10
 # its candidates), or too many connections wait already, so the question stays.
 DONE, GONE, FULL = "done", "gone", "full"
 QUOTE_MAX = 400
+INFERRED_MAX = (
+    80  # why DMbot inferred a connection (#2959 item 5): a short reason, the column's limit
+)
 DECIDED_MAX = 60  # how a pronoun was settled (#2790), in fixed words (the column's limit)
 DECIDED_BY_DM = "who-is-it: picked by the DM"  # the DM chose one of the names offered
 DECIDED_ELSE = "who-is-it: kept as someone else"  # the DM chose "someone else"
@@ -37,12 +44,20 @@ ID_MAX = 40  # an entry id (the column's limit)
 MERGE_HOPS = 6  # a merge chain is followed this far; a longer one is dropped
 
 
+def _kind_key(predicate: str, detail: str) -> str:
+    """A connection's kind as the queue tells two apart (#4173 slice 6d): a route with a means is
+    its own ("route_to:road"), so a known road never hides a waiting river; a plain route is any
+    route between the pair (`checks.duplicate_of` says the same)."""
+    means = _means(predicate, detail)
+    return f"{predicate}:{means}" if means else predicate
+
+
 def _already_known(
     known: dict[tuple[str, str, str], str], a: str, predicate: str, b: str, detail: str
 ) -> bool:
     """Whether the campaign holds this connection already. A "knows" is known only when it says the
     same about the feeling (#3175): hostile held and friendly waiting is a change, not a repeat."""
-    held = known.get((a, predicate, b))
+    held = known.get((a, _kind_key(predicate, detail), b))
     if held is None:
         return False
     if predicate == "knows":
@@ -65,6 +80,18 @@ class NewLink:
     known_by: str = ""
     # Every player character knows it once kept (#2959): the upload's choice, or the AI's call.
     world: int = 0  # lore_knowledge.NOT_KNOWN/SURE/GUESS
+    # DMbot inferred it, with why (#2959 item 5): "" for a connection the text states. Never kept
+    # without the DM's press (the sure step and Keep all leave it out).
+    inferred: str = ""
+    # DMbot's guess of which NPCs and groups know it (#2959 slice 3): entry id to certainty, below
+    # 1.0, written as knowers only once it is kept. Empty when DMBOT_STORY_NPC_GUESS is off.
+    npc_guesses: Mapping[str, float] = field(default_factory=dict)
+    # A hand-over (#4115): who had the item before (an entry id) and how it moved, or "" for none.
+    hand_over_from: str = ""
+    hand_over: str = ""
+    # A place's parent DMbot assumed from where the story was (#4173 slice 3): never a question,
+    # kept by itself once both places are kept (`backstory_keep.keep_assumed`).
+    assumed: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,6 +156,58 @@ class Waiting:
     decided: str = ""  # how a pronoun was settled (#2790), else ""
     known_by: str = ""  # the character who knows it once kept (#2935), else ""
     world: int = 0  # how the players know it once kept: lore_knowledge.NOT_KNOWN/SURE/GUESS (#2959)
+    inferred: str = ""  # why DMbot inferred it (#2959 item 5), else "": only ever kept by a press
+    # DMbot's guess of which NPCs and groups know it, entry id to certainty (#2959 slice 3)
+    npc_guesses: Mapping[str, float] = field(default_factory=dict)
+    # A hand-over (#4115): who had the item before (entry id, then their name as it is now) and
+    # how it moved (`background.HAND_OVERS`). "" for none. Keeping it ends what they held.
+    hand_over_from: str = ""
+    hand_over_name: str = ""
+    hand_over: str = ""
+    assumed: bool = False  # DMbot assumed it (#4173 slice 3): never one of the DM's questions
+
+
+def _hand_over(link: NewLink) -> tuple[str, str]:
+    """A queued link's hand-over as stored: both or neither (the table's CHECK), and only on an
+    `owns` or `carries` from an entry id."""
+    if (
+        link.hand_over in HAND_OVERS
+        and is_id(link.hand_over_from)
+        and link.predicate in ("owns", "carries")
+        and link.hand_over_from not in (link.subject_id, link.object_id)
+    ):
+        return link.hand_over_from, link.hand_over
+    return "", ""
+
+
+MAX_GUESSES = 3  # NPCs and groups guessed to know one connection (#2959 slice 3)
+
+
+def _guesses(raw: object) -> dict[str, float]:
+    """A connection's NPC guesses as stored (entry id to certainty, below 1.0), whatever came in:
+    a few ids of 32 hex characters and a number each; anything else is left out."""
+    if not isinstance(raw, Mapping):
+        return {}
+    out: dict[str, float] = {}
+    for key, value in raw.items():
+        if (
+            isinstance(key, str)
+            and len(key) == 32
+            and isinstance(value, int | float)
+            and not isinstance(value, bool)
+            and 0.0 < value < 1.0
+        ):
+            out[key] = round(float(value), 2)
+        if len(out) >= MAX_GUESSES:
+            break
+    return out
+
+
+def _means(predicate: str, detail: str) -> str:
+    """The key part a waiting connection adds for its kind (migration 0468, #4173 slice 6d): a
+    route's means (its detail), so a road and a river between one pair are two; '' for every other
+    kind, which keys as before. The database computes the same for the row it stores."""
+    return detail if predicate == route_words.ROUTE_TO else ""
 
 
 class BackstoryLinks:
@@ -150,7 +229,8 @@ class BackstoryLinks:
             await self._lock(conn, campaign_id)
             cur = await conn.execute(
                 "SELECT count(*) AS n FROM backstory_links"
-                " WHERE guild_id = %s AND campaign_id = %s",
+                # (DMbot's assumed places never crowd out a question: #4173 slice 3)
+                " WHERE guild_id = %s AND campaign_id = %s AND NOT assumed",
                 (guild_id, campaign_id),
             )
             row = await cur.fetchone()
@@ -161,20 +241,71 @@ class BackstoryLinks:
                 cur = await conn.execute(
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id, predicate,"
                     " object_id, quote, secret, detail, truth, created_at, upload, decided,"
-                    " known_by, world) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
-                    " %s) ON CONFLICT DO NOTHING",  # (a pair already waiting keeps its first check)
+                    " known_by, world, inferred_reason, npc_guesses, hand_over_from, hand_over,"
+                    " assumed)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
+                    " %s, %s)"
+                    " ON CONFLICT DO NOTHING",  # (a pair already waiting keeps its first check)
                     (guild_id, campaign_id, link.subject_id, link.predicate, link.object_id,
                      link.quote[:QUOTE_MAX], link.secret, link.detail, link.truth, now,
                      link.upload[:UPLOAD_MAX], link.decided[:DECIDED_MAX], link.known_by[:ID_MAX],
-                     int(link.world)),
+                     int(link.world), link.inferred[:INFERRED_MAX],
+                     Jsonb(_guesses(link.npc_guesses)), *_hand_over(link), link.assumed),
                 )  # fmt: skip
                 added += cur.rowcount
-                if cur.rowcount == 0 and link.truth:  # already waiting: the new word is 100% truth
+                if cur.rowcount == 0 and link.truth and not link.inferred:
+                    # already waiting: the new word is 100% truth (never for DMbot's inference)
                     await conn.execute(
                         "UPDATE backstory_links SET truth = true WHERE guild_id = %s"
                         " AND campaign_id = %s AND subject_id = %s AND predicate = %s"
-                        " AND object_id = %s",
-                        (guild_id, campaign_id, link.subject_id, link.predicate, link.object_id),
+                        " AND object_id = %s AND means = %s AND inferred_reason = ''",
+                        (
+                            guild_id,
+                            campaign_id,
+                            link.subject_id,
+                            link.predicate,
+                            link.object_id,
+                            _means(link.predicate, link.detail),
+                        ),
+                    )
+                if cur.rowcount == 0 and _hand_over(link)[1]:
+                    # already waiting without one: the text says who had it before (#4115)
+                    await conn.execute(
+                        "UPDATE backstory_links SET hand_over_from = %s, hand_over = %s"
+                        " WHERE guild_id = %s AND campaign_id = %s AND subject_id = %s"
+                        " AND predicate = %s AND object_id = %s AND means = %s AND hand_over = ''",
+                        (*_hand_over(link), guild_id, campaign_id, link.subject_id,
+                         link.predicate, link.object_id, _means(link.predicate, link.detail)),
+                    )  # fmt: skip
+                if cur.rowcount == 0 and not link.assumed:
+                    # already waiting as DMbot's assumption: a text that states it makes it a
+                    # question, with this text's own quote, secrecy and who knows it
+                    await conn.execute(
+                        "UPDATE backstory_links SET assumed = false, quote = %s, secret = %s,"
+                        " detail = %s, truth = %s, upload = %s, decided = %s, known_by = %s,"
+                        " world = %s, created_at = %s WHERE guild_id = %s AND campaign_id = %s"
+                        " AND subject_id = %s AND predicate = %s AND object_id = %s AND means = %s"
+                        " AND assumed",
+                        (link.quote[:QUOTE_MAX], link.secret, link.detail, link.truth,
+                         link.upload[:UPLOAD_MAX], link.decided[:DECIDED_MAX],
+                         link.known_by[:ID_MAX], int(link.world), now, guild_id, campaign_id,
+                         link.subject_id, link.predicate, link.object_id,
+                         _means(link.predicate, link.detail)),
+                    )  # fmt: skip
+                if cur.rowcount == 0 and not link.inferred:
+                    # already waiting as DMbot's inference: a text that states it makes it stated
+                    await conn.execute(
+                        "UPDATE backstory_links SET inferred_reason = '' WHERE guild_id = %s"
+                        " AND campaign_id = %s AND subject_id = %s AND predicate = %s"
+                        " AND object_id = %s AND means = %s AND inferred_reason <> ''",
+                        (
+                            guild_id,
+                            campaign_id,
+                            link.subject_id,
+                            link.predicate,
+                            link.object_id,
+                            _means(link.predicate, link.detail),
+                        ),
                     )
         return added
 
@@ -185,7 +316,8 @@ class BackstoryLinks:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT (SELECT count(*) FROM backstory_links WHERE guild_id = %s"
-                " AND campaign_id = %s) + (SELECT count(*) FROM backstory_which WHERE guild_id = %s"
+                " AND campaign_id = %s AND NOT assumed)"
+                " + (SELECT count(*) FROM backstory_which WHERE guild_id = %s"
                 " AND campaign_id = %s) AS n",
                 (guild_id, campaign_id, guild_id, campaign_id),
             )
@@ -335,7 +467,7 @@ class BackstoryLinks:
                     return GONE  # (the question's own end is no answer: the question stays)
                 cur = await conn.execute(
                     "SELECT count(*) AS n FROM backstory_links WHERE guild_id = %s"
-                    " AND campaign_id = %s",
+                    " AND campaign_id = %s AND NOT assumed",
                     (guild_id, campaign_id),
                 )
                 counted = await cur.fetchone()
@@ -369,20 +501,28 @@ class BackstoryLinks:
         return DONE
 
     async def waiting(
-        self, guild_id: int, campaign_id: str, *, symmetric: Collection[str] = ()
+        self,
+        guild_id: int,
+        campaign_id: str,
+        *,
+        symmetric: Collection[str] = (),
+        assumed: bool = False,
     ) -> list[Waiting]:
         """The connections still worth asking about, oldest first, after the clean-up above.
         `symmetric`: the relationships that read the same both ways (family, friend, enemy), so
-        a pair the campaign has either way round is already known."""
+        a pair the campaign has either way round is already known. `assumed` (#4173 slice 3):
+        False (the default, every list and count of questions) leaves out the places' parents
+        DMbot assumed; True gives only those, for `backstory_keep.keep_assumed`."""
         async with self._db.guild(guild_id) as conn:
             await self._lock(conn, campaign_id)
             cur = await conn.execute(
                 "SELECT id, subject_id, predicate, object_id, quote, secret, detail, truth,"
-                " created_at, upload, told, decided, known_by, world"
+                " created_at, upload, told, decided, known_by, world, inferred_reason, npc_guesses,"
+                " hand_over_from, hand_over, assumed"
                 " FROM backstory_links"
-                " WHERE guild_id = %s AND campaign_id = %s ORDER BY created_at, subject_id,"
-                " predicate, object_id",
-                (guild_id, campaign_id),
+                " WHERE guild_id = %s AND campaign_id = %s AND assumed = %s"
+                " ORDER BY created_at, subject_id, predicate, object_id",
+                (guild_id, campaign_id, assumed),
             )
             rows = list(await cur.fetchall())
             if not rows:
@@ -391,17 +531,18 @@ class BackstoryLinks:
                 conn,
                 guild_id,
                 campaign_id,
-                {r[k] for r in rows for k in ("subject_id", "object_id")},
+                {r[k] for r in rows for k in ("subject_id", "object_id", "hand_over_from") if r[k]},
             )
             known = await self._known(conn, guild_id, campaign_id, set(entities))
             out: list[Waiting] = []
-            seen: set[tuple[str, str, str]] = set()
+            seen: set[tuple[str, str, str]] = set()  # (a, kind with its means, b)
             drop: list[Any] = []  # rows to delete: the dead ones and the ones a merge moved
             move: list[tuple[str, str, str, Any]] = []  # where a moved row goes
             for r in rows:
                 a, b = self._end(entities, r["subject_id"]), self._end(entities, r["object_id"])
                 predicate = str(r["predicate"])
-                key = (a or "", predicate, b or "")
+                kind = _kind_key(predicate, str(r["detail"]))
+                key = (a or "", kind, b or "")
                 dead = (
                     a is None
                     or b is None
@@ -409,7 +550,7 @@ class BackstoryLinks:
                     or entities[a]["status"] == "rejected"
                     or entities[b]["status"] == "rejected"
                     or _already_known(known, a, predicate, b, str(r["detail"]))
-                    or (predicate in symmetric and (b, predicate, a) in known)
+                    or (predicate in symmetric and (b, kind, a) in known)
                     or key in seen
                 )
                 moved = (a, b) != (r["subject_id"], r["object_id"])
@@ -422,6 +563,17 @@ class BackstoryLinks:
                 if moved:  # it follows the merge: the same connection, on the name that stayed
                     move.append((a, predicate, b, r))
                 ready = entities[a]["status"] == "confirmed" == entities[b]["status"]
+                # who had it before, followed through a merge as the ends are; one that is gone,
+                # turned down or became an end leaves the plain connection (#4115)
+                prev = self._end(entities, str(r["hand_over_from"])) if r["hand_over"] else None
+                if prev is not None and (
+                    prev in (a, b)
+                    or entities[prev]["status"] == "rejected"
+                    or predicate not in ("owns", "carries")
+                ):
+                    prev = None
+                if prev is not None:  # (asked once that one is a confirmed name too)
+                    ready = ready and entities[prev]["status"] == "confirmed"
                 # A clue only some people know makes it secret. A name merely not shown to the
                 # players yet (#2321; every new name starts so, #2404) does not: a backstory
                 # connection is kept unrevealed instead, and cannot be shown before both names are.
@@ -432,7 +584,10 @@ class BackstoryLinks:
                         str(entities[a]["name"]), str(entities[b]["name"]),
                         ready, str(r["detail"]), bool(r["truth"]), str(r["id"]),
                         str(r["upload"]), bool(r["told"]), str(r["decided"]),
-                        str(r["known_by"]), int(r["world"]),
+                        str(r["known_by"]), int(r["world"]), str(r["inferred_reason"]),
+                        _guesses(r["npc_guesses"]), prev or "",
+                        str(entities[prev]["name"]) if prev else "",
+                        str(r["hand_over"]) if prev else "", bool(r["assumed"]),
                     )
                 )  # fmt: skip
             # Deletes first, then inserts: a moved row may land on a key a dropped row had.
@@ -442,12 +597,21 @@ class BackstoryLinks:
                 await conn.execute(
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id,"
                     " predicate, object_id, quote, secret, detail, truth, created_at, id, upload,"
-                    " told, decided, known_by, world)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
-                    " ON CONFLICT DO NOTHING",
+                    " told, decided, known_by, world, inferred_reason, npc_guesses,"
+                    " hand_over_from, hand_over, assumed)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
+                    " %s, %s, %s, %s)"
+                    # (a stated one moved by a merge onto a key DMbot's assumption holds takes it
+                    # over: the DM's question is never lost to a guess, #4173 slice 3)
+                    " ON CONFLICT (guild_id, campaign_id, subject_id, predicate, object_id, means)"
+                    " DO UPDATE SET assumed = false, quote = EXCLUDED.quote,"
+                    " secret = EXCLUDED.secret, detail = EXCLUDED.detail, upload = EXCLUDED.upload"
+                    " WHERE backstory_links.assumed AND NOT EXCLUDED.assumed",
                     (guild_id, campaign_id, a, predicate, b, r["quote"], r["secret"],
                      r["detail"], r["truth"], r["created_at"], r["id"], r["upload"], r["told"],
-                     r["decided"], r["known_by"], int(r["world"])),
+                     r["decided"], r["known_by"], int(r["world"]), r["inferred_reason"],
+                     Jsonb(_guesses(r["npc_guesses"])), r["hand_over_from"], r["hand_over"],
+                     r["assumed"]),
                 )  # fmt: skip
         return out
 
@@ -465,7 +629,7 @@ class BackstoryLinks:
                 " l.campaign_id AND s.id = l.subject_id"
                 " LEFT JOIN memory_entities o ON o.guild_id = l.guild_id AND o.campaign_id ="
                 " l.campaign_id AND o.id = l.object_id"
-                " WHERE l.guild_id = %s AND l.campaign_id = %s"
+                " WHERE l.guild_id = %s AND l.campaign_id = %s AND NOT l.assumed"
                 " GROUP BY l.predicate, l.upload, ready ORDER BY l.upload, l.predicate, ready",
                 (guild_id, campaign_id),
             )
@@ -477,9 +641,9 @@ class BackstoryLinks:
     async def take_ready_notices(
         self, guild_id: int, campaign_id: str, *, symmetric: Collection[str] = ()
     ) -> Taken:
-        """The connections that became ready since the DM screen last said so (#2650), as a count
+        """The connections that became ready since they were last announced (#2650), as a count
         for each upload ("" for an old one), marked told as they are taken: said once, even if two
-        rounds overlap. Counts only: the DM screen never shows the connections themselves."""
+        rounds overlap. Counts only: the announcement never shows the connections themselves."""
         waiting = await self.waiting(guild_id, campaign_id, symmetric=symmetric)
         fresh = [w for w in waiting if w.ready and not w.told and w.id]
         if not fresh:
@@ -497,6 +661,18 @@ class BackstoryLinks:
                 ids.append(str(row["id"]))
                 counts[str(row["upload"])] = counts.get(str(row["upload"]), 0) + 1
         return Taken(counts, ids)
+
+    async def ready_counts(
+        self, guild_id: int, campaign_id: str, *, symmetric: Collection[str] = ()
+    ) -> dict[str, int]:
+        """How many connections are ready to check now, for each upload ("" for an old one), told
+        or not: the live message in the DM Bot channel shows the whole count (#3874). Read-only;
+        counts only."""
+        counts: dict[str, int] = {}
+        for link in await self.waiting(guild_id, campaign_id, symmetric=symmetric):
+            if link.ready:
+                counts[link.upload] = counts.get(link.upload, 0) + 1
+        return counts
 
     async def mark_told(self, guild_id: int, campaign_id: str, ids: Sequence[str]) -> None:
         """These connections were just announced some other way (an upload's own summary)."""
@@ -528,7 +704,7 @@ class BackstoryLinks:
                 guild_id,
                 campaign_id,
                 {"subject_id": link.subject_id, "predicate": link.predicate,
-                 "object_id": link.object_id},
+                 "object_id": link.object_id, "detail": link.detail},
             )  # fmt: skip
 
     async def remove_all(self, guild_id: int, campaign_id: str, links: Sequence[Waiting]) -> None:
@@ -539,8 +715,15 @@ class BackstoryLinks:
     async def _drop(conn: Any, guild_id: int, campaign_id: str, row: Any) -> None:
         await conn.execute(
             "DELETE FROM backstory_links WHERE guild_id = %s AND campaign_id = %s"
-            " AND subject_id = %s AND predicate = %s AND object_id = %s",
-            (guild_id, campaign_id, row["subject_id"], row["predicate"], row["object_id"]),
+            " AND subject_id = %s AND predicate = %s AND object_id = %s AND means = %s",
+            (
+                guild_id,
+                campaign_id,
+                row["subject_id"],
+                row["predicate"],
+                row["object_id"],
+                _means(str(row["predicate"]), str(row.get("detail") or "")),
+            ),
         )
 
     @staticmethod
@@ -589,10 +772,16 @@ class BackstoryLinks:
             " WHERE guild_id = %s AND campaign_id = %s AND status = 'confirmed'"
             # (a connection that was ended is history: the same kind may be offered again, #3021)
             " AND to_session_at IS NULL"
+            # (DMbot's assumed place is not known yet: a text that states it asks, and keeping it
+            # clears the mark, #4173 slice 3)
+            " AND NOT assumed"
             " AND subject_id = ANY(%s) AND object_id = ANY(%s)",
             (guild_id, campaign_id, list(ids), list(ids)),
         )
-        return {
-            (str(r["subject_id"]), str(r["predicate"]), str(r["object_id"])): str(r["detail"])
-            for r in await cur.fetchall()
-        }
+        out: dict[tuple[str, str, str], str] = {}
+        for r in await cur.fetchall():
+            a, predicate, b = str(r["subject_id"]), str(r["predicate"]), str(r["object_id"])
+            out[(a, predicate, b)] = str(r["detail"])
+            if _means(predicate, str(r["detail"])):  # (and by its means: #4173 slice 6d)
+                out[(a, _kind_key(predicate, str(r["detail"])), b)] = str(r["detail"])
+        return out

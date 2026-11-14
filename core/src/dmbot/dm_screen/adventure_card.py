@@ -30,10 +30,9 @@ from dmbot.campaigns.models import STORY_GUIDE, STORY_OFF
 from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.dm_screen.story_mode import COULDNT, _dm_campaign, say
 from dmbot.logs import set_log_context
-from dmbot.memory import plan_reader
+from dmbot.memory import plan_reader, setting_worlds
 from dmbot.memory.adventure import (
     DOCUMENTS_MAX,
-    FILE_MAX_BYTES,
     READ_REPLY_BYTES,
     READ_TIME_S,
     AdventureError,
@@ -41,7 +40,15 @@ from dmbot.memory.adventure import (
     adventure_text,
 )
 from dmbot.memory.document_reader import READING, read_document
-from dmbot.memory.name_documents import DocumentError, kind_of_file
+from dmbot.memory.models import BACKGROUND_SOURCE, Entity
+from dmbot.memory.name_documents import (
+    MAX_DOCUMENT_BYTES,
+    MAX_PDF_BYTES,
+    DocumentError,
+    kind_of_file,
+    max_bytes_for,
+    picture_note,
+)
 from dmbot.memory.story_plan import Counts, Listed, ReadState
 from dmbot.waiting import (
     SHOW_ELAPSED_AFTER_S,
@@ -70,7 +77,19 @@ EMPTY = "Nothing yet. Press Give a file to add one."
 NOT_ON = (
     "Not yet. In Settings, turn on Shared story and say you have the right to use the material."
 )
-TOO_BIG = "That file is over 10 MB. Try a smaller file, or save a text copy (.txt)."
+_MB = 1024 * 1024
+# The words name the limits in force, so a changed limit changes them (#4068).
+TOO_BIG = (
+    f"That file is over {MAX_DOCUMENT_BYTES // _MB} MB."
+    " Try a smaller file, or save a text copy (.txt)."
+)
+TOO_BIG_PDF = (
+    f"That PDF is over {MAX_PDF_BYTES // _MB} MB. Try a smaller file, or save a text copy (.txt)."
+)
+FILE_DESCRIPTION = (
+    f"One file: a PDF up to {MAX_PDF_BYTES // _MB} MB, others up to {MAX_DOCUMENT_BYTES // _MB} MB."
+    " DMbot keeps the text."
+)
 WRONG_TYPE = "DMbot can read PDF, Word (.docx) and text (.txt, .md) files. Save it as one of those."
 NO_FILE = "No file was picked. Press Give a file again and pick one."
 DOWNLOAD_FAILED = "DMbot couldn't download that file, and kept nothing. Try again."
@@ -565,7 +584,7 @@ class AddButton(
 class AdventureForm(discord.ui.Modal, title="Give DMbot your adventure"):
     file: discord.ui.Label[AdventureForm] = discord.ui.Label(
         text="Your adventure (PDF, Word or text)",  # 45 characters at most
-        description="One file, up to 10 MB. DMbot keeps the text, not the file.",
+        description=FILE_DESCRIPTION,
         component=discord.ui.FileUpload(max_values=1),
     )
 
@@ -599,8 +618,11 @@ class AdventureForm(discord.ui.Modal, title="Give DMbot your adventure"):
             await reply(NO_FILE, ephemeral=True)
             return
         attachment = upload.values[0]
-        if attachment.size > FILE_MAX_BYTES:
-            await reply(TOO_BIG, ephemeral=True)
+        if attachment.size > max_bytes_for(attachment.filename):
+            await reply(
+                TOO_BIG_PDF if attachment.filename.casefold().endswith(".pdf") else TOO_BIG,
+                ephemeral=True,
+            )
             return
         if PurePath(attachment.filename).suffix.casefold() not in FILE_TYPES or (
             kind_of_file(attachment.filename) == "unknown"
@@ -622,6 +644,7 @@ class AdventureForm(discord.ui.Modal, title="Give DMbot your adventure"):
                     limit_s=READ_TIME_S,
                     max_reply=READ_REPLY_BYTES,
                 )
+            note = picture_note(text)  # pages with only pictures, in counts (#4000)
             await store.add(
                 fresh.guild_id, fresh.id, interaction.user.id, attachment.filename, text
             )
@@ -632,8 +655,73 @@ class AdventureForm(discord.ui.Modal, title="Give DMbot your adventure"):
         log.info(
             "Adventure text kept: %d characters in %.1f s", len(text), time.monotonic() - began
         )
+        guessed = await guess_setting(interaction, fresh, attachment.filename, text)
         card, view = await _card(interaction, fresh)
-        await reply(f"Kept.\n\n{card}", view=view, ephemeral=True, allowed_mentions=NO_MENTIONS)
+        kept = "Kept." + (f"\n{note}" if note else "")
+        if guessed is not None:  # (the DM is told here, in the reply they asked for: #4299 review)
+            kept += f"\n{guess_line(guessed.name)}"
+            add_guess_buttons(view, fresh.id, guessed.id)
+        await reply(f"{kept}\n\n{card}", view=view, ephemeral=True, allowed_mentions=NO_MENTIONS)
+
+
+async def guess_setting(
+    interaction: discord.Interaction, campaign: Campaign, file_name: str, text: str
+) -> Entity | None:
+    """Where the story is set, worked out from the adventure just kept (#4173 slice 2b): its
+    file's name, then its opening words, against `setting_worlds`' names. Written as DMbot's guess
+    for the DM to keep or refuse on the place's card, never over a setting the DM has, never
+    twice after a ✖ Not the setting, and never as a message: the card and the campaign's settings
+    show it (Supervisor's conditions). Never raises: the log says whether one was found, no
+    names."""
+    world = setting_worlds.world_for(file_name, text)
+    memory = getattr(interaction.client, "memory", None)
+    if world is None or memory is None:
+        return None
+    try:
+        written = await memory.guess_setting(
+            campaign.guild_id, campaign.id, world.place, source=BACKGROUND_SOURCE
+        )
+    except Exception as exc:  # (the type only: a database error can quote a row)
+        log.warning("A setting couldn't be guessed (%s)", type(exc).__name__)
+        return None
+    log.info("Setting from the adventure: %s", "guessed" if written.value else "kept as it was")
+    if written.value is not None:  # (the DM's cards and search see the new place at once)
+        from dmbot.ui.names import changed
+
+        changed(interaction, campaign)
+    guessed: Entity | None = written.value
+    return guessed
+
+
+def guess_line(world: str) -> str:
+    """The line the adventure form's own reply gets when DMbot guessed the setting."""
+    shown = discord.utils.escape_markdown(world)
+    return (
+        f"🌍 DMbot guessed this campaign is set in **{shown}**. Open its card to keep it or say no."
+    )
+
+
+def add_guess_buttons(view: discord.ui.View, campaign_id: str, entity_id: str) -> bool:
+    """The card's ✅ Keep as the setting and ✖ Not the setting, with the card's own handlers, on
+    the first row with room for both (the form's Remove buttons fill rows 0 to 3 for twenty files).
+    False when no row has room: the line still says where to find them."""
+    from dmbot.ui import place_size
+    from dmbot.ui.dmbot_commands import _Button
+
+    for row in range(5):
+        if sum(1 for c in view.children if getattr(c, "row", None) == row) > 3:
+            continue
+
+        async def keep(interaction: discord.Interaction) -> None:
+            await place_size.answer_guess(interaction, campaign_id, entity_id, keep=True)
+
+        async def no(interaction: discord.Interaction) -> None:
+            await place_size.answer_guess(interaction, campaign_id, entity_id, keep=False)
+
+        view.add_item(_Button(keep, label=place_size.KEEP_SETTING_BUTTON, row=row))
+        view.add_item(_Button(no, label=place_size.NOT_SETTING_BUTTON, row=row))
+        return True
+    return False
 
 
 class RemoveButton(
@@ -1022,17 +1110,20 @@ class MatchButton(
         await show_matches(interaction, campaign.id)
 
 
-def finished_text(file_name: str, state: ReadState, counts: Counts | None) -> str:
-    """The line posted on the DM screen when a read ends."""
-    name = discord.utils.escape_markdown(file_name[:NAME_SHOWN])
+def finished_text(
+    file_name: str, state: ReadState, counts: Counts | None, *, named: bool = True
+) -> str:
+    """The line posted when a read ends. `named=False` (the DM Bot channel, which the campaign's
+    people can read, #3874) says "your file" instead of the file's name."""
+    name = f"**{discord.utils.escape_markdown(file_name[:NAME_SHOWN])}**" if named else "your file"
     if state.status == "done":
         found = found_line(counts or Counts())
         return (
-            f"📖 DMbot finished reading **{name}**: {found}. Open **Shared story** in Settings, "
+            f"📖 DMbot finished reading {name}: {found}. Open **Shared story** in Settings, "
             "then **Give your adventure**, to see what it read."
         )
     words = STOPPED_WORDS.get(state.stop_reason, CARRY_ON)
-    return f"📖 DMbot stopped reading **{name}** at {state.percent}%. {words}"
+    return f"📖 DMbot stopped reading {name} at {state.percent}%. {words}"
 
 
 ICONS = {"chapter": "📖", "place": "📍", "person": "🧑", "link": "🔗"}

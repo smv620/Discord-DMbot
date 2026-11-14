@@ -192,6 +192,72 @@ class TheRefusals(SharingBase):
 CODE = "ABCDEFGHJK"  # the shape of a share code (invented)
 
 
+class TheDecisions(SharingBase):
+    """The pairs the DM decided (#3697): a read for the campaign's DMs, numbers and the winner."""
+
+    async def decide(
+        self, campaign: Any, a: tuple[str, int], b: tuple[str, int], winner: str
+    ) -> None:
+        await self.sql(
+            "INSERT INTO house_rule_wins (guild_id, campaign_id, a_set, a_number, b_set, b_number,"
+            " winner, decided_by, decided_at) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 7)",
+            THURSDAY.id, campaign.id, a[0], a[1], b[0], b[1], winner, ALICE.id,
+        )  # fmt: skip
+
+    async def test_the_pairs_come_back_in_order_and_nothing_else(self) -> None:
+        await self.decide(self.one, ("", 1), ("", 2), "b")
+        await self.decide(self.one, ("", 1), ("Red Table", 2), "a")
+        got = await rule_sharing.read_decisions(self.web, self.session, self.cref())
+        self.assertEqual(
+            got,
+            [
+                {
+                    "a": {"set": "", "number": 1},
+                    "b": {"set": "", "number": 2},
+                    "winner": "b",
+                    "decidedAt": 7,
+                },
+                {
+                    "a": {"set": "", "number": 1},
+                    "b": {"set": "Red Table", "number": 2},
+                    "winner": "a",
+                    "decidedAt": 7,
+                },
+            ],
+        )
+
+    async def test_none_decided_reads_empty(self) -> None:
+        self.assertEqual(await rule_sharing.read_decisions(self.web, self.session, self.cref()), [])
+
+    async def test_another_campaigns_pairs_are_not_in_it(self) -> None:
+        await self.decide(self.two, ("", 1), ("", 2), "a")
+        self.assertEqual(await rule_sharing.read_decisions(self.web, self.session, self.cref()), [])
+
+    async def test_a_player_a_manager_and_another_campaigns_dm_are_refused(self) -> None:
+        await self.decide(self.one, ("", 1), ("", 2), "a")
+        player = await self.signed(CARL, [DiscordGuild(THURSDAY.id, THURSDAY.name, False)])
+        manager = await self.signed(CARL)
+        bob = await self.signed(BOB)
+        for who in (player, manager, bob):
+            with self.assertRaises(RecapError) as caught:
+                await rule_sharing.read_decisions(self.web, who, self.cref())
+            self.assertEqual(caught.exception.code, "not_allowed")
+        with self.assertRaises(RecapError) as caught:
+            await rule_sharing.read_decisions(self.web, self.session, self.cref(self.two))
+        self.assertEqual(caught.exception.code, "not_allowed")
+
+    async def test_a_server_the_session_does_not_have_is_not_found(self) -> None:
+        with self.assertRaises(RecapError) as caught:
+            await rule_sharing.read_decisions(self.web, self.session, f"999.{self.one.id}")
+        self.assertEqual(caught.exception.code, "not_found")
+
+    async def test_the_website_role_cannot_read_the_table_itself(self) -> None:
+        await self.decide(self.one, ("", 1), ("", 2), "a")
+        async with self.web.user(ALICE.id) as conn:
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                await conn.execute("SELECT * FROM house_rule_wins")
+
+
 class TheQueue(SharingBase):
     """What a DM asks for on the page is queued for the bot (#2783), after the checks the door can
     make; the bot applies it and checks again, so these prove only who may ask and what is kept."""
@@ -239,6 +305,15 @@ class TheQueue(SharingBase):
         self.assertTrue(all((r["state"], r["stage"]) == ("waiting", "waiting") for r in got))
         self.assertTrue(all(r["user_id"] == ALICE.id for r in got))
 
+    async def test_clash_decisions_are_queued_with_their_numbers_only(self) -> None:
+        await self.ask("decide_clash", "2:1")
+        await self.ask("clear_clash", "1:2")
+        got = await self.rows()
+        self.assertEqual(
+            [(r["action"], r["arg"], r["state"]) for r in got],
+            [("decide_clash", "2:1", "waiting"), ("clear_clash", "1:2", "waiting")],
+        )
+
     async def test_a_second_press_gets_the_open_choice_back_and_adds_none(self) -> None:
         first = await self.ask("unfollow")
         self.assertEqual(await self.ask("unfollow"), first)
@@ -278,6 +353,14 @@ class TheQueue(SharingBase):
             ("follow_code", "ABCDEFGHJ1", "bad_arg"),  # 1 is not a letter of a code
             ("follow_here", "not-an-id", "bad_arg"),
             ("follow_here", "", "bad_arg"),
+            ("decide_clash", "", "bad_arg"),
+            ("decide_clash", "2", "bad_arg"),
+            ("decide_clash", "2:2", "bad_arg"),  # a rule cannot win over itself
+            ("decide_clash", "0:1", "bad_arg"),
+            ("decide_clash", "a:1", "bad_arg"),
+            ("decide_clash", "1:2:3", "bad_arg"),
+            ("decide_clash", "1234567890:1", "bad_arg"),
+            ("clear_clash", "3:3", "bad_arg"),
         ):
             self.assertEqual(await self.refused_ask(action, arg), code, (action, arg))
         bodies: list[object] = [
@@ -440,6 +523,36 @@ class TheRoutes(SharingBase):
         self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
         sent = await self.client.post(self.url, json={"action": "unfollow"}, headers=HEADERS)
         self.assertEqual((sent.status_code, sent.json()), (403, {"error": "not_allowed"}))
+
+
+class TheDecisionRoutes(TheRoutes):
+    async def test_off_by_default_the_pairs_are_not_found(self) -> None:
+        await self.start()
+        got = await self.client.get(f"/me/campaigns/{self.cref()}/rule-decisions")
+        self.assertEqual((got.status_code, got.json()), (404, {"error": "not_found"}))
+
+    async def test_the_pairs_and_a_queued_decision_over_http_when_on(self) -> None:
+        await self.start(rule_sharing_on=True)
+        url = f"/me/campaigns/{self.cref()}/rule-decisions"
+        self.assertEqual((await self.client.get(url)).json(), {"decisions": []})
+        sent = await self.client.post(
+            self.url, json={"action": "decide_clash", "arg": "2:1"}, headers=HEADERS
+        )
+        self.assertEqual(sent.status_code, 202)
+        bad = await self.client.post(
+            self.url, json={"action": "decide_clash", "arg": "2:2"}, headers=HEADERS
+        )
+        self.assertEqual((bad.status_code, bad.json()), (400, {"error": "bad_arg"}))
+
+    async def test_a_player_is_refused_over_http(self) -> None:
+        await self.start(rule_sharing_on=True)
+        carl: Any = CARL
+        token = await sessions.sign_in(
+            self.web, carl, [DiscordGuild(THURSDAY.id, THURSDAY.name, False)], now=NOW, days=30
+        )
+        self.client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+        got = await self.client.get(f"/me/campaigns/{self.cref()}/rule-decisions")
+        self.assertEqual((got.status_code, got.json()), (403, {"error": "not_allowed"}))
 
 
 class TheQueueKeeping(TheQueue):
