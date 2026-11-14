@@ -297,8 +297,8 @@ from dmbot.install_record import InstallStore
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
 from dmbot.map_notes import MapNotesSection, MapNoteStore
-from dmbot.maps.pending import PendingMaps
 from dmbot.maps import store as maps_store
+from dmbot.maps.pending import PendingMaps
 from dmbot.maps.store import Map as MapRow
 from dmbot.maps.store import MapStore
 from dmbot.members import MemberDirectory
