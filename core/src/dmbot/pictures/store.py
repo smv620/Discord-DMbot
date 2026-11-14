@@ -355,7 +355,9 @@ class PictureStore:
             )
             return None
 
-    async def delete(self, guild_id: int, campaign_id: str, picture_id: int) -> Picture | None:
+    async def delete(
+        self, guild_id: int, campaign_id: str, picture_id: int, *, unless_map: bool = False
+    ) -> Picture | None:
         """Delete a picture: the row keeps its link (so it can say it was removed), the
         description goes. Returns what was kept so the caller deletes the files; None when it was
         not kept here or already gone."""
@@ -369,6 +371,14 @@ class PictureStore:
             row = await cur.fetchone()
             if row is None:
                 return None
+            if unless_map:  # (a poster's no must not take a map their own yes just made, #4344)
+                cur = await conn.execute(
+                    "SELECT 1 FROM campaign_maps WHERE guild_id = %s AND campaign_id = %s"
+                    " AND picture_id = %s",
+                    (guild_id, campaign_id, picture_id),
+                )
+                if await cur.fetchone() is not None:
+                    return None
             # A picture that is gone is no map either (#4344: a poster who deletes their picture
             # takes its map with it, in the same step).
             cur = await conn.execute(
