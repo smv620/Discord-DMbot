@@ -20,11 +20,11 @@ from __future__ import annotations
 #
 # The five actions go on the queue door as `world-keep` did (0481), filed under no name, no
 # target, no flag; the door checks only each text's shape and the bot rechecks everything (the
-# DM, the poster, the map): `map-use` `<map id> yes|no`, `map-show` `<map id> shown|hidden`,
-# `map-remove` and `map-takeback` `<map id>`, and `map-undo` a change number one of those made
+# DM, the poster, the map): `maps-use` `<map id> yes|no`, `maps-show` `<map id> shown|hidden`,
+# `maps-remove` and `maps-takeback` `<map id>`, and `maps-undo` a change number one of those made
 # (the bot's guard, as `world-undo`). The queue door and its lists are read back as they are
 # (many migrations changed them) and each anchor must be found exactly once. No row is changed.
-ACTIONS = ("map-use", "map-show", "map-remove", "map-takeback", "map-undo")
+ACTIONS = ("maps-use", "maps-show", "maps-remove", "maps-takeback", "maps-undo")
 _MAP = "[0-9a-f]{32}"
 
 _QUEUE_SWAPS = (
@@ -33,16 +33,16 @@ _QUEUE_SWAPS = (
         "'met-name', 'met-join', 'met-remove', 'world-keep', 'world-not',"
         " 'world-undo')\n        THEN",
         "'met-name', 'met-join', 'met-remove', 'world-keep', 'world-not', 'world-undo',"
-        " 'map-use', 'map-show', 'map-remove', 'map-takeback', 'map-undo')\n        THEN",
+        " 'maps-use', 'maps-show', 'maps-remove', 'maps-takeback', 'maps-undo')\n        THEN",
         1,
     ),
     # their shape: a map id and a word, a map id, or a change number
     (
         "           OR (act = 'merge-many' AND (clean = '' OR clean !~ ",
-        f"           OR (act = 'map-use' AND clean !~ '^{_MAP} (yes|no)$')\n"
-        f"           OR (act = 'map-show' AND clean !~ '^{_MAP} (shown|hidden)$')\n"
-        f"           OR (act IN ('map-remove', 'map-takeback') AND clean !~ '^{_MAP}$')\n"
-        "           OR (act = 'map-undo' AND clean !~ '^[0-9]{1,15}$')\n"
+        f"           OR (act = 'maps-use' AND clean !~ '^{_MAP} (yes|no)$')\n"
+        f"           OR (act = 'maps-show' AND clean !~ '^{_MAP} (shown|hidden)$')\n"
+        f"           OR (act IN ('maps-remove', 'maps-takeback') AND clean !~ '^{_MAP}$')\n"
+        "           OR (act = 'maps-undo' AND clean !~ '^[0-9]{1,15}$')\n"
         "           OR (act = 'merge-many' AND (clean = '' OR clean !~ ",
         1,
     ),
@@ -51,7 +51,7 @@ _QUEUE_SWAPS = (
         "'met-name', 'met-join', 'met-remove', 'world-keep', 'world-not', 'world-undo')\n"
         "               AND COALESCE(fl, false))",
         "'met-name', 'met-join', 'met-remove', 'world-keep', 'world-not', 'world-undo',"
-        " 'map-use', 'map-show', 'map-remove', 'map-takeback', 'map-undo')\n"
+        " 'maps-use', 'maps-show', 'maps-remove', 'maps-takeback', 'maps-undo')\n"
         "               AND COALESCE(fl, false))",
         1,
     ),
@@ -60,8 +60,8 @@ _QUEUE_SWAPS = (
         "OR act IN ('confirm-kinds', 'confirm-undo', 'offer-clear', 'clock-set', 'clock-skip',"
         " 'world-keep', 'world-not', 'world-undo') THEN",
         "OR act IN ('confirm-kinds', 'confirm-undo', 'offer-clear', 'clock-set', 'clock-skip',"
-        " 'world-keep', 'world-not', 'world-undo', 'map-use', 'map-show', 'map-remove',"
-        " 'map-takeback', 'map-undo') THEN",
+        " 'world-keep', 'world-not', 'world-undo', 'maps-use', 'maps-show', 'maps-remove',"
+        " 'maps-takeback', 'maps-undo') THEN",
         1,
     ),
 )
