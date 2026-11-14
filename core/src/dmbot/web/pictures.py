@@ -34,7 +34,7 @@ from dmbot.pictures.store import MB, permanent_limit_bytes
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
-from dmbot.web.transcripts import numbered_sessions
+from dmbot.web.transcripts import numbered_sessions, reads_campaign
 
 _CODE = re.compile(r"[A-Za-z0-9_-]{43,}")
 LINK_SECONDS = 300  # how long a signed address lasts: long enough to load, too short to pass on
@@ -180,8 +180,20 @@ async def read_pictures(
             (guild_id, campaign_id, wanted, poster[:80], q[:200], after, after_id, PAGE),
         )
         got = (await cur.fetchone() or {}).get("r")
+        people = await reads_campaign(conn, guild_id, campaign_id)
     if got is None:
         raise RecapError("not_allowed")
+    if not people:
+        # Poster names and image descriptions come from the transcripts, so they follow the
+        # campaign's-people rule (#3891, #4403): anyone else sees only the pictures they posted
+        # themselves, and no list of posters. (A picture's open link is shareable by design.)
+        got = {
+            **got,
+            "pictures": [p for p in got["pictures"] if p["mine"]],
+            "more": False,
+            "posters": [],
+            "sessions": [],
+        }
     base = api_url.rstrip("/")
     usage = got.get("usage")
     return {
