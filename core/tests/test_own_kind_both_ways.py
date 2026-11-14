@@ -130,7 +130,9 @@ class TheMigration(_Campaign):
             cur = await conn.execute(
                 "SELECT both_ways FROM memory_relations WHERE id = %s", (elsewhere,)
             )
-            self.assertIsNone((await cur.fetchone())["both_ways"])
+            found = await cur.fetchone()
+        assert found is not None
+        self.assertIsNone(found["both_ways"])
         batch = self.batches[old]
         assert batch is not None
         await self.memory.undo(GUILD_A, self.c, batch)  # (its change log was marked too)
