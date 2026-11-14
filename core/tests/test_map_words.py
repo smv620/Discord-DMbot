@@ -22,7 +22,7 @@ class Words(unittest.TestCase):
         for from_chat in (True, False):
             text = words.said_yes(False, from_chat)
             self.assertIn("A DM has to say it can be used before DMbot reads it", text)
-            self.assertIn("take it back from the picture's page", text)
+            self.assertIn("take it back with the button below", text)
         self.assertIn("Everyone at the table already saw it", words.said_yes(False, True))
         self.assertTrue(words.said_yes(False, False).startswith("Kept. Only the DMs can see it."))
 

@@ -13,7 +13,8 @@ import discord
 from dmbot.memory.models import CONFIRMED
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.memory.ontology import FALLBACK_PREDICATE
-from dmbot.ui import connection_edit, name_card, who_knows
+from dmbot.memory.store import LENGTH_CHANGED
+from dmbot.ui import connection_edit, name_card, place_size, who_knows
 from dmbot.ui import names as ui
 from tests import test_memory_names as base
 
@@ -725,3 +726,149 @@ class Cards(base.NamesTest):
         await undo.callback(self.it())
         (back,) = await self.relations()  # exactly one connection again
         self.assertEqual((back.id, back.predicate), (old.id, "knows"))
+
+    # ---- a route's stated length (#4255) ----
+
+    async def road_page(self, who: int = DM, *, read: str = "") -> Any:
+        """Targos's road to Bryn Shander, on Targos's edit page; `read` gives it DMbot's length."""
+        targos = await ui.save_name(self.memory, self.campaign, "Targos", "place", [], [])
+        bryn = await ui.save_name(self.memory, self.campaign, "Bryn Shander", "place", [], [])
+        made = await self.memory.add_relation(
+            GUILD, self.campaign.id, targos.id, "route_to", bryn.id,
+            source="dm", confidence=1.0, status=CONFIRMED, detail="road",
+        )  # fmt: skip
+        self.made = made.value[0]
+        if read:
+            await self.memory.set_route_length(
+                GUILD, self.campaign.id, self.made.id, read, on="connection", source="background"
+            )
+        self.fresh()
+        found = await connection_edit._find(self.it(who), self.campaign.id, targos.id, self.made.id)
+        assert found is not None
+        return connection_edit.OneConnection(self.campaign.id, targos.id, found)
+
+    async def road(self) -> Any:
+        got = await self.memory.relation(GUILD, self.campaign.id, self.made.id)
+        assert got is not None
+        return got
+
+    def told(self, it: Any) -> str:
+        return str(it.response.edited or it.response.sent or it.followup.send.await_args)
+
+    async def test_a_route_has_a_length_button_and_the_dms_words_are_kept(self) -> None:
+        page = await self.road_page()
+        self.assertIn(place_size.LENGTH_BUTTON, self.labels(page))
+        self.assertNotIn(place_size.KEEP_LENGTH_BUTTON, self.labels(page))
+        it = self.it()
+        await page._set_length(it, "two days by cart")
+        self.assertIn("🛣️ Length saved: **two days by cart**. Wrong? Press **Undo**", self.told(it))
+        road = await self.road()
+        self.assertEqual((road.length_words, road.length_amount, road.length_from),
+                         ("two days by cart", 2.0, "dm"))  # fmt: skip
+        again = self.it()
+        await page._set_length(again, "two days by cart")
+        self.assertIn(place_size.NOTHING_CHANGED, self.told(again))
+        undo_it = self.it()
+        await page._set_length(undo_it, "twenty miles")
+        _, card = undo_it.response.edited[0]
+        (undo,) = [c for c in card.children if isinstance(c, name_card.UndoConnectionButton)]
+        await undo.callback(self.it())  # (the card's Undo takes a length change back)
+        self.assertEqual((await self.road()).length_words, "two days by cart")
+        off = self.it()
+        await page._set_length(off, "")
+        self.assertIn("🛣️ Length taken off.", self.told(off))
+        self.assertIsNone((await self.road()).length_words)
+
+    async def test_a_connection_that_is_not_a_route_has_no_length(self) -> None:
+        await self.know("Kesh")
+        self.assertNotIn(place_size.LENGTH_BUTTON, self.labels(await self.page()))
+
+    async def test_length_is_right_keeps_dmbots_read_once(self) -> None:
+        page = await self.road_page(read="a day by cart")
+        self.assertIn(place_size.KEEP_LENGTH_BUTTON, self.labels(page))
+        it = self.it()
+        await page._keep_length(it)
+        self.assertIn("🛣️ Length kept: **a day by cart**.", self.told(it))
+        self.assertEqual((await self.road()).length_from, "dm")
+        stale = self.it()
+        await page._keep_length(stale)  # (the stale page still offers it)
+        self.assertIn(LENGTH_CHANGED, self.told(stale))
+
+    async def test_a_manager_cannot_change_a_length(self) -> None:
+        page = await self.road_page(read="a day by cart")
+        await page._set_length(self.it(MANAGER), "twenty miles")
+        await page._keep_length(self.it(MANAGER))
+        road = await self.road()
+        self.assertEqual((road.length_words, road.length_from), ("a day by cart", "read"))
+        self.assertNotIn(place_size.LENGTH_BUTTON, self.labels(await self.road_page_again(MANAGER)))
+
+    async def road_page_again(self, who: int) -> Any:
+        found = await connection_edit._find(
+            self.it(who), self.campaign.id, self.made.subject_id, self.made.id
+        )
+        assert found is not None
+        return connection_edit.OneConnection(self.campaign.id, self.made.subject_id, found)
+
+    async def route_place(self, read: str = "") -> Any:
+        east = await ui.save_name(self.memory, self.campaign, "The Eastway", "place", [], [])
+        await self.memory.set_place_form(GUILD, self.campaign.id, east.id, "route", source="dm")
+        if read:
+            await self.memory.set_route_length(
+                GUILD, self.campaign.id, east.id, read, on="place", source="background"
+            )
+        self.fresh()
+        return east
+
+    async def place_card(self, place: Any, who: int = DM) -> tuple[str, Any]:
+        it = self.it(who)
+        await name_card.show_card(it, self.campaign.id, place.id)
+        text, kw = it.response.sent[0]
+        return text, kw["view"]
+
+    async def test_a_route_places_card_shows_dmbots_read_to_the_dm_only(self) -> None:
+        east = await self.route_place(read="a day by cart")
+        text, view = await self.place_card(east)
+        self.assertIn(
+            "🛣️ **Length:** a day by cart (DMbot read this. Players see it once you press "
+            "✅ Length is right.)",
+            text,
+        )
+        self.assertIn(place_size.LENGTH_BUTTON, self.labels(view))
+        self.assertIn(place_size.KEEP_LENGTH_BUTTON, self.labels(view))
+        text, view = await self.place_card(east, MANAGER)
+        self.assertNotIn("a day by cart", text)
+        self.assertNotIn(place_size.LENGTH_BUTTON, self.labels(view))
+
+    async def test_the_dm_keeps_or_changes_a_route_places_length(self) -> None:
+        east = await self.route_place(read="a day by cart")
+        it = self.it()
+        await place_size.set_length(it, self.campaign.id, east.id, "", keep=True)
+        self.assertIn("🛣️ Length kept: **a day by cart**.", self.told(it))
+        stale = self.it()
+        await place_size.set_length(stale, self.campaign.id, east.id, "", keep=True)
+        self.assertIn(place_size.LENGTH_CLASH, self.told(stale))
+        text, _ = await self.place_card(east, MANAGER)  # (kept: the players see it now)
+        self.assertIn("🛣️ **Length:** a day by cart\n", text + "\n")
+        changed = self.it()
+        await place_size.set_length(changed, self.campaign.id, east.id, "two days by cart")
+        self.assertIn("🛣️ Length saved: **two days by cart**.", self.told(changed))
+        same = self.it()
+        await place_size.set_length(same, self.campaign.id, east.id, "two days by cart")
+        self.assertIn(place_size.NOTHING_CHANGED, self.told(same))
+        await place_size.set_length(self.it(MANAGER), self.campaign.id, east.id, "")
+        place = await self.memory.entity(GUILD, self.campaign.id, east.id)
+        assert place is not None
+        self.assertEqual((place.length_words, place.length_from), ("two days by cart", "dm"))
+
+    async def test_a_place_that_is_not_a_route_has_no_length(self) -> None:
+        town = await ui.save_name(self.memory, self.campaign, "Targos", "place", [], [])
+        self.fresh()
+        _, view = await self.place_card(town)
+        self.assertNotIn(place_size.LENGTH_BUTTON, self.labels(view))
+
+    async def test_a_manager_is_told_only_the_dm_sets_a_length_before_the_form(self) -> None:
+        page = await self.road_page()
+        it = self.it(MANAGER)
+        await page._length(it)
+        self.assertIn(place_size.ONLY_DM_LENGTH, self.told(it))
+        self.assertIsNone(getattr(it.response, "modal", None))  # (no form to type into)
