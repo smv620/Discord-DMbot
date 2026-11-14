@@ -318,6 +318,20 @@ class Recalling(MemoryTest):
                 GUILD_A, self.c, link.id, source="dm", status="rejected"
             )
 
+    async def test_a_one_way_kind_the_dm_made_two_way_is_given_as_a_pair(self) -> None:
+        """#4164: the AI is given the card's own pair words for it, never one-way words."""
+        names = {e.name: e.id for e in await self.memory.entities(GUILD_A, self.c)}
+        made = await self.memory.add_relation(
+            GUILD_A, self.c, names["Mira"], "serves", names["Ulfgar"], source="dm",
+            confidence=1.0, status="confirmed",
+        )  # fmt: skip
+        before = self.texts(await self.recall(PLAYERS, "Ulfgar", hops=1))
+        self.assertIn("Mira serves Ulfgar", before)  # (the fact is there, one way)
+        self.assertNotIn("Mira and Ulfgar", before)
+        await self.memory.set_direction(GUILD_A, self.c, made.value[0].id, None, source="dm")
+        after = self.texts(await self.recall(PLAYERS, "Ulfgar", hops=1))
+        self.assertIn("Mira and Ulfgar are connected (“works for”)", after)
+
     async def test_a_two_way_family_role_stored_undirected_keeps_its_role(self) -> None:
         """#3111: a sibling, cousin or spouse is true of both names, so the roster tie and the
         recall line carry the role from either side even though the link is not directional."""

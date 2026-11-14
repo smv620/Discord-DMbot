@@ -2,8 +2,9 @@
 to a room, so DMbot can tell a building from the town it stands in. DMbot reads the size from the
 words beside a name ("the town of Targos"); the DM sets or changes it here, and "Not sure" clears
 it. A second menu says whether the place is land, water or a road (its form, #4173 slice 6a), so
-"on the shore of" points at a lake. For the campaign's DMs only, checked on every press. Nothing
-here goes to players."""
+"on the shore of" points at a lake. For the campaign's DMs only, checked on every press. The card's
+size and kind lines reach players only once the DM has set them (#4286): one DMbot only read is
+the DM's to check."""
 
 from __future__ import annotations
 
@@ -82,7 +83,7 @@ def ask_text(name: str, level: str | None, read: bool = False) -> str:
         "around it.\n"
         '🧭 **Second menu: is it land, water or a road?** Then a town "on the shore of" it '
         "means a lake.\n"
-        "Players who can see this place see both.\n"
+        "Players see each one only after you pick it.\n"
         "↔️ **Next to** or 🛣️ **Travel to**: say which places touch, and how you get from one to "
         "the other."
     )
@@ -105,15 +106,28 @@ async def show_sizes(interaction: discord.Interaction, campaign_id: str, entity_
     await _replace(
         interaction,
         ask_text(entity.name, entity.place_level, entity.place_level_read),
-        SizeMenu(campaign_id, entity_id, entity.place_level, entity.form, entity.name),
+        SizeMenu(
+            campaign_id,
+            entity_id,
+            entity.place_level,
+            entity.form,
+            entity.name,
+            level_read=entity.place_level_read,
+            form_read=entity.form_read,
+        ),
     )
 
 
-def options(level: str | None) -> list[discord.SelectOption]:
-    """Every size, largest first, then "Not sure"; the current one is marked as chosen."""
+def options(level: str | None, read: bool = False) -> list[discord.SelectOption]:
+    """Every size, largest first, then "Not sure"; the current one is marked as chosen. One DMbot
+    only read is left unmarked (#4286): picking the option already chosen sends nothing, so the DM
+    could never answer "Is that right?" by picking DMbot's own guess."""
     out = [
         discord.SelectOption(
-            label=CHOICES[key][0], description=CHOICES[key][1], value=key, default=key == level
+            label=CHOICES[key][0],
+            description=CHOICES[key][1],
+            value=key,
+            default=key == level and not read,
         )
         for key in place_levels.LEVELS
     ]
@@ -122,17 +136,18 @@ def options(level: str | None) -> list[discord.SelectOption]:
             label="Not sure",
             description="No size: DMbot won't guess",
             value=NOT_SURE,
-            default=level is None,
+            default=level is None and not read,
         )
     )
     return out
 
 
-def form_options(form: str | None) -> list[discord.SelectOption]:
-    """Land, water or a road; the current one is marked as chosen (land when there is none)."""
+def form_options(form: str | None, read: bool = False) -> list[discord.SelectOption]:
+    """Land, water or a road; the current one is marked as chosen (land when there is none). One
+    DMbot only read is left unmarked, as the size's is (#4286)."""
     return [
         discord.SelectOption(
-            label=label, description=example, value=key, default=key == (form or AREA)
+            label=label, description=example, value=key, default=key == (form or AREA) and not read
         )
         for key, (label, example) in FORM_CHOICES.items()
     ]
@@ -146,13 +161,16 @@ class SizeMenu(_Menu):
         level: str | None,
         form: str | None = None,
         name: str = "",
+        *,
+        level_read: bool = False,
+        form_read: bool = False,
     ) -> None:
         super().__init__()
         self.campaign_id, self.entity_id, self.name = campaign_id, entity_id, name
-        self.pick = _Select(self._picked, placeholder=HOLDER, options=options(level))
+        self.pick = _Select(self._picked, placeholder=HOLDER, options=options(level, level_read))
         self.add_item(self.pick)
         self.form_pick = _Select(
-            self._form_picked, placeholder=FORM_HOLDER, options=form_options(form), row=1
+            self._form_picked, placeholder=FORM_HOLDER, options=form_options(form, form_read), row=1
         )
         self.add_item(self.form_pick)
         # the DM's own links to the places beside it and the ways to others (#4173 slice 6d)

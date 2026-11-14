@@ -69,7 +69,9 @@ class Walked:
     chains: dict[str, list[str]]
     pairs: list[tuple[str, str]] = field(default_factory=list)
     legs: list[Leg] = field(default_factory=list)
-    town: str | None = None  # the town the party was last in, for the walk after a Rejoin
+    # the town the party was last in: for the walk after a Rejoin, and kept for the next session
+    # (`memory_story_chain`'s 'town' row, #4338)
+    town: str | None = None
 
 
 def _mentions(text: str, found: Sequence[Place]) -> list[tuple[int, int, Place]]:
@@ -120,8 +122,10 @@ def walk(
     """Walk a session's lines in order from the chains as they were (see the module's rules).
     `routes`: the campaign's named route places ("the Eastway"); being on one closes the town level
     and below (#4173 slice 6d, the movement rule), as travel does. `last_town`: the town the party
-    was last in, from the walk before a Rejoin (it is not kept from one session to the next: a
-    session that starts on the road writes no journey to its first town)."""
+    was last in, from the walk before a Rejoin or the session before (#4338: kept between sessions,
+    so a session that starts on the road writes its first arrival as a journey). It is used only
+    when the party's chain holds no town, and only while it is still a town: one the DM has since
+    made a region (or turned down) starts no journey."""
     usable = [p for p in found if p.level in place_levels.RANK]
     ranks = {p.entity_id: place_levels.RANK[p.level] for p in usable}
     route_ids = {r.entity_id for r in routes}
@@ -132,9 +136,11 @@ def walk(
     # passed on from the walk before a Rejoin) to the next town the AI says the DM brings it to
     # (an explicit "arrive": a town named in passing, with no move, is never a journey). The way is
     # read only from the DM's lines once the party has left, and the arrival line itself.
-    town = last_town or next(
-        (e for e in out.chains.get(MAIN, []) if ranks[e] == _ON_THE_ROAD), None
+    on_chain = next((e for e in out.chains.get(MAIN, []) if ranks[e] == _ON_THE_ROAD), None)
+    kept_town = (
+        last_town if last_town is not None and ranks.get(last_town) == _ON_THE_ROAD else None
     )
+    town = on_chain or kept_town
     way_words: list[str] = []
     for line in lines:
         if line.chain is None:

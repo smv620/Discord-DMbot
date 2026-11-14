@@ -39,11 +39,12 @@ class WhatIsRead(unittest.TestCase):
 
 ROW = {"chain": "main", "rank": 0, "entity_id": "a" * 32, "updated_at": 5}
 MARK = {"chain": "mark", "rank": 0, "entity_id": None, "updated_at": 5}
+TOWN = {"chain": "town", "rank": 0, "entity_id": "b" * 32, "updated_at": 5}  # (#4338)
 
 
 class TheBackupChecks(unittest.TestCase):
     def test_good_rows_and_the_mark(self) -> None:
-        self.assertEqual(len(_checked([ROW, MARK])), 2)
+        self.assertEqual(len(_checked([ROW, MARK, TOWN])), 3)
 
     def test_every_damaged_row_refuses_the_section(self) -> None:
         bad = [
@@ -56,6 +57,8 @@ class TheBackupChecks(unittest.TestCase):
             {**ROW, "entity_id": None},  # (only the mark has no place)
             {**MARK, "entity_id": "a" * 32},
             {**MARK, "rank": 1},
+            {**TOWN, "rank": 1},  # (one last town)
+            {**TOWN, "entity_id": None},  # (the town is a place)
             {**ROW, "updated_at": 0},
         ]
         for row in bad:
