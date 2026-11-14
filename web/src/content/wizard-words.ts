@@ -41,6 +41,8 @@ export const wizardWords = {
   saved: "Saved. You can leave and come back: your answers are kept for 7 days.",
   saving: "Saving…",
   step: (n: number, of: number): string => `Step ${n} of ${of}`,
+  // The campaign's name, above the step line once it is named (#4301); the page cuts a long one with an ellipsis, so the full name is in its title.
+  settingUp: (name: string): string => `Setting up: ${name}`,
   back: "Back",
   next: "Next",
   skip: "Skip",
