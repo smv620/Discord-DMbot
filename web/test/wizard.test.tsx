@@ -809,3 +809,45 @@ describe("the wizard", () => {
     expect((screen.getByLabelText(/Tasha/) as HTMLInputElement).checked).toBe(false);
   });
 });
+
+describe("step 10's Back (#4302)", () => {
+  // Steps 2 to 9, then step 10: step 9 needs a pick (#4212) before Next is allowed.
+  async function toStepTen(api = mockWizard(), guild = G) {
+    await start(api, guild);
+    await next(2);
+    fireEvent.input(screen.getByLabelText(w.confirm.nameLabel), { target: { value: "The Frostmaiden" } });
+    fireEvent.blur(screen.getByLabelText(w.confirm.nameLabel));
+    await waitFor(async () => expect((await api.get(guild))?.answers.name).toBe("The Frostmaiden"));
+    for (let to = 3; to <= 9; to++) await next(to);
+    fireEvent.click(screen.getByLabelText(w.data.no));
+    await waitFor(() => expect((screen.getByRole("button", { name: w.next }) as HTMLButtonElement).disabled).toBe(false));
+    await next(10);
+    return api;
+  }
+
+  it("step 10 shows Back before the run starts", async () => {
+    await toStepTen();
+    expect(screen.getByRole("button", { name: w.back })).toBeTruthy();
+  });
+
+  it("step 10 hides Back while the run is working", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = await toStepTen();
+    fireEvent.click(screen.getByRole("button", { name: w.finish.button }));
+    await waitFor(() => expect(api.calls.some((c) => c.startsWith("finish:"))).toBe(true));
+    await waitFor(() => expect(screen.queryByRole("button", { name: w.back })).toBeNull());
+    await vi.advanceTimersByTimeAsync(1600); // a look after the first one: the run is still working
+    expect(screen.queryByRole("button", { name: w.back })).toBeNull();
+  });
+
+  it("step 10 shows Back again after a failed run", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    const api = await toStepTen(mockWizard(), `${G}.fail`);
+    fireEvent.click(screen.getByRole("button", { name: w.finish.button }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: w.back })).toBeNull());
+    for (let i = 0; i < 10 && !screen.queryByRole("button", { name: w.finish.retry }); i++) await vi.advanceTimersByTimeAsync(2100);
+    expect(screen.getByRole("button", { name: w.finish.retry })).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.back })).toBeTruthy();
+    expect(api.calls.some((c) => c.startsWith("finish:"))).toBe(true);
+  });
+});
