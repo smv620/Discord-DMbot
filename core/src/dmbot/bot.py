@@ -15486,7 +15486,8 @@ async def run(settings: Settings) -> None:
                 pictures, bot.picture_bucket, settings.picture_storage_mb
             )
             bot.picture_store = pictures
-            bot.map_store = MapStore(db, bot.memory)  # the two yeses of a map (#4344)
+            if bot.memory is not None:
+                bot.map_store = MapStore(db, bot.memory)  # the two yeses of a map (#4344)
             bot.picture_actions = PictureActions(
                 db, pictures, bot.picture_bucket, settings.picture_storage_mb
             )

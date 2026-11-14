@@ -604,6 +604,7 @@ class TableImages(chat.AtTheTableTyped):
             self.reads(images.MAP)
             await self.hear(picture())
             asked.assert_awaited_once()
+            assert asked.await_args is not None
             self.assertEqual(asked.await_args.args[1], GUILD_A)  # (the server, then the campaign)
             asked.reset_mock()
             self.reads("photo")
