@@ -9,7 +9,9 @@ never on the DM screen or where players are. Names and the lists' own words only
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
+from typing import Any
 
 import discord
 
@@ -288,4 +290,34 @@ class Done(_Menu):
 
     async def _back(self, interaction: discord.Interaction) -> None:
         self.stop()
+        await show_world_notes(interaction, self.campaign_id)
+
+
+class WorldNotesButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=r"dmbot:questions:world:(?P<campaign>[0-9a-f]{32})",
+):
+    """🌍 World notes, from the ❓ Questions for you message (Supervisor's ruling on #4285). It
+    works after a restart (the campaign is in the button's ID); the DM check is the screen's own."""
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="🌍 World notes",
+                style=discord.ButtonStyle.primary,
+                custom_id=f"dmbot:questions:world:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> WorldNotesButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        # (a private "thinking" answer first: the screen replaces the message it opens from, and
+        # that must be this private one, never the Questions message, as Look-alikes does)
+        await interaction.response.defer(ephemeral=True, thinking=True)
         await show_world_notes(interaction, self.campaign_id)
