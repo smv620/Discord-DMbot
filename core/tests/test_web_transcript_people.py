@@ -161,3 +161,67 @@ class WhoDoesNotCount(People):
             CAROL.id, THURSDAY.id, waiting.value.id,
         )  # fmt: skip
         self.assertEqual(await self.refused(self.carol), "not_found")
+
+
+class TheDoorsThemselves(People):
+    """The doors that hand over words ask the rule too (#4404): a direct call cannot bypass it."""
+
+    async def session_id(self) -> str:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM transcript_sessions WHERE guild_id = %s AND campaign_id = %s",
+                (THURSDAY.id, self.one.id),
+            )
+            return str((await cur.fetchone() or {})["id"])
+
+    async def door(self, who: Any, call: str, *args: Any) -> Any:
+        async with self.web.user(who.user_id, session=who.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            marks = ", ".join(["%s"] * (2 + len(args)))
+            cur = await conn.execute(
+                f"SELECT {call}({marks}) AS r", (THURSDAY.id, self.one.id, *args)
+            )
+            found = await cur.fetchone()
+        return found["r"] if found else None
+
+    async def test_each_door_answers_nothing_to_an_outsider_and_something_to_a_person(self) -> None:
+        sid = await self.session_id()
+        for call, args in (
+            ("dmbot_web_transcript_lines", (sid,)),
+            ("dmbot_web_transcript_characters", ()),
+            ("dmbot_web_transcript_speakers", (sid,)),
+            ("dmbot_web_transcript_choices", (sid,)),
+        ):
+            with self.subTest(call=call):
+                self.assertIsNone(await self.door(self.carol, call, *args))
+                self.assertIsNotNone(await self.door(self.bob, call, *args))  # (heard at it)
+
+    async def test_the_stretch_door_answers_nothing_to_an_outsider_too(self) -> None:
+        sid = await self.session_id()
+        args = (sid, BOB.id, START * 1000, START * 1000 + 5000)
+        self.assertIsNone(await self.door(self.carol, "dmbot_web_transcript_stretch", *args))
+
+    async def test_the_session_list_stays_open_for_the_pages_that_only_number_sessions(
+        self,
+    ) -> None:
+        # (the recap, timeline and pictures pages count sessions from it: numbers and dates only)
+        self.assertIsNotNone(await self.door(self.carol, "dmbot_web_transcript_sessions"))
+
+
+class TheRulesAddedIds(People):
+    async def test_someone_heard_under_an_added_discord_id_is_one_of_the_people(self) -> None:
+        # Dan has added a second Discord id to his account, and that id spoke at the table
+        added = 5005
+        await self.sql(
+            "INSERT INTO account_discord_ids (discord_id, account_id, added_at) VALUES (%s, %s, 0)",
+            added, DAN.id,
+        )  # fmt: skip
+        store = TranscriptStore(self.db)
+        sid = await store.open_session(THURSDAY.id, self.one.id, START + 86_400)
+        await store.add_lines(
+            THURSDAY.id,
+            sid,
+            [Line((START + 86_400) * 1000 + 1000, added, "second id", "second id")],
+        )
+        self.assertTrue((await self.lines_of(self.dan))["lines"])
+        self.assertEqual(await self.refused(self.carol), "not_found")  # (still nobody else)
