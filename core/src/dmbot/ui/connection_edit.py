@@ -12,13 +12,13 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.memory import kin, link_edits
+from dmbot.memory import kin, link_edits, route_length, route_words
 from dmbot.memory.link_words import CONNECTION_WORDS, link_words, predicate_for, reads_both_ways
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED, DM, KNOWS_HOWS, MemoryRuleError, Relation
@@ -61,6 +61,9 @@ WEBSITE_LINE = (
 )
 GONE_LINK = "That connection isn't there any more. Open the name card again to see the list."
 UNDO_NOTE = "Wrong? Press **Undo** within 10 minutes."
+LENGTH_BUTTON = "🛣️ Length"  # a route's stated length (#4255)
+KEEP_LENGTH_BUTTON = "✅ Length is right"
+NOTHING_CHANGED = "Nothing changed."
 WORDS_MAX = 100  # the longest "other words": the same as the website's and the store's
 # Whether two people have met (#3881): the DM's word, on a `knows` only.
 HOW_PLACEHOLDER = "Have they met?"
@@ -328,6 +331,14 @@ class OneConnection(_Menu):
             )
         self.add_item(_Button(self._remove, label="🗑 Remove", style=grey, row=1))
         self.add_item(_Button(self._back, label="Back", style=grey, row=2))
+        if r.predicate == route_words.ROUTE_TO and not r.route_state and found.secrets:
+            # a route's stated length, the DM's (#4255; the ux-critic's words): 🛣️ (📏 is Size)
+            self.length_words = r.length_words or ""
+            self.add_item(_Button(self._length, label=LENGTH_BUTTON, style=grey, row=3))
+            if r.length_words is not None and r.length_from == "read":
+                self.add_item(
+                    _Button(self._keep_length, label=KEEP_LENGTH_BUTTON, style=grey, row=3)
+                )
         if meets(found) and found.secrets:  # whether they've met: the DM's word (#3881)
             self.how = _Select(
                 self._how_picked,
@@ -555,6 +566,53 @@ class OneConnection(_Menu):
         )
         await self._changed(interaction, found, note, undo=written.batch)
 
+    async def _length(self, interaction: discord.Interaction) -> None:
+        await interaction.response.send_modal(
+            RouteLengthForm(self.length_words, lambda i, text: self._set_length(i, text))
+        )
+
+    async def _set_length(self, interaction: discord.Interaction, text: str) -> None:
+        """The DM's 🛣️ Length (#4255): their words as given, the amount read from them; an empty
+        box takes it off. Saving DMbot's read as it stands makes it the DM's too."""
+        await _answer_first(interaction, in_place=True)
+        found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
+        if found is None:
+            return
+        if not found.secrets:  # checked on every press
+            await _tell(interaction, SECRET_DENIED_PRESS)
+            return
+        c = found.campaign
+        try:
+            written = await found.memory.set_route_length(
+                c.guild_id, c.id, found.relation.id, text, on="connection", source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change that. {exc}")
+            return
+        if written.batch is None:
+            await _tell(interaction, NOTHING_CHANGED)
+            return
+        await self._changed(interaction, found, length_note(written.value), undo=written.batch)
+
+    async def _keep_length(self, interaction: discord.Interaction) -> None:
+        """✅ Length is right (#4255): DMbot's read of the length is the DM's from now on."""
+        await _answer_first(interaction, in_place=True)
+        found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
+        if found is None:
+            return
+        if not found.secrets:
+            await _tell(interaction, SECRET_DENIED_PRESS)
+            return
+        c = found.campaign
+        try:
+            written = await found.memory.keep_route_length(
+                c.guild_id, c.id, found.relation.id, on="connection", source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, str(exc))  # (the length changed meanwhile: plain words)
+            return
+        await self._changed(interaction, found, length_note(written.value), undo=written.batch)
+
     async def _remove(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
         found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
@@ -604,6 +662,46 @@ class ConfirmRemove(_Menu):
     async def _keep(self, interaction: discord.Interaction) -> None:
         self.stop()
         await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
+
+
+class RouteLengthForm(discord.ui.Modal, title="How far is it?"):
+    """A route's stated length in the DM's words (#4255): filled with the length it has, so the DM
+    edits it; an empty box takes it off. Shared by a route connection and a route place."""
+
+    words: discord.ui.TextInput[RouteLengthForm] = discord.ui.TextInput(
+        label="In your words (leave empty to take it off)",
+        placeholder="For example: two days by cart",
+        max_length=route_length.WORDS_MAX,
+        required=False,
+    )
+
+    def __init__(
+        self,
+        current: str,
+        done: Callable[[discord.Interaction, str], Awaitable[None]],
+    ) -> None:
+        super().__init__(timeout=VIEW_TIMEOUT_S)
+        self.words.default = current or None
+        self._done = done
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        text = " ".join(str(self.words.value or "").split())
+        if text and not text.isprintable():
+            await _tell(interaction, "Type how far it is, like “two days by cart”.")
+            return
+        await self._done(interaction, text)
+
+
+def length_note(length: route_length.Length | None) -> str:
+    """What the DM is told after a length change (#4255; the ux-critic's words)."""
+    if length is None:
+        return f"🛣️ Length taken off. {UNDO_NOTE}"
+    return f"🛣️ Length kept: **{_md(length.words)}**. {UNDO_NOTE}"
 
 
 class OtherWords(discord.ui.Modal, title="Other words"):
