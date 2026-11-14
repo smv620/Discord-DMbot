@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, httpApi, type NameAnswerResult } from "../src/account/api";
 import { mockApi, mockRecaps } from "../src/account/mock";
-import RecapNameChecks from "../src/account/RecapNameChecks";
+import RecapNameChecks, { noteSaysWhere } from "../src/account/RecapNameChecks";
 import { workWords as workMovedWords } from "../src/content/work-progress";
 import { nameGroupWords as gw } from "../src/content/name-group-words";
 import { nameCheckWords as w } from "../src/content/recap-name-checks";
@@ -57,6 +57,16 @@ async function open() {
 }
 const row = (name: string) => screen.getByRole("group", { name }) as HTMLElement;
 const slow = { timeout: 8000 };
+
+describe("a name read from a picture says where it came from (#4116)", () => {
+  it("shows its own sentence as it is, and keeps 'From the recap:' for the recap's notes", () => {
+    expect(noteSaysWhere('Read from a picture on page 3 as "Red Larch". Is this Red Larch Inn?')).toBe(true);
+    expect(noteSaysWhere('Read from a picture in the file as "Red Larch". Check the spelling.')).toBe(true);
+    expect(noteSaysWhere("A smith in Eastmarch.")).toBe(false);
+    expect(noteSaysWhere("Someone said: Read from a picture")).toBe(false);
+    expect(noteSaysWhere("")).toBe(false);
+  });
+});
 
 describe("names to check", () => {
   it("shows nothing while it is switched off", async () => {

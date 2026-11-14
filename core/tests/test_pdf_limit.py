@@ -7,6 +7,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
+from dmbot.dm_screen import adventure_card, house_sync
 from dmbot.memory import document_reader
 from dmbot.memory.name_documents import (
     MAX_DOCUMENT_BYTES,
@@ -16,6 +17,7 @@ from dmbot.memory.name_documents import (
     text_of,
     too_big_words,
 )
+from dmbot.rules import house_reader
 from dmbot.web import wizard_check
 from tests.test_adventure import pdf
 
@@ -29,6 +31,15 @@ class TheLimit(unittest.TestCase):
         for name in ("notes.docx", "names.txt", "sheet.xlsx", "page.html", "rules.csv"):
             self.assertEqual(max_bytes_for(name), MAX_DOCUMENT_BYTES, name)
         self.assertEqual((MAX_DOCUMENT_BYTES // MB, MAX_PDF_BYTES // MB), (10, 100))
+
+    def test_a_csv_over_the_limit_says_the_limit_in_force(self) -> None:
+        # (the limit is patched to 3 MB, so a hand-written "10 MB" would not pass)
+        with patch("dmbot.memory.name_documents.max_bytes_for", return_value=3 * MB):
+            expected = too_big_words("rules.csv")
+            with self.assertRaises(DocumentError) as caught:
+                house_reader.house_text_of("rules.csv", b"x" * (MAX_DOCUMENT_BYTES + 1))
+        self.assertEqual(str(caught.exception), expected)
+        self.assertIn("up to 3 MB", str(caught.exception))
 
     def test_the_words_name_the_limit_that_applies(self) -> None:
         self.assertIn("up to 100 MB", too_big_words("book.pdf"))
@@ -50,6 +61,23 @@ class TheLimit(unittest.TestCase):
         with self.assertRaises(DocumentError) as caught:
             text_of("notes.docx", b"x" * (15 * MB))
         self.assertIn("up to 10 MB", str(caught.exception))
+
+
+class TheWords(unittest.TestCase):
+    def test_the_too_big_words_say_the_limits_in_force(self) -> None:
+        # (the whole phrase, so "10" cannot pass for "100 MB")
+        pdf_mb, file_mb = MAX_PDF_BYTES // MB, MAX_DOCUMENT_BYTES // MB
+        self.assertIn(f"(up to {pdf_mb} MB)", house_sync.TOO_BIG_PDF)
+        self.assertIn(f"(up to {file_mb} MB)", house_sync.TOO_BIG)
+        self.assertIn(f"over {pdf_mb} MB", adventure_card.TOO_BIG_PDF)
+        self.assertIn(f"over {file_mb} MB", adventure_card.TOO_BIG)
+
+    def test_the_adventure_command_says_both_limits(self) -> None:
+        pdf_mb, file_mb = MAX_PDF_BYTES // MB, MAX_DOCUMENT_BYTES // MB
+        self.assertEqual(
+            adventure_card.FILE_DESCRIPTION,
+            f"One file: a PDF up to {pdf_mb} MB, others up to {file_mb} MB. DMbot keeps the text.",
+        )
 
 
 class TheChild(unittest.IsolatedAsyncioTestCase):

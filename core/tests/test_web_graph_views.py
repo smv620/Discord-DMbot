@@ -272,3 +272,25 @@ class ThePeekNotice(Views):
             row = await cur.fetchone()
         assert row is not None
         self.assertEqual(row["n"], 0)
+
+
+class Routes(Views):
+    async def test_a_journey_never_reads_as_a_road_in_either_view(self) -> None:
+        # (#4173 slice 6d part 2, Supervisor's condition: before anything writes one)
+        town = await self.add("Brindleford", "place")
+        road = await self.link("route_to", self.hall, town, "road")
+        leg = await self.memory.add_relation(
+            self.g, self.one.id, self.hall, "route_to", town, source="dm", confidence=1.0,
+            status="confirmed", detail="road", route_state="travelled", from_session_at=100,
+        )  # fmt: skip
+        leg_id = leg.value[0].id
+        for view in ("full", "players"):
+            got = await self.graph(center=self.hall, hops=1, view=view)
+            words = {x["id"]: x.get("words") for e in got["edges"] for x in e["links"]}
+            with self.subTest(view=view):
+                self.assertIn(road, words)
+                self.assertEqual(words[leg_id], "is where the party set out by road for")
+                link = next(x for e in got["edges"] for x in e["links"] if x["id"] == leg_id)
+                self.assertNotEqual(link["direction"], "both")  # (one way, from the start)
+                self.assertEqual(link["back"], "is where the party arrived by road from")
+                self.assertIsNone(link.get("pairWords"))

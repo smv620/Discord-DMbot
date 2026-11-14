@@ -50,13 +50,16 @@ async def set_who_knows(
     characters: Sequence[str] = (),
     *,
     players_only: bool = False,
+    made: list[int] | None = None,
 ) -> Written[object]:
     """ "Who knows this?" for one connection (#2935), the one call the name card and the website
     share. Only the DM (hidden from the party, no knowers), only these player characters (hidden
     from the party, each of those characters' own point of view holds it), or everyone at the table
     (their knowers let go, then shown to the players: the same as the old "show to players").
-    The three keep the meaning of the old 🤫 and 👁️ switches. Returns the last change, which Undo
-    reverses."""
+    The three keep the meaning of the old 🤫 and 👁️ switches. Returns the last change that wrote
+    something. One answer can be two changes (hide it, then say who knows it): `made`, when given,
+    gets every change's batch in order, so an Undo can take back all of them (#4159)."""
+    log = made if made is not None else []
     if who not in WHO_KNOWS:
         raise MemoryRuleError("Pick who knows it: only you, some characters, or everyone.")
     if who == SOME_CHARACTERS and not characters:
@@ -68,11 +71,14 @@ async def set_who_knows(
             link.id, []
         )
         if before:
-            await memory.set_connection_knowers(
-                guild_id, campaign_id, link.id, [], source=DM, players_only=players_only
+            keep_batch(
+                log,
+                await memory.set_connection_knowers(
+                    guild_id, campaign_id, link.id, [], source=DM, players_only=players_only
+                ),
             )
         try:
-            return await set_secret(memory, guild_id, campaign_id, link, False)
+            return keep_batch(log, await set_secret(memory, guild_id, campaign_id, link, False))
         except MemoryRuleError:  # (refused until its names are shown): put who knew it back
             if before:
                 await memory.set_connection_knowers(
@@ -81,11 +87,24 @@ async def set_who_knows(
             raise
     chosen = list(characters) if who == SOME_CHARACTERS else []
     await memory.check_knowers(guild_id, campaign_id, chosen)  # nothing is hidden on a bad pick
+    hidden: Written[object] = Written(None, None)
     if not (link.secret or link.unrevealed):
-        await set_secret(memory, guild_id, campaign_id, link, True)
-    return await memory.set_connection_knowers(
-        guild_id, campaign_id, link.id, chosen, source=DM, players_only=players_only
+        hidden = keep_batch(log, await set_secret(memory, guild_id, campaign_id, link, True))
+    knew = keep_batch(
+        log,
+        await memory.set_connection_knowers(
+            guild_id, campaign_id, link.id, chosen, source=DM, players_only=players_only
+        ),
     )
+    # (hiding it with no one to know it is the only change: that one is what Undo takes back, #4159)
+    return knew if knew.batch is not None else hidden
+
+
+def keep_batch[T](log: list[int], written: Written[T]) -> Written[T]:
+    """Note a change's batch (none when it wrote nothing) and pass the change on."""
+    if written.batch is not None:
+        log.append(written.batch)
+    return written
 
 
 async def remove(

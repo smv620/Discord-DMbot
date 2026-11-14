@@ -72,6 +72,15 @@ class Settings:
     # The careful tier's last editing pass over each finished recap (#2952). On unless
     # RECAP_FINAL_READ is 0.
     recap_final_read: bool = True
+    # The writer's message front (the beats, the transcript and the blocks after it) is marked to be
+    # remembered between the writer, its retries and its revisions (#4054). A write costs 1.25 times
+    # an input token, so it is off until the server's logs show that recaps revise or retry often
+    # enough to pay for it. Off unless RECAP_CACHE.
+    recap_cache: bool = False
+    # The disk check (#4075): a warning at this percent of the disk used, and the owner told at the
+    # alert one.
+    disk_warn_pct: int = 85
+    disk_alert_pct: int = 95
     # The split of a session's opening through the three-pass structured-output adapter (#2714):
     # a strong model drafts, a fast one fills the schema. Off unless RECAP_STRUCTURED_OUTPUT_SPLIT.
     recap_structured_output_split: bool = False
@@ -118,6 +127,19 @@ class Settings:
     # asked in the claims call itself. Off until the DM's list of them (#4045) has merged
     # (Supervisor, 2026-11-10).
     met_unnamed_on: bool = False
+    # Private scenes between two player characters (#2996 rule 5), found by code after a session
+    # from the game clock and who spoke: no AI call. Off until dev1 has checked it (Supervisor,
+    # 2026-11-10).
+    private_scenes_on: bool = False
+    # Scene moves (#4173 slice 4): send only the DM lines whose stored numbers look like a move
+    # to the AI. Off (Supervisor's ruling, 2026-11-13): every DM line goes to the one call until
+    # dev1 has tuned the filter on the sample session (`devtools.scene_moves_tune`) to 95%.
+    scene_filter_on: bool = False
+    # Names read from an upload's pictures (#4003): the words the picture reading gives go through
+    # the lore reader too, each name checked against the document's own; one it can't resolve waits
+    # in Names to check, its note saying so. Off until the picture reading (CloudDev-lead's half) is
+    # built and dev1 has checked a sample.
+    picture_names_on: bool = False
     # Who a waiting name is (#3602): after a session, the AI ranks the few entries each name to
     # check could be, kept for the DM's card and the website. It only ranks: nothing is applied.
     # Off until the extractor is; it only runs when the extractor does, inside the same call limits.
@@ -194,6 +216,9 @@ class Settings:
     # key is set (scripts/set-key VOYAGE_API_KEY, by dev1 once the privacy page names Voyage).
     meaning_search: bool = False
     voyage_key: str = field(default="", repr=False)
+    # The server secret that keys the one-way hash kept for a person after their account is deleted
+    # (#4145, `dmbot.person_key`). Empty: the code that needs it refuses to run.
+    person_key: str = field(default="", repr=False)
     voyage_embed_model: str = "voyage-3.5"
     voyage_rerank_model: str = "rerank-2.5"
     recap_audio_max_credits: int = 20000  # provider credits one recap may use (about $4; #3633)
@@ -463,6 +488,21 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     met_raw = (get("DMBOT_MET_UNNAMED") or "0").lower()
     if met_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_MET_UNNAMED must be 1 (on) or 0 (off), got "' + met_raw + '".')
+    scene_filter_raw = (get("DMBOT_SCENE_FILTER") or "0").lower()
+    if scene_filter_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_SCENE_FILTER must be 1 (on) or 0 (off), got "' + scene_filter_raw + '".'
+        )
+    private_raw = (get("DMBOT_PRIVATE_SCENES") or "0").lower()
+    if private_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_PRIVATE_SCENES must be 1 (on) or 0 (off), got "' + private_raw + '".'
+        )
+    picture_raw = (get("DMBOT_PICTURE_NAMES") or "0").lower()
+    if picture_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_PICTURE_NAMES must be 1 (on) or 0 (off), got "' + picture_raw + '".'
+        )
     reveals_raw = (get("DMBOT_STORY_REVEALS") or "0").lower()
     if reveals_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -580,6 +620,13 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     images_raw = (get("DMBOT_TABLE_IMAGES") or "0").lower()
     if images_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_TABLE_IMAGES must be 1 (on) or 0 (off), got "' + images_raw + '".')
+    disk_warn_pct = _percent(get, "DMBOT_DISK_WARN_PCT", 85)
+    disk_alert_pct = _percent(get, "DMBOT_DISK_ALERT_PCT", 95)
+    if disk_warn_pct >= disk_alert_pct:
+        raise ConfigError(
+            "DMBOT_DISK_WARN_PCT must be lower than DMBOT_DISK_ALERT_PCT, got "
+            f"{disk_warn_pct} and {disk_alert_pct}."
+        )
     images_day_raw = get("DMBOT_TABLE_IMAGES_PER_DAY") or "40"
     if not (images_day_raw.isascii() and images_day_raw.isdigit()) or not (
         1 <= int(images_day_raw) <= 1000
@@ -645,6 +692,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         ai_provider_creative=ai_provider_creative,
         recap_writer_reads=_recap_writer_reads(get),
         recap_final_read=_on_unless_off(get, "RECAP_FINAL_READ"),
+        recap_cache=_on_off(get, "RECAP_CACHE"),
+        disk_warn_pct=disk_warn_pct,
+        disk_alert_pct=disk_alert_pct,
         recap_structured_output_split=_on_off(get, "RECAP_STRUCTURED_OUTPUT_SPLIT"),
         recap_structured_output_beats=_on_off(get, "RECAP_STRUCTURED_OUTPUT_BEATS"),
         gemini_key=get("GEMINI_API_KEY"),
@@ -664,6 +714,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_reveals_on=reveals_raw in ("1", "true", "on"),
         story_reveals_precheck=precheck_raw in ("1", "true", "on"),
         met_unnamed_on=met_raw in ("1", "true", "on"),
+        private_scenes_on=private_raw in ("1", "true", "on"),
+        scene_filter_on=scene_filter_raw in ("1", "true", "on"),
+        picture_names_on=picture_raw in ("1", "true", "on"),
         story_who_on=who_raw in ("1", "true", "on"),
         # (applying needs the ranking: on alone does nothing)
         story_who_apply_on=who_apply_raw in ("1", "true", "on") and who_raw in ("1", "true", "on"),
@@ -694,6 +747,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         time_suggestions=suggestions_raw in ("1", "true", "on"),
         meaning_search=meaning_raw in ("1", "true", "on"),
         voyage_key=get("VOYAGE_API_KEY"),
+        person_key=get("DMBOT_PERSON_KEY"),
         voyage_embed_model=voyage_models[0],
         voyage_rerank_model=voyage_models[1],
         elevenlabs_key=get("ELEVENLABS_API_KEY"),
@@ -798,6 +852,16 @@ def parse_ai_models(get: Callable[[str], str]) -> tuple[AIModels, str]:
             )
         chosen[tier] = raw or getattr(DEFAULT_MODELS, tier)
     return AIModels(**chosen), notice
+
+
+def _percent(get: Callable[[str], str], name: str, default: int) -> int:
+    """A percentage setting: a whole number from 1 to 99 (empty is the default)."""
+    raw = _unquote(get(name))
+    if not raw:
+        return default
+    if not (raw.isascii() and raw.isdigit()) or not 1 <= int(raw) <= 99:
+        raise ConfigError(f'{name} in .env must be a whole number from 1 to 99, got "{raw}".')
+    return int(raw)
 
 
 def _on_off(get: Callable[[str], str], name: str) -> bool:

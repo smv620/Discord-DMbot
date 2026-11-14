@@ -191,7 +191,7 @@ class WinsSection:
             if (
                 winner == loser
                 or not digits
-                or not 0 < int(str(by)) <= INT64_MAX
+                or not 0 <= int(str(by)) <= INT64_MAX  # (0: someone who has left, #4148)
                 or isinstance(at, bool)
                 or not isinstance(at, int)
                 or not 0 <= at <= INT64_MAX

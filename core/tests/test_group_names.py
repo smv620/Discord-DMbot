@@ -41,6 +41,14 @@ class GroupOfNames(_Base):
         self.assertEqual([(h.group_id, h.members, h.others) for h in hints],
                          [(group, ("Tavin", "Mira"), ())])  # fmt: skip
 
+    async def test_a_group_they_left_is_no_hint(self) -> None:
+        # (#4134: an ended membership is not who they are now)
+        await self.wolves("Tavin", "Mira")
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute("UPDATE memory_relations SET to_session_at = 5")
+        listed = await self.waiting("Tavin and Mira")
+        self.assertEqual(await self.memory.group_hints(GUILD_A, self.c, listed), [])
+
     async def test_no_hint_when_no_group_fits_or_it_is_one_name(self) -> None:
         await self.wolves("Tavin")
         await self.character("Mira")

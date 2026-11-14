@@ -6,16 +6,17 @@ from __future__ import annotations
 
 import asyncio
 import json
+from contextlib import nullcontext
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
-from dmbot import images, table_chat
-from dmbot.ai import Image
+from dmbot import credits, images, table_chat
+from dmbot.ai import AIOutOfFunds, Image
 from dmbot.campaigns.models import SHARED_STORY
 from dmbot.consent import IMAGE_TERMS_VERSION
 from dmbot.image_desk import DAY_S, ImageDesk, ImageUseStore
-from dmbot.map_notes import MapNoteStore
+from dmbot.map_notes import MapNoteStore, close_of
 from dmbot.pictures.keeper import Result
 from dmbot.transcript.models import Line
 from tests import test_table_chat as chat
@@ -48,6 +49,24 @@ class MapVision(Vision):
         super().__init__("A map of the coast.", "map")
 
     async def complete(self, system: str, text: str, **kw: Any) -> Any:
+        if system == images.CLOSE_MAP_SYSTEM:  # (a map DMbot may use: #4173 slice 6b-1)
+            self.calls += 1
+            self.closely = getattr(self, "closely", 0) + 1
+            self.max_tokens = kw.get("max_tokens")
+            body: dict[str, Any] = {
+                "level": "region",
+                "places": [
+                    {"name": "Harrowmere", "where": "on the coast", "level": "settlement",
+                     "form": "land"},
+                    {"name": "Grey Sound", "where": "west", "level": "", "form": "water"},
+                ],
+                "links": [
+                    {"a": "Harrowmere", "kind": "next_to", "b": "Grey Sound",
+                     "word": "on the coast of", "sure": True},
+                ],
+                "layout": "A road runs east.",
+            }  # fmt: skip
+            return SimpleNamespace(text=json.dumps(body), refused=False, cut=False)
         if system != images.MAP_SYSTEM:
             return await super().complete(system, text, **kw)
         self.calls += 1
@@ -131,6 +150,81 @@ class TableImages(chat.AtTheTableTyped):
         [line] = self.lines()
         self.assertTrue(line.text.startswith("a map: "))  # the transcript says it is a map
         self.assertNotIn("Harrowmere", line.text)  # and carries no more than the short description
+
+    async def test_no_map_is_read_closely_when_it_is_posted(self) -> None:
+        # (#4349, MapBot 6b-2: the close read waits for both yeses on the kept map, by the sweep;
+        # neither the DM's picture nor a player's is read closely in chat)
+        await self.confirm_right_to_use()
+        self.bot.map_notes = MapNoteStore(self.db)
+        vision = MapVision()
+        self.bot.image_desk = self.make_desk(vision=vision)
+        await self.hear(picture())  # (the DM's)
+        self.bot.consent.has_image_consent = lambda guild_id, user_id: True  # type: ignore[method-assign]
+        await self.hear(picture(author=PLAYER))
+        notes = await self.bot.map_notes.notes(GUILD_A, self.a.id)
+        self.assertEqual([n.close for n in notes], [None, None])
+        self.assertEqual(getattr(vision, "closely", 0), 0)
+
+    async def test_a_map_read_is_charged_as_ai_credits(self) -> None:
+        seen: list[Any] = []
+        vision = MapVision()
+        real = vision.complete
+
+        async def spy(system: str, text: str, **kw: Any) -> Any:
+            if system in (images.MAP_SYSTEM, images.CLOSE_MAP_SYSTEM):
+                seen.append(credits.current())
+            return await real(system, text, **kw)
+
+        vision.complete = spy  # type: ignore[method-assign]
+        self.bot.map_notes = MapNoteStore(self.db)
+        self.bot.image_desk = self.make_desk(vision=vision)
+        await self.hear(picture())
+        self.assertEqual(seen, [None])  # (no Shared story confirmation: nothing kept, not charged)
+        seen.clear()
+        await self.confirm_right_to_use()
+        await self.hear(picture())
+        [scope] = seen
+        assert scope is not None
+        self.assertEqual((scope.campaign_id, scope.job_kind), (self.a.id, "map"))
+
+    async def test_a_close_read_out_of_credits_gives_its_place_back_and_looks_once(self) -> None:
+        # (the reviewer's case, #4349: no first look on a kept map, and a read put off for AI
+        # credits keeps the table's own pictures their place that day)
+        class Broke(MapVision):
+            async def complete(self, system: str, text: str, **kw: Any) -> Any:
+                self.calls += 1
+                raise AIOutOfFunds("no funds")
+
+        vision = Broke()
+        desk = self.make_desk(vision=vision)
+        png = Image("image/png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+        with self.assertRaises(AIOutOfFunds):
+            await desk.read_closely(GUILD_A, self.a.id, png, nullcontext)
+        self.assertEqual(vision.calls, 1)  # (the metered close read only: no first look)
+        self.assertEqual(await ImageUseStore(self.db).used(GUILD_A, self.a.id, desk.day()), 0)
+
+    async def test_a_cut_close_read_gives_no_close_read(self) -> None:
+        # (#4349: the close read is the sweep's, `ImageDesk.read_closely`; a cut answer keeps no
+        # places, so the sweep counts it as a failed try and reads again, never "nothing found")
+        vision = MapVision()
+        real = vision.complete
+
+        async def cut(system: str, text: str, **kw: Any) -> Any:
+            got = await real(system, text, **kw)
+            return (
+                SimpleNamespace(text=got.text[:40], refused=False, cut=True)
+                if (system == images.CLOSE_MAP_SYSTEM)
+                else got
+            )
+
+        vision.complete = cut  # type: ignore[method-assign]
+        desk = self.make_desk(vision=vision)
+        png = Image("image/png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+        with self.assertLogs("dmbot.images", "INFO") as logs:
+            read = await desk.read_closely(GUILD_A, self.a.id, png, nullcontext)
+        self.assertIn("(cut)", " ".join(logs.output))
+        assert read is not None
+        self.assertIsNone(close_of(read))  # (nothing a note could keep as a close read)
 
     async def test_a_poster_who_stops_after_the_reading_but_before_the_write_leaves_no_note(
         self,
@@ -508,6 +602,32 @@ class TableImages(chat.AtTheTableTyped):
             ["dmbot:picpriv:77", "dmbot:picdel:77"],
         )
         self.assertEqual(len(self.lines()), 1)
+
+    async def test_a_map_asks_its_poster_once_and_a_plain_picture_does_not(self) -> None:
+        self.say_into()
+        self.keeper()
+        self.bot.map_store = cast(Any, object())
+        asked = AsyncMock()
+        with patch("dmbot.ui.map_question.ask", new=asked):
+            self.reads(images.MAP)
+            await self.hear(picture())
+            asked.assert_awaited_once()
+            assert asked.await_args is not None
+            self.assertEqual(asked.await_args.args[1], GUILD_A)  # (the server, then the campaign)
+            asked.reset_mock()
+            self.reads("photo")
+            await self.hear(picture())
+            asked.assert_not_awaited()
+
+    async def test_the_same_map_again_is_not_asked_a_second_time(self) -> None:
+        self.say_into()
+        self.keeper(Result(cast(Any, SimpleNamespace(code="CODE", id=77)), False))
+        self.bot.map_store = cast(Any, object())
+        self.reads(images.MAP)
+        asked = AsyncMock()
+        with patch("dmbot.ui.map_question.ask", new=asked):
+            await self.hear(picture())
+        asked.assert_not_awaited()
 
     async def test_the_same_picture_again_says_no_second_link(self) -> None:
         said = self.say_into()

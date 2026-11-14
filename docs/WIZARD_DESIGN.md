@@ -56,7 +56,7 @@ DM's own ruleset), 7 (house rules) and 8 (homebrew).
 | `name` | file name or link title, as the DM sees it (at most 200). |
 | `source` | `upload` \| `link` \| `drive`. |
 | `drive_id` | for `drive`, the file id from Google's picker (`drive.file` scope); the bot reads it with the DM's existing Drive link at Finish. Empty otherwise. |
-| `text` | the extracted text for an upload (bounded: the lore text limit of 0288, 262,144 characters a document; a bigger file is **refused at the door with the way out**, "split it or use Google Drive"). Blank for `drive` and for a link kept as a link. |
+| `text` | the extracted text for an upload (bounded: the lore text limit of 0288, 262,144 characters a document; a bigger file is **refused at the door with the way out**, "split it into parts"). Blank for `drive` and for a link kept as a link. |
 | `pages`, `words` | what check-only counted (`pages` 0 for plain text). |
 | `status` | `ok` \| `unreadable`; with `reason` (a short code from a fixed list the page words: `empty`, `scanned`, `locked`, `too_big`, `not_text`). |
 | `rights_by`, `rights_at` | the right-to-use confirmation (CLAUDE.md, IP): required before a `ruleset` document is accepted and before **any** of `lore`, `secrets`, `house`, `homebrew` is read by the AI at Finish (the same one confirmation the Discord upload asks for; who and when are recorded on the campaign at Finish, via the existing `campaigns` store call). |

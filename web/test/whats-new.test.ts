@@ -12,10 +12,14 @@ import { parsePage } from "./dom";
 import { entries, formatDate, held, whatsNewHeading } from "../src/content/whats-new";
 import Help from "../src/pages/help.astro";
 import Home from "../src/pages/index.astro";
+import Older from "../src/pages/whats-new/older.astro";
 import WhatsNew from "../src/pages/whats-new.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
-let page: Document;
+let page: Document; // (the main page, the newest entries)
+let older: Document; // ("Older changes", the rest, #4200)
+/** Every entry shown on either page, newest first. */
+const allShown = (): Element[] => [...page.querySelectorAll(".entry"), ...older.querySelectorAll(".entry")];
 let help: Document;
 let home: Document;
 
@@ -24,6 +28,7 @@ beforeAll(async () => {
   const render = async (component: Parameters<typeof container.renderToString>[0], path: string): Promise<Document> =>
     parsePage(await container.renderToString(component, { request: new Request(`https://dmbot.example${path}`) }));
   page = await render(WhatsNew, "/whats-new");
+  older = await render(Older, "/whats-new/older");
   help = await render(Help, "/help");
   home = await render(Home, "/");
 });
@@ -77,7 +82,7 @@ describe("What's new", () => {
   it("keeps the live list as it was when the entries moved into files (#2468)", () => {
     const now = entries.map((e) => e.title);
     expect(now.filter((t) => liveWhenSplit.includes(t))).toEqual(liveWhenSplit);
-    expect(page.querySelectorAll(".entry").length).toBe(entries.length);
+    expect(allShown().length).toBe(entries.length);
   });
 
   it("gives every file the same shape, with a name that starts with its date (#2468)", () => {
@@ -102,7 +107,7 @@ describe("What's new", () => {
 
   it("lists every entry, newest first, with the day it went live", () => {
     expect(page.querySelector("h1")?.textContent).toBe(whatsNewHeading);
-    const shown = [...page.querySelectorAll(".entry")];
+    const shown = allShown();
     expect(shown.map((e) => e.querySelector("h2")?.textContent)).toEqual(entries.map((e) => e.title));
     expect(shown.map((e) => e.querySelector("time")?.getAttribute("datetime"))).toEqual(
       entries.map((e) => e.date),
@@ -137,7 +142,7 @@ describe("What's new", () => {
       expect(h.reason.length, h.title).toBeGreaterThan(20);
       expect(entries.map((e) => e.title)).not.toContain(h.title);
     }
-    const shown = page.querySelector("main")?.textContent ?? "";
+    const shown = (page.querySelector("main")?.textContent ?? "") + (older.querySelector("main")?.textContent ?? "");
     expect(shown).not.toContain("Move to a new Discord account");
     expect(shown).not.toContain("New names from what was said");
     expect(shown).not.toContain("A note before tonight");
@@ -145,7 +150,7 @@ describe("What's new", () => {
     expect(shown).not.toContain("move code");
     expect(shown).not.toContain("Ask a question in public"); // not until QAbot is live
     expect(shown).not.toContain("QAbot");
-    expect(page.querySelectorAll(".entry")).toHaveLength(entries.length);
+    expect(allShown()).toHaveLength(entries.length);
     expect(entries.length).toBeGreaterThanOrEqual(10); // each live entry is shown (#1521)
   });
 

@@ -1,6 +1,10 @@
 ---
+import EntryList from "../components/EntryList.astro";
 import Base from "../layouts/Base.astro";
-import { entries, formatDate, whatsNewHeading, whatsNewIntro } from "../content/whats-new";
+import { entries, olderHeading, splitEntries, whatsNewHeading, whatsNewIntro } from "../content/whats-new";
+
+// The newest entries only (the last 60 days, at least 30): the page lists what is live, so it would grow with every one (#4200).
+const { recent, older } = splitEntries(entries, new Date());
 ---
 
 <Base
@@ -10,48 +14,11 @@ import { entries, formatDate, whatsNewHeading, whatsNewIntro } from "../content/
   <h1>{whatsNewHeading}</h1>
   <p class="lead muted">{whatsNewIntro}</p>
 
-  <ol class="entries">
-    {
-      entries.map((e) => (
-        <li class="surface entry">
-          <h2>{e.title}</h2>
-          <p class="muted date">
-            <time datetime={e.date}>{formatDate(e.date)}</time>
-          </p>
-          <p>{e.what}</p>
-        </li>
-      ))
-    }
-  </ol>
+  <EntryList entries={recent} />
+
+  {older.length > 0 && <p><a href="/whats-new/older">{olderHeading}</a></p>}
 
   <p class="muted">
     Need a hand? Read the <a href="/help">Help page</a>.
   </p>
 </Base>
-
-<style>
-  .entries {
-    list-style: none;
-    padding: 0;
-    margin: var(--space-4) 0;
-    display: grid;
-    gap: var(--space-4);
-  }
-
-  .entry {
-    padding: var(--space-6);
-  }
-
-  .entry h2 {
-    font-size: var(--text-lg);
-    margin: 0 0 var(--space-1);
-  }
-
-  .entry p {
-    margin: 0;
-  }
-
-  .entry .date {
-    margin-bottom: var(--space-2);
-  }
-</style>

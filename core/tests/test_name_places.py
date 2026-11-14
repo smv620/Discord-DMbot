@@ -248,6 +248,15 @@ class Cards(NamesTest):
         text = await name_places.where_said(None, self.store, GUILD, [], ["Hrothgar"], {DM})
         self.assertEqual(text, name_places.NOTHING_KEPT)
 
+    async def test_a_press_after_the_uploads_sentence_went_says_so(self) -> None:
+        # #4227: the card was drawn with something behind the button; by the press, nothing is
+        await self.said(2)
+        view, _text = await self.card()
+        view.refs = []
+        it = self.it()
+        await self.where(view).callback(it)
+        self.assertEqual(it.response.sent[-1][0], name_places.LORE_GONE)
+
     async def test_a_lore_name_shows_its_sentence_and_the_upload(self) -> None:
         text = await name_places.where_said(
             None,

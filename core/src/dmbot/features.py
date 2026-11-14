@@ -88,8 +88,9 @@ FEATURES: tuple[Feature, ...] = (
         "Finding notes by meaning",
         "PlotBot also finds notes that mean the same thing in different words.",
         lambda s: s.meaning_search_on,
-        # (`role_match`: new story roles matched by meaning, #3172; a part of meaning search)
-        ("meaning_search", "voyage_key", "role_match"),
+        # (`role_match`: new story roles matched by meaning, #3172; `scene_filter_on`: scene
+        # moves sent to the AI only for lines that look like one, #4173 slice 4; both parts of it)
+        ("meaning_search", "voyage_key", "role_match", "scene_filter_on"),
         for_dms=False,  # for whoever runs DMbot: it needs the Voyage key (#2664)
     ),
     Feature(
@@ -121,6 +122,14 @@ FEATURES: tuple[Feature, ...] = (
         lambda s: s.recap_final_read,
         ("recap_final_read",),
         for_dms=False,  # how the work is done, not something a DM chooses (#2952)
+    ),
+    Feature(
+        "recap reuse",
+        "Recap writer reuses its repeated text",
+        "",
+        lambda s: s.recap_cache,
+        ("recap_cache",),
+        for_dms=False,  # how the work is paid for, not something a DM chooses (#4054)
     ),
     Feature(
         "structured beats",
@@ -164,6 +173,8 @@ FEATURES: tuple[Feature, ...] = (
             "story_reveals_on",
             "story_reveals_precheck",
             "met_unnamed_on",
+            "private_scenes_on",
+            "picture_names_on",
             "story_who_on",
             "story_who_apply_on",
             "story_family_only",
@@ -295,6 +306,7 @@ NOT_A_SWITCH: dict[str, str] = {
     "ears_secret": "a secret, always needed",
     "ears_host": "where the voice service is",
     "ears_port": "where the voice service is",
+    "person_key": "a secret, always needed once account records use it (#4145)",
     "dev_guild_id": "the test server's commands, not a feature",
     "clear_guild_commands": "a one-time clean-up list of servers",
     "database_url": "a secret address, always needed",
@@ -312,6 +324,8 @@ NOT_A_SWITCH: dict[str, str] = {
     "memory_keep_days": "a number of days",
     "free_users": "the owner's own accounts: never listed",
     "free_guilds": "the owner's own test server: never listed",
+    "disk_warn_pct": "a percentage: where the disk check starts to warn (#4075)",
+    "disk_alert_pct": "a percentage: where the disk check tells the owner (#4075)",
     "elevenlabs_speech_model": "which voice model, a choice",
     "voyage_embed_model": "which meaning-search model, a choice",
     "voyage_rerank_model": "which meaning-search ranking model, a choice",

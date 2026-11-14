@@ -25,6 +25,16 @@ EVERY_ACTION = (
     "told-add", "told-remove",  # "Tell a character" (#3542)
     "clock-set", "clock-skip",  # the import clock offer (#3199)
     "match-confirm", "match-undo",  # the answer to one of DMbot's own matches (#3602)
+    "link-undo",  # the page's Undo of a connection edit (#4156)
+    "met-name", "met-join", "met-remove",  # "Met but not named" (#4084)
+    "link-direction",  # A → B, B → A or A ↔ B (#4154)
+    "link-right",  # ✅ That's right on an assumed parent (#4304)
+    "place-size",  # how big a place is (#4173)
+    "place-setting",  # the campaign's setting (#4173 slice 2)
+    "place-form",  # land, water or a road (#4173 slice 6a)
+    "maps-use", "maps-show", "maps-remove", "maps-takeback", "maps-undo",  # the Maps page (#4347)
+    "map-terrain", "map-climate", "map-control", "map-show",  # a place's land, climate, ruler
+    "world-keep", "world-not", "world-undo",  # World notes (#4285)
 )  # fmt: skip
 
 

@@ -723,6 +723,66 @@ class WhenKept(NamesTest):
         self.assertEqual([w.upload for w in left], ["Other file, 2 Jan"])  # never kept unseen
         self.assertEqual(len(await self.relations()), 2)
 
+    async def test_the_card_says_what_keep_all_leaves_for_you(self) -> None:
+        """The owner's test (2026-11-10): "Connection 1 of 9" beside "Keep all 3" must say what
+        happens to the rest."""
+        await self.read()
+        await self.confirm_all()
+        await self.memory.add_names(
+            GUILD,
+            self.campaign.id,
+            [NewName("Edda", "npc", "confirmed"), NewName("Holt", "npc", "confirmed")],
+            source="dm",
+        )
+        ids = {e.name: e.id for e in await self.memory.entities(GUILD, self.campaign.id)}
+        self.store._clock = lambda: time.time() + 100
+        await self.store.add(
+            GUILD,
+            self.campaign.id,
+            [NewLink(ids["Edda"], "kin_of", ids["Holt"], "Edda and Holt", upload="Other file")],
+        )
+        it, _ = await self.offer()
+        sent = it.followup.send.await_args
+        text = sent.args[0] if sent.args else sent.kwargs.get("content", "")
+        self.assertIn("Connection 1 of 3", text)
+        self.assertIn("Keep all 2 keeps just the 2 from", text)
+        self.assertIn("The other one you check on its own: 1 from another file.", text)
+        # (right under the counter, so "of 3" and "Keep all 2" are read together, #4320)
+        self.assertLess(text.index("Connection 1 of 3"), text.index("Keep all 2 keeps"))
+        self.assertLess(text.index("Keep all 2 keeps"), text.index("From your text"))
+
+    async def test_the_card_says_how_many_are_from_other_files_and_how_many_dmbot_guessed(
+        self,
+    ) -> None:
+        await self.read()
+        await self.confirm_all()
+        await self.memory.add_names(
+            GUILD,
+            self.campaign.id,
+            [NewName("Edda", "npc", "confirmed"), NewName("Holt", "npc", "confirmed")],
+            source="dm",
+        )
+        ids = {e.name: e.id for e in await self.memory.entities(GUILD, self.campaign.id)}
+        self.store._clock = lambda: time.time() + 100
+        await self.store.add(
+            GUILD,
+            self.campaign.id,
+            [
+                NewLink(ids["Edda"], "kin_of", ids["Holt"], "Edda and Holt", upload="Other file"),
+                NewLink(ids["Holt"], "ally_of", ids["Edda"], "Holt and Edda", upload="Other file"),
+                NewLink(
+                    ids["Holt"], "friend_of", ids["Edda"], "Holt knew Edda", inferred="they travel"
+                ),
+            ],
+        )
+        it, _ = await self.offer()
+        sent = it.followup.send.await_args
+        text = sent.args[0] if sent.args else sent.kwargs.get("content", "")
+        self.assertIn(
+            "The other 3 you check one at a time: 2 from other files and 1 DMbot guessed.",
+            text,
+        )
+
     async def test_the_counts_for_the_check_are_read_only(self) -> None:
         await self.read()
         before = await self.store.counts(GUILD, self.campaign.id)

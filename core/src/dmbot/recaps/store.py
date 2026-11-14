@@ -1006,8 +1006,9 @@ class RecapStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 # (a recap written by the table is not one of DMbot's recaps: it costs nothing and
-                # is not counted; its narration still is)
-                "SELECT COALESCE(sum(CASE WHEN uploaded_by > 0 THEN 0 ELSE"
+                # is not counted; its narration still is. `written_by`, not `uploaded_by`: that
+                # one goes to 0 when the uploader's account is deleted, #4148)
+                "SELECT COALESCE(sum(CASE WHEN written_by <> '' THEN 0 ELSE"
                 " (CASE WHEN state = 'ready' THEN 1 ELSE 0 END) + tries END), 0)"
                 " AS recaps, COALESCE(sum((CASE WHEN audio = 'ready' THEN 1 ELSE 0 END)"
                 " + (CASE WHEN audio <> 'off' THEN tries ELSE 0 END)), 0)"

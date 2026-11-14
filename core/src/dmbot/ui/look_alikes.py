@@ -22,7 +22,7 @@ from dmbot.campaigns import Campaign
 from dmbot.memory.lookalikes import Name, by_use, look_alike
 from dmbot.memory.models import DM, MemoryRuleError, days
 from dmbot.memory.store import MemoryStore
-from dmbot.ui import logic, name_places
+from dmbot.ui import logic, name_places, split_words
 from dmbot.ui.dmbot_commands import (
     _answer_first,
     _Button,
@@ -501,6 +501,8 @@ class ConfirmMerge(_Menu):
             f"{'name is' if len(self.others) == 1 else 'names are'} now other "
             f"{'name' if len(self.others) == 1 else 'names'} for **{_md(self.keep.name)}**."
         )
+        if secret := split_words.for_join(written.split):  # (#4043)
+            note = f"{note}\n{secret}"
         rest = await _reload(memory, campaign)
         await _show_group(
             interaction,
@@ -719,4 +721,6 @@ class ConfirmCard(_Menu):
             self.keep.name,
             len(self.others),
         )
+        if secret := split_words.for_join(written.split):  # (#4043)
+            note = f"{note}\n{secret}"
         await show_card(interaction, campaign.id, self.keep.id, replace=True, note=note)

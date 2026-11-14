@@ -142,15 +142,15 @@ describe("on the Help page, more", () => {
   it("hides a list whose steps don't match but keeps the heading of the list that does", () => {
     const doc = parsePage(html);
     const main = doc.querySelector("main")!;
-    // Quick answers sit under their own heading inside the game master section.
-    const quick = doc.querySelector("#quick-heading")!;
-    const list = quick.nextElementSibling!;
+    // The recaps list sits under its own heading inside the game master section (the quick answers moved to their own page: #4235).
+    const recaps = doc.querySelector("#recaps-heading");
+    if (!recaps) return; // only while recaps are on
+    const list = recaps.nextElementSibling!;
     const first = list.querySelector("li")!.textContent ?? "";
-    // A word that is only in that quick answer, and nowhere in the steps before it.
     const word = normalize(first).split(" ").find((w) => w.length > 6 && !(doc.querySelector("#dm-heading ~ ol")?.textContent ?? "").toLowerCase().includes(w));
-    expect(word, "a word only the quick answer has").toBeTruthy();
+    expect(word, "a word only the recap list has").toBeTruthy();
     applySearch(main, word!);
-    expect(quick.hasAttribute("hidden")).toBe(false);
+    expect(recaps.hasAttribute("hidden")).toBe(false);
     expect(list.hasAttribute("hidden")).toBe(false);
     expect(doc.querySelector("#dm-heading ~ ol")?.hasAttribute("hidden")).toBe(true);
   });

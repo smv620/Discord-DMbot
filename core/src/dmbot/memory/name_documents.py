@@ -21,6 +21,7 @@ import zipfile
 from collections.abc import Callable
 from html.parser import HTMLParser
 from pathlib import PurePath
+from typing import Any
 
 from dmbot.memory.models import name_key
 from dmbot.memory.name_list import MAX_PER_LINE, join_cell, lines_for, split_cell
@@ -183,6 +184,8 @@ def _pdf_text(raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS) -> ReadText:
     pictures = 0
     for page in reader.pages:
         text = page.extract_text() or ""
+        if words_come_apart(text):
+            text = _by_layout(page, text)
         parts.append(text)
         size += len(text)
         if len("".join(text.split())) < PICTURE_PAGE_CHARS:
@@ -196,6 +199,60 @@ def _pdf_text(raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS) -> ReadText:
     if not text.strip():
         raise DocumentError(SCANNED_PDF)
     return ReadText(text, len(reader.pages), pictures)
+
+
+# A page whose plain reading came apart into a few words a line (the owner's report, 2026-11-13: a
+# Google Docs "Download as PDF" draws every word on its own, and pypdf's plain reading starts a new
+# line at each one, so "Bryn Shander" reached the readers as two lines and the lore gave far fewer
+# names and connections than the same text as a Google Doc). Such a page is read again by where its
+# words sit (pypdf's layout reading), and that is kept only when it really joins the lines up and
+# the page has no column gutter: a book in two columns reads column by column in the plain reading,
+# and the layout reading would run its two columns together on each line.
+APART_LINES = 30  # at least this many lines on the page (a short list of names is read as it is)
+APART_WORDS = 4  # fewer words than this a line, on average
+JOINED = 0.6  # the layout reading has at most this share of the plain reading's lines
+GUTTER = 0.8  # a blank strip at the same place in at least this share of the lines is a gutter
+_GAP = re.compile(r" {3,}")
+
+
+def words_come_apart(text: str) -> bool:
+    """Did the plain reading put a few words on each line, page-long?"""
+    lines = [line for line in text.split("\n") if line.strip()]
+    if len(lines) < APART_LINES:
+        return False
+    return sum(len(line.split()) for line in lines) / len(lines) < APART_WORDS
+
+
+def _gutter(lines: list[str]) -> bool:
+    """A blank strip at the same place, between words, in most of the lines: columns."""
+    full = [line for line in lines if line.strip()]
+    if not full:
+        return False
+    counts: dict[int, int] = {}
+    for line in full:
+        body = line.rstrip()
+        for gap in _GAP.finditer(body):
+            if gap.start() > 0 and gap.end() < len(body):
+                for at in range(gap.start() + 1, gap.end() - 1):
+                    counts[at] = counts.get(at, 0) + 1
+    return bool(counts) and max(counts.values()) >= GUTTER * len(full)
+
+
+def _by_layout(page: Any, plain: str) -> str:
+    """The page read by where its words sit, one space between words, when that is better (see
+    above); else the plain reading."""
+    try:
+        laid = page.extract_text(extraction_mode="layout") or ""
+    except Exception as exc:  # (an unusual page: the plain reading stands)
+        log.info("A PDF page's layout reading failed (%s)", type(exc).__name__)
+        return plain
+    lines = laid.split("\n")
+    full = [line for line in lines if line.strip()]
+    plain_lines = sum(1 for line in plain.split("\n") if line.strip())
+    if not full or len(full) > JOINED * plain_lines or _gutter(lines):
+        return plain
+    tidy = "\n".join(" ".join(line.split()) for line in lines)
+    return re.sub(r"\n{3,}", "\n\n", tidy).strip("\n")
 
 
 # Text runs and paragraph ends in a Word file. `[^<]*` can't run past a tag, so one pass

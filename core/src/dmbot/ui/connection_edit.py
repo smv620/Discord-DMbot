@@ -10,14 +10,15 @@ the campaign, the DM and the connection again; only the campaign's DMs deal in s
 
 from __future__ import annotations
 
+import dataclasses
 import logging
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.memory import link_edits
+from dmbot.memory import kin, link_edits, place_levels, route_length, route_words
 from dmbot.memory.link_words import CONNECTION_WORDS, link_words, predicate_for, reads_both_ways
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED, DM, KNOWS_HOWS, MemoryRuleError, Relation
@@ -46,6 +47,12 @@ from dmbot.ui.name_card import (
     show_card,
 )
 from dmbot.ui.names import _campaign_for, _md, _memory, changed, sees_secrets
+from dmbot.ui.place_size import (
+    KEEP_LENGTH_BUTTON,
+    LENGTH_BUTTON,
+    NOTHING_CHANGED,
+    ONLY_DM_LENGTH,
+)
 from dmbot.ui.who_knows import WhoKnowsMenu, called, player_characters, who_text
 
 log = logging.getLogger(__name__)
@@ -127,6 +134,51 @@ async def website(interaction: discord.Interaction, campaign_id: str) -> None:
         )
 
 
+# Which way a connection reads, the DM's choice (#4154): the same three as the website's toggle.
+DIRECTION_PLACEHOLDER = "Which way does it read?"
+BOTH = "both"  # (the other two values are the id of the name it reads from)
+BOTH_LABEL = "Both ways ↔"
+
+
+def direction_choices(
+    r: Relation, first: str, second: str, said: Callable[[Relation], str]
+) -> list[discord.SelectOption]:
+    """ "Cerric → Wit", "Wit → Cerric", "Both ways ↔", the one it reads now chosen. A chosen menu
+    never shows its placeholder, so each choice's second line is the sentence it would give
+    (`said`: "Cerric is a rival of Wit"). Names are cut to a menu's name length first, so both ends
+    and the arrow always show. A family role true of one name only ("niece") keeps its word and
+    has no both-ways choice once it has a direction: the arrow says who holds the role."""
+    a, b = logic.name_label(first), logic.name_label(second)
+    role = kin.role_of(r.detail) if r.predicate == "kin_of" else None
+    one_way_role = role is not None and kin.directional(role)
+
+    def one_way(x: Relation) -> Relation:
+        # (a role takes the arrow as its direction; any other kind is marked one way)
+        return (
+            dataclasses.replace(x, directional=True)
+            if one_way_role
+            else dataclasses.replace(x, both_ways=False)
+        )
+
+    turned = one_way(dataclasses.replace(r, subject_id=r.object_id, object_id=r.subject_id))
+    both = reads_both_ways(r.predicate, r.detail, r.directional, r.both_ways, r.route_state)
+    choices = [
+        (f"{a} → {b}", r.subject_id, not both, said(one_way(r))),
+        (f"{b} → {a}", r.object_id, False, said(turned)),
+    ]
+    if not (one_way_role and r.directional):
+        choices.append((BOTH_LABEL, BOTH, both, said(dataclasses.replace(r, both_ways=True))))
+    return [
+        discord.SelectOption(
+            label=logic.shorten(label, logic.OPTION_LABEL_MAX),
+            value=value,
+            default=now,
+            description=logic.shorten(line, logic.DESCRIPTION_MAX) if line else None,
+        )
+        for label, value, now, line in choices
+    ]
+
+
 @dataclass
 class Found:
     campaign: Campaign
@@ -157,7 +209,10 @@ async def _find(
         confirmed_only=True,
         include_secret=secrets,
     )
-    shown = {row.id: row.relation for row in _rows(names, entity_id, mine, secrets)}
+    # (the same rows the menu offered: an ended holding too, for the DM, #4115)
+    shown = {
+        row.id: row.relation for row in _rows(names, entity_id, mine, secrets, history=secrets)
+    }
     relation = shown.get(relation_id)
     if relation is None or relation.status != CONFIRMED:
         await _tell(interaction, GONE_LINK)
@@ -279,6 +334,14 @@ class OneConnection(_Menu):
             )
         self.add_item(_Button(self._remove, label="🗑 Remove", style=grey, row=1))
         self.add_item(_Button(self._back, label="Back", style=grey, row=2))
+        if r.predicate == route_words.ROUTE_TO and not r.route_state and found.secrets:
+            # a route's stated length, the DM's (#4255; the ux-critic's words): 🛣️ (📏 is Size)
+            self.length_words = r.length_words or ""
+            self.add_item(_Button(self._length, label=LENGTH_BUTTON, style=grey, row=3))
+            if r.length_words is not None and r.length_from == place_levels.READ:
+                self.add_item(
+                    _Button(self._keep_length, label=KEEP_LENGTH_BUTTON, style=grey, row=3)
+                )
         if meets(found) and found.secrets:  # whether they've met: the DM's word (#3881)
             self.how = _Select(
                 self._how_picked,
@@ -294,6 +357,19 @@ class OneConnection(_Menu):
                 row=3,
             )
             self.add_item(self.how)
+        if found.secrets and subject is not None and other is not None:  # (the DM's word, #4154)
+            self.direction = _Select(
+                self._direction_picked,
+                placeholder=DIRECTION_PLACEHOLDER,
+                options=direction_choices(
+                    r,
+                    subject.name,
+                    other.name,
+                    lambda x: sentence(found.names, x, feeling=True) or "",
+                ),
+                row=4,
+            )
+            self.add_item(self.direction)
 
     async def _changed(
         self, interaction: discord.Interaction, found: Found, note: str, *, undo: int | None = None
@@ -351,10 +427,14 @@ class OneConnection(_Menu):
         # connection with no direction ("is an enemy of") is said from the card the DM is on,
         # whichever way round the row happens to be stored, as the card itself reads it.
         first, second = stored.subject_id, stored.object_id
-        if second == card_id and reads_both_ways(
-            stored.predicate, stored.detail, stored.directional
-        ):
-            first, second = second, first
+        if reads_both_ways(
+            stored.predicate, stored.detail, stored.directional, stored.both_ways,
+            stored.route_state,
+        ):  # fmt: skip
+            # said of the two together, from the card's name: "Cerric and Wit are rivals" (#4154)
+            if second == card_id:
+                stored = dataclasses.replace(stored, subject_id=second, object_id=first)
+            return sentence(found.names, stored, feeling=True) or "?"
         subject = found.names.entities.get(first)
         other = found.names.entities.get(second)
         words = link_words(
@@ -364,6 +444,7 @@ class OneConnection(_Menu):
             subject.type if subject else "",
             feeling=True,
             knows_how=stored.knows_how,
+            route_state=stored.route_state,
         )
         return f"{subject.name if subject else '?'} {words} {other.name if other else '?'}"
 
@@ -389,6 +470,35 @@ class OneConnection(_Menu):
             return
         if written.batch is None:
             await _tell(interaction, "It already says that. Press Back to see the card.")
+            return
+        reads = _md(self._now_reads(found, written.value, self.entity_id))
+        await self._changed(
+            interaction, found, f"Changed to: {reads}. {UNDO_NOTE}", undo=written.batch
+        )
+
+    async def _direction_picked(self, interaction: discord.Interaction) -> None:
+        picked = self.direction.values[0]
+        await _answer_first(interaction, in_place=True)
+        found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
+        if found is None:
+            return
+        if not found.secrets:  # (only the campaign's DMs say this; checked again on every press)
+            await _tell(interaction, SECRET_DENIED_PRESS)
+            return
+        r = found.relation
+        if picked != BOTH and picked not in (r.subject_id, r.object_id):
+            await _tell(interaction, NOTHING_MORE)
+            return
+        c = found.campaign
+        try:
+            written = await found.memory.set_direction(
+                c.guild_id, c.id, r.id, None if picked == BOTH else picked, source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change that. {exc}")
+            return
+        if written.batch is None:
+            await _tell(interaction, "It already reads that way. Press Back to see the card.")
             return
         reads = _md(self._now_reads(found, written.value, self.entity_id))
         await self._changed(
@@ -459,6 +569,61 @@ class OneConnection(_Menu):
         )
         await self._changed(interaction, found, note, undo=written.batch)
 
+    async def _length(self, interaction: discord.Interaction) -> None:
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):  # (before the form, not after typing)
+            await _tell(interaction, ONLY_DM_LENGTH)
+            return
+        await interaction.response.send_modal(
+            RouteLengthForm(self.length_words, lambda i, text: self._set_length(i, text))
+        )
+
+    async def _set_length(self, interaction: discord.Interaction, text: str) -> None:
+        """The DM's 🛣️ Length (#4255): their words as given, the amount read from them; an empty
+        box takes it off. Saving DMbot's read as it stands makes it the DM's too."""
+        await _answer_first(interaction, in_place=True)
+        found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
+        if found is None:
+            return
+        if not found.secrets:  # checked on every press
+            await _tell(interaction, ONLY_DM_LENGTH)
+            return
+        c = found.campaign
+        try:
+            written = await found.memory.set_route_length(
+                c.guild_id, c.id, found.relation.id, text, on="connection", source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, f"Couldn't change that. {exc}")
+            return
+        if written.batch is None:
+            await _tell(interaction, NOTHING_CHANGED)
+            return
+        note = length_note(written.value, kept=False)
+        await self._changed(interaction, found, note, undo=written.batch)
+
+    async def _keep_length(self, interaction: discord.Interaction) -> None:
+        """✅ Length is right (#4255): DMbot's read of the length is the DM's from now on."""
+        await _answer_first(interaction, in_place=True)
+        found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
+        if found is None:
+            return
+        if not found.secrets:
+            await _tell(interaction, ONLY_DM_LENGTH)
+            return
+        c = found.campaign
+        try:
+            written = await found.memory.keep_route_length(
+                c.guild_id, c.id, found.relation.id, on="connection", source=DM
+            )
+        except MemoryRuleError as exc:
+            await _tell(interaction, str(exc))  # (the length changed meanwhile: plain words)
+            return
+        note = length_note(written.value, kept=True)
+        await self._changed(interaction, found, note, undo=written.batch)
+
     async def _remove(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
         found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
@@ -508,6 +673,48 @@ class ConfirmRemove(_Menu):
     async def _keep(self, interaction: discord.Interaction) -> None:
         self.stop()
         await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
+
+
+class RouteLengthForm(discord.ui.Modal, title="How far is it?"):
+    """A route's stated length in the DM's words (#4255): filled with the length it has, so the DM
+    edits it; an empty box takes it off. Shared by a route connection and a route place."""
+
+    words: discord.ui.TextInput[RouteLengthForm] = discord.ui.TextInput(
+        label="In your words (leave empty to take it off)",
+        placeholder="For example: two days by cart",
+        max_length=route_length.WORDS_MAX,
+        required=False,
+    )
+
+    def __init__(
+        self,
+        current: str,
+        done: Callable[[discord.Interaction, str], Awaitable[None]],
+    ) -> None:
+        super().__init__(timeout=VIEW_TIMEOUT_S)
+        self.words.default = current or None
+        self._done = done
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        text = " ".join(str(self.words.value or "").split())
+        if text and not text.isprintable():
+            await _tell(interaction, "Type how far it is, like “two days by cart”.")
+            return
+        await self._done(interaction, text)
+
+
+def length_note(length: route_length.Length | None, *, kept: bool, undo: bool = True) -> str:
+    """What the DM is told after a length change (#4255; the ux-critic's words): "saved" for the
+    DM's own words, "kept" for ✅ Length is right on DMbot's read."""
+    after = f" {UNDO_NOTE}" if undo else ""
+    if length is None:
+        return f"🛣️ Length taken off.{after}"
+    return f"🛣️ Length {'kept' if kept else 'saved'}: **{_md(length.words)}**.{after}"
 
 
 class OtherWords(discord.ui.Modal, title="Other words"):

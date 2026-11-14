@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from dmbot.campaigns.store import decode_backup
-from dmbot.memory import kin, place_words, reputation_words, unnamed
+from dmbot.memory import kin, place_words, reputation_words, route_length, unnamed
 from dmbot.memory.models import name_key
 
 DEFAULT_KEY = (
@@ -68,6 +68,7 @@ GROUPS: dict[str, str] = {
     "found": "things",
     "associate": "associations",
     "in": "places",
+    "route": "places",  # a road or way between two places (#4255)
     "lives_in": "places",
     "lived_in": "places",
     "works_in": "places",
@@ -136,6 +137,15 @@ class Report:
     placeholders: int = 0
     # #3606: for each key tie that expects a feeling, (id, how the stored word sits against it)
     feelings: list[tuple[str, str]] = field(default_factory=list)
+    # #4256: a place's land, climate and ruler, per layer: found, wrong (another value), missed,
+    # and extra (a row the key does not list: a false note). Counts only.
+    map_facts: dict[str, Counter[str]] = field(default_factory=dict)
+    # A character's languages (#4229; owner, 2026-11-14: a property of the character, never a tie):
+    # found, missed, and extra (a language row the key does not list). Counts only.
+    languages: Counter[str] = field(default_factory=Counter)
+    # A road's stated length (#4255; a property of the road, never a tie): found, missed, and extra
+    # (a length on a road the key does not list). Counts only.
+    route_lengths: Counter[str] = field(default_factory=Counter)
 
 
 def _live(row: Mapping[str, Any]) -> bool:
@@ -168,6 +178,7 @@ class Graph:
     """The backup's entries and connections, found by name."""
 
     def __init__(self, tables: Mapping[str, Sequence[Mapping[str, Any]]]) -> None:
+        self.tables = tables  # (every table, for the checks that read one of their own)
         self.entities = {
             str(e["id"]): e
             for e in tables.get("entity", ())
@@ -361,6 +372,8 @@ def _row_ok(
             why = "" if ok else "other feeling"
     elif rel == "associate":
         ok = pred == "associated_with"
+    elif rel == "route":  # (a way between two places reads both ways round, #4255)
+        ok = pred == "route_to"
     elif rel == "in":
         ok = pred == "located_in" and forward and not place_words.way_of(detail)
         why = "wrong place word" if pred == "located_in" else ""
@@ -488,7 +501,126 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
     report.events_in_backup = sum(
         1 for e in graph.entities.values() if e["type"] in ("event", "deed")
     )
+    _score_map_facts(report, graph, key, names)
+    _score_languages(report, graph, key, names, wanted)
+    _score_route_lengths(report, graph, key, names, wanted)
     return report
+
+
+def _score_languages(
+    report: Report,
+    graph: Graph,
+    key: Mapping[str, Any],
+    names: Mapping[str, list[str]],
+    wanted: set[str],
+) -> None:
+    """The key's `languages` (#4229): {character, language}. A backup language row on that
+    character with that language (compared as `name_key`, so "elvish" is "Elvish") is found; none
+    is missed. Every other row is extra: a language the document never gives that character, such
+    as runes on an item read as a language. Whoever gave it (DMbot's read or the DM) counts alike:
+    the check scores what the graph holds, as for ties. A key with no `languages` list (the
+    session key, a key from before #4229) is not scored, so its report is unchanged; nor is a run
+    that scores none of the documents its languages come from (`doc`, lore when not given), so a
+    session-only run never counts the lore's languages as missed. Two things this does not judge:
+    a row on an entry turned down since is still extra, and a character with a sheet gets no story
+    languages at all (its languages are the sheet's), so a run that sets one before the lore is
+    read scores its languages as missed."""
+    langs = [x for x in key.get("languages", []) if x.get("doc", "lore") in wanted]
+    if not langs:
+        return
+    rows = list(graph.tables.get("story_language", []))
+    used: set[int] = set()
+    for lang in langs:
+        who = graph.ids(names.get(lang["character"], [lang["character"]]))
+        want = name_key(str(lang["language"]))
+        hit = [
+            i
+            for i, r in enumerate(rows)
+            if str(r["entity_id"]) in who and str(r.get("name_key") or name_key(r["name"])) == want
+        ]
+        used.update(hit)
+        report.languages["found" if hit else "missed"] += 1
+    report.languages["extra"] += sum(1 for i in range(len(rows)) if i not in used)
+
+
+def _same_length(stored: Mapping[str, Any], words: str) -> bool:
+    """A stored length says what the key's words say: the same amount and unit when the words give
+    one (so "1 hour" is "an hour"), else the same words."""
+    want = route_length.parse(words)
+    if want is None:
+        return False
+    if want.amount is not None:
+        return (stored.get("length_amount"), stored.get("length_unit")) == (want.amount, want.unit)
+    return name_key(str(stored.get("length_words") or "")) == name_key(want.words)
+
+
+def _joins(s: str, o: str, a: set[str], b: set[str]) -> bool:
+    """The road runs between the two places, either way round (never a road with one end only)."""
+    return (s in a and o in b) or (s in b and o in a)
+
+
+def _score_route_lengths(
+    report: Report,
+    graph: Graph,
+    key: Mapping[str, Any],
+    names: Mapping[str, list[str]],
+    wanted: set[str],
+) -> None:
+    """The key's `route_lengths` (#4255): {from, to, words}. A road (`route_to`, either way round)
+    between those two places whose stored length says the same is found; none is missed. Every
+    other road with a length is extra. Whoever gave it (DMbot's read or the DM) counts alike, as
+    for languages. A key with no list, or a run that scores none of its documents (`doc`, the
+    session when not given), scores none, so its report is unchanged."""
+    lengths = [x for x in key.get("route_lengths", []) if x.get("doc", "session") in wanted]
+    if not lengths:
+        return
+    roads = [r for r in graph.relations if r["predicate"] == "route_to" and r.get("length_words")]
+    used: set[int] = set()
+    for want in lengths:
+        a = graph.ids(names.get(want["from"], [want["from"]]))
+        b = graph.ids(names.get(want["to"], [want["to"]]))
+        hit = [
+            i
+            for i, r in enumerate(roads)
+            if _joins(str(r["subject_id"]), str(r["object_id"]), a, b)
+            and _same_length(r, str(want["words"]))
+        ]
+        used.update(hit)
+        report.route_lengths["found" if hit else "missed"] += 1
+    report.route_lengths["extra"] += sum(1 for i in range(len(roads)) if i not in used)
+
+
+def _score_map_facts(
+    report: Report, graph: Graph, key: Mapping[str, Any], names: Mapping[str, list[str]]
+) -> None:
+    """The key's `map_facts` (#4256): {place, layer, value}, the value a word of the layer's list
+    or, for control, the ruling group's key name. A backup row on that place and layer with that
+    value is found; one with another value is wrong; none is missed. A row the key doesn't list is
+    extra (a false note, design §13.15). Only the rows still open count."""
+    rows = [
+        r
+        for r in graph.tables.get("map_fact", [])
+        if r.get("status") != "rejected" and r.get("to_session_at") is None
+    ]
+    used: set[str] = set()
+    for fact in key.get("map_facts", []):
+        layer = str(fact["layer"])
+        tally = report.map_facts.setdefault(layer, Counter())
+        places = graph.ids(names.get(fact["place"], [fact["place"]]))
+        wanted = (
+            graph.ids(names.get(fact["value"], [fact["value"]]))
+            if layer == "control"
+            else {str(fact["value"])}
+        )
+        here = [r for r in rows if str(r["entity_id"]) in places and r["layer"] == layer]
+        hit = [
+            r for r in here if str(r["faction_id"] if layer == "control" else r["value"]) in wanted
+        ]
+        used.update(str(r["id"]) for r in here)
+        tally["found" if hit else "wrong" if here else "missed"] += 1
+    for r in rows:
+        if str(r["id"]) not in used:
+            report.map_facts.setdefault(str(r["layer"]), Counter())["extra"] += 1
 
 
 def _kind_for(entry_type: str) -> str:
@@ -523,6 +655,9 @@ def summarize(report: Report) -> dict[str, Any]:
         "inferred_confirmed": len(report.inferred_confirmed),
         "event_entries": {"expected": report.events_expected, "in_backup": report.events_in_backup},
         "player_characters": {"found": report.players_found, "expected": report.players_expected},
+        "map_facts": {layer: dict(c) for layer, c in sorted(report.map_facts.items())},
+        **({"languages": dict(report.languages)} if report.languages else {}),
+        **({"route_lengths": dict(report.route_lengths)} if report.route_lengths else {}),
     }
 
 
@@ -556,6 +691,17 @@ def render(report: Report, counts_only: bool = False) -> str:
         f"Event entries: {report.events_in_backup} in the backup, {report.events_expected} expected"
     )
     lines.append(f"Player characters found: {report.players_found} of {report.players_expected}")
+    for layer, c in sorted(report.map_facts.items()):  # (#4256: land, climate and ruler)
+        lines.append(
+            f"Place {layer}: found {c['found']}, wrong {c['wrong']}, missed {c['missed']}, "
+            f"extra {c['extra']}"
+        )
+    if report.languages:  # (#4229: a character's languages, a property, not a tie)
+        c = report.languages
+        lines.append(f"Languages: found {c['found']}, missed {c['missed']}, extra {c['extra']}")
+    if report.route_lengths:  # (#4255: a road's length, a property of the road, not a tie)
+        c = report.route_lengths
+        lines.append(f"Road lengths: found {c['found']}, missed {c['missed']}, extra {c['extra']}")
     lines.append(f"Must-not-find names present: {len(report.violations)}")
     if report.violations and not counts_only:
         lines.append("  " + ", ".join(report.violations))

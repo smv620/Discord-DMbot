@@ -7,9 +7,10 @@ import io
 import json
 import tempfile
 import unittest
+from collections import Counter
 from contextlib import redirect_stderr, redirect_stdout
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 
 from dmbot.devtools import graph_key_check as gkc
 
@@ -614,6 +615,22 @@ class UnnamedPeople(unittest.TestCase):
         report = gkc.check(old, self.raider_key())
         self.assertEqual((report.entries[0].status, report.violations), (gkc.FOUND, []))
 
+    def test_the_wind_spirit_is_found_by_the_lores_own_words(self) -> None:
+        # (the owner, 2026-11-10: lore line 30 says "an ancient wind spirit", which DMbot keeps as
+        # "unnamed - ancient wind spirit"; with only "The wind spirit" in the key, a right find and
+        # its tie to Okthandom, l035, both scored as misses)
+        key = load("lore_key.json")
+        data = backup(
+            [("ok", "Okthandom Korran", "character"), ("ws", "unnamed - ancient wind spirit",
+             "creature")],
+            [rel("r1", "ws", "associated_with", "ok")],
+        )  # fmt: skip
+        data["sections"]["memory"][1]["unnamed"] = True
+        report = gkc.check(data, key, "lore")
+        (spirit,) = [e for e in report.entries if e.id == "The wind spirit"]
+        (tie,) = [t for t in report.ties if t.id == "l035"]
+        self.assertEqual((spirit.status, tie.status), (gkc.FOUND, gkc.FOUND))
+
     def test_other_must_not_names_still_count_as_descriptions(self) -> None:
         key = {**self.raider_key(), "must_not_names": ["maul barbarian", "the attackers"]}
         data = backup([("u1", "unnamed - the attackers", "character")], [])
@@ -623,3 +640,177 @@ class UnnamedPeople(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class PlaceFacts(unittest.TestCase):
+    """A place's land, climate and ruler, scored per layer (#4256)."""
+
+    def test_found_wrong_missed_and_extra(self) -> None:
+        key = {
+            "nodes": [
+                {"name": "Dale", "kind": "place", "aliases": [], "note": ""},
+                {"name": "Vault", "kind": "place", "aliases": [], "note": ""},
+                {"name": "Council", "kind": "group", "aliases": [], "note": ""},
+            ],
+            "pairs": [],
+            "map_facts": [
+                {"place": "Dale", "layer": "climate", "value": "arctic"},
+                {"place": "Vault", "layer": "terrain", "value": "underdark"},
+                {"place": "Dale", "layer": "control", "value": "Council"},
+            ],
+        }
+
+        def fact(
+            i: str, place: str, layer: str, value: str = "", group: str | None = None
+        ) -> dict[str, Any]:
+            return {
+                "table": "map_fact", "id": i, "entity_id": place, "layer": layer, "value": value,
+                "faction_id": group, "status": "read", "to_session_at": None,
+            }  # fmt: skip
+
+        rows = [
+            fact("f1", "d", "climate", "arctic"),  # found
+            fact("f2", "v", "terrain", "mountain"),  # wrong
+            fact("f3", "d", "terrain", "hill"),  # extra: the key says nothing of Dale's land
+        ]
+        data = backup(
+            [("d", "Dale", "place"), ("v", "Vault", "place"), ("c", "Council", "faction")], rows
+        )
+        report = gkc.check(data, key)
+        self.assertEqual(report.map_facts["climate"]["found"], 1)
+        self.assertEqual(report.map_facts["terrain"]["wrong"], 1)
+        self.assertEqual(report.map_facts["terrain"]["extra"], 1)
+        self.assertEqual(report.map_facts["control"]["missed"], 1)
+        self.assertIn("Place climate: found 1, wrong 0, missed 0, extra 0", gkc.render(report))
+
+
+class Languages(unittest.TestCase):
+    """A character's languages, a property of the character and never a tie (#4229; owner,
+    2026-11-14): found, missed and extra."""
+
+    def test_found_missed_and_extra(self) -> None:
+        key = {
+            "nodes": [
+                {"name": "Norrin", "kind": "person", "aliases": [], "note": ""},
+                {"name": "Tamsin", "kind": "person", "aliases": [], "note": ""},
+            ],
+            "pairs": [],
+            "languages": [
+                {"character": "Norrin", "language": "Elvish"},
+                {"character": "Norrin", "language": "Draconic"},
+            ],
+        }
+
+        def lang(i: str, who: str, name: str) -> dict[str, Any]:
+            return {
+                "table": "story_language", "id": i, "entity_id": who, "name": name,
+                "name_key": name.casefold(), "given_by": "read",
+            }  # fmt: skip
+
+        rows = [
+            lang("a", "n", "elvish"),  # found (the same word, another case)
+            lang("b", "t", "Sylvan"),  # extra: the key gives Tamsin no language
+            lang("c", "t", "Draconic"),  # extra: Draconic is Norrin's, not Tamsin's
+        ]
+        data = backup([("n", "Norrin", "person"), ("t", "Tamsin", "person")], rows)
+        report = gkc.check(data, key)
+        self.assertEqual(dict(report.languages), {"found": 1, "missed": 1, "extra": 2})
+        self.assertIn("Languages: found 1, missed 1, extra 2", gkc.render(report))
+        self.assertEqual(gkc.summarize(report)["languages"]["extra"], 2)
+
+    def test_a_key_without_languages_scores_none_even_with_rows(self) -> None:
+        row = {
+            "table": "story_language", "id": "a", "entity_id": "n", "name": "Elvish",
+            "name_key": "elvish", "given_by": "read",
+        }  # fmt: skip
+        report = gkc.check(backup([("n", "Norrin", "person")], [row]), {"nodes": [], "pairs": []})
+        self.assertEqual(report.languages, Counter())
+        self.assertNotIn("Languages:", gkc.render(report))
+        self.assertNotIn("languages", gkc.summarize(report))
+
+    def test_a_session_only_run_never_scores_the_lores_languages(self) -> None:
+        report = gkc.check(backup([], []), load("master_key.json"), docs="session")
+        self.assertEqual(report.languages, Counter())
+        both = gkc.check(backup([], []), load("master_key.json"), docs="both")
+        self.assertEqual(both.languages["missed"], 2)
+
+    def test_the_sample_keys_give_cerric_two_languages_and_no_tie(self) -> None:
+        for name in ("lore_key.json", "master_key.json"):
+            key = load(name)
+            self.assertEqual(
+                sorted((x["character"], x["language"]) for x in key["languages"]),
+                [("Cerric Vanya'elen", "Draconic"), ("Cerric Vanya'elen", "Elvish")],
+            )
+            self.assertFalse([p for p in key["pairs"] if "language" in p["relation"]])
+
+
+class Roads(unittest.TestCase):
+    """A road between two places, read either way round, and how far it is: a property of the road
+    scored like languages (#4255; Supervisor's ruling): found, missed and extra."""
+
+    KEY: ClassVar[dict[str, Any]] = {
+        "nodes": [
+            {"name": "Kelvenmoor", "kind": "place", "aliases": [], "note": ""},
+            {"name": "Brindleford", "kind": "place", "aliases": [], "note": ""},
+            {"name": "Ashwick", "kind": "place", "aliases": [], "note": ""},
+        ],
+        "pairs": [
+            {"id": "r1", "a": "Kelvenmoor", "relation": "route", "b": "Brindleford",
+             "tier": "stated", "must_find": False, "line": 1},
+        ],
+        "route_lengths": [
+            {"from": "Kelvenmoor", "to": "Brindleford", "words": "1 hour", "line": 1},
+            {"from": "Kelvenmoor", "to": "Ashwick", "words": "a few days", "line": 2},
+        ],
+    }  # fmt: skip
+    PLACES: ClassVar[list[tuple[str, str, str]]] = [
+        ("k", "Kelvenmoor", "place"),
+        ("b", "Brindleford", "place"),
+        ("a", "Ashwick", "place"),
+    ]
+
+    def road(self, rid: str, s: str, o: str, words: str = "", **length: Any) -> dict[str, Any]:
+        return {**rel(rid, s, "route_to", o), "length_words": words or None, **length}
+
+    def test_a_road_is_found_either_way_round(self) -> None:
+        report = gkc.check(backup(self.PLACES, [self.road("x", "b", "k")]), self.KEY)
+        self.assertEqual({t.id: t.status for t in report.ties}, {"r1": gkc.FOUND})
+
+    def test_found_by_amount_and_unit_missed_and_extra(self) -> None:
+        rows = [
+            # "an hour" is "1 hour": the same amount and unit, the road read the other way round
+            self.road("x", "b", "k", "an hour", length_amount=1.0, length_unit="hours"),
+            self.road("y", "a", "b", "two days", length_amount=2.0, length_unit="days"),  # extra
+        ]
+        report = gkc.check(backup(self.PLACES, rows), self.KEY)
+        self.assertEqual(dict(report.route_lengths), {"found": 1, "missed": 1, "extra": 1})
+        self.assertIn("Road lengths: found 1, missed 1, extra 1", gkc.render(report))
+        self.assertEqual(gkc.summarize(report)["route_lengths"]["missed"], 1)
+
+    def test_words_with_no_amount_match_by_their_words(self) -> None:
+        rows = [self.road("x", "k", "a", "A few days")]
+        report = gkc.check(backup(self.PLACES, rows), self.KEY)
+        self.assertEqual(report.route_lengths["found"], 1)
+
+    def test_a_lore_only_run_never_scores_the_sessions_lengths(self) -> None:
+        report = gkc.check(backup([], []), load("master_key.json"), docs="lore")
+        self.assertEqual(report.route_lengths, Counter())
+        both = gkc.check(backup([], []), load("master_key.json"), docs="both")
+        self.assertEqual(both.route_lengths["missed"], 2)
+
+    def test_the_sample_keys_roads_and_lengths(self) -> None:
+        for name in ("session_key.json", "master_key.json"):
+            key = load(name)
+            roads = sorted((p["a"], p["b"]) for p in key["pairs"] if p["relation"] == "route")
+            self.assertEqual(
+                roads,
+                [("Easthaven", "Bryn Shander"), ("Easthaven", "Caer-Konig"),
+                 ("Easthaven", "Good Mead"), ("Targos", "Bryn Shander"),
+                 ("Targos", "Easthaven")],
+            )  # fmt: skip
+            self.assertEqual(
+                [(x["from"], x["to"], x["words"]) for x in key["route_lengths"]],
+                [("Targos", "Bryn Shander", "1 hour"), ("Targos", "Easthaven", "five hours")],
+            )
+            # (a distance to a mountain and one trip through a branch stay travel facts)
+            self.assertEqual(sorted(m["line"] for m in key["map_context"]), [6, 171])

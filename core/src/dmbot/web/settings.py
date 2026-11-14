@@ -129,6 +129,8 @@ class WebSettings:
     # The owner's own Discord accounts: free access, no caps (#771). Never logged.
     free_users: frozenset[int] = field(default=frozenset(), repr=False)
     free_guilds: frozenset[int] = field(default=frozenset(), repr=False)
+    # Keys the hash kept of a Discord ID after an account is deleted (#4145); empty: none stored.
+    person_key: str = field(default="", repr=False)
     # The same switch as the bot's: when on, the site's hand-over accept checks the campaign
     # cap too, so the two never disagree (#437 part 2c).
     enforce_plans: bool = False
@@ -534,6 +536,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         session_days=session_days,
         free_users=free_users,
         free_guilds=free_guilds,
+        person_key=get("DMBOT_PERSON_KEY"),
         payment_provider=provider,
         payment_webhook_secret=webhook_secret.encode("utf-8"),
         stripe=stripe,

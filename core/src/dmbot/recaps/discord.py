@@ -295,6 +295,7 @@ class RecapFeatures:
         async def run_web_backups(self) -> None: ...
         async def run_picture_actions(self) -> None: ...
         async def run_picture_sweep(self) -> None: ...
+        async def run_map_close_reads(self) -> None: ...
         async def run_web_line_deletions(self) -> None: ...
 
         async def run_speaker_removals(self) -> None: ...
@@ -1679,6 +1680,7 @@ class RecapFeatures:
                         name=name,
                         source="scan",
                         description="Used in a recap",
+                        session_started_at=job.session_at,  # (the split-party check, #4043)
                     )
                 except MemoryRuleError as exc:
                     log.info("Skipped a name from the recap: %s", exc)
@@ -1717,6 +1719,8 @@ class RecapFeatures:
         """The same note as a private message to the DM, with the same check (#2027): it waits
         until the DM next opens Discord. Closed private messages cost nothing but a line in the
         log: the DM screen has it too. Never raises."""
+        if not dm_user_id:  # 0 is a DM whose account was deleted (#4141): nobody to tell
+            return
         try:
             user = await self.fetch_user(dm_user_id)
             base = recap_names_dm_view(gid, cid)
@@ -2081,6 +2085,10 @@ class RecapFeatures:
                 await self.run_picture_sweep()
             except Exception as exc:
                 log.warning("The picture sweep failed: %s", type(exc).__name__)
+            try:
+                await self.run_map_close_reads()
+            except Exception as exc:
+                log.warning("The map close-read sweep failed: %s", type(exc).__name__)
             try:
                 await self.run_web_settings()
             except Exception as exc:

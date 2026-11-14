@@ -7,7 +7,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { autoAddWords as w } from "../content/auto-add-words";
-import { ApiError, type AccountApi, type UploadNotice as Notice } from "./api";
+import { ApiError, type AccountApi, type JobProgress, type UploadNotice as Notice } from "./api";
 import WorkProgress from "./WorkProgress";
 
 const LOOK_MS = 2000;
@@ -18,8 +18,9 @@ export default function UploadNotice({ api, campaignRef, source, onChanged }: { 
   const [failed, setFailed] = useState(false);
   const [asking, setAsking] = useState(false);
   const [undoing, setUndoing] = useState(false);
-  const [undone, setUndone] = useState<{ took: number; of: number } | null>(null);
+  const [undone, setUndone] = useState<{ took: number; of?: number } | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
+  const [look, setLook] = useState<JobProgress | null>(null); // how the undo stands each time the page looks (shared wait panel)
   const live = useRef(true);
   const yes = useRef<HTMLButtonElement>(null);
   const first = useRef<HTMLButtonElement>(null);
@@ -75,7 +76,10 @@ export default function UploadNotice({ api, campaignRef, source, onChanged }: { 
 
   const days = notice.undoUntil && notice.undoUntil > notice.serverNow ? Math.max(1, Math.ceil((notice.undoUntil - notice.serverNow) / 86400)) : 0;
   const result = undone ?? notice.undone;
-  const names = `/account/names/${encodeURIComponent(campaignRef)}#from=${encodeURIComponent(source.id)}`;
+  // Core's Names filter knows the website's lore uploads (`u` and the upload's 32-hex id); an import's names are found by session, which
+  // that filter does not offer yet, so the link opens the whole Names page for it.
+  const fromId = source.kind === "lore" && /^[0-9a-f]{32}$/.test(source.id) ? `u${source.id}` : "";
+  const names = `/account/names/${encodeURIComponent(campaignRef)}${fromId ? `#from=${fromId}` : ""}`;
 
   async function undo(): Promise<void> {
     if (undoing || !api.undoUpload) return;
@@ -83,14 +87,14 @@ export default function UploadNotice({ api, campaignRef, source, onChanged }: { 
     setProblem(null);
     setAsking(false);
     try {
-      const got = await api.undoUpload(campaignRef, source);
+      const got = await api.undoUpload(campaignRef, source, (l) => live.current && setLook(l));
       if (!live.current) return;
       setUndone(got);
       onChanged?.();
     } catch (error) {
       if (!live.current) return;
       const kind = error instanceof ApiError ? error.kind : "server";
-      setProblem(kind === "undo-late" ? w.undoLate : kind === "undo-done" ? w.undoneAlready : w.notice.failed);
+      setProblem(kind === "undo-late" ? w.undoLate : kind === "undo-done" ? w.undoneAlready : kind === "still-waiting" ? w.undoStillWorking : w.undoFailed);
     } finally {
       if (live.current) setUndoing(false);
     }
@@ -101,7 +105,7 @@ export default function UploadNotice({ api, campaignRef, source, onChanged }: { 
       <p role="status">{w.added(notice.counts.names, notice.counts.byKind, notice.counts.connections, notice.label)}</p>
       <ul class="plain-list">
         <li>
-          <a href={names}>{w.seeNames}</a>
+          <a href={names}>{fromId ? w.seeNames : w.seeAllNames}</a>
         </li>
         <li>
           <a href={`/account/web/${encodeURIComponent(campaignRef)}`}>{w.seeGraph}</a>
@@ -112,7 +116,18 @@ export default function UploadNotice({ api, campaignRef, source, onChanged }: { 
           {w.questions(notice.questionsLeft)} <a href="/account/questions">{w.questionsLink}</a>
         </p>
       )}
-      {undoing && <p role="status">{w.undoing}…</p>}
+      {undoing && (
+        <WorkProgress
+          stage={w.undoing}
+          done={null}
+          total={null}
+          startedAt={look?.startedAt ?? null}
+          updatedAt={look?.updatedAt ?? null}
+          serverNow={look?.serverNow ?? null}
+          state={look?.state === "stalled" ? "stalled" : "running"}
+          progressUnknown={!look}
+        />
+      )}
       {result && <p role="status">{w.tookBack(result.took, result.of)}</p>}
       {problem && (
         <p class="warn" role="alert">

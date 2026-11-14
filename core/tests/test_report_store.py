@@ -343,7 +343,7 @@ class CheckingTheBackup(unittest.TestCase):
             {**GOOD, "item_kind": "other"},
             {**GOOD, "answer": "maybe"},
             {**GOOD, "answered_by": 77},
-            {**GOOD, "answered_by": "0"},
+            {**GOOD, "answered_by": "-1"},  # ("0" is someone who has left, #4148)
             {**GOOD, "answered_at": -1},
             {**GOOD, "answered_at": True},
             {**GOOD, "answer": "remind"},  # remind needs the session it was asked in

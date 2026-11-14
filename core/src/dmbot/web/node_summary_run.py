@@ -55,7 +55,8 @@ class Result:
 def ranks_of(inputs: Mapping[str, Any]) -> dict[str, int]:
     """The rank of every live entry from the rank-inputs door's answer (`dmbot_web_rank_inputs`):
     `entities` ({id, type, role, status, mergedInto}), `relations` ([subject, object, predicate]),
-    `assessed` ([entity, seq, rank]) and `heard` ([entity, session time]). The same functions the
+    `assessed` ([entity, seq, rank]), `heard` ([entity, session time]) and `private` (the entries
+    said in a kept private scene, #4110; absent from an older door). The same functions the
     bot's reader uses, so the website and the bot cannot disagree. Used in Python only: the rank
     never goes to a browser."""
     entities: dict[str, Mapping[str, object]] = {
@@ -77,8 +78,9 @@ def ranks_of(inputs: Mapping[str, Any]) -> dict[str, int]:
         ((str(a), str(b), str(p)) for a, b, p in inputs["relations"]), entities, ended
     )
     return importance_rank.ranks_from(
-        entities, ended, importance_rank.newest_by_group(ended, newest), heard, links, companions
-    )
+        entities, ended, importance_rank.newest_by_group(ended, newest), heard, links, companions,
+        [str(e) for e in inputs.get("private", ())],  # (#4110: said in a kept private scene)
+    )  # fmt: skip
 
 
 def _when(value: object) -> int | None:
@@ -158,6 +160,7 @@ def _facts(
                 deed=str(e["detail"] or "") if kind == "did" else "",
                 session=_when(e.get("at")),
                 subject_kind=str(nodes[a]["kind"]),
+                route_state=str(e.get("route_state") or ""),  # (a journey or a plan, #4173 6d)
                 # (meaningful for the player version only: that graph holds just what players know)
                 players_know=True,
                 viewer_knows=clicker_knows is None or str(e["id"]) in clicker_knows,

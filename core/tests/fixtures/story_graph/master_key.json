@@ -1,6 +1,6 @@
 {
  "campaign": "test of the frostmaiden (sample)",
- "version": 1,
+ "version": 2,
  "sources": {
   "lore": "https://docs.google.com/document/d/1zbt7g3r6uFfiSYr3fl_gyaxARhwJPizauI0jmiEa2aw/edit?usp=sharing",
   "session": "https://docs.google.com/document/d/1BtHZ4O75886WHOoTq0FCPst2hdg7YLnsaCiI-kNsv-E/edit?usp=sharing"
@@ -8,13 +8,15 @@
  "order": "the lore is read first, then the session; where they disagree about what is current, the session wins",
  "how_to_read": {
   "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted); needs_context = only readable with the lore or the recap (for example 'she' is Keegan); recap_only = only in the 'Previously' recap on line 1, so background and never this session's event; by_rule = made by a rule, not read",
-  "relation": "parent_of, grandparent_of, sibling, spouse, uncle_of, apprentice_of, mentor_of, owns, carries, knows (+ one of nine feeling words), member, leads, works_for, enemy_of, rival_of, held_captive_by, found, associate; place ties by word: lives_in, lived_in, works_in, comes_from, last_seen_in (a character, creature or group), kept_in, was_kept_in (an item); in (only a place inside a place)",
+  "relation": "parent_of, grandparent_of, sibling, spouse, uncle_of, apprentice_of, mentor_of, owns, carries, knows (+ one of nine feeling words), member, leads, works_for, enemy_of, rival_of, held_captive_by, found, associate; place ties by word: lives_in, lived_in, works_in, comes_from, last_seen_in (a character, creature or group), kept_in, was_kept_in (an item); in (only a place inside a place); route (a road or way between two places, either way round, #4255)",
   "direction": "a to b: parent_of (a is the parent), owns (a owns b), leads (a leads b), member (a belongs to b), in (a place is inside place b); sibling, spouse and rival_of read the same both ways",
   "must_find": "false = a good find if present, not a miss if absent; an inferred tie that must be found is scored as an offered suggestion",
   "current": "false = history: it was true and is not now (the graph shows the most recent relationship, #3363)",
   "line": "the line of the document's plain-text export that supports it (blank lines count)",
   "in": "which documents say it: lore, session, or both (a both tie is checked twice: once in each document, and the master counts it once)",
-  "sources": "for each document that says it: the key id there and the line of its plain-text export"
+  "sources": "for each document that says it: the key id there and the line of its plain-text export",
+  "languages": "a character's languages are a property of the character, never a tie (owner, 2026-11-14; #4229): {character, language, line, note, doc (the document that says it)}; scored as found, missed, and extra (a language the key does not list)",
+  "route_lengths": "how far a road is, as the session says it (#4255): a property of the road, never a tie; found by the same amount and unit, or the same words when they give none"
  },
  "players": {
   "Cerric Vanya'elen": "player_ist",
@@ -453,11 +455,16 @@
   {
    "name": "The wind spirit",
    "kind": "creature",
-   "aliases": [],
-   "note": "Unnamed ancient spirit that guides and guards Okthandom",
+   "aliases": [
+    "ancient wind spirit",
+    "wind spirit",
+    "ancient spirit"
+   ],
+   "note": "Unnamed. The ancient wind spirit that guides and guards Okthandom (lore line 36); kept as a being the story never names, found by its description ('unnamed - ancient wind spirit'), never as a name.",
    "docs": [
     "lore"
-   ]
+   ],
+   "unnamed": true
   },
   {
    "name": "Yeti",
@@ -1105,7 +1112,7 @@
     {
      "doc": "lore",
      "id": "l006",
-     "line": 18
+     "line": 24
     }
    ],
    "note": "died in a severe storm"
@@ -1124,7 +1131,7 @@
     {
      "doc": "lore",
      "id": "l007",
-     "line": 18
+     "line": 24
     }
    ],
    "note": "'Roceran's brother Qinric'; the owner asked for this tie directly"
@@ -1143,7 +1150,7 @@
     {
      "doc": "lore",
      "id": "l008",
-     "line": 18
+     "line": 24
     }
    ],
    "note": "never said as 'uncle': Roceran's brother"
@@ -1162,7 +1169,7 @@
     {
      "doc": "lore",
      "id": "l009",
-     "line": 18
+     "line": 24
     }
    ],
    "note": "a war mage evoker in it"
@@ -1199,7 +1206,7 @@
     {
      "doc": "lore",
      "id": "l011",
-     "line": 18
+     "line": 24
     }
    ],
    "note": "Keeper of the Sparkwalker Spire under him"
@@ -1218,7 +1225,7 @@
     {
      "doc": "lore",
      "id": "l012",
-     "line": 18
+     "line": 24
     }
    ],
    "note": "Keeper of it (leads; works_in is also true and kept as optional, Supervisor 2026-11-04)"
@@ -1237,7 +1244,7 @@
     {
      "doc": "lore",
      "id": "l013",
-     "line": 18
+     "line": 24
     }
    ],
    "note": "Keeper of it"
@@ -1256,7 +1263,7 @@
     {
      "doc": "lore",
      "id": "l014",
-     "line": 18
+     "line": 24
     }
    ],
    "note": "'Syllar Sparkwalker of Blackstaff Tower'"
@@ -1275,7 +1282,7 @@
     {
      "doc": "lore",
      "id": "l015",
-     "line": 18
+     "line": 24
     }
    ],
    "note": "Cerric's fellow apprentices"
@@ -1294,7 +1301,7 @@
     {
      "doc": "lore",
      "id": "l016",
-     "line": 18
+     "line": 24
     }
    ]
   },
@@ -1312,7 +1319,7 @@
     {
      "doc": "lore",
      "id": "l017",
-     "line": 18
+     "line": 24
     }
    ],
    "note": "'rival apprentices Emmerich and Wit'; the owner flagged backstory rivals as missing"
@@ -1331,7 +1338,7 @@
     {
      "doc": "lore",
      "id": "l018",
-     "line": 18
+     "line": 24
     }
    ]
   },
@@ -1424,7 +1431,7 @@
     {
      "doc": "lore",
      "id": "l023",
-     "line": 21
+     "line": 27
     }
    ],
    "note": "grabbed his master's locked tome"
@@ -1443,7 +1450,7 @@
     {
      "doc": "lore",
      "id": "l024",
-     "line": 21
+     "line": 27
     }
    ],
    "note": "'his master's'"
@@ -1462,7 +1469,7 @@
     {
      "doc": "lore",
      "id": "l025",
-     "line": 21
+     "line": 27
     }
    ],
    "note": "fled there by teleportation rune"
@@ -1481,7 +1488,7 @@
     {
      "doc": "lore",
      "id": "l026",
-     "line": 21
+     "line": 27
     }
    ],
    "note": "journeyed north into it"
@@ -1500,7 +1507,7 @@
     {
      "doc": "lore",
      "id": "l027",
-     "line": 21
+     "line": 27
     }
    ],
    "note": "the note is addressed 'Danneth, Easthaven'"
@@ -1519,7 +1526,7 @@
     {
      "doc": "lore",
      "id": "l028",
-     "line": 21
+     "line": 27
     }
    ],
    "note": "the note is signed S"
@@ -1539,7 +1546,7 @@
     {
      "doc": "lore",
      "id": "l029",
-     "line": 21
+     "line": 27
     },
     {
      "doc": "session",
@@ -1563,7 +1570,7 @@
     {
      "doc": "lore",
      "id": "l030",
-     "line": 21
+     "line": 27
     }
    ]
   },
@@ -1582,7 +1589,7 @@
     {
      "doc": "lore",
      "id": "l031",
-     "line": 27
+     "line": 33
     },
     {
      "doc": "session",
@@ -1607,7 +1614,7 @@
     {
      "doc": "lore",
      "id": "l032",
-     "line": 27
+     "line": 33
     },
     {
      "doc": "session",
@@ -1631,7 +1638,7 @@
     {
      "doc": "lore",
      "id": "l033",
-     "line": 27
+     "line": 33
     }
    ]
   },
@@ -1649,7 +1656,7 @@
     {
      "doc": "lore",
      "id": "l034",
-     "line": 30
+     "line": 36
     }
    ],
    "note": "'his child', named once in passing"
@@ -1668,7 +1675,7 @@
     {
      "doc": "lore",
      "id": "l035",
-     "line": 30
+     "line": 36
     }
    ],
    "note": "guides and guards him"
@@ -1687,7 +1694,7 @@
     {
      "doc": "lore",
      "id": "l036",
-     "line": 27
+     "line": 33
     }
    ],
    "note": "found the curse in it"
@@ -1706,7 +1713,7 @@
     {
      "doc": "lore",
      "id": "l037",
-     "line": 36
+     "line": 42
     }
    ],
    "note": "'a scout associated with the Explorer's League'"
@@ -1725,7 +1732,7 @@
     {
      "doc": "lore",
      "id": "l038",
-     "line": 42
+     "line": 48
     }
    ]
   },
@@ -1743,7 +1750,7 @@
     {
      "doc": "lore",
      "id": "l039",
-     "line": 42
+     "line": 48
     }
    ],
    "note": "'Griz, son of Lee'; the owner flagged this as missing"
@@ -1763,7 +1770,7 @@
     {
      "doc": "lore",
      "id": "l040",
-     "line": 42
+     "line": 48
     }
    ],
    "note": "before he escaped"
@@ -1783,10 +1790,10 @@
     {
      "doc": "lore",
      "id": "l041",
-     "line": 42
+     "line": 48
     }
    ],
-   "note": "the owner: Claude found it first (line 42: he carries a unique wolf figurine; line 90: he sells it). Offered to the DM, never extracted"
+   "note": "the owner: Claude found it first (line 48: he carries a unique wolf figurine; line 96: he sells it). Offered to the DM, never extracted"
   },
   {
    "id": "m042",
@@ -1802,7 +1809,7 @@
     {
      "doc": "lore",
      "id": "l042",
-     "line": 51
+     "line": 57
     }
    ],
    "note": "withdrawn there to live among mortals"
@@ -1821,7 +1828,7 @@
     {
      "doc": "lore",
      "id": "l043",
-     "line": 90
+     "line": 96
     }
    ],
    "note": "its towns sacrifice every ten-day to appease her"
@@ -1840,7 +1847,7 @@
     {
      "doc": "lore",
      "id": "l044",
-     "line": 90
+     "line": 96
     }
    ],
    "note": "listed with its sacrifice (also line 7)"
@@ -1859,7 +1866,7 @@
     {
      "doc": "lore",
      "id": "l045",
-     "line": 90
+     "line": 96
     }
    ],
    "note": "listed with its sacrifice (also line 7)"
@@ -1878,7 +1885,7 @@
     {
      "doc": "lore",
      "id": "l046",
-     "line": 90
+     "line": 96
     }
    ],
    "note": "listed with its sacrifice (also line 7)"
@@ -1897,7 +1904,7 @@
     {
      "doc": "lore",
      "id": "l047",
-     "line": 90
+     "line": 96
     }
    ],
    "note": "listed with its sacrifice (also line 7)"
@@ -1916,7 +1923,7 @@
     {
      "doc": "lore",
      "id": "l048",
-     "line": 90
+     "line": 96
     }
    ],
    "note": "listed with its sacrifice (also line 7)"
@@ -1935,7 +1942,7 @@
     {
      "doc": "lore",
      "id": "l049",
-     "line": 90
+     "line": 96
     }
    ],
    "note": "listed with its sacrifice (also line 7)"
@@ -1954,7 +1961,7 @@
     {
      "doc": "lore",
      "id": "l050",
-     "line": 90
+     "line": 96
     }
    ],
    "note": "listed with its sacrifice (also line 7)"
@@ -1973,7 +1980,7 @@
     {
      "doc": "lore",
      "id": "l051",
-     "line": 90
+     "line": 96
     }
    ],
    "note": "listed with its sacrifice (also line 7)"
@@ -1992,7 +1999,7 @@
     {
      "doc": "lore",
      "id": "l052",
-     "line": 90
+     "line": 96
     }
    ],
    "note": "listed with its sacrifice (also line 7)"
@@ -2011,7 +2018,7 @@
     {
      "doc": "lore",
      "id": "l053",
-     "line": 57
+     "line": 63
     }
    ]
   },
@@ -2032,7 +2039,7 @@
      "line": 7
     }
    ],
-   "note": "held there every ten-day (line 90)"
+   "note": "held there every ten-day (line 96)"
   },
   {
    "id": "m055",
@@ -2051,7 +2058,7 @@
      "line": 7
     }
    ],
-   "note": "held there every ten-day (line 90)"
+   "note": "held there every ten-day (line 96)"
   },
   {
    "id": "m056",
@@ -2070,7 +2077,7 @@
      "line": 7
     }
    ],
-   "note": "held there every ten-day (line 90)"
+   "note": "held there every ten-day (line 96)"
   },
   {
    "id": "m057",
@@ -2086,7 +2093,7 @@
     {
      "doc": "lore",
      "id": "l057",
-     "line": 90
+     "line": 96
     }
    ],
    "note": "to appease her"
@@ -2108,7 +2115,7 @@
      "line": 7
     }
    ],
-   "note": "held there every ten-day (line 90)"
+   "note": "held there every ten-day (line 96)"
   },
   {
    "id": "m059",
@@ -2127,7 +2134,7 @@
      "line": 7
     }
    ],
-   "note": "held there every ten-day (line 90)"
+   "note": "held there every ten-day (line 96)"
   },
   {
    "id": "m060",
@@ -2146,7 +2153,7 @@
      "line": 7
     }
    ],
-   "note": "held there every ten-day (line 90)"
+   "note": "held there every ten-day (line 96)"
   },
   {
    "id": "m061",
@@ -2162,7 +2169,7 @@
     {
      "doc": "lore",
      "id": "l061",
-     "line": 90
+     "line": 96
     }
    ],
    "note": "to appease her"
@@ -2184,7 +2191,7 @@
      "line": 7
     }
    ],
-   "note": "held there every ten-day (line 90)"
+   "note": "held there every ten-day (line 96)"
   },
   {
    "id": "m063",
@@ -2203,7 +2210,7 @@
      "line": 7
     }
    ],
-   "note": "held there every ten-day (line 90)"
+   "note": "held there every ten-day (line 96)"
   },
   {
    "id": "m064",
@@ -2222,7 +2229,7 @@
      "line": 7
     }
    ],
-   "note": "held there every ten-day (line 90)"
+   "note": "held there every ten-day (line 96)"
   },
   {
    "id": "m065",
@@ -2238,7 +2245,7 @@
     {
      "doc": "lore",
      "id": "l065",
-     "line": 90
+     "line": 96
     }
    ],
    "note": "to appease her"
@@ -2257,7 +2264,7 @@
     {
      "doc": "lore",
      "id": "l066",
-     "line": 51
+     "line": 57
     }
    ],
    "note": "casts it each night before midnight (line 4)"
@@ -2295,7 +2302,7 @@
     {
      "doc": "lore",
      "id": "l068",
-     "line": 53
+     "line": 59
     }
    ],
    "note": "operates out of it"
@@ -2314,10 +2321,10 @@
     {
      "doc": "lore",
      "id": "l069",
-     "line": 53
+     "line": 59
     }
    ],
-   "note": "100 gold to capture or eliminate Kaltro (line 67)"
+   "note": "100 gold to capture or eliminate Kaltro (line 73)"
   },
   {
    "id": "m070",
@@ -2333,7 +2340,7 @@
     {
      "doc": "lore",
      "id": "l070",
-     "line": 53
+     "line": 59
     }
    ],
    "note": "she hires against him; she is not his servant (#3256)"
@@ -2352,10 +2359,10 @@
     {
      "doc": "lore",
      "id": "l071",
-     "line": 57
+     "line": 63
     }
    ],
-   "note": "her bodyguard (also line 55)"
+   "note": "her bodyguard (also line 61)"
   },
   {
    "id": "m072",
@@ -2371,10 +2378,10 @@
     {
      "doc": "lore",
      "id": "l072",
-     "line": 57
+     "line": 63
     }
    ],
-   "note": "under her own heading on line 56"
+   "note": "under her own heading on line 62"
   },
   {
    "id": "m073",
@@ -2390,7 +2397,7 @@
     {
      "doc": "lore",
      "id": "l073",
-     "line": 55
+     "line": 61
     }
    ],
    "note": "accompanies it"
@@ -2409,7 +2416,7 @@
     {
      "doc": "lore",
      "id": "l074",
-     "line": 96
+     "line": 102
     }
    ],
    "note": "his last known location"
@@ -2428,7 +2435,7 @@
     {
      "doc": "lore",
      "id": "l075",
-     "line": 59
+     "line": 65
     }
    ]
   },
@@ -2446,10 +2453,10 @@
     {
      "doc": "lore",
      "id": "l076",
-     "line": 78
+     "line": 84
     }
    ],
-   "note": "50 gold, then 250 for the mine (line 87)"
+   "note": "50 gold, then 250 for the mine (line 93)"
   },
   {
    "id": "m077",
@@ -2465,7 +2472,7 @@
     {
      "doc": "lore",
      "id": "l077",
-     "line": 61
+     "line": 67
     }
    ]
   },
@@ -2483,7 +2490,7 @@
     {
      "doc": "lore",
      "id": "l078",
-     "line": 61
+     "line": 67
     }
    ],
    "note": "owner and proprietor"
@@ -2502,7 +2509,7 @@
     {
      "doc": "lore",
      "id": "l079",
-     "line": 61
+     "line": 67
     }
    ]
   },
@@ -2520,7 +2527,7 @@
     {
      "doc": "lore",
      "id": "l080",
-     "line": 67
+     "line": 73
     }
    ]
   },
@@ -2539,7 +2546,7 @@
     {
      "doc": "lore",
      "id": "l081",
-     "line": 67
+     "line": 73
     }
    ],
    "note": "a heated debate"
@@ -2558,7 +2565,7 @@
     {
      "doc": "lore",
      "id": "l082",
-     "line": 67
+     "line": 73
     }
    ]
   },
@@ -2577,7 +2584,7 @@
     {
      "doc": "lore",
      "id": "l083",
-     "line": 67
+     "line": 73
     },
     {
      "doc": "session",
@@ -2602,7 +2609,7 @@
     {
      "doc": "lore",
      "id": "l084",
-     "line": 67
+     "line": 73
     },
     {
      "doc": "session",
@@ -2627,7 +2634,7 @@
     {
      "doc": "lore",
      "id": "l085",
-     "line": 67
+     "line": 73
     },
     {
      "doc": "session",
@@ -2652,7 +2659,7 @@
     {
      "doc": "lore",
      "id": "l086",
-     "line": 67
+     "line": 73
     },
     {
      "doc": "session",
@@ -2677,7 +2684,7 @@
     {
      "doc": "lore",
      "id": "l087",
-     "line": 67
+     "line": 73
     },
     {
      "doc": "session",
@@ -2702,7 +2709,7 @@
     {
      "doc": "lore",
      "id": "l088",
-     "line": 67
+     "line": 73
     },
     {
      "doc": "session",
@@ -2727,7 +2734,7 @@
     {
      "doc": "lore",
      "id": "l089",
-     "line": 67
+     "line": 73
     },
     {
      "doc": "session",
@@ -2752,7 +2759,7 @@
     {
      "doc": "lore",
      "id": "l090",
-     "line": 67
+     "line": 73
     },
     {
      "doc": "session",
@@ -2777,7 +2784,7 @@
     {
      "doc": "lore",
      "id": "l091",
-     "line": 67
+     "line": 73
     },
     {
      "doc": "session",
@@ -2802,7 +2809,7 @@
     {
      "doc": "lore",
      "id": "l092",
-     "line": 67
+     "line": 73
     },
     {
      "doc": "session",
@@ -2826,7 +2833,7 @@
     {
      "doc": "lore",
      "id": "l093",
-     "line": 78
+     "line": 84
     }
    ],
    "note": "'Thorin, his miner brother Bruni'"
@@ -2845,7 +2852,7 @@
     {
      "doc": "lore",
      "id": "l094",
-     "line": 78
+     "line": 84
     }
    ],
    "note": "a miner"
@@ -2864,7 +2871,7 @@
     {
      "doc": "lore",
      "id": "l095",
-     "line": 78
+     "line": 84
     }
    ]
   },
@@ -2882,7 +2889,7 @@
     {
      "doc": "lore",
      "id": "l096",
-     "line": 84
+     "line": 90
     }
    ],
    "note": "a possessed ghost emerged when he fell"
@@ -2901,7 +2908,7 @@
     {
      "doc": "lore",
      "id": "l097",
-     "line": 84
+     "line": 90
     }
    ],
    "note": "the plant was in his backpack"
@@ -2920,7 +2927,7 @@
     {
      "doc": "lore",
      "id": "l098",
-     "line": 84
+     "line": 90
     }
    ],
    "note": "killed him with an arrow"
@@ -2939,7 +2946,7 @@
     {
      "doc": "lore",
      "id": "l099",
-     "line": 84
+     "line": 90
     }
    ],
    "note": "Okthandom found it and gave it to him"
@@ -2958,7 +2965,7 @@
     {
      "doc": "lore",
      "id": "l100",
-     "line": 84
+     "line": 90
     }
    ],
    "note": "found in the mine"
@@ -2977,7 +2984,7 @@
     {
      "doc": "lore",
      "id": "l101",
-     "line": 84
+     "line": 90
     }
    ],
    "note": "spoils of the mine"
@@ -2996,7 +3003,7 @@
     {
      "doc": "lore",
      "id": "l102",
-     "line": 84
+     "line": 90
     }
    ],
    "note": "hidden under the bucket lift"
@@ -3015,7 +3022,7 @@
     {
      "doc": "lore",
      "id": "l103",
-     "line": 87
+     "line": 93
     }
    ],
    "note": "studied it; the party took it from the skull"
@@ -3035,7 +3042,7 @@
     {
      "doc": "lore",
      "id": "l104",
-     "line": 84
+     "line": 90
     }
    ],
    "note": "found there in the mind flayer's skull, then taken: the place is history"
@@ -3054,7 +3061,7 @@
     {
      "doc": "lore",
      "id": "l105",
-     "line": 84
+     "line": 90
     }
    ],
    "note": "from its petrified skull"
@@ -3073,7 +3080,7 @@
     {
      "doc": "lore",
      "id": "l106",
-     "line": 90
+     "line": 96
     }
    ],
    "note": "bought it from Claude for 75 gold"
@@ -3092,7 +3099,7 @@
     {
      "doc": "lore",
      "id": "l107",
-     "line": 90
+     "line": 96
     }
    ],
    "note": "the owner: he owns it and carries it now; the text says only that he bought it"
@@ -3111,7 +3118,7 @@
     {
      "doc": "lore",
      "id": "l108",
-     "line": 90
+     "line": 96
     }
    ],
    "note": "'Fizzlebomb's vessel'; the owner flagged this as missing"
@@ -3130,7 +3137,7 @@
     {
      "doc": "lore",
      "id": "l109",
-     "line": 90
+     "line": 96
     }
    ],
    "note": "devoured him and shattered his ship"
@@ -3149,7 +3156,7 @@
     {
      "doc": "lore",
      "id": "l110",
-     "line": 90
+     "line": 96
     }
    ]
   },
@@ -3169,7 +3176,7 @@
     {
      "doc": "lore",
      "id": "l111",
-     "line": 96
+     "line": 102
     },
     {
      "doc": "session",
@@ -3193,7 +3200,7 @@
     {
      "doc": "lore",
      "id": "l112",
-     "line": 96
+     "line": 102
     }
    ]
   },
@@ -3211,7 +3218,7 @@
     {
      "doc": "lore",
      "id": "l113",
-     "line": 96
+     "line": 102
     }
    ]
   },
@@ -3230,7 +3237,7 @@
     {
      "doc": "lore",
      "id": "l114",
-     "line": 96
+     "line": 102
     },
     {
      "doc": "session",
@@ -3255,7 +3262,7 @@
     {
      "doc": "lore",
      "id": "l115",
-     "line": 96
+     "line": 102
     },
     {
      "doc": "session",
@@ -3280,7 +3287,7 @@
     {
      "doc": "lore",
      "id": "l116",
-     "line": 96
+     "line": 102
     },
     {
      "doc": "session",
@@ -3305,7 +3312,7 @@
     {
      "doc": "lore",
      "id": "l117",
-     "line": 96
+     "line": 102
     },
     {
      "doc": "session",
@@ -3330,7 +3337,7 @@
     {
      "doc": "lore",
      "id": "l118",
-     "line": 96
+     "line": 102
     },
     {
      "doc": "session",
@@ -3354,7 +3361,7 @@
     {
      "doc": "lore",
      "id": "l119",
-     "line": 96
+     "line": 102
     }
    ],
    "note": "a kennel master the party met there"
@@ -3664,7 +3671,7 @@
     {
      "doc": "lore",
      "id": "l121",
-     "line": 18
+     "line": 24
     }
    ],
    "note": "served as Keeper of the Sparkwalker Spire \"under Master Syllar Sparkwalker\", \"alongside rival apprentices Emmerich and Wit\": an apprentice of his (m011 says works_for)"
@@ -3684,7 +3691,7 @@
     {
      "doc": "lore",
      "id": "l122",
-     "line": 67
+     "line": 73
     }
    ],
    "note": "the other side of the heated debate on mithril smelting (m081 is Belleros toward Brewner)"
@@ -3703,7 +3710,7 @@
     {
      "doc": "lore",
      "id": "l123",
-     "line": 30
+     "line": 36
     }
    ],
    "note": "'hunts across Icewind Dale searching for answers': where he roams now (#3545, step 11b)"
@@ -3722,7 +3729,7 @@
     {
      "doc": "lore",
      "id": "l124",
-     "line": 93
+     "line": 99
     }
    ],
    "note": "'Belleros took command of the vessel and ran the ship ashore' (#3545, step 11b)"
@@ -3741,7 +3748,7 @@
     {
      "doc": "lore",
      "id": "l125",
-     "line": 93
+     "line": 99
     }
    ],
    "note": "pushed Fizzlebomb overboard into the freezing waters, at Cerric's urging (#3545, step 11b)"
@@ -3760,7 +3767,7 @@
     {
      "doc": "lore",
      "id": "l126",
-     "line": 93
+     "line": 99
     }
    ],
    "note": "'Cerric to convince Okthandom to push Fizzlebomb overboard' (#3545, step 11b)"
@@ -3783,6 +3790,101 @@
     }
    ],
    "note": "the DM: 'he certainly knows where the Dwarven Valley is' (#3545, step 11b)"
+  },
+  {
+   "id": "m142",
+   "a": "Targos",
+   "relation": "route",
+   "b": "Bryn Shander",
+   "tier": "stated",
+   "must_find": false,
+   "in": [
+    "session"
+   ],
+   "sources": [
+    {
+     "doc": "session",
+     "id": "s035",
+     "line": 283
+    }
+   ],
+   "note": "the party's journey: 'You make it to Bryn Shander without any issues following the road' (#4255)"
+  },
+  {
+   "id": "m143",
+   "a": "Targos",
+   "relation": "route",
+   "b": "Easthaven",
+   "tier": "stated",
+   "must_find": false,
+   "in": [
+    "session"
+   ],
+   "sources": [
+    {
+     "doc": "session",
+     "id": "s036",
+     "line": 192
+    }
+   ],
+   "note": "the DM's other way: 'take the dogsled five hours to Easthaven' (not travelled this session; #4255)"
+  },
+  {
+   "id": "m144",
+   "a": "Easthaven",
+   "relation": "route",
+   "b": "Good Mead",
+   "tier": "stated",
+   "must_find": false,
+   "in": [
+    "session"
+   ],
+   "sources": [
+    {
+     "doc": "session",
+     "id": "s037",
+     "line": 183
+    }
+   ],
+   "note": "'Those are the three connected towns to Easthaven' (#4255)"
+  },
+  {
+   "id": "m145",
+   "a": "Easthaven",
+   "relation": "route",
+   "b": "Bryn Shander",
+   "tier": "stated",
+   "must_find": false,
+   "in": [
+    "session"
+   ],
+   "sources": [
+    {
+     "doc": "session",
+     "id": "s038",
+     "line": 183
+    }
+   ],
+   "note": "'Those are the three connected towns to Easthaven' (#4255)"
+  },
+  {
+   "id": "m146",
+   "a": "Easthaven",
+   "relation": "route",
+   "b": "Caer-Konig",
+   "tier": "stated",
+   "must_find": false,
+   "in": [
+    "session"
+   ],
+   "sources": [
+    {
+     "doc": "session",
+     "id": "s039",
+     "line": 183
+    }
+   ],
+   "note": "'Those are the three connected towns to Easthaven' (#4255)"
   }
  ],
  "events": [
@@ -3791,105 +3893,105 @@
    "doc": "lore",
    "what": "Master Sparkwalker disappears, Wit comes back fatally wounded, and Cerric flees to Neverwinter with the tome",
    "who": "Cerric, Syllar Sparkwalker, Wit",
-   "lines": "21"
+   "lines": "27"
   },
   {
    "id": "L-e02",
    "doc": "lore",
    "what": "Vaelrith vanishes at 105, leaving a bloodstained campsite",
    "who": "Okthandom, Vaelrith",
-   "lines": "27"
+   "lines": "33"
   },
   {
    "id": "L-e03",
    "doc": "lore",
    "what": "Claude erases his own memory, is held by a circus and escapes",
    "who": "Claude",
-   "lines": "42"
+   "lines": "48"
   },
   {
    "id": "L-e04",
    "doc": "lore",
    "what": "Hlin Trollbane offers the party a contract on Sephek Kaltro in The Lucky Liar",
    "who": "the party, Hlin Trollbane, Sephek Kaltro",
-   "lines": "67"
+   "lines": "73"
   },
   {
    "id": "L-e05",
    "doc": "lore",
    "what": "The party fights six ice kobolds and evades a yeti on the road to Termalaine",
    "who": "the party",
-   "lines": "75"
+   "lines": "81"
   },
   {
    "id": "L-e06",
    "doc": "lore",
    "what": "Rumours reach the party that an evil wizard captured in Easthaven will be burned at the stake",
    "who": "the party",
-   "lines": "78"
+   "lines": "84"
   },
   {
    "id": "L-e07",
    "doc": "lore",
    "what": "The grell paralyzes Claude and destroys Glyph, then the party kills it",
    "who": "Claude, Cerric, the party",
-   "lines": "84"
+   "lines": "90"
   },
   {
    "id": "L-e08",
    "doc": "lore",
    "what": "Okthandom kills Trex with an arrow, and Claude burns Penolopi to banish the ghost",
    "who": "Okthandom, Trex, Claude, Cerric",
-   "lines": "84"
+   "lines": "90"
   },
   {
    "id": "L-e09",
    "doc": "lore",
    "what": "The party secures the spoils of the mine, including a psi crystal and a heart of chardalyn",
    "who": "the party",
-   "lines": "84"
+   "lines": "90"
   },
   {
    "id": "L-e10",
    "doc": "lore",
    "what": "Speaker Masthew pays a bounty of 250 gold for clearing the mine",
    "who": "the party, Speaker Masthew",
-   "lines": "87"
+   "lines": "93"
   },
   {
    "id": "L-e11",
    "doc": "lore",
    "what": "Claude sells the wolf figurine to Belleros for 75 gold",
    "who": "Claude, Belleros",
-   "lines": "90"
+   "lines": "96"
   },
   {
    "id": "L-e12",
    "doc": "lore",
    "what": "An ice troll devours the first ship's captain and shatters his ship",
    "who": "ice troll, the minotaur captain",
-   "lines": "90"
+   "lines": "96"
   },
   {
    "id": "L-e13",
    "doc": "lore",
    "what": "Cerric talks Okthandom into pushing Fizzlebomb overboard; Belleros runs the Aurora's Wind ashore",
    "who": "Cerric, Okthandom, Belleros, Fizzlebomb",
-   "lines": "93"
+   "lines": "99"
   },
   {
    "id": "L-e14",
    "doc": "lore",
    "what": "Three owlbears ambush the party near Targos",
    "who": "the party",
-   "lines": "93"
+   "lines": "99"
   },
   {
    "id": "L-e15",
    "doc": "lore",
    "what": "Belleros befriends Boy, who leads the party to Keegan Velryn; she asks them to find Garret",
    "who": "Belleros, Boy, Keegan Velryn, Garret Velryn",
-   "lines": "96"
+   "lines": "102"
   },
   {
    "id": "L-e16",
@@ -3917,7 +4019,7 @@
    "doc": "lore",
    "what": "Each night before midnight Auril casts the spell that keeps the sun from rising: the Everlasting Rime",
    "who": "Auril",
-   "lines": "51"
+   "lines": "57"
   },
   {
    "id": "S-s01",
@@ -3971,27 +4073,25 @@
   },
   {
    "from": "Targos",
-   "to": "Bryn Shander",
-   "fact": "1 hour by dogsled on the road",
-   "line": 283
-  },
-  {
-   "from": "Targos",
    "to": "Dwarven Valley",
    "fact": "2 hours to the branch toward Termalaine, then 5 hours: 7 hours by dogsled",
    "line": 171
+  }
+ ],
+ "languages": [
+  {
+   "character": "Cerric Vanya'elen",
+   "language": "Elvish",
+   "line": 21,
+   "note": "'raised fluent in Elvish' (from his elven heritage); the owner added this paragraph on 2026-11-14",
+   "doc": "lore"
   },
   {
-   "from": "Targos",
-   "to": "Easthaven",
-   "fact": "5 hours by dogsled",
-   "line": 192
-  },
-  {
-   "from": "Easthaven",
-   "to": "Good Mead / Bryn Shander / Caer-Konig",
-   "fact": "the three towns connected to Easthaven",
-   "line": 183
+   "character": "Cerric Vanya'elen",
+   "language": "Draconic",
+   "line": 21,
+   "note": "'earned him fluency in Draconic as well' (from his studies of arcane texts)",
+   "doc": "lore"
   }
  ],
  "deferred": [
@@ -4015,7 +4115,8 @@
   "only unique items are tracked (#3373): no entry or tie for the two sleds and eight dogs, rations, the spear, the heavy crossbow, the greatsword, the shortsword, the wineskin, the tarps and tents, the spellbook or the chardalyn weapons the attackers hold",
   "'you elves all look alike to me' is a joke, not a relationship",
   "distances, speeds and times (the map context below) are travel facts, not ties between people",
-  "'she' and 'the lady' are never a new person: they are Keegan Velryn, and 'he' in Jebidiah's lines is Jebidiah"
+  "'she' and 'the lady' are never a new person: they are Keegan Velryn, and 'he' in Jebidiah's lines is Jebidiah",
+  "the Sylvan runes on Claude's wolf figurine (line 48) are writing on an item, not a language Claude speaks: no language row for him"
  ],
  "must_not_names": [
   "Wyvern poison",
@@ -4039,5 +4140,23 @@
   "Grell",
   "Electric eel",
   "Owlbears"
+ ],
+ "route_lengths": [
+  {
+   "from": "Targos",
+   "to": "Bryn Shander",
+   "words": "1 hour",
+   "line": 283,
+   "doc": "session",
+   "note": "'It's only 1 hour to Bryn Shander' on the party's journey"
+  },
+  {
+   "from": "Targos",
+   "to": "Easthaven",
+   "words": "five hours",
+   "line": 192,
+   "doc": "session",
+   "note": "'take the dogsled five hours to Easthaven'; read only if that journey is walked"
+  }
  ]
 }

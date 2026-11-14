@@ -8,6 +8,7 @@
 // is read again after, so what shows is always the API's own.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { handBracket, handKeeps } from "../content/hand-over-words";
 import { waitingWords as w } from "../content/web-waiting";
 import { ApiError, type AccountApi, type Waiting, type WaitingAnswer, type WaitingLook } from "./api";
 import { currentItem, itemDomId, openItem, pairFromItem } from "./itemLink";
@@ -42,6 +43,9 @@ function waitShown(sending: { since: number; stage: string; keepAll: boolean; lo
 /** Capitalises a line that opens a sentence, so "she grew up with Rook" reads "She grew up with Rook". */
 const startCap = (line: string): string => line.charAt(0).toUpperCase() + line.slice(1);
 
+/** The bracket for an item that changed hands, "Claude sold it", or "" for a plain connection or a previous holder the page cannot name. */
+const bracketOf = (b: Waiting["backstory"][number]): string => (b.handOver && b.handOverName ? handBracket(b.handOver, b.handOverName) : "");
+const handOf = bracketOf; // (no switch: the fields only arrive with the door that sends them, 0436)
 const KEEP_ALL_MAX = 50; // the API keeps at most this many named in one Keep all
 
 type Said = { ok: boolean; text: string; n: number; more?: string } | null;
@@ -466,7 +470,7 @@ export default function WebWaiting({
           <h4>{w.backstoryHeading}</h4>
           <p class="small">{w.backstoryNote}</p>
           {uploads.map((u) => {
-            const ready = u.items.filter((b) => b.ready);
+            const ready = u.items.filter((b) => b.ready && !handOf(b));
             const ids = ready.slice(0, KEEP_ALL_MAX).map((b) => b.id);
             const left = ready.length - ids.length;
             return (
@@ -491,10 +495,11 @@ export default function WebWaiting({
                 )}
                 {u.items.map((b) => (
                   <div key={b.id} class="panel" id={itemDomId(b.id)} tabIndex={-1}>
-                    <p id={`wb-${b.id}`}>{`${b.subject} ${b.how} ${b.object}`}</p>
+                    <p id={`wb-${b.id}`}>{`${b.subject} ${b.how} ${b.object}`}{handOf(b) ? ` (${handOf(b)})` : ""}</p>
                     {b.check && <p class="small muted">{w.checkLine(b.check)}</p>}
                     {b.quote && <p class="muted small">“{b.quote}”</p>}
                     {b.secret && <p class="small">{w.secretNote}</p>}
+                    {handOf(b) && b.ready && <p class="small">{handKeeps(b.handOver!, b.handOverName!, b.secret)}</p>}
                     {b.ready ? (
                       <div class="row">
                         <button

@@ -56,6 +56,7 @@ _STAGES = {
     "reading": q.READING,
     "looking": q.READING,
     "shaping": q.FINDING_NAMES,
+    "pictures": q.FINDING_NAMES,  # (the words in its pictures, #4003: names too)
     "who": q.FINDING_LINKS,
     "sorting": q.FINDING_LINKS,
 }

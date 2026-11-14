@@ -25,10 +25,16 @@ DEFINES = "defines or carries the flag: the model, the table, a backup, a row de
 WRITES = "writes the flag (and the list beside it, so they stay one rule); goes with the flags"
 MIRRORS = "keeps the list and the flag in step (slice 2b); goes with the flags"
 READS = "READS the flag to decide who may see something: to be converted to the gate"
+COUNTS = "counts it for a report to dev1: decides nothing anyone sees, prints numbers only"
 
 # path (under src/dmbot) → (kind, owner, why). One line each, in alphabetical order.
 FILES: dict[str, tuple[str, str, str]] = {
     "bot.py": (READS, "CloudDev-lead", "the clue reveal reads `unseen_by_players` from the lookup"),
+    "devtools/sample_run/counts.py": (
+        COUNTS,
+        "GraphEngineer",
+        "the sample run's split-party counts (#3545)",
+    ),
     "memory/_changes.py": (WRITES, "GraphEngineer", "the change log's row writers and Undo"),
     "memory/backstory_keep.py": (READS, "GraphEngineer", "which entries a backstory may link"),
     "memory/backstory_links.py": (READS, "GraphEngineer", "hides a connection with a limited end"),
@@ -96,7 +102,7 @@ class TheFlagReaders(unittest.TestCase):
 
     def test_the_list_is_in_order_and_each_line_says_why(self) -> None:
         self.assertEqual(list(FILES), sorted(FILES))
-        kinds = {DEFINES, WRITES, MIRRORS, READS}
+        kinds = {DEFINES, WRITES, MIRRORS, READS, COUNTS}
         for path, (kind, owner, why) in FILES.items():
             self.assertIn(kind, kinds, path)
             self.assertIn(owner, ("CloudDev-lead", "GraphEngineer"), path)

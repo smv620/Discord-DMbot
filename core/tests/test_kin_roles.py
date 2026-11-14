@@ -174,7 +174,8 @@ class TheWebEdges(unittest.TestCase):
 def relation(subject: str, object_: str, detail: str, directional: bool = True) -> Any:
     return SimpleNamespace(
         id="r1", subject_id=subject, object_id=object_, predicate="kin_of", detail=detail,
-        status="confirmed", secret=False, directional=directional,
+        status="confirmed", secret=False, directional=directional, both_ways=None,
+        knows_how="", assumed=False, route_state="",
     )  # fmt: skip
 
 

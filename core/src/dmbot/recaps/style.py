@@ -240,7 +240,7 @@ class NotesSection:
                 or not text.strip()
                 or len(text) > NOTE_CHARS
                 or not digits
-                or not 0 < int(str(by)) <= INT64_MAX
+                or not 0 <= int(str(by)) <= INT64_MAX  # (0: someone who has left, #4141)
                 or isinstance(at, bool)
                 or not isinstance(at, int)
                 or not 0 <= at <= INT64_MAX
@@ -307,7 +307,7 @@ class StyleSection:
                 or len(text.split()) > EXAMPLE_MAX_WORDS
                 or len(text) > MAX_CHARS
                 or not digits
-                or not 0 < int(str(by)) <= INT64_MAX
+                or not 0 <= int(str(by)) <= INT64_MAX  # (0: someone who has left, #4141)
                 or isinstance(at, bool)
                 or not isinstance(at, int)
                 or not 0 <= at <= INT64_MAX

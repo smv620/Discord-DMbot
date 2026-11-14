@@ -369,6 +369,7 @@ class RecapWorker:
         structured_split: bool = False,
         structured_beats: bool = False,
         final_read: bool = False,
+        cache_front: bool = False,
         stored_split: Callable[[int, str, int], Awaitable[sp.Split | None]] | None = None,
     ) -> None:
         # Two models write the prose (#2074): `creative` writes it as plain text, `formatting`
@@ -387,6 +388,7 @@ class RecapWorker:
         self._structured_beats = structured_beats
         # The final read (#2952): off for a tool or test that does not pass it; the bot turns it on.
         self._final_read_on = final_read
+        self._cache_front = cache_front  # the writer's message front is remembered (#4054)
         self._beats_instead: set[tuple[int, str, int]] = set()
         self._heard: dict[tuple[int, str, int], str] = {}  # the transcript the writer was shown
         # the sheet, threads and earlier recaps the writer was shown (#2954): the checks read them
@@ -617,6 +619,7 @@ class RecapWorker:
         stage: str = "",
         soft: bool = False,
         free: bool = False,
+        front: str = "",
     ) -> Reply | None:
         """One AI call, counted before it is made. None if it failed (the job is then waiting or
         failed already: the caller returns). `soft`: a call of the critics loop (#2255), whose
@@ -632,10 +635,15 @@ class RecapWorker:
         calls, spent = now.calls + (0 if free else 1), now.spent + 1
         await self._store.update(gid, cid, job.session_at, calls=calls, spent=spent)
         try:
+            # `front` (#4054): the part of the message that is the same on every call of the writer,
+            # sent as a cached leading block; `text` is what follows it. Passed only when used.
+            extra: dict[str, Any] = {"cache_prefix": front} if front else {}
             if schema is None:
-                reply = await client.complete(system, text, max_tokens=max_tokens)
+                reply = await client.complete(system, text, max_tokens=max_tokens, **extra)
             else:  # structured outputs (#2039): the answer is JSON of this shape
-                reply = await client.complete(system, text, max_tokens=max_tokens, schema=schema)
+                reply = await client.complete(
+                    system, text, max_tokens=max_tokens, schema=schema, **extra
+                )
         except AIOutOfFunds:
             await self._fail(gid, cid, job, FUNDS)
             return None
@@ -1276,10 +1284,12 @@ class RecapWorker:
             self._heard[key] = heard  # the fact check reads the same lines
         else:
             self._heard.pop(key, None)
+        front, tail = message, ""  # what every writer call of this recap shares, then what differs
         if job.problems:
-            message += rd.prose_retry(
+            tail = rd.prose_retry(
                 job.problems, self._rejected_prose.get(key), length, plain=self._two
             )
+        message = front + tail
         stage = self._draft_stage
         kept = self._written.pop(key, None) if self._two else None  # the writer's text, kept
         raw: Reply | None = None
@@ -1298,10 +1308,11 @@ class RecapWorker:
                     corrections=inputs.corrections,
                     musts=inputs.musts,
                 ),
-                message,
+                tail if self._cache_front else message,
                 more_room(rd.write_room(length) if self._two else length.max_tokens, job.attempt),
                 schema=None if self._two else rd.prose_schema(),
                 stage=stage if self._two else "",
+                front=front if self._cache_front else "",
             )
             if raw is None:
                 return await self._store.get(gid, cid, job.session_at)
@@ -2236,7 +2247,9 @@ class RecapWorker:
             who_and_what=given.who_and_what,
             threads=given.threads,
             story=given.story,
-        ) + rd.prose_retry(cr.writer_notes(loop.pending), prose, length, plain=self._two)
+        )
+        tail = rd.prose_retry(cr.writer_notes(loop.pending), prose, length, plain=self._two)
+        front, message = message, message + tail  # the front is the writer's, word for word
         attempt = 1  # the careful writer's room, as for a retry
         kept = self._written.pop(key, None)  # the writer's text, if only the formatter failed
         raw = None if kept is not None else await self._call(
@@ -2246,12 +2259,13 @@ class RecapWorker:
                 inputs.setting, length, plain=self._two, style=inputs.style,
                 notes=inputs.notes, corrections=inputs.corrections, musts=inputs.musts,
             ),
-            message,
+            tail if self._cache_front else message,
             more_room(rd.write_room(length) if self._two else length.max_tokens, attempt),
             schema=None if self._two else rd.prose_schema(),
             stage="revise",
             soft=True,
             free=loop.waits > 0,  # a try of a recap that waits has its own budget (#2370)
+            front=front if self._cache_front else "",
         )  # fmt: skip
         if raw is None and kept is None:
             return await self._store.get(gid, cid, job.session_at)

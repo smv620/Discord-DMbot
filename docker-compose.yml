@@ -82,6 +82,7 @@ services:
       DEEPGRAM_API_KEY: ""
       DISCORD_CLIENT_SECRET: ""     # the website API's secrets stay in web-api
       WEB_SECRET_KEY: ""
+      DMBOT_PERSON_KEY: ""          # core and the website API hold it, ears never does (#4145)
       PAYMENT_WEBHOOK_SECRET: ""
       DMBOT_WEB_DB_PASSWORD: ""
       CLOUDFLARE_TUNNEL_TOKEN: ""   # only the tunnel container holds it (#836)
@@ -110,6 +111,7 @@ services:
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
       WEB_SECRET_KEY: ${WEB_SECRET_KEY:-}
+      DMBOT_PERSON_KEY: ${DMBOT_PERSON_KEY:-}   # keys the hash kept after an account is deleted (#4145)
       WEB_SITE_URL: ${WEB_SITE_URL:-}
       WEB_API_URL: ${WEB_API_URL:-}
       WEB_API_PORT: ${WEB_API_PORT:-8080}

@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.memory.models import PROPOSED
+from dmbot.memory.models import DM, PROPOSED
 from dmbot.questions import kinds
 
 log = logging.getLogger(__name__)
@@ -40,6 +40,7 @@ class Sources:
     db: Database
     memory: Any | None = None  # MemoryStore
     claims: Any | None = None  # ClaimStore, only when the claim reader is on
+    maps: Any | None = None  # MapStore, with the kept pictures
     backstory: Any | None = None  # BackstoryLinks
     heard: Any | None = None  # WaitingQuestionStore
     rule_sets: Any | None = None  # RuleSetStore
@@ -83,7 +84,8 @@ async def _lookalikes(src: Sources, g: int, c: str) -> Counted:
 
 async def _connections(src: Sources, g: int, c: str) -> Counted:
     """Backstory connections (not "Which one?", its own kind), the names an AI read suggested for
-    confirmed entries, unnamed people who may be a named one, and the family links worked out."""
+    confirmed entries, unnamed people who may be a named one, the family links worked out, and
+    the one-of-a-kind items two holders have (#4115)."""
     total = 0
     if src.backstory is not None:
         # (two reads: a "Which one?" added between them must not make this negative)
@@ -94,6 +96,7 @@ async def _connections(src: Sources, g: int, c: str) -> Counted:
         total += len(await src.memory.suggested_names(g, c))
         total += len(await src.memory.same_person_offers(g, c))
         total += len(await src.memory.worked_out_waiting(g, c))
+        total += len(await src.memory.hand_over_waiting(g, c, source=DM))  # (#4115)
     return Counted(total)
 
 
@@ -185,6 +188,23 @@ async def _traits(src: Sources, g: int, c: str) -> Counted:
     return Counted(await TraitOfferStore(src.db).count(g, c))
 
 
+async def _world(src: Sources, g: int, c: str) -> Counted:
+    """DMbot's guesses about places and languages the DM hasn't checked (#4285): the lines the
+    🌍 World notes screen shows (`MemoryStore.world_notes`)."""
+    if src.memory is None:
+        return Counted(0)
+    notes = await src.memory.world_notes(g, c)
+    return Counted(len(notes), min((n.made_at for n in notes), default=None))
+
+
+async def _maps(src: Sources, g: int, c: str) -> Counted:
+    """Maps a player kept that no DM has answered yet (`MapStore.waiting_for_a_dm`)."""
+    if src.maps is None:
+        return Counted(0)
+    waiting = await src.maps.waiting_for_a_dm(g, c)
+    return Counted(len(waiting), min((m.created_at for m in waiting), default=None))
+
+
 _COUNTERS: dict[str, Callable[[Sources, int, str], Awaitable[Counted]]] = {
     kinds.NAMES: _names,
     kinds.HEARD: _heard,
@@ -193,6 +213,8 @@ _COUNTERS: dict[str, Callable[[Sources, int, str], Awaitable[Counted]]] = {
     kinds.WHICH: _which,
     kinds.FAMILY: _family,
     kinds.TRAITS: _traits,
+    kinds.WORLD: _world,
+    kinds.MAPS: _maps,
     kinds.CLAIMS: _claims,
     kinds.READINGS: _readings,
     kinds.PLOT: _plot,

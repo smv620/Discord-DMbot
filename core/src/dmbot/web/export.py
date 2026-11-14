@@ -14,6 +14,7 @@ from typing import Any
 from psycopg import AsyncCursor
 from psycopg.rows import DictRow
 
+from dmbot import person_key
 from dmbot.db import Conn, Database
 from dmbot.entitlements import cap_hours
 from dmbot.web.discord import DiscordGuild
@@ -149,7 +150,10 @@ async def build_export(db: Database, session: Session, *, now: int) -> dict[str,
             (session.user_id,),
         )
         payments = await cur.fetchall()
-        cur = await conn.execute("SELECT 1 FROM try_it_used WHERE user_id = %s", (session.user_id,))
+        cur = await conn.execute(
+            "SELECT 1 FROM try_it_used WHERE user_id = %s OR person_key = %s",
+            (session.user_id, person_key.key_for(session.user_id)),
+        )
         tried = await cur.fetchone() is not None
         # Earlier Discord accounts this DMbot account used (#1230), oldest first: a database
         # door that can only return the signed-in person's own rows.

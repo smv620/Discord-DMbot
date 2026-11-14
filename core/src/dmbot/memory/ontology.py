@@ -42,6 +42,7 @@ from dmbot.memory.models import (
     UNKNOWN,
     MemoryRuleError,
 )
+from dmbot.names import not_names
 
 log = logging.getLogger(__name__)
 
@@ -655,6 +656,57 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         synonyms=("imprisoned_by", "prisoner_of", "captured_by"),
     ),
     PredicateTerm(
+        "next_to",
+        "is next to",
+        "Two places beside each other: two regions that share a border, a town on the shore of a "
+        "lake, a keep at the foot of a mountain, two rooms side by side, a town on a named road. "
+        "Its word, when the story gives one, is kept in its details: borders, on the shore of, on "
+        "the coast of, at the foot of, on. Never one place inside another: that is 'is in'.",
+        ("place",),
+        ("place",),
+        symmetric=True,
+        covers=(
+            "two regions or realms that share a border",
+            "a town on the shore of a lake, or on the coast of a sea",
+            "a keep or village at the foot of a mountain",
+            "a town on a named road or trade route",
+            "two rooms or buildings side by side",
+        ),
+        not_this=(("one place inside another (a tavern in a town)", "located_in"),),
+        examples=("Targos is on the shore of Maer Dualdon.", "Luskan borders the Sword Coast."),
+        inverse_label="is next to",
+        synonyms=("beside", "borders", "adjacent_to", "next_door_to", "on_the_shore_of"),
+    ),
+    PredicateTerm(
+        "route_to",
+        "is connected to",
+        "Two places reachable from each other by a stated way: by road, by river, by sea or a "
+        "water trade route, by air (an airship), through a permanent portal, or through the wild "
+        "(a path across country). The way is kept in its details. Both places are named with the "
+        "way between them; a way word alone ('she flew over the camp') is not a route. Never two "
+        "places beside each other (that is 'is next to') or one inside another ('is in').",
+        ("place",),
+        ("place",),
+        symmetric=True,
+        covers=(
+            "a road between two towns",
+            "a river or sea route between two ports",
+            "an airship line between two cities",
+            "a permanent portal between two places",
+            "a path through the wild the party took or means to take",
+        ),
+        not_this=(
+            ("two places side by side (a town on a lake's shore)", "next_to"),
+            ("one place inside another (a tavern in a town)", "located_in"),
+        ),
+        examples=(
+            "A road runs from Targos to Bryn Shander.",
+            "A portal links Waterdeep and Luskan.",
+        ),
+        inverse_label="is connected to",
+        synonyms=("connected_by_way", "reachable_from"),  # (never one that names a means)
+    ),
+    PredicateTerm(
         "contains",
         "contains",
         "Has something inside it: a note in a book, a gem in a chest.",
@@ -968,7 +1020,12 @@ RULES_WORDS = frozenset(
         "difficulty class", "damage type", "spell slot", "concentration", "advantage",
         "disadvantage", "attunement", "inspiration", "short rest", "long rest", "cover",
         "ability check", "level", "experience points", "stat block", "creature type", "round",
+        # "language" is the rules word for the lot (#4227), so no campaign makes it a kind
+        "language",
     }
+    # The SRD's languages that are nothing else (#4227), from the one list the readers use; the
+    # ones that are also a name or a creature ("Sylvan", "Giant") stay free as a kind.
+    | not_names.ONLY_LANGUAGES
 )  # fmt: skip
 # Plain-English words that mean a rules word in the game, so a proposal named like this is the
 # rules concept, not a story relationship. Each says why (the value is the rules word it is).

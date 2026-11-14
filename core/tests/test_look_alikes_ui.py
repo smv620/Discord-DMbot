@@ -294,7 +294,7 @@ class TheMerge(unittest.IsolatedAsyncioTestCase):
 
     def memory(self, **kw: Any) -> Any:
         return SimpleNamespace(
-            merge_many=AsyncMock(return_value=SimpleNamespace(batch=42)),
+            merge_many=AsyncMock(return_value=SimpleNamespace(batch=42, split="")),  # (#4043)
             look_alikes=AsyncMock(return_value=[]),
             not_the_same=AsyncMock(return_value=1),
             keep_days=30,

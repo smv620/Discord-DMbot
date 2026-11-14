@@ -9,6 +9,8 @@ file are untrusted and fully checked before anything is written.
 from __future__ import annotations
 
 import asyncio
+import logging
+from collections import Counter
 from collections.abc import Mapping, Sequence
 from typing import Any
 
@@ -19,7 +21,17 @@ from psycopg.types.json import Jsonb
 from dmbot import lineage
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn
-from dmbot.memory import beliefs, evidence, notify, sheets
+from dmbot.memory import (
+    beliefs,
+    evidence,
+    map_facts,
+    notify,
+    place_levels,
+    route_length,
+    route_words,
+    sheets,
+    whereabouts,
+)
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import (
     ALIAS_KNOWERS,
@@ -33,12 +45,14 @@ from dmbot.memory._changes import (
     FLAGS,
     IMPRESSIONS,
     KNOWERS,
+    MAP_FACTS,
     PERSPECTIVES,
     PREDICATES,
     RELATIONS,
     RULE_LINKS,
     SHEETS,
     STATES,
+    STORY_LANGUAGES,
     TOLD,
     TYPES,
     Table,
@@ -54,10 +68,12 @@ from dmbot.memory.models import (
     CONDITIONS,
     DESCRIPTION_MAX,
     DETAIL_MAX,
+    END_REASONS,
     ENTITY_STATUSES,
     EVIDENCE_ID_MAX,
     EVIDENCE_MAX,
     FIX,
+    GIVEN_BY,
     HOWS,
     KEEP,
     KNOWS_HOWS,
@@ -73,6 +89,7 @@ from dmbot.memory.models import (
     PLAYERS_TEXT_MAX,
     ROLES,
     SOURCES,
+    STORY_LANGUAGE_MAX,
     THREAD_STATES,
     is_id,
     lookup_key,
@@ -95,6 +112,8 @@ from dmbot.memory.ontology import (
 from dmbot.memory.sounds import sound_codes
 from dmbot.memory.voice import split_effect_note
 
+log = logging.getLogger(__name__)
+
 DAMAGED = "This backup file is damaged (bad campaign memory entry)."
 INT64_MAX = 2**63 - 1
 
@@ -104,6 +123,8 @@ _TAGS: dict[str, Table] = {
     "predicate": PREDICATES,
     "entity": ENTITIES,
     "rule_link": RULE_LINKS,
+    "story_language": STORY_LANGUAGES,  # a character's languages from the story (#4229)
+    "map_fact": MAP_FACTS,  # a place's land, climate and who rules it (#4256)
     "state": STATES,
     "claim": CLAIMS,
     "alias": ALIASES,
@@ -136,6 +157,7 @@ _TEXT_LIMITS = {
     "parent": 40,
     "inverse_label": LABEL_MAX,
     "rules_source": LINK_SOURCE_MAX,
+    "name_key": STORY_LANGUAGE_MAX,  # (a story language's key, #4229)
     "replaced_by": 40,
     "type": 40,
     "predicate": 40,
@@ -149,6 +171,7 @@ _TEXT_LIMITS = {
     "unnamed_what": NAME_MAX,
     "players_text": PLAYERS_TEXT_MAX,  # the players' line for an entry (#2967)
     "decided": 60,  # how a pronoun was settled (#2790): fixed words and a number
+    "length_words": route_length.WORDS_MAX,  # a route's stated length, its own words (#4255)
 }
 _CHOICES: dict[str, Sequence[str]] = {
     "status": (
@@ -162,10 +185,20 @@ _CHOICES: dict[str, Sequence[str]] = {
     ),
     "how": HOWS,
     "knows_how": KNOWS_HOWS,
+    "route_state": route_words.STATES,  # (a route's state, #4173 slice 6d)
+    "end_reason": (*END_REASONS, whereabouts.MOVED),  # (a move, #4173 slice 5)
+    "place_level": place_levels.LEVELS,
+    "place_level_from": place_levels.FROM,
+    "form": place_levels.FORMS,  # a place's form (#4173 slice 6a)
+    "form_from": place_levels.FROM,
+    "length_unit": route_length.UNITS,  # (a route's stated length, #4255)
+    "length_from": place_levels.FROM,
+    "setting_from": (*place_levels.FROM, "declined"),  # who made it the setting (#4173 slice 2b)
     "kind": (*ALIAS_KINDS, *FLAG_KINDS, *LINK_KINDS, *PERSPECTIVE_KINDS),
     "condition": (*CONDITIONS, *THREAD_STATES),
     "role": ROLES,
     "edition": LINK_EDITIONS,
+    "given_by": GIVEN_BY,  # who gave a story language (#4229)
     "action": (FIX, KEEP),
     "source": SOURCES,
     "change_kind": CHANGE_KINDS,
@@ -188,8 +221,28 @@ _NULLABLE = {
     "to_game_time", "game_time", "max_per_subject", "closed_at", "unique_item", "fact_id",
     "session_started_at", "decided_at", "said_as", "from_set", "session_at", "manipulated_by",
     "unnamed_anchor", "unnamed_role", "unnamed_what", "players_text", "decided", "via_alias_id",
-    "derived_from", "change_kind", "subject_picked", "object_picked",
+    "derived_from", "change_kind", "subject_picked", "object_picked", "end_reason",
+    "place_level", "place_level_from",  # (how big a place is and who said it, #4173)
+    "form", "form_from",  # (a place's form and who said it, #4173 slice 6a)
+    "setting_from",  # (who made it the campaign's setting, #4173 slice 2b)
+    "both_ways",  # (the DM's direction, #4154: None is the kind's default)
+    "length_words", "length_amount", "length_unit", "length_from",  # (a route's length, #4255)
 }  # fmt: skip
+
+
+def _length_whole(r: Mapping[str, Any], *, on_a_route: bool) -> bool:
+    """A route's stated length in a file (#4255) as the database holds it: only on a route, its
+    words and who gave them together, an amount and its unit together, and no amount or "about"
+    without words. A damaged one refuses the file, as the database's own check would."""
+    words, amount = r.get("length_words"), r.get("length_amount")
+    if words is None:
+        return amount is None and r.get("length_from") is None and not r.get("length_approx")
+    return (
+        on_a_route
+        and r.get("length_from") is not None
+        and (amount is None) == (r.get("length_unit") is None)
+        and (amount is None or (isinstance(amount, (int, float)) and 0 < amount <= 10_000))
+    )
 
 
 def _valid(column: str, value: object) -> bool:
@@ -245,8 +298,17 @@ def _valid(column: str, value: object) -> bool:
         "directional",
         "pinned",
         "added_entry",
+        "both_ways",
+        "assumed",
+        "setting",
+        "srd",
+        "length_approx",  # (a route's length said "about", #4255)
     ):
         return isinstance(value, bool)
+    if column == "length_amount":  # a route's stated length (#4255)
+        return (
+            isinstance(value, (int, float)) and not isinstance(value, bool) and 0 < value <= 10_000
+        )
     if column == "score":  # an impression's or attitude's feeling (#1655)
         return isinstance(value, int) and not isinstance(value, bool) and -100 <= value <= 100
     if column == "weight":  # how much evidence is behind it
@@ -258,6 +320,8 @@ def _valid(column: str, value: object) -> bool:
     limit = _TEXT_LIMITS.get(column)
     if column == "players_text":  # the column refuses an empty line: none is NULL (#2967)
         return isinstance(value, str) and 1 <= len(value) <= PLAYERS_TEXT_MAX
+    if column == "length_words":  # the same: no length is NULL (#4255)
+        return isinstance(value, str) and 1 <= len(value) <= route_length.WORDS_MAX
     return limit is not None and isinstance(value, str) and len(value) <= limit
 
 
@@ -290,7 +354,8 @@ class MemorySection:
             # One table at a time, so only one table's raw rows are held at once (#393).
             out += await asyncio.to_thread(_dump_rows, [(tag, table, raws)])
             del raws
-        return out
+        # (once for the whole section, not for each table: one default row, #4060)
+        return await asyncio.to_thread(_with_default_stamp, out)
 
     def check(self, rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         """Every value checked and sound codes worked out: pure CPU, which the store
@@ -390,6 +455,52 @@ def _dump_rows(fetched: list[tuple[str, Table, list[Any]]]) -> list[Any]:
     return out
 
 
+# The row that carries the build stamp most rows share (#4060): written first, once, so a row holds
+# its own `made_by` only when it differs (an explicit null for "none"). A file from before has no
+# such row and a stamp on every row.
+DEFAULTS_TAG = "defaults"
+
+
+def _with_default_stamp(rows: list[Any]) -> list[Any]:
+    """The rows with the most common build stamp written once, ahead of them, and left off the rows
+    that have it."""
+    stamps = Counter(r["made_by"] for r in rows if r.get("made_by"))
+    if not stamps:
+        return rows
+    default = stamps.most_common(1)[0][0]
+    shared = [({k: v for k, v in r.items() if k != "made_by"} if r.get("made_by") == default else r)
+              for r in rows]  # fmt: skip
+    return [{"table": DEFAULTS_TAG, "made_by": default}, *shared]
+
+
+def _expand_default_stamp(rows: list[Any]) -> list[Any]:
+    """The rows as before the default was taken off them. Untrusted: a default that is not a stamp
+    (40 lower-case hex characters), or that is not alone in its row, refuses the whole backup."""
+    if not isinstance(rows, list):
+        return rows
+    heads = [r for r in rows if isinstance(r, dict) and r.get("table") == DEFAULTS_TAG]
+    if not heads:
+        return rows
+    head = heads[0]
+    default = head.get("made_by")
+    if (
+        len(heads) != 1
+        or set(head) != {"table", "made_by"}
+        or not isinstance(default, str)
+        or not lineage.valid(default)
+    ):
+        raise CampaignError(DAMAGED)
+    out: list[Any] = []
+    for r in rows:
+        if r is head:
+            continue
+        table = _TAGS.get(str(r.get("table"))) if isinstance(r, dict) else None
+        if table is not None and table.name in lineage.STAMPED and "made_by" not in r:
+            r = {**r, "made_by": default}
+        out.append(r)
+    return out
+
+
 def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     """A backup's memory rows, every value checked, grouped by table tag. Untrusted:
     raises CampaignError(DAMAGED) on anything out of shape.
@@ -400,6 +511,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     it would strand the campaign, while a loop only shows as a neighbour on a card (the readers
     follow one link, not a chain) and a new link or a merge can't add to it."""
     by_tag: dict[str, list[dict[str, Any]]] = {tag: [] for tag in _TAGS}
+    rows = _expand_default_stamp(rows)
     rows = _with_definition_fields(_gods_are_npcs(_from_before_kinds(_unnamed_names(rows))))
     for raw in rows:
         if not isinstance(raw, dict) or raw.get("table") not in _TAGS:
@@ -421,10 +533,32 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         # so a hand-edited file says "damaged" here instead of failing mid-restore
         if table is RELATIONS and raw.get("knows_how") and raw.get("predicate") != "knows":
             raise CampaignError(DAMAGED)
+        # and a route's state is on a route only (#4173 slice 6d), as the database says
+        if table is RELATIONS and raw.get("route_state") and raw.get("predicate") != "route_to":
+            raise CampaignError(DAMAGED)
+        # and why a tie ended is on an ended owns or carries only (#4115), or a move on an ended
+        # located_in (#4173 slice 5), as the database says
+        if (
+            table is RELATIONS
+            and raw.get("end_reason") is not None
+            and (
+                raw.get("predicate")
+                not in (
+                    ("located_in",)
+                    if raw["end_reason"] == whereabouts.MOVED
+                    else ("owns", "carries")
+                )
+                or raw.get("to_session_at") is None
+            )
+        ):
+            raise CampaignError(DAMAGED)
         if table is SHEETS:
             raw = _checked_sheet(raw)
         elif table is EVIDENCE:
             _check_evidence(raw)
+        elif table is MAP_FACTS:
+            # (its own check: its `how`, `status` and `source` mean other things than elsewhere)
+            _check_map_fact(raw)
         elif table is KNOWERS:  # four statement columns, exactly one set (`_check_knowers`)
             if not all(
                 raw[c] is None or is_id(raw[c])
@@ -583,9 +717,21 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "unnamed_anchor": None,
                 "unnamed_role": None,
                 "unnamed_what": None,
+                "place_level": None,  # from before #4173: no place had a size
+                "place_level_from": None,
+                "setting": False,  # from before #4173: no campaign had a setting
+                "form": None,  # from before #4173 slice 6a: every place an area
+                "form_from": None,
+                "length_words": None,  # from before #4255: no route had a stated length
+                "length_amount": None,
+                "length_unit": None,
+                "length_approx": False,
+                "length_from": None,
                 "players_text": None,  # from before the players' line (#2967)
                 **raw,
             }
+            if "setting_from" not in raw:  # (from before #4173 slice 2b: a setting was the DM's)
+                raw = {**raw, "setting_from": "dm" if raw.get("setting") else None}
         elif isinstance(raw, dict) and raw.get("table") == "belief":
             # from before the pin (#2447), a hide's sleep (#3082) and lineage (#3091)
             raw = {
@@ -631,6 +777,15 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "decided": None,
                 "via_alias_id": None,  # from before #3037: no connection came through a name
                 "knows_how": "",  # from before #3881: the story's word on how was not kept
+                "end_reason": None,  # from before #4115: why a tie ended was not kept
+                "both_ways": None,  # from before #4154: every direction was its kind's default
+                "assumed": False,  # from before #4173 slice 3: every connection was stated
+                "route_state": "",  # from before #4173 slice 6d: no route had a state
+                "length_words": None,  # from before #4255: no route had a stated length
+                "length_amount": None,
+                "length_unit": None,
+                "length_approx": False,
+                "length_from": None,
                 **raw,
                 "definition_version": version,
             }
@@ -859,6 +1014,12 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
     )
     if any(r["type"] not in onto.types for r in by_tag["entity"]):
         raise CampaignError(DAMAGED)
+    # A campaign's own two-way kind's connection carries its direction (#4388, as migration 0485
+    # did for the rows already kept): a file from before has none, which the card reads one way.
+    for r in by_tag["relation"]:
+        own = onto.predicates.get(r["predicate"])
+        if r["both_ways"] is None and own is not None and not own.core and own.symmetric:
+            r["both_ways"] = True
     # A role belongs to a character; only a player character (or a person) has a player;
     # a link is on a character that is in the file.
     if any(
@@ -891,13 +1052,104 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
     ):
         raise CampaignError(DAMAGED)
     _check_states(onto, by_tag)
+    # A link to the rules on an entry that is no character (#4241): a kind change once left them
+    # behind, and a backup downloaded then can't be fixed by a migration, so such a link is left out
+    # (and counted in the log) instead of refusing the file. A link to an entry the file doesn't
+    # hold is still damage.
     characters = {r["id"] for r in by_tag["entity"] if onto.is_a(r["type"], "character")}
-    if any(r["entity_id"] not in characters for r in by_tag["rule_link"]):
+    if any(r["entity_id"] not in kinds for r in by_tag["rule_link"]):
         raise CampaignError(DAMAGED)
+    kept = [r for r in by_tag["rule_link"] if r["entity_id"] in characters]
+    if len(kept) != len(by_tag["rule_link"]):
+        log.info("A restore left out %d rules links on entries that are no character",
+                 len(by_tag["rule_link"]) - len(kept))  # fmt: skip
+        by_tag["rule_link"] = kept
     if any(r["known"] != bool(r["rules_source"]) for r in by_tag["rule_link"]):
         raise CampaignError(DAMAGED)
+    _check_story_languages(by_tag["story_language"], characters)
+    # a place's land, climate and ruler (#4256): on a place, ruled by a group, allowed there
+    places = {r["id"]: r for r in by_tag["entity"] if onto.is_a(r["type"], "place")}
+    groups = {r["id"] for r in by_tag["entity"] if onto.is_a(r["type"], "faction")}
+    every = {r["id"] for r in by_tag["entity"]}
+    open_keys: set[tuple[str, ...]] = set()
+    for r in by_tag["map_fact"]:
+        place = places.get(r["entity_id"])
+        key = (r["entity_id"], r["layer"], r["value"], r["faction_id"] or "", r["part"].lower())
+        is_open = r["status"] != map_facts.REJECTED and r["to_session_at"] is None
+        if is_open and key in open_keys:
+            raise CampaignError(DAMAGED)  # (one open row per place, layer, value and part)
+        if is_open:
+            open_keys.add(key)
+        if not is_open:  # (history: its place or group may have changed since; it must exist)
+            if r["entity_id"] not in every or (r["faction_id"] or r["entity_id"]) not in every:
+                raise CampaignError(DAMAGED)
+            continue
+        if (
+            place is None
+            or (r["faction_id"] is not None and r["faction_id"] not in groups)
+            or not map_facts.allowed_on(
+                r["layer"], form=place.get("form"), level=place.get("place_level")
+            )
+        ):
+            raise CampaignError(DAMAGED)
+    if any(
+        not _length_whole(r, on_a_route=r["predicate"] == "route_to") for r in by_tag["relation"]
+    ):
+        raise CampaignError(DAMAGED)  # (a route's stated length, #4255)
     if any(r["predicate"] not in onto.predicates for r in by_tag["relation"]):
         raise CampaignError(DAMAGED)
+
+
+def _check_map_fact(r: Mapping[str, Any]) -> None:
+    """One row of a place's land, climate or ruler (#4256), as the store writes it: a value the
+    layer allows, a group for control and a word for the others, the text's words only with
+    "other", and its own status, source and story time."""
+    words, part = r["words"], r["part"]
+    ints = ("from_session_at", "to_session_at", "from_game_time", "to_game_time")
+    if not (
+        is_id(r["id"])
+        and is_id(r["entity_id"])
+        and r["layer"] in map_facts.LAYERS
+        and isinstance(r["value"], str)
+        and isinstance(r["how"], str)
+        and isinstance(words, str)
+        and isinstance(part, str)
+        and len(words) <= map_facts.WORDS_MAX
+        and len(part) <= map_facts.WORDS_MAX
+        and r["status"] in (map_facts.READ, map_facts.CONFIRMED, map_facts.REJECTED)
+        and r["source"] in map_facts.RANK
+        and isinstance(r["also_text"], bool)
+        and isinstance(r["table_knows"], bool)
+        and _valid("created_at", r["created_at"])
+        and all(_valid(c, r[c]) for c in ints)
+    ):
+        raise CampaignError(DAMAGED)
+    control = r["layer"] == map_facts.CONTROL
+    if (
+        control != (r["faction_id"] is not None)
+        or (r["faction_id"] is not None and not is_id(r["faction_id"]))
+        or control != (r["value"] == "")
+        or (r["value"] == map_facts.OTHER) != (words != "")
+        or not map_facts.valid(r["layer"], r["value"], r["how"])
+    ):
+        raise CampaignError(DAMAGED)
+
+
+def _check_story_languages(rows: Sequence[Mapping[str, Any]], characters: set[str]) -> None:
+    """A character's languages from the story (#4229), as the store writes them: a character's,
+    named in at most STORY_LANGUAGE_MAX characters, each kept once, its key made from its name."""
+    seen: set[tuple[str, str]] = set()
+    for r in rows:
+        key = (r["entity_id"], r["name_key"])
+        if (
+            r["entity_id"] not in characters
+            or not 0 < len(r["name"]) <= STORY_LANGUAGE_MAX
+            or r["name_key"] != name_key(r["name"])
+            or not r["name_key"]
+            or key in seen
+        ):
+            raise CampaignError(DAMAGED)
+        seen.add(key)
 
 
 def _check_claim(row: Mapping[str, Any]) -> None:
@@ -946,11 +1198,34 @@ def _check_states(onto: Ontology, by_tag: dict[str, list[dict[str, Any]]]) -> No
         r["unique_item"] is not None and not onto.is_a(r["type"], "item") for r in by_tag["entity"]
     ):
         raise CampaignError(DAMAGED)
+    # only a place has a size (#4173), as the store says
+    if any(
+        (r.get("place_level") is not None and not onto.is_a(r["type"], "place"))
+        # a size and who said it come together (#4173)
+        or (r.get("place_level") is None) != (r.get("place_level_from") is None)
+        # only a place has a form, and a form and who said it come together (#4173 slice 6a)
+        or (r.get("form") is not None and not onto.is_a(r["type"], "place"))
+        or (r.get("form") is None) != (r.get("form_from") is None)
+        or not _length_whole(r, on_a_route=r.get("form") == "route")
+        for r in by_tag["entity"]
+    ):
+        raise CampaignError(DAMAGED)
     if any(r["audience_limited"] and r["type"] != "clue" for r in by_tag["entity"]):
         raise CampaignError(DAMAGED)  # only a clue has an audience (#1649)
     parties = [r for r in by_tag["entity"] if r["party"]]
     if len(parties) > 1 or any(r["type"] != "faction" for r in parties):
         raise CampaignError(DAMAGED)  # at most one party, and it is a group (#1655)
+    if any(
+        bool(r.get("setting")) != (r.get("setting_from") in place_levels.FROM)
+        for r in by_tag["entity"]
+    ):
+        raise CampaignError(DAMAGED)  # a setting says who set it, and only a setting does (2b)
+    settings = [r for r in by_tag["entity"] if r.get("setting")]
+    if len(settings) > 1 or any(
+        not onto.is_a(r["type"], "place") or r.get("place_level") not in place_levels.SETTING_LEVELS
+        for r in settings
+    ):
+        raise CampaignError(DAMAGED)  # at most one setting, and it is a place (#4173)
     _check_standing(by_tag)
     open_for: set[str] = set()
     for r in by_tag["state"]:

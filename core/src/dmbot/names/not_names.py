@@ -286,6 +286,42 @@ TITLE_WORDS = frozenset(
 TITLES_ALONE = TITLE_WORDS - DESCRIBING_TITLE_WORDS - NAME_LIKE_TITLES
 
 
+# The SRD's languages (#4227): rules vocabulary, never a name in the game, so "Elvish" and "speaks
+# Dwarvish" are never suggested; a campaign's own invented tongue still can be, and the DM keeps
+# one as an idea. Words as `_words_of` gives them (lower case, no apostrophe). The ones that are
+# nothing but a language are caught alone; the ones that are also a given name ("Sylvan"), a
+# creature ("the Giant", "a goblin") or a plain word ("Common") only after a speech word ("speaks
+# Sylvan"), so a character called Sylvan and an epithet like "the Giant" are still suggested.
+ONLY_LANGUAGES = frozenset(
+    {
+        "common sign language", "draconic", "dwarvish", "elvish", "gnomish", "abyssal",
+        "deep speech", "druidic", "infernal", "thieves cant", "undercommon",
+    }
+)  # fmt: skip
+NAME_LIKE_LANGUAGES = frozenset(
+    {
+        "common", "giant", "goblin", "halfling", "orc", "celestial", "primordial", "aquan",
+        "auran", "ignan", "terran", "sylvan",
+    }
+)  # fmt: skip
+LANGUAGES = ONLY_LANGUAGES | NAME_LIKE_LANGUAGES
+# Speech words that may lead a language ("speaks Elvish"). "in Elvish" is a clause already (below).
+_LANGUAGE_LEADS = frozenset({"speaks", "speak", "spoke", "spoken", "speaking"})
+
+
+def is_language(candidate: str) -> bool:
+    """Is this one of the SRD's languages, as a reader would cut it out (#4227)? One that is only
+    a language counts alone or after a speech word; one that is also a name or a creature counts
+    only after a speech word."""
+    words = _words_of(candidate)
+    led = False
+    while words and words[0] in _LANGUAGE_LEADS:
+        words.pop(0)
+        led = True
+    said = " ".join(words)
+    return said in ONLY_LANGUAGES or (led and said in NAME_LIKE_LANGUAGES)
+
+
 _CLOCK = re.compile(r"\b\d{1,2}[:.]\d{2}\b|\b\d+\s*(?:am|pm|o'?clock)\b", re.IGNORECASE)
 _ARTICLES = frozenset({"the", "a", "an", "of"})
 
@@ -314,12 +350,14 @@ def _clause(candidate: str) -> bool:
 
 
 def shape_of(candidate: str) -> str | None:
-    """Why this candidate is no name by its shape alone: `number`, `measure`, `time`, `address` or
-    `clause`;
+    """Why this candidate is no name by its shape alone: `number`, `measure`, `time`, `address`,
+    `clause` or `language`;
     None when the shape says nothing. Capitals do not decide any of these."""
     words = _words_of(candidate)
     if not words:
         return None
+    if is_language(candidate):  # rules vocabulary, however it is capitalised (#4227)
+        return "language"
     if " ".join(words) in ADDRESS_ALONE or (len(words) == 1 and words[0] in TITLES_ALONE):
         return "address"
     if _clause(candidate):

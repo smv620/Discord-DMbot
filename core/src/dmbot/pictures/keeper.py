@@ -42,8 +42,11 @@ class Context:
     line_id: int | None
     message_id: int
     description: str
-    consent_version: int
-    right_granted_at: int
+    # The poster's own yes to their table using pictures from the chat. None for a picture that
+    # did not come from the chat (`message_id` 0: a map the person sent themselves, #4372): there
+    # is no such yes, and none is made up.
+    consent_version: int | None = None
+    right_granted_at: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -82,12 +85,16 @@ class PictureKeeper:
             except BucketError as exc:
                 log.warning("Pictures: couldn't delete a file (%s)", exc)
 
-    async def discard(self, guild_id: int, campaign_id: str, picture: Picture) -> None:
+    async def discard(
+        self, guild_id: int, campaign_id: str, picture: Picture, *, unless_map: bool = False
+    ) -> bool:
         """Take back a picture just kept (its poster stopped, or deleted the message, while it was
-        being stored): the row keeps its link so the link says it was removed, the files go."""
-        gone = await self._store.delete(guild_id, campaign_id, picture.id)
+        being stored): the row keeps its link so the link says it was removed, the files go. True
+        when it went. `unless_map`: leave it when it has become a map meanwhile (#4344)."""
+        gone = await self._store.delete(guild_id, campaign_id, picture.id, unless_map=unless_map)
         if gone is not None:
             await self._delete(gone.object_key, gone.preview_key)
+        return gone is not None
 
     async def forget_message(self, guild_id: int, message_id: int) -> int:
         """The poster deleted the Discord message a picture was in: the kept picture goes too,
@@ -99,6 +106,10 @@ class PictureKeeper:
         return taken
 
     async def keep(self, ctx: Context, data: bytes) -> Result:
+        if (ctx.consent_version is None) != (ctx.right_granted_at is None):
+            raise ValueError("a picture's consent version and date go together")
+        if ctx.consent_version is None and ctx.message_id != 0:
+            raise ValueError("a picture from the chat needs the poster's yes")
         try:
             ready = await self._prepare(data)
         except Refused as exc:

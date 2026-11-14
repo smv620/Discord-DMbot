@@ -1,0 +1,172 @@
+"""Private scenes in campaign backups (an `ExportSection`; #2996 rule 5, as the reveals' are).
+
+A backup holds the whole campaign, so a restored one keeps both the scenes found and the DM's "Not
+private" marks (which a later run must not undo). A row is ids and times only: the two player
+characters, the entries said in it (#4110), the session's start (a restore makes the session again
+under a new id, so the start is the key), the first and last line's start, how many lines, who
+spoke, and the DM's mark. Rows from
+the file are untrusted: the section is refused whole if any is damaged. A kept row whose speaker is
+not recorded in the server it is restored into is left out of every read (`PrivateScenes.listed`
+reads only rows whose speakers are all recorded). An older backup has no such section and restores
+with none.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
+from typing import Any
+
+from dmbot.campaigns.models import CampaignError
+from dmbot.db import Conn
+from dmbot.memory.models import is_id
+
+DAMAGED = "This backup file is damaged (bad private scenes)."
+ROWS_MAX = 5_000
+INT64_MAX = 2**63 - 1
+STATUSES = ("kept", "not_private")
+_KEYS = {
+    "id", "first_id", "second_id", "session_started_at", "from_ms", "to_ms", "line_count",
+    "speaker_ids", "status", "created_at", "decided_at",
+}  # fmt: skip
+_ORDER = sorted(_KEYS)
+ENTRIES = "entries"  # (#4110: the entries said in the scene; a file from before has none)
+ENTRIES_MAX = 200  # (the store keeps at most this many a scene: `private_scene_store`)
+
+Row = tuple[Any, ...]
+
+
+def _int(value: object, low: int, high: int) -> bool:
+    return type(value) is int and low <= value <= high  # (a JSON true is not a number)
+
+
+def _checked(rows: object) -> list[Row]:
+    """The rows as tuples, or CampaignError(DAMAGED) on anything out of shape (the table's own
+    rules, checked before the insert so a bad file is refused whole). Pure."""
+    if not isinstance(rows, list) or len(rows) > ROWS_MAX:
+        raise CampaignError(DAMAGED)
+    out: list[Row] = []
+    ids: set[str] = set()
+    once: set[tuple[Any, ...]] = set()  # (the table's unique index)
+    for r in rows:
+        if not (
+            isinstance(r, dict)
+            and set(r) - {ENTRIES} == _KEYS
+            and isinstance(r.get(ENTRIES, []), list)
+            and len(r.get(ENTRIES, [])) <= ENTRIES_MAX
+            and all(is_id(e) for e in r.get(ENTRIES, []))
+            and is_id(r["id"])
+            and r["id"] not in ids
+            and is_id(r["first_id"])
+            and is_id(r["second_id"])
+            and r["first_id"] < r["second_id"]
+            and _int(r["session_started_at"], 1, INT64_MAX)
+            and _int(r["from_ms"], 0, INT64_MAX)
+            and _int(r["to_ms"], r["from_ms"], INT64_MAX)
+            and _int(r["line_count"], 2, 2**31 - 1)
+            and isinstance(r["speaker_ids"], list)
+            and len(r["speaker_ids"]) <= 100
+            and all(_int(u, 1, INT64_MAX) for u in r["speaker_ids"])
+            and r["status"] in STATUSES
+            and (r["status"] == "not_private" or len(r["speaker_ids"]) >= 2)
+            and _int(r["created_at"], 1, INT64_MAX)
+            and (
+                _int(r["decided_at"], 1, INT64_MAX)
+                if r["status"] == "not_private"
+                else r["decided_at"] is None
+            )
+        ):
+            raise CampaignError(DAMAGED)
+        key = (r["session_started_at"], r["first_id"], r["second_id"], r["from_ms"])
+        if key in once:
+            raise CampaignError(DAMAGED)
+        once.add(key)
+        ids.add(r["id"])
+        out.append((*(r[k] for k in _ORDER), tuple(sorted(set(r.get(ENTRIES, []))))))
+    return out
+
+
+def _is_checked(rows: object) -> bool:
+    return isinstance(rows, list) and all(isinstance(r, tuple) for r in rows)
+
+
+class PrivateScenesSection:
+    """`consenting`: who is recorded in a server, read at a restore. The entries said in a scene
+    (the importance floor's input, #4110) are restored only for a kept scene whose speakers are
+    all recorded where it lands: the floor reads no consent of its own. None (a test): every kept
+    one."""
+
+    name = "memory_private_scenes"
+
+    def __init__(
+        self, consenting: Callable[[int], Awaitable[frozenset[int]]] | None = None
+    ) -> None:
+        self._consenting = consenting
+
+    async def dump(self, conn: Conn, guild_id: int, campaign_id: str) -> list[Any]:
+        cur = await conn.execute(
+            "SELECT id, first_id, second_id, session_started_at, from_ms, to_ms, line_count,"
+            " speaker_ids, status, created_at, decided_at, ARRAY(SELECT x.entity_id"
+            "  FROM memory_private_scene_entries x WHERE x.guild_id = p.guild_id"
+            "  AND x.campaign_id = p.campaign_id AND x.scene_id = p.id ORDER BY x.entity_id"
+            " LIMIT 200) AS entries FROM memory_private_scenes p"
+            # (past the cap, the DM's marks first, then the newest)
+            " WHERE guild_id = %s AND campaign_id = %s"
+            " ORDER BY status = 'not_private' DESC, session_started_at DESC, from_ms, id LIMIT %s",
+            (guild_id, campaign_id, ROWS_MAX),
+        )
+        return [
+            {
+                "id": r["id"], "first_id": r["first_id"], "second_id": r["second_id"],
+                "session_started_at": int(r["session_started_at"]),
+                "from_ms": int(r["from_ms"]), "to_ms": int(r["to_ms"]),
+                "line_count": int(r["line_count"]),
+                "speaker_ids": [int(u) for u in r["speaker_ids"]], "status": r["status"],
+                "created_at": int(r["created_at"]),
+                "decided_at": None if r["decided_at"] is None else int(r["decided_at"]),
+                ENTRIES: [str(e) for e in r["entries"]],
+            }
+            for r in await cur.fetchall()
+        ]  # fmt: skip
+
+    def check(self, rows: list[Any]) -> list[Row]:
+        """Pure; the store runs it in a worker thread before its transaction."""
+        return _checked(rows)
+
+    async def load(self, conn: Conn, guild_id: int, campaign_id: str, rows: Any) -> None:
+        checked = list(rows) if _is_checked(rows) else _checked(rows)
+        if not checked:
+            return
+        at = {k: i for i, k in enumerate(_ORDER)}
+        columns = ", ".join(_ORDER)
+        async with conn.cursor() as cursor:
+            await cursor.executemany(
+                f"INSERT INTO memory_private_scenes (guild_id, campaign_id, {columns})"
+                f" VALUES (%s, %s, {', '.join(['%s'] * len(_ORDER))})",
+                [(guild_id, campaign_id, *(r[at[k]] for k in _ORDER)) for r in checked],
+            )
+            recorded = await self._consenting(guild_id) if self._consenting is not None else None
+            # (an entry the file names that the restored campaign lacks is left out: the floor
+            # only reads entries that exist; so is any of a scene not wholly recorded here)
+            await cursor.executemany(
+                "INSERT INTO memory_private_scene_entries (guild_id, campaign_id, scene_id,"
+                " entity_id) SELECT %s, %s, %s, %s WHERE EXISTS (SELECT 1 FROM memory_entities e"
+                " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.id = %s)"
+                " ON CONFLICT DO NOTHING",
+                [
+                    (guild_id, campaign_id, r[at["id"]], e, guild_id, campaign_id, e)
+                    for r in checked
+                    if r[at["status"]] == "kept"
+                    and (recorded is None or set(r[at["speaker_ids"]]) <= recorded)
+                    for e in r[len(_ORDER)]
+                ],
+            )
+
+    async def clear(self, conn: Conn, guild_id: int, campaign_id: str) -> None:
+        # (the entries go with their scenes, by cascade)
+        await conn.execute(
+            "DELETE FROM memory_private_scenes WHERE guild_id = %s AND campaign_id = %s",
+            (guild_id, campaign_id),
+        )
+
+
+__all__ = ["ROWS_MAX", "PrivateScenesSection"]

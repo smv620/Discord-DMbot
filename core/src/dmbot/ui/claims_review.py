@@ -26,11 +26,14 @@ from dmbot.memory.claims import (
     condition_of,
 )
 from dmbot.memory.models import DM, HOW_DM, MemoryRuleError, TooLateToUndo, name_key
+from dmbot.ui.check_everything import add_stop, next_part, progress
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _replace, _send, _tell
 from dmbot.ui.name_card import FLAG_WHY
 from dmbot.ui.names import _campaign_for, _md, _memory
+from dmbot.walk import Walk
 
 NOTHING_WAITING = "✅ Nothing left to check. DMbot will ask again after the next session."
+FINISHED = "✅ What was said: checked."  # (the line a "Check everything" walk leaves, #4192)
 ODD_PAIR = "DMbot noticed something odd about it"
 REFUSAL_MAX = (
     160  # a store's reason in the summary: the page and the summary share 2,000 characters
@@ -226,7 +229,9 @@ def claims_review_view(campaign_id: str) -> discord.ui.View:
     return view
 
 
-async def start_claims_review(interaction: discord.Interaction, campaign_id: str) -> None:
+async def start_claims_review(
+    interaction: discord.Interaction, campaign_id: str, *, walk: Walk | None = None
+) -> None:
     memory = _memory(interaction)
     if memory is None:
         await _tell(
@@ -238,9 +243,12 @@ async def start_claims_review(interaction: discord.Interaction, campaign_id: str
     campaign = await _campaign_for(interaction, campaign_id)  # only whoever runs the campaign
     if campaign is None:
         return
-    view = ClaimsReview(campaign.id, campaign.guild_id)
+    view = ClaimsReview(campaign.id, campaign.guild_id, walk=walk)
     text = await view.current_text(interaction)
     if text is None:
+        if walk is not None:  # (answered meanwhile: on to the next part)
+            await next_part(interaction, walk)
+            return
         await _tell(interaction, NOTHING_WAITING)
         return
     await _send(interaction, text, view)
@@ -250,9 +258,11 @@ class ClaimsReview(_Menu):
     """A page of questions, each with ✅ and ❌ under its number. Answering one leaves the rest
     where they are; the next page comes when the whole page is answered."""
 
-    def __init__(self, campaign_id: str, guild_id: int) -> None:
+    def __init__(self, campaign_id: str, guild_id: int, *, walk: Walk | None = None) -> None:
         super().__init__()
         self.campaign_id = campaign_id
+        self.walk = walk  # inside "Check everything" (#4192): a progress line and Stop for now
+        self.first_total = 0  # how many waited when this review began, for "4 of 11"
         # From the campaign, not the press: a question in the DM's private chat has no server
         # around it (#3210).
         self.guild_id = guild_id
@@ -273,6 +283,7 @@ class ClaimsReview(_Menu):
         agreed = await _bot(interaction).consent.consenting(self.guild_id)
         waiting = await ClaimStore(memory).waiting(self.guild_id, self.campaign_id, opted_in=agreed)
         self.page, self.total, self.answered = waiting[:PAGE], len(waiting), {}
+        self.first_total = self.first_total or self.total
         self.undoable = {}
         if not self.page:
             self.clear_items()
@@ -354,7 +365,11 @@ class ClaimsReview(_Menu):
                         row=4,
                     )
                 )
-        return page_text(self.page, self.total, self.answered)
+        add_stop(self, self.walk, row=0)  # (row 0 has at most three buttons; row 4 can be full)
+        done = min(self.first_total - self.total + len(self.answered) + 1, self.first_total)
+        return progress(self.walk, done, self.first_total) + page_text(
+            self.page, self.total, self.answered
+        )
 
     def _undo(self, claim_id: str) -> Any:
         async def handler(interaction: discord.Interaction) -> None:
@@ -455,7 +470,10 @@ class ClaimsReview(_Menu):
             fresh = await self.current_text(interaction)
             if fresh is None:
                 self.stop()
-                await _replace(interaction, f"{done}{note}\n\n{NOTHING_WAITING}", None)
+                final = FINISHED if self.walk is not None else NOTHING_WAITING
+                await _replace(interaction, f"{done}{note}\n\n{final}", None)
+                if self.walk is not None:
+                    await next_part(interaction, self.walk)
                 return
             await _replace(interaction, f"{done}{note}\n\n{fresh}", self)
             return
@@ -581,10 +599,16 @@ async def _answer_page(
             if view.last_bulk:  # nothing left to check, but the press can still be taken back
                 view.clear_items()
                 view._bulk_buttons()
-                await _replace(interaction, f"{summary}\n\n{NOTHING_WAITING}", view)
+                final = FINISHED if view.walk is not None else NOTHING_WAITING
+                await _replace(interaction, f"{summary}\n\n{final}", view)
+                if view.walk is not None:  # (this card keeps its Undo; the walk goes on below it)
+                    await next_part(interaction, view.walk)
                 return
             view.stop()
-            await _replace(interaction, f"{summary}\n\n{NOTHING_WAITING}", None)
+            final = FINISHED if view.walk is not None else NOTHING_WAITING
+            await _replace(interaction, f"{summary}\n\n{final}", None)
+            if view.walk is not None:
+                await next_part(interaction, view.walk)
             return
         await _replace(interaction, f"{summary}\n\n{fresh}", view)
         return

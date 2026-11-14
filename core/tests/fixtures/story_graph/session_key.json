@@ -5,10 +5,11 @@
  "goes_with": "the small sample lore, https://docs.google.com/document/d/1zbt7g3r6uFfiSYr3fl_gyaxARhwJPizauI0jmiEa2aw/edit?usp=sharing",
  "how_to_read": {
   "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted); needs_context = only readable with the lore or the recap (for example 'she' is Keegan); recap_only = only in the 'Previously' recap on line 1, so background and never this session's event; by_rule = made by a rule, not read",
-  "relation": "owns, carries, sibling, spouse, member, works_for, knows (+ one of nine feeling words), associate; place ties by word: works_in, last_seen_in; in (only a place inside a place)",
+  "relation": "owns, carries, sibling, spouse, member, works_for, knows (+ one of nine feeling words), associate; place ties by word: works_in, last_seen_in; in (only a place inside a place); route (a road or way between two places, either way round, #4255)",
   "must_find": "false = a good find if present, not a miss if absent",
   "current": "false = history: it was true earlier in the session and is not at the end (the graph shows the most recent relationship, #3363)",
-  "line": "the line of the session's plain-text export that supports it (blank lines count); 0 = by rule, no line"
+  "line": "the line of the session's plain-text export that supports it (blank lines count); 0 = by rule, no line",
+  "route_lengths": "how far a road is, as the session says it (#4255): a property of the road, never a tie; found by the same amount and unit, or the same words when they give none"
  },
  "players": {
   "Cerric Vanya'elen": "player_ist",
@@ -592,6 +593,56 @@
    "must_find": false,
    "line": 204,
    "note": "the DM: 'he certainly knows where the Dwarven Valley is' (#3545, step 11b)"
+  },
+  {
+   "id": "s035",
+   "a": "Targos",
+   "relation": "route",
+   "b": "Bryn Shander",
+   "tier": "stated",
+   "must_find": false,
+   "line": 283,
+   "note": "the party's journey: 'You make it to Bryn Shander without any issues following the road' (#4255)"
+  },
+  {
+   "id": "s036",
+   "a": "Targos",
+   "relation": "route",
+   "b": "Easthaven",
+   "tier": "stated",
+   "must_find": false,
+   "line": 192,
+   "note": "the DM's other way: 'take the dogsled five hours to Easthaven' (not travelled this session; #4255)"
+  },
+  {
+   "id": "s037",
+   "a": "Easthaven",
+   "relation": "route",
+   "b": "Good Mead",
+   "tier": "stated",
+   "must_find": false,
+   "line": 183,
+   "note": "'Those are the three connected towns to Easthaven' (#4255)"
+  },
+  {
+   "id": "s038",
+   "a": "Easthaven",
+   "relation": "route",
+   "b": "Bryn Shander",
+   "tier": "stated",
+   "must_find": false,
+   "line": 183,
+   "note": "'Those are the three connected towns to Easthaven' (#4255)"
+  },
+  {
+   "id": "s039",
+   "a": "Easthaven",
+   "relation": "route",
+   "b": "Caer-Konig",
+   "tier": "stated",
+   "must_find": false,
+   "line": 183,
+   "note": "'Those are the three connected towns to Easthaven' (#4255)"
   }
  ],
  "events": [
@@ -641,27 +692,9 @@
   },
   {
    "from": "Targos",
-   "to": "Bryn Shander",
-   "fact": "1 hour by dogsled on the road",
-   "line": 283
-  },
-  {
-   "from": "Targos",
    "to": "Dwarven Valley",
    "fact": "2 hours to the branch toward Termalaine, then 5 hours: 7 hours by dogsled",
    "line": 171
-  },
-  {
-   "from": "Targos",
-   "to": "Easthaven",
-   "fact": "5 hours by dogsled",
-   "line": 192
-  },
-  {
-   "from": "Easthaven",
-   "to": "Good Mead / Bryn Shander / Caer-Konig",
-   "fact": "the three towns connected to Easthaven",
-   "line": 183
   }
  ],
  "deferred": [
@@ -683,5 +716,23 @@
   "maul barbarian",
   "barbarians",
   "the attackers"
+ ],
+ "route_lengths": [
+  {
+   "from": "Targos",
+   "to": "Bryn Shander",
+   "words": "1 hour",
+   "line": 283,
+   "doc": "session",
+   "note": "'It's only 1 hour to Bryn Shander' on the party's journey"
+  },
+  {
+   "from": "Targos",
+   "to": "Easthaven",
+   "words": "five hours",
+   "line": 192,
+   "doc": "session",
+   "note": "'take the dogsled five hours to Easthaven'; read only if that journey is walked"
+  }
  ]
 }

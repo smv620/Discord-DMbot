@@ -124,6 +124,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
             lookup=self.lookup,
             memory=memory,
             name_of=lambda *_: "Ann",
+            settings=SimpleNamespace(),  # (every list switch off: the More lists count is 0)
         )
 
     def it(self, kind: discord.InteractionType = discord.InteractionType.component) -> Any:

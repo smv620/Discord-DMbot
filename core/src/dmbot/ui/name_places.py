@@ -222,6 +222,9 @@ async def more_places(
 
 REMOVED = "That line was removed."
 NOTHING_KEPT = "No place is kept for this name."
+# The button was drawn for the sentence from the DM's upload, which DMbot holds only for a while
+# after reading it (#2561): gone by the press (#4227).
+LORE_GONE = "That sentence from your upload is gone: DMbot only keeps it for a while after reading."
 TRY_AGAIN = "Couldn't read the transcript just now. Try again in a moment."
 SHOWN_BEHIND_BUTTON = 3  # "📜 Where was it said?" shows this many, newest first (#3384)
 

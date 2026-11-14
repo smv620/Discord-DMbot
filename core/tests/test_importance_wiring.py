@@ -27,7 +27,7 @@ class Wiring(unittest.IsolatedAsyncioTestCase):
             settings=SimpleNamespace(**{
                 "story_extractor_on": True, "story_extractor_max_calls": 480,
                 "story_extractor_max_calls_day": 960, "role_match_on": False,
-                "voyage_embed_model": "v", **settings,
+                "voyage_embed_model": "v", "private_scenes_on": False, **settings,
             }),
             extractor_ai=SimpleNamespace(model="m"),
             memory=SimpleNamespace(_db=object(), mentions=AsyncMock(return_value=[])),

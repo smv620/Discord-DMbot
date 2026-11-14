@@ -85,6 +85,7 @@ LOCKED_TABLES = (
     "said_as_listens",
     "script_makes",
     "trait_answers",
+    "upload_undos",
     "picture_actions",
     "speaker_removals",
 )
@@ -99,6 +100,7 @@ WORKED_TABLES = (
     "said_as_listens",
     "script_makes",
     "trait_answers",
+    "upload_undos",
     "picture_actions",
     "speaker_removals",
 )

@@ -34,7 +34,8 @@ class RankInputs(Web):
         self.assertIn(("ally_of", frozenset({self.mira, self.rook})), self.joined(got))
         self.assertFalse(got["limited"])
         self.assertEqual(
-            set(got), {"status", "limited", "entities", "relations", "assessed", "heard"}
+            set(got),
+            {"status", "limited", "entities", "relations", "assessed", "heard", "private"},
         )
 
     async def test_a_player_may_read_it_too_as_the_graph_source_is_open_to_members(self) -> None:
@@ -73,6 +74,29 @@ class RankInputs(Web):
         joined = self.joined(got)
         self.assertNotIn(("knows", frozenset({self.mira, self.keep})), joined)
         self.assertIn(("ally_of", frozenset({self.mira, self.rook})), joined)
+
+    async def test_only_an_entry_said_in_a_kept_private_scene_is_handed_over(self) -> None:
+        """#4110: the floor's input. A scene the DM said was not private hands over nothing."""
+        a, b = sorted((self.rook, self.mira))
+        async with self.db.guild(self.g) as conn:
+            for scene, status, decided, entry in (
+                ("1" * 32, "kept", None, self.keep),
+                ("2" * 32, "not_private", 9, self.rook),
+            ):
+                await conn.execute(
+                    "INSERT INTO memory_private_scenes (guild_id, campaign_id, id, first_id,"
+                    " second_id, session_started_at, from_ms, to_ms, line_count, speaker_ids,"
+                    " status, created_at, decided_at) VALUES (%s, %s, %s, %s, %s, 100, %s, %s, 2,"
+                    " '{5,6}', %s, 1, %s)",
+                    (self.g, self.one.id, scene, a, b, int(scene[0]), int(scene[0]) + 1, status,
+                     decided),
+                )  # fmt: skip
+                await conn.execute(
+                    "INSERT INTO memory_private_scene_entries (guild_id, campaign_id, scene_id,"
+                    " entity_id) VALUES (%s, %s, %s, %s)",
+                    (self.g, self.one.id, scene, entry),
+                )
+        self.assertEqual((await self.read())["private"], [self.keep])
 
     async def test_an_outsider_and_another_campaign_are_not_found(self) -> None:
         outsider = await self.signed(BOB, QUILLON)

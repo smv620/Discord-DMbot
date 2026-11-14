@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import re
 from dataclasses import dataclass
 
 from dmbot.memory.document_reader import READING
@@ -136,3 +137,16 @@ def check_text(text: str) -> Checked:
     if count == 0:
         return _unreadable("empty")
     return Checked(text, pages_of(count), count, "ok", "")
+
+
+LINK_MAX = 2_000  # one address, as long as the finish stage reads
+_LINK = re.compile(r"https://\S+")
+
+
+def check_link(address: str) -> Checked | None:
+    """A link document (#4206): kept as the address itself, to be fetched once at Finish and never
+    here (no request leaves the server from this door). None when it is not a plain https address
+    of sensible length, so the route refuses it before anything is stored."""
+    if len(address) > LINK_MAX or not _LINK.fullmatch(address):
+        return None
+    return Checked(address, 0, 0, "ok", "")

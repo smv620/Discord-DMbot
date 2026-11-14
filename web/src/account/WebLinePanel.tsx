@@ -5,6 +5,7 @@
 // page's switches, as before.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { ASSUMED_PARENT_LIVE } from "../content/assumed-parent-switch";
 import { KNOWS_FEELING_LIVE } from "../content/knows-feeling-switch";
 import { feelingOf } from "../content/knows-feeling-words";
 import { KNOWS_HOW_LIVE } from "../content/knows-how-switch";
@@ -99,7 +100,7 @@ export default function LinePanel({
 
 /** "Who knows this?" on a held connection (#2935 D4, #3214): the DM says only the DM, some characters, or everyone at
  * the table, and the bot applies it. Shown to the DM's full view only, behind WHO_KNOWS_LIVE. */
-function WhoKnows({
+export function WhoKnows({
   api,
   refId,
   link,
@@ -308,6 +309,7 @@ function LinkRow({
         {markSecret(link) && <span aria-hidden="true">{words.secretMark} </span>}
         {link.belief && <span aria-hidden="true">{words.theoryMark} </span>}
         {words.linkText(a, b, link.words, link.direction)}
+        {ASSUMED_PARENT_LIVE && canEdit && link.assumed && <span> {words.assumedMark}</span>}
         {!link.knowWord && link.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
       </p>
       {sourceWords && <p class="small muted">{sourceWords}</p>}
@@ -385,6 +387,22 @@ function LinkRow({
             >
               {link.pinned ? words.unpin : words.pin}
             </button>
+            {ASSUMED_PARENT_LIVE && link.assumed && (
+              <button
+                type="button"
+                class="button secondary"
+                aria-label={words.rightLabel(n)}
+                onClick={() =>
+                  void run(
+                    { action: "right", id: link.id },
+                    // the place is the one the line reads from, its parent the other (Discord's note)
+                    link.direction === "b-a" ? words.rightDone(b, a) : words.rightDone(a, b),
+                  )
+                }
+              >
+                {words.rightButton}
+              </button>
+            )}
             {!asking && (
               <button type="button" class="button secondary" aria-label={words.removeLink(n)} onClick={() => setAsking(true)}>
                 {words.removeShort}

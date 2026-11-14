@@ -330,6 +330,7 @@ class Report:
     met_refused: int = 0  # items the rules turned down (a player's line among them: `met_not_dm`)
     met_not_dm: int = 0  # said only by a player, or not in the DM's words
     met_past_cap: int = 0  # past the cap of a session, never made
+    met_gone: int = 0  # cited someone whose lines went before the write (#4091), never made
     met_cut: int = 0  # claims answers cut short with the switch on: their "met" items are lost
     met_made: int = 0  # quiet entries made
     met_again: int = 0  # already kept for this session
@@ -384,7 +385,8 @@ class Report:
             + (
                 f", met: {self.met} found, {self.met_refused} refused ({self.met_not_dm} not the"
                 f" DM's), {self.met_past_cap} past the cap, {self.met_made} kept,"
-                f" {self.met_again} again, {self.met_named} named, {self.met_cut} cut short"
+                f" {self.met_again} again, {self.met_named} named, {self.met_gone} speaker gone,"
+                f" {self.met_cut} cut short"
                 if self.met or self.met_refused or self.met_cut
                 else ""
             )
@@ -960,3 +962,4 @@ async def _keep_met(
     report.met_again += added.again
     report.met_named += added.named
     report.met_past_cap += added.past_cap
+    report.met_gone += added.gone

@@ -30,6 +30,7 @@ from datetime import UTC, datetime
 
 from psycopg import errors
 
+from dmbot import person_key
 from dmbot.db import Database
 
 log = logging.getLogger(__name__)
@@ -251,8 +252,15 @@ class AccountMoves:
                 # while the move waited, then happen unseen.
                 await conn.execute("SET LOCAL lock_timeout = '3s'")
                 cur = await conn.execute(
-                    "SELECT dmbot_move_account(%s, %s, %s, %s) AS outcome",
-                    (old_user_id, new_user_id, self._now(), hash_code(code)),
+                    "SELECT dmbot_move_account(%s, %s, %s, %s, %s, %s) AS outcome",
+                    (
+                        old_user_id,
+                        new_user_id,
+                        self._now(),
+                        hash_code(code),
+                        person_key.key_for(old_user_id),
+                        person_key.key_for(new_user_id),
+                    ),
                 )
                 row = await cur.fetchone()
         except errors.LockNotAvailable:

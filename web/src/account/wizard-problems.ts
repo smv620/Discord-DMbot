@@ -25,8 +25,9 @@ export const problemWords = (error: unknown): string => {
     case "rights_needed":
       return w.docs.rightsNeeded;
     case "too_big":
-    case "doc_too_big":
       return w.docs.unreadable["too_big"]!;
+    case "doc_too_big":
+      return w.docs.unreadable["doc_too_big"]!;
     case "too_many":
     case "too_many_files":
       return w.docs.full;

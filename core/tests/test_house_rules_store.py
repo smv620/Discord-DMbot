@@ -555,7 +555,7 @@ class Backups(HouseRulesTest):
             {**base, "instead": ""},
             {**base, "instead": 5},
             {**base, "scenario": "y" * 501},
-            {**base, "by": "0"},
+            {**base, "by": "-1"},
             {**base, "by": "-5"},
             {**base, "by": "abc"},
             {**base, "by": 7},

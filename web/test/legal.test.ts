@@ -12,7 +12,8 @@ import facts from "../src/content/plans.json";
 import { aiTrainingSentence, deletionWarnings, notAffiliated, operator, retentionRows } from "../src/content/legal";
 import { QABOT_LIVE } from "../src/content/qabot";
 import { RECAPS_LIVE } from "../src/content/recap-words";
-import { initiativeLine, pcIconsLine, sessionNotesPrivacy, storyStatesLine } from "../src/content/privacy-channels";
+import { REMEMBERED_PLAYERS_LIVE } from "../src/content/remembered-players-switch";
+import { initiativeLine, pcIconsLine, rememberedPlayersLine, sessionNotesPrivacy, storyStatesLine } from "../src/content/privacy-channels";
 import { byId, formatPeriod } from "../src/content/pricing";
 import Privacy from "../src/pages/legal/privacy.astro";
 import Refunds from "../src/pages/legal/refunds.astro";
@@ -127,9 +128,22 @@ describe("the facts #433 asks for", () => {
     // The initiative and story-state lines show only while their features are live (#1810).
     expect(privacy().includes(initiativeLine.lead)).toBe(initiativeLine.live);
     expect(privacy().includes(storyStatesLine.lead)).toBe(storyStatesLine.live);
+    // The remembered-players line is on the page from the deploy that starts the list, before its page opens (#4226); only the
+    // last sentence, about that page, waits for its switch.
+    expect(privacy()).toContain(rememberedPlayersLine.lead);
+    expect(privacy()).toContain("you are removed from every DM's list");
+    expect(privacy().includes("on the People you play with page")).toBe(REMEMBERED_PLAYERS_LIVE);
     expect(privacy().includes(pcIconsLine.lead)).toBe(pcIconsLine.live); // (player pictures: only while the icons are live, #3622)
     expect(privacy()).toContain("only from people who said yes to being recorded");
     expect(privacy()).toContain("Names your game master typed in themselves stay.");
+  });
+
+  it("has the owner's line about pictures and maps, and TERMS_VERSION did not change for it (#4275)", () => {
+    const text = terms().replace(/\s+/g, " ");
+    expect(text).toContain("Pictures and maps you add. When you add a picture or a map, in Discord or on the website, you confirm you have the right to use it and to let DMbot keep it in this campaign.");
+    // It sits right after the adventure-or-rulebook item.
+    expect(text.indexOf("game master can delete it.")).toBeLessThan(text.indexOf("Pictures and maps you add."));
+    expect(text.indexOf("Pictures and maps you add.")).toBeLessThan(text.indexOf("What DMbot makes from a session belongs to the campaign"));
   });
 
   it("sets the minimum age at 16, with no 'older where local law requires' marker", () => {

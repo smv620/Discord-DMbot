@@ -70,6 +70,13 @@ class TheButtons(unittest.TestCase):
             ],
         )
 
+    def test_world_notes_get_their_own_button(self) -> None:
+        # (#4285, Supervisor's ruling: a 🌍 line on this message, opening the World notes screen)
+        view = board.view(GUILD, CAMPAIGN, found(world_notes=3))
+        self.assertEqual(ids(view), [f"dmbot:questions:world:{CAMPAIGN}"])
+        text = board.text("Frostmaiden", found(world_notes=3))
+        self.assertIn("• World notes: **3**", text)
+
     def test_family_ties_get_their_own_button(self) -> None:
         view = board.view(GUILD, CAMPAIGN, found(family=2, claims=1))
         self.assertEqual(
