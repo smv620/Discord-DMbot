@@ -34,13 +34,15 @@ class Asking(DatabaseTest):
         await super().asyncSetUp()
         self.campaigns = CampaignStore(self.db)
         self.pictures = PictureStore(self.db, clock=lambda: 1000.0)
-        self.maps = MapStore(self.db, MemoryStore(self.db), clock=lambda: 2000.0)
+        self.memory = MemoryStore(self.db)
+        self.maps = MapStore(self.db, self.memory, clock=lambda: 2000.0)
         self.campaign = await self.campaigns.create(GUILD, "One", DM)
         self.consenting = True
         self.bot = SimpleNamespace(
             picture_store=self.pictures,
             picture_keeper=PictureKeeper(self.pictures, Bucket(), 5),
             map_store=self.maps,
+            memory=self.memory,
             campaigns=self.campaigns,
             settings=SimpleNamespace(picture_storage_mb=5),
             consent=SimpleNamespace(has_image_consent=lambda guild, user: self.consenting),
@@ -87,7 +89,8 @@ class Asking(DatabaseTest):
         self.assertEqual((kept.right_by, kept.waiting, kept.audience), (PLAYER, True, "table"))
         self.assertFalse(may_use_map(kept))
         self.assertEqual(self.shown(it), words.said_yes(False, True))
-        self.assertIsNone(self.call(it.edit_original_response).kwargs["view"])
+        [button] = self.call(it.edit_original_response).kwargs["view"].children
+        self.assertTrue(button.item.custom_id.startswith("dmbot:mapqt:"))  # (Take it back)
 
     async def test_a_dms_yes_keeps_it_and_lets_dmbot_use_it(self) -> None:
         pic = await self.picture(DM)
@@ -173,3 +176,91 @@ class Asking(DatabaseTest):
         kept = await self.pictures.by_id(GUILD, pic)
         assert kept is not None
         self.assertFalse(kept.gone)
+
+    async def test_the_poster_takes_it_back_and_only_the_map_goes(self) -> None:
+        pic = await self.picture(PLAYER)
+        await map_question.YesButton(GUILD, pic).callback(self.press(PLAYER))
+        back = self.press(PLAYER)
+        await map_question.TakeBackButton(GUILD, pic).callback(back)
+        self.assertEqual(await self.kept_maps(), [])
+        kept = await self.pictures.by_id(GUILD, pic)
+        assert kept is not None
+        self.assertFalse(kept.gone)
+        self.assertEqual(self.shown(back), words.TOOK_BACK)
+        self.assertEqual(
+            len(self.call(back.edit_original_response).kwargs["view"].children), 1
+        )  # (the Undo)
+
+    async def test_only_the_poster_may_take_it_back(self) -> None:
+        pic = await self.picture(PLAYER)
+        await map_question.YesButton(GUILD, pic).callback(self.press(PLAYER))
+        for user in (STRANGER, DM):
+            it = self.press(user)
+            await map_question.TakeBackButton(GUILD, pic).callback(it)
+            self.assertEqual(self.call(it.followup.send).args[0], words.NOT_YOURS)
+        self.assertEqual(len(await self.kept_maps()), 1)
+
+    async def undo_press(self, user: int, batch: int) -> Any:
+        it = self.press(user)
+        await map_question.PosterUndoButton(GUILD, self.campaign.id, batch).callback(it)
+        return it
+
+    @staticmethod
+    def batch_in(it: Any) -> int:
+        view = it.edit_original_response.await_args.kwargs["view"]
+        return int(view.children[0].item.custom_id.rsplit(":", 1)[1])
+
+    async def test_the_posters_undo_brings_the_map_back_and_is_theirs_alone(self) -> None:
+        pic = await self.picture(PLAYER)
+        await map_question.YesButton(GUILD, pic).callback(self.press(PLAYER))
+        back = self.press(PLAYER)
+        await map_question.TakeBackButton(GUILD, pic).callback(back)
+        batch = self.batch_in(back)
+        other = await self.undo_press(STRANGER, batch)  # (a forwarded card)
+        self.assertEqual(self.call(other.followup.send).args[0], words.NOT_YOUR_CHANGE)
+        self.assertEqual(await self.kept_maps(), [])
+        mine = await self.undo_press(PLAYER, batch)
+        self.assertEqual(self.shown(mine), words.UNDONE)
+        self.assertEqual(len(await self.kept_maps()), 1)
+        made_up = await self.undo_press(PLAYER, 999_999)
+        self.assertEqual(self.call(made_up.followup.send).args[0], words.NOT_YOUR_CHANGE)
+
+    async def test_a_dms_removal_is_not_the_posters_to_undo(self) -> None:
+        pic = await self.picture(PLAYER)
+        await map_question.YesButton(GUILD, pic).callback(self.press(PLAYER))
+        [kept] = await self.kept_maps()
+        gone = await self.maps.remove_map(GUILD, self.campaign.id, kept.id)  # (a DM's Remove)
+        assert gone.batch is not None
+        it = await self.undo_press(PLAYER, gone.batch)  # (their own map, but not their change)
+        self.assertEqual(self.call(it.followup.send).args[0], words.NOT_YOUR_CHANGE)
+        self.assertEqual(await self.kept_maps(), [])
+
+    async def test_asking_marks_the_picture_and_the_reminder_goes_once(self) -> None:
+        pic = await self.picture(PLAYER)
+        picture = await self.pictures.by_id(GUILD, pic)
+        sent = AsyncMock()
+        self.bot.fetch_user = AsyncMock(return_value=SimpleNamespace(send=sent))
+        await map_question.ask(self.bot, GUILD, self.campaign, picture)
+        self.assertEqual(
+            len(await self.pictures.unanswered_map_questions(GUILD, self.campaign.id)), 1
+        )
+        sent.reset_mock()
+        await map_question.remind(self.bot, GUILD, self.campaign)
+        self.assertIn(words.REMINDER, self.call(sent).args[0])
+        sent.reset_mock()
+        await map_question.remind(self.bot, GUILD, self.campaign)  # (never again)
+        sent.assert_not_awaited()
+
+    async def test_no_reminder_for_an_answered_picture_or_a_poster_who_stopped(self) -> None:
+        answered, stopped = await self.picture(PLAYER, 1), await self.picture(PLAYER, 2, 12)
+        for pic in (answered, stopped):
+            await self.pictures.mark_map_asked(GUILD, self.campaign.id, pic)
+        await map_question.YesButton(GUILD, answered).callback(self.press(PLAYER))
+        sent = AsyncMock()
+        self.bot.fetch_user = AsyncMock(return_value=SimpleNamespace(send=sent))
+        self.consenting = False  # (they stopped recording pictures)
+        await map_question.remind(self.bot, GUILD, self.campaign)
+        sent.assert_not_awaited()
+        self.consenting = True
+        await map_question.remind(self.bot, GUILD, self.campaign)
+        sent.assert_not_awaited()  # (marked reminded the first time: not nagged later)
