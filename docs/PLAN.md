@@ -6330,7 +6330,9 @@ for no speakers, funds or stopped recording does not. The failing check's fixed 
   languages known come from the character sheet, with a story-only list beside the sheets for a
   character with none (`memory_story_languages`), never in the graph; a lore language for a
   character the campaign already had is a question for the DM, or for a player character with a
-  sheet one private line; SRD languages are never suggested as names (#4227). Cultures and lineages
+  sheet one private line; SRD languages are never suggested as names (#4227). A language the DM
+  takes away (the character's ✖, World notes' 🚫) stays the DM's no: no later read gives it again,
+  and only the DM's own word brings it back (Supervisor, 2026-11-14, #4362). Cultures and lineages
   are a per-campaign catalogue outside the graph; cultural influence, political control and
   population sit in MapBot's layer; biases toward places and lineages live in `memory_attitudes`.
 - **MapBot** (owner; `docs/design/mapbot_layers.md`, revision 2, binding): maps are kept as maps

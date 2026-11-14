@@ -20,7 +20,7 @@ from __future__ import annotations
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 
-from dmbot.memory import gate, map_fact_store
+from dmbot.memory import gate, language_rows, map_fact_store
 from dmbot.memory import map_facts as mf
 from dmbot.memory._changes import ENTITIES, STORY_LANGUAGES, Changes, Scope
 from dmbot.memory.models import DM, MemoryRuleError
@@ -136,9 +136,9 @@ async def keep(w: Changes, line_ids: Collection[str]) -> int:
 
 
 async def turn_down(w: Changes, line_id: str) -> None:
-    """The DM's 🚫 Not right on one line (one Undo). A place's reading is turned down, so it is
-    never read in again. A language is taken away, as the character's own ✖ does: the story keeps
-    no "not this" for a language, so a later lore read may give it again (#4362)."""
+    """The DM's 🚫 Not right on one line (one Undo). A place's reading is turned down and a
+    language is marked as the DM's no, as the character's own ✖ does (#4362): neither is ever read
+    in again."""
     places, languages = await _still_open(w, [line_id])
     if places:
         if not await map_fact_store.reject_row(w, next(iter(places))):
@@ -146,7 +146,7 @@ async def turn_down(w: Changes, line_id: str) -> None:
         return
     if not languages:
         raise MemoryRuleError(GONE)
-    await w.delete(STORY_LANGUAGES, next(iter(languages)))
+    await language_rows.say_not(w, next(iter(languages)))
 
 
 def of_kind(notes: Sequence[Note], kind: str) -> list[str]:

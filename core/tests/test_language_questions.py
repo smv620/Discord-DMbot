@@ -131,6 +131,29 @@ class Asked(NamesTest):
         self.assertEqual((waiting.entity_id, waiting.trait.name), (self.brewner, "Giant"))
         self.assertEqual(await self.memory.story_languages(GUILD, self.campaign.id, testa), [])
 
+    async def test_an_upload_never_asks_about_a_language_the_dm_said_no_to(self) -> None:
+        # (#4362: the lore upload's own path, through `ask_languages`, for a character it knew)
+        made = await self.memory.add_story_language(
+            GUILD, self.campaign.id, self.brewner, "Giant", source="background"
+        )
+        assert made.value is not None
+        await self.memory.remove_story_language(GUILD, self.campaign.id, made.value.id, source="dm")
+        asked, _ = await nb.ask_languages(
+            self.memory, self.campaign, [Spoken("Brewner", "Giant", "Brewner speaks Giant")],
+            "Notes", None,
+        )  # fmt: skip
+        self.assertEqual((asked, await self.store.count(GUILD, self.campaign.id)), (0, 0))
+
+    async def test_a_waiting_question_closes_when_the_dm_says_no_on_the_card(self) -> None:
+        await self.store.offer(GUILD, self.campaign.id, [self.offer()])
+        made = await self.memory.add_story_language(
+            GUILD, self.campaign.id, self.brewner, "Giant", source="dm"
+        )
+        assert made.value is not None
+        await self.memory.remove_story_language(GUILD, self.campaign.id, made.value.id, source="dm")
+        self.assertEqual(await self.store.count(GUILD, self.campaign.id), 0)
+        self.assertEqual(await self.store.waiting(GUILD, self.campaign.id), [])
+
 
 class TheWebsiteLeavesThemOut(WebBase):
     async def test_a_language_question_is_not_listed_yet(self) -> None:
