@@ -436,6 +436,7 @@ async def read(
     *,
     close: bool = False,
     meter: Callable[[], AbstractContextManager[Any]] | None = None,
+    known_map: bool = False,
 ) -> Read | None:
     """Describe one image: one call on the fast model; a map is read again by the careful model for
     its places and layout. None when the answer can't be used (the caller notes "(image, not
@@ -446,22 +447,28 @@ async def read(
     sweep, `ImageDesk.read_closely`, asks), so it gets the close read (sizes, forms, links)
     instead. `meter`: the map's call is charged as AI credits inside it
     (Supervisor's ruling, 2026-11-13: map reads are metered; the first look at a picture stays as
-    it was). The plain map read keeps its 4000 (as before this slice: it is kept only as words)."""
-    reply = await fast.complete(
-        SYSTEM,
-        "Describe this image.",
-        max_tokens=1200,
-        schema=DESCRIBE_SCHEMA,
-        images=[image],
-    )
-    if getattr(reply, "refused", False) or getattr(reply, "cut", False):
-        return None
-    described = parse_describe(str(reply.text))
-    if described is None:
-        log.info("Image: the answer could not be used")
-        return None
-    if described.kind != MAP:
-        return described
+    it was). The plain map read keeps its 4000 (as before this slice: it is kept only as words).
+    `known_map` (#4349): a kept map is a map already, so the first look is skipped (no call paid
+    for again, and none made before the metered one)."""
+    if known_map:
+        described = Read(MAP, "", "", (), "")
+    else:
+        reply = await fast.complete(
+            SYSTEM,
+            "Describe this image.",
+            max_tokens=1200,
+            schema=DESCRIBE_SCHEMA,
+            images=[image],
+        )
+        if getattr(reply, "refused", False) or getattr(reply, "cut", False):
+            return None
+        parsed_look = parse_describe(str(reply.text))
+        if parsed_look is None:
+            log.info("Image: the answer could not be used")
+            return None
+        described = parsed_look
+        if described.kind != MAP:
+            return described
     try:
         with meter() if meter is not None else nullcontext():
             mapped = await careful.complete(

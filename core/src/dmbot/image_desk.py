@@ -20,7 +20,7 @@ from contextlib import AbstractContextManager
 from typing import Any, Protocol
 
 from dmbot import images
-from dmbot.ai import Image
+from dmbot.ai import AIOutOfFunds, Image
 from dmbot.db import Database
 from dmbot.images import ImageError, Read, Vision
 
@@ -46,6 +46,8 @@ class DayCounter(Protocol):
     async def take(self, guild_id: int, campaign_id: str, day: int, limit: int) -> bool:
         """Count one more picture for this campaign's day if it has not used `limit`."""
         ...
+
+    async def give_back(self, guild_id: int, campaign_id: str, day: int) -> None: ...
 
 
 class ImageUseStore:
@@ -73,6 +75,16 @@ class ImageUseStore:
                 (guild_id, campaign_id, day),
             )
             return taken
+
+    async def give_back(self, guild_id: int, campaign_id: str, day: int) -> None:
+        """A place taken for a read that was put off (no AI credits, #4349): the table's own
+        pictures that day keep it."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE image_day_use SET used = GREATEST(used - 1, 0)"
+                " WHERE guild_id = %s AND campaign_id = %s AND day = %s",
+                (guild_id, campaign_id, day),
+            )
 
     async def used(self, guild_id: int, campaign_id: str, day: int) -> int:
         async with self._db.guild(guild_id) as conn:
@@ -125,15 +137,29 @@ class ImageDesk:
         campaign_id: str,
         image: Image,
         meter: Callable[[], AbstractContextManager[Any]],
+        still_ok: StillOk = lambda: True,
     ) -> Read | None:
         """A kept map's close read (#4349, MapBot 6b-2): only once DMbot may use it, which the
-        caller asked `maps.store.may_use_map`. Counts against the day's pictures like any read;
-        raises DayLimit past it. AI errors (no credits) are the caller's, as for `images.read`."""
-        if self.counter is None:
+        caller asked `maps.store.may_use_map`. One metered call: a kept map is a map, so there is
+        no first look. Counts against the day's pictures like any read; raises DayLimit past it.
+        `still_ok` is asked right before the call (Stopped when it says no). Out of AI credits
+        gives the day's place back and raises AIOutOfFunds for the caller to put the read off."""
+        counter = self.counter
+        if counter is None:
             raise DayLimit
-        if not await self.counter.take(guild_id, campaign_id, self.day(), self._per_day):
+        day = self.day()
+        if not await counter.take(guild_id, campaign_id, day, self._per_day):
             raise DayLimit
-        return await images.read(image, self._fast, self._careful, close=True, meter=meter)
+        try:
+            if not still_ok():
+                raise Stopped
+            careful = _Guarded(self._careful, still_ok)
+            return await images.read(
+                image, self._fast, careful, close=True, meter=meter, known_map=True
+            )
+        except (AIOutOfFunds, Stopped):
+            await counter.give_back(guild_id, campaign_id, day)
+            raise
 
     async def describe(
         self,

@@ -12,7 +12,7 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 from dmbot import credits, images, table_chat
-from dmbot.ai import Image
+from dmbot.ai import AIOutOfFunds, Image
 from dmbot.campaigns.models import SHARED_STORY
 from dmbot.consent import IMAGE_TERMS_VERSION
 from dmbot.image_desk import DAY_S, ImageDesk, ImageUseStore
@@ -186,6 +186,22 @@ class TableImages(chat.AtTheTableTyped):
         [scope] = seen
         assert scope is not None
         self.assertEqual((scope.campaign_id, scope.job_kind), (self.a.id, "map"))
+
+    async def test_a_close_read_out_of_credits_gives_its_place_back_and_looks_once(self) -> None:
+        # (the reviewer's case, #4349: no first look on a kept map, and a read put off for AI
+        # credits keeps the table's own pictures their place that day)
+        class Broke(MapVision):
+            async def complete(self, system: str, text: str, **kw: Any) -> Any:
+                self.calls += 1
+                raise AIOutOfFunds("no funds")
+
+        vision = Broke()
+        desk = self.make_desk(vision=vision)
+        png = Image("image/png", b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+        with self.assertRaises(AIOutOfFunds):
+            await desk.read_closely(GUILD_A, self.a.id, png, nullcontext)
+        self.assertEqual(vision.calls, 1)  # (the metered close read only: no first look)
+        self.assertEqual(await ImageUseStore(self.db).used(GUILD_A, self.a.id, desk.day()), 0)
 
     async def test_a_cut_close_read_gives_no_close_read(self) -> None:
         # (#4349: the close read is the sweep's, `ImageDesk.read_closely`; a cut answer keeps no
