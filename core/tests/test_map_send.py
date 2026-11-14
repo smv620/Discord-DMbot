@@ -169,6 +169,14 @@ class Sending(DatabaseTest):
         self.assertFalse(may_use_map(kept))
         self.assertEqual(self.shown(it), words.said_yes(False, False))
         self.assertIsNone(self.bot.pending_maps.get(PLAYER, code))  # (nothing held any more)
+        async with self.db.guild(GUILD) as conn:  # (no made-up chat-capture yes on the picture)
+            cur = await conn.execute(
+                "SELECT consent_version, right_granted_at FROM campaign_pictures"
+            )
+            self.assertEqual(
+                [(r["consent_version"], r["right_granted_at"]) for r in await cur.fetchall()],
+                [(None, None)],
+            )
 
     async def test_a_dms_own_map_is_usable_at_once(self) -> None:
         _, _, code = await self.asked(DM)

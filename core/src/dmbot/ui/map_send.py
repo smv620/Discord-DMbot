@@ -16,13 +16,11 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
-import time
 from typing import TYPE_CHECKING, Any
 
 import discord
 from discord import app_commands
 
-from dmbot.consent import IMAGE_TERMS_VERSION
 from dmbot.maps import words
 from dmbot.maps.pending import Busy
 from dmbot.maps.store import MapError
@@ -265,18 +263,13 @@ class YesButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], temp
         picture = None
         got = None
         try:
-            agreed = await bot.consent.agreed_under(self.guild_id, user_id)
-            # The picture row records the sender's own yes to this picture. With no recorded yes
-            # to be recorded at the table, this answer is that agreement; it is not a chat-capture
-            # consent, and nothing else reads it as one (`message_id` 0 marks "not from the chat").
-            granted, version = (
-                agreed if agreed is not None else (int(time.time()), IMAGE_TERMS_VERSION)
-            )
+            # No consent is recorded on the picture: sending a map is the person's own act, and its
+            # right-to-use yes is on the map. Stamping a chat-capture yes would be a false record.
             got = await keeper.keep(
                 PictureContext(
                     guild_id=self.guild_id, campaign_id=campaign.id, poster_id=user_id,
                     session_id="", line_id=None, message_id=0, description=held.title,
-                    consent_version=max(version, IMAGE_TERMS_VERSION), right_granted_at=granted,
+                    consent_version=None, right_granted_at=None,
                 ),
                 held.data,
             )  # fmt: skip
