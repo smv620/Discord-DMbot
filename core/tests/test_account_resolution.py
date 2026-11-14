@@ -38,6 +38,11 @@ OWNER_COMPARED = re.compile(
 ALLOWED: dict[tuple[str, str], str] = {
     (
         "bot.py",
+        "return min(dm_user_ids) if dm_user_ids else 0",
+    ): "one Discord login of the campaign's DMs, for a resumed session whose starter deleted their "
+    "account (#4148); the session only needs a DM to run for, and none is named to players",
+    (
+        "bot.py",
         "next(iter(campaign.dm_user_ids))",
     ): "the one DM who may be named 'DM' beside a speaker's Discord ID; with several logins, none",
     (

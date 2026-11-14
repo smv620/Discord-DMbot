@@ -22,6 +22,7 @@ question, kept by itself once both places are kept (`backstory_keep.keep_assumed
 from __future__ import annotations
 
 import bisect
+import logging
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -29,13 +30,15 @@ from typing import TYPE_CHECKING, Any
 from dmbot.db import Database
 from dmbot.memory import route_words
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink
-from dmbot.memory.models import CONFIRMED, DM, MemoryRuleError
+from dmbot.memory.models import BACKGROUND_SOURCE, CONFIRMED, DM, MemoryRuleError
 from dmbot.memory.scene_moves import Move
 from dmbot.memory.session_chain import MAIN, Leg, Line, rejoined, walk
 from dmbot.memory.story_chain import Place
 
 if TYPE_CHECKING:
     from dmbot.memory.store import MemoryStore
+
+log = logging.getLogger(__name__)
 
 MARK = "mark"  # the one row that says when the last session was walked
 TOWN = "town"  # the party's last town, kept for the next session's first journey (#4338)
@@ -246,7 +249,7 @@ class StoryChains:
                 unkept += 1
                 continue
             try:
-                await self._memory.add_relation(
+                made = await self._memory.add_relation(
                     guild_id, campaign_id, leg.start, route_words.ROUTE_TO, leg.end, source=DM,
                     confidence=1.0, status=CONFIRMED, detail=leg.means,
                     route_state=route_words.TRAVELLED, from_session_at=at,
@@ -255,7 +258,21 @@ class StoryChains:
                 refused += 1
                 continue
             written += 1
+            if leg.length:
+                await self._length(guild_id, campaign_id, made.value[0].id, leg.length)
         return written, unkept, refused
+
+    async def _length(self, guild_id: int, campaign_id: str, route_id: str, words: str) -> None:
+        """How far the DM's words on a journey said it was (#4255 slice 1b; Supervisor's ruling):
+        DMbot's read, so players see it only once the DM keeps it, never over the DM's own length,
+        in its own change (one Undo). The journey is kept whatever happens to its length."""
+        assert self._memory is not None
+        try:
+            await self._memory.set_route_length(
+                guild_id, campaign_id, route_id, words, on="connection", source=BACKGROUND_SOURCE
+            )
+        except Exception as exc:
+            log.warning("A journey's length could not be stored (%s)", type(exc).__name__)
 
 
 def _walk_all(
