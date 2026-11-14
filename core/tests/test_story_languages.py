@@ -6,7 +6,7 @@ from __future__ import annotations
 from dmbot.campaigns import CampaignError
 from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.memory import sheets
-from dmbot.memory.models import DM, Known, MemoryRuleError
+from dmbot.memory.models import DM, Known, MemoryRuleError, StoryLanguage
 from dmbot.memory.sheet_store import SheetStore
 from tests.test_memory_store import DM as DM_USER
 from tests.test_memory_store import GUILD_A, GUILD_B, MemoryTest
@@ -180,3 +180,85 @@ class StoryLanguages(MemoryTest):
         await self.memory.remove_story_language(GUILD_A, self.c, added.value.id, source=DM)
         with self.assertRaisesRegex(MemoryRuleError, "gone"):
             await self.memory.remove_story_language(GUILD_A, self.c, added.value.id, source=DM)
+
+
+class TheDmsNo(StoryLanguages):
+    """A language the DM says is wrong stays wrong (#4362, Supervisor's ruling): the row stays as
+    the DM's no, every reader skips it, a later read never gives it again, the DM's own word can."""
+
+    async def read(self, name: str = "Giant", who: str | None = None) -> StoryLanguage | None:
+        written = await self.memory.add_story_language(
+            GUILD_A, self.c, who or self.npc, name, source="background"
+        )
+        return written.value
+
+    async def say_no(self) -> int:
+        made = await self.read()
+        assert made is not None
+        gone = await self.memory.remove_story_language(GUILD_A, self.c, made.id, source=DM)
+        assert gone.batch is not None
+        return gone.batch
+
+    async def test_a_later_read_never_gives_it_again(self) -> None:
+        await self.say_no()
+        self.assertIsNone(await self.read())
+        self.assertIsNone(await self.read("giant"))  # (the same word, any case)
+        self.assertEqual(await self.memory.story_languages(GUILD_A, self.c, self.npc), [])
+        self.assertEqual(await self.memory.languages_known(GUILD_A, self.c, [self.npc]), {})
+        self.assertEqual(await self.memory.world_notes(GUILD_A, self.c), [])
+
+    async def test_undo_gives_it_back_as_dmbots_read(self) -> None:
+        batch = await self.say_no()
+        await self.memory.undo(GUILD_A, self.c, batch)
+        (back,) = await self.memory.story_languages(GUILD_A, self.c, self.npc)
+        self.assertEqual((back.name, back.given_by), ("Giant", "read"))
+
+    async def test_the_dms_own_word_brings_it_back(self) -> None:
+        await self.say_no()
+        own = await self.memory.add_story_language(GUILD_A, self.c, self.npc, "Giant", source=DM)
+        assert own.value is not None
+        self.assertEqual(own.value.given_by, DM)
+        self.assertEqual(len(await self.memory.story_languages(GUILD_A, self.c, self.npc)), 1)
+
+    async def test_world_notes_no_is_the_same_no(self) -> None:
+        await self.read()
+        (note,) = await self.memory.world_notes(GUILD_A, self.c)
+        await self.memory.turn_down_world_note(GUILD_A, self.c, note.id, source=DM)
+        self.assertIsNone(await self.read())
+        self.assertEqual(await self.memory.world_notes(GUILD_A, self.c), [])
+
+    async def test_a_second_no_says_it_is_gone(self) -> None:
+        made = await self.read()
+        assert made is not None
+        await self.memory.remove_story_language(GUILD_A, self.c, made.id, source=DM)
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.remove_story_language(GUILD_A, self.c, made.id, source=DM)
+
+    async def test_a_merge_keeps_the_no_unless_the_dm_said_yes(self) -> None:
+        twin = await self.add("Brewner the Brewer")
+        await self.say_no()  # (no on Brewner's Giant)
+        await self.read("Giant", twin)  # (DMbot's read on the twin)
+        dwarvish = await self.memory.add_story_language(
+            GUILD_A, self.c, twin, "Dwarvish", source=DM
+        )
+        assert dwarvish.value is not None
+        await self.memory.remove_story_language(
+            GUILD_A, self.c, dwarvish.value.id, source=DM
+        )  # (the twin's no on Dwarvish)
+        await self.memory.add_story_language(GUILD_A, self.c, self.npc, "Dwarvish", source=DM)
+        await self.memory.merge(GUILD_A, self.c, self.npc, twin, source=DM, dm_said_same=True)
+        kept = await self.memory.story_languages(GUILD_A, self.c, self.npc)
+        self.assertEqual([(x.name, x.given_by) for x in kept], [("Dwarvish", DM)])
+        self.assertIsNone(await self.read("Giant"))  # (the kept entry's no stands)
+
+    async def test_the_no_survives_a_backup(self) -> None:
+        await self.say_no()
+        raw = encode_backup(await self.campaigns.export(GUILD_A, self.c))
+        restored = await self.campaigns.import_backup(GUILD_B, decode_backup(raw), DM_USER)
+        (brewner,) = [
+            e for e in await self.memory.entities(GUILD_B, restored.id) if e.name == "Brewner"
+        ]
+        written = await self.memory.add_story_language(
+            GUILD_B, restored.id, brewner.id, "Giant", source="background"
+        )
+        self.assertIsNone(written.value)

@@ -47,6 +47,7 @@ from dmbot.memory import (
     kin,
     kind_offers,
     knowers,
+    language_rows,
     lineage,
     link_words,
     map_fact_store,
@@ -142,6 +143,7 @@ from dmbot.memory.models import (
     KEEP,
     KNOWS_HOWS,
     KNOWS_MET,
+    LANGUAGE_NOT,
     LINE_REF_MAX,
     LINK_EDITIONS,
     LINK_KINDS,
@@ -452,6 +454,7 @@ _LANGUAGES_KNOWN: LiteralString = (
     " SELECT l.entity_id, l.name, l.given_by, l.created_at AS seq"
     " FROM memory_story_languages l"
     " WHERE l.guild_id = %s AND l.campaign_id = %s AND l.entity_id = ANY(%s)"
+    "   AND l.given_by <> 'not'"  # (the DM's no: #4362)
     "   AND NOT EXISTS (SELECT 1 FROM character_sheets s2 WHERE s2.guild_id = l.guild_id"
     "     AND s2.campaign_id = l.campaign_id AND s2.entity_id = l.entity_id)"
     " ORDER BY 1, 4, 2"
@@ -3217,6 +3220,8 @@ class MemoryStore:
             for old in await w.select(
                 STORY_LANGUAGES, " AND entity_id = %s AND name_key = %s", [entity_id, key]
             ):
+                if old["given_by"] == LANGUAGE_NOT and given_by != DM:
+                    return Written(None, w.batch)  # (the DM said no: never read in again, #4362)
                 if given_by == DM and old["given_by"] != DM:
                     old = await w.update(STORY_LANGUAGES, old["id"], {"given_by": DM})
                 return Written(_story_language(old), w.batch)
@@ -3237,13 +3242,12 @@ class MemoryStore:
     async def remove_story_language(
         self, guild_id: int, campaign_id: str, language_id: str, *, source: str
     ) -> Written[None]:
-        """Take a language from the story away (the DM's call, #4229); Undo brings it back."""
+        """Take a language from the story away (the DM's call, #4229); Undo brings it back. The
+        row stays as the DM's no (#4362), so no later read gives it again; the DM's own word can."""
         if source != DM:
             raise MemoryRuleError("Only the DM can change that.")
         async with self._write(guild_id, campaign_id, source) as w:
-            if await w.get(STORY_LANGUAGES, language_id) is None:
-                raise MemoryRuleError("That language is gone already.")
-            await w.delete(STORY_LANGUAGES, language_id)
+            await language_rows.say_not(w, language_id)
             return Written(None, w.batch)
 
     async def check_story_languages(
@@ -3277,7 +3281,9 @@ class MemoryStore:
         reads the sheet). The caller shows them to the campaign's DMs only."""
         async with self._read(guild_id, campaign_id) as scope:
             rows = await scope.select(
-                STORY_LANGUAGES, " AND entity_id = %s ORDER BY created_at, id", [entity_id]
+                STORY_LANGUAGES,
+                " AND entity_id = %s AND given_by <> 'not' ORDER BY created_at, id",  # (#4362)
+                [entity_id],
             )
         return [_story_language(r) for r in rows]
 
@@ -7618,8 +7624,12 @@ async def _move_story_languages(w: Changes, to_character: bool, keep_id: str, go
         have = mine.get(row["name_key"])
         if have is None:
             await w.update(STORY_LANGUAGES, row["id"], {"entity_id": keep_id})
-        elif have["given_by"] == "read" and row["given_by"] == DM:
+        elif row["given_by"] == DM and have["given_by"] != DM:
+            # (the DM's word wins over DMbot's read, and over the DM's own no on the other entry)
             await w.update(STORY_LANGUAGES, have["id"], {"given_by": DM})
+        elif row["given_by"] == LANGUAGE_NOT and have["given_by"] == "read":
+            # (the DM said no on the merged entry: DMbot's read of it on the kept one goes, #4362)
+            await w.update(STORY_LANGUAGES, have["id"], {"given_by": LANGUAGE_NOT})
 
 
 async def _move_plan_links(w: Changes, keep_id: str, gone_id: str) -> None:

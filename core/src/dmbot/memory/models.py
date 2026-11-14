@@ -93,7 +93,10 @@ LINK_NAME_MAX = 100
 # DMbot's read or by the DM. A character with a sheet keeps its languages there instead.
 STORY_LANGUAGE_MAX = 60
 LANGUAGE = "language"  # a lore language waiting as a question, like a lineage (#4229 slice 1c)
-GIVEN_BY = ("read", "dm")
+# Who gave a story language (#4229): DMbot's read, the DM, or the DM's no (#4362: the row stays so
+# no later read gives it again; every reader skips it).
+LANGUAGE_NOT = "not"
+GIVEN_BY = ("read", "dm", LANGUAGE_NOT)
 LINK_EDITIONS = ("2014", "2024")
 
 NAME_MAX = 100
