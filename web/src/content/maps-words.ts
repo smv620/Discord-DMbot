@@ -21,9 +21,12 @@ export const mapsWords = {
   undoFailed: "Couldn't undo: that map was changed again since.",
   answeredBy: (dm: string, yes: boolean): string => `${dm} already answered: ${yes ? "yes" : "no"}.`,
   gone: "That picture isn't kept any more.",
-  failedShared: "That didn't go through. Try the button again, or open the picture's page.",
+  failedShared: "That didn't go through. Try the button again.",
   full: "DMbot has no room to keep another map. Ask your DM to free some room.",
   dmOnly: "Only the DMs of this campaign can answer this.",
+  takeBack: "Take it back",
+  takenBack: "OK. It's no longer a map. The picture is still kept.",
+  takeBackUndoFailed: "Couldn't undo: that was changed again since.",
 
   // The website's own
   heading: "Maps",
@@ -56,8 +59,6 @@ export const mapsWords = {
   cancel: "Cancel",
   removeAsk: "Remove from maps? The picture stays. You can undo this right after.",
   keepIt: "Keep it",
-  takeBack: "Take it back",
-  takenBack: "OK. It's no longer a map. The picture is still kept.",
   shownDone: "Shown to the table.",
   hiddenDone: "Hidden from the table.",
 } as const;
