@@ -46,7 +46,7 @@ export const beforeQuestions: readonly Question[] = [
     // go in the raw record too. The privacy page has the rest.
     question: "Who can read the game's written record?",
     answer:
-      "Everyone in your Discord server can read and download it. The message that asks players to say yes tells them so, and says it stays there even if they stop later.",
+      "This campaign's people (its DMs, its players and anyone recorded at its table) can read and download it, or everyone in your Discord server if you chose that. The message that asks players to say yes tells them so, and says it stays there even if they stop later.",
     more: { text: "Read the privacy page", href: "/legal/privacy" },
   },
   {
