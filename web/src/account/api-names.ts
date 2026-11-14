@@ -41,7 +41,7 @@ import {
   errorKinds,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
-import type { AccountApi, ApiHelpers, HandOverQuestion, NodeSummary, TraitOffer, UploadNotice, WaitingLook } from "./api";
+import type { AccountApi, ApiHelpers, HandOverQuestion, NodeSummary, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
 export function countOf(counts: unknown, key: string): number | undefined {
@@ -542,6 +542,20 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
     // The icon choice is instant: the door answers with what it was and what it is now (#3621).
     setPcIcon: async (ref, entityId, choice) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/pc-icons/${encodeURIComponent(entityId)}`, { choice })) as { previous: IconChoice; now: IconChoice },
+    worldNotes: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/world-notes`)) as WorldNotes,
+    // Queued for the bot like the connection edits (202 {answer}); this waits for it and gives back the change it made, for Undo.
+    changeWorldNotes: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued =
+        change.action === "keep"
+          ? ((await call("POST", `${base}/world-notes/keep`, { ids: change.ids })) as { answer: string })
+          : change.action === "not"
+            ? ((await call("POST", `${base}/world-notes/not`, { id: change.id })) as { answer: string })
+            : ((await call("POST", `${base}/world-notes/${change.batch}/undo`, {})) as { answer: string });
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { kept: typeof got.kept === "number" ? got.kept : null, batch: typeof got.batch === "number" ? got.batch : null };
+    },
     changeWebLink: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}/web`;
       let queued: { answer: string };
