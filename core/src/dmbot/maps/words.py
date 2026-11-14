@@ -60,3 +60,53 @@ def said_yes(is_dm: bool, from_chat: bool) -> str:
 
 def said_no(from_chat: bool) -> str:
     return NO_CHAT if from_chat else NO_PRIVATE
+
+
+# The DM's side (slice 3b-2a): a map a player kept waits for a DM's yes.
+QUESTIONS_LABEL = "Maps waiting for your yes"
+USE_YES_LABEL = "Yes, use it"
+USE_NO_LABEL = "No, don't use it"
+REMOVE_LABEL = "Remove it"
+NOTHING_WAITING = "No maps are waiting for you."
+DM_ONLY = "Only the DMs of this campaign can answer this."
+
+
+def dm_title(player: str) -> str:
+    return f"A map from {player}: use it?"
+
+
+def dm_body(player: str) -> str:
+    """The question to a DM: what each button does, and that the claim is the player's."""
+    return (
+        "Use this map? **Yes** lets DMbot read it. **No** keeps the picture but DMbot never reads "
+        "it. **Remove** takes it off your maps; the picture stays.\n"
+        f"{player} says they may use it."
+    )
+
+
+def waiting_line(count: int) -> str:
+    if count == 1:
+        return "A map is waiting for your yes."
+    return f"{count} maps are waiting for your yes."
+
+
+def answered_by(dm: str, yes: bool) -> str:
+    """The second DM to press: the first answer stands."""
+    return f"{dm} already answered: {'yes' if yes else 'no'}."
+
+
+def done_yes() -> str:
+    return "OK. DMbot will use this map."
+
+
+def done_no() -> str:
+    return "OK. DMbot keeps the picture and never reads it as a map."
+
+
+def done_removed() -> str:
+    return "Removed from your maps. The picture is still kept."
+
+
+UNDO_LABEL = "Undo"
+UNDONE = "↩️ Undone."
+UNDO_FAILED = "Couldn't undo: that map was changed again since."

@@ -560,6 +560,7 @@ from dmbot.ui import (
     kept_pictures,
     kind_offer,
     looked_at,
+    map_answer,
     map_question,
     name_pass_undo,
     player_id,
@@ -1826,6 +1827,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             kept_pictures.PrivateButton, kept_pictures.DeleteButton, kept_pictures.DeleteYesButton
         )
         self.add_dynamic_items(map_question.YesButton, map_question.NoButton)  # #4344
+        self.add_dynamic_items(
+            map_answer.ActButton, map_answer.OpenButton, map_answer.UndoButton
+        )  # the DM's side, #4344
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )

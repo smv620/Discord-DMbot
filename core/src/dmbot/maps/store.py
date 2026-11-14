@@ -44,6 +44,15 @@ class MapError(Exception):
     """A refusal, with the words to show."""
 
 
+class AlreadyAnswered(MapError):
+    """A DM's answer came second (`answer_use(first_only=True)`): the first one stands. Carries
+    the map as it is, so the caller can say who answered."""
+
+    def __init__(self, answered: Map) -> None:
+        super().__init__("That's already answered.")
+        self.map = answered
+
+
 @dataclass(frozen=True, slots=True)
 class Map:
     id: str
@@ -214,15 +223,28 @@ class MapStore:
             return Written(_map(row), w.batch)
 
     async def answer_use(
-        self, guild_id: int, campaign_id: str, map_id: str, *, dm_id: int, yes: bool
+        self,
+        guild_id: int,
+        campaign_id: str,
+        map_id: str,
+        *,
+        dm_id: int,
+        yes: bool,
+        first_only: bool = False,
     ) -> Written[Map]:
         """A DM's yes or no to "A map from <player>: use it?". A no leaves the picture kept and
         unused; removing it is a separate tap. The caller has checked that `dm_id` is a DM of this
-        campaign. Answering again changes the answer, and the later one stands."""
+        campaign. Answering again changes the answer, and the later one stands, unless
+        `first_only`: then an answered map is left as it is and `AlreadyAnswered` says so (two DMs
+        pressing at once: the first answer stands). The check and the write are one step, under
+        the picture store's lock."""
         async with self._memory.map_write(guild_id, campaign_id) as w:
             await _lock(w.conn, guild_id, campaign_id)
-            if await w.get(MAPS, map_id) is None:
+            current = await w.get(MAPS, map_id)
+            if current is None:
                 raise MapError(GONE)
+            if first_only and current["use_ok"] is not None:
+                raise AlreadyAnswered(_map(current))
             row = await w.update(
                 MAPS, map_id, {"use_ok": yes, "use_by": dm_id, "use_at": int(self._clock())}
             )

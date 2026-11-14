@@ -67,6 +67,7 @@ class TheKinds(unittest.TestCase):
                 "Family ties",
                 "Lineage and class",
                 "World notes",
+                "Maps waiting for your yes",
                 "Facts to check",
                 "What people believe",
                 "Plot check",
