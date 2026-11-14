@@ -14,13 +14,16 @@ answer adds up, so they are only ever taken from words that say them plainly:
   `approx` set;
 - anything vaguer ("a few days", "several miles") keeps its words only: no amount, no unit.
 
-`find` turns a route's own quote (the sentence the reader already chose for the route) into the
-length's words by set phrases only ("two days' ride from", "a day by cart to", "20 miles from"):
-never the AI's own sum. Pure: no Discord, no database."""
+`find` turns a route's own quote (the sentence the reader already chose for the route, or the DM's
+words on a journey) into the length's words by set phrases only ("two days' ride from", "a day by
+cart to", "20 miles from", "five hours to Easthaven" when Easthaven is that route's own end): never
+the AI's own sum. The lore keep and the session's journeys use it alike (#4255 slice 1b). Pure: no
+Discord, no database."""
 
 from __future__ import annotations
 
 import re
+from collections.abc import Collection
 from typing import NamedTuple
 
 HOURS, DAYS, MILES = "hours", "days", "miles"
@@ -112,24 +115,34 @@ _LEAD = r"(?:(?:about|roughly|nearly|some|around|almost|approximately)\s+)?"
 _AMOUNT = rf"{_LEAD}(?:half\s+an?\s+{_UNIT}|{_NUMBER}(?:\s*(?:or|to|-|–)\s*{_NUMBER})?\s+{_UNIT})"
 _HOW = (
     r"(?:['’]s?\s+(?:ride|walk|march|sail|journey|travel|trek|flight)"
-    r"|\s+(?:by|on)\s+(?:cart|wagon|horse|horseback|foot|boat|ship|sled|dogsled|road|river|sea|air)"
+    r"|\s+(?:by|on)\s+(?:the\s+)?"
+    r"(?:cart|wagon|horse|horseback|foot|boat|ship|sled|dogsled|road|river|sea|air)"
     r"|\s+of\s+(?:road|river|travel|walking|riding|sailing))"
 )
 # With how it is travelled, the length may lead to the place ("a day by cart to"); a bare amount
 # only from or away from it ("twenty miles from"): "three days to reach" is a deadline, not a way.
 _PHRASE = re.compile(
-    rf"\b(?P<words>{_AMOUNT}{_HOW})(?=\s+(?:from|to|away|along|up|down|across|between)\b|[,.;:]|\s*$)"
+    rf"\b(?P<words>{_AMOUNT}{_HOW})(?=\s+(?:from|to|away|along|up|down|across|between|on)\b|[,.;:]|\s*$)"
     rf"|\b(?P<bare>{_AMOUNT})(?=\s+(?:from|away|between)\b)",
     re.I,
 )
 
 
-def find(quote: str) -> str:
+def find(quote: str, places: Collection[str] = ()) -> str:
     """The length's words a route's quote states by a set phrase, or "" when it states none, or
     more than one: a sentence with two lengths may be about two routes, and which is which is a
-    guess this never makes."""
-    found = list(_PHRASE.finditer(" ".join(quote.split())))
-    return (found[0]["words"] or found[0]["bare"]).strip() if len(found) == 1 else ""
+    guess this never makes. `places`: the route's own ends by name. A bare amount leading to one
+    of them ("five hours to Easthaven") is a length too: "to" and a name the route ends at, never
+    "to reach" (a deadline) or a place this route doesn't go to."""
+    text = " ".join(quote.split())
+    found = [(m.start(), m["words"] or m["bare"]) for m in _PHRASE.finditer(text)]
+    names = sorted({" ".join(p.split()) for p in places if p.strip()}, key=len, reverse=True)
+    if names:
+        ends = "|".join(re.escape(n) for n in names)
+        to_end = re.compile(rf"\b(?P<to>{_AMOUNT})\s+to\s+(?:{ends})\b", re.I)
+        seen = {at for at, _ in found}
+        found += [(m.start(), m["to"]) for m in to_end.finditer(text) if m.start() not in seen]
+    return found[0][1].strip() if len(found) == 1 else ""
 
 
 __all__ = ["DAYS", "HOURS", "MILES", "UNITS", "WORDS_MAX", "Length", "find", "parse"]

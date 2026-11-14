@@ -229,6 +229,19 @@ class Journeys(Chains):
         ]
         self.assertEqual((rels[0].status, rels[0].source), (CONFIRMED, "dm"))
 
+    async def test_a_journeys_stated_length_is_dmbots_read(self) -> None:
+        # (#4255 slice 1b: kept for the DM to check; players never see it until then)
+        await self.go(
+            (1, DM, "You reach Kelvenmoor.", "Kelvenmoor"),
+            (2, DM, "It's two days to Brindleford by the road, and you reach it.", "Brindleford"),
+        )
+        (road,) = [
+            r for r in await self.memory.relations(GUILD, self.cid, include_secret=True)
+            if r.predicate == "route_to"
+        ]  # fmt: skip
+        self.assertEqual((road.length_words, road.length_from), ("two days", "read"))
+        self.assertEqual(road.status, CONFIRMED)  # (the journey itself stays the DM's)
+
     async def test_no_journey_to_a_place_not_kept(self) -> None:
         made = await self.memory.add_entity(
             GUILD, self.cid, name="Easthaven", type="place", status="proposed", source="extractor"

@@ -21,6 +21,7 @@ ALLOWED = {
     "memory/states.py": "a place that stops being one loses its length; shows nothing",
     "memory/backup.py": "the whole campaign, DMbot's reads included, so a restore keeps them",
     "memory/backstory_keep.py": "writes DMbot's read from a kept route's quote; shows nothing",
+    "memory/session_chain.py": "finds a journey's length words in the DM's lines; shows nothing",
     "migrations/0486_route_length.py": "adds the columns",
     "ui/name_card.py": "a player's card drops a read (`_rows`, and the route place's line)",
     "ui/place_size.py": "the route place's card line; its buttons are the DM's, checked again",

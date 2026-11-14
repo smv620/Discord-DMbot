@@ -227,7 +227,21 @@ class Journeys(unittest.TestCase):
             self.arrive("You reach Bryn Shander.", "Bryn Shander"),
             chains={MAIN: ["dale", "targos"]},
         )
-        self.assertEqual(got.legs, [Leg("targos", "bryn", "river")])
+        self.assertEqual(got.legs, [Leg("targos", "bryn", "river", "Three days on the river")])
+
+    def test_the_dms_words_on_the_way_give_its_length(self) -> None:
+        # (#4255 slice 1b: by `route_length`'s set phrases, the arrival's own name included)
+        got = run(
+            dm("Three days on the river.", moves=[Move(1, TRAVEL, "")]),
+            self.arrive("You reach Bryn Shander.", "Bryn Shander"),
+            chains={MAIN: ["dale", "targos"]},
+        )
+        self.assertEqual(got.legs[0].length, "Three days on the river")
+        named = run(
+            self.arrive("It's only 1 hour to Bryn Shander, and you arrive.", "Bryn Shander"),
+            chains={MAIN: ["dale", "targos"]},
+        )
+        self.assertEqual(named.legs[0].length, "1 hour")
 
     def test_a_town_named_in_passing_is_no_journey(self) -> None:
         got = run(

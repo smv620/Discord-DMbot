@@ -63,6 +63,25 @@ class TheSetPhrases(unittest.TestCase):
             with self.subTest(quote):
                 self.assertEqual(rl.find(quote), words)
 
+    def test_on_the_road_and_by_the_river(self) -> None:
+        self.assertEqual(rl.find("Three days on the river."), "Three days on the river")
+        self.assertEqual(rl.find("1 hour by dogsled on the road."), "1 hour by dogsled")
+
+    def test_a_bare_amount_to_the_routes_own_end(self) -> None:
+        # (#4255 slice 1b: "to" and a name the route ends at; never "to reach", never another place)
+        ends = ["Easthaven", "Bryn Shander"]
+        cases = {
+            "You can take the dogsled five hours to Easthaven, then rest.": "five hours",
+            "It's only 1 hour to Bryn Shander, so you get there by 3:00.": "1 hour",
+            "The party has three days to reach Easthaven": "",
+            "It is two days to Luskan from here.": "",  # (not this route's end)
+            "Two days to Easthaven, or a day to Bryn Shander.": "",  # (two lengths: none)
+        }
+        for quote, words in cases.items():
+            with self.subTest(quote):
+                self.assertEqual(rl.find(quote, places=ends), words)
+        self.assertEqual(rl.find("five hours to Easthaven"), "")  # (no names: no such phrase)
+
     def test_a_quote_with_no_length_gives_none(self) -> None:
         for quote in (
             "A road runs from Targos to Bryn Shander.",

@@ -28,7 +28,7 @@ import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 
-from dmbot.memory import place_levels, route_words
+from dmbot.memory import place_levels, route_length, route_words
 from dmbot.memory.scene_moves import ARRIVE, HEADING, LEAVE, NONE, TRAVEL, Move
 from dmbot.memory.story_chain import LIST_PLACES, Place
 
@@ -59,6 +59,7 @@ class Leg:
     start: str
     end: str
     means: str
+    length: str = ""  # how far the DM's words said, by `route_length`'s set phrases (#4255 1b)
 
 
 @dataclass(slots=True)
@@ -205,7 +206,9 @@ def walk(
                     arrived = moved.get(p.entity_id) == ARRIVE  # (the AI said so, not a default)
                     if arrived and town is not None and town != p.entity_id:
                         words = way_words if away else [*way_words, line.text]
-                        out.legs.append(Leg(town, p.entity_id, _way(words)))
+                        text = " ".join(words)  # (one find over the stretch: two lengths, none)
+                        length = route_length.find(text, places=p.spellings)
+                        out.legs.append(Leg(town, p.entity_id, _way(words), length))
                     if arrived or town is None:
                         town, way_words = p.entity_id, []
     out.town = town
