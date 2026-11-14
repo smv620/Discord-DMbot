@@ -183,3 +183,23 @@ describe("the words", () => {
     expect(w.asked("Targos", true)).toBe("Travel from Targos to…");
   });
 });
+
+describe("keyboard focus", () => {
+  it("focus moves to the choices after a place is picked", async () => {
+    const { row } = await openRow("Saltmarsh");
+    fireEvent.click(await row.findByRole("button", { name: w.nextButton }));
+    fireEvent.input(await row.findByLabelText(w.asked("Saltmarsh", false)), { target: { value: "Greywatch" } });
+    fireEvent.click(await row.findByRole("button", { name: "Greywatch" }));
+    const legend = row.getByText(w.ask("Saltmarsh", "Greywatch", false));
+    await waitFor(() => expect(document.activeElement).toBe(legend));
+  });
+  it("focus goes back to the button that opened the panel", async () => {
+    const { row } = await openRow("Saltmarsh");
+    fireEvent.click(await row.findByRole("button", { name: w.travelButton }));
+    fireEvent.click(await row.findByRole("button", { name: w.back }));
+    await waitFor(() => expect(document.activeElement).toBe(row.getByRole("button", { name: w.travelButton })));
+    fireEvent.click(await row.findByRole("button", { name: w.nextButton }));
+    fireEvent.click(await row.findByRole("button", { name: w.back }));
+    await waitFor(() => expect(document.activeElement).toBe(row.getByRole("button", { name: w.nextButton })));
+  });
+});

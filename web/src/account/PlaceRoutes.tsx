@@ -25,6 +25,29 @@ export default function PlaceRoutes({ api, refId, row, onSignedOut }: { api: Acc
   const seq = useRef(0);
   const travel = how === "travel";
 
+  // Focus must not fall off the page when the control that had it goes away: after a place is picked, the choices' legend takes it;
+  // after the panel closes (Back, or a save that worked) and it was opened from a button, that button takes it again.
+  // once the panel has been opened from one of its buttons (wasOpen), so a page that loads does not steal focus.
+  const legendRef = useRef<HTMLLegendElement>(null);
+  const nextRef = useRef<HTMLButtonElement>(null);
+  const travelRef = useRef<HTMLButtonElement>(null);
+  const openedBy = useRef<"next" | "travel">("next");
+  const wasOpen = useRef(false);
+  useEffect(() => {
+    if (picked !== null) legendRef.current?.focus();
+  }, [picked]);
+  useEffect(() => {
+    if (how !== null) {
+      openedBy.current = how;
+      wasOpen.current = true;
+      return;
+    }
+    if (wasOpen.current) {
+      wasOpen.current = false;
+      (openedBy.current === "travel" ? travelRef : nextRef).current?.focus();
+    }
+  }, [how]);
+
   useEffect(() => {
     const mine = ++seq.current;
     setSearchFailed(false);
@@ -85,8 +108,8 @@ export default function PlaceRoutes({ api, refId, row, onSignedOut }: { api: Acc
     <section class="stack" aria-label={w.nextButton}>
       {how === null && (
         <p class="row">
-          <button type="button" class="button secondary" onClick={() => { setNote(null); setHow("next"); }}>{w.nextButton}</button>
-          <button type="button" class="button secondary" onClick={() => { setNote(null); setHow("travel"); }}>{w.travelButton}</button>
+          <button ref={nextRef} type="button" class="button secondary" onClick={() => { setNote(null); setHow("next"); }}>{w.nextButton}</button>
+          <button ref={travelRef} type="button" class="button secondary" onClick={() => { setNote(null); setHow("travel"); }}>{w.travelButton}</button>
         </p>
       )}
       {how !== null && picked === null && (
@@ -112,7 +135,7 @@ export default function PlaceRoutes({ api, refId, row, onSignedOut }: { api: Acc
       )}
       {how !== null && picked !== null && (
         <fieldset class="stack" aria-busy={busy}>
-          <legend>{w.ask(row.name, picked.name, travel)}</legend>
+          <legend ref={legendRef} tabIndex={-1}>{w.ask(row.name, picked.name, travel)}</legend>
           {choices.map((c) => (
             <label key={c.label} class="choice">
               <input type="radio" name={`route-${row.id}`} checked={choice === c} onChange={() => setChoice(c)} />
