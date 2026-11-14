@@ -9,15 +9,18 @@ from __future__ import annotations
 
 # `dmbot_web_maps(g, c)`: NULL for anyone who is not a member of the campaign's server, else the
 # maps this caller may see, oldest first. A DM of the campaign sees every map, with whether it is
-# shown to the table and its state (waiting, usable, declined). Anyone else sees the maps a DM
-# has shown to the table (`audience = 'table'`) and said yes to (`use_ok`), and their own
-# (`right_by` is their id), and only their own rows carry `shown` and `state`: a player is never
-# sent a row for a map hidden from them that they did not add, nor a sign that one exists.
-# "Anyone in the server" is the gallery's own rule (`dmbot_web_pictures`: a picture is private to
-# the campaign, not to its game masters); the poster's name is the one the session kept (a
-# website upload has none: "Someone"; and `via` is "discord" for a picture from the chat and
-# "website" for any other, an import or a document included). A removed picture is not listed.
-# Words, ids and the picture's open code only; no file key leaves this door.
+# shown to the table and its state (waiting, usable, declined). Anyone else sees their own maps
+# and the maps a DM has shown to the table (`audience = 'table'`) and said yes to (`use_ok`) only
+# if they may read the campaign's transcripts (design 8.1; #3891): the campaign's people (a
+# confirmed character's player, someone heard at one of its sessions, or someone a DM added by
+# hand in `campaign_channel_people`), or anyone in the server when the campaign's
+# `channels_visibility` is 'everyone'. That is the test `dm_screen.channel_sync.campaign_people`
+# makes for Discord's channels, copied exactly so the two never differ. Only a DM's rows and a
+# person's own carry `shown` and `state`: a person is never sent a row for a map hidden from them
+# that they did not add, nor a sign that one exists. The poster's name is the one the session
+# kept (a website upload has none: "Someone"; and `via` is "discord" for a picture from the chat
+# and "website" for any other, an import or a document included). A removed picture is not
+# listed. Words, ids and the picture's open code only; no file key leaves this door.
 #
 # The five actions go on the queue door as `world-keep` did (0481), filed under no name, no
 # target, no flag; the door checks only each text's shape and the bot rechecks everything (the
@@ -127,6 +130,7 @@ SQL = (
     LANGUAGE plpgsql STABLE SECURITY DEFINER AS $fn$
     DECLARE
         is_dm BOOLEAN;
+        reads BOOLEAN;
     BEGIN
         IF dmbot_current_guild() IS DISTINCT FROM g
            OR NOT (g = ANY ((SELECT dmbot_web_guilds())::BIGINT[]))
@@ -136,6 +140,21 @@ SQL = (
         is_dm := EXISTS (SELECT 1 FROM campaign_dms d
                          WHERE d.guild_id = g AND d.campaign_id = c
                            AND d.user_id = dmbot_current_user());
+        -- who may read this campaign's transcripts (the campaign's people, or everyone)
+        reads := is_dm
+            OR EXISTS (SELECT 1 FROM campaigns k WHERE k.guild_id = g AND k.id = c
+                       AND k.channels_visibility = 'everyone')
+            OR EXISTS (SELECT 1 FROM campaign_channel_people x
+                       WHERE x.guild_id = g AND x.campaign_id = c
+                         AND x.user_id = dmbot_current_user())
+            OR EXISTS (SELECT 1 FROM memory_entities e
+                       WHERE e.guild_id = g AND e.campaign_id = c
+                         AND e.played_by = dmbot_current_user() AND e.type = 'character'
+                         AND e.status = 'confirmed')
+            OR EXISTS (SELECT 1 FROM transcript_lines l
+                       JOIN transcript_sessions s ON s.id = l.session_id AND s.guild_id = l.guild_id
+                       WHERE l.guild_id = g AND s.campaign_id = c AND l.sidebar IS NULL
+                         AND NOT l.typed AND l.user_id = dmbot_current_user());
         RETURN jsonb_build_object(
             'status', 'ok', 'isDm', is_dm,
             'maps', COALESCE((
@@ -163,7 +182,7 @@ SQL = (
                  AND t.id = p.session_id
                 WHERE m.guild_id = g AND m.campaign_id = c
                   AND (is_dm OR m.right_by = dmbot_current_user()
-                       OR (m.audience = 'table' AND m.use_ok IS TRUE))), '[]'::jsonb));
+                       OR (reads AND m.audience = 'table' AND m.use_ok IS TRUE))), '[]'::jsonb));
     END
     $fn$;
 

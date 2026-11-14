@@ -18,7 +18,9 @@ from tests.test_web_name_actions import Acting
 
 
 class MapsDoor(Acting):
-    """Alice is the DM of campaign One; Bob is a player there (and the DM of its sibling "Two")."""
+    """Alice is the DM of campaign One. Bob is a member of the server and the DM of its sibling
+    "Two", and he uploaded a map to One: until a test makes him one of One's people (a player of a
+    character, or on the by-hand list) he is not one of them, so he reads none of One's tables."""
 
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
@@ -47,6 +49,13 @@ class MapsDoor(Acting):
             storage_mb=10, title=title,
         )  # fmt: skip
         return made.value.id
+
+    async def make_bob_a_player(self) -> None:
+        hero = await self.add("Hero", "character")
+        await self.sql(
+            "UPDATE memory_entities SET played_by = %s WHERE guild_id = %s AND id = %s",
+            BOB.id, self.g, hero,
+        )  # fmt: skip
 
     async def door(self, who: Any = None) -> Any:
         session = who or self.session
@@ -97,6 +106,7 @@ class TheReadDoor(MapsDoor):
         self.assertEqual((by_id[self.shown]["state"], by_id[self.shown]["shown"]), ("usable", True))
 
     async def test_a_player_gets_the_shown_usable_maps_and_their_own_and_nothing_else(self) -> None:
+        await self.make_bob_a_player()
         got = await self.door(self.player)
         self.assertFalse(got["isDm"])
         by_id = {m["id"]: m for m in got["maps"]}
@@ -107,12 +117,41 @@ class TheReadDoor(MapsDoor):
         self.assertEqual((by_id[self.bobs]["state"], by_id[self.bobs]["mine"]), ("waiting", True))
 
     async def test_a_hidden_map_never_reaches_a_player_in_any_form(self) -> None:
+        await self.make_bob_a_player()
         got = await self.door(self.player)
         text = repr(got)
         self.assertNotIn(self.dm_map, text)
         self.assertNotIn("The Keep", text)
 
+    async def ids_for_bob(self) -> set[str]:
+        return {m["id"] for m in (await self.door(self.player))["maps"]}
+
+    async def test_a_member_who_is_not_one_of_the_campaigns_people_gets_no_shown_map(self) -> None:
+        # (the transcripts' rule, #3891: the table's maps reach only who may read its transcripts)
+        self.assertEqual(await self.ids_for_bob(), {self.bobs})  # (their own, still listed)
+
+    async def test_a_player_of_the_campaign_gets_the_shown_map(self) -> None:
+        await self.make_bob_a_player()
+        self.assertEqual(await self.ids_for_bob(), {self.shown, self.bobs})
+
+    async def test_with_everyone_any_member_gets_it_and_their_own_is_still_listed(self) -> None:
+        await self.sql(
+            "UPDATE campaigns SET channels_visibility = 'everyone' WHERE guild_id = %s AND id = %s",
+            self.g, self.one.id,
+        )  # fmt: skip
+        self.assertEqual(await self.ids_for_bob(), {self.shown, self.bobs})
+        self.assertNotIn(self.dm_map, await self.ids_for_bob())  # (a hidden map: never)
+
+    async def test_someone_a_dm_added_by_hand_gets_it(self) -> None:
+        await self.sql(
+            "INSERT INTO campaign_channel_people (guild_id, campaign_id, user_id, added_by,"
+            " added_at) VALUES (%s, %s, %s, %s, 0)",
+            self.g, self.one.id, BOB.id, ALICE.id,
+        )  # fmt: skip
+        self.assertEqual(await self.ids_for_bob(), {self.shown, self.bobs})
+
     async def test_a_map_a_dm_said_no_to_or_one_still_waiting_is_not_shown_to_others(self) -> None:
+        await self.make_bob_a_player()
         other = await self.make_map(ALICE.id, "Old road", dm=False)  # (waiting, not Bob's)
         await self.maps.set_audience(self.g, self.one.id, other, "table")
         ids = {m["id"] for m in (await self.door(self.player))["maps"]}
