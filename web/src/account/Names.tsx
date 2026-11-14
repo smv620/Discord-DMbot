@@ -17,6 +17,7 @@ import { MET_LIST_LIVE } from "../content/met-list-switch";
 import { PRIVATE_SCENES_LIVE } from "../content/private-scenes-switch";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
 import { PLACE_SPELLING_LIVE } from "../content/place-spelling-switch";
+import { WORLD_NOTES_LIVE } from "../content/world-notes-switch";
 import { PLACE_ROUTES_LIVE } from "../content/place-routes-switch";
 import { PLACE_WORLD_LIVE } from "../content/place-world-switch";
 import { PLACE_FACTS_LIVE } from "../content/place-switch";
@@ -428,6 +429,9 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
         )}
       </section>
 
+      {WORLD_NOTES_LIVE && data.canEdit && api.worldNotes !== undefined && (
+        <LazyPanel load={() => import("./WorldNotes")} what="DMbot's guesses about your world" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />
+      )}
       {MET_LIST_LIVE && data.canEdit && api.metList !== undefined && (
         <LazyPanel load={() => import("./MetList")} what="who your party met" props={{ api, campaignRef: ref, onChanged: () => void load(pageNow.current, true) }} />
       )}
