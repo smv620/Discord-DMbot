@@ -29,6 +29,7 @@ ELSEWHERE: Rules = {
         "sent_emails", "entitlements", "web_sessions",
         "web_users", "support_tickets", "wizard_documents", "wizard_drafts", "wizard_finishes",
         "dm_players",  # (0450: its own forget function, dmbot_forget_dm_players, #4226)
+        "campaign_maps",  # (0480: its own forget function, dmbot_forget_maps, #3274, #4344)
         "installs", "move_code_asks",  # (move_code_asks: ON DELETE CASCADE from web_users, 0069)
     )
 }  # fmt: skip
@@ -69,9 +70,6 @@ UNREVIEWED: Rules = {  # not yet decided: the list for Supervisor on #4141 (colu
     "access_log": None, "account_moves": None, "active_sessions": None, "adventure_reads": None,
     "campaign_dms": None, "campaign_handover_offers": None,
     "map_notes": None, "memory_beliefs": None, "memory_knowers": None,
-    # (a map's uploader and the DM who said yes: it follows the kept pictures, whose own forget
-    # step is still owed, so a person's maps go with their pictures, #3274, #4344)
-    "campaign_maps": None,
     "name_not_same": None, "pack_suggestions": None,
     "plan_position": None, "plan_same_as": None,
     "plot_chat": None, "plot_issues": None,
