@@ -1,7 +1,7 @@
 {
  "campaign": "test of the frostmaiden (sample)",
  "source": "the public sample lore, https://docs.google.com/document/d/1zbt7g3r6uFfiSYr3fl_gyaxARhwJPizauI0jmiEa2aw/edit?usp=sharing (the plain-text export; each connection names its line)",
- "version": 2,
+ "version": 3,
  "how_to_read": {
   "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted as a fact); by_rule = made by a rule, not read",
   "relation": "parent_of, grandparent_of, sibling, spouse, uncle_of, apprentice_of, mentor_of, owns, carries, knows (+ one of nine feeling words), member, leads, works_for, enemy_of, rival_of, held_captive_by, found, associate; place ties by word: lives_in, lived_in, works_in, comes_from, last_seen_in (a character, creature or group), kept_in, was_kept_in (an item); in (only a place inside a place)",
@@ -9,7 +9,8 @@
   "must_find": "false = a good find if present, not a miss if absent; an inferred tie that must be found is scored as an offered suggestion",
   "current": "false = history: it was true and is not now (the graph shows the most recent relationship, #3363)",
   "line": "the line of the document's plain-text export that supports it (blank lines count)",
-  "map_facts": "a place's land, climate or ruler (#4256): layer terrain, climate or control; value a word of that layer's list, or the ruling group's key name; scored per layer as found, wrong, missed and extra (a row the key does not list)"
+  "map_facts": "a place's land, climate or ruler (#4256): layer terrain, climate or control; value a word of that layer's list, or the ruling group's key name; scored per layer as found, wrong, missed and extra (a row the key does not list)",
+  "languages": "a character's languages are a property of the character, never a tie (owner, 2026-11-14; #4229): {character, language, line, note}; scored as found, missed, and extra (a language the key does not list)"
  },
  "players": {
   "Cerric Vanya'elen": "player_ist",
@@ -303,7 +304,7 @@
     "wind spirit",
     "ancient spirit"
    ],
-   "note": "Unnamed. The ancient wind spirit that guides and guards Okthandom (lore line 30); kept as a being the story never names, found by its description ('unnamed - ancient wind spirit'), never as a name.",
+   "note": "Unnamed. The ancient wind spirit that guides and guards Okthandom (lore line 36); kept as a being the story never names, found by its description ('unnamed - ancient wind spirit'), never as a name.",
    "unnamed": true
   },
   {
@@ -655,7 +656,7 @@
    "b": "Cerric Vanya'elen",
    "tier": "stated",
    "must_find": true,
-   "line": 18,
+   "line": 24,
    "note": "died in a severe storm"
   },
   {
@@ -665,7 +666,7 @@
    "b": "Roceran",
    "tier": "stated",
    "must_find": true,
-   "line": 18,
+   "line": 24,
    "note": "'Roceran's brother Qinric'; the owner asked for this tie directly"
   },
   {
@@ -675,7 +676,7 @@
    "b": "Cerric Vanya'elen",
    "tier": "inferred",
    "must_find": true,
-   "line": 18,
+   "line": 24,
    "note": "never said as 'uncle': Roceran's brother"
   },
   {
@@ -685,7 +686,7 @@
    "b": "Lord's Alliance",
    "tier": "stated",
    "must_find": true,
-   "line": 18,
+   "line": 24,
    "note": "a war mage evoker in it"
   },
   {
@@ -704,7 +705,7 @@
    "b": "Syllar Sparkwalker",
    "tier": "stated",
    "must_find": true,
-   "line": 18,
+   "line": 24,
    "note": "Keeper of the Sparkwalker Spire under him"
   },
   {
@@ -714,7 +715,7 @@
    "b": "Sparkwalker Spire",
    "tier": "stated",
    "must_find": true,
-   "line": 18,
+   "line": 24,
    "note": "Keeper of it (leads; works_in is also true and kept as optional, Supervisor 2026-11-04)"
   },
   {
@@ -724,7 +725,7 @@
    "b": "Sparkwalker Spire",
    "tier": "stated",
    "must_find": false,
-   "line": 18,
+   "line": 24,
    "note": "Keeper of it"
   },
   {
@@ -734,7 +735,7 @@
    "b": "Blackstaff Tower",
    "tier": "inferred",
    "must_find": false,
-   "line": 18,
+   "line": 24,
    "note": "'Syllar Sparkwalker of Blackstaff Tower'"
   },
   {
@@ -744,7 +745,7 @@
    "b": "Emmerich",
    "tier": "inferred",
    "must_find": false,
-   "line": 18,
+   "line": 24,
    "note": "Cerric's fellow apprentices"
   },
   {
@@ -754,7 +755,7 @@
    "b": "Wit",
    "tier": "inferred",
    "must_find": false,
-   "line": 18
+   "line": 24
   },
   {
    "id": "l017",
@@ -763,7 +764,7 @@
    "b": "Cerric Vanya'elen",
    "tier": "stated",
    "must_find": true,
-   "line": 18,
+   "line": 24,
    "note": "'rival apprentices Emmerich and Wit'; the owner flagged backstory rivals as missing"
   },
   {
@@ -773,7 +774,7 @@
    "b": "Cerric Vanya'elen",
    "tier": "stated",
    "must_find": false,
-   "line": 18
+   "line": 24
   },
   {
    "id": "l019",
@@ -821,7 +822,7 @@
    "b": "Azure tome",
    "tier": "stated",
    "must_find": true,
-   "line": 21,
+   "line": 27,
    "note": "grabbed his master's locked tome"
   },
   {
@@ -831,7 +832,7 @@
    "b": "Azure tome",
    "tier": "stated",
    "must_find": true,
-   "line": 21,
+   "line": 27,
    "note": "'his master's'"
   },
   {
@@ -841,7 +842,7 @@
    "b": "Neverwinter",
    "tier": "stated",
    "must_find": false,
-   "line": 21,
+   "line": 27,
    "note": "fled there by teleportation rune"
   },
   {
@@ -851,7 +852,7 @@
    "b": "Icewind Dale",
    "tier": "stated",
    "must_find": false,
-   "line": 21,
+   "line": 27,
    "note": "journeyed north into it"
   },
   {
@@ -861,7 +862,7 @@
    "b": "Easthaven",
    "tier": "inferred",
    "must_find": false,
-   "line": 21,
+   "line": 27,
    "note": "the note is addressed 'Danneth, Easthaven'"
   },
   {
@@ -871,7 +872,7 @@
    "b": "Danneth",
    "tier": "inferred",
    "must_find": false,
-   "line": 21,
+   "line": 27,
    "note": "the note is signed S"
   },
   {
@@ -881,7 +882,7 @@
    "b": "Glyph",
    "tier": "stated",
    "must_find": true,
-   "line": 21,
+   "line": 27,
    "note": "snowy owl familiar"
   },
   {
@@ -891,7 +892,7 @@
    "b": "Icewind Dale",
    "tier": "stated",
    "must_find": true,
-   "line": 21
+   "line": 27
   },
   {
    "id": "l031",
@@ -900,7 +901,7 @@
    "b": "Vaelrith",
    "tier": "stated",
    "must_find": true,
-   "line": 27,
+   "line": 33,
    "note": "elder brother, vanished at 105"
   },
   {
@@ -910,7 +911,7 @@
    "b": "Nyssara",
    "tier": "stated",
    "must_find": true,
-   "line": 27,
+   "line": 33,
    "note": "younger sister; a player character's family must be kept"
   },
   {
@@ -920,7 +921,7 @@
    "b": "Nyssara",
    "tier": "inferred",
    "must_find": false,
-   "line": 27
+   "line": 33
   },
   {
    "id": "l034",
@@ -929,7 +930,7 @@
    "b": "Okthandom's child",
    "tier": "stated",
    "must_find": false,
-   "line": 30,
+   "line": 36,
    "note": "'his child', named once in passing"
   },
   {
@@ -939,7 +940,7 @@
    "b": "Okthandom Korran",
    "tier": "stated",
    "must_find": true,
-   "line": 30,
+   "line": 36,
    "note": "guides and guards him"
   },
   {
@@ -949,7 +950,7 @@
    "b": "Ancestral journal",
    "tier": "inferred",
    "must_find": false,
-   "line": 27,
+   "line": 33,
    "note": "found the curse in it"
   },
   {
@@ -959,7 +960,7 @@
    "b": "Explorer's League",
    "tier": "stated",
    "must_find": true,
-   "line": 36,
+   "line": 42,
    "note": "'a scout associated with the Explorer's League'"
   },
   {
@@ -969,7 +970,7 @@
    "b": "Spine of the World",
    "tier": "stated",
    "must_find": true,
-   "line": 42
+   "line": 48
   },
   {
    "id": "l039",
@@ -978,7 +979,7 @@
    "b": "Claude Ambere",
    "tier": "stated",
    "must_find": true,
-   "line": 42,
+   "line": 48,
    "note": "'Griz, son of Lee'; the owner flagged this as missing"
   },
   {
@@ -988,7 +989,7 @@
    "b": "The circus",
    "tier": "stated",
    "must_find": true,
-   "line": 42,
+   "line": 48,
    "current": false,
    "note": "before he escaped"
   },
@@ -999,9 +1000,9 @@
    "b": "Wolf figurine",
    "tier": "inferred",
    "must_find": true,
-   "line": 42,
+   "line": 48,
    "current": false,
-   "note": "the owner: Claude found it first (line 42: he carries a unique wolf figurine; line 90: he sells it). Offered to the DM, never extracted"
+   "note": "the owner: Claude found it first (line 48: he carries a unique wolf figurine; line 96: he sells it). Offered to the DM, never extracted"
   },
   {
    "id": "l042",
@@ -1010,7 +1011,7 @@
    "b": "Icewind Dale",
    "tier": "stated",
    "must_find": true,
-   "line": 51,
+   "line": 57,
    "note": "withdrawn there to live among mortals"
   },
   {
@@ -1020,7 +1021,7 @@
    "b": "Auril the Frostmaiden",
    "tier": "stated",
    "must_find": false,
-   "line": 90,
+   "line": 96,
    "note": "its towns sacrifice every ten-day to appease her"
   },
   {
@@ -1030,7 +1031,7 @@
    "b": "Ten-Towns",
    "tier": "stated",
    "must_find": true,
-   "line": 90,
+   "line": 96,
    "note": "listed with its sacrifice (also line 7)"
   },
   {
@@ -1040,7 +1041,7 @@
    "b": "Ten-Towns",
    "tier": "stated",
    "must_find": true,
-   "line": 90,
+   "line": 96,
    "note": "listed with its sacrifice (also line 7)"
   },
   {
@@ -1050,7 +1051,7 @@
    "b": "Ten-Towns",
    "tier": "stated",
    "must_find": true,
-   "line": 90,
+   "line": 96,
    "note": "listed with its sacrifice (also line 7)"
   },
   {
@@ -1060,7 +1061,7 @@
    "b": "Ten-Towns",
    "tier": "stated",
    "must_find": true,
-   "line": 90,
+   "line": 96,
    "note": "listed with its sacrifice (also line 7)"
   },
   {
@@ -1070,7 +1071,7 @@
    "b": "Ten-Towns",
    "tier": "stated",
    "must_find": true,
-   "line": 90,
+   "line": 96,
    "note": "listed with its sacrifice (also line 7)"
   },
   {
@@ -1080,7 +1081,7 @@
    "b": "Ten-Towns",
    "tier": "stated",
    "must_find": true,
-   "line": 90,
+   "line": 96,
    "note": "listed with its sacrifice (also line 7)"
   },
   {
@@ -1090,7 +1091,7 @@
    "b": "Ten-Towns",
    "tier": "stated",
    "must_find": true,
-   "line": 90,
+   "line": 96,
    "note": "listed with its sacrifice (also line 7)"
   },
   {
@@ -1100,7 +1101,7 @@
    "b": "Ten-Towns",
    "tier": "stated",
    "must_find": true,
-   "line": 90,
+   "line": 96,
    "note": "listed with its sacrifice (also line 7)"
   },
   {
@@ -1110,7 +1111,7 @@
    "b": "Ten-Towns",
    "tier": "stated",
    "must_find": true,
-   "line": 90,
+   "line": 96,
    "note": "listed with its sacrifice (also line 7)"
   },
   {
@@ -1120,7 +1121,7 @@
    "b": "Icewind Dale",
    "tier": "stated",
    "must_find": true,
-   "line": 57
+   "line": 63
   },
   {
    "id": "l054",
@@ -1130,7 +1131,7 @@
    "tier": "stated",
    "must_find": true,
    "line": 7,
-   "note": "held there every ten-day (line 90)"
+   "note": "held there every ten-day (line 96)"
   },
   {
    "id": "l055",
@@ -1140,7 +1141,7 @@
    "tier": "stated",
    "must_find": true,
    "line": 7,
-   "note": "held there every ten-day (line 90)"
+   "note": "held there every ten-day (line 96)"
   },
   {
    "id": "l056",
@@ -1150,7 +1151,7 @@
    "tier": "stated",
    "must_find": true,
    "line": 7,
-   "note": "held there every ten-day (line 90)"
+   "note": "held there every ten-day (line 96)"
   },
   {
    "id": "l057",
@@ -1159,7 +1160,7 @@
    "b": "Auril the Frostmaiden",
    "tier": "stated",
    "must_find": true,
-   "line": 90,
+   "line": 96,
    "note": "to appease her"
   },
   {
@@ -1170,7 +1171,7 @@
    "tier": "stated",
    "must_find": true,
    "line": 7,
-   "note": "held there every ten-day (line 90)"
+   "note": "held there every ten-day (line 96)"
   },
   {
    "id": "l059",
@@ -1180,7 +1181,7 @@
    "tier": "stated",
    "must_find": true,
    "line": 7,
-   "note": "held there every ten-day (line 90)"
+   "note": "held there every ten-day (line 96)"
   },
   {
    "id": "l060",
@@ -1190,7 +1191,7 @@
    "tier": "stated",
    "must_find": true,
    "line": 7,
-   "note": "held there every ten-day (line 90)"
+   "note": "held there every ten-day (line 96)"
   },
   {
    "id": "l061",
@@ -1199,7 +1200,7 @@
    "b": "Auril the Frostmaiden",
    "tier": "stated",
    "must_find": true,
-   "line": 90,
+   "line": 96,
    "note": "to appease her"
   },
   {
@@ -1210,7 +1211,7 @@
    "tier": "stated",
    "must_find": true,
    "line": 7,
-   "note": "held there every ten-day (line 90)"
+   "note": "held there every ten-day (line 96)"
   },
   {
    "id": "l063",
@@ -1220,7 +1221,7 @@
    "tier": "stated",
    "must_find": true,
    "line": 7,
-   "note": "held there every ten-day (line 90)"
+   "note": "held there every ten-day (line 96)"
   },
   {
    "id": "l064",
@@ -1230,7 +1231,7 @@
    "tier": "stated",
    "must_find": true,
    "line": 7,
-   "note": "held there every ten-day (line 90)"
+   "note": "held there every ten-day (line 96)"
   },
   {
    "id": "l065",
@@ -1239,7 +1240,7 @@
    "b": "Auril the Frostmaiden",
    "tier": "stated",
    "must_find": true,
-   "line": 90,
+   "line": 96,
    "note": "to appease her"
   },
   {
@@ -1249,7 +1250,7 @@
    "b": "The Everlasting Rime",
    "tier": "stated",
    "must_find": true,
-   "line": 51,
+   "line": 57,
    "note": "casts it each night before midnight (line 4)"
   },
   {
@@ -1269,7 +1270,7 @@
    "b": "Lonelywood",
    "tier": "stated",
    "must_find": true,
-   "line": 53,
+   "line": 59,
    "note": "operates out of it"
   },
   {
@@ -1279,8 +1280,8 @@
    "b": "Hlin Trollbane",
    "tier": "stated",
    "must_find": true,
-   "line": 53,
-   "note": "100 gold to capture or eliminate Kaltro (line 67)"
+   "line": 59,
+   "note": "100 gold to capture or eliminate Kaltro (line 73)"
   },
   {
    "id": "l070",
@@ -1289,7 +1290,7 @@
    "b": "Sephek Kaltro",
    "tier": "inferred",
    "must_find": false,
-   "line": 53,
+   "line": 59,
    "note": "she hires against him; she is not his servant (#3256)"
   },
   {
@@ -1299,8 +1300,8 @@
    "b": "Torrga Icevein",
    "tier": "stated",
    "must_find": true,
-   "line": 57,
-   "note": "her bodyguard (also line 55)"
+   "line": 63,
+   "note": "her bodyguard (also line 61)"
   },
   {
    "id": "l072",
@@ -1309,8 +1310,8 @@
    "b": "Torg's Caravan",
    "tier": "stated",
    "must_find": true,
-   "line": 57,
-   "note": "under her own heading on line 56"
+   "line": 63,
+   "note": "under her own heading on line 62"
   },
   {
    "id": "l073",
@@ -1319,7 +1320,7 @@
    "b": "Torg's Caravan",
    "tier": "inferred",
    "must_find": false,
-   "line": 55,
+   "line": 61,
    "note": "accompanies it"
   },
   {
@@ -1329,7 +1330,7 @@
    "b": "Easthaven",
    "tier": "stated",
    "must_find": false,
-   "line": 96,
+   "line": 102,
    "note": "his last known location"
   },
   {
@@ -1339,7 +1340,7 @@
    "b": "Termalaine",
    "tier": "stated",
    "must_find": true,
-   "line": 59
+   "line": 65
   },
   {
    "id": "l076",
@@ -1348,8 +1349,8 @@
    "b": "Speaker Masthew",
    "tier": "stated",
    "must_find": true,
-   "line": 78,
-   "note": "50 gold, then 250 for the mine (line 87)"
+   "line": 84,
+   "note": "50 gold, then 250 for the mine (line 93)"
   },
   {
    "id": "l077",
@@ -1358,7 +1359,7 @@
    "b": "The Blue Clam",
    "tier": "stated",
    "must_find": true,
-   "line": 61
+   "line": 67
   },
   {
    "id": "l078",
@@ -1367,7 +1368,7 @@
    "b": "The Blue Clam",
    "tier": "stated",
    "must_find": true,
-   "line": 61,
+   "line": 67,
    "note": "owner and proprietor"
   },
   {
@@ -1377,7 +1378,7 @@
    "b": "Termalaine",
    "tier": "stated",
    "must_find": true,
-   "line": 61
+   "line": 67
   },
   {
    "id": "l080",
@@ -1386,7 +1387,7 @@
    "b": "Lonelywood",
    "tier": "stated",
    "must_find": true,
-   "line": 67
+   "line": 73
   },
   {
    "id": "l081",
@@ -1395,7 +1396,7 @@
    "b": "Brewner",
    "tier": "stated",
    "must_find": false,
-   "line": 67,
+   "line": 73,
    "feeling": "wary",
    "note": "a heated debate"
   },
@@ -1406,7 +1407,7 @@
    "b": "Brewner's daughter",
    "tier": "stated",
    "must_find": false,
-   "line": 67
+   "line": 73
   },
   {
    "id": "l083",
@@ -1415,7 +1416,7 @@
    "b": "The party",
    "tier": "stated",
    "must_find": true,
-   "line": 67,
+   "line": 73,
    "note": "'our four adventurers'"
   },
   {
@@ -1425,7 +1426,7 @@
    "b": "The party",
    "tier": "stated",
    "must_find": true,
-   "line": 67,
+   "line": 73,
    "note": "'our four adventurers'"
   },
   {
@@ -1435,7 +1436,7 @@
    "b": "The party",
    "tier": "stated",
    "must_find": true,
-   "line": 67,
+   "line": 73,
    "note": "'our four adventurers'"
   },
   {
@@ -1445,7 +1446,7 @@
    "b": "The party",
    "tier": "stated",
    "must_find": true,
-   "line": 67,
+   "line": 73,
    "note": "'our four adventurers'"
   },
   {
@@ -1455,7 +1456,7 @@
    "b": "Belleros Stormgrace",
    "tier": "by_rule",
    "must_find": true,
-   "line": 67,
+   "line": 73,
    "note": "player characters who play together know each other (#3036)"
   },
   {
@@ -1465,7 +1466,7 @@
    "b": "Okthandom Korran",
    "tier": "by_rule",
    "must_find": true,
-   "line": 67,
+   "line": 73,
    "note": "player characters who play together know each other (#3036)"
   },
   {
@@ -1475,7 +1476,7 @@
    "b": "Claude Ambere",
    "tier": "by_rule",
    "must_find": true,
-   "line": 67,
+   "line": 73,
    "note": "player characters who play together know each other (#3036)"
   },
   {
@@ -1485,7 +1486,7 @@
    "b": "Okthandom Korran",
    "tier": "by_rule",
    "must_find": true,
-   "line": 67,
+   "line": 73,
    "note": "player characters who play together know each other (#3036)"
   },
   {
@@ -1495,7 +1496,7 @@
    "b": "Claude Ambere",
    "tier": "by_rule",
    "must_find": true,
-   "line": 67,
+   "line": 73,
    "note": "player characters who play together know each other (#3036)"
   },
   {
@@ -1505,7 +1506,7 @@
    "b": "Claude Ambere",
    "tier": "by_rule",
    "must_find": true,
-   "line": 67,
+   "line": 73,
    "note": "player characters who play together know each other (#3036)"
   },
   {
@@ -1515,7 +1516,7 @@
    "b": "Thorin",
    "tier": "stated",
    "must_find": true,
-   "line": 78,
+   "line": 84,
    "note": "'Thorin, his miner brother Bruni'"
   },
   {
@@ -1525,7 +1526,7 @@
    "b": "The gemstone mine",
    "tier": "stated",
    "must_find": false,
-   "line": 78,
+   "line": 84,
    "note": "a miner"
   },
   {
@@ -1535,7 +1536,7 @@
    "b": "Termalaine",
    "tier": "inferred",
    "must_find": false,
-   "line": 78
+   "line": 84
   },
   {
    "id": "l096",
@@ -1544,7 +1545,7 @@
    "b": "The ghost",
    "tier": "stated",
    "must_find": false,
-   "line": 84,
+   "line": 90,
    "note": "a possessed ghost emerged when he fell"
   },
   {
@@ -1554,7 +1555,7 @@
    "b": "Penolopi",
    "tier": "stated",
    "must_find": false,
-   "line": 84,
+   "line": 90,
    "note": "the plant was in his backpack"
   },
   {
@@ -1564,7 +1565,7 @@
    "b": "Trex",
    "tier": "stated",
    "must_find": false,
-   "line": 84,
+   "line": 90,
    "note": "killed him with an arrow"
   },
   {
@@ -1574,7 +1575,7 @@
    "b": "Wand of Conducting",
    "tier": "stated",
    "must_find": false,
-   "line": 84,
+   "line": 90,
    "note": "Okthandom found it and gave it to him"
   },
   {
@@ -1584,7 +1585,7 @@
    "b": "Lantern of Greater Tracking",
    "tier": "stated",
    "must_find": false,
-   "line": 84,
+   "line": 90,
    "note": "found in the mine"
   },
   {
@@ -1594,7 +1595,7 @@
    "b": "Chardalyn spear",
    "tier": "stated",
    "must_find": false,
-   "line": 84,
+   "line": 90,
    "note": "spoils of the mine"
   },
   {
@@ -1604,7 +1605,7 @@
    "b": "Heart of chardalyn",
    "tier": "stated",
    "must_find": false,
-   "line": 84,
+   "line": 90,
    "note": "hidden under the bucket lift"
   },
   {
@@ -1614,7 +1615,7 @@
    "b": "Psi crystal",
    "tier": "inferred",
    "must_find": true,
-   "line": 87,
+   "line": 93,
    "note": "studied it; the party took it from the skull"
   },
   {
@@ -1624,7 +1625,7 @@
    "b": "The gemstone mine",
    "tier": "inferred",
    "must_find": true,
-   "line": 84,
+   "line": 90,
    "current": false,
    "note": "found there in the mind flayer's skull, then taken: the place is history"
   },
@@ -1635,7 +1636,7 @@
    "b": "Mind flayer",
    "tier": "stated",
    "must_find": false,
-   "line": 84,
+   "line": 90,
    "note": "from its petrified skull"
   },
   {
@@ -1645,7 +1646,7 @@
    "b": "Wolf figurine",
    "tier": "stated",
    "must_find": true,
-   "line": 90,
+   "line": 96,
    "note": "bought it from Claude for 75 gold"
   },
   {
@@ -1655,7 +1656,7 @@
    "b": "Wolf figurine",
    "tier": "inferred",
    "must_find": true,
-   "line": 90,
+   "line": 96,
    "note": "the owner: he owns it and carries it now; the text says only that he bought it"
   },
   {
@@ -1665,7 +1666,7 @@
    "b": "Aurora's Wind",
    "tier": "stated",
    "must_find": true,
-   "line": 90,
+   "line": 96,
    "note": "'Fizzlebomb's vessel'; the owner flagged this as missing"
   },
   {
@@ -1675,7 +1676,7 @@
    "b": "The minotaur captain",
    "tier": "stated",
    "must_find": false,
-   "line": 90,
+   "line": 96,
    "note": "devoured him and shattered his ship"
   },
   {
@@ -1685,7 +1686,7 @@
    "b": "Maer Dualdon",
    "tier": "stated",
    "must_find": false,
-   "line": 90
+   "line": 96
   },
   {
    "id": "l111",
@@ -1694,7 +1695,7 @@
    "b": "Boy",
    "tier": "stated",
    "must_find": false,
-   "line": 96,
+   "line": 102,
    "feeling": "friendly",
    "note": "befriended him"
   },
@@ -1705,7 +1706,7 @@
    "b": "Three Flags Sailing",
    "tier": "stated",
    "must_find": false,
-   "line": 96
+   "line": 102
   },
   {
    "id": "l113",
@@ -1714,7 +1715,7 @@
    "b": "Targos",
    "tier": "inferred",
    "must_find": false,
-   "line": 96
+   "line": 102
   },
   {
    "id": "l114",
@@ -1723,7 +1724,7 @@
    "b": "Boy",
    "tier": "inferred",
    "must_find": true,
-   "line": 96,
+   "line": 102,
    "note": "Boy led the party to Keegan's home: the owner says he is Garret's dog. The text never says it; offer it to the DM, never extract it"
   },
   {
@@ -1733,7 +1734,7 @@
    "b": "Keegan Velryn",
    "tier": "stated",
    "must_find": true,
-   "line": 96,
+   "line": 102,
    "note": "'whose husband'"
   },
   {
@@ -1743,7 +1744,7 @@
    "b": "Explorer's League",
    "tier": "stated",
    "must_find": true,
-   "line": 96,
+   "line": 102,
    "note": "'a noted member'"
   },
   {
@@ -1753,7 +1754,7 @@
    "b": "Kelvin's Cairn",
    "tier": "stated",
    "must_find": false,
-   "line": 96,
+   "line": 102,
    "note": "vanished five days ago leading an expedition up it"
   },
   {
@@ -1763,7 +1764,7 @@
    "b": "Keegan Velryn",
    "tier": "stated",
    "must_find": true,
-   "line": 96,
+   "line": 102,
    "note": "50 gold and a route map to find Garret"
   },
   {
@@ -1773,7 +1774,7 @@
    "b": "Targos",
    "tier": "inferred",
    "must_find": false,
-   "line": 96,
+   "line": 102,
    "note": "a kennel master the party met there"
   },
   {
@@ -1793,7 +1794,7 @@
    "b": "Cerric Vanya'elen",
    "tier": "stated",
    "must_find": false,
-   "line": 18,
+   "line": 24,
    "note": "served as Keeper of the Sparkwalker Spire \"under Master Syllar Sparkwalker\", \"alongside rival apprentices Emmerich and Wit\": an apprentice of his (l011 says works_for)"
   },
   {
@@ -1803,7 +1804,7 @@
    "b": "Belleros Stormgrace",
    "tier": "stated",
    "must_find": false,
-   "line": 67,
+   "line": 73,
    "feeling": "wary",
    "note": "the other side of the heated debate on mithril smelting (l081 is Belleros toward Brewner)"
   },
@@ -1814,7 +1815,7 @@
    "b": "Icewind Dale",
    "tier": "stated",
    "must_find": false,
-   "line": 30,
+   "line": 36,
    "note": "'hunts across Icewind Dale searching for answers': where he roams now (#3545, step 11b)"
   },
   {
@@ -1824,7 +1825,7 @@
    "b": "Aurora's Wind",
    "tier": "stated",
    "must_find": false,
-   "line": 93,
+   "line": 99,
    "note": "'Belleros took command of the vessel and ran the ship ashore' (#3545, step 11b)"
   },
   {
@@ -1834,7 +1835,7 @@
    "b": "Fizzlebomb",
    "tier": "stated",
    "must_find": false,
-   "line": 93,
+   "line": 99,
    "note": "pushed Fizzlebomb overboard into the freezing waters, at Cerric's urging (#3545, step 11b)"
   },
   {
@@ -1844,7 +1845,7 @@
    "b": "Fizzlebomb",
    "tier": "stated",
    "must_find": false,
-   "line": 93,
+   "line": 99,
    "note": "'Cerric to convince Okthandom to push Fizzlebomb overboard' (#3545, step 11b)"
   }
  ],
@@ -1853,91 +1854,91 @@
    "id": "e01",
    "what": "Master Sparkwalker disappears, Wit comes back fatally wounded, and Cerric flees to Neverwinter with the tome",
    "who": "Cerric, Syllar Sparkwalker, Wit",
-   "line": 21
+   "line": 27
   },
   {
    "id": "e02",
    "what": "Vaelrith vanishes at 105, leaving a bloodstained campsite",
    "who": "Okthandom, Vaelrith",
-   "line": 27
+   "line": 33
   },
   {
    "id": "e03",
    "what": "Claude erases his own memory, is held by a circus and escapes",
    "who": "Claude",
-   "line": 42
+   "line": 48
   },
   {
    "id": "e04",
    "what": "Hlin Trollbane offers the party a contract on Sephek Kaltro in The Lucky Liar",
    "who": "the party, Hlin Trollbane, Sephek Kaltro",
-   "line": 67
+   "line": 73
   },
   {
    "id": "e05",
    "what": "The party fights six ice kobolds and evades a yeti on the road to Termalaine",
    "who": "the party",
-   "line": 75
+   "line": 81
   },
   {
    "id": "e06",
    "what": "Rumours reach the party that an evil wizard captured in Easthaven will be burned at the stake",
    "who": "the party",
-   "line": 78
+   "line": 84
   },
   {
    "id": "e07",
    "what": "The grell paralyzes Claude and destroys Glyph, then the party kills it",
    "who": "Claude, Cerric, the party",
-   "line": 84
+   "line": 90
   },
   {
    "id": "e08",
    "what": "Okthandom kills Trex with an arrow, and Claude burns Penolopi to banish the ghost",
    "who": "Okthandom, Trex, Claude, Cerric",
-   "line": 84
+   "line": 90
   },
   {
    "id": "e09",
    "what": "The party secures the spoils of the mine, including a psi crystal and a heart of chardalyn",
    "who": "the party",
-   "line": 84
+   "line": 90
   },
   {
    "id": "e10",
    "what": "Speaker Masthew pays a bounty of 250 gold for clearing the mine",
    "who": "the party, Speaker Masthew",
-   "line": 87
+   "line": 93
   },
   {
    "id": "e11",
    "what": "Claude sells the wolf figurine to Belleros for 75 gold",
    "who": "Claude, Belleros",
-   "line": 90
+   "line": 96
   },
   {
    "id": "e12",
    "what": "An ice troll devours the first ship's captain and shatters his ship",
    "who": "ice troll, the minotaur captain",
-   "line": 90
+   "line": 96
   },
   {
    "id": "e13",
    "what": "Cerric talks Okthandom into pushing Fizzlebomb overboard; Belleros runs the Aurora's Wind ashore",
    "who": "Cerric, Okthandom, Belleros, Fizzlebomb",
-   "line": 93
+   "line": 99
   },
   {
    "id": "e14",
    "what": "Three owlbears ambush the party near Targos",
    "who": "the party",
-   "line": 93
+   "line": 99
   },
   {
    "id": "e15",
    "what": "Belleros befriends Boy, who leads the party to Keegan Velryn; she asks them to find Garret",
    "who": "Belleros, Boy, Keegan Velryn, Garret Velryn",
-   "line": 96
+   "line": 102
   },
   {
    "id": "e16",
@@ -1961,7 +1962,7 @@
    "id": "e19",
    "what": "Each night before midnight Auril casts the spell that keeps the sun from rising: the Everlasting Rime",
    "who": "Auril",
-   "line": 51
+   "line": 57
   }
  ],
  "deferred": [
@@ -1969,7 +1970,11 @@
   "who a marching order puts ahead of whom is not a tie"
  ],
  "map_facts": [
-  {"place": "Icewind Dale", "layer": "climate", "value": "arctic", "line": 4, "note": "the North held in a frozen vice, no sun, no warmth; also the treacherous tundra (line 36). Not one of slice 2's set phrases, so its reader misses it: scored as missed until a reader says it"}
+  {"place": "Icewind Dale", "layer": "climate", "value": "arctic", "line": 4, "note": "the North held in a frozen vice, no sun, no warmth; also the treacherous tundra (line 42). Not one of slice 2's set phrases, so its reader misses it: scored as missed until a reader says it"}
+ ],
+ "languages": [
+  {"character": "Cerric Vanya'elen", "language": "Elvish", "line": 21, "note": "'raised fluent in Elvish' (from his elven heritage); the owner added this paragraph on 2026-11-14"},
+  {"character": "Cerric Vanya'elen", "language": "Draconic", "line": 21, "note": "'earned him fluency in Draconic as well' (from his studies of arcane texts)"}
  ],
  "must_not_find": [
   "a kind of creature is not an entry (#3373 rule, Supervisor 2026-11-04): no entry or tie for the white roc, ice kobolds, grell, electric eel or owlbears; one particular creature is (the mind flayer whose skull held the Psi crystal)",
@@ -1979,6 +1984,7 @@
   "'The Brotherhood' in the note is named once and nothing is said about it: no members, no leader, and it is not the Explorer's League",
   "the unnamed boy who shouts the news, the unnamed beggar woman's prophecy and the unnamed ghost's own name: do not invent names for them",
   "'Eashaven' is Easthaven spelled wrongly (one place, not two)",
-  "the Ten-Towns settlement 'Dougan's Hole' is not in this document, so it must not appear"
+  "the Ten-Towns settlement 'Dougan's Hole' is not in this document, so it must not appear",
+  "the Sylvan runes on Claude's wolf figurine (line 48) are writing on an item, not a language Claude speaks: no language row for him"
  ]
 }
