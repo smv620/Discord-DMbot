@@ -13067,6 +13067,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 look_up=self._player_lookup(guild.id),
                                 actions=store,
                                 clock=self._import_clock_choice(guild.id),
+                                maps=self.map_store,
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug

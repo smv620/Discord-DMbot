@@ -18,6 +18,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING
 
 from dmbot.db import Database
 from dmbot.memory import backstory_keep as keep
@@ -53,6 +54,9 @@ from dmbot.memory.models import (
 )
 from dmbot.memory.store import INT64_MAX, PERSON, MemoryStore
 from dmbot.memory.store import NAMES_NOT_SHOWN as NAMES_NOT_SHOWN_WORDS
+
+if TYPE_CHECKING:
+    from dmbot.maps.store import MapStore
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
 
 log = logging.getLogger(__name__)
@@ -136,6 +140,13 @@ MAP_ACTIONS = ("map-terrain", "map-climate", "map-control", "map-show")
 # World notes (#4285, slice 1c): ✅ on the lines the page showed (their ids, space-separated), 🚫 on
 # one line, or ↩ Undo of one of those (the text is its change number). Filed under no name.
 WORLD_ACTIONS = ("world-keep", "world-not", "world-undo")
+# The Maps page's presses (#4347): a DM's yes or no to using a map (`<map id> yes|no`), Show to
+# the table or Hide (`<map id> shown|hidden`), Remove (`<map id>`), a poster's Take it back
+# (`<map id>`), and ↩ Undo of one of those (the text is its change number). Filed under no name.
+# Only a DM may use, show or remove; the poster alone may take their own map back, so these run
+# before the "sender is a DM" check, which a player is never meant to pass. (`MAP_ACTIONS` above
+# is the place's land, climate and ruler.)
+MAPS_PAGE_ACTIONS = ("maps-use", "maps-show", "maps-remove", "maps-takeback", "maps-undo")
 
 
 async def _map_fact(
@@ -400,6 +411,21 @@ class ActionStore:
             )
             return await cur.fetchone() is not None
 
+    async def map_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int
+    ) -> bool:
+        """Whether `batch` is the change this person's own done Maps press made from the website
+        (#4347: a DM's use, show or remove, or a poster's take-back), so the page's Undo can only
+        take back what they did themselves."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action IN ('maps-use', 'maps-show', 'maps-remove',"
+                " 'maps-takeback') AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
+                (guild_id, campaign_id, user_id, batch),
+            )
+            return await cur.fetchone() is not None
+
     async def claim_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, claim_id: str, batch: int
     ) -> bool:
@@ -498,8 +524,11 @@ async def apply(
     look_up: PlayerLookupFn | None = None,
     actions: ActionStore | None = None,
     clock: ClockChoiceFn | None = None,
+    maps: MapStore | None = None,
 ) -> Outcome:
     """Do one action the way Discord's name card does. Nothing here logs the DM's words."""
+    if action.action in MAPS_PAGE_ACTIONS:
+        return await _maps(memory, maps, actions, guild_id, dm_user_ids, action)
     if action.user_id not in dm_user_ids:
         return _failed(NOT_ALLOWED)
     cid = action.campaign_id
@@ -902,6 +931,75 @@ async def _world(
     except MemoryRuleError:
         return _failed(GONE)
     return Outcome(batches=(done.batch,) if done.batch is not None else ())
+
+
+async def _maps(
+    memory: MemoryStore,
+    maps: MapStore | None,
+    actions: ActionStore | None,
+    guild_id: int,
+    dm_user_ids: Collection[int],
+    a: Action,
+) -> Outcome:
+    """One press on the Maps page (#4347), through the map store's own calls (as Discord's buttons,
+    #4373 and #4390), so each is one change and one Undo. A DM may answer a map's use, show or hide
+    it and remove it; only a map's poster takes it back; ↩ Undo takes back only a change this
+    person's own done Maps action made, read again here. The store rechecks the map, so one gone
+    meanwhile answers `gone`. Words and ids only."""
+    from dmbot.maps.store import (  # (a late import: no cycle)
+        NOT_YOURS,
+        AlreadyAnswered,
+        MapError,
+        Viewer,
+    )
+
+    if maps is None or actions is None:
+        return _failed(FAILED)
+    cid = a.campaign_id
+    is_dm = a.user_id in dm_user_ids
+    if a.action == "maps-undo":
+        if not (a.text.isascii() and a.text.isdigit()) or len(a.text) > 15:
+            return _failed(GONE)  # ("²" is a digit to Python and int() refuses it)
+        batch = int(a.text)
+        if not await actions.map_batch_made(guild_id, cid, a.user_id, batch):
+            return _failed(GONE)
+        try:
+            await memory.undo(guild_id, cid, batch)
+        except TooLateToUndo:
+            return _failed(TOO_LATE)
+        except MemoryRuleError as exc:
+            if str(exc) == ALREADY_UNDONE:
+                return Outcome()  # (taken back already: a retried Undo)
+            return _failed(GONE if str(exc) == STORE_NOT_FOUND else CHANGED)
+        return Outcome()
+    if a.action != "maps-takeback" and not is_dm:
+        return _failed(NOT_ALLOWED)
+    map_id, _, word = a.text.partition(" ")
+    made: int | None  # the change the press made, for the page's Undo (none when nothing changed)
+    try:
+        if a.action == "maps-use":
+            made = (
+                await maps.answer_use(
+                    guild_id, cid, map_id, dm_id=a.user_id, yes=word == "yes", first_only=True
+                )
+            ).batch
+        elif a.action == "maps-show":
+            made = (
+                await maps.set_audience(guild_id, cid, map_id, "table" if word == "shown" else "dm")
+            ).batch
+        elif a.action == "maps-remove":
+            made = (await maps.remove_map(guild_id, cid, map_id)).batch
+        else:
+            found = await maps.get(guild_id, cid, map_id, Viewer(dm=True))
+            if found is None:
+                return _failed(GONE)
+            made = (await maps.take_back(guild_id, cid, found.picture_id, a.user_id)).batch
+    except AlreadyAnswered:
+        return Outcome()  # (the first answer stands: done, with no change to undo)
+    except MapError as exc:
+        # a map gone meanwhile, or not the sender's to take back
+        return _failed(NOT_ALLOWED if str(exc) == NOT_YOURS else GONE)
+    return Outcome(batches=(made,) if made is not None else ())
 
 
 async def _world_undo(
