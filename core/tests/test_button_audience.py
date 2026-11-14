@@ -232,6 +232,10 @@ AUDIENCE: dict[str, str] = {
             "ui.kept_pictures.DeleteButton",
             "ui.kept_pictures.DeleteYesButton",
             "ui.kept_pictures.PrivateButton",
+            # Only the person who posted the picture; read from the database on every press, so a
+            # forwarded card or a made-up number finds nothing (#4344).
+            "ui.map_question.NoButton",
+            "ui.map_question.YesButton",
             "ui.line_fix.FixLineButton",
             "ui.line_fix.LineFixButton",
             "ui.name_card.UndoButton",
