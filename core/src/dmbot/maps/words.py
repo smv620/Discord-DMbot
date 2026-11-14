@@ -119,3 +119,21 @@ TAKE_BACK_UNDO_FAILED = "Couldn't undo: that was changed again since."
 NOT_YOUR_CHANGE = "Only the person who made this change can undo it."
 _NOT_USING = "Not answered yet, so DMbot isn't using this map."
 REMINDER = _NOT_USING + " You can still answer the question above."
+
+
+# Sending a map to DMbot yourself (#4372): `/dmbot map`, or a picture in a private chat.
+WHICH_CAMPAIGN = "Which campaign is this map for?"
+NO_CAMPAIGN_HERE = "You're not in a campaign on this server yet. Ask your DM to add you."
+NO_CAMPAIGN_PRIVATE = "DMbot can't find a campaign for you. Ask your DM to add you."
+BUSY = "DMbot is busy. Try again in a few minutes."
+EXPIRED = "That took too long, so DMbot let the picture go. Send it again."
+WRONG_TYPE = "DMbot can only keep pictures: PNG, JPG, WebP or GIF."
+SAVING = "Saving your map…"
+FIRST_25 = "Showing the first 25."
+COMMAND_DESCRIPTION = "Keep a map picture for your campaign"
+PICTURE_OPTION = "Attach the map picture"
+NAME_OPTION = "What is it called?"
+
+
+def too_big(mb: int) -> str:
+    return f"That picture is too big. Send one under {mb} MB."

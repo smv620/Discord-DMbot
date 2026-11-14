@@ -102,6 +102,12 @@ AUDIENCE: dict[str, str] = {
             "ui.map_question.PosterUndoButton",  # their own change only, read from the log
             "ui.map_question.TakeBackButton",
             "ui.map_question.YesButton",
+            # A map the person sent themselves (#4372): only the person it is held for, by its
+            # token, read from the bot's memory on every press.
+            "ui.map_send.MenuSelect",
+            "ui.map_send.NoButton",
+            "ui.map_send.PickButton",
+            "ui.map_send.YesButton",
         ],
         SELF,
     ),

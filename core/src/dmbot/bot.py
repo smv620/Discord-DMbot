@@ -295,6 +295,7 @@ from dmbot.install_record import InstallStore
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
 from dmbot.map_notes import MapNotesSection, MapNoteStore
+from dmbot.maps.pending import PendingMaps
 from dmbot.maps.store import MapStore
 from dmbot.members import MemberDirectory
 from dmbot.memory import (
@@ -562,6 +563,7 @@ from dmbot.ui import (
     looked_at,
     map_answer,
     map_question,
+    map_send,
     name_pass_undo,
     player_id,
     recap_audio,
@@ -1548,6 +1550,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.picture_actions: PictureActions | None = None
         self.picture_store: PictureStore | None = None
         self.map_store: MapStore | None = None  # a picture kept as a map (#4344)
+        self.pending_maps = PendingMaps()  # a sent map waiting for its owner's yes (#4372)
         self.picture_bucket: Bucket | None = None
         self._picture_db: Database | None = None
         self._pictures_told: set[str] = set()  # campaigns told this run that old pictures went
@@ -1827,6 +1830,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             kept_pictures.PrivateButton, kept_pictures.DeleteButton, kept_pictures.DeleteYesButton
         )
         self.add_dynamic_items(map_question.YesButton, map_question.NoButton)  # #4344
+        self.add_dynamic_items(
+            map_send.PickButton, map_send.MenuSelect, map_send.YesButton, map_send.NoButton
+        )  # a map sent to DMbot, #4372
         self.add_dynamic_items(
             map_answer.ActButton, map_answer.OpenButton, map_answer.UndoButton
         )  # the DM's side, #4344
@@ -13465,6 +13471,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     await self._delete_reply(reply)
                 else:
                     self._image_replies.setdefault(message_id, []).append(reply)
+
+    async def take_private_map(self, message: discord.Message) -> bool:
+        """A picture sent to DMbot in a private chat is a map to keep (#4372): True when it took
+        it, so the sidebar says nothing more. Nothing is stored before the sender's yes."""
+        if self.map_store is None or self.picture_keeper is None:
+            return False
+        return await map_send.from_private_message(self, message)
 
     async def _tell_pictures_removed(self, guild_id: int, campaign_id: str, count: int) -> None:
         """The DMs hear once (a run of the bot) that old pictures were removed to make room."""

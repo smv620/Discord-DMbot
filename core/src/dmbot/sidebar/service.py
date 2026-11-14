@@ -298,6 +298,12 @@ class SidebarService:
         if message.author.bot or message.guild is not None:
             return
         user_id = message.author.id
+        if message.attachments and not message.flags.voice:
+            # A picture sent to DMbot may be a map to keep (#4372): it asks its own question, and
+            # takes the message only when it is one picture.
+            take_map = getattr(self.host, "take_private_map", None)
+            if take_map is not None and await take_map(message):
+                return
         voice = message.flags.voice and bool(message.attachments)
         typed = message.content.strip() if not message.attachments else ""
         if not voice and not typed:
