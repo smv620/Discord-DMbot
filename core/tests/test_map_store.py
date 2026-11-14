@@ -326,6 +326,36 @@ class Maps(DatabaseTest):
             [m.id for m in await self.maps.waiting_for_a_dm(GUILD_A, self.two.id)], [theirs]
         )
 
+    async def test_the_poster_takes_their_map_back_and_the_batch_is_theirs_alone(self) -> None:
+        pic = await self.picture(self.one.id, 1)
+        mid = await self.add(pic, dm=False)
+        with self.assertRaises(MapError):  # (a DM or anyone else is refused)
+            await self.maps.take_back(GUILD_A, self.one.id, pic, DM)
+        self.assertEqual(len(await self.maps.maps(GUILD_A, self.one.id, DM_VIEW)), 1)
+        back = await self.maps.take_back(GUILD_A, self.one.id, pic, PLAYER)
+        assert back.value is not None and back.batch is not None
+        self.assertEqual(back.value.id, mid)
+        self.assertEqual(await self.maps.maps(GUILD_A, self.one.id, DM_VIEW), [])
+        kept = await self.pictures.by_id(GUILD_A, pic)
+        assert kept is not None
+        self.assertFalse(kept.gone)  # (the picture stays a picture)
+        taken = self.pictures.taken_back_by
+        self.assertTrue(await taken(GUILD_A, self.one.id, back.batch, PLAYER))
+        self.assertFalse(await taken(GUILD_A, self.one.id, back.batch, DM))
+        self.assertFalse(await taken(GUILD_A, self.two.id, back.batch, PLAYER))
+        # nothing left to take back: no change, no batch
+        again = await self.maps.take_back(GUILD_A, self.one.id, pic, PLAYER)
+        self.assertEqual((again.value, again.batch), (None, None))
+
+    async def test_a_dms_removal_is_not_a_take_back_batch(self) -> None:
+        pic = await self.picture(self.one.id, 1)
+        mid = await self.add(pic, dm=False)
+        gone = await self.maps.remove_map(GUILD_A, self.one.id, mid)
+        assert gone.batch is not None
+        self.assertFalse(
+            await self.pictures.taken_back_by(GUILD_A, self.one.id, gone.batch, PLAYER)
+        )
+
     async def test_a_player_viewer_never_sees_a_dm_only_map_even_when_it_is_usable(self) -> None:
         mid = await self.add(await self.picture(self.one.id, 1), dm=True)
         got = await self.maps.get(GUILD_A, self.one.id, mid, DM_VIEW)
