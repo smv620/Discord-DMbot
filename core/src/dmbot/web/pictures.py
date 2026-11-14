@@ -39,6 +39,7 @@ from dmbot.web.transcripts import numbered_sessions, reads_campaign
 _CODE = re.compile(r"[A-Za-z0-9_-]{43,}")
 LINK_SECONDS = 300  # how long a signed address lasts: long enough to load, too short to pass on
 PAGE = 24
+SCAN_AT_MOST = 20  # pages of the door an outsider's own pictures may be read across (#4403)
 
 # The only words an unopened link says (the page shows these and nothing about the table).
 PRIVATE_WORDS = "This picture is private to its campaign."
@@ -160,7 +161,8 @@ async def read_pictures(
     """The gallery page: `{pictures, more, isDm, usage, sessions, posters}`, newest first. A
     picture is `{code, at, sessionNumber, poster, description, previewUrl, permanent, isPublic,
     mine}`. `usage` is for the campaign's DMs only. Any member of the server may ask; anyone else
-    gets `not_allowed`. The session filter is the transcripts page's number."""
+    gets `not_allowed`. A member outside the campaign's people (#3891) gets only the pictures they
+    posted, and no posters or sessions. The session filter is the transcripts page's number."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     async with db.user(session.user_id, session=session.id_hash) as conn:
@@ -175,25 +177,30 @@ async def read_pictures(
             except ValueError:
                 wanted = -1
         after, after_id = _cursor(before)
-        cur = await conn.execute(
-            "SELECT dmbot_web_pictures(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
-            (guild_id, campaign_id, wanted, poster[:80], q[:200], after, after_id, PAGE),
-        )
-        got = (await cur.fetchone() or {}).get("r")
         people = await reads_campaign(conn, guild_id, campaign_id)
+        got = None
+        own: list[dict[str, Any]] = []
+        for _ in range(SCAN_AT_MOST):
+            cur = await conn.execute(
+                "SELECT dmbot_web_pictures(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
+                (guild_id, campaign_id, wanted, poster[:80], q[:200], after, after_id, PAGE),
+            )
+            got = (await cur.fetchone() or {}).get("r")
+            if got is None or people:
+                break
+            # Poster names and image descriptions come from the transcripts, so they follow the
+            # campaign's-people rule (#3891, #4403): anyone else sees only the pictures they posted
+            # themselves, and no list of posters. The door pages before this cut, so another
+            # person's pictures must not hide their own older ones: read on until a page of their
+            # own, or the end. (A picture's open link is shareable by design.)
+            own.extend(p for p in got["pictures"] if p["mine"])
+            if not got["more"] or len(own) >= PAGE or not got["pictures"]:
+                break
+            after, after_id = _cursor(got["pictures"][-1]["cursor"])
     if got is None:
         raise RecapError("not_allowed")
     if not people:
-        # Poster names and image descriptions come from the transcripts, so they follow the
-        # campaign's-people rule (#3891, #4403): anyone else sees only the pictures they posted
-        # themselves, and no list of posters. (A picture's open link is shareable by design.)
-        got = {
-            **got,
-            "pictures": [p for p in got["pictures"] if p["mine"]],
-            "more": False,
-            "posters": [],
-            "sessions": [],
-        }
+        got = {**got, "pictures": own[:PAGE], "posters": [], "sessions": []}
     base = api_url.rstrip("/")
     usage = got.get("usage")
     return {

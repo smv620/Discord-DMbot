@@ -641,3 +641,20 @@ class TheGalleryPeople(Kept):
                 (THURSDAY.id,),
             )
         self.assertEqual(await self.codes(self.carol), {self.theirs, self.bobs})
+
+    async def test_others_newest_pictures_do_not_hide_an_outsiders_older_own(self) -> None:
+        # (the door pages before the cut: more than a page of other people's newer pictures)
+        mine = await self.keep(poster=CAROL.id, description="carol's old one", at=START + 5)
+        for n in range(pictures.PAGE + 5):
+            await self.keep(poster=ALICE.id, description=f"theirs {n}", at=START + 100 + n)
+        got = await self.gallery(self.carol)
+        self.assertEqual([p["code"] for p in got["pictures"]], [mine])
+
+    async def test_a_search_or_a_poster_filter_shows_an_outsider_no_one_elses_picture(self) -> None:
+        await self.keep(poster=CAROL.id, description="carol's own")
+        for filters in ({"q": "keep"}, {"poster": "Mira"}, {"q": "map", "poster": "Cerric"}):
+            with self.subTest(filters=filters):
+                got = await self.gallery(self.carol, **filters)
+                self.assertEqual(
+                    [p["mine"] for p in got["pictures"]], [True] * len(got["pictures"])
+                )
