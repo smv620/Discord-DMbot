@@ -2026,6 +2026,9 @@ export interface WorldPlaceNote {
   name: string;
   layer: "terrain" | "climate" | "control";
   value: string;
+  /** The table's own words, when the value is "other" (the same as Discord's card). */
+  words: string;
+  /** "partly" for a land, "dry" or "wet" for a climate, or how a group holds the place (rules, claims, occupies, protects). */
   how: string | null;
   rulerId: string | null;
   ruler: string | null;

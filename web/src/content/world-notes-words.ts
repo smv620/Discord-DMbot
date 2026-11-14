@@ -10,14 +10,14 @@ export const worldNotesWords = {
   loading: "Loading…",
   failed: "Couldn't load your world notes.",
   tryAgain: "Try again",
-  none: "Nothing to check right now.",
+  none: "Nothing to check right now. New guesses show up here after a session or a lore upload.",
   places: "Places",
   languages: "Languages",
   keep: "✅ Keep",
   notRight: "🚫 Not right",
   undo: "↩ Undo",
-  keepLabel: (line: string): string => `Keep: ${line}`,
-  notRightLabel: (line: string): string => `Not right: ${line}`,
+  keepLabel: (line: string): string => `Keep "${line}"`,
+  notRightLabel: (line: string): string => `Not right: "${line}"`,
   keepAllPlaces: (n: number): string => `✅ Keep all ${n} ${n === 1 ? "place" : "places"}`,
   keepAllLanguages: (n: number): string => `✅ Keep all ${n} ${n === 1 ? "language" : "languages"}`,
   showing: (shown: number, total: number): string => `Showing ${shown} of ${total}. Check some and the rest come up.`,
@@ -35,12 +35,16 @@ export const worldNotesWords = {
   notDm: "Only a DM of this campaign can check world notes.",
   wrong: "Something went wrong. Nothing was changed. Press the button again.",
   working: "Working on it…",
-  /** One line's words: the land, the climate, who holds the place, or the language. */
-  place: (n: { name: string; layer: string; value: string; how: string | null; ruler: string | null }): string => {
-    if (n.layer === "terrain") return `${n.name}: ${place.land.choices[n.value]?.[0] ?? n.value}`;
+  /** One line's words, as Discord's card says them: the land ("partly" when only part of it), the climate (and dry or wet), who holds
+   * the place, or the language. A value of "other" shows the table's own words. */
+  place: (n: { name: string; layer: string; value: string; words: string; how: string | null; ruler: string | null }): string => {
+    if (n.layer === "terrain") {
+      const land = n.value === "other" ? n.words : (place.land.choices[n.value]?.[0] ?? n.value);
+      return `${n.name}: ${n.how === "partly" ? `Partly ${land.toLowerCase()}` : land}`;
+    }
     if (n.layer === "climate") {
-      const [warmth = "", wet = ""] = n.value.split(" ");
-      return `${n.name}: ${place.climate.warmth[warmth] ?? warmth}${wet ? ` and ${wet}` : ""}`;
+      const warmth = n.value === "other" ? n.words : (place.climate.warmth[n.value] ?? n.value);
+      return `${n.name}: ${n.how === "dry" || n.how === "wet" ? `${warmth} and ${n.how}` : warmth}`;
     }
     return `${n.name}: ${place.ruler.lines[n.how ?? ""] ?? "Held by"} ${n.ruler ?? "a group"}`;
   },

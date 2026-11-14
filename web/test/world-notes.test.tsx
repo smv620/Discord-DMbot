@@ -46,6 +46,13 @@ describe("the list", () => {
     expect(screen.getByRole("button", { name: w.keepAllPlaces(3) })).toBeTruthy();
     expect(screen.getByRole("button", { name: w.keepAllLanguages(1) })).toBeTruthy();
   });
+  it("says partly, and the table's own words for an \"other\" value, as Discord's card does", () => {
+    const base = { name: "Saltmarsh", words: "", how: null, ruler: null };
+    expect(w.place({ ...base, layer: "terrain", value: "swamp", how: "partly" })).toBe("Saltmarsh: Partly swamp");
+    expect(w.place({ ...base, layer: "terrain", value: "other", words: "Floating islands" })).toBe("Saltmarsh: Floating islands");
+    expect(w.place({ ...base, layer: "climate", value: "other", words: "Always misty", how: "wet" })).toBe("Saltmarsh: Always misty and wet");
+    expect(w.place({ ...base, layer: "climate", value: "cold", how: "dry" })).toBe("Saltmarsh: Cold and dry");
+  });
   it("is not there while the switch is off", async () => {
     live.on = false;
     const api = mockApi("table");

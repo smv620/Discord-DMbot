@@ -1038,9 +1038,9 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // DMbot's guesses for the DM to check (#4285): a few lines of each kind, ids shaped as the door's are.
   const worldNotes: { places: WorldPlaceNote[]; languages: WorldLanguageNote[] } = {
     places: [
-      { id: `place:${"a1".repeat(16)}`, entityId: "n24", name: "Saltmarsh", layer: "terrain", value: "swamp", how: null, rulerId: null, ruler: null, from: "session", fromSession: 1_700_000_000 },
-      { id: `place:${"a2".repeat(16)}`, entityId: "n24", name: "Saltmarsh", layer: "climate", value: "temperate wet", how: null, rulerId: null, ruler: null, from: "session", fromSession: 1_700_000_000 },
-      { id: `place:${"a3".repeat(16)}`, entityId: "n25", name: "Greywatch", layer: "control", value: "", how: "rules", rulerId: "g1", ruler: "The Greywatch Guard", from: "lore", fromSession: null },
+      { id: `place:${"a1".repeat(16)}`, entityId: "n24", name: "Saltmarsh", layer: "terrain", value: "swamp", words: "", how: null, rulerId: null, ruler: null, from: "session", fromSession: 1_700_000_000 },
+      { id: `place:${"a2".repeat(16)}`, entityId: "n24", name: "Saltmarsh", layer: "climate", value: "temperate", words: "", how: "wet", rulerId: null, ruler: null, from: "session", fromSession: 1_700_000_000 },
+      { id: `place:${"a3".repeat(16)}`, entityId: "n25", name: "Greywatch", layer: "control", value: "", words: "", how: "rules", rulerId: "g1", ruler: "The Greywatch Guard", from: "lore", fromSession: null },
     ],
     languages: [{ id: `language:${"b1".repeat(16)}`, entityId: "n3", name: "Brother Venn", language: "Giant", from: "lore", fromSession: null }],
   };

@@ -34,6 +34,7 @@ def _line(kind: str, r: dict[str, Any]) -> dict[str, Any]:
         return out
     out["layer"] = str(r["layer"])
     out["value"] = str(r["value"])
+    out["words"] = str(r.get("words") or "")  # the DM's own words, when the value is "other"
     out["how"] = str(r["how"]) if r.get("how") else None
     out["rulerId"] = str(r["rulerId"]) if r.get("rulerId") else None
     out["ruler"] = str(r["ruler"]) if r.get("ruler") else None
