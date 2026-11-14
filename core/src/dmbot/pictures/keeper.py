@@ -42,8 +42,11 @@ class Context:
     line_id: int | None
     message_id: int
     description: str
-    consent_version: int
-    right_granted_at: int
+    # The poster's own yes to their table using pictures from the chat. None for a picture that
+    # did not come from the chat (`message_id` 0: a map the person sent themselves, #4372): there
+    # is no such yes, and none is made up.
+    consent_version: int | None = None
+    right_granted_at: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -103,6 +106,10 @@ class PictureKeeper:
         return taken
 
     async def keep(self, ctx: Context, data: bytes) -> Result:
+        if (ctx.consent_version is None) != (ctx.right_granted_at is None):
+            raise ValueError("a picture's consent version and date go together")
+        if ctx.consent_version is None and ctx.message_id != 0:
+            raise ValueError("a picture from the chat needs the poster's yes")
         try:
             ready = await self._prepare(data)
         except Refused as exc:
