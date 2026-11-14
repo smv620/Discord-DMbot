@@ -761,7 +761,7 @@ class Cards(base.NamesTest):
         self.assertNotIn(connection_edit.KEEP_LENGTH_BUTTON, self.labels(page))
         it = self.it()
         await page._set_length(it, "two days by cart")
-        self.assertIn("🛣️ Length kept: **two days by cart**. Wrong? Press **Undo**", self.told(it))
+        self.assertIn("🛣️ Length saved: **two days by cart**. Wrong? Press **Undo**", self.told(it))
         road = await self.road()
         self.assertEqual((road.length_words, road.length_amount, road.length_from),
                          ("two days by cart", 2.0, "dm"))  # fmt: skip
@@ -830,7 +830,11 @@ class Cards(base.NamesTest):
     async def test_a_route_places_card_shows_dmbots_read_to_the_dm_only(self) -> None:
         east = await self.route_place(read="a day by cart")
         text, view = await self.place_card(east)
-        self.assertIn("🛣️ **Length:** a day by cart (DMbot read this; tap 🛣️ Length to change)", text)
+        self.assertIn(
+            "🛣️ **Length:** a day by cart (DMbot read this. Players see it once you press "
+            "✅ Length is right.)",
+            text,
+        )
         self.assertIn(place_size.LENGTH_BUTTON, self.labels(view))
         self.assertIn(place_size.KEEP_LENGTH_BUTTON, self.labels(view))
         text, view = await self.place_card(east, MANAGER)
@@ -844,12 +848,12 @@ class Cards(base.NamesTest):
         self.assertIn("🛣️ Length kept: **a day by cart**.", self.told(it))
         stale = self.it()
         await place_size.set_length(stale, self.campaign.id, east.id, "", keep=True)
-        self.assertIn(LENGTH_CHANGED, self.told(stale))
+        self.assertIn(place_size.LENGTH_CLASH, self.told(stale))
         text, _ = await self.place_card(east, MANAGER)  # (kept: the players see it now)
         self.assertIn("🛣️ **Length:** a day by cart\n", text + "\n")
         changed = self.it()
         await place_size.set_length(changed, self.campaign.id, east.id, "two days by cart")
-        self.assertIn("🛣️ Length kept: **two days by cart**.", self.told(changed))
+        self.assertIn("🛣️ Length saved: **two days by cart**.", self.told(changed))
         same = self.it()
         await place_size.set_length(same, self.campaign.id, east.id, "two days by cart")
         self.assertIn(place_size.NOTHING_CHANGED, self.told(same))
@@ -863,3 +867,10 @@ class Cards(base.NamesTest):
         self.fresh()
         _, view = await self.place_card(town)
         self.assertNotIn(place_size.LENGTH_BUTTON, self.labels(view))
+
+    async def test_a_manager_is_told_only_the_dm_sets_a_length_before_the_form(self) -> None:
+        page = await self.road_page()
+        it = self.it(MANAGER)
+        await page._length(it)
+        self.assertIn(place_size.ONLY_DM_LENGTH, self.told(it))
+        self.assertIsNone(getattr(it.response, "modal", None))  # (no form to type into)

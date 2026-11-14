@@ -47,7 +47,12 @@ from dmbot.ui.name_card import (
     show_card,
 )
 from dmbot.ui.names import _campaign_for, _md, _memory, changed, sees_secrets
-from dmbot.ui.place_size import KEEP_LENGTH_BUTTON, LENGTH_BUTTON, NOTHING_CHANGED
+from dmbot.ui.place_size import (
+    KEEP_LENGTH_BUTTON,
+    LENGTH_BUTTON,
+    NOTHING_CHANGED,
+    ONLY_DM_LENGTH,
+)
 from dmbot.ui.who_knows import WhoKnowsMenu, called, player_characters, who_text
 
 log = logging.getLogger(__name__)
@@ -565,6 +570,12 @@ class OneConnection(_Menu):
         await self._changed(interaction, found, note, undo=written.batch)
 
     async def _length(self, interaction: discord.Interaction) -> None:
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        if campaign is None:
+            return
+        if not sees_secrets(campaign, interaction.user.id):  # (before the form, not after typing)
+            await _tell(interaction, ONLY_DM_LENGTH)
+            return
         await interaction.response.send_modal(
             RouteLengthForm(self.length_words, lambda i, text: self._set_length(i, text))
         )
@@ -577,7 +588,7 @@ class OneConnection(_Menu):
         if found is None:
             return
         if not found.secrets:  # checked on every press
-            await _tell(interaction, SECRET_DENIED_PRESS)
+            await _tell(interaction, ONLY_DM_LENGTH)
             return
         c = found.campaign
         try:
@@ -590,7 +601,8 @@ class OneConnection(_Menu):
         if written.batch is None:
             await _tell(interaction, NOTHING_CHANGED)
             return
-        await self._changed(interaction, found, length_note(written.value), undo=written.batch)
+        note = length_note(written.value, kept=False)
+        await self._changed(interaction, found, note, undo=written.batch)
 
     async def _keep_length(self, interaction: discord.Interaction) -> None:
         """✅ Length is right (#4255): DMbot's read of the length is the DM's from now on."""
@@ -599,7 +611,7 @@ class OneConnection(_Menu):
         if found is None:
             return
         if not found.secrets:
-            await _tell(interaction, SECRET_DENIED_PRESS)
+            await _tell(interaction, ONLY_DM_LENGTH)
             return
         c = found.campaign
         try:
@@ -609,7 +621,8 @@ class OneConnection(_Menu):
         except MemoryRuleError as exc:
             await _tell(interaction, str(exc))  # (the length changed meanwhile: plain words)
             return
-        await self._changed(interaction, found, length_note(written.value), undo=written.batch)
+        note = length_note(written.value, kept=True)
+        await self._changed(interaction, found, note, undo=written.batch)
 
     async def _remove(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -695,11 +708,13 @@ class RouteLengthForm(discord.ui.Modal, title="How far is it?"):
         await self._done(interaction, text)
 
 
-def length_note(length: route_length.Length | None) -> str:
-    """What the DM is told after a length change (#4255; the ux-critic's words)."""
+def length_note(length: route_length.Length | None, *, kept: bool, undo: bool = True) -> str:
+    """What the DM is told after a length change (#4255; the ux-critic's words): "saved" for the
+    DM's own words, "kept" for ✅ Length is right on DMbot's read."""
+    after = f" {UNDO_NOTE}" if undo else ""
     if length is None:
-        return f"🛣️ Length taken off. {UNDO_NOTE}"
-    return f"🛣️ Length kept: **{_md(length.words)}**. {UNDO_NOTE}"
+        return f"🛣️ Length taken off.{after}"
+    return f"🛣️ Length {'kept' if kept else 'saved'}: **{_md(length.words)}**.{after}"
 
 
 class OtherWords(discord.ui.Modal, title="Other words"):

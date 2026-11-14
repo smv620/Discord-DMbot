@@ -14,6 +14,7 @@ import discord
 
 from dmbot.memory import place_levels
 from dmbot.memory.models import DM, MemoryRuleError
+from dmbot.memory.store import LENGTH_CHANGED
 from dmbot.ui import place_links
 from dmbot.ui.dmbot_commands import _answer_first, _Button, _Menu, _replace, _Select, _tell
 from dmbot.ui.names import GONE, _campaign_for, _md, _memory, changed, sees_secrets
@@ -52,7 +53,9 @@ FORM_LABELS = {place_levels.WATER: "water", place_levels.ROUTE: "a road or route
 LENGTH_BUTTON = "🛣️ Length"
 KEEP_LENGTH_BUTTON = "✅ Length is right"
 ONLY_DM_LENGTH = "Only the DM can change how far a route is."
-NOTHING_CHANGED = "Nothing changed."
+NOTHING_CHANGED = "Nothing changed: that's already its length."
+# A stale ✅ on a place: the card is drawn again with the length as it is now
+LENGTH_CLASH = "🛣️ Someone changed that length just now. Here it is; try again if it's still wrong."
 
 
 def form_line(form: str | None, read: bool = False) -> str:
@@ -71,7 +74,10 @@ def length_line(words: str | None, read: bool = False) -> str:
     if not words:
         return ""
     if read:
-        return f"\n🛣️ **Length:** {_md(words)} (DMbot read this; tap {LENGTH_BUTTON} to change)"
+        return (
+            f"\n🛣️ **Length:** {_md(words)} (DMbot read this. Players see it once you press "
+            f"{KEEP_LENGTH_BUTTON}.)"
+        )
     return f"\n🛣️ **Length:** {_md(words)}"
 
 
@@ -406,6 +412,7 @@ async def set_length(
 ) -> None:
     """The DM's length for a route place (#4255): their words, or `keep` DMbot's read as it is
     (✅ Length is right). One change each; the same words again write nothing."""
+    from dmbot.ui.connection_edit import length_note
     from dmbot.ui.name_card import show_card
 
     await _answer_first(interaction, in_place=True)
@@ -426,16 +433,14 @@ async def set_length(
                 campaign.guild_id, campaign.id, entity_id, text, on="place", source=DM
             )
     except MemoryRuleError as exc:  # (the card is drawn again, so its buttons keep working)
-        await show_card(
-            interaction, campaign_id, entity_id, replace=True, note=f"🛣️ Couldn't change it. {exc}"
-        )
+        note = LENGTH_CLASH if str(exc) == LENGTH_CHANGED else f"🛣️ Couldn't change it. {exc}"
+        await show_card(interaction, campaign_id, entity_id, replace=True, note=note)
         return
     if written.batch is None:
         await _tell(interaction, NOTHING_CHANGED)
         return
     changed(interaction, campaign)
     length = written.value
-    note = (
-        f"🛣️ Length kept: **{_md(length.words)}**." if length is not None else "🛣️ Length taken off."
-    )
+    # (no Undo note: a place's card has no Undo for this; the DM sets it again instead)
+    note = length_note(length, kept=keep, undo=False)
     await show_card(interaction, campaign_id, entity_id, replace=True, note=note)
