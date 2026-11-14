@@ -97,11 +97,22 @@ class Viewer(NamedTuple):
 
 def may_use_map(m: Map) -> bool:
     """THE answer to "may DMbot use this map?" (design rule 3): both yeses are on the row. Every
-    reader of maps calls this; a map waiting for a DM, or one a DM said no to, is never used. (A
-    picture in chat that is not a map yet has `dmbot.map_use.may_use_map`, until 6b-2 makes this
-    the only one, #4349.)"""
+    reader of maps calls this; a map waiting for a DM, or one a DM said no to, is never used. The
+    only one (#4349): a picture in chat that is not a map yet is never read closely at all."""
     return m.use_ok is True
 
+
+# The close read's sweep (#4349): at most this many failed reads of one map (the migration's CHECK
+# holds the same 3), and a claim or a failure older than this is taken again: a sweep that stopped
+# mid-read (the bot restarted), or the wait before the next try.
+CLOSE_READ_TRIES = 3
+CLOSE_READ_LEASE_S = 1800
+# A map the sweep may take: allowed, and not read, not being read (or that claim is stale) and not
+# failed too often. Its two numbers are the tries limit and the oldest live claim, in that order.
+_CLAIMABLE = (
+    "use_ok IS TRUE AND close_read_tries < %s"
+    " AND (close_read_at IS NULL OR (close_read_tries > 0 AND close_read_at < %s))"
+)
 
 COLUMNS = (
     "id, picture_id, title, covers, kind, width, height, audience, came_from, import_tool,"
@@ -363,6 +374,71 @@ class MapStore:
             )
             row = await cur.fetchone()
         return None if row is None else _map(row)
+
+    # ---- the close read's sweep (#4349, MapBot 6b-2; migration 0488 says what the marks mean) ----
+
+    async def close_read_waiting(self, guild_id: int) -> list[tuple[str, Map]]:
+        """The maps in this server still to be read closely, oldest first, each with its campaign:
+        DMbot may use them (`may_use_map`), none has been read, and none failed 3 times. Claimed
+        ones come back once their claim is older than `CLOSE_READ_LEASE_S`."""
+        now = int(self._clock())
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"SELECT campaign_id, {COLUMNS} FROM campaign_maps WHERE guild_id = %s"
+                f" AND {_CLAIMABLE} ORDER BY created_at, id",
+                (guild_id, CLOSE_READ_TRIES, now - CLOSE_READ_LEASE_S),
+            )
+            found = [(str(r["campaign_id"]), _map(r)) for r in await cur.fetchall()]
+        return [(c, m) for c, m in found if may_use_map(m)]
+
+    async def claim_close_read(self, guild_id: int, campaign_id: str, map_id: str) -> int | None:
+        """Mark this map as being read, in the same statement that checks it still may be, so two
+        sweeps never read one map (Supervisor's ruling). The claim's time, which the outcome must
+        name (`close_read_done`, `close_read_failed`), or None when it can't be claimed now."""
+        now = int(self._clock())
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE campaign_maps SET close_read_at = %s,"
+                " close_read_tries = close_read_tries + 1"
+                f" WHERE guild_id = %s AND campaign_id = %s AND id = %s AND {_CLAIMABLE}"
+                " RETURNING close_read_at",
+                (now, guild_id, campaign_id, map_id, CLOSE_READ_TRIES, now - CLOSE_READ_LEASE_S),
+            )
+            row = await cur.fetchone()
+        return None if row is None else int(row["close_read_at"])
+
+    async def close_read_done(
+        self, guild_id: int, campaign_id: str, map_id: str, claimed: int
+    ) -> None:
+        """The read is kept: the mark stays and the tries go back to 0, so it isn't read again."""
+        await self._close_read_mark(guild_id, campaign_id, map_id, claimed, "close_read_tries = 0")
+
+    async def close_read_failed(
+        self, guild_id: int, campaign_id: str, map_id: str, claimed: int, *, counted: bool = True
+    ) -> None:
+        """The read didn't work. Counted: the mark stays, set to now, so the next try waits a lease
+        (`CLOSE_READ_LEASE_S`: a short AI outage doesn't use up the tries); at `CLOSE_READ_TRIES`
+        it is left alone. Not `counted` when it was put off rather than failed (no AI credits, the
+        day's picture limit, the poster stopped mid-read): the try is given back and the mark
+        cleared."""
+        change = (
+            f"close_read_at = {int(self._clock())}"
+            if counted
+            else "close_read_at = NULL, close_read_tries = GREATEST(close_read_tries - 1, 0)"
+        )
+        await self._close_read_mark(guild_id, campaign_id, map_id, claimed, change)
+
+    async def _close_read_mark(
+        self, guild_id: int, campaign_id: str, map_id: str, claimed: int, change: str
+    ) -> None:
+        # (only the claim that read it may say how it went: a later claim after a lapsed lease is
+        # never undone by an earlier read finishing late)
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                f"UPDATE campaign_maps SET {change}"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s AND close_read_at = %s",
+                (guild_id, campaign_id, map_id, claimed),
+            )
 
     async def waiting_for_a_dm(self, guild_id: int, campaign_id: str) -> list[Map]:
         """The maps a player said yes to and no DM has answered ("❓ Questions for you")."""

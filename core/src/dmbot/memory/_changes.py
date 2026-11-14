@@ -173,7 +173,9 @@ MAP_FACTS = Table(
 )  # fmt: skip
 # One map: a kept picture DMbot knows is a map (#4344, MapBot layers slice 3a). It is in the log so
 # that each DM action on a map (keep, yes or no to using it, show to the table, remove) is one Undo
-# (#4346, design rule 8). Only the store in `maps/store.py` writes it, through `Changes`.
+# (#4346, design rule 8). Only the store in `maps/store.py` writes it, through `Changes`; the one
+# exception is the close-read sweep's own marks (`close_read_at`, `close_read_tries`, #4349),
+# housekeeping that is no DM action and so not among the columns below.
 MAPS = Table(
     "campaign_maps",
     "id",
