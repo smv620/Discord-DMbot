@@ -466,15 +466,31 @@ def _sure() -> Sure:
         except accept_all.WrongCampaign as exc:
             raise SampleError(str(exc)) from exc
         memory, tally = MemoryStore(db), auto.Tally()
+        kept_so_far = len(await memory.entities(guild, campaign, statuses=("confirmed",)))
         if not connections_only:
             await auto.accept_names(memory, guild, campaign, tally, kind_of=background_kind)
             await auto.accept_other_names(memory, guild, campaign, tally)
         await auto.accept_connections(memory, BackstoryLinks(db), guild, campaign, tally)
-        return {
+        counts = {
             "accepted": sum(tally.accepted.values()),
             "left waiting": sum(tally.waiting.values()),
             "refused by a rule": sum(tally.refused.values()),
             "changes": len(tally.batches),
+        }
+        if connections_only:  # (after the AI's answers: only "accepted" is read, names untouched)
+            return counts
+        # #4382: what "left waiting" is, so a run says it without SQL. A lore upload keeps what
+        # DMbot is sure of by itself (`add_sure`, unless the DM asked to be asked first), so this
+        # step often accepts 0. "names kept so far": every kept entry before this step (the
+        # upload's sure names and every earlier step's; "The party" too, once the bot has filled
+        # it in at a start-up). The connections' reasons add up to "waiting connections".
+        return {
+            **counts,
+            "names kept so far": kept_so_far,
+            "waiting names": tally.waiting[auto.NAMES],
+            "waiting other names": tally.waiting[auto.OTHER_NAMES],
+            "waiting connections": tally.waiting[auto.CONNECTIONS],
+            **{f"connections {why}": tally.waiting_why[why] for why in auto.WHY_WAITING},
         }
 
     return sure
