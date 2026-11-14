@@ -63,13 +63,21 @@ def check_picture(content_type: str | None, size: int) -> str | None:
 
 
 async def campaigns_for(bot: DMBot, user_id: int, guild_id: int | None) -> list[tuple[int, Any]]:
-    """The campaigns this person is in: one the person runs, or where DMbot has their yes to be
-    recorded (`guild_id` limits it to one server; None looks in every server DMbot is in)."""
-    guilds = [guild_id] if guild_id is not None else await bot.campaigns.guilds_with_campaigns()
+    """The campaigns this person is in, per campaign: one they run, or one where they play a
+    character. The server-wide yes to be recorded is not membership (a person who agreed in a
+    server is not in every campaign there), so it is never used here. `guild_id` limits it to one
+    server; None looks in the servers DMbot is in and the person shares."""
     found: list[tuple[int, Any]] = []
+    if guild_id is not None:
+        guilds = [guild_id]
+    else:
+        guilds = [g for g in await bot.campaigns.guilds_with_campaigns() if bot.get_guild(g)]
     for gid in guilds:
         for campaign in await bot.campaigns.list_campaigns(gid):
-            if user_id in campaign.dm_user_ids or bot.consent.has_consent(gid, user_id):
+            plays = False
+            if user_id not in campaign.dm_user_ids and bot.memory is not None:
+                plays = bool(await bot.memory.characters_of(gid, campaign.id, user_id))
+            if user_id in campaign.dm_user_ids or plays:
                 found.append((gid, campaign))
     return found
 
@@ -84,13 +92,13 @@ async def offer(
     """Hold the picture and return what to show: the campaign choice, or the question itself when
     there is only one campaign. Nothing is stored. A picture DMbot can't keep is never asked
     about, and no campaign or a full memory is said in plain words."""
+    campaigns = await campaigns_for(bot, user_id, guild_id)
+    if not campaigns:
+        return (words.NO_CAMPAIGN_HERE if guild_id is not None else words.NO_CAMPAIGN_PRIVATE), None
     try:
         await prepare.prepare_async(data)  # (decodes it once, to refuse a broken file up front)
     except prepare.Refused:
         return words.WRONG_TYPE, None
-    campaigns = await campaigns_for(bot, user_id, guild_id)
-    if not campaigns:
-        return (words.NO_CAMPAIGN_HERE if guild_id is not None else words.NO_CAMPAIGN_PRIVATE), None
     try:
         held = bot.pending_maps.put(user_id, data, title)
     except Busy:
@@ -175,6 +183,7 @@ class MenuSelect(discord.ui.DynamicItem[discord.ui.Select[discord.ui.View]], tem
                 discord.SelectOption(label=_short(name), value=f"{gid}:{cid}")
                 for gid, cid, name in (options or [])
             ]
+            # (a menu needs one option even when rebuilt from its id after a restart)
             or [discord.SelectOption(label="Pick a campaign", value="0:0")],
         )
         super().__init__(select)
@@ -238,13 +247,14 @@ class YesButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], temp
         bot = _bot(interaction)
         await _answer_first(interaction, in_place=True)
         user_id = interaction.user.id
-        held = bot.pending_maps.get(user_id, self.code)
+        # Claimed before any await, so two quick presses can never both store it.
+        held = bot.pending_maps.claim(user_id, self.code)
         keeper, maps = bot.picture_keeper, bot.map_store
         if held is None:
             await _gone(interaction)
             return
         if keeper is None or maps is None:
-            await _show(interaction, words.FAILED)
+            await _retry(interaction, bot, held, self)
             return
         mine = await campaigns_for(bot, user_id, self.guild_id)
         campaign = next((c for _, c in mine if c.id == self.campaign_id), None)
@@ -253,9 +263,12 @@ class YesButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], temp
             return
         await _show(interaction, words.SAVING)
         picture = None
+        got = None
         try:
             agreed = await bot.consent.agreed_under(self.guild_id, user_id)
-            # (a sender with no recorded yes to pictures: this yes is their own agreement)
+            # The picture row records the sender's own yes to this picture. With no recorded yes
+            # to be recorded at the table, this answer is that agreement; it is not a chat-capture
+            # consent, and nothing else reads it as one (`message_id` 0 marks "not from the chat").
             granted, version = (
                 agreed if agreed is not None else (int(time.time()), IMAGE_TERMS_VERSION)
             )
@@ -269,7 +282,10 @@ class YesButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], temp
             )  # fmt: skip
             picture = got.picture
             if picture is None:
-                await _show(interaction, words.BUSY if got.why_not == "full" else words.FAILED)
+                if got.why_not == "full":
+                    await _show(interaction, words.BUSY)  # (no room: the picture is let go)
+                else:
+                    await _retry(interaction, bot, held, self)
                 return
             is_dm = user_id in campaign.dm_user_ids
             await maps.add_map(
@@ -278,19 +294,29 @@ class YesButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], temp
                 title=held.title, audience="dm", storage_mb=bot.settings.picture_storage_mb,
             )  # fmt: skip
         except MapError as exc:  # (no room, already a map): the store's own words
-            if picture is not None and got.new:
+            if picture is not None and got is not None and got.new:
                 await keeper.discard(self.guild_id, campaign.id, picture, unless_map=True)
-            await _show(interaction, str(exc))
+            await _show(interaction, str(exc))  # (the store's own words; the picture is let go)
             return
         except Exception as exc:
             log.warning("A sent map failed to save (%s)", type(exc).__name__)
-            await _show(interaction, words.FAILED)
+            await _retry(interaction, bot, held, self)
             return
-        bot.pending_maps.drop(user_id, self.code)
         log.info("A sent map was kept (%s)", "dm" if is_dm else "player")
         back = discord.ui.View(timeout=None)
         back.add_item(TakeBackButton(self.guild_id, picture.id))
         await _show(interaction, words.said_yes(is_dm, False), back)
+
+
+async def _retry(interaction: discord.Interaction, bot: DMBot, held: Any, yes: YesButton) -> None:
+    """A save that failed and may work again: the picture is put back (the same code and expiry)
+    and the question stays, so the person can press Yes again."""
+    bot.pending_maps.restore(held)
+    await _show(
+        interaction,
+        f"{words.FAILED}\n\n{_question()}",
+        _question_view(yes.guild_id, yes.campaign_id, yes.code),
+    )
 
 
 class NoButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_NO):
@@ -340,6 +366,7 @@ async def dmbot_map(
         await _tell(interaction, why)
         return
     if interaction.guild_id is None:
+        await _tell(interaction, words.NO_CAMPAIGN_PRIVATE)
         return
     try:
         data = await picture.read()
@@ -354,12 +381,15 @@ async def dmbot_map(
 
 async def from_private_message(bot: DMBot, message: discord.Message) -> bool:
     """A picture sent to DMbot in a private chat: True when this took it (the sidebar then says
-    nothing more). Only one picture at a time, and only a real picture; anything else is left to
-    the sidebar's own note."""
+    nothing more). Only one picture of a kind DMbot keeps, with no words typed with it (a DM
+    asking the sidebar a question with a picture attached still gets the sidebar's answer);
+    anything else is left to the sidebar."""
     if message.guild is not None or message.author.bot or len(message.attachments) != 1:
         return False
+    if message.content.strip():
+        return False
     attached = message.attachments[0]
-    if attached.content_type is None or not attached.content_type.startswith("image/"):
+    if (attached.content_type or "").split(";")[0].strip().lower() not in TYPES:
         return False
     why = check_picture(attached.content_type, attached.size)
     if why is not None:

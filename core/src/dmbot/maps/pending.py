@@ -10,6 +10,8 @@ which the sender is told DMbot is busy. Counts-only logs: never a name or the pi
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import secrets
 import time
 from collections.abc import Callable
@@ -62,6 +64,9 @@ class PendingMaps:
             raise Busy
         held = Held(secrets.token_hex(6), user_id, data, title, self._clock() + self._ttl)
         self._held[user_id] = held
+        # Nothing else runs while the bot is idle, so release the bytes on time by themselves too.
+        with contextlib.suppress(RuntimeError):  # (no running loop: the next call sweeps)
+            asyncio.get_running_loop().call_later(self._ttl + 1, self._sweep)
         return held
 
     def get(self, user_id: int, code: str) -> Held | None:
@@ -69,6 +74,20 @@ class PendingMaps:
         self._sweep()
         held = self._held.get(user_id)
         return held if held is not None and held.code == code else None
+
+    def claim(self, user_id: int, code: str) -> Held | None:
+        """Take the person's held picture out, before any await: two quick presses of Yes can
+        then never both store it. `restore` puts it back when the save failed and may be retried."""
+        held = self.get(user_id, code)
+        if held is not None:
+            del self._held[user_id]
+        return held
+
+    def restore(self, held: Held) -> None:
+        """Put a claimed picture back (a failed save): the same code and the same expiry."""
+        self._sweep()
+        if held.expires_at > self._clock() and held.user_id not in self._held:
+            self._held[held.user_id] = held
 
     def drop(self, user_id: int, code: str) -> bool:
         held = self.get(user_id, code)

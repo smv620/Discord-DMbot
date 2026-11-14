@@ -104,16 +104,22 @@ class Sending(DatabaseTest):
         self.maps = MapStore(self.db, self.memory, clock=lambda: 2000.0)
         self.bucket = Bucket()
         self.one = await self.campaigns.create(GUILD, "One", DM)
+        self.plays: dict[str, set[int]] = {self.one.id: {PLAYER}}  # (who plays a character where)
+
+        async def characters_of(guild: int, campaign: str, user: int) -> list[str]:
+            return ["c"] if user in self.plays.get(campaign, set()) else []
+
         self.bot: Any = SimpleNamespace(
             picture_store=self.pictures,
             picture_keeper=PictureKeeper(self.pictures, self.bucket, 5),
             map_store=self.maps,
-            memory=self.memory,
+            memory=SimpleNamespace(characters_of=characters_of),
             campaigns=self.campaigns,
             settings=SimpleNamespace(picture_storage_mb=5),
             pending_maps=PendingMaps(),
             consent=SimpleNamespace(
-                has_consent=lambda guild, user: user == PLAYER,
+                # (everyone has agreed to be recorded: that is not being in the campaign)
+                has_consent=lambda guild, user: True,
                 agreed_under=AsyncMock(return_value=None),
             ),
             get_guild=lambda gid: SimpleNamespace(name="The Server"),
@@ -206,6 +212,44 @@ class Sending(DatabaseTest):
         self.assertEqual(self.bucket.puts, [])
         self.assertEqual(await self.kept(), [])
 
+    async def test_a_consenting_person_who_is_not_in_the_campaign_is_not_offered_it(self) -> None:
+        # STRANGER agreed to be recorded in the server, but neither runs nor plays in any campaign
+        text, view = await map_send.offer(self.bot, STRANGER, png(), "", GUILD)
+        self.assertEqual((text, view), (words.NO_CAMPAIGN_HERE, None))
+        self.assertEqual(self.bot.pending_maps.total(), 0)
+
+    async def test_a_member_of_one_campaign_is_not_offered_the_other(self) -> None:
+        two = await self.campaigns.create(GUILD, "Two", DM)  # (PLAYER plays only in One)
+        text, _, code = await self.asked(PLAYER)
+        self.assertEqual(text, words.question(from_chat=False))  # (no choice: only One)
+        it = self.press(PLAYER)
+        await map_send.YesButton(GUILD, two.id, code).callback(it)  # (a made-up press for Two)
+        self.assertEqual(self.shown(it), words.EXPIRED)
+        self.assertEqual(await self.maps.maps(GUILD, two.id, Viewer(dm=True)), [])
+
+    async def test_two_quick_yes_presses_keep_one_map_only(self) -> None:
+        import asyncio
+
+        _, _, code = await self.asked(PLAYER)
+        first, second = self.press(PLAYER), self.press(PLAYER)
+        yes = map_send.YesButton(GUILD, self.one.id, code)
+        await asyncio.gather(yes.callback(first), yes.callback(second))
+        self.assertEqual(len(await self.kept()), 1)
+        self.assertEqual(len(self.bucket.puts), 2)  # (the file and its preview, once)
+        self.assertEqual(sorted([self.shown(first), self.shown(second)]).count(words.EXPIRED), 1)
+
+    async def test_a_failed_save_puts_the_picture_back_and_the_question_stays(self) -> None:
+        _, _, code = await self.asked(PLAYER)
+        real = self.bot.picture_keeper.keep
+        self.bot.picture_keeper.keep = AsyncMock(side_effect=RuntimeError("boom"))
+        it = self.press(PLAYER)
+        await map_send.YesButton(GUILD, self.one.id, code).callback(it)
+        self.assertIn(words.FAILED, self.shown(it))
+        self.assertIsNotNone(self.bot.pending_maps.get(PLAYER, code))
+        self.bot.picture_keeper.keep = real
+        await map_send.YesButton(GUILD, self.one.id, code).callback(self.press(PLAYER))
+        self.assertEqual(len(await self.kept()), 1)
+
     async def test_no_campaign_says_so_and_holds_nothing(self) -> None:
         text, view = await map_send.offer(self.bot, STRANGER, png(), "", GUILD)
         self.assertEqual((text, view), (words.NO_CAMPAIGN_HERE, None))
@@ -280,14 +324,35 @@ class Sending(DatabaseTest):
 
 
 class PrivateChat(unittest.IsolatedAsyncioTestCase):
-    async def test_only_one_real_picture_is_taken(self) -> None:
-        bot = SimpleNamespace()
-        two = SimpleNamespace(content_type="image/png", size=1)
-        for attachments in ([], [two, two], [SimpleNamespace(content_type="audio/ogg", size=1)]):
-            message = SimpleNamespace(
-                guild=None, author=SimpleNamespace(bot=False, id=1), attachments=attachments
-            )
-            self.assertFalse(await map_send.from_private_message(bot, message))  # type: ignore[arg-type]
+    @staticmethod
+    def message(attachments: list[Any], content: str = "", guild: Any = None) -> Any:
+        sent = AsyncMock()
+        return SimpleNamespace(
+            guild=guild, author=SimpleNamespace(bot=False, id=1), attachments=attachments,
+            content=content, channel=SimpleNamespace(send=sent),
+        )  # fmt: skip
+
+    async def test_only_one_real_picture_with_no_words_is_taken(self) -> None:
+        bot: Any = SimpleNamespace()
+        png_file = SimpleNamespace(content_type="image/png", size=1)
+        cases = [
+            self.message([]),
+            self.message([png_file, png_file]),  # (two files)
+            self.message([SimpleNamespace(content_type="audio/ogg", size=1)]),
+            self.message([SimpleNamespace(content_type="image/svg+xml", size=1)]),  # (not kept)
+            self.message([png_file], content="what does this rule say?"),  # (a DM's question)
+            self.message([png_file], guild=object()),  # (a server's message)
+        ]
+        for message in cases:
+            self.assertFalse(await map_send.from_private_message(bot, message))
+            message.channel.send.assert_not_awaited()
+
+    async def test_a_picture_too_big_is_refused_in_words(self) -> None:
+        bot: Any = SimpleNamespace()
+        big = SimpleNamespace(content_type="image/png", size=26 * 1024 * 1024)
+        message = self.message([big])
+        self.assertTrue(await map_send.from_private_message(bot, message))
+        self.assertEqual(message.channel.send.await_args.args[0], words.too_big(25))
 
 
 class SidebarHook(unittest.IsolatedAsyncioTestCase):

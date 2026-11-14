@@ -298,12 +298,18 @@ class SidebarService:
         if message.author.bot or message.guild is not None:
             return
         user_id = message.author.id
-        if message.attachments and not message.flags.voice:
-            # A picture sent to DMbot may be a map to keep (#4372): it asks its own question, and
-            # takes the message only when it is one picture.
-            take_map = getattr(self.host, "take_private_map", None)
-            if take_map is not None and await take_map(message):
-                return
+        # A picture sent to DMbot may be a map to keep (#4372): it asks its own question, and takes
+        # the message only when it is one picture with no words (not a DM's question).
+        # (an optional capability of the host, not part of `Host`: the many stand-in hosts of the
+        # sidebar's tests have no maps, and a host without it simply never takes a picture)
+        take_map = getattr(self.host, "take_private_map", None)
+        if (
+            take_map is not None
+            and message.attachments
+            and not message.flags.voice
+            and await take_map(message)
+        ):
+            return
         voice = message.flags.voice and bool(message.attachments)
         typed = message.content.strip() if not message.attachments else ""
         if not voice and not typed:
