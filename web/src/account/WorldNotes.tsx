@@ -54,8 +54,8 @@ export default function WorldNotes({ api, refId, onSignedOut }: { api: AccountAp
     press({ action: "keep", ids: [id] }, (m) => (m.kept === 0 ? { ok: false, text: w.nothingKept, batch: null } : { ok: true, text: w.kept(line), batch: m.batch }));
   const keepAll = (ids: string[]) =>
     press({ action: "keep", ids }, (m) => (m.kept === 0 ? { ok: false, text: w.nothingKept, batch: null } : { ok: true, text: w.keptMany(m.kept ?? ids.length), batch: m.batch }));
-  const notRight = (line: string, id: string, kind: "place" | "language") =>
-    press({ action: "not", id }, (m) => ({ ok: true, text: `${w.takenOut(line)} ${kind === "place" ? w.placeNever : w.languageAgain}`, batch: m.batch }));
+  const notRight = (line: string, id: string) =>
+    press({ action: "not", id }, (m) => ({ ok: true, text: `${w.takenOut(line)} ${w.notAgain}`, batch: m.batch }));
   const undo = (batch: number) => press({ action: "undo", batch }, () => ({ ok: true, text: w.undone, batch: null }));
 
   if (problem) {
@@ -98,7 +98,7 @@ export default function WorldNotes({ api, refId, onSignedOut }: { api: AccountAp
                 <button type="button" class="button secondary" disabled={busy} aria-label={w.keepLabel(text(n))} onClick={() => void keepOne(text(n), n.id)}>
                   {w.keep}
                 </button>
-                <button type="button" class="button secondary" disabled={busy} aria-label={w.notRightLabel(text(n))} onClick={() => void notRight(text(n), n.id, kind)}>
+                <button type="button" class="button secondary" disabled={busy} aria-label={w.notRightLabel(text(n))} onClick={() => void notRight(text(n), n.id)}>
                   {w.notRight}
                 </button>
               </p>

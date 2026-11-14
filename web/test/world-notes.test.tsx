@@ -79,12 +79,17 @@ describe("the presses", () => {
     expect(sent).toHaveLength(1);
     expect((sent[0]!.match(/place:/g) ?? []).length).toBe(3);
   });
-  it("🚫 on a place says it won't be guessed again; on a language, that it can come back", async () => {
+  it("🚫 says DMbot won't guess it again, for a place and for a language", async () => {
     await open();
     fireEvent.click(await screen.findByRole("button", { name: w.notRightLabel(SALT) }));
-    expect(await screen.findByText(new RegExp(`${w.placeNever}$`))).toBeTruthy();
+    expect(await screen.findByText(new RegExp(`${w.notAgain}$`))).toBeTruthy();
     fireEvent.click(await screen.findByRole("button", { name: w.notRightLabel("Brother Venn: Giant") }));
-    expect(await screen.findByText(new RegExp(`${w.languageAgain.replace(/[.]/g, "\\.")}$`))).toBeTruthy();
+    expect(await screen.findByText(new RegExp(`${w.notAgain}$`))).toBeTruthy();
+  });
+  it("one line left in a kind says Keep the 1, as Discord does", () => {
+    expect(w.keepAllPlaces(1)).toBe("✅ Keep the 1 place");
+    expect(w.keepAllLanguages(1)).toBe("✅ Keep the 1 language");
+    expect(w.keepAllPlaces(3)).toBe("✅ Keep all 3 places");
   });
   it("↩ Undo puts the line back", async () => {
     const api = await open();
