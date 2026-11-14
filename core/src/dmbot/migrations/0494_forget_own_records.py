@@ -25,8 +25,8 @@ from __future__ import annotations
 #
 # Not here, decided on #4148: `map_notes` are a person's own words put into pictures' descriptions
 # and go when the person deletes their own words (`TranscriptStore.delete_person`, not on account
-# deletion), the owner's call with the transcripts (rule 4); `account_moves` and `access_log` are kept by design (see the
-# catalog's reasons).
+# deletion), the owner's call with the transcripts (rule 4); `account_moves` and `access_log` are
+# proposed to be kept by design (see the catalog's reasons), for Supervisor's ruling.
 #
 # (table, the column that holds the person's Discord ID)
 DELETED: tuple[tuple[str, str], ...] = (
