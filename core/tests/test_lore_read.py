@@ -1329,7 +1329,7 @@ class TheKeptDirection(unittest.IsolatedAsyncioTestCase):
 
         async def add_relation(*args: Any, **kw: Any) -> Any:
             calls.append({"args": args, **kw})
-            return SimpleNamespace(value=(SimpleNamespace(id="r"),), batch=1)
+            return SimpleNamespace(value=(SimpleNamespace(id="r", predicate="kin_of"),), batch=1)
 
         memory = SimpleNamespace(
             add_relation=add_relation,
