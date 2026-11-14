@@ -38,12 +38,6 @@ BY_DESIGN: Rules = {  # kept on purpose: protects the person, or stops a second 
     "trial_extensions": None,
     "try_it_used": None,
     "email_unsubscribed": None,  # the unsubscribe list is kept so nobody is emailed again
-    # (for Supervisor's ruling on #4148) the moved marker stops a second free trial and a replayed
-    # payment (#1230), like try_it_used; its primary key is the old ID, so it cannot be zeroed
-    "account_moves": None,
-    # the admin's own record of who was given free access and by which admin email, kept for the
-    # admin (the delete_person docstring); the grant itself goes with the account
-    "access_log": None,
     "payment_events": None,  # the payment record is kept (the delete_person docstring)
 }
 # The campaign's transcripts, speakers and consent: the owner's call (rule 4):
@@ -98,7 +92,7 @@ class EveryPersonColumnHasARule(DatabaseTest):
         part_g = import_module("dmbot.migrations.0494_forget_own_records")
         done = {
             *part_a.DELETED, *part_a.ZEROED, *part_b.ZEROED, *part_c.DELETED, *part_d.ZEROED,
-            *part_e.DELETED, *part_f.ZEROED, *part_g.DELETED,
+            *part_e.DELETED, *part_f.ZEROED, *part_g.DELETED, *part_g.ZEROED, *part_g.MOVES,
         }  # fmt: skip
         deleted_tables = {
             t for t, _ in (*part_a.DELETED, *part_c.DELETED, *part_e.DELETED, *part_g.DELETED)

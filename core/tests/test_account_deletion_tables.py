@@ -32,6 +32,7 @@ ZEROED: tuple[tuple[str, str], ...] = (
     + FORGET_AUTHORSHIP.ZEROED
     + FORGET_DECISIONS.ZEROED
     + FORGET_DECISIONS_2.ZEROED
+    + FORGET_OWN.ZEROED
 )
 
 # Written out on purpose: if a column is dropped from a forget function, this test fails too, so
@@ -109,6 +110,7 @@ EXPECTED_ZEROED: frozenset[tuple[str, str]] = frozenset(
         ("plot_issues", "answered_by"),
         ("adventure_reads", "started_by"),
         ("active_sessions", "started_by"),
+        ("access_log", "discord_user_id"),
     )
 )
 
@@ -133,6 +135,9 @@ ALREADY_COVERED = frozenset(
         "plot_issues",
         "adventure_reads",
         "active_sessions",
+        # 0494 (#4148): written only by the grant writer, so it has its own test beside the moved
+        # marker's (test_forget_own_records.py).
+        "access_log",
     }
 )
 
