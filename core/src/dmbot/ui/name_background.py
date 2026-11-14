@@ -1419,7 +1419,9 @@ async def store_place_facts(
         for f in read:
             counts[f.layer] += 1
             value = group_ids[f.value] if f.layer == map_facts.CONTROL else f.value
-            found.append(map_fact_store.Read(next(iter(ids)), f.layer, value, f.how, session_at))
+            found.append(
+                map_fact_store.Read(next(iter(ids)), f.layer, value, f.how, session_at, f.part)
+            )
     if not found:
         return 0
     try:
@@ -1430,9 +1432,11 @@ async def store_place_facts(
         log.warning("Place facts couldn't be kept (%s)", type(exc).__name__)
         return 0
     log.info(
-        "Place facts read: terrain=%d climate=%d control=%d unknown=%d; %s",
+        "Place facts read: terrain=%d climate=%d control=%d culture=%d population=%d unknown=%d;"
+        " %s",
         counts[map_facts.TERRAIN], counts[map_facts.CLIMATE], counts[map_facts.CONTROL],
-        counts["unknown"], dict(sorted(written.value.items())),
+        counts[map_facts.CULTURE], counts[map_facts.POPULATION], counts["unknown"],
+        dict(sorted(written.value.items())),
     )  # fmt: skip
     return written.value["written"]
 
