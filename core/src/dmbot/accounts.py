@@ -220,6 +220,9 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
         # The kept trial and unsubscribe records lose the Discord ID where they have its keyed hash
         # (#4145); a row with no hash yet keeps the ID, as before.
         await conn.execute("SELECT dmbot_forget_person_ids()")
+        # The maps they uploaded go, and the maps they answered "use it?" for stay with nobody as
+        # the DM who said so (#3274, #4344).
+        await conn.execute("SELECT dmbot_forget_maps()")
         await conn.execute("DELETE FROM web_users WHERE user_id = %s", (user_id,))
         # Free access goes with the account (#771). It isn't linked to web_users (a grant
         # works for someone who never signed in), so it's deleted by hand.

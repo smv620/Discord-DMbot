@@ -12,6 +12,7 @@ SRC = Path(__file__).resolve().parent.parent / "src" / "dmbot"
 ALLOWED = {
     "maps/store.py",
     "migrations/0472_campaign_maps.py",
+    "migrations/0480_forget_maps.py",  # account deletion: the uploader's maps, the DM's id (#3274)
     "migrations/0457_map_facts.py",  # (its comment: where `map_id` was left for this table)
     "campaigns/tables.py",
     "lineage.py",
