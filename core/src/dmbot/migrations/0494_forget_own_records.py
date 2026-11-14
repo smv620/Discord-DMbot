@@ -16,13 +16,16 @@ from __future__ import annotations
 #   name, its channel IDs and the other game masters), taken by the bot within seconds and swept
 #   after a week. `by_user_id` is who deleted it. Nothing references it; the other game masters'
 #   IDs in `other_dms` are a short-lived queue entry that goes with the row or the sweep, and the
-#   campaign it names no longer exists.
+#   campaign it names no longer exists. A notice another game master wrote can still list the
+#   person's ID in `other_dms` until the bot takes it (seconds) or the weekly sweep removes it; and
+#   a person who deletes a campaign on the website and then their account before the bot takes the
+#   note leaves the other game masters untold and the channels untidied (a window of seconds).
 # A row can be deleted while the bot is working on it; the worker's later `UPDATE ... WHERE id` then
 # matches nothing, which it already treats as "taken back" (as for the queues in 0431 and 0440).
 #
 # Not here, decided on #4148: `map_notes` are a person's own words put into pictures' descriptions
-# and go when the person deletes their own words (`TranscriptStore.delete_person`), the owner's call
-# with the transcripts (rule 4); `account_moves` and `access_log` are kept by design (see the
+# and go when the person deletes their own words (`TranscriptStore.delete_person`, not on account
+# deletion), the owner's call with the transcripts (rule 4); `account_moves` and `access_log` are kept by design (see the
 # catalog's reasons).
 #
 # (table, the column that holds the person's Discord ID)
