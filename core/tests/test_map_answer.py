@@ -7,7 +7,7 @@ Postgres."""
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import discord
@@ -103,7 +103,10 @@ class Answering(DatabaseTest):
         found = await count_kinds(src, GUILD, self.campaign.id, only={kinds.MAPS})
         self.assertEqual(found[kinds.MAPS].n, 2)
         self.assertEqual(
-            [i.item.custom_id for i in board.view(GUILD, self.campaign.id, found).children],
+            [
+                cast(Any, i).item.custom_id
+                for i in board.view(GUILD, self.campaign.id, found).children
+            ],
             [f"dmbot:mapsq:open:{self.campaign.id}"],
         )
 
