@@ -19,6 +19,11 @@ import importlib
 # (0487) now calls it instead of keeping a copy. It reads who someone is, never a line of a
 # transcript.
 #
+# One difference from Discord's list stays, said here: a person who plays or spoke under a second
+# Discord id they added to their account is matched there by every id, but a website session is the
+# account's own id, so here only that id counts. (A DM is unaffected: `campaign_dms` holds the
+# account.)
+#
 # 0487's own door is read back and its inline copy of the test is swapped for a call, each anchor
 # found exactly once, so a drift stops the migration. No row is changed.
 _MAPS = importlib.import_module("dmbot.migrations.0487_maps_doors")

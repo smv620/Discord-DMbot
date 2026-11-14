@@ -44,6 +44,14 @@ class TimelineBase(Base):
         await store.end_session(self.g, other, START + 60)
         self.bob = await self.signed(BOB)
         self.carol = await self.signed(CAROL)
+        # These tests read as a plain member of the server (Carol). Since #3891 a campaign's
+        # transcripts are its people's unless its channels are open to everyone, so they say so;
+        # `test_web_transcript_people.py` tests the rule itself.
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET channels_visibility = 'everyone' WHERE guild_id = %s",
+                (self.g,),
+            )
 
     async def signed(self, user: Any, guilds: Any = None) -> Any:
         token = await sessions.sign_in(

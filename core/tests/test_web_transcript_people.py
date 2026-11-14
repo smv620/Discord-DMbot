@@ -74,7 +74,7 @@ class People(Base):
 
 class TheRule(People):
     async def test_a_member_outside_the_campaigns_people_is_refused_like_a_stranger(self) -> None:
-        self.assertEqual(await self.refused(self.carol), "not_allowed")
+        self.assertEqual(await self.refused(self.carol), "not_found")
         self.assertNotIn(self.cref, await self.listed(self.carol))  # (nor is it listed to them)
 
     async def test_the_dm_may_read(self) -> None:
@@ -99,7 +99,7 @@ class TheRule(People):
         self.assertTrue((await self.lines_of(self.carol))["lines"])
 
     async def test_someone_a_dm_added_by_hand_may_read(self) -> None:
-        self.assertEqual(await self.refused(self.dan), "not_allowed")
+        self.assertEqual(await self.refused(self.dan), "not_found")
         await self.sql(
             "INSERT INTO campaign_channel_people (guild_id, campaign_id, user_id, added_by,"
             " added_at) VALUES (%s, %s, %s, %s, 0)",
@@ -120,4 +120,44 @@ class TheRule(People):
             await transcripts.list_sessions(
                 self.web, self.carol, self.cref, now=NOW, enforce_plans=False
             )
-        self.assertEqual(caught.exception.code, "not_allowed")
+        self.assertEqual(caught.exception.code, "not_found")
+
+
+class WhoDoesNotCount(People):
+    async def test_someone_who_only_typed_in_the_chat_is_not_one_of_the_people(self) -> None:
+        # (the rule is who was heard at the table: typed lines and the DM's sidebar do not count)
+        store = TranscriptStore(self.db)
+        sid = await store.open_session(THURSDAY.id, self.one.id, START + 86_400)
+        await store.add_lines(
+            THURSDAY.id,
+            sid,
+            [
+                Line(
+                    (START + 86_400) * 1000 + 1000,
+                    CAROL.id,
+                    "typed words",
+                    "typed words",
+                    typed=True,
+                )
+            ],
+        )
+        self.assertEqual(await self.refused(self.carol), "not_found")
+
+    async def test_someone_heard_only_at_another_campaign_is_not_one_of_the_people(self) -> None:
+        store = TranscriptStore(self.db)
+        sid = await store.open_session(THURSDAY.id, self.two.id, START)
+        await store.add_lines(
+            THURSDAY.id, sid, [Line(START * 1000 + 1000, DAN.id, "elsewhere", "elsewhere")]
+        )
+        self.assertEqual(await self.refused(self.dan), "not_found")
+
+    async def test_a_character_that_is_not_confirmed_makes_no_one_a_person(self) -> None:
+        waiting = await self.memory.add_entity(
+            THURSDAY.id, self.one.id, type="character", name="Maybe", source=DM_SOURCE,
+            status="proposed",
+        )  # fmt: skip
+        await self.sql(
+            "UPDATE memory_entities SET played_by = %s WHERE guild_id = %s AND id = %s",
+            CAROL.id, THURSDAY.id, waiting.value.id,
+        )  # fmt: skip
+        self.assertEqual(await self.refused(self.carol), "not_found")

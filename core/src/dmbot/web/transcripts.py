@@ -142,13 +142,14 @@ async def _sessions(
 ) -> tuple[int, str, dict[str, Any]]:
     """(server, campaign, the door's answer: the campaign's name and sessions), or a refusal.
     Every page that returns a transcript's words asks this first, so the campaign's-people rule
-    (#3891) is kept here: anyone outside it is refused as a stranger is (`not_allowed`)."""
+    (#3891) is kept here: anyone outside it is refused as a stranger is (`not_found`: the same
+    answer, so nothing says the campaign is there)."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
         if not await reads_campaign(conn, guild_id, campaign_id):
-            raise RecapError("not_allowed")
+            raise RecapError("not_found")
         cur = await conn.execute(
             "SELECT dmbot_web_transcript_sessions(%s, %s) AS found", (guild_id, campaign_id)
         )
