@@ -16,7 +16,7 @@ import time
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
 
-from dmbot.memory import kin, knows_how, lore_knowledge
+from dmbot.memory import kin, knows_how, lore_knowledge, route_length, route_words
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.background import SALES
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink, Waiting
@@ -24,6 +24,7 @@ from dmbot.memory.checks import conflicts
 from dmbot.memory.clues import KNOWS as KNOWS_PREDICATE
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
+    BACKGROUND_SOURCE,
     CONFIRMED,
     DM,
     PLAYER_CHARACTER,
@@ -367,6 +368,23 @@ async def keep_all(
                 batch = None
             if batch is not None:
                 ended.append(batch)
+        # A route's stated length, from the route's own quote by set phrases only (#4255): kept as
+        # DMbot's read (only the DM's ✅ makes it what players may see), in the same Undo
+        if made.predicate == route_words.ROUTE_TO and not made.route_state and c.quote:
+            words = route_length.find(c.quote)
+            if words:
+                try:
+                    said = await memory.set_route_length(
+                        guild_id,
+                        campaign_id,
+                        made.id,
+                        words,
+                        on="connection",
+                        source=BACKGROUND_SOURCE,
+                    )
+                    ended.append(said.batch)
+                except MemoryRuleError:  # (the connection is kept whatever the length does)
+                    log.info("A kept route's length was not stored")
         # (only a connection made just now: an older twin's rows are the DM's, not this guess's)
         if c.world == lore_knowledge.GUESS and not made.unrevealed and made.created_at >= now:
             await mark_guess(memory, guild_id, campaign_id, "connection", [made.id])

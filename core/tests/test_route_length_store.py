@@ -147,3 +147,31 @@ class RouteLength(MemoryTest):
             (road.length_words, road.length_amount, road.length_approx),
             ("about 20 miles", 20, True),
         )
+
+    async def test_a_kept_route_takes_its_length_from_its_quote_as_dmbots_read(self) -> None:
+        # (#4255: the lore reader's route, kept by the sure step or the DM's press)
+        from dmbot.memory import backstory_keep
+        from dmbot.memory.backstory_links import BackstoryLinks, NewLink
+
+        easthaven = await self.add("Easthaven", type="place", status="confirmed")
+        links = BackstoryLinks(self.db)
+        await links.add(
+            GUILD_A, self.c,
+            [NewLink(self.bryn, "route_to", easthaven,
+                     "Easthaven is two days by dogsled from Bryn Shander.", detail="road",
+                     upload="Notes")],
+        )  # fmt: skip
+        waiting = await links.waiting(GUILD_A, self.c, symmetric={"route_to"})
+        done = await backstory_keep.keep_all(self.memory, links, GUILD_A, self.c, waiting)
+        every = await self.memory.relations(GUILD_A, self.c, include_secret=True)
+        (route,) = [
+            r
+            for r in every
+            if r.predicate == "route_to" and easthaven in (r.subject_id, r.object_id)
+        ]
+        self.assertEqual(
+            (route.length_words, route.length_amount, route.length_from),
+            ("two days by dogsled", 2.0, "read"),
+        )
+        for batches in done.ended:  # (the keep's own Undo takes the length back too)
+            self.assertTrue(all(b is not None for b in batches))
