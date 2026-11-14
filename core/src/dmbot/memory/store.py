@@ -435,6 +435,9 @@ def _entity(r: dict[str, Any]) -> Entity:
         place_level_from=r.get("place_level_from"), setting=bool(r.get("setting")),
         setting_from=r.get("setting_from"),
         form=r.get("form"), form_from=r.get("form_from"),
+        length_words=r.get("length_words"), length_amount=r.get("length_amount"),
+        length_unit=r.get("length_unit"), length_approx=bool(r.get("length_approx")),
+        length_from=r.get("length_from"),
     )  # fmt: skip
 
 
@@ -492,6 +495,9 @@ def _relation(r: dict[str, Any]) -> Relation:
         r.get("decided"), r.get("via_alias_id"), str(r.get("knows_how") or ""),
         r.get("end_reason"), r.get("both_ways"), bool(r.get("assumed")),
         str(r.get("route_state") or ""),
+        length_words=r.get("length_words"), length_amount=r.get("length_amount"),
+        length_unit=r.get("length_unit"), length_approx=bool(r.get("length_approx")),
+        length_from=r.get("length_from"),
     )  # fmt: skip
 
 
@@ -522,6 +528,11 @@ def _relation_row(rel: Relation) -> dict[str, Any]:
         "both_ways": rel.both_ways,
         "assumed": rel.assumed,
         "route_state": rel.route_state,
+        "length_words": rel.length_words,
+        "length_amount": rel.length_amount,
+        "length_unit": rel.length_unit,
+        "length_approx": rel.length_approx,
+        "length_from": rel.length_from,
     }
 
 

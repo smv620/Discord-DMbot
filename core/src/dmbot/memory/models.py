@@ -392,6 +392,14 @@ class Entity:
     # the size order. `form_from` says who said it, as for the size.
     form: str | None = None
     form_from: str | None = None
+    # A route's stated length (#4255): the source's words, with an amount and a unit (hours, days or
+    # miles) when the words give one, "about" (`length_approx`), and who gave it (`length_from`:
+    # "read" or "dm"). Only on a route; `memory/route_length.py`.
+    length_words: str | None = None
+    length_amount: float | None = None
+    length_unit: str | None = None
+    length_approx: bool = False
+    length_from: str | None = None
 
     @property
     def setting_guessed(self) -> bool:
@@ -565,6 +573,14 @@ class Relation:
     # "travelled" (a journey from the first place to the second, in the session `from_session_at`
     # gives) or "planned" (the table means to go that way: never where anyone is). `route_words`.
     route_state: str = ""
+    # A route's stated length (#4255): the source's words, with an amount and a unit (hours, days or
+    # miles) when the words give one, "about" (`length_approx`), and who gave it (`length_from`:
+    # "read" or "dm"). Only on a route; `memory/route_length.py`.
+    length_words: str | None = None
+    length_amount: float | None = None
+    length_unit: str | None = None
+    length_approx: bool = False
+    length_from: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

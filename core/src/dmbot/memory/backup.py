@@ -27,6 +27,7 @@ from dmbot.memory import (
     map_facts,
     notify,
     place_levels,
+    route_length,
     route_words,
     sheets,
     whereabouts,
@@ -170,6 +171,7 @@ _TEXT_LIMITS = {
     "unnamed_what": NAME_MAX,
     "players_text": PLAYERS_TEXT_MAX,  # the players' line for an entry (#2967)
     "decided": 60,  # how a pronoun was settled (#2790): fixed words and a number
+    "length_words": route_length.WORDS_MAX,  # a route's stated length, its own words (#4255)
 }
 _CHOICES: dict[str, Sequence[str]] = {
     "status": (
@@ -189,6 +191,8 @@ _CHOICES: dict[str, Sequence[str]] = {
     "place_level_from": place_levels.FROM,
     "form": place_levels.FORMS,  # a place's form (#4173 slice 6a)
     "form_from": place_levels.FROM,
+    "length_unit": route_length.UNITS,  # (a route's stated length, #4255)
+    "length_from": place_levels.FROM,
     "setting_from": (*place_levels.FROM, "declined"),  # who made it the setting (#4173 slice 2b)
     "kind": (*ALIAS_KINDS, *FLAG_KINDS, *LINK_KINDS, *PERSPECTIVE_KINDS),
     "condition": (*CONDITIONS, *THREAD_STATES),
@@ -222,7 +226,23 @@ _NULLABLE = {
     "form", "form_from",  # (a place's form and who said it, #4173 slice 6a)
     "setting_from",  # (who made it the campaign's setting, #4173 slice 2b)
     "both_ways",  # (the DM's direction, #4154: None is the kind's default)
+    "length_words", "length_amount", "length_unit", "length_from",  # (a route's length, #4255)
 }  # fmt: skip
+
+
+def _length_whole(r: Mapping[str, Any], *, on_a_route: bool) -> bool:
+    """A route's stated length in a file (#4255) as the database holds it: only on a route, its
+    words and who gave them together, an amount and its unit together, and no amount or "about"
+    without words. A damaged one refuses the file, as the database's own check would."""
+    words, amount = r.get("length_words"), r.get("length_amount")
+    if words is None:
+        return amount is None and r.get("length_from") is None and not r.get("length_approx")
+    return (
+        on_a_route
+        and r.get("length_from") is not None
+        and (amount is None) == (r.get("length_unit") is None)
+        and (amount is None or (isinstance(amount, (int, float)) and 0 < amount <= 10_000))
+    )
 
 
 def _valid(column: str, value: object) -> bool:
@@ -282,8 +302,13 @@ def _valid(column: str, value: object) -> bool:
         "assumed",
         "setting",
         "srd",
+        "length_approx",  # (a route's length said "about", #4255)
     ):
         return isinstance(value, bool)
+    if column == "length_amount":  # a route's stated length (#4255)
+        return (
+            isinstance(value, (int, float)) and not isinstance(value, bool) and 0 < value <= 10_000
+        )
     if column == "score":  # an impression's or attitude's feeling (#1655)
         return isinstance(value, int) and not isinstance(value, bool) and -100 <= value <= 100
     if column == "weight":  # how much evidence is behind it
@@ -695,6 +720,11 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "setting": False,  # from before #4173: no campaign had a setting
                 "form": None,  # from before #4173 slice 6a: every place an area
                 "form_from": None,
+                "length_words": None,  # from before #4255: no route had a stated length
+                "length_amount": None,
+                "length_unit": None,
+                "length_approx": False,
+                "length_from": None,
                 "players_text": None,  # from before the players' line (#2967)
                 **raw,
             }
@@ -749,6 +779,11 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "both_ways": None,  # from before #4154: every direction was its kind's default
                 "assumed": False,  # from before #4173 slice 3: every connection was stated
                 "route_state": "",  # from before #4173 slice 6d: no route had a state
+                "length_words": None,  # from before #4255: no route had a stated length
+                "length_amount": None,
+                "length_unit": None,
+                "length_approx": False,
+                "length_from": None,
                 **raw,
                 "definition_version": version,
             }
@@ -1049,6 +1084,10 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
             )
         ):
             raise CampaignError(DAMAGED)
+    if any(
+        not _length_whole(r, on_a_route=r["predicate"] == "route_to") for r in by_tag["relation"]
+    ):
+        raise CampaignError(DAMAGED)  # (a route's stated length, #4255)
     if any(r["predicate"] not in onto.predicates for r in by_tag["relation"]):
         raise CampaignError(DAMAGED)
 
@@ -1159,6 +1198,7 @@ def _check_states(onto: Ontology, by_tag: dict[str, list[dict[str, Any]]]) -> No
         # only a place has a form, and a form and who said it come together (#4173 slice 6a)
         or (r.get("form") is not None and not onto.is_a(r["type"], "place"))
         or (r.get("form") is None) != (r.get("form_from") is None)
+        or not _length_whole(r, on_a_route=r.get("form") == "route")
         for r in by_tag["entity"]
     ):
         raise CampaignError(DAMAGED)
