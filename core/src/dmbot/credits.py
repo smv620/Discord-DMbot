@@ -57,6 +57,7 @@ PREPARING_JOBS: tuple[tuple[str, str], ...] = (
     ("dmbot.bot", "DMBot._scan_import"),  # an imported session's name scan
     ("dmbot.bot", "DMBot._read_plan"),  # the read of the DM's adventure
     ("dmbot.ui.theatre_button", "make_for"),  # the script of an imported session (not a live one)
+    ("dmbot.bot", "DMBot._hear_images"),  # a map's careful read, when its note is kept (#4173 6b-1)
 )
 
 OwnerOf = Callable[[int, str], Awaitable[int | None]]

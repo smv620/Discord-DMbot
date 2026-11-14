@@ -13,6 +13,8 @@ question, kept by itself once both places are kept (`backstory_keep.keep_assumed
   only the places every group still shares (`session_chain.rejoined`).
 - **Order.** A session older than the chains' last one never moves them (an import of an old file
   after newer play): it is left out, counted in the log.
+- **The party's last town** (#4338) is one more row, 'town', so a session that starts on the road
+  writes its first arrival as a journey; it is never an open place.
 - **Ids only.** The lines are read in memory and never kept; the table holds entry ids, and the log
   gets counts.
 """
@@ -36,6 +38,7 @@ if TYPE_CHECKING:
     from dmbot.memory.store import MemoryStore
 
 MARK = "mark"  # the one row that says when the last session was walked
+TOWN = "town"  # the party's last town, kept for the next session's first journey (#4338)
 MAX_RANK = 20  # the table's own limit: a chain is at most this deep (a plane down to a room is 8)
 
 
@@ -183,7 +186,7 @@ class StoryChains:
                 "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
                 (f"dmbot.story_chain:{guild_id}:{campaign_id}",),
             )
-            chains, last = await _load(conn, guild_id, campaign_id)
+            chains, last, town = await _load(conn, guild_id, campaign_id)
             if last is not None and session_started_at < last:
                 return Result(0, skipped_older=True)
             found = await _places(conn, guild_id, campaign_id)
@@ -192,16 +195,16 @@ class StoryChains:
             until = (said[-1].started_ms // 1000) if said else session_started_at
             clock = await _clock(conn, guild_id, campaign_id, until)
             plays = await _plays(conn, guild_id, campaign_id)
-            walked, pairs, legs = _walk_all(
-                said, dm_ids, clock, plays, chains, found, stated, moves, routes
+            walked, pairs, legs, town_after = _walk_all(
+                said, dm_ids, clock, plays, chains, found, stated, moves, routes, town
             )
             still = set(await agreed())  # (consent again, after the reads: #4153's rule)
             if any(s.user_id not in still for s in said):
                 said = [s for s in said if s.user_id in still]
-                walked, pairs, legs = _walk_all(
-                    said, dm_ids, clock, plays, chains, found, stated, moves, routes
+                walked, pairs, legs, town_after = _walk_all(
+                    said, dm_ids, clock, plays, chains, found, stated, moves, routes, town
                 )
-            await _save(conn, guild_id, campaign_id, walked, session_started_at)
+            await _save(conn, guild_id, campaign_id, walked, session_started_at, town_after)
             added = 0
             if pairs:  # (inside the lock: the next walk sees them as waiting)
                 added = await self._links.add(
@@ -265,13 +268,14 @@ def _walk_all(
     stated: Collection[str],
     moves: Mapping[int, tuple[Move, ...]] | None = None,
     routes: Sequence[Place] = (),
-) -> tuple[dict[str, list[str]], list[tuple[str, str]], list[Leg]]:
-    """The whole session, Rejoins included: the chains it ends with, the guesses it made and the
-    party's journeys."""
+    town: str | None = None,
+) -> tuple[dict[str, list[str]], list[tuple[str, str]], list[Leg], str | None]:
+    """The whole session, Rejoins included: the chains it ends with, the guesses it made, the
+    party's journeys and the town it was last in. `town`: the one the last session left (#4338),
+    so a session that starts on the road writes its first arrival as a journey."""
     given = set(stated)
     pairs: list[tuple[str, str]] = []
     legs: list[Leg] = []
-    town: str | None = None  # (the party's last town, carried over a Rejoin)
     batch: list[Line] = []
     left_in = max((int(k[1:].split("g")[0]) for k in chains if k != MAIN), default=None)
     for line, ended in lines_with_chains(said, dm_ids, clock, plays, left_in, moves):
@@ -294,14 +298,15 @@ def _walk_all(
         if line is not None:
             batch.append(line)
     walked = walk(batch, found, chains, given, routes, town)
-    return walked.chains, pairs + walked.pairs, legs + walked.legs
+    return walked.chains, pairs + walked.pairs, legs + walked.legs, walked.town
 
 
 async def _load(
     conn: Any, guild_id: int, campaign_id: str
-) -> tuple[dict[str, list[str]], int | None]:
-    """The chains, with places that are gone or turned down left out, and when the last session
-    was walked (the 'mark' row, so it holds even when every chain ended empty)."""
+) -> tuple[dict[str, list[str]], int | None, str | None]:
+    """The chains, with places that are gone or turned down left out, when the last session
+    was walked (the 'mark' row, so it holds even when every chain ended empty), and the party's
+    last town (the 'town' row, left out the same way when its place is gone)."""
     cur = await conn.execute(
         "SELECT max(updated_at) AS last FROM memory_story_chain"
         " WHERE guild_id = %s AND campaign_id = %s",
@@ -317,13 +322,22 @@ async def _load(
         (guild_id, campaign_id),
     )
     chains: dict[str, list[str]] = {}
+    town: str | None = None
     for r in await cur.fetchall():
-        chains.setdefault(str(r["chain"]), []).append(str(r["entity_id"]))
-    return chains, last
+        if r["chain"] == TOWN:
+            town = str(r["entity_id"])
+        else:
+            chains.setdefault(str(r["chain"]), []).append(str(r["entity_id"]))
+    return chains, last, town
 
 
 async def _save(
-    conn: Any, guild_id: int, campaign_id: str, chains: dict[str, list[str]], at: int
+    conn: Any,
+    guild_id: int,
+    campaign_id: str,
+    chains: dict[str, list[str]],
+    at: int,
+    town: str | None = None,
 ) -> None:
     await conn.execute(
         "DELETE FROM memory_story_chain WHERE guild_id = %s AND campaign_id = %s",
@@ -332,6 +346,8 @@ async def _save(
     rows: list[tuple[int, str, str, int, str | None, int]] = [
         (guild_id, campaign_id, MARK, 0, None, max(at, 1))
     ]
+    if town is not None:  # (the same `at` as the mark: `_load` reads the newest as the last walk)
+        rows.append((guild_id, campaign_id, TOWN, 0, town, max(at, 1)))
     for key, ids in chains.items():
         rows += [
             (guild_id, campaign_id, key, rank, entity_id, max(at, 1))

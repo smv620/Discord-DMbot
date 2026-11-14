@@ -149,6 +149,7 @@ class Canned:
         self.fact_tokens: list[int] = []  # the room each fact check was given (#2345)
         self.tokens: list[int] = []  # the room each call was given
         self.sent: list[str] = []
+        self.fronts: list[str] = []
         self.systems: list[str] = []
         self.schemas: list[
             dict[str, Any] | None
@@ -161,7 +162,9 @@ class Canned:
         *,
         max_tokens: int = 0,
         schema: dict[str, Any] | None = None,
+        cache_prefix: str = "",
     ) -> Reply:
+        self.fronts.append(cache_prefix)  # the cached front of each call ("" when there is none)
         if system in (rd.FACTS_SYSTEM, rd.FACTS_SYSTEM_TRANSCRIPT):
             self.fact_sent.append(text)
             self.fact_tokens.append(max_tokens)

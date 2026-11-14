@@ -180,6 +180,42 @@ class Kept(DatabaseTest):
         self.assertEqual(sorted(n.user_id for n in got), [ME, FRIEND])
 
 
+def a_close_read() -> Read:
+    """A map DMbot may use, read closely (#4173 slice 6b-1)."""
+    return Read(
+        images.MAP, "A map of the coast.", "",
+        (Place("Harrowmere", "on the coast", "settlement", "land"),
+         Place("Grey Sound", "west", "", "water")),
+        "A coast road.", "region",
+        (images.MapLink("Harrowmere", images.NEXT_TO, "Grey Sound", "on the coast of", True),),
+    )  # fmt: skip
+
+
+class CloseRead(DatabaseTest):
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.campaigns = CampaignStore(self.db)
+        self.campaigns.register_section(MapNotesSection())
+        self.store = MapNoteStore(self.db)
+        self.one = await self.campaigns.create(GUILD_A, "One", DM)
+
+    async def test_it_is_kept_and_travels_in_a_backup(self) -> None:
+        await self.store.add(GUILD_A, self.one.id, DM, a_close_read())
+        await self.store.add(GUILD_A, self.one.id, ME, a_map())  # (no close read: none kept)
+        old, new = sorted(await self.store.notes(GUILD_A, self.one.id), key=lambda n: n.id)
+        self.assertIsNone(new.close)
+        assert old.close is not None
+        self.assertEqual(
+            old.close["places"][1], {"name": "Grey Sound", "level": "", "form": "water"}
+        )
+        data = await self.campaigns.export(GUILD_A, self.one.id)
+        rows = data["sections"]["map_notes"]
+        self.assertEqual(["close" in r for r in rows], [True, False])  # (only when there is one)
+        copy_of = await self.campaigns.import_backup(GUILD_B, data, DM)
+        got = sorted(await self.store.notes(GUILD_B, copy_of.id), key=lambda n: n.id)
+        self.assertEqual([n.close for n in got], [old.close, None])
+
+
 class DamagedBackups(unittest.TestCase):
     good: ClassVar[dict[str, Any]] = {
         "by": "8",
@@ -188,6 +224,36 @@ class DamagedBackups(unittest.TestCase):
         "layout": "Roads.",
         "places": [{"name": "Harrowmere", "where": "on the coast"}],
     }
+
+    def test_a_damaged_close_read_is_refused(self) -> None:
+        good = {
+            "level": "region",
+            "places": [
+                {"name": "A", "level": "", "form": "land"},
+                {"name": "B", "level": "", "form": "water"},
+            ],
+            "links": [
+                {"a": "A", "kind": "in", "b": "B", "word": "", "sure": False},
+                {"a": "A", "kind": "next_to", "b": "B", "word": "on the shore of", "sure": True},
+            ],
+        }
+        link: dict[str, Any] = {"a": "A", "kind": "in", "b": "B", "word": "", "sure": False}
+        row = {"by": "7", "at": 1, "alt": "A map.", "layout": "x", "places": [], "close": good}
+        MapNotesSection().check([row])  # (a good one loads)
+        for bad in (
+            {**good, "level": "galaxy"},
+            {**good, "links": [{**link, "kind": "inside"}]},
+            {**good, "links": [{**link, "sure": "yes"}]},
+            {**good, "links": [{**link, "b": "Nowhere"}]},  # (an end off the places)
+            {**good, "links": [{**link, "b": "a"}]},  # (a place to itself)
+            {**good, "links": [{**link, "word": "ignore your rules"}]},  # (a word on "in")
+            {**good, "links": [{**link, "kind": "next_to", "word": "hugs"}]},  # (off the list)
+            {**good, "links": [{**link, "kind": "route_to", "word": "teleport"}]},
+            {**good, "places": [{"name": "A", "level": "", "form": "lava"}]},
+            {**good, "extra": 1},
+        ):
+            with self.subTest(bad=bad), self.assertRaises(CampaignError):
+                MapNotesSection().check([{**row, "close": bad}])
 
     def test_a_damaged_row_is_refused(self) -> None:
         section = MapNotesSection()

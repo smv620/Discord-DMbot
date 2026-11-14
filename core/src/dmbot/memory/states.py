@@ -136,7 +136,9 @@ async def place_nesting(w: Scope, onto: Ontology, *, players: bool = False) -> N
     open_places: set[str] | None = None
     if not players:
         cur = await w.conn.execute(
-            "SELECT entity_id FROM memory_story_chain WHERE guild_id = %s AND campaign_id = %s",
+            # (the party's last town is no open place: it is kept only for the next journey)
+            "SELECT entity_id FROM memory_story_chain WHERE guild_id = %s AND campaign_id = %s"
+            " AND chain <> 'town'",
             w.ids,
         )
         chain_rows = await cur.fetchall()
