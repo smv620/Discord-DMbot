@@ -5,7 +5,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, type WebLinkChange } from "../src/account/api";
+import { ApiError, type NamesPage, type WebLinkChange } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Names from "../src/account/Names";
 import { namesPage } from "../src/content/names-words";
@@ -102,6 +102,48 @@ describe("saving", () => {
     expect(changes).toHaveLength(0);
     expect(await row.findByRole("button", { name: w.nextButton })).toBeTruthy();
   });
+  it("a second press of Save while the first is still saving sends one change", async () => {
+    const { api, row, changes } = await openRow("Saltmarsh");
+    let release!: () => void;
+    api.changeWebLink = async (_ref, change) => {
+      changes.push(change);
+      const wait = new Promise<void>((r) => (release = r));
+      await wait;
+      return { a: "x", b: "y", label: "", more: 0, links: [] };
+    };
+    fireEvent.click(await row.findByRole("button", { name: w.nextButton }));
+    fireEvent.input(await row.findByLabelText(w.asked("Saltmarsh", false)), { target: { value: "Greywatch" } });
+    fireEvent.click(await row.findByRole("button", { name: "Greywatch" }));
+    fireEvent.click(row.getByLabelText(/^Next to/));
+    // Native clicks: fireEvent flushes the re-render, which would disable Save before the second press.
+    const save = row.getByRole("button", { name: w.save }) as HTMLButtonElement;
+    save.click();
+    save.click();
+    release();
+    await waitFor(() => expect(changes).toHaveLength(1));
+    expect(await row.findByText(w.saved("Saltmarsh", "Greywatch", NEXT_CHOICES[0]!))).toBeTruthy();
+    expect(changes).toHaveLength(1);
+  });
+  it("an old search answer never replaces a newer one", async () => {
+    const { api, row } = await openRow("Saltmarsh");
+    const all = api.allNames!.bind(api);
+    const held: { answer?: (page: NamesPage) => void } = {};
+    api.allNames = async (ref, query) => {
+      if (query.q === "Grey") return new Promise<NamesPage>((r) => (held.answer = r));
+      return all(ref, query);
+    };
+    fireEvent.click(await row.findByRole("button", { name: w.nextButton }));
+    fireEvent.input(await row.findByLabelText(w.asked("Saltmarsh", false)), { target: { value: "Grey" } });
+    await waitFor(() => expect(held.answer).toBeDefined(), { timeout: 2000 });
+    fireEvent.input(row.getByLabelText(w.asked("Saltmarsh", false)), { target: { value: "Greywatch" } });
+    await row.findByRole("button", { name: "Greywatch" }, { timeout: 2000 });
+    // The old answer arrives late, with a place of its own; it must not appear.
+    const sample = await all("100.cmp1", { q: "Greywatch", kind: "place", sort: "name", page: 1 });
+    held.answer!({ ...sample, names: sample.names.slice(0, 1).map((n) => ({ ...n, name: "Old Name" })) });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(row.queryByRole("button", { name: "Old Name" })).toBeNull();
+    expect(row.getByRole("button", { name: "Greywatch" })).toBeTruthy();
+  });
 });
 
 describe("when saving fails", () => {
@@ -116,6 +158,19 @@ describe("when saving fails", () => {
     fireEvent.click(row.getByLabelText(/^Next to/));
     fireEvent.click(row.getByRole("button", { name: w.save }));
     expect(await row.findByText(w.failed)).toBeTruthy();
+  });
+  it("a refused save says so in plain words and keeps the choice", async () => {
+    const { api, row } = await openRow("Saltmarsh");
+    api.changeWebLink = async () => {
+      throw new ApiError("bad-target");
+    };
+    fireEvent.click(await row.findByRole("button", { name: w.nextButton }));
+    fireEvent.input(await row.findByLabelText(w.asked("Saltmarsh", false)), { target: { value: "Greywatch" } });
+    fireEvent.click(await row.findByRole("button", { name: "Greywatch" }));
+    fireEvent.click(row.getByLabelText(/^Next to/));
+    fireEvent.click(row.getByRole("button", { name: w.save }));
+    expect(await row.findByText(w.refused)).toBeTruthy();
+    expect((row.getByLabelText(/^Next to/) as HTMLInputElement).checked).toBe(true);
   });
 });
 
