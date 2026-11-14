@@ -96,6 +96,7 @@ from dmbot.web import (
     wizard,
     wizard_check,
     wizard_page,
+    world_notes,
 )
 from dmbot.web import homebrew as homebrew_pages
 from dmbot.web import house_rules as house_rule_pages
@@ -2496,6 +2497,55 @@ def create_app(
             return {"answer": await met_list.queue(db, session, ref, met_id, body)}
         except RecapError as err:
             status, detail = name_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/world-notes")
+    async def me_campaign_world_notes(ref: str, signed: Signed) -> dict[str, Any]:
+        """DMbot's guesses about places and languages, for the DM to check (#4285): DM only,
+        nothing for anyone else."""
+        session, _token = signed
+        try:
+            return await world_notes.read(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/world-notes/keep", status_code=202)
+    async def me_campaign_world_keep(ref: str, request: Request, signed: Signed) -> dict[str, str]:
+        """✅ Keep the lines the DM was shown; polled at `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await world_notes.queue_keep(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/world-notes/not", status_code=202)
+    async def me_campaign_world_not(ref: str, request: Request, signed: Signed) -> dict[str, str]:
+        """🚫 Not right on one line."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await world_notes.queue_not(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/world-notes/{batch}/undo", status_code=202)
+    async def me_campaign_world_undo(ref: str, batch: str, signed: Signed) -> dict[str, str]:
+        """↩ Undo of a ✅ or 🚫 by the change number its answer carried."""
+        session, _token = signed
+        try:
+            return {"answer": await world_notes.queue_undo(db, session, ref, batch)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
     @app.get("/me/campaigns/{ref}/names/{entity_id}/world")
