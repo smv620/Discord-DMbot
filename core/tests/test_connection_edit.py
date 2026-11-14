@@ -757,8 +757,8 @@ class Cards(base.NamesTest):
 
     async def test_a_route_has_a_length_button_and_the_dms_words_are_kept(self) -> None:
         page = await self.road_page()
-        self.assertIn(connection_edit.LENGTH_BUTTON, self.labels(page))
-        self.assertNotIn(connection_edit.KEEP_LENGTH_BUTTON, self.labels(page))
+        self.assertIn(place_size.LENGTH_BUTTON, self.labels(page))
+        self.assertNotIn(place_size.KEEP_LENGTH_BUTTON, self.labels(page))
         it = self.it()
         await page._set_length(it, "two days by cart")
         self.assertIn("🛣️ Length saved: **two days by cart**. Wrong? Press **Undo**", self.told(it))
@@ -767,7 +767,7 @@ class Cards(base.NamesTest):
                          ("two days by cart", 2.0, "dm"))  # fmt: skip
         again = self.it()
         await page._set_length(again, "two days by cart")
-        self.assertIn(connection_edit.NOTHING_CHANGED, self.told(again))
+        self.assertIn(place_size.NOTHING_CHANGED, self.told(again))
         undo_it = self.it()
         await page._set_length(undo_it, "twenty miles")
         _, card = undo_it.response.edited[0]
@@ -781,11 +781,11 @@ class Cards(base.NamesTest):
 
     async def test_a_connection_that_is_not_a_route_has_no_length(self) -> None:
         await self.know("Kesh")
-        self.assertNotIn(connection_edit.LENGTH_BUTTON, self.labels(await self.page()))
+        self.assertNotIn(place_size.LENGTH_BUTTON, self.labels(await self.page()))
 
     async def test_length_is_right_keeps_dmbots_read_once(self) -> None:
         page = await self.road_page(read="a day by cart")
-        self.assertIn(connection_edit.KEEP_LENGTH_BUTTON, self.labels(page))
+        self.assertIn(place_size.KEEP_LENGTH_BUTTON, self.labels(page))
         it = self.it()
         await page._keep_length(it)
         self.assertIn("🛣️ Length kept: **a day by cart**.", self.told(it))
@@ -800,9 +800,7 @@ class Cards(base.NamesTest):
         await page._keep_length(self.it(MANAGER))
         road = await self.road()
         self.assertEqual((road.length_words, road.length_from), ("a day by cart", "read"))
-        self.assertNotIn(
-            connection_edit.LENGTH_BUTTON, self.labels(await self.road_page_again(MANAGER))
-        )
+        self.assertNotIn(place_size.LENGTH_BUTTON, self.labels(await self.road_page_again(MANAGER)))
 
     async def road_page_again(self, who: int) -> Any:
         found = await connection_edit._find(
