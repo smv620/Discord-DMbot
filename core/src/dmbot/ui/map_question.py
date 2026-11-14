@@ -22,7 +22,7 @@ from typing import Any
 import discord
 
 from dmbot.maps import words
-from dmbot.maps.store import MapError, Viewer
+from dmbot.maps.store import MapError
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.ui.dmbot_commands import _answer_first, _bot
 
@@ -172,16 +172,12 @@ class TakeBackButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
             if interaction.user.id != picture.poster_id:
                 await interaction.followup.send(words.NOT_YOURS, ephemeral=True)
                 return
-            here = [
-                m
-                for m in await maps.maps(self.guild_id, picture.campaign_id, Viewer(dm=True))
-                if m.picture_id == picture.id
-            ]
-            mine = here[0] if here else None
-            if mine is None:
+            gone = await maps.take_back(
+                self.guild_id, picture.campaign_id, picture.id, interaction.user.id
+            )
+            if gone.value is None:
                 await _finish(interaction, words.ANSWERED)
                 return
-            gone = await maps.remove_map(self.guild_id, picture.campaign_id, mine.id)
         except Exception as exc:
             log.warning("A map take-back failed (%s)", type(exc).__name__)
             await _finish(interaction, words.FAILED)
@@ -189,9 +185,6 @@ class TakeBackButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
         log.info("A poster took a map back")
         undo = discord.ui.View(timeout=None)
         if gone.batch is not None:
-            await store.mark_map_taken_back(
-                self.guild_id, picture.campaign_id, picture.id, gone.batch
-            )
             undo.add_item(PosterUndoButton(self.guild_id, picture.campaign_id, gone.batch))
         await _finish(interaction, words.TOOK_BACK, undo)
 

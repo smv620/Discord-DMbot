@@ -17,13 +17,16 @@ from __future__ import annotations
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 from dmbot.db import Conn, Database
 from dmbot.memory._changes import MAP_FACTS, MAPS
 from dmbot.memory.models import Written, new_id
 from dmbot.memory.store import MemoryStore
 from dmbot.pictures.store import MB, Usage, _lock, _usage
+
+if TYPE_CHECKING:
+    from dmbot.memory._changes import Changes
 
 # Fixed lists in code, each with "other" (design rule 6).
 KINDS = ("world", "region", "settlement", "building", "battle", "other")
@@ -37,6 +40,7 @@ NOT_KEPT = "That picture isn't kept here any more."
 ALREADY = "That picture is already a map."
 FULL = "Permanent pictures are full. Remove one to make room."
 BAD = "That isn't one of the choices."
+NOT_YOURS = "Only the person who posted it can take it back."
 GONE = "That map is gone. Open the Maps page again to see it as it is now."
 
 
@@ -86,6 +90,9 @@ class Viewer(NamedTuple):
 
     dm: bool = False
     table: bool = False
+    # A player's own Discord id: they also see the maps they uploaded themselves, in any state
+    # (so they can see theirs is waiting for a DM), never anyone else's hidden one (#4347).
+    own: int | None = None
 
 
 def may_use_map(m: Map) -> bool:
@@ -128,12 +135,14 @@ def _map(r: Any) -> Map:
 def _seen(viewer: Viewer) -> str:
     """The clause for a viewer (section 8.1). A DM sees every map; whoever may read the transcripts
     sees the `table` ones that DMbot may use, so a map a DM said no to, or one still waiting for a
-    DM, is not listed to the players."""
+    DM, is not listed to the players, except to the person who uploaded it (`own`)."""
     if viewer.dm:
         return ""
+    # `own` is an int by type and is cast again here, so nothing but a number reaches the SQL text.
+    own = "" if viewer.own is None else f" OR right_by = {int(viewer.own)}"
     if viewer.table:
-        return " AND audience = 'table' AND use_ok IS TRUE"
-    return " AND FALSE"
+        return f" AND ((audience = 'table' AND use_ok IS TRUE){own})"
+    return f" AND (FALSE{own})"
 
 
 class MapStore:
@@ -271,19 +280,57 @@ class MapStore:
         the log, so one Undo puts them back with it. No such map: nothing, and no batch."""
         async with self._memory.map_write(guild_id, campaign_id) as w:
             await _lock(w.conn, guild_id, campaign_id)
-            row = await w.get(MAPS, map_id)
-            if row is None:
-                return Written(None, None)
-            for fact in await w.select(MAP_FACTS, " AND map_id = %s", [map_id]):
-                await w.update(MAP_FACTS, str(fact["id"]), {"map_id": None})
-            for other in await w.select(MAPS, " AND replaces = %s", [map_id]):
-                await w.update(MAPS, str(other["id"]), {"replaces": None})
-            await w.delete(MAPS, map_id)
-            await w.conn.execute(
-                "UPDATE campaign_pictures SET permanent = FALSE WHERE id = %s",
-                (int(row["picture_id"]),),
+            gone = await self._remove(w, map_id)
+            return Written(gone, None if gone is None else w.batch)
+
+    async def take_back(
+        self, guild_id: int, campaign_id: str, picture_id: int, user_id: int
+    ) -> Written[Map | None]:
+        """A poster takes their own picture's map back (the Discord button and the website's
+        "Take it back"): only the map goes, as `remove_map`, and the change's batch is written on
+        the picture in the same transaction, which is the one batch the poster's Undo accepts
+        (`PictureStore.taken_back_by`, #4390). Raises `MapError(NOT_YOURS)` for anyone but the
+        picture's poster; no map for it: nothing, and no batch."""
+        async with self._memory.map_write(guild_id, campaign_id) as w:
+            await _lock(w.conn, guild_id, campaign_id)
+            cur = await w.conn.execute(
+                "SELECT poster_id FROM campaign_pictures WHERE guild_id = %s AND campaign_id = %s"
+                " AND id = %s AND deleted_at IS NULL",
+                (guild_id, campaign_id, picture_id),
             )
-            return Written(_map(row), w.batch)
+            posted = await cur.fetchone()
+            if posted is None:
+                raise MapError(NOT_KEPT)
+            if int(posted["poster_id"]) != user_id:
+                raise MapError(NOT_YOURS)
+            found = await w.select(MAPS, " AND picture_id = %s", [picture_id])
+            gone = await self._remove(w, str(found[0]["id"])) if found else None
+            if gone is None:
+                return Written(None, None)
+            await w.conn.execute(
+                "UPDATE campaign_pictures SET map_taken_back_batch = %s WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s",
+                (w.batch, guild_id, campaign_id, picture_id),
+            )
+            return Written(gone, w.batch)
+
+    @staticmethod
+    async def _remove(w: Changes, map_id: str) -> Map | None:
+        """The removal itself, inside a write the caller has opened and locked."""
+        row = await w.get(MAPS, map_id)
+        if row is None:
+            return None
+        for fact in await w.select(MAP_FACTS, " AND map_id = %s", [map_id]):
+            await w.update(MAP_FACTS, str(fact["id"]), {"map_id": None})
+        for other in await w.select(MAPS, " AND replaces = %s", [map_id]):
+            await w.update(MAPS, str(other["id"]), {"replaces": None})
+        await w.delete(MAPS, map_id)
+        await w.conn.execute(
+            "UPDATE campaign_pictures SET permanent = FALSE WHERE guild_id = %s"
+            " AND campaign_id = %s AND id = %s",
+            (w.guild_id, w.campaign_id, int(row["picture_id"])),
+        )
+        return _map(row)
 
     async def maps(
         self,
@@ -306,6 +353,8 @@ class MapStore:
         return [m for m in found if may_use_map(m)] if usable_only else found
 
     async def get(self, guild_id: int, campaign_id: str, map_id: str, viewer: Viewer) -> Map | None:
+        """One map this viewer may see. With `Viewer.own` it can be the person's own map that is
+        still waiting or was refused: a reader of a map's content must check `may_use_map` too."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 f"SELECT {COLUMNS} FROM campaign_maps WHERE guild_id = %s AND campaign_id = %s"

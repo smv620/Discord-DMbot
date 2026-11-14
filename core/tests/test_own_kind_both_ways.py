@@ -23,7 +23,9 @@ OATH = PredicateTerm(
 
 
 class _Campaign(unittest.IsolatedAsyncioTestCase):  # (no tests of its own)
-    NAME = ""  # migrations before this one run at set-up
+    # every migration but this one runs at set-up (later ones too, as the store writes their
+    # columns: test_waiting_route_means_migration does the same)
+    NAME = ""
 
     async def asyncSetUp(self) -> None:
         if not TEST_URL:
@@ -33,7 +35,7 @@ class _Campaign(unittest.IsolatedAsyncioTestCase):  # (no tests of its own)
         self.schema = f"t_{uuid.uuid4().hex[:16]}"
         self.db = await Database.open(
             TEST_URL, schema=self.schema, max_size=2,
-            migrations=tuple(m for m in MIGRATIONS if m[0] < self.NAME),
+            migrations=tuple(m for m in MIGRATIONS if m[0] != self.NAME),
         )  # fmt: skip
         self.c = (await CampaignStore(self.db).create(GUILD_A, "Frostmaiden", DM)).id
         self.memory = MemoryStore(self.db)
