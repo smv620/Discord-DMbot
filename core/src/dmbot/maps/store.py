@@ -86,6 +86,9 @@ class Viewer(NamedTuple):
 
     dm: bool = False
     table: bool = False
+    # A player's own Discord id: they also see the maps they uploaded themselves, in any state
+    # (so they can see theirs is waiting for a DM), never anyone else's hidden one (#4347).
+    own: int | None = None
 
 
 def may_use_map(m: Map) -> bool:
@@ -128,12 +131,14 @@ def _map(r: Any) -> Map:
 def _seen(viewer: Viewer) -> str:
     """The clause for a viewer (section 8.1). A DM sees every map; whoever may read the transcripts
     sees the `table` ones that DMbot may use, so a map a DM said no to, or one still waiting for a
-    DM, is not listed to the players."""
+    DM, is not listed to the players, except to the person who uploaded it (`own`)."""
     if viewer.dm:
         return ""
+    # `own` is an int by type and is cast again here, so nothing but a number reaches the SQL text.
+    own = "" if viewer.own is None else f" OR right_by = {int(viewer.own)}"
     if viewer.table:
-        return " AND audience = 'table' AND use_ok IS TRUE"
-    return " AND FALSE"
+        return f" AND ((audience = 'table' AND use_ok IS TRUE){own})"
+    return f" AND (FALSE{own})"
 
 
 class MapStore:
@@ -306,6 +311,8 @@ class MapStore:
         return [m for m in found if may_use_map(m)] if usable_only else found
 
     async def get(self, guild_id: int, campaign_id: str, map_id: str, viewer: Viewer) -> Map | None:
+        """One map this viewer may see. With `Viewer.own` it can be the person's own map that is
+        still waiting or was refused: a reader of a map's content must check `may_use_map` too."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 f"SELECT {COLUMNS} FROM campaign_maps WHERE guild_id = %s AND campaign_id = %s"
