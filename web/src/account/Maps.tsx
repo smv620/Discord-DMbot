@@ -24,7 +24,7 @@ export function refFromPath(path: string): string | null {
 /** A press still waiting after this long is said to be stuck, and what to do is said with it. */
 const STUCK_SECONDS = 120;
 
-type Said = { ok: boolean; text: string; batch: number | null };
+type Said = { ok: boolean; text: string; batch: number | null; takeBack?: boolean };
 type Asking = { id: string; kind: "show" | "remove" };
 
 export default function Maps({ api, refId }: { api: AccountApi; refId: string }) {
@@ -62,7 +62,8 @@ export default function Maps({ api, refId }: { api: AccountApi; refId: string })
     return () => clearInterval(tick);
   }, [since]);
 
-  async function press(change: MapsChange, then: (made: { batch: number | null }) => Said): Promise<void> {
+  /** `changedWords` is what a "changed" refusal means for this press: for an Undo, that the map was changed again; for any other press, that the map just changed. */
+  async function press(change: MapsChange, then: (made: { batch: number | null }) => Said, changedWords: string = w.justChanged): Promise<void> {
     if (flight.current) return;
     if (!api.changeMaps) return setSaid({ ok: false, text: w.wrong, batch: null });
     flight.current = true;
@@ -75,7 +76,7 @@ export default function Maps({ api, refId }: { api: AccountApi; refId: string })
       setSaid(then(await api.changeMaps(refId, change)));
     } catch (error) {
       const kind = error instanceof ApiError ? error.kind : "";
-      const text = kind === "gone" ? w.gone : kind === "not-allowed" ? w.dmOnly : kind === "changed" ? w.undoFailed : w.wrong;
+      const text = kind === "gone" ? w.gone : kind === "not-allowed" ? w.dmOnly : kind === "changed" ? changedWords : w.wrong;
       setSaid({ ok: false, text, batch: null });
     } finally {
       flight.current = false;
@@ -87,8 +88,10 @@ export default function Maps({ api, refId }: { api: AccountApi; refId: string })
   const use = (m: MapItem, yes: boolean) => press({ action: "use", id: m.id, yes }, (r) => ({ ok: true, text: yes ? w.doneYes : w.doneNo, batch: r.batch }));
   const show = (m: MapItem, shown: boolean) => press({ action: "show", id: m.id, shown }, (r) => ({ ok: true, text: shown ? w.shownDone : w.hiddenDone, batch: r.batch }));
   const remove = (m: MapItem) => press({ action: "remove", id: m.id }, (r) => ({ ok: true, text: w.doneRemoved, batch: r.batch }));
-  const takeBack = (m: MapItem) => press({ action: "takeback", id: m.id }, (r) => ({ ok: true, text: w.takenBack, batch: r.batch }));
-  const undo = (batch: number) => press({ action: "undo", batch }, () => ({ ok: true, text: w.undone, batch: null }));
+  const takeBack = (m: MapItem) => press({ action: "takeback", id: m.id }, (r) => ({ ok: true, text: w.takenBack, batch: r.batch, takeBack: true }));
+  // A take-back's Undo has its own words in Discord; any other Undo uses the general ones.
+  const undo = (batch: number, wasTakeBack: boolean) =>
+    press({ action: "undo", batch }, () => ({ ok: true, text: w.undone, batch: null }), wasTakeBack ? w.takeBackUndoFailed : w.undoFailed);
 
   if (!MAPS_LIVE) return <p class="muted">{w.notOpen}</p>;
   if (problem) {
@@ -183,7 +186,7 @@ export default function Maps({ api, refId }: { api: AccountApi; refId: string })
         <p class="row">
           <span class={said.ok ? "small" : "small warn"} role={said.ok ? "status" : "alert"}>{said.text}</span>
           {said.batch !== null && (
-            <button type="button" class="link" disabled={busy} onClick={() => void undo(said.batch!)}>
+            <button type="button" class="link" disabled={busy} onClick={() => void undo(said.batch!, said.takeBack === true)}>
               {w.undoLabel}
             </button>
           )}

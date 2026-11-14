@@ -4,6 +4,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { ApiError } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Maps, { refFromPath } from "../src/account/Maps";
 import { mapsWords as w } from "../src/content/maps-words";
@@ -112,6 +113,33 @@ describe("the Maps page", () => {
     fireEvent.click(button);
     await screen.findByText(w.takenBack);
     expect(api.calls.filter((c) => c.startsWith("changeMaps:")).length).toBe(1);
+  });
+
+  it("says what a changed refusal means: a press, an Undo, and a take-back's Undo", async () => {
+    const api = mockApi("table");
+    const real = api.changeMaps!.bind(api);
+    let refuse = false;
+    api.changeMaps = async (ref, change) => {
+      if (refuse) throw new ApiError("changed");
+      return real(ref, change);
+    };
+    render(<Maps api={api} refId={DM} />);
+    await screen.findByText("Cave");
+    refuse = true;
+    fireEvent.click(within(rowFor("Cave")).getByRole("button", { name: w.useYes }));
+    await screen.findByText(w.justChanged);
+    refuse = false;
+    fireEvent.click(within(rowFor("Cave")).getByRole("button", { name: w.useYes }));
+    await screen.findByText(w.doneYes);
+    refuse = true;
+    fireEvent.click(screen.getByRole("button", { name: w.undoLabel }));
+    await screen.findByText(w.undoFailed);
+    refuse = false;
+    fireEvent.click(within(rowFor("Harbour sketch")).getByRole("button", { name: w.takeBack }));
+    await screen.findByText(w.takenBack);
+    refuse = true;
+    fireEvent.click(screen.getByRole("button", { name: w.undoLabel }));
+    await screen.findByText(w.takeBackUndoFailed);
   });
 
   it("says it could not load, with a way to try again", async () => {

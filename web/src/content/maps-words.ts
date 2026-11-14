@@ -67,6 +67,7 @@ export const mapsWords = {
   workingStage: "DMbot is doing it. This takes a moment.",
   stuck: "This is taking longer than usual. Look at the page again in a minute. If nothing changed, press the button again.",
   usableNote: "DMbot uses this map.",
+  justChanged: "That map was just changed by someone else. Here is the list as it is now.",
   wrong: "Something went wrong. Nothing was changed. Press the button again.",
   shownDone: "Shown to the table.",
   hiddenDone: "Hidden from the table.",
