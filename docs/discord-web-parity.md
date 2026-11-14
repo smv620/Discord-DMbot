@@ -189,6 +189,7 @@ match. "In Discord" says where the DM finds it today.
 | Live heads-up (a secret about to be said) | live card | Discord-only: live at the table |
 | Questions for you (notice, reminders, 🔕 Not now) | private notices | The Questions page; notices are Discord-only |
 | Pictures: kept pictures, looked-at pictures, image fix | picture cards | Pictures gallery (`PICTURES_LIVE`) |
+| Maps: the right-to-use question to a map's poster (#4344, 3b-1) | private question | Website: the same question in the Maps page's upload step (#4347); the Discord question follows a map posted in the table's chat, which only Discord has (live at the table) |
 | Speaker questions (who said this?) | speaker question card | Discord-only on purpose (Supervisor, #3698): the question is live at the table; "Fix one transcript line" covers fixing a speaker afterwards; remove a speaker is `SPEAKER_REMOVAL_LIVE` |
 | Account move notices; plan and trial messages | private messages | The account page shows the plan and ends; the notices are Discord-only (WebDev confirmed) |
 
