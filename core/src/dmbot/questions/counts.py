@@ -187,6 +187,15 @@ async def _traits(src: Sources, g: int, c: str) -> Counted:
     return Counted(await TraitOfferStore(src.db).count(g, c))
 
 
+async def _world(src: Sources, g: int, c: str) -> Counted:
+    """DMbot's guesses about places and languages the DM hasn't checked (#4285): the lines the
+    🌍 World notes screen shows (`MemoryStore.world_notes`)."""
+    if src.memory is None:
+        return Counted(0)
+    notes = await src.memory.world_notes(g, c)
+    return Counted(len(notes), min((n.made_at for n in notes), default=None))
+
+
 _COUNTERS: dict[str, Callable[[Sources, int, str], Awaitable[Counted]]] = {
     kinds.NAMES: _names,
     kinds.HEARD: _heard,
@@ -195,6 +204,7 @@ _COUNTERS: dict[str, Callable[[Sources, int, str], Awaitable[Counted]]] = {
     kinds.WHICH: _which,
     kinds.FAMILY: _family,
     kinds.TRAITS: _traits,
+    kinds.WORLD: _world,
     kinds.CLAIMS: _claims,
     kinds.READINGS: _readings,
     kinds.PLOT: _plot,
