@@ -7,6 +7,7 @@ player's to their own group, and Rejoin keeps only what every group shares. Inve
 from __future__ import annotations
 
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 from dmbot.memory.backstory_links import BackstoryLinks
 from dmbot.memory.models import CONFIRMED
@@ -228,6 +229,31 @@ class Journeys(Chains):
             r for r in await self.memory.relations(GUILD, self.cid) if r.predicate == "route_to"
         ]
         self.assertEqual((rels[0].status, rels[0].source), (CONFIRMED, "dm"))
+
+    async def test_a_journeys_stated_length_is_dmbots_read(self) -> None:
+        # (#4255 slice 1b: kept for the DM to check; players never see it until then)
+        await self.go(
+            (1, DM, "You reach Kelvenmoor.", "Kelvenmoor"),
+            (2, DM, "It's two days to Brindleford by the road, and you reach it.", "Brindleford"),
+        )
+        (road,) = [
+            r for r in await self.memory.relations(GUILD, self.cid, include_secret=True)
+            if r.predicate == "route_to"
+        ]  # fmt: skip
+        self.assertEqual((road.length_words, road.length_from), ("two days", "read"))
+        self.assertEqual(road.status, CONFIRMED)  # (the journey itself stays the DM's)
+
+    async def test_a_journey_is_kept_whatever_its_length_does(self) -> None:
+        # (the length's own trouble is logged by its type; the journey stays)
+        with patch.object(self.memory, "set_route_length", AsyncMock(side_effect=RuntimeError)):
+            done = await self.go(
+                (1, DM, "You reach Kelvenmoor.", "Kelvenmoor"),
+                (2, DM, "It's two days to Brindleford, and you reach it.", "Brindleford"),
+            )
+        self.assertEqual(done.journeys, 1)
+        (road,) = [r for r in await self.memory.relations(GUILD, self.cid)
+                   if r.predicate == "route_to"]  # fmt: skip
+        self.assertIsNone(road.length_words)
 
     async def test_no_journey_to_a_place_not_kept(self) -> None:
         made = await self.memory.add_entity(
