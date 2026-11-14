@@ -1830,6 +1830,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(
             map_answer.ActButton, map_answer.OpenButton, map_answer.UndoButton
         )  # the DM's side, #4344
+        self.add_dynamic_items(map_question.TakeBackButton, map_question.PosterUndoButton)  # #4344
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
@@ -4156,6 +4157,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         transcript_id, transcript_problem = await self._transcript_channel(guild, campaign, screen)
         dm_bot_problem = await self._dm_bot_channel(guild, campaign, screen)
         await self._retire_old_channels(guild, campaign)
+        await map_question.remind(
+            self, guild.id, campaign
+        )  # the one reminder (#4344, never raises)
         try:
             await self._old_chat_notice(guild, campaign, screen_id)
         except Exception:
