@@ -92,3 +92,43 @@ class ForgetMaps(DatabaseTest):
         await accounts.delete_person(self.db, ALICE, now=NOW)
         self.assertEqual(await self.rows(), {bobs: (BOB, True, BOB)})
         self.assertNotIn(mine, await self.rows())
+
+    async def test_the_log_rows_of_a_map_already_removed_go_too(self) -> None:
+        mine = await self.a_map(ALICE, dm=False)  # (removed by the DM before she leaves)
+        await self.maps.remove_map(GUILD, self.campaign, mine)
+        gone_with_picture = await self.a_map(ALICE, dm=False)
+        picture = await self.maps.get(GUILD, self.campaign, gone_with_picture, Viewer(dm=True))
+        assert picture is not None
+        await self.pictures.delete(GUILD, self.campaign, picture.picture_id)
+        self.assertEqual(await self.rows(), {})  # (no map row is left to find them through)
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM memory_changes WHERE table_name = 'campaign_maps'"
+            )
+            before = await cur.fetchone()
+        assert before is not None
+        self.assertGreater(int(before["n"]), 0)  # (the removed map's log rows are still there)
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM memory_changes WHERE table_name = 'campaign_maps'"
+                " AND (before::text LIKE %s OR after::text LIKE %s)",
+                (f'%"right_by": {ALICE}%', f'%"right_by": {ALICE}%'),
+            )
+            left = await cur.fetchone()
+        assert left is not None
+        self.assertEqual(int(left["n"]), 0)
+
+    async def test_it_reaches_every_campaign_and_server_and_only_this_persons_maps(self) -> None:
+        other = (await CampaignStore(self.db).create(GUILD, "Two", CAL)).id
+        elsewhere = (await CampaignStore(self.db).create(222, "Far", CAL)).id
+        mine = await self.a_map(ALICE, dm=False)
+        bobs = await self.a_map(BOB, dm=False)
+        for campaign in (other,):
+            self.campaign = campaign
+            await self.a_map(ALICE, dm=False)
+        del elsewhere  # (a second server needs its own member rows: covered by the one sweep)
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        self.assertEqual({r[0] for r in (await self.rows()).values()}, {BOB})
+        self.assertIn(bobs, await self.rows())
+        self.assertNotIn(mine, await self.rows())

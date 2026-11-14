@@ -22,10 +22,31 @@ from __future__ import annotations
 # `dmbot.owner_sync` value, as 0431 and 0455 do). The read policies also show the rows the UPDATE
 # leaves behind (`use_by = 0`), because Postgres checks the new row against the SELECT policies.
 _GATE = "dmbot_owner_sync() = ''forget_maps''"
+_ME = "dmbot_current_user()"
+# A log row is the person's when its map still names them, or when the row itself does: a map the DM
+# removed, or whose picture was deleted, has no `campaign_maps` row left to find it through, and its
+# log rows still hold both ids and the title in `before` and `after`.
 _MINE_MAP = (
     "m.guild_id = memory_changes.guild_id AND m.campaign_id = memory_changes.campaign_id"
-    " AND (m.right_by = dmbot_current_user() OR m.use_by = dmbot_current_user())"
+    f" AND (m.right_by = {_ME} OR m.use_by = {_ME})"
 )
+
+
+def _mine_log(quote: str) -> str:
+    """The test for one of the person's map log rows. `quote` is how a quote mark is written where
+    it is used: a doubled one inside the policies' format string, a plain one in the function."""
+    q = quote
+    named = " OR ".join(
+        # (qualified: the function has a variable called `before`)
+        f"memory_changes.{side}->>{q}{col}{q} = {_ME}::text"
+        for side in ("before", "after")
+        for col in ("right_by", "use_by")
+    )
+    return (
+        f"table_name = {q}campaign_maps{q} AND (row_id IN"
+        f" (SELECT m.id FROM campaign_maps m WHERE {_MINE_MAP}) OR {named})"
+    )
+
 
 SQL = (
     r"""
@@ -60,11 +81,9 @@ SQL = (
             USING ({_GATE} AND use_by = dmbot_current_user())
             WITH CHECK ({_GATE} AND use_by = 0)', current_user);
         EXECUTE format('CREATE POLICY forget_maps_log_read ON memory_changes FOR SELECT TO %I
-            USING ({_GATE} AND table_name = ''campaign_maps'' AND row_id IN (
-                SELECT m.id FROM campaign_maps m WHERE {_MINE_MAP}))', current_user);
+            USING ({_GATE} AND {_mine_log("''")})', current_user);
         EXECUTE format('CREATE POLICY forget_maps_log_delete ON memory_changes FOR DELETE TO %I
-            USING ({_GATE} AND table_name = ''campaign_maps'' AND row_id IN (
-                SELECT m.id FROM campaign_maps m WHERE {_MINE_MAP}))', current_user);
+            USING ({_GATE} AND {_mine_log("''")})', current_user);
 """
     + r"""
     END
@@ -79,8 +98,10 @@ SQL = (
             RETURN;
         END IF;
         PERFORM set_config('dmbot.owner_sync', 'forget_maps', true);
-        -- the log rows first: they are found through the maps, which must still be there
-        DELETE FROM memory_changes WHERE table_name = 'campaign_maps';
+        -- the log rows first: some are found through the maps, which must still be there
+        DELETE FROM memory_changes WHERE """
+    + _mine_log("'")
+    + r""";
         DELETE FROM campaign_maps WHERE right_by = dmbot_current_user();
         UPDATE campaign_maps SET use_by = 0 WHERE use_by = dmbot_current_user();
         -- (an error rolls the setting back, so only success restores it)
