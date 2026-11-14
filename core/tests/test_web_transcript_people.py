@@ -196,10 +196,22 @@ class TheDoorsThemselves(People):
                 self.assertIsNone(await self.door(self.carol, call, *args))
                 self.assertIsNotNone(await self.door(self.bob, call, *args))  # (heard at it)
 
-    async def test_the_stretch_door_answers_nothing_to_an_outsider_too(self) -> None:
+    async def test_the_stretch_door_answers_nothing_to_an_outsider_and_something_to_a_dm(
+        self,
+    ) -> None:
         sid = await self.session_id()
         args = (sid, BOB.id, START * 1000, START * 1000 + 5000)
         self.assertIsNone(await self.door(self.carol, "dmbot_web_transcript_stretch", *args))
+        self.assertIsNotNone(await self.door(self.alice, "dmbot_web_transcript_stretch", *args))
+
+    async def test_a_dm_and_everyone_are_let_in_by_the_lines_door(self) -> None:
+        sid = await self.session_id()
+        self.assertTrue(await self.door(self.alice, "dmbot_web_transcript_lines", sid))
+        await self.sql(
+            "UPDATE campaigns SET channels_visibility = 'everyone' WHERE guild_id = %s",
+            THURSDAY.id,
+        )
+        self.assertTrue(await self.door(self.carol, "dmbot_web_transcript_lines", sid))
 
     async def test_the_session_list_stays_open_for_the_pages_that_only_number_sessions(
         self,
@@ -225,3 +237,29 @@ class TheRulesAddedIds(People):
         )
         self.assertTrue((await self.lines_of(self.dan))["lines"])
         self.assertEqual(await self.refused(self.carol), "not_found")  # (still nobody else)
+
+    async def test_someone_added_by_hand_under_an_added_id_is_one_of_the_people(self) -> None:
+        await self.sql(
+            "INSERT INTO account_discord_ids (discord_id, account_id, added_at) VALUES (%s, %s, 0)",
+            5006, DAN.id,
+        )  # fmt: skip
+        await self.sql(
+            "INSERT INTO campaign_channel_people (guild_id, campaign_id, user_id, added_by,"
+            " added_at) VALUES (%s, %s, %s, %s, 0)",
+            THURSDAY.id, self.one.id, 5006, ALICE.id,
+        )  # fmt: skip
+        self.assertTrue((await self.lines_of(self.dan))["lines"])
+
+    async def test_an_id_the_account_took_off_itself_counts_no_more(self) -> None:
+        # (0392: it stays the account's number, but it is nobody's login)
+        store = TranscriptStore(self.db)
+        sid = await store.open_session(THURSDAY.id, self.one.id, START + 86_400)
+        await store.add_lines(
+            THURSDAY.id, sid, [Line((START + 86_400) * 1000 + 1000, DAN.id, "dan", "dan")]
+        )
+        self.assertTrue((await self.lines_of(self.dan))["lines"])  # (his own id spoke)
+        await self.sql(
+            "INSERT INTO account_reserved (discord_id, account_id, removed_at) VALUES (%s, %s, 0)",
+            DAN.id, DAN.id,
+        )  # fmt: skip
+        self.assertEqual(await self.refused(self.dan), "not_found")

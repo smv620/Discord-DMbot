@@ -79,8 +79,9 @@ SQL = r"""
                       AND k.channels_visibility = 'everyone') THEN
             RETURN TRUE;
         END IF;
-        -- every Discord id of this account (the account's own number included)
-        ids := ARRAY(SELECT dmbot_account_logins(me)) || me;
+        -- every Discord id that acts as this account: its own number unless the account took it off
+        -- itself (0392), and its added ids. Never the number again after that.
+        ids := ARRAY(SELECT dmbot_account_logins(me));
         RETURN EXISTS (SELECT 1 FROM campaign_channel_people x
                        WHERE x.guild_id = g AND x.campaign_id = c AND x.user_id = ANY (ids))
             OR EXISTS (SELECT 1 FROM memory_entities e
