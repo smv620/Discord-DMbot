@@ -13,7 +13,7 @@ import discord
 
 from dmbot.campaigns import CampaignStore
 from dmbot.maps import words
-from dmbot.maps.store import MapStore, Viewer, may_use_map
+from dmbot.maps.store import ALREADY, MapStore, Viewer, may_use_map
 from dmbot.memory.store import MemoryStore
 from dmbot.pictures.keeper import PictureKeeper
 from dmbot.pictures.store import MB, PictureStore
@@ -42,7 +42,9 @@ class Asking(DatabaseTest):
             map_store=self.maps,
             campaigns=self.campaigns,
             settings=SimpleNamespace(picture_storage_mb=5),
+            consent=SimpleNamespace(has_image_consent=lambda guild, user: self.consenting),
         )
+        self.consenting = True
 
     async def picture(self, poster: int, n: int = 1, message_id: int = 11) -> int:
         added = await self.pictures.add(
@@ -116,7 +118,7 @@ class Asking(DatabaseTest):
         await map_question.YesButton(GUILD, pic).callback(self.press(PLAYER))
         again = self.press(PLAYER)
         await map_question.YesButton(GUILD, pic).callback(again)
-        self.assertEqual(self.shown(again), words.ANSWERED)
+        self.assertEqual(self.shown(again), ALREADY)  # (the store's own words)
         self.assertEqual(len(await self.kept_maps()), 1)
         nothing = self.press(PLAYER)
         await map_question.YesButton(GUILD, 999).callback(nothing)
@@ -146,3 +148,22 @@ class Asking(DatabaseTest):
             await map_question.ask(self.bot, GUILD, self.campaign, picture)
         self.assertEqual(note.await_args.args[2], words.dms_could_not_ask("Mia"))
         self.assertEqual(await self.kept_maps(), [])
+
+    async def test_a_poster_who_stopped_since_the_question_cannot_keep_it_as_a_map(self) -> None:
+        pic = await self.picture(PLAYER)
+        self.consenting = False  # (they pressed Stop recording me, or withdrew their yes)
+        it = self.press(PLAYER)
+        await map_question.YesButton(GUILD, pic).callback(it)
+        self.assertEqual(self.shown(it), words.NO_CONSENT)
+        self.assertEqual(await self.kept_maps(), [])
+
+    async def test_a_no_after_a_yes_leaves_the_map_the_yes_made(self) -> None:
+        pic = await self.picture(PLAYER)
+        await map_question.YesButton(GUILD, pic).callback(self.press(PLAYER))
+        late = self.press(PLAYER)  # (both buttons were still on the card)
+        await map_question.NoButton(GUILD, pic).callback(late)
+        self.assertEqual(self.shown(late), words.ANSWERED)
+        self.assertEqual(len(await self.kept_maps()), 1)
+        kept = await self.pictures.by_id(GUILD, pic)
+        assert kept is not None
+        self.assertFalse(kept.gone)

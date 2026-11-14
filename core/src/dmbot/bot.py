@@ -13438,7 +13438,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # A map: its poster is asked, once and in private, whether they may use and save it
             # (#4344). Not answered, it stays a picture as before.
             campaign = await self.campaigns.get(gid, cid)
-            if campaign is not None:
+            if campaign is not None and still_ok():  # (the poster's yes, checked once more)
                 await map_question.ask(self, gid, campaign, got.picture)
         if got.new and channel_id and self.settings.site_url:
             # The link under the description: anyone with it can open the picture (the poster or a

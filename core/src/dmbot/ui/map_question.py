@@ -22,7 +22,7 @@ from typing import Any
 import discord
 
 from dmbot.maps import words
-from dmbot.maps.store import MapError, Viewer
+from dmbot.maps.store import MapError
 from dmbot.ui.dmbot_commands import _answer_first, _bot
 
 log = logging.getLogger(__name__)
@@ -61,15 +61,11 @@ async def _answer(
             return
         # A map posted in the table's chat has a message; the question is only asked for those.
         from_chat = picture.message_id != 0
-        known = [
-            m
-            for m in await maps.maps(guild_id, campaign.id, Viewer(dm=True))
-            if m.picture_id == picture.id
-        ]
-        if known:
-            await _finish(interaction, words.ANSWERED)
-            return
         if yes:
+            if not bot.consent.has_image_consent(guild_id, interaction.user.id):
+                # (they stopped, or withdrew their yes to pictures, since the question was sent)
+                await _finish(interaction, words.NO_CONSENT)
+                return
             is_dm = interaction.user.id in campaign.dm_user_ids
             await maps.add_map(
                 guild_id, campaign.id, picture_id=picture.id, uploader_id=interaction.user.id,
@@ -79,7 +75,10 @@ async def _answer(
             log.info("A map was kept (%s)", "dm" if is_dm else "player")
             await _finish(interaction, words.said_yes(is_dm, from_chat))
             return
-        await keeper.discard(guild_id, campaign.id, picture)
+        # (a yes pressed a moment before keeps the map: the store leaves it, under its own lock)
+        if not await keeper.discard(guild_id, campaign.id, picture, unless_map=True):
+            await _finish(interaction, words.ANSWERED)
+            return
         log.info("A map was not kept")
         await _finish(interaction, words.said_no(from_chat))
     except MapError as exc:  # (the store's own words: no room, already a map)

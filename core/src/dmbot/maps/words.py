@@ -32,6 +32,7 @@ NO_CHAT = (
 NO_PRIVATE = "OK. DMbot didn't keep it."
 
 GONE = "That picture isn't kept any more."
+NO_CONSENT = "You've stopped DMbot recording pictures, so it isn't keeping this one."
 ANSWERED = "That's already answered."
 NOT_YOURS = "Only the person who posted it can answer this."
 FAILED = "That didn't go through. Try the button again, or open the picture's page."
