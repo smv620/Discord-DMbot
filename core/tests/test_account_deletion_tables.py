@@ -23,6 +23,7 @@ FORGET_REQUESTS = import_module("dmbot.migrations.0440_forget_requests")
 FORGET_DECISIONS = import_module("dmbot.migrations.0455_forget_decisions")
 FORGET_DECISIONS_2 = import_module("dmbot.migrations.0493_forget_decisions_2")
 FORGET_OWN = import_module("dmbot.migrations.0494_forget_own_records")
+FORGET_RECAP = import_module("dmbot.migrations.0495_forget_recap_approval")
 FORGET_LOOKUPS = import_module("dmbot.migrations.0447_member_lookups")
 DELETED: tuple[tuple[str, str], ...] = (
     FORGET_PERSON.DELETED + FORGET_REQUESTS.DELETED + FORGET_LOOKUPS.DELETED + FORGET_OWN.DELETED
@@ -33,6 +34,7 @@ ZEROED: tuple[tuple[str, str], ...] = (
     + FORGET_DECISIONS.ZEROED
     + FORGET_DECISIONS_2.ZEROED
     + FORGET_OWN.ZEROED
+    + FORGET_RECAP.ZEROED
 )
 
 # Written out on purpose: if a column is dropped from a forget function, this test fails too, so
@@ -111,6 +113,7 @@ EXPECTED_ZEROED: frozenset[tuple[str, str]] = frozenset(
         ("adventure_reads", "started_by"),
         ("active_sessions", "started_by"),
         ("access_log", "discord_user_id"),
+        ("recap_jobs", "approved_by"),
     )
 )
 
@@ -314,7 +317,7 @@ ROWS: dict[str, str] = {
     ),
     "recap_jobs": (
         "INSERT INTO recap_jobs (guild_id, campaign_id, session_at, dm_user_id, uploaded_by,"
-        " created_at) VALUES (%(g)s, %(c)s, %(u)s, %(u)s, %(u)s, 1)"
+        " approved_by, created_at) VALUES (%(g)s, %(c)s, %(u)s, %(u)s, %(u)s, %(u)s, 1)"
     ),
     "house_rule_wins": (
         "INSERT INTO house_rule_wins (guild_id, campaign_id, a_number, b_number, winner,"
