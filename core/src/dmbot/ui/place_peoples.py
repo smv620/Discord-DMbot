@@ -46,7 +46,13 @@ ONCE_HINT = "Once = only what they left behind, like ruins."
 SHOW_ALL = "👁️ Show all to players"
 HIDE_ALL = "🙈 Hide all from players"
 STRENGTH_BUTTONS = {"strong": "Strongly", "some": "Somewhat", "traces": "A little", "once": "Once"}
-SHARE_LABELS = {"all": "Almost all", "most": "Most", "many": "Many", "some": "Some", "few": "A few"}
+SHARE_LABELS = {
+    "all": "Almost entirely",
+    "most": "Most",
+    "many": "Many",
+    "some": "Some",
+    "few": "A few",
+}
 Handler = Callable[[discord.Interaction], Awaitable[None]]
 
 

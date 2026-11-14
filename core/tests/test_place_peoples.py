@@ -100,6 +100,16 @@ class Words(unittest.TestCase):
         self.assertNotIn("species", every)
         self.assertNotIn("lineage", every)
 
+    def test_share_words_go_before_the_group(self) -> None:
+        """Supervisor on #4413: "almost entirely / mostly / many / some / a few halflings", or
+        just "halflings" with no share."""
+        said = {how: f"{pp.HOW_WORDS[how]} halflings" for how in pp.POPULATION_HOWS}
+        self.assertEqual(
+            said,
+            {"all": "almost entirely halflings", "most": "mostly halflings",
+             "many": "many halflings", "some": "some halflings", "few": "a few halflings"},
+        )  # fmt: skip
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -42,10 +42,17 @@ LINEAGES: dict[str, tuple[str, str]] = {
     "tiefling": ("tiefling", "tieflings"),
 }
 # The shares (§6), as stored (one word: the column takes letters only) and as said. "all" is
-# "almost all": nowhere is every last one of a people.
+# "almost entirely": nowhere is every last one of a people (Supervisor, #4413: share words go
+# before the group, "almost entirely halflings").
 CULTURE_HOWS = ("strong", "some", "traces", "once")
 POPULATION_HOWS = ("all", "most", "many", "some", "few")
-HOW_WORDS = {"all": "almost all", "most": "mostly", "many": "many", "some": "some", "few": "a few"}
+HOW_WORDS = {
+    "all": "almost entirely",
+    "most": "mostly",
+    "many": "many",
+    "some": "some",
+    "few": "a few",
+}
 
 _ADJECTIVES = {adj: key for key, (adj, _) in LINEAGES.items()}
 _PLURALS = {plural: key for key, (_, plural) in LINEAGES.items()}
