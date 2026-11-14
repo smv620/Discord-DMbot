@@ -22,6 +22,7 @@ const HIDDEN_POLL_MS = 10_000; // and far less often while the tab is hidden (#4
 
 export default function Wizard({ api, guild }: { api: WizardApi; guild: string }) {
   const [pasted, setPasted] = useState(""); // the pasted campaign-page text, in memory only (#4204)
+  const [running, setRunning] = useState(false); // step 10's finish run is working, so Back is hidden (#4302)
   const [draft, setDraft] = useState<WizardDraft | null | "loading">("loading");
   const [problem, setProblem] = useState("");
   const [skipping, setSkipping] = useState(false);
@@ -117,6 +118,7 @@ export default function Wizard({ api, guild }: { api: WizardApi; guild: string }
     },
     pasted,
     onPasted: setPasted,
+    onRunning: setRunning,
   };
 
   const named = current.answers.name.trim(); // the campaign's name, once it is saved (#4301)
@@ -146,9 +148,11 @@ export default function Wizard({ api, guild }: { api: WizardApi; guild: string }
 
       {!skipping && !discarding && (
         <div class="row">
-          <button type="button" class="button secondary" disabled={busy || step === 1} onClick={() => void go(step - 1)}>
-            {w.back}
-          </button>
+          {!running && (
+            <button type="button" class="button secondary" disabled={busy || step === 1} onClick={() => void go(step - 1)}>
+              {w.back}
+            </button>
+          )}
           {step < WIZARD_STEPS.length && (
             <button type="button" class="button" disabled={busy || (id === "data" && dataChoice === "none")} onClick={() => void go(step + 1)}>
               {w.next}
@@ -223,13 +227,20 @@ function SkipPanel({ api, guild, draft, step, onCancel, onMade }: StepProps & { 
 }
 
 /** The last page: a summary, the press, and the wait while the bot makes the campaign in stages. */
-function FinishStep({ api, guild, draft, dataChoice = "none" }: StepProps) {
+function FinishStep({ api, guild, draft, dataChoice = "none", onRunning }: StepProps) {
   const t = w.finish;
   const [run, setRun] = useState<WizardFinish | null>(null);
   const [problem, setProblem] = useState("");
   const [started, setStarted] = useState(false);
   const live = useRef(true);
   useEffect(() => () => void (live.current = false), []);
+
+  // The shell hides Back while a run works (#4302); a run that stops, or leaving this step, puts it back.
+  const working = started && run?.state !== "failed" && run?.state !== "done";
+  useEffect(() => {
+    onRunning?.(working);
+  }, [working, onRunning]);
+  useEffect(() => () => onRunning?.(false), [onRunning]);
 
   // Follow a finish that is already going (a reload, or Skip pressed on another page).
   useEffect(() => {
