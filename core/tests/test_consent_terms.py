@@ -4,7 +4,7 @@ import hashlib
 import unittest
 
 from dmbot.consent import TERMS_VERSION
-from dmbot.consent_dm import RENEWED, reminder_text, request_text
+from dmbot.consent_dm import ALREADY_RECORDED, RENEWED, WHO_CAN_READ, reminder_text, request_text
 from dmbot.consent_words import AGE_LINE, CONSENT_LABEL, MIN_AGE, UNDER_LINE
 from dmbot.ui.logic import HELP_TEXT
 
@@ -15,8 +15,10 @@ from dmbot.ui.logic import HELP_TEXT
 # may a change to a version nobody can have agreed to yet (not deployed).
 # The "What's new" note for people asked again (consent_dm.RENEWED) explains a change
 # rather than adding terms, so it isn't part of the fingerprint.
-PINNED_VERSION = 7  # #3268: pictures in the table's chat are described and kept; "the table's chat"
-PINNED_FINGERPRINT = "a9066c074cac8a25464ef35ef4ea83529c7a06e8ce1a34316e6f7758089b2747"
+PINNED_VERSION = (
+    7  # #3268: pictures are kept; "the table's chat"; who can read: the campaign's people
+)
+PINNED_FINGERPRINT = "40e9f512ef2fb4ba7fc2a5044c480b446ec97be7bc9b3e3db06b915a4792500c"
 
 
 def fingerprint() -> str:
@@ -98,7 +100,7 @@ class TermsVersion(unittest.TestCase):
         self.assertIn("make it private or delete it", text)
         self.assertNotIn("not kept", text)  # #3268: pictures are kept (owner, 2026-11-02)
         self.assertIn("your name and question are posted there for everyone to read", text)
-        self.assertIn("Anyone in this server can read and download that text", text)
+        self.assertIn(WHO_CAN_READ, text)
         self.assertIn("ignores your voice and your typing", text)
 
     def test_no_age_or_birthdate_is_kept_anywhere(self) -> None:
@@ -118,7 +120,17 @@ class TermsVersion(unittest.TestCase):
             self.assertNotIn(word, text)
 
     def test_the_request_says_who_can_read_it(self) -> None:
-        self.assertIn(
+        # The campaign's people rule (#3891, Supervisor's words on #3269): said the same in the
+        # request, the reminder and the stop warning, with the whole server only when the DM chose.
+        words = (
+            "This campaign's people can read and download that text: its DMs, its players and "
+            "anyone recorded at its table. If your DM chose to, everyone in this server can."
+        )
+        self.assertEqual(WHO_CAN_READ, words)
+        self.assertIn(words, request_text("Server", voice=None, dm=None, cloud=False))
+        self.assertIn(words, reminder_text("Server", "Table", 1_700_000_000))
+        self.assertIn(words, ALREADY_RECORDED)
+        self.assertNotIn(
             "Anyone in this server can read",
             request_text("Server", voice=None, dm=None, cloud=False),
         )

@@ -245,7 +245,9 @@ class HelpText(unittest.TestCase):
         # Button names must match the buttons people actually see.
         self.assertIn(f"**{CONSENT_LABEL}**", HELP_TEXT)
         self.assertIn(f"**{STOP_LABEL}**", HELP_TEXT)
-        self.assertIn("anyone in this server can read", HELP_TEXT.lower())
+        # (#3891: the campaign's people, and the whole server only when the DM chose that)
+        self.assertIn("this campaign's people can read", HELP_TEXT.lower())
+        self.assertIn("everyone in this server, if your dm chose to", HELP_TEXT.lower())
         self.assertIn("/consent give", HELP_TEXT)  # the fallback stays documented
 
 

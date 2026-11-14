@@ -98,11 +98,16 @@ REASK_INTRO = (
     "🔄 **DMbot now uses an outside company to turn speech into text,** so it needs to ask "
     "you again. Please read this and choose."
 )
-# What happens to what someone said before they stopped: the whole server can read it
-# (docs/PLAN.md, Retention and "who can see what"; transcripts #124, #125).
-ALREADY_RECORDED = (
-    "What DMbot already wrote down stays, and anyone in this server can still read it."
+# Who can read the transcript (#3891, 2026-11-09): the campaign's people, and everyone in the server
+# only when the campaign's setting says so. The same words in the request, the reminder and the
+# stop warning (Supervisor's wording, #3269).
+WHO_CAN_READ = (
+    "This campaign's people can read and download that text: its DMs, its players and anyone "
+    "recorded at its table. If your DM chose to, everyone in this server can."
 )
+# What happens to what someone said before they stopped: the campaign's people can read it
+# (docs/PLAN.md, Retention and "who can see what"; transcripts #124, #125).
+ALREADY_RECORDED = f"What DMbot already wrote down stays. {WHO_CAN_READ}"
 # How to remove it (#1532): said with the stop message, whose buttons carry the 🗂️ Menu.
 HOW_TO_DELETE = f"Want it gone? Press 🗂️ {MENU_LABEL}, then **{DELETE_LABEL}**."
 
@@ -179,8 +184,7 @@ def request_text(
         f"• Press **{CONSENT_LABEL}** and DMbot records what you say while it is listening. "
         "It also reads what you type in the table's chat: the voice channel's chat, and one more "
         "channel if your DM picks one. It turns it all into text. "
-        "Anyone in this server can read and download that text. It stays there even if you "
-        f"stop later. {AI_NOTE}",
+        f"{WHO_CAN_READ} It stays there even if you stop later. {AI_NOTE}",
         "• If you post a picture in the table's chat, DMbot sends it to the AI to be described "
         "and keeps it with the campaign. Only post pictures you have the right to share: by "
         "posting one, you let your table use it in this game. Anyone with its link can see it, "
@@ -294,7 +298,7 @@ def reminder_text(
     outside = f" {outside_note(company)}" if cloud else ""
     return (
         f"🎙️ DMbot is recording you in {where}**{_plain(server)}** (you said yes on "
-        f"{_date(granted_at)}). Anyone in this server can read the text.{outside} {AI_SHORT} "
+        f"{_date(granted_at)}). {WHO_CAN_READ}{outside} {AI_SHORT} "
         f"{MENU_HINT}{_sheet_note(sheets)}"
     )
 
