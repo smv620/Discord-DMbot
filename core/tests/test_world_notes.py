@@ -9,7 +9,9 @@ from dmbot.memory import map_facts as mf
 from dmbot.memory import world_notes as wn
 from dmbot.memory.map_fact_store import Read
 from dmbot.memory.models import MemoryRuleError
-from tests.test_memory_store import DM, GUILD_A, MemoryTest
+from tests.test_memory_store import DM, GUILD_A, GUILD_B, MemoryTest
+
+DM_SOURCE = "dm"
 
 
 class WorldNotes(MemoryTest):
@@ -104,20 +106,18 @@ class WorldNotes(MemoryTest):
         await self.memory.turn_down_world_note(GUILD_A, self.c, note.id, source="dm")
         with self.assertRaises(MemoryRuleError):
             await self.memory.turn_down_world_note(GUILD_A, self.c, note.id, source="dm")
-        kept = await self.memory.keep_world_notes(GUILD_A, self.c, [note.id], source="dm")
-        self.assertEqual(kept.value, 0)
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.keep_world_notes(GUILD_A, self.c, [note.id], source="dm")
         with self.assertRaises(MemoryRuleError):
             await self.memory.keep_world_notes(GUILD_A, self.c, ["nonsense"], source="dm")
 
     async def test_only_the_dm_checks_them(self) -> None:
         await self.read_place()
         (note,) = await self.notes()
-        for call in (
-            self.memory.keep_world_notes(GUILD_A, self.c, [note.id], source="background"),
-            self.memory.turn_down_world_note(GUILD_A, self.c, note.id, source="background"),
-        ):
-            with self.assertRaises(MemoryRuleError):
-                await call
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.keep_world_notes(GUILD_A, self.c, [note.id], source="background")
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.turn_down_world_note(GUILD_A, self.c, note.id, source="background")
 
     async def test_a_turned_down_entry_and_a_character_with_a_sheet_have_none(self) -> None:
         await self.read_place()
@@ -132,29 +132,83 @@ class WorldNotes(MemoryTest):
             )
         self.assertEqual(await self.notes(), [])
 
-    async def test_a_waiting_language_question_is_never_asked_twice(self) -> None:
-        # (#4285, Supervisor: language questions stay in Questions for you; a story row holding the
-        # same language hides the question there, so it is asked in one place only)
-        from dmbot.memory.trait_offers import TraitOfferStore
-
+    async def offer_language(self, name: str = "Giant", state: str = "waiting") -> None:
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
                 "INSERT INTO memory_trait_offers (guild_id, campaign_id, entity_id, kind, name,"
-                " name_key, state, created_at) VALUES (%s, %s, %s, 'language', 'Giant', 'giant',"
-                " 'waiting', 1)",
-                (GUILD_A, self.c, self.brewner),
+                " name_key, state, created_at) VALUES (%s, %s, %s, 'language', %s, %s, %s, 1)",
+                (GUILD_A, self.c, self.brewner, name, name.casefold(), state),
             )
+
+    async def test_a_language_question_stays_in_questions_for_you(self) -> None:
+        # (#4285, Supervisor's ruling: a language question is asked there, never here too)
+        from dmbot.memory.trait_offers import TraitOfferStore
+
         offers = TraitOfferStore(self.db)
-        self.assertEqual(await offers.count(GUILD_A, self.c), 1)  # (asked there, not here)
+        await self.offer_language()
+        await self.read_language("Giant")  # (DMbot's own read never hides the question)
+        self.assertEqual(await offers.count(GUILD_A, self.c), 1)
         self.assertEqual(await self.notes(), [])
+
+    async def test_a_language_answered_no_there_is_never_a_note(self) -> None:
+        await self.offer_language(state="never")
         await self.read_language("Giant")
-        asked = await offers.count(GUILD_A, self.c) + len(await self.notes())
-        self.assertEqual(asked, 1)  # (now here only)
+        self.assertEqual(await self.notes(), [])
 
-    async def test_another_campaign_sees_none_of_them(self) -> None:
+    async def test_not_right_never_brings_a_question_back(self) -> None:
+        from dmbot.memory.trait_offers import TraitOfferStore
+
+        offers = TraitOfferStore(self.db)
+        await self.read_language("Dwarvish")
+        (note,) = await self.notes()
+        await self.memory.turn_down_world_note(GUILD_A, self.c, note.id, source="dm")
+        self.assertEqual((await offers.count(GUILD_A, self.c), await self.notes()), (0, []))
+
+    async def test_a_ruler_the_dm_turned_down_is_no_note(self) -> None:
+        council = await self.add("Council of Speakers", type="faction", status="confirmed")
+        await self.memory.add_read_map_facts(
+            GUILD_A, self.c, [Read(self.dale, mf.CONTROL, council, how="rules")],
+            source="background",
+        )  # fmt: skip
+        (note,) = await self.notes()
+        self.assertEqual((note.layer, note.value, note.how), (mf.CONTROL, council, "rules"))
+        await self.memory.set_entity_status(GUILD_A, self.c, council, "rejected", source="dm")
+        self.assertEqual(await self.notes(), [])
+        with self.assertRaises(MemoryRuleError):  # (a list drawn before: never kept now)
+            await self.memory.keep_world_notes(GUILD_A, self.c, [note.id], source="dm")
+
+    async def test_a_kept_reading_is_the_dms_word_on_the_card(self) -> None:
+        from dmbot.memory import gate
+
         await self.read_place()
-        other = (await self.campaigns.create(GUILD_A, "Elsewhere", DM)).id
-        self.assertEqual(await self.memory.world_notes(GUILD_A, other), [])
+        (note,) = await self.notes()
+        await self.memory.keep_world_notes(GUILD_A, self.c, [note.id], source="dm")
+        facts = await self.memory.map_facts(GUILD_A, self.c, [self.dale], gate.Viewer.the_dm())
+        (fact,) = facts[self.dale]
+        self.assertEqual((fact.status, fact.source, fact.table_knows), ("confirmed", "dm", False))
 
+    async def test_hand_made_ids_are_refused(self) -> None:
+        await self.read_place()
+        for bad in ("place:", "bogus:x", "x", "place:not-a-row"):
+            with self.subTest(bad=bad), self.assertRaises(MemoryRuleError):
+                await self.memory.turn_down_world_note(GUILD_A, self.c, bad, source="dm")
+        given = await self.memory.add_story_language(
+            GUILD_A, self.c, self.brewner, "Elvish", source="dm"
+        )
+        assert given.value is not None
+        with self.assertRaises(MemoryRuleError):  # (the DM's own word is no note)
+            await self.memory.keep_world_notes(
+                GUILD_A, self.c, [wn.note_id(wn.LANGUAGE, given.value.id)], source="dm"
+            )
 
-DM_SOURCE = "dm"
+    async def test_another_campaign_or_server_cant_see_or_touch_them(self) -> None:
+        await self.read_place()
+        (note,) = await self.notes()
+        for guild, name in ((GUILD_A, "Elsewhere"), (GUILD_B, "Far away")):
+            other = (await self.campaigns.create(guild, name, DM)).id
+            self.assertEqual(await self.memory.world_notes(guild, other), [])
+            with self.assertRaises(MemoryRuleError):
+                await self.memory.keep_world_notes(guild, other, [note.id], source="dm")
+            with self.assertRaises(MemoryRuleError):
+                await self.memory.turn_down_world_note(guild, other, note.id, source="dm")
+        self.assertEqual([n.id for n in await self.notes()], [note.id])

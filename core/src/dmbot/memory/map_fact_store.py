@@ -361,12 +361,14 @@ async def drop_on_kind_change(
             await w.delete(MAP_FACTS, str(r["id"]))
 
 
-async def read_notes(dm: Scope) -> list[tuple[mf.Fact, int | None, int]]:
+async def dm_read_notes(scope: Scope, viewer: gate.Viewer) -> list[tuple[mf.Fact, int | None, int]]:
     """Every open row DMbot read and the DM hasn't checked, for the DM's World notes (#4285):
-    (the fact, the session it was read from, when it was kept), oldest first. The DM's own list,
-    never a player's (the caller checks; `facts_for` stays the one read for a viewer, so the scope
-    is named for who it is)."""
-    rows = await dm.select(
+    (the fact, the session it was read from, when DMbot read it), oldest first. The second reader
+    of the table, the DM's only: it refuses anyone else, so `facts_for` stays the one read a player
+    is ever given (`test_map_fact_readers` names both)."""
+    if not viewer.dm:
+        raise MemoryRuleError("Only the DM can see that.")
+    rows = await scope.select(
         MAP_FACTS, " AND status = 'read'" + _OPEN + " ORDER BY created_at, id", []
     )
     return [(_fact(r), r["from_session_at"], int(r["created_at"])) for r in rows]
