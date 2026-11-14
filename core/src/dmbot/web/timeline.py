@@ -4,7 +4,8 @@ day it was played, its length, its recap and the names shown to the players at t
 The sessions, their numbers and lengths are the transcripts page's own list (`transcripts.
 list_sessions`), so a number is never counted twice and the same plan rule applies as to the
 transcripts. One more door (`dmbot_web_story_timeline`, schema.py) adds the recaps and the names
-shown at the table; it answers for anyone in the server, and the game masters see more: every
+shown at the table; it answers for the campaign's people (who may read its transcripts, #3891:
+the page's session list asks that first), and the game masters see more: every
 approved recap, where a player sees only posted ones, and none of a draft. A recap links to its
 page only for a game master, because that page is theirs; a player reads the title.
 

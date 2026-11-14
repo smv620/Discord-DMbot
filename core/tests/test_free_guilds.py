@@ -186,9 +186,13 @@ class TheGates(DatabaseTest):
         async def gate(_db: Any, *args: Any, **kwargs: Any) -> None:
             await real(self.db, *args, **kwargs)
 
+        async def readable(*_args: Any) -> bool:
+            return True  # (the people rule, #3891, has its own tests: this one is about the plan)
+
         with (
             patch.object(transcripts, "_scoped", scope),
             patch.object(transcripts, "_plan_allows", gate),
+            patch.object(transcripts, "reads_campaign", readable),
         ):
             shown = await transcripts.list_campaigns(
                 Db(),  # type: ignore[arg-type]
