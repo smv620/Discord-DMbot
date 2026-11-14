@@ -36,6 +36,7 @@ class Asking(DatabaseTest):
         self.pictures = PictureStore(self.db, clock=lambda: 1000.0)
         self.maps = MapStore(self.db, MemoryStore(self.db), clock=lambda: 2000.0)
         self.campaign = await self.campaigns.create(GUILD, "One", DM)
+        self.consenting = True
         self.bot = SimpleNamespace(
             picture_store=self.pictures,
             picture_keeper=PictureKeeper(self.pictures, Bucket(), 5),
@@ -44,7 +45,6 @@ class Asking(DatabaseTest):
             settings=SimpleNamespace(picture_storage_mb=5),
             consent=SimpleNamespace(has_image_consent=lambda guild, user: self.consenting),
         )
-        self.consenting = True
 
     async def picture(self, poster: int, n: int = 1, message_id: int = 11) -> int:
         added = await self.pictures.add(
@@ -67,8 +67,14 @@ class Asking(DatabaseTest):
         )
 
     @staticmethod
-    def shown(it: Any) -> str:
-        return str(it.edit_original_response.await_args.kwargs["content"])
+    def call(mock: Any) -> Any:
+        """The last call of an awaited mock, so the checks below have no `None` to doubt."""
+        last = mock.await_args
+        assert last is not None
+        return last
+
+    def shown(self, it: Any) -> str:
+        return str(self.call(it.edit_original_response).kwargs["content"])
 
     async def kept_maps(self) -> list[Any]:
         return await self.maps.maps(GUILD, self.campaign.id, Viewer(dm=True))
@@ -81,7 +87,7 @@ class Asking(DatabaseTest):
         self.assertEqual((kept.right_by, kept.waiting, kept.audience), (PLAYER, True, "table"))
         self.assertFalse(may_use_map(kept))
         self.assertEqual(self.shown(it), words.said_yes(False, True))
-        self.assertIsNone(it.edit_original_response.await_args.kwargs["view"])
+        self.assertIsNone(self.call(it.edit_original_response).kwargs["view"])
 
     async def test_a_dms_yes_keeps_it_and_lets_dmbot_use_it(self) -> None:
         pic = await self.picture(DM)
@@ -107,7 +113,7 @@ class Asking(DatabaseTest):
             it = self.press(user)
             await map_question.YesButton(GUILD, pic).callback(it)
             it.followup.send.assert_awaited_once()
-            self.assertEqual(it.followup.send.await_args.args[0], words.NOT_YOURS)
+            self.assertEqual(self.call(it.followup.send).args[0], words.NOT_YOURS)
         self.assertEqual(await self.kept_maps(), [])
         kept = await self.pictures.by_id(GUILD, pic)
         assert kept is not None
@@ -130,10 +136,10 @@ class Asking(DatabaseTest):
         sent = AsyncMock()
         self.bot.fetch_user = AsyncMock(return_value=SimpleNamespace(send=sent))
         await map_question.ask(self.bot, GUILD, self.campaign, picture)
-        text = sent.await_args.args[0]
+        text = self.call(sent).args[0]
         self.assertIn(words.QUESTION, text)
         self.assertIn("Everyone at the table has seen it", text)
-        labels = [c.item.label for c in sent.await_args.kwargs["view"].children]
+        labels = [c.item.label for c in self.call(sent).kwargs["view"].children]
         self.assertEqual(labels, [words.YES_LABEL, words.NO_LABEL])
 
     async def test_closed_private_messages_tell_the_dms_and_use_no_map(self) -> None:
@@ -146,7 +152,7 @@ class Asking(DatabaseTest):
         self.bot.fetch_user = AsyncMock(return_value=closed)
         with patch("dmbot.dm_screen.private_note.send", new=AsyncMock()) as note:
             await map_question.ask(self.bot, GUILD, self.campaign, picture)
-        self.assertEqual(note.await_args.args[2], words.dms_could_not_ask("Mia"))
+        self.assertEqual(self.call(note).args[2], words.dms_could_not_ask("Mia"))
         self.assertEqual(await self.kept_maps(), [])
 
     async def test_a_poster_who_stopped_since_the_question_cannot_keep_it_as_a_map(self) -> None:

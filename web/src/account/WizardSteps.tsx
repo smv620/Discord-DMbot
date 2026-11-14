@@ -26,6 +26,8 @@ export interface StepProps {
    * again (#4204); never sent to the server except to be read, and gone on a reload. */
   pasted?: string;
   onPasted?(text: string): void;
+  /** Step 10 tells the shell a finish run is working, so Back is hidden (#4302): Back does not stop the run. */
+  onRunning?(running: boolean): void;
 }
 
 const INVITE = /^https:\/\/www\.dndbeyond\.com\/campaigns\/join\/\d+/;
