@@ -38,7 +38,8 @@ UPLOAD_MAX = 200  # the upload's label, as `upload_notices.label`
 WAITING, NEVER = "waiting", "never"
 # A question whose answer is already true (the DM set that lineage or class since, or the
 # character knows that language now, by the DM's word: DMbot's own read of it is the question's,
-# #4285) is not shown or counted, nor a language question for a
+# #4285), or whose language the DM has said no to on the character (#4362: answered, yes or no), is
+# not shown or counted, nor a language question for a
 # character that has a sheet since (its languages are the sheet's, #4229): the same rows `waiting`
 # and `count` read.
 _STILL_OPEN = (
@@ -47,7 +48,7 @@ _STILL_OPEN = (
     " AND lower(l.name) = lower(o.name))"
     " AND NOT (o.kind = 'language' AND (EXISTS (SELECT 1 FROM memory_story_languages s"
     " WHERE s.guild_id = o.guild_id AND s.campaign_id = o.campaign_id"
-    " AND s.entity_id = o.entity_id AND s.name_key = o.name_key AND s.given_by = 'dm')"
+    " AND s.entity_id = o.entity_id AND s.name_key = o.name_key AND s.given_by IN ('dm', 'not'))"
     " OR EXISTS (SELECT 1 FROM character_sheets h WHERE h.guild_id = o.guild_id"
     " AND h.campaign_id = o.campaign_id AND h.entity_id = o.entity_id)))"
 )
