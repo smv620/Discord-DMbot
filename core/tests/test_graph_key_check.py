@@ -681,3 +681,51 @@ class PlaceFacts(unittest.TestCase):
         self.assertEqual(report.map_facts["terrain"]["extra"], 1)
         self.assertEqual(report.map_facts["control"]["missed"], 1)
         self.assertIn("Place climate: found 1, wrong 0, missed 0, extra 0", gkc.render(report))
+
+
+class Languages(unittest.TestCase):
+    """A character's languages, a property of the character and never a tie (#4229; owner,
+    2026-11-14): found, missed and extra."""
+
+    def test_found_missed_and_extra(self) -> None:
+        key = {
+            "nodes": [
+                {"name": "Norrin", "kind": "person", "aliases": [], "note": ""},
+                {"name": "Tamsin", "kind": "person", "aliases": [], "note": ""},
+            ],
+            "pairs": [],
+            "languages": [
+                {"character": "Norrin", "language": "Elvish"},
+                {"character": "Norrin", "language": "Draconic"},
+            ],
+        }
+
+        def lang(i: str, who: str, name: str) -> dict[str, Any]:
+            return {
+                "table": "story_language", "id": i, "entity_id": who, "name": name,
+                "name_key": name.casefold(), "given_by": "read",
+            }  # fmt: skip
+
+        rows = [
+            lang("a", "n", "elvish"),  # found (the same word, another case)
+            lang("b", "t", "Sylvan"),  # extra: the key gives Tamsin no language
+            lang("c", "t", "Draconic"),  # extra: Draconic is Norrin's, not Tamsin's
+        ]
+        data = backup([("n", "Norrin", "person"), ("t", "Tamsin", "person")], rows)
+        report = gkc.check(data, key)
+        self.assertEqual(dict(report.languages), {"found": 1, "missed": 1, "extra": 2})
+        self.assertIn("Languages: found 1, missed 1, extra 2", gkc.render(report))
+        self.assertEqual(gkc.summarize(report)["languages"]["extra"], 2)
+
+    def test_a_key_without_languages_prints_nothing(self) -> None:
+        report = gkc.check(backup([("n", "Norrin", "person")], []), {"nodes": [], "pairs": []})
+        self.assertNotIn("Languages:", gkc.render(report))
+
+    def test_the_sample_keys_give_cerric_two_languages_and_no_tie(self) -> None:
+        for name in ("lore_key.json", "master_key.json"):
+            key = load(name)
+            self.assertEqual(
+                sorted((x["character"], x["language"]) for x in key["languages"]),
+                [("Cerric Vanya'elen", "Draconic"), ("Cerric Vanya'elen", "Elvish")],
+            )
+            self.assertFalse([p for p in key["pairs"] if "language" in p["relation"]])
