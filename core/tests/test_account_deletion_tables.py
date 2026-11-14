@@ -24,6 +24,7 @@ FORGET_DECISIONS = import_module("dmbot.migrations.0455_forget_decisions")
 FORGET_DECISIONS_2 = import_module("dmbot.migrations.0493_forget_decisions_2")
 FORGET_OWN = import_module("dmbot.migrations.0494_forget_own_records")
 FORGET_RECAP = import_module("dmbot.migrations.0495_forget_recap_approval")
+FORGET_MEMBERSHIP = import_module("dmbot.migrations.0496_forget_membership")
 FORGET_LOOKUPS = import_module("dmbot.migrations.0447_member_lookups")
 DELETED: tuple[tuple[str, str], ...] = (
     FORGET_PERSON.DELETED + FORGET_REQUESTS.DELETED + FORGET_LOOKUPS.DELETED + FORGET_OWN.DELETED
@@ -35,6 +36,7 @@ ZEROED: tuple[tuple[str, str], ...] = (
     + FORGET_DECISIONS_2.ZEROED
     + FORGET_OWN.ZEROED
     + FORGET_RECAP.ZEROED
+    + FORGET_MEMBERSHIP.ZEROED
 )
 
 # Written out on purpose: if a column is dropped from a forget function, this test fails too, so
@@ -69,6 +71,7 @@ EXPECTED_DELETED: frozenset[tuple[str, str]] = frozenset(
         ("web_rule_actions", "user_id"),
         ("plot_chat", "user_id"),
         ("web_delete_notices", "by_user_id"),
+        ("campaign_dms", "user_id"),
     )
 )
 EXPECTED_ZEROED: frozenset[tuple[str, str]] = frozenset(
@@ -114,6 +117,8 @@ EXPECTED_ZEROED: frozenset[tuple[str, str]] = frozenset(
         ("active_sessions", "started_by"),
         ("access_log", "discord_user_id"),
         ("recap_jobs", "approved_by"),
+        ("campaign_handover_offers", "from_user_id"),
+        ("campaign_handover_offers", "to_user_id"),
     )
 )
 
@@ -141,6 +146,10 @@ ALREADY_COVERED = frozenset(
         # 0494 (#4148): written only by the grant writer, so it has its own test beside the moved
         # marker's (test_forget_own_records.py).
         "access_log",
+        # 0496 (#4148): a DM list and hand-over offers between two people, with the readers of an
+        # empty list, in test_forget_membership.py.
+        "campaign_dms",
+        "campaign_handover_offers",
     }
 )
 

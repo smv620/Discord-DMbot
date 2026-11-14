@@ -222,6 +222,9 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
         await conn.execute("SELECT dmbot_forget_own_records()")
         # Who approved a recap goes to 0; the approval is its hash, which stays (#4148).
         await conn.execute("SELECT dmbot_forget_recap_approval()")
+        # They come out of every campaign's DM list; open hand-over offers to or from them are
+        # cancelled and answered ones keep nobody in their place (#4148).
+        await conn.execute("SELECT dmbot_forget_membership()")
         # The DM's list of players they remember, and every list that names the person (#4226).
         await conn.execute("SELECT dmbot_forget_dm_players()")
         # The kept trial and unsubscribe records lose the Discord ID where they have its keyed hash

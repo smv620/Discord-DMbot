@@ -72,8 +72,7 @@ NOT_A_PERSON: Rules = {  # matched by name only
     "game_clocks": None,  # channel and message ids
     "campaigns": ("owner_left_at", "owner_missing_since"),  # times
 }
-UNREVIEWED: Rules = {  # not yet decided: the list for Supervisor on #4141 (columns not yet audited)
-    "campaign_dms": None, "campaign_handover_offers": None,
+UNREVIEWED: Rules = {  # not yet decided (columns not yet audited): empty since #4148's last set
 }  # fmt: skip
 
 
@@ -94,13 +93,21 @@ class EveryPersonColumnHasARule(DatabaseTest):
         part_f = import_module("dmbot.migrations.0493_forget_decisions_2")
         part_g = import_module("dmbot.migrations.0494_forget_own_records")
         part_h = import_module("dmbot.migrations.0495_forget_recap_approval")
+        part_i = import_module("dmbot.migrations.0496_forget_membership")
         done = {
             *part_a.DELETED, *part_a.ZEROED, *part_b.ZEROED, *part_c.DELETED, *part_d.ZEROED,
             *part_e.DELETED, *part_f.ZEROED, *part_g.DELETED, *part_g.ZEROED, *part_g.MOVES,
-            *part_h.ZEROED,
+            *part_h.ZEROED, *part_i.DELETED, *part_i.ZEROED,
         }  # fmt: skip
         deleted_tables = {
-            t for t, _ in (*part_a.DELETED, *part_c.DELETED, *part_e.DELETED, *part_g.DELETED)
+            t
+            for t, _ in (
+                *part_a.DELETED,
+                *part_c.DELETED,
+                *part_e.DELETED,
+                *part_g.DELETED,
+                *part_i.DELETED,
+            )
         }
         async with self.db.unscoped() as conn:
             cur = await conn.execute(
