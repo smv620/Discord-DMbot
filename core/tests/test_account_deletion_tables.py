@@ -27,7 +27,11 @@ FORGET_RECAP = import_module("dmbot.migrations.0495_forget_recap_approval")
 FORGET_MEMBERSHIP = import_module("dmbot.migrations.0496_forget_membership")
 FORGET_LOOKUPS = import_module("dmbot.migrations.0447_member_lookups")
 DELETED: tuple[tuple[str, str], ...] = (
-    FORGET_PERSON.DELETED + FORGET_REQUESTS.DELETED + FORGET_LOOKUPS.DELETED + FORGET_OWN.DELETED
+    FORGET_PERSON.DELETED
+    + FORGET_REQUESTS.DELETED
+    + FORGET_LOOKUPS.DELETED
+    + FORGET_OWN.DELETED
+    + FORGET_MEMBERSHIP.DELETED
 )
 ZEROED: tuple[tuple[str, str], ...] = (
     FORGET_PERSON.ZEROED
