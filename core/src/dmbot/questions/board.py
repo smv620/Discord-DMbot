@@ -91,6 +91,7 @@ def view(guild_id: int, campaign_id: str, found: Mapping[str, Counted]) -> disco
     from dmbot.ui.map_answer import OpenButton as MapsOpenButton
     from dmbot.ui.names import RecapNamesButton
     from dmbot.ui.trait_questions import TraitQuestionsButton
+    from dmbot.ui.world_notes import WorldNotesButton
 
     waiting = {k for k, c in found.items() if c.n > 0}
     out = discord.ui.View(timeout=None)
@@ -106,6 +107,8 @@ def view(guild_id: int, campaign_id: str, found: Mapping[str, Counted]) -> disco
         out.add_item(FamilyTiesButton(campaign_id))
     if kinds.TRAITS in waiting:
         out.add_item(TraitQuestionsButton(campaign_id))
+    if kinds.WORLD in waiting:
+        out.add_item(WorldNotesButton(campaign_id))
     if kinds.MAPS in waiting:
         out.add_item(MapsOpenButton(campaign_id))
     if kinds.CLAIMS in waiting:

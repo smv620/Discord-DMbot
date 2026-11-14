@@ -47,9 +47,14 @@ class OneReader(unittest.TestCase):
 
     def test_the_one_reader_filters_for_players(self) -> None:
         text = (SRC / "memory" / "map_fact_store.py").read_text(encoding="utf-8")
-        # (writes read inside their own change with `w.select`; only `facts_for` reads for a viewer)
-        viewer_reads = re.findall(r"scope\.select\(\s*MAP_FACTS", text)
-        self.assertEqual(len(viewer_reads), 1, "one read for viewers")
+        # (writes read inside their own change with `w.select`; any other `.select(MAP_FACTS` is a
+        # reader: `facts_for`, the one a player is ever given, and `dm_read_notes`, the DM's World
+        # notes (#4285), which refuses anyone else)
+        readers = re.findall(
+            r"async def (\w+)\((?:(?!\nasync def ).)*?(?<!\bw)\.select\(\s*MAP_FACTS", text, re.S
+        )
+        self.assertEqual(sorted(readers), ["dm_read_notes", "facts_for"], "the two readers")
+        self.assertIn("if not viewer.dm:", text.split("async def dm_read_notes", 1)[1][:900])
         # the players' rule is written once, in `map_facts.for_players` (#4287: the website's
         # player view calls it too), and the one reader uses it
         self.assertIn("mf.for_players(facts, known)", text)

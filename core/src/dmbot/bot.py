@@ -656,6 +656,7 @@ from dmbot.ui.transcripts import (
     transcript_command,
 )
 from dmbot.ui.upload_notice import UndoUploadButton, notice_text, notice_view
+from dmbot.ui.world_notes import WorldNotesButton
 from dmbot.upload_notices import Notice as UploadNotice
 from dmbot.upload_notices import UploadNotices
 
@@ -1909,6 +1910,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             questions_board.QuestionsButton,
             FamilyTiesButton,
             TraitQuestionsButton,  # 🧬 Lineage and class (#3926)
+            WorldNotesButton,  # 🌍 World notes (#4285)
         )  # the Questions message and the card's button (#3435)
         self.question_round = questions_discord.build_round(self)
         self.question_notices = (

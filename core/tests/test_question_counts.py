@@ -66,6 +66,7 @@ class TheKinds(unittest.TestCase):
                 "Which one?",
                 "Family ties",
                 "Lineage and class",
+                "World notes",
                 "Maps waiting for your yes",
                 "Facts to check",
                 "What people believe",
@@ -111,6 +112,23 @@ class TheCounts(Base):
     async def count(self, kind: str) -> Counted:
         found = await counts.count_kinds(self.src, self.g, self.c, only={kind})
         return found[kind]
+
+    async def test_world_notes_equal_the_lines_the_screen_shows(self) -> None:
+        # (#4285: DMbot's reads of places and languages the DM hasn't checked)
+        from dmbot.memory import map_facts as mf
+        from dmbot.memory.map_fact_store import Read
+
+        self.assertEqual((await self.count(kinds.WORLD)).n, 0)
+        made = await self.memory.add_entity(
+            self.g, self.c, name="Frostvale", type="place", status="confirmed", source="dm"
+        )
+        await self.memory.set_place_level(self.g, self.c, made.value.id, "region", source="dm")
+        await self.memory.add_read_map_facts(
+            self.g, self.c, [Read(made.value.id, mf.TERRAIN, "arctic")], source="background"
+        )
+        shown = await self.memory.world_notes(self.g, self.c)
+        got = await self.count(kinds.WORLD)
+        self.assertEqual((got.n, got.oldest), (len(shown), shown[0].made_at))
 
     async def test_new_names_equal_the_names_the_review_opens_with(self) -> None:
         """The count equals the queue of the real 📝 Check new names review, and an old pronoun

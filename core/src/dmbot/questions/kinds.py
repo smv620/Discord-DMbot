@@ -20,6 +20,7 @@ RECAP_APPROVE: Final = "recap_approve"
 RULES: Final = "rules"
 MAPS: Final = "maps"  # a map a player kept, waiting for a DM's yes (#4344)
 TRAITS: Final = "traits"  # a lineage or class the lore gives a character the DM has (#3926)
+WORLD: Final = "world_notes"  # DMbot's guesses about places and languages, to check (#4285)
 
 # In the order the list shows them (the ones people answer most first).
 ORDER: Final[tuple[str, ...]] = (
@@ -30,6 +31,7 @@ ORDER: Final[tuple[str, ...]] = (
     WHICH,
     FAMILY,
     TRAITS,
+    WORLD,
     MAPS,
     CLAIMS,
     READINGS,
@@ -46,6 +48,7 @@ LABELS: Final[dict[str, str]] = {
     WHICH: "Which one?",
     FAMILY: "Family ties",
     TRAITS: "Lineage and class",
+    WORLD: "World notes",
     MAPS: "Maps waiting for your yes",
     CLAIMS: "Facts to check",
     READINGS: "What people believe",
