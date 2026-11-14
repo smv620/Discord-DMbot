@@ -57,13 +57,25 @@ async def run(db: Database, *, batch: int = BATCH, max_pages: int = MAX_PAGES) -
     return Result(people, rows, False)
 
 
+async def left(db: Database) -> dict[str, int]:
+    """How many rows in each table still have no key (counts only)."""
+    async with db.unscoped() as conn:
+        cur = await conn.execute("SELECT tbl, n FROM dmbot_person_key_left()")
+        return {str(r["tbl"]): int(r["n"]) for r in await cur.fetchall()}
+
+
 async def run_logged(db: Database) -> None:
-    """`run`, with one line of counts in the log when anything was done."""
+    """`run`, then one line of counts in the log on every pass: what was done, and how many rows
+    in each table are still without a key (#4383: a pass that did nothing used to say nothing, and
+    34 unkeyed rows went unseen). Nothing is said while no secret is set (start-up says so)."""
+    if person_key.key_for(1) is None:
+        return
     result = await run(db)
-    if result.people:
-        log.info(
-            "Person keys: %d people, %d rows given a key%s",
-            result.people,
-            result.rows,
-            "" if result.complete else " (more next time)",
-        )
+    unkeyed = await left(db)
+    log.info(
+        "Person keys: %d people, %d rows given a key%s; rows still without a key: %s",
+        result.people,
+        result.rows,
+        "" if result.complete else " (more next time)",
+        ", ".join(f"{t} {n}" for t, n in sorted(unkeyed.items())) or "none counted",
+    )
