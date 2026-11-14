@@ -51,6 +51,7 @@ TRANSCRIPTS: Rules = {
         "speaker_erasures", "test_voice_consent", "theatre_lines", "transcript_erasures",
         "transcript_lines", "transcript_respells", "transcript_sessions", "character_sheets",
         "fightbot_players", "campaign_channel_people",
+        "map_notes",  # (a person's words put into a picture: gone with their own words, #2450)
     )
 }  # fmt: skip
 TRANSCRIPTS.update(
@@ -67,12 +68,9 @@ NOT_A_PERSON: Rules = {  # matched by name only
     "campaigns": ("owner_left_at", "owner_missing_since"),  # times
 }
 UNREVIEWED: Rules = {  # not yet decided: the list for Supervisor on #4141 (columns not yet audited)
-    "access_log": None, "account_moves": None,
     "campaign_dms": None, "campaign_handover_offers": None,
-    "map_notes": None, "memory_beliefs": None, "memory_knowers": None,
-    "plot_chat": None,
+    "memory_beliefs": None, "memory_knowers": None,
     "recap_jobs": ("approved_by", "speakers"),
-    "web_delete_notices": None,
 }  # fmt: skip
 
 
@@ -91,11 +89,14 @@ class EveryPersonColumnHasARule(DatabaseTest):
         part_d = import_module("dmbot.migrations.0455_forget_decisions")
         part_e = import_module("dmbot.migrations.0447_member_lookups")
         part_f = import_module("dmbot.migrations.0493_forget_decisions_2")
+        part_g = import_module("dmbot.migrations.0494_forget_own_records")
         done = {
             *part_a.DELETED, *part_a.ZEROED, *part_b.ZEROED, *part_c.DELETED, *part_d.ZEROED,
-            *part_e.DELETED, *part_f.ZEROED,
+            *part_e.DELETED, *part_f.ZEROED, *part_g.DELETED, *part_g.ZEROED, *part_g.MOVES,
         }  # fmt: skip
-        deleted_tables = {t for t, _ in (*part_a.DELETED, *part_c.DELETED, *part_e.DELETED)}
+        deleted_tables = {
+            t for t, _ in (*part_a.DELETED, *part_c.DELETED, *part_e.DELETED, *part_g.DELETED)
+        }
         async with self.db.unscoped() as conn:
             cur = await conn.execute(
                 "SELECT table_name, column_name FROM information_schema.columns"

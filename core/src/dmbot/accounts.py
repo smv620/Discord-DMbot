@@ -218,6 +218,8 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
         # The same for the next set: name decisions, the plan's, suggestions, plot answers and who
         # started a reading or a session (#4148).
         await conn.execute("SELECT dmbot_forget_decisions_2()")
+        # Their own talk with PlotBot, and the website's note that they deleted a campaign (#4148).
+        await conn.execute("SELECT dmbot_forget_own_records()")
         # The DM's list of players they remember, and every list that names the person (#4226).
         await conn.execute("SELECT dmbot_forget_dm_players()")
         # The kept trial and unsubscribe records lose the Discord ID where they have its keyed hash
