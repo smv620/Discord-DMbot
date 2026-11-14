@@ -22,15 +22,17 @@ FORGET_AUTHORSHIP = import_module("dmbot.migrations.0432_forget_authorship")
 FORGET_REQUESTS = import_module("dmbot.migrations.0440_forget_requests")
 FORGET_DECISIONS = import_module("dmbot.migrations.0455_forget_decisions")
 FORGET_DECISIONS_2 = import_module("dmbot.migrations.0493_forget_decisions_2")
+FORGET_OWN = import_module("dmbot.migrations.0494_forget_own_records")
 FORGET_LOOKUPS = import_module("dmbot.migrations.0447_member_lookups")
 DELETED: tuple[tuple[str, str], ...] = (
-    FORGET_PERSON.DELETED + FORGET_REQUESTS.DELETED + FORGET_LOOKUPS.DELETED
+    FORGET_PERSON.DELETED + FORGET_REQUESTS.DELETED + FORGET_LOOKUPS.DELETED + FORGET_OWN.DELETED
 )
 ZEROED: tuple[tuple[str, str], ...] = (
     FORGET_PERSON.ZEROED
     + FORGET_AUTHORSHIP.ZEROED
     + FORGET_DECISIONS.ZEROED
     + FORGET_DECISIONS_2.ZEROED
+    + FORGET_OWN.ZEROED
 )
 
 # Written out on purpose: if a column is dropped from a forget function, this test fails too, so
@@ -63,6 +65,8 @@ EXPECTED_DELETED: frozenset[tuple[str, str]] = frozenset(
         ("web_report_requests", "user_id"),
         ("web_restores", "user_id"),
         ("web_rule_actions", "user_id"),
+        ("plot_chat", "user_id"),
+        ("web_delete_notices", "by_user_id"),
     )
 )
 EXPECTED_ZEROED: frozenset[tuple[str, str]] = frozenset(
@@ -106,6 +110,7 @@ EXPECTED_ZEROED: frozenset[tuple[str, str]] = frozenset(
         ("plot_issues", "answered_by"),
         ("adventure_reads", "started_by"),
         ("active_sessions", "started_by"),
+        ("access_log", "discord_user_id"),
     )
 )
 
@@ -130,6 +135,9 @@ ALREADY_COVERED = frozenset(
         "plot_issues",
         "adventure_reads",
         "active_sessions",
+        # 0494 (#4148): written only by the grant writer, so it has its own test beside the moved
+        # marker's (test_forget_own_records.py).
+        "access_log",
     }
 )
 
@@ -205,6 +213,14 @@ ROWS: dict[str, str] = {
         "INSERT INTO lore_uploads (guild_id, campaign_id, id, user_id, source, choice,"
         " rights_by, rights_at, created_at, updated_at, state) VALUES (%(g)s, %(c)s, %(k)s, %(u)s,"
         " 'paste', 'world', %(u)s, 1, 1, 1, 'done')"
+    ),
+    "plot_chat": (
+        "INSERT INTO plot_chat (guild_id, campaign_id, id, issue_id, session_at, user_id, role,"
+        " created_at) VALUES (%(g)s, %(c)s, %(k)s, %(k)s, 1, %(u)s, 'dm', 1)"
+    ),
+    "web_delete_notices": (
+        "INSERT INTO web_delete_notices (guild_id, id, gone_id, campaign_name, by_user_id,"
+        " created_at) VALUES (%(g)s, %(k)s, %(k)s, 'x', %(u)s, 1)"
     ),
     "web_backups": (
         "INSERT INTO web_backups (guild_id, campaign_id, id, user_id, created_at, updated_at)"
