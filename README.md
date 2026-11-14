@@ -17,11 +17,18 @@ DMbot is in testing on the owner's own server, with a public website at
   hasn't agreed are never recorded. Anyone can stop at any time (🗂️ **Menu**, then
   **Stop recording me**).
 - **Transcripts** of every session, to read and download, and imports of older sessions.
+  The campaign's people (its DMs, its players and anyone recorded at its table) can read
+  them, or everyone in the server if the DM chooses that.
 - **Recaps** of each session, checked against what was said, with an optional voice-over.
   Nothing goes to the players until the DM approves it.
 - **Story memory** (the Story Graph on the website): the people, places, groups and things
   of the campaign, how they connect, and who in the story knows what. It's built from
   sessions and from lore the DM uploads. **DMbot suggests; the DM confirms.**
+- **Maps and pictures:** pictures posted in the table's chat are kept with the campaign and
+  described. A map is kept only after its poster says they may share it, and DMbot reads it
+  only after a DM says yes. The DM chooses which maps the table sees.
+- **World notes:** the cultures, languages and peoples of the campaign's world, read from
+  lore and kept only when the DM confirms them.
 - **Rules help:** looking up spells, conditions, creatures and rules in the free rules
   (SRD 5.2.1, with 2014 as the fallback), house rules and homebrew, Xanathar's and
   Tasha's optional rules, and short private tips for the DM with their source.
@@ -64,6 +71,7 @@ Most things are buttons. The DM runs `/dmbot start`, and DMbot offers the rest f
 | `/dmbot transcript` · `fix` · `delete-my-lines` | Download a session's transcript, fix a line DMbot heard wrong, or delete what DMbot wrote down from you. |
 | `/dmbot import` | Bring in older sessions, on the website. |
 | `/dmbot rule` · `houserules` · `homebrew` · `optionalrules` | Rules: look one up, the campaign's house rules, its homebrew, and the optional rules. |
+| `/dmbot map` | Keep a map picture for the campaign. |
 | `/dmbot backup` · `restore` | Download a copy of a campaign, or bring one back. |
 | `/dmbot migrate` | Move your plan and campaigns to a new Discord account. |
 | `/consent give` · `revoke` | Agree to be recorded, or stop, if the private message didn't reach you. |
