@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from dmbot.campaigns.store import decode_backup
-from dmbot.memory import kin, place_words, reputation_words, unnamed
+from dmbot.memory import kin, place_words, reputation_words, route_length, unnamed
 from dmbot.memory.models import name_key
 
 DEFAULT_KEY = (
@@ -68,6 +68,7 @@ GROUPS: dict[str, str] = {
     "found": "things",
     "associate": "associations",
     "in": "places",
+    "route": "places",  # a road or way between two places (#4255)
     "lives_in": "places",
     "lived_in": "places",
     "works_in": "places",
@@ -142,6 +143,9 @@ class Report:
     # A character's languages (#4229; owner, 2026-11-14: a property of the character, never a tie):
     # found, missed, and extra (a language row the key does not list). Counts only.
     languages: Counter[str] = field(default_factory=Counter)
+    # A road's stated length (#4255; a property of the road, never a tie): found, missed, and extra
+    # (a length on a road the key does not list). Counts only.
+    route_lengths: Counter[str] = field(default_factory=Counter)
 
 
 def _live(row: Mapping[str, Any]) -> bool:
@@ -368,6 +372,8 @@ def _row_ok(
             why = "" if ok else "other feeling"
     elif rel == "associate":
         ok = pred == "associated_with"
+    elif rel == "route":  # (a way between two places reads both ways round, #4255)
+        ok = pred == "route_to"
     elif rel == "in":
         ok = pred == "located_in" and forward and not place_words.way_of(detail)
         why = "wrong place word" if pred == "located_in" else ""
@@ -497,6 +503,7 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
     )
     _score_map_facts(report, graph, key, names)
     _score_languages(report, graph, key, names, wanted)
+    _score_route_lengths(report, graph, key, names, wanted)
     return report
 
 
@@ -534,6 +541,53 @@ def _score_languages(
         used.update(hit)
         report.languages["found" if hit else "missed"] += 1
     report.languages["extra"] += sum(1 for i in range(len(rows)) if i not in used)
+
+
+def _same_length(stored: Mapping[str, Any], words: str) -> bool:
+    """A stored length says what the key's words say: the same amount and unit when the words give
+    one (so "1 hour" is "an hour"), else the same words."""
+    want = route_length.parse(words)
+    if want is None:
+        return False
+    if want.amount is not None:
+        return (stored.get("length_amount"), stored.get("length_unit")) == (want.amount, want.unit)
+    return name_key(str(stored.get("length_words") or "")) == name_key(want.words)
+
+
+def _joins(s: str, o: str, a: set[str], b: set[str]) -> bool:
+    """The road runs between the two places, either way round (never a road with one end only)."""
+    return (s in a and o in b) or (s in b and o in a)
+
+
+def _score_route_lengths(
+    report: Report,
+    graph: Graph,
+    key: Mapping[str, Any],
+    names: Mapping[str, list[str]],
+    wanted: set[str],
+) -> None:
+    """The key's `route_lengths` (#4255): {from, to, words}. A road (`route_to`, either way round)
+    between those two places whose stored length says the same is found; none is missed. Every
+    other road with a length is extra. Whoever gave it (DMbot's read or the DM) counts alike, as
+    for languages. A key with no list, or a run that scores none of its documents (`doc`, the
+    session when not given), scores none, so its report is unchanged."""
+    lengths = [x for x in key.get("route_lengths", []) if x.get("doc", "session") in wanted]
+    if not lengths:
+        return
+    roads = [r for r in graph.relations if r["predicate"] == "route_to" and r.get("length_words")]
+    used: set[int] = set()
+    for want in lengths:
+        a = graph.ids(names.get(want["from"], [want["from"]]))
+        b = graph.ids(names.get(want["to"], [want["to"]]))
+        hit = [
+            i
+            for i, r in enumerate(roads)
+            if _joins(str(r["subject_id"]), str(r["object_id"]), a, b)
+            and _same_length(r, str(want["words"]))
+        ]
+        used.update(hit)
+        report.route_lengths["found" if hit else "missed"] += 1
+    report.route_lengths["extra"] += sum(1 for i in range(len(roads)) if i not in used)
 
 
 def _score_map_facts(
@@ -603,6 +657,7 @@ def summarize(report: Report) -> dict[str, Any]:
         "player_characters": {"found": report.players_found, "expected": report.players_expected},
         "map_facts": {layer: dict(c) for layer, c in sorted(report.map_facts.items())},
         **({"languages": dict(report.languages)} if report.languages else {}),
+        **({"route_lengths": dict(report.route_lengths)} if report.route_lengths else {}),
     }
 
 
@@ -644,6 +699,9 @@ def render(report: Report, counts_only: bool = False) -> str:
     if report.languages:  # (#4229: a character's languages, a property, not a tie)
         c = report.languages
         lines.append(f"Languages: found {c['found']}, missed {c['missed']}, extra {c['extra']}")
+    if report.route_lengths:  # (#4255: a road's length, a property of the road, not a tie)
+        c = report.route_lengths
+        lines.append(f"Road lengths: found {c['found']}, missed {c['missed']}, extra {c['extra']}")
     lines.append(f"Must-not-find names present: {len(report.violations)}")
     if report.violations and not counts_only:
         lines.append("  " + ", ".join(report.violations))

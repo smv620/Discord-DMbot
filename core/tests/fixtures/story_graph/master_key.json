@@ -8,14 +8,15 @@
  "order": "the lore is read first, then the session; where they disagree about what is current, the session wins",
  "how_to_read": {
   "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted); needs_context = only readable with the lore or the recap (for example 'she' is Keegan); recap_only = only in the 'Previously' recap on line 1, so background and never this session's event; by_rule = made by a rule, not read",
-  "relation": "parent_of, grandparent_of, sibling, spouse, uncle_of, apprentice_of, mentor_of, owns, carries, knows (+ one of nine feeling words), member, leads, works_for, enemy_of, rival_of, held_captive_by, found, associate; place ties by word: lives_in, lived_in, works_in, comes_from, last_seen_in (a character, creature or group), kept_in, was_kept_in (an item); in (only a place inside a place)",
+  "relation": "parent_of, grandparent_of, sibling, spouse, uncle_of, apprentice_of, mentor_of, owns, carries, knows (+ one of nine feeling words), member, leads, works_for, enemy_of, rival_of, held_captive_by, found, associate; place ties by word: lives_in, lived_in, works_in, comes_from, last_seen_in (a character, creature or group), kept_in, was_kept_in (an item); in (only a place inside a place); route (a road or way between two places, either way round, #4255)",
   "direction": "a to b: parent_of (a is the parent), owns (a owns b), leads (a leads b), member (a belongs to b), in (a place is inside place b); sibling, spouse and rival_of read the same both ways",
   "must_find": "false = a good find if present, not a miss if absent; an inferred tie that must be found is scored as an offered suggestion",
   "current": "false = history: it was true and is not now (the graph shows the most recent relationship, #3363)",
   "line": "the line of the document's plain-text export that supports it (blank lines count)",
   "in": "which documents say it: lore, session, or both (a both tie is checked twice: once in each document, and the master counts it once)",
   "sources": "for each document that says it: the key id there and the line of its plain-text export",
-  "languages": "a character's languages are a property of the character, never a tie (owner, 2026-11-14; #4229): {character, language, line, note, doc (the document that says it)}; scored as found, missed, and extra (a language the key does not list)"
+  "languages": "a character's languages are a property of the character, never a tie (owner, 2026-11-14; #4229): {character, language, line, note, doc (the document that says it)}; scored as found, missed, and extra (a language the key does not list)",
+  "route_lengths": "how far a road is, as the session says it (#4255): a property of the road, never a tie; found by the same amount and unit, or the same words when they give none"
  },
  "players": {
   "Cerric Vanya'elen": "player_ist",
@@ -3789,6 +3790,101 @@
     }
    ],
    "note": "the DM: 'he certainly knows where the Dwarven Valley is' (#3545, step 11b)"
+  },
+  {
+   "id": "m142",
+   "a": "Targos",
+   "relation": "route",
+   "b": "Bryn Shander",
+   "tier": "stated",
+   "must_find": false,
+   "in": [
+    "session"
+   ],
+   "sources": [
+    {
+     "doc": "session",
+     "id": "s035",
+     "line": 283
+    }
+   ],
+   "note": "the party's journey: 'You make it to Bryn Shander without any issues following the road' (#4255)"
+  },
+  {
+   "id": "m143",
+   "a": "Targos",
+   "relation": "route",
+   "b": "Easthaven",
+   "tier": "stated",
+   "must_find": false,
+   "in": [
+    "session"
+   ],
+   "sources": [
+    {
+     "doc": "session",
+     "id": "s036",
+     "line": 192
+    }
+   ],
+   "note": "the DM's other way: 'take the dogsled five hours to Easthaven' (not travelled this session; #4255)"
+  },
+  {
+   "id": "m144",
+   "a": "Easthaven",
+   "relation": "route",
+   "b": "Good Mead",
+   "tier": "stated",
+   "must_find": false,
+   "in": [
+    "session"
+   ],
+   "sources": [
+    {
+     "doc": "session",
+     "id": "s037",
+     "line": 183
+    }
+   ],
+   "note": "'Those are the three connected towns to Easthaven' (#4255)"
+  },
+  {
+   "id": "m145",
+   "a": "Easthaven",
+   "relation": "route",
+   "b": "Bryn Shander",
+   "tier": "stated",
+   "must_find": false,
+   "in": [
+    "session"
+   ],
+   "sources": [
+    {
+     "doc": "session",
+     "id": "s038",
+     "line": 183
+    }
+   ],
+   "note": "'Those are the three connected towns to Easthaven' (#4255)"
+  },
+  {
+   "id": "m146",
+   "a": "Easthaven",
+   "relation": "route",
+   "b": "Caer-Konig",
+   "tier": "stated",
+   "must_find": false,
+   "in": [
+    "session"
+   ],
+   "sources": [
+    {
+     "doc": "session",
+     "id": "s039",
+     "line": 183
+    }
+   ],
+   "note": "'Those are the three connected towns to Easthaven' (#4255)"
   }
  ],
  "events": [
@@ -3977,27 +4073,9 @@
   },
   {
    "from": "Targos",
-   "to": "Bryn Shander",
-   "fact": "1 hour by dogsled on the road",
-   "line": 283
-  },
-  {
-   "from": "Targos",
    "to": "Dwarven Valley",
    "fact": "2 hours to the branch toward Termalaine, then 5 hours: 7 hours by dogsled",
    "line": 171
-  },
-  {
-   "from": "Targos",
-   "to": "Easthaven",
-   "fact": "5 hours by dogsled",
-   "line": 192
-  },
-  {
-   "from": "Easthaven",
-   "to": "Good Mead / Bryn Shander / Caer-Konig",
-   "fact": "the three towns connected to Easthaven",
-   "line": 183
   }
  ],
  "languages": [
@@ -4062,5 +4140,23 @@
   "Grell",
   "Electric eel",
   "Owlbears"
+ ],
+ "route_lengths": [
+  {
+   "from": "Targos",
+   "to": "Bryn Shander",
+   "words": "1 hour",
+   "line": 283,
+   "doc": "session",
+   "note": "'It's only 1 hour to Bryn Shander' on the party's journey"
+  },
+  {
+   "from": "Targos",
+   "to": "Easthaven",
+   "words": "five hours",
+   "line": 192,
+   "doc": "session",
+   "note": "'take the dogsled five hours to Easthaven'; read only if that journey is walked"
+  }
  ]
 }

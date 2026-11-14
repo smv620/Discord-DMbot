@@ -227,7 +227,36 @@ class Journeys(unittest.TestCase):
             self.arrive("You reach Bryn Shander.", "Bryn Shander"),
             chains={MAIN: ["dale", "targos"]},
         )
-        self.assertEqual(got.legs, [Leg("targos", "bryn", "river")])
+        self.assertEqual(got.legs, [Leg("targos", "bryn", "river")])  # (no end named: no length)
+
+    def test_the_dms_words_on_the_way_give_its_length(self) -> None:
+        # (#4255 slice 1b: by `route_length`'s set phrases, the arrival's own name included)
+        got = run(
+            dm("Three days on the river to Bryn Shander.", moves=[Move(1, TRAVEL, "")]),
+            self.arrive("You reach Bryn Shander.", "Bryn Shander"),
+            chains={MAIN: ["dale", "targos"]},
+        )
+        self.assertEqual(got.legs[0].length, "Three days on the river")
+        named = run(
+            self.arrive("It's only 1 hour to Bryn Shander, and you arrive.", "Bryn Shander"),
+            chains={MAIN: ["dale", "targos"]},
+        )
+        self.assertEqual(named.legs[0].length, "1 hour")
+
+    def test_a_length_said_of_another_place_is_not_the_journeys(self) -> None:
+        # (the reviewer's case: narration on the way speaks of other places)
+        other = run(
+            dm("Kelvin's Cairn is twenty miles from here.", moves=[Move(1, TRAVEL, "")]),
+            self.arrive("You set off and reach Bryn Shander.", "Bryn Shander"),
+            chains={MAIN: ["dale", "targos"]},
+        )
+        self.assertEqual(other.legs[0].length, "")
+        both = run(
+            dm("Kelvin's Cairn is twenty miles from here.", moves=[Move(1, TRAVEL, "")]),
+            self.arrive("It's only 1 hour to Bryn Shander, and you arrive.", "Bryn Shander"),
+            chains={MAIN: ["dale", "targos"]},
+        )
+        self.assertEqual(both.legs[0].length, "1 hour")  # (the other place's never cancels it)
 
     def test_a_town_named_in_passing_is_no_journey(self) -> None:
         got = run(

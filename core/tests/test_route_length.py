@@ -63,6 +63,29 @@ class TheSetPhrases(unittest.TestCase):
             with self.subTest(quote):
                 self.assertEqual(rl.find(quote), words)
 
+    def test_on_the_road_and_by_the_river(self) -> None:
+        self.assertEqual(rl.find("Three days on the river."), "Three days on the river")
+        self.assertEqual(rl.find("1 hour by dogsled on the road."), "1 hour by dogsled")
+        # ("by the river" is beside it: a camp or a rest, not a way)
+        self.assertEqual(rl.find("You camp two days by the river, then go on."), "")
+        self.assertEqual(rl.find("You rest an hour by the road."), "")
+
+    def test_a_bare_amount_to_the_routes_own_end(self) -> None:
+        # (#4255 slice 1b: "to" and a name the route ends at; never "to reach", never another place)
+        ends = ["Easthaven", "Bryn Shander"]
+        cases = {
+            "You can take the dogsled five hours to Easthaven, then rest.": "five hours",
+            "It's only 1 hour to Bryn Shander, so you get there by 3:00.": "1 hour",
+            "The party has three days to reach Easthaven": "",
+            "It is two days to Luskan from here.": "",  # (not this route's end)
+            "Two days to Easthaven, or a day to Bryn Shander.": "",  # (two lengths: none)
+            "They have three days to Bryn Shander's festival.": "",  # (a deadline, not a way)
+        }
+        for quote, words in cases.items():
+            with self.subTest(quote):
+                self.assertEqual(rl.find(quote, places=ends), words)
+        self.assertEqual(rl.find("five hours to Easthaven"), "")  # (no names: no such phrase)
+
     def test_a_quote_with_no_length_gives_none(self) -> None:
         for quote in (
             "A road runs from Targos to Bryn Shander.",
@@ -73,6 +96,30 @@ class TheSetPhrases(unittest.TestCase):
         ):
             with self.subTest(quote):
                 self.assertEqual(rl.find(quote), "")
+
+
+class OnTheWay(unittest.TestCase):
+    """A journey's length from the DM's lines on the way (#4255 slice 1b): a set phrase only on a
+    line that names one of its ends, the name-tied form anywhere, exactly one across the stretch."""
+
+    ENDS = ("Targos", "Bryn Shander")
+
+    def test_only_a_line_naming_an_end_gives_its_set_phrase(self) -> None:
+        lines = ["Kelvin's Cairn is twenty miles from here.", "You reach Bryn Shander."]
+        self.assertEqual(rl.find_on_way(lines, self.ENDS), "")
+        lines = ["Bryn Shander is a day by sled from here.", "You reach it."]
+        self.assertEqual(rl.find_on_way(lines, self.ENDS), "a day by sled")
+
+    def test_the_name_tied_form_counts_anywhere_and_two_give_none(self) -> None:
+        self.assertEqual(
+            rl.find_on_way(["Off you go.", "It's only 1 hour to Bryn Shander."], self.ENDS),
+            "1 hour",
+        )
+        lines = ["It's 1 hour to Bryn Shander.", "Well, two hours to Bryn Shander."]
+        self.assertEqual(rl.find_on_way(lines, self.ENDS), "")
+
+    def test_no_ends_no_length(self) -> None:
+        self.assertEqual(rl.find_on_way(["two days by cart to Targos."], ()), "")
 
 
 if __name__ == "__main__":
