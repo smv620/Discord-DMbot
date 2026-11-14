@@ -49,8 +49,7 @@ KEEP, CHANGE, NOT_RIGHT, BACK, UNDO = "✅ Keep", "✏️ Change", "🚫 Not rig
 UNDONE = "↩ Undone."
 TOO_LATE = "Too late to undo. Open the place or the character to change it."
 NOT_UNDONE = "Not undone, because something changed since. Open the place or the character."
-NEVER_AGAIN = "DMbot won't guess this again."
-MAY_COME_BACK = "If your lore says it again later, it comes back here to check."
+NEVER_AGAIN = "DMbot won't guess this again."  # (a place and a language alike since #4362)
 MENU_MAX = SELECT_OPTIONS_MAX  # (Discord's limit for a menu's choices)
 LIST_MAX = MESSAGE_MAX - 300  # the list, so the reply with a line above it stays inside one message
 LAYER = {mf.TERRAIN: "Land", mf.CLIMATE: "Climate", mf.CONTROL: "Ruler"}
@@ -145,8 +144,7 @@ def note_text(note: wn.Note) -> str:
 def done_text(note: wn.Note, kept: bool) -> str:
     if kept:
         return f"✅ Kept: {full_line(note)}."
-    after = NEVER_AGAIN if note.kind == wn.PLACE else MAY_COME_BACK
-    return f"🚫 Taken out: {full_line(note)}. {after}"
+    return f"🚫 Taken out: {full_line(note)}. {NEVER_AGAIN}"
 
 
 async def show_world_notes(

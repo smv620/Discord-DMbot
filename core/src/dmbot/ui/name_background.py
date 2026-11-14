@@ -1470,9 +1470,11 @@ async def ask_languages(
             return 0, []
         everyone = sorted(set(ids.values()))
         known = await memory.languages_known(campaign.guild_id, campaign.id, everyone)
+        # (one the DM said no to is never asked again, and `known` leaves it out: #4362)
+        said_no = await memory.languages_said_no(campaign.guild_id, campaign.id, everyone)
         for s in spoken:
             entity_id = ids.get(s.name)
-            if entity_id is None:
+            if entity_id is None or name_key(s.language) in said_no.get(entity_id, set()):
                 continue
             has = known.get(entity_id, [])
             if any(name_key(k.name) == name_key(s.language) for k in has):

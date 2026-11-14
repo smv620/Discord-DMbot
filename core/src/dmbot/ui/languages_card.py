@@ -41,6 +41,7 @@ HAS_SHEET = (
     "the sheet."
 )
 UNCHECKED = "not checked yet"  # the ones DMbot found in the DM's notes and the DM hasn't confirmed
+GONE_FOR_GOOD = "DMbot won't guess it again."
 LOOK_AGAIN = f"Tap {BACK_BUTTON}, then {LANGUAGES_BUTTON}, to see the list as it is now."
 LINE_MAX = 300  # the card's line, so a long list never pushes the rest of the card out
 
@@ -192,7 +193,8 @@ class LanguagesMenu(_Menu):
         changed(interaction, campaign)
         self.stop()
         gone = self.names.get(self.pick.values[0], "")
-        note = f"🗣️ Removed: **{_md(gone)}**." if gone else "🗣️ Removed."
+        # (the same promise as World notes' 🚫: the DM's no is remembered, #4362)
+        note = f"🗣️ Removed: **{_md(gone)}**. {GONE_FOR_GOOD}" if gone else "🗣️ Removed."
         await show_languages(interaction, self.campaign_id, self.entity_id, note)
 
     async def _add(self, interaction: discord.Interaction) -> None:
