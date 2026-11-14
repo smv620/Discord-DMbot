@@ -21,7 +21,6 @@ ALLOWED = {
     "migrations/0486_route_length.py": "adds the columns",
     "ui/name_card.py": "a player's card drops a read (`_rows`, and the route place's line)",
     "ui/connection_edit.py": "the DM's edit page only (`found.secrets`)",
-    "ui/place_size.py": "the card line's words; its buttons are the DM's, checked on every press",
 }
 NAMES = re.compile(r"\blength_(?:words|from|amount|unit|approx)\b|\broute_length\b")
 
