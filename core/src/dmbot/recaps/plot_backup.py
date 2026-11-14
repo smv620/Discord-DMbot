@@ -116,7 +116,7 @@ class PlotIssuesSection:
                 and (row["answer_kind"] in ANSWERS if answered else True)
                 and _text(row["answer_note"], 500)
                 and (
-                    (_user(row["answered_by"]) and _int(row["answered_at"]))
+                    (_author(row["answered_by"]) and _int(row["answered_at"]))
                     if answered
                     else (row["answered_by"] is None and row["answered_at"] is None)
                 )
