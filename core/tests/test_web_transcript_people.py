@@ -57,6 +57,16 @@ class People(Base):
         async with self.db.guild(THURSDAY.id) as conn:
             await conn.execute(statement, args)
 
+    async def add_login(self, discord_id: int, account: int) -> None:
+        """A Discord id added to an account (0392: only the move setting opens its table)."""
+        async with self.db.unscoped() as conn:
+            await conn.execute("SET LOCAL dmbot.owner_sync = 'move'")
+            await conn.execute(
+                "INSERT INTO account_discord_ids (discord_id, account_id, added_at)"
+                " VALUES (%s, %s, 0)",
+                (discord_id, account),
+            )
+
     async def lines_of(self, who: Any) -> dict[str, Any]:
         return await transcripts.read_session(
             self.web, who, self.cref, 1, "heard", now=NOW, enforce_plans=False
@@ -187,7 +197,7 @@ class TheDoorsThemselves(People):
     async def test_each_door_answers_nothing_to_an_outsider_and_something_to_a_person(self) -> None:
         sid = await self.session_id()
         for call, args in (
-            ("dmbot_web_transcript_lines", (sid,)),
+            ("dmbot_web_transcript_lines", (sid, None, None)),
             ("dmbot_web_transcript_characters", ()),
             ("dmbot_web_transcript_speakers", (sid,)),
             ("dmbot_web_transcript_choices", (sid,)),
@@ -206,12 +216,12 @@ class TheDoorsThemselves(People):
 
     async def test_a_dm_and_everyone_are_let_in_by_the_lines_door(self) -> None:
         sid = await self.session_id()
-        self.assertTrue(await self.door(self.alice, "dmbot_web_transcript_lines", sid))
+        self.assertTrue(await self.door(self.alice, "dmbot_web_transcript_lines", sid, None, None))
         await self.sql(
             "UPDATE campaigns SET channels_visibility = 'everyone' WHERE guild_id = %s",
             THURSDAY.id,
         )
-        self.assertTrue(await self.door(self.carol, "dmbot_web_transcript_lines", sid))
+        self.assertTrue(await self.door(self.carol, "dmbot_web_transcript_lines", sid, None, None))
 
     async def test_the_session_list_stays_open_for_the_pages_that_only_number_sessions(
         self,
@@ -224,10 +234,7 @@ class TheRulesAddedIds(People):
     async def test_someone_heard_under_an_added_discord_id_is_one_of_the_people(self) -> None:
         # Dan has added a second Discord id to his account, and that id spoke at the table
         added = 5005
-        await self.sql(
-            "INSERT INTO account_discord_ids (discord_id, account_id, added_at) VALUES (%s, %s, 0)",
-            added, DAN.id,
-        )  # fmt: skip
+        await self.add_login(added, DAN.id)
         store = TranscriptStore(self.db)
         sid = await store.open_session(THURSDAY.id, self.one.id, START + 86_400)
         await store.add_lines(
@@ -239,10 +246,7 @@ class TheRulesAddedIds(People):
         self.assertEqual(await self.refused(self.carol), "not_found")  # (still nobody else)
 
     async def test_someone_added_by_hand_under_an_added_id_is_one_of_the_people(self) -> None:
-        await self.sql(
-            "INSERT INTO account_discord_ids (discord_id, account_id, added_at) VALUES (%s, %s, 0)",
-            5006, DAN.id,
-        )  # fmt: skip
+        await self.add_login(5006, DAN.id)
         await self.sql(
             "INSERT INTO campaign_channel_people (guild_id, campaign_id, user_id, added_by,"
             " added_at) VALUES (%s, %s, %s, %s, 0)",
@@ -258,10 +262,13 @@ class TheRulesAddedIds(People):
             THURSDAY.id, sid, [Line((START + 86_400) * 1000 + 1000, DAN.id, "dan", "dan")]
         )
         self.assertTrue((await self.lines_of(self.dan))["lines"])  # (his own id spoke)
-        await self.sql(
-            "INSERT INTO account_reserved (discord_id, account_id, removed_at) VALUES (%s, %s, 0)",
-            DAN.id, DAN.id,
-        )  # fmt: skip
+        async with self.db.unscoped() as conn:
+            await conn.execute("SET LOCAL dmbot.owner_sync = 'move'")
+            await conn.execute(
+                "INSERT INTO account_reserved (discord_id, account_id, removed_at)"
+                " VALUES (%s, %s, 0)",
+                (DAN.id, DAN.id),
+            )
         self.assertEqual(await self.refused(self.dan), "not_found")
 
 
