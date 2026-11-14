@@ -1124,9 +1124,21 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         found = await cur.fetchone()
     got = found["r"] if found else None
     if got is None or not str(got["action"]).startswith(
-        ("link-", "claim-", "backstory-", "reading-", "names-fixed-")
+        ("link-", "claim-", "backstory-", "reading-", "names-fixed-", "world-")
     ):
         raise RecapError("not_found")
+    if str(got["action"]).startswith("world-"):
+        # a World notes ✅, 🚫 or ↩ Undo (#4285): how it ended, how many a Keep kept, and the change
+        # it made for the page's Undo (none when it changed nothing)
+        made = got.get("resultBatches") or []
+        counts = str(got.get("counts") or "")
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "kept": int(counts.removeprefix("kept:")) if counts.startswith("kept:") else None,
+            "batch": int(made[0]) if got["state"] == "done" and made else None,
+            "undone": got["action"] == "world-undo" and got["state"] == "done",
+        }
     if str(got["action"]).startswith("reading-"):
         return _reading_answer(got)
     if str(got["action"]).startswith("names-fixed-"):
