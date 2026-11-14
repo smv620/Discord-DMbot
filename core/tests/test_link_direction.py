@@ -7,6 +7,7 @@ from __future__ import annotations
 import unittest
 from typing import Any
 
+from dmbot.memory.entity_text import _connection
 from dmbot.memory.gate import CONNECTION
 from dmbot.memory.link_words import (
     PAIR_WORDS,
@@ -15,6 +16,7 @@ from dmbot.memory.link_words import (
     reads_both_ways,
 )
 from dmbot.memory.models import MemoryRuleError, Relation
+from dmbot.memory.ontology import PredicateTerm
 from dmbot.memory.store import DIRECTION_DM_ONLY, ROLE_ONE_WAY
 from dmbot.web import relationships
 from tests.test_memory_store import GUILD_A, MemoryTest
@@ -78,7 +80,7 @@ class TheWords(unittest.TestCase):
                 self.assertNotIn("enemy", back)
 
 
-class TheStore(MemoryTest):
+class _StoreBase(MemoryTest):  # (no tests of its own: both classes below share it)
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.cerric = await self.add("Cerric", type="character")
@@ -108,6 +110,8 @@ class TheStore(MemoryTest):
             await self.memory.set_direction(GUILD_A, self.c, rid, first, **{"source": "dm", **kw})
         return str(caught.exception)
 
+
+class TheStore(_StoreBase):
     async def test_both_ways_on_a_one_way_kind_and_its_undo(self) -> None:
         r = await self.tie("sworn_to", self.cerric, self.wit)
         done = await self.turn(r.id, None)
@@ -340,3 +344,64 @@ class TheDirectionsUndo(Editing):
         stored = await self.memory.relation(self.g, self.one.id, rid)
         assert stored is not None
         self.assertEqual((stored.status, stored.both_ways), ("confirmed", None))
+
+
+class ACampaignsOwnKind(_StoreBase):
+    """A campaign's own kind (#4354): its default lives in its table (`is_symmetric`), which the
+    card's words never read, so the row carries the DM's choice and every reader agrees."""
+
+    async def own(self, symmetric: bool) -> str:
+        key = "oath_kin_of" if symmetric else "patron_of"
+        term = PredicateTerm(
+            key, "is oath-bound to", "Two sworn to each other.", ("character",), ("character",),
+            symmetric=symmetric, core=False,
+        )  # fmt: skip
+        await self.memory.add_predicate(
+            GUILD_A, self.c, term, examples=["Cerric is oath-bound to Wit."],
+            reason="the table uses it", source="dm",
+        )  # fmt: skip
+        return key
+
+    def text_of_other_end(self, r: Relation, symmetric: bool) -> str | None:
+        return _connection(
+            {"predicate": r.predicate, "label": "is oath-bound to", "other": "Cerric",
+             "outgoing": False, "symmetric": symmetric, "both_ways": r.both_ways}
+        )  # fmt: skip
+
+    async def test_a_two_way_own_kind_made_one_way_reads_one_way_everywhere(self) -> None:
+        key = await self.own(symmetric=True)
+        r = await self.tie(key, self.cerric, self.wit)
+        one = (await self.turn(r.id, r.subject_id)).value
+        self.assertIs(one.both_ways, False)
+        self.assertFalse(reads_both_ways(one.predicate, one.detail, False, one.both_ways))  # card
+        self.assertIsNone(self.text_of_other_end(one, symmetric=True))  # search text
+        back = (await self.turn(r.id, None)).value
+        self.assertIs(back.both_ways, True)
+        self.assertTrue(reads_both_ways(back.predicate, back.detail, False, back.both_ways))
+        self.assertIsNotNone(self.text_of_other_end(back, symmetric=True))
+
+    async def test_a_one_way_own_kind_made_two_way_and_back(self) -> None:
+        key = await self.own(symmetric=False)
+        r = await self.tie(key, self.cerric, self.wit)
+        same = await self.turn(r.id, r.subject_id)  # (the way it already reads: nothing written)
+        self.assertIsNone(same.batch)
+        both = (await self.turn(r.id, None)).value
+        self.assertIs(both.both_ways, True)
+        one = (await self.turn(r.id, r.subject_id)).value
+        self.assertIsNone(one.both_ways)  # (its kind's own default again: one way everywhere)
+        self.assertFalse(reads_both_ways(one.predicate, one.detail, False, one.both_ways))
+        self.assertIsNone(self.text_of_other_end(one, symmetric=False))
+
+    async def test_a_two_way_own_kind_turned_round(self) -> None:
+        key = await self.own(symmetric=True)
+        r = await self.tie(key, self.cerric, self.wit)
+        done = await self.turn(r.id, r.object_id)
+        new = done.value
+        self.assertEqual(
+            (new.subject_id, new.object_id, new.both_ways), (r.object_id, r.subject_id, False)
+        )
+        self.assertEqual((await self.stored(r.id)).status, "rejected")
+        self.assertEqual([x.id for x in await self.live(key)], [new.id])
+        await self.memory.undo(GUILD_A, self.c, done.batch)
+        (back,) = await self.live(key)
+        self.assertEqual((back.id, back.both_ways), (r.id, None))
