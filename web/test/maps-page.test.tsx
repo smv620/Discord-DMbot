@@ -78,7 +78,7 @@ describe("the Maps page", () => {
     render(<Maps api={mockApi("table")} refId={DM} />);
     await screen.findByText("Old road");
     fireEvent.click(within(rowFor("Old road")).getByRole("button", { name: w.removeIt }));
-    fireEvent.click(within(rowFor("Old road")).getByRole("button", { name: w.removeIt }));
+    fireEvent.click(within(rowFor("Old road")).getByRole("button", { name: w.removeYes }));
     await screen.findByText(w.doneRemoved);
     expect(screen.queryByText("Old road")).toBeNull();
     fireEvent.click(screen.getByRole("button", { name: w.undoLabel }));
@@ -100,6 +100,18 @@ describe("the Maps page", () => {
     fireEvent.click(within(rowFor("Harbour sketch")).getByRole("button", { name: w.takeBack }));
     await screen.findByText(w.takenBack);
     expect(screen.queryByText("Harbour sketch")).toBeNull();
+  });
+
+  it("never gives a player the DM's buttons, and a second press while one waits is ignored", async () => {
+    const api = mockApi("table");
+    render(<Maps api={api} refId={PLAYER} />);
+    await screen.findByText("Harbour sketch");
+    for (const name of [w.useYes, w.useNo, w.hide, w.show, w.removeIt]) expect(screen.queryByRole("button", { name })).toBeNull();
+    const button = within(rowFor("Harbour sketch")).getByRole("button", { name: w.takeBack });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    await screen.findByText(w.takenBack);
+    expect(api.calls.filter((c) => c.startsWith("changeMaps:")).length).toBe(1);
   });
 
   it("says it could not load, with a way to try again", async () => {

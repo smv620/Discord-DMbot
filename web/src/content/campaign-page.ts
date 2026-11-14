@@ -68,7 +68,7 @@ export const campaignPage = {
     recaps: "Read, edit and post session recaps.",
     timeline: "Every session in order, with its recap and the names that came out.",
     pictures: "The pictures people posted in the table's chat, and their links.",
-    maps: "The maps of your story: who added them, and which DMbot may use.",
+    maps: "Maps of your story. Say yes to the ones DMbot may use, and choose which the table sees.",
     graph: "How the names in this campaign are connected.",
     names: "Every name DMbot remembers. Search them and fix any that are wrong.",
     transcripts: "Read and download what was said. Everyone in the server can read these.",

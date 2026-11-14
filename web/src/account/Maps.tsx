@@ -27,7 +27,7 @@ const STUCK_SECONDS = 120;
 type Said = { ok: boolean; text: string; batch: number | null };
 type Asking = { id: string; kind: "show" | "remove" };
 
-export default function Maps({ api, refId, onSignedOut }: { api: AccountApi; refId: string; onSignedOut?: () => void }) {
+export default function Maps({ api, refId }: { api: AccountApi; refId: string }) {
   const [read, setRead] = useState<MapsRead | null>(null);
   const [problem, setProblem] = useState<string | null>(null);
   const [said, setSaid] = useState<Said | null>(null);
@@ -35,14 +35,19 @@ export default function Maps({ api, refId, onSignedOut }: { api: AccountApi; ref
   const [since, setSince] = useState<number | null>(null);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const flight = useRef(false);
+  // Counts the reads, so a slow older answer never covers a newer one.
+  const reads = useRef(0);
 
   async function load(): Promise<void> {
+    const mine = ++reads.current;
     try {
-      setRead(await api.maps!(refId));
+      const got = await api.maps!(refId);
+      if (mine !== reads.current) return;
+      setRead(got);
       setProblem(null);
-    } catch (error) {
-      if (error instanceof ApiError && error.kind === "signed-out") return onSignedOut?.();
-      setProblem(w.failed);
+    } catch {
+      // A signed-out person sees the sign-in line the page's header already shows; the list just says it could not load.
+      if (mine === reads.current) setProblem(w.failed);
     }
   }
   useEffect(() => {
@@ -58,16 +63,17 @@ export default function Maps({ api, refId, onSignedOut }: { api: AccountApi; ref
   }, [since]);
 
   async function press(change: MapsChange, then: (made: { batch: number | null }) => Said): Promise<void> {
-    if (flight.current || !api.changeMaps) return;
+    if (flight.current) return;
+    if (!api.changeMaps) return setSaid({ ok: false, text: w.wrong, batch: null });
     flight.current = true;
     setAsking(null);
     setSaid(null);
-    setNow(Math.floor(Date.now() / 1000));
-    setSince(Math.floor(Date.now() / 1000));
+    const start = Math.floor(Date.now() / 1000);
+    setNow(start);
+    setSince(start);
     try {
       setSaid(then(await api.changeMaps(refId, change)));
     } catch (error) {
-      if (error instanceof ApiError && error.kind === "signed-out") return onSignedOut?.();
       const kind = error instanceof ApiError ? error.kind : "";
       const text = kind === "gone" ? w.gone : kind === "not-allowed" ? w.dmOnly : kind === "changed" ? w.undoFailed : w.wrong;
       setSaid({ ok: false, text, batch: null });
@@ -124,7 +130,7 @@ export default function Maps({ api, refId, onSignedOut }: { api: AccountApi; ref
             <h2 class="small">{m.title}</h2>
             <p class="small muted">{w.addedBy(m.addedBy, m.via)}</p>
             <p class="small">
-              <a href={m.openUrl} target="_blank" rel="noopener noreferrer">{w.open}</a>
+              <a href={m.openUrl} target="_blank" rel="noopener noreferrer" aria-label={`${w.open}: ${m.title} (opens in a new tab)`}>{w.open}</a>
             </p>
             {read.canManage && m.state === "waiting" && (
               <div class="stack">
@@ -145,7 +151,7 @@ export default function Maps({ api, refId, onSignedOut }: { api: AccountApi; ref
                 <p>{asking.kind === "show" ? w.showWarning : w.removeAsk}</p>
                 <p class="row">
                   <button type="button" class="button" disabled={busy} onClick={() => void (asking.kind === "show" ? show(m, true) : remove(m))}>
-                    {asking.kind === "show" ? w.showIt : w.removeIt}
+                    {asking.kind === "show" ? w.showIt : w.removeYes}
                   </button>
                   <button type="button" class="button secondary" onClick={() => setAsking(null)}>
                     {asking.kind === "show" ? w.cancel : w.keepIt}
@@ -174,8 +180,8 @@ export default function Maps({ api, refId, onSignedOut }: { api: AccountApi; ref
         ))}
       </ul>
       {said && (
-        <p class={said.ok ? "small" : "small warn"} role={said.ok ? "status" : "alert"}>
-          {said.text}{" "}
+        <p class="row">
+          <span class={said.ok ? "small" : "small warn"} role={said.ok ? "status" : "alert"}>{said.text}</span>
           {said.batch !== null && (
             <button type="button" class="link" disabled={busy} onClick={() => void undo(said.batch!)}>
               {w.undoLabel}
