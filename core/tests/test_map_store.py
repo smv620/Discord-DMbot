@@ -341,6 +341,11 @@ class Maps(DatabaseTest):
         stranger = Viewer(table=True, own=PLAYER + 1)
         self.assertEqual(await self.maps.maps(GUILD_A, self.one.id, stranger), [])
         self.assertEqual(await self.maps.maps(GUILD_A, self.one.id, player, usable_only=True), [])
+        # their own map stays visible to them after a DM said no, and is still never usable
+        await self.maps.answer_use(GUILD_A, self.one.id, mine, dm_id=DM, yes=False)
+        [refused] = await self.maps.maps(GUILD_A, self.one.id, player)
+        self.assertFalse(may_use_map(refused))
+        self.assertEqual(await self.maps.maps(GUILD_A, self.one.id, player, usable_only=True), [])
         # (another campaign's maps stay out of it)
         self.assertEqual(await self.maps.maps(GUILD_B, self.far.id, player), [])
 

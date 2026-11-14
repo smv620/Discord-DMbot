@@ -311,6 +311,8 @@ class MapStore:
         return [m for m in found if may_use_map(m)] if usable_only else found
 
     async def get(self, guild_id: int, campaign_id: str, map_id: str, viewer: Viewer) -> Map | None:
+        """One map this viewer may see. With `Viewer.own` it can be the person's own map that is
+        still waiting or was refused: a reader of a map's content must check `may_use_map` too."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 f"SELECT {COLUMNS} FROM campaign_maps WHERE guild_id = %s AND campaign_id = %s"
