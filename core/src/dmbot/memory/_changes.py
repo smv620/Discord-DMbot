@@ -93,6 +93,11 @@ ENTITIES = Table(
         "setting_from",
         "form",
         "form_from",
+        "length_words",
+        "length_amount",
+        "length_unit",
+        "length_approx",
+        "length_from",
     ),
     # a clue's switch (#1649), the party, "players don't know this one yet" (#2321); a row written
     # now is after the pronoun gate (#2358)
@@ -114,6 +119,12 @@ ENTITIES = Table(
         "setting_from": None,  # ... and who said it (#4173 slice 2b)
         "form": None,  # an area, until said to be water or a route (#4173 slice 6a)
         "form_from": None,  # ... and who said it
+        # a route's stated length (#4255): none until a source or the DM gives one
+        "length_words": None,
+        "length_amount": None,
+        "length_unit": None,
+        "length_approx": False,
+        "length_from": None,
     },
 )
 # What a being or thing is now, with the history of what it was (#1267): one current row for
@@ -197,7 +208,8 @@ RELATIONS = Table(
     ("id", "subject_id", "predicate", "object_id", "detail", "confidence", "status", "source",
      "mention_ids", "from_session_at", "to_session_at", "from_game_time", "to_game_time",
      "secret", "created_at", "definition_version", "unrevealed", "directional", "decided",
-     "via_alias_id", "knows_how", "end_reason", "both_ways", "assumed", "route_state"),
+     "via_alias_id", "knows_how", "end_reason", "both_ways", "assumed", "route_state",
+     "length_words", "length_amount", "length_unit", "length_approx", "length_from"),
     # unrevealed: held back from the players until said at the table (#2404). directional: an
     # older row's role has no direction (#2457). knows_how: the story didn't say (#3881).
     # end_reason: an end from before #4115 has none. both_ways: its kind's default (#4154).
@@ -205,7 +217,8 @@ RELATIONS = Table(
     defaults={
         "unrevealed": False, "directional": False, "decided": None, "via_alias_id": None,
         "knows_how": "", "end_reason": None, "both_ways": None, "assumed": False,
-        "route_state": "",
+        "route_state": "", "length_words": None, "length_amount": None, "length_unit": None,
+        "length_approx": False, "length_from": None,  # (no length before #4255)
     },
 )  # fmt: skip
 CORRECTIONS = Table(
@@ -933,6 +946,11 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "both_ways": None,  # no DM set a direction before #4154: the kind's default
         "assumed": False,  # nothing was assumed before #4173 slice 3
         "route_state": "",  # no route had a state before #4173 slice 6d
+        "length_words": None,  # no route had a stated length before #4255
+        "length_amount": None,
+        "length_unit": None,
+        "length_approx": False,
+        "length_from": None,
     },
     # unique_item: nobody said, the name decides (#1267). audience_limited: off (#1649).
     # made_before_name_gate: a snapshot from before the column is a row from before it (#2358)
@@ -953,6 +971,11 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "setting": False,
         "form": None,  # every place was an area before #4173 slice 6a
         "form_from": None,
+        "length_words": None,  # no route had a stated length before #4255
+        "length_amount": None,
+        "length_unit": None,
+        "length_approx": False,
+        "length_from": None,
     },
     # nothing was pinned before the pin (#2447); nothing slept before a hide could put it to sleep
     # (#3082), so an Undo across the migration still finds the row as the batch left it

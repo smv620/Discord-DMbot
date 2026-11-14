@@ -57,6 +57,7 @@ from dmbot.memory import (
     place_words,
     report_fixed,
     reputation_words,
+    route_length,
     route_words,
     standing,
     states,
@@ -100,6 +101,7 @@ from dmbot.memory._changes import (
     TYPES,
     Changes,
     Scope,
+    Table,
     undo_batch,
 )
 from dmbot.memory.checks import (
@@ -416,6 +418,54 @@ def _merged_form(kept: dict[str, Any], gone: dict[str, Any]) -> dict[str, Any]:
     return {"form": None, "form_from": None}
 
 
+_LENGTH = ("length_words", "length_amount", "length_unit", "length_approx", "length_from")
+NO_LENGTH: dict[str, Any] = dict.fromkeys(_LENGTH) | {"length_approx": False}
+
+
+def _length_of(row: Mapping[str, Any]) -> dict[str, Any]:
+    """A row's stated route length (#4255), as its five columns."""
+    return {k: row.get(k, NO_LENGTH[k]) for k in _LENGTH}
+
+
+def _merged_length(kept: dict[str, Any], gone: dict[str, Any]) -> dict[str, Any]:
+    """A merged route's stated length (#4255): the DM's word over DMbot's read, then the kept
+    entry's, as for its form."""
+    for row in sorted((kept, gone), key=lambda r: r.get("length_from") != place_levels.BY_DM):
+        if row.get("length_words") is not None:
+            return _length_of(row)
+    return dict(NO_LENGTH)
+
+
+LENGTH_CHANGED = "That length has changed. Open the card again to see it."
+ROUTE_GONE = "That route isn't there any more."
+
+
+def _stated_length(row: Mapping[str, Any]) -> route_length.Length | None:
+    if row.get("length_words") is None:
+        return None
+    amount = row.get("length_amount")
+    return route_length.Length(
+        str(row["length_words"]), float(amount) if amount is not None else None,
+        row.get("length_unit"), bool(row.get("length_approx")),
+    )  # fmt: skip
+
+
+async def _route_target(w: Changes, target_id: str, on: str) -> tuple[Table, dict[str, Any]]:
+    """The row a route's length lives on (#4255): a live `route_to` connection, or a kept route
+    place. MemoryRuleError(ROUTE_GONE) for anything else (gone, rejected, or not a route)."""
+    if on == "connection":
+        row = await w.get(RELATIONS, target_id)
+        if row is None or row["predicate"] != route_words.ROUTE_TO or row["status"] == REJECTED:
+            raise MemoryRuleError(ROUTE_GONE)
+        return RELATIONS, row
+    if on == "place":
+        row = await w.get(ENTITIES, target_id)
+        if row is None or row.get("form") != "route" or row["status"] == REJECTED:
+            raise MemoryRuleError(ROUTE_GONE)
+        return ENTITIES, row
+    raise ValueError(on)
+
+
 def _merged_size(kept: dict[str, Any], gone: dict[str, Any]) -> dict[str, Any]:
     """How big a merged place is (#4173): the DM's word over DMbot's read, then the kept entry's."""
     for row in sorted((kept, gone), key=lambda r: r.get("place_level_from") != place_levels.BY_DM):
@@ -435,6 +485,9 @@ def _entity(r: dict[str, Any]) -> Entity:
         place_level_from=r.get("place_level_from"), setting=bool(r.get("setting")),
         setting_from=r.get("setting_from"),
         form=r.get("form"), form_from=r.get("form_from"),
+        length_words=r.get("length_words"), length_amount=r.get("length_amount"),
+        length_unit=r.get("length_unit"), length_approx=bool(r.get("length_approx")),
+        length_from=r.get("length_from"),
     )  # fmt: skip
 
 
@@ -492,6 +545,9 @@ def _relation(r: dict[str, Any]) -> Relation:
         r.get("decided"), r.get("via_alias_id"), str(r.get("knows_how") or ""),
         r.get("end_reason"), r.get("both_ways"), bool(r.get("assumed")),
         str(r.get("route_state") or ""),
+        length_words=r.get("length_words"), length_amount=r.get("length_amount"),
+        length_unit=r.get("length_unit"), length_approx=bool(r.get("length_approx")),
+        length_from=r.get("length_from"),
     )  # fmt: skip
 
 
@@ -522,6 +578,11 @@ def _relation_row(rel: Relation) -> dict[str, Any]:
         "both_ways": rel.both_ways,
         "assumed": rel.assumed,
         "route_state": rel.route_state,
+        "length_words": rel.length_words,
+        "length_amount": rel.length_amount,
+        "length_unit": rel.length_unit,
+        "length_approx": rel.length_approx,
+        "length_from": rel.length_from,
     }
 
 
@@ -1392,12 +1453,69 @@ class MemoryStore:
             row = current
             said = place_levels.BY_DM if form is not None else None
             if (current.get("form"), current.get("form_from")) != (form, said):
-                row = await w.update(ENTITIES, entity_id, {"form": form, "form_from": said})
+                change: dict[str, Any] = {"form": form, "form_from": said}
+                if form != "route" and current.get("length_words") is not None:
+                    change.update(NO_LENGTH)  # (only a route has a length, #4255: one Undo)
+                row = await w.update(ENTITIES, entity_id, change)
                 # (water or a road has no land type: #4256, in the same Undo)
                 await map_fact_store.prune(w, onto, entity_id)
             return Written(_entity(row), w.batch)
 
     # ---- A place's land, climate and who rules it (#4256, MapBot layers slice 2) ----------------
+
+    async def set_route_length(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        target_id: str,
+        words: str,
+        *,
+        on: str,
+        source: str,
+    ) -> Written[route_length.Length | None]:
+        """A route's stated length (#4255): `on` is "connection" (a `route_to`) or "place" (a route
+        place), `words` as the source or the DM gave them ("two days by cart"; empty takes it off,
+        the DM's only). The DM's word is kept as the DM's; anyone else's is DMbot's read, never
+        written over the DM's own and never over the same words. One change, so one Undo; nothing
+        changed writes nothing (no batch)."""
+        length = route_length.parse(words)
+        if source != DM and length is None:
+            raise MemoryRuleError(ONLY_DM_SAYS)  # (only the DM takes a length off)
+        given = place_levels.BY_DM if source == DM else place_levels.READ
+        async with self._write(guild_id, campaign_id, source) as w:
+            table, row = await _route_target(w, target_id, on)
+            if given == place_levels.READ and row.get("length_from") == place_levels.BY_DM:
+                return Written(_stated_length(row), None)  # (the DM's word stands)
+            fields = (
+                dict(NO_LENGTH)
+                if length is None
+                else {
+                    "length_words": length.words, "length_amount": length.amount,
+                    "length_unit": length.unit, "length_approx": length.approx,
+                    "length_from": given,
+                }
+            )  # fmt: skip
+            if given == place_levels.READ and row.get("length_words") == fields["length_words"]:
+                return Written(_stated_length(row), None)  # (read again: nothing new)
+            if _length_of(row) != fields:
+                await w.update(table, target_id, fields)
+            return Written(length, w.batch)
+
+    async def keep_route_length(
+        self, guild_id: int, campaign_id: str, target_id: str, *, on: str, source: str
+    ) -> Written[route_length.Length]:
+        """The DM's ✅ Length is right on a length DMbot read (#4255): it is the DM's from now on,
+        so players may see it. One change, one Undo. MemoryRuleError(LENGTH_CHANGED) when the
+        length is gone or is the DM's already (the screen was old)."""
+        if source != DM:
+            raise MemoryRuleError(ONLY_DM_SAYS)
+        async with self._write(guild_id, campaign_id, source) as w:
+            table, row = await _route_target(w, target_id, on)
+            stated = _stated_length(row)
+            if stated is None or row.get("length_from") != place_levels.READ:
+                raise MemoryRuleError(LENGTH_CHANGED)
+            await w.update(table, target_id, {"length_from": place_levels.BY_DM})
+            return Written(stated, w.batch)
 
     async def map_facts(
         self,
@@ -5188,6 +5306,12 @@ class MemoryStore:
                 # and how big a place is, the same way (#4173)
                 **_merged_size(kept, gone),
                 **_merged_form(kept, gone),
+                # (a route's stated length goes with it, but only onto a route, #4255)
+                **(
+                    _merged_length(kept, gone)
+                    if _merged_form(kept, gone)["form"] == "route"
+                    else NO_LENGTH
+                ),
                 # A clue only some people know stays so if either was (#1649).
                 "audience_limited": kept["audience_limited"] or gone["audience_limited"],
                 # And so does an entry the players don't know yet (#2321).
@@ -6958,6 +7082,13 @@ class MemoryStore:
             new = _relation(moved)
         if current["secret"] and not new.secret:
             new = _relation(await w.update(RELATIONS, new.id, {"secret": True}))
+        if (
+            current.get("length_words") is not None
+            and new.predicate == route_words.ROUTE_TO
+            and new.length_words is None
+        ):
+            # a route's stated length follows it to its new words or its turn (#4255)
+            new = _relation(await w.update(RELATIONS, new.id, _length_of(current)))
         # and who knows it (#2935): the list follows the statement to its new row, so new words or
         # a turn never quietly tell nobody or everybody (#4154, the reviewer's finding)
         await knowers.move_rows(w, "relation_id", relation_id, new.id)
@@ -7525,6 +7656,8 @@ class MemoryStore:
             ]
             if not ended and _is_a_reveal(rows):  # 👁️ Show to players on a held-back one (#2404)
                 ended = rows
+            if not ended and _is_a_length_change(rows):  # the DM's 🛣️ Length (#4255)
+                ended = rows
             if len(ended) != 1 or any(r["source"] != DM for r in rows):
                 raise MemoryRuleError(NOT_FOUND)  # only a removal, rewording or reveal by the DM
             for r in rows:  # a secret is not even mentioned, old or not
@@ -8060,6 +8193,16 @@ def _is_a_reveal(rows: list[dict[str, Any]]) -> bool:
     changed_keys = {k for k in {*before, *after} if before.get(k) != after.get(k)}
     # (a reveal of DMbot's assumed place also clears its mark: still the DM's reveal, #4173)
     return bool(changed_keys) and changed_keys <= {"secret", "unrevealed", "assumed"}
+
+
+def _is_a_length_change(rows: list[dict[str, Any]]) -> bool:
+    """One route changed in place, and only in its stated length (#4255): the DM's 🛣️ Length or ✅
+    Length is right, which the card's Undo takes back."""
+    if len(rows) != 1 or rows[0]["op"] != "update":
+        return False
+    before, after = rows[0]["before"] or {}, rows[0]["after"] or {}
+    changed_keys = {k for k in {*before, *after} if before.get(k) != after.get(k)}
+    return bool(changed_keys) and all(k.startswith("length_") for k in changed_keys)
 
 
 async def _let_go_of_anchored(w: Changes, anchor_id: str) -> None:
@@ -9424,6 +9567,10 @@ async def _move_relations(
                 upgrade = {**upgrade, "assumed": False}
                 if twin.unrevealed and not moved.unrevealed:
                     upgrade["unrevealed"] = False
+            if twin.predicate == route_words.ROUTE_TO:  # the DM's length over DMbot's read (#4255)
+                length = _merged_length(_relation_row(twin), _relation_row(moved))
+                if length != _length_of(_relation_row(twin)):
+                    upgrade = {**upgrade, **length}
             gone_rows.append(moved.id)
             folded[moved.id] = twin.id
             forget(moved)

@@ -356,6 +356,29 @@ class Maps(DatabaseTest):
             await self.pictures.taken_back_by(GUILD_A, self.one.id, gone.batch, PLAYER)
         )
 
+    async def test_a_player_also_sees_their_own_map_in_any_state_and_never_anothers(self) -> None:
+        mine = await self.add(await self.picture(self.one.id, 1), dm=False)  # (waiting for a DM)
+        other = await self.add(await self.picture(self.one.id, 2), dm=True)  # (a DM's, hidden)
+        await self.maps.set_audience(GUILD_A, self.one.id, other, "dm")
+        table = Viewer(table=True)
+        self.assertEqual(await self.maps.maps(GUILD_A, self.one.id, table), [])
+        player = Viewer(table=True, own=PLAYER)
+        self.assertEqual([m.id for m in await self.maps.maps(GUILD_A, self.one.id, player)], [mine])
+        self.assertIsNotNone(await self.maps.get(GUILD_A, self.one.id, mine, player))
+        self.assertIsNone(await self.maps.get(GUILD_A, self.one.id, other, player))
+        # someone else's id sees neither, and the content readers (usable only) never get a
+        # map still waiting for a DM
+        stranger = Viewer(table=True, own=PLAYER + 1)
+        self.assertEqual(await self.maps.maps(GUILD_A, self.one.id, stranger), [])
+        self.assertEqual(await self.maps.maps(GUILD_A, self.one.id, player, usable_only=True), [])
+        # their own map stays visible to them after a DM said no, and is still never usable
+        await self.maps.answer_use(GUILD_A, self.one.id, mine, dm_id=DM, yes=False)
+        [refused] = await self.maps.maps(GUILD_A, self.one.id, player)
+        self.assertFalse(may_use_map(refused))
+        self.assertEqual(await self.maps.maps(GUILD_A, self.one.id, player, usable_only=True), [])
+        # (another campaign's maps stay out of it)
+        self.assertEqual(await self.maps.maps(GUILD_B, self.far.id, player), [])
+
     async def test_a_player_viewer_never_sees_a_dm_only_map_even_when_it_is_usable(self) -> None:
         mid = await self.add(await self.picture(self.one.id, 1), dm=True)
         got = await self.maps.get(GUILD_A, self.one.id, mid, DM_VIEW)
