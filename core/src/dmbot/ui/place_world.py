@@ -11,7 +11,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 
 import discord
 
-from dmbot.memory import gate
+from dmbot.memory import gate, place_peoples
 from dmbot.memory import map_facts as mf
 from dmbot.memory.models import DM, MemoryRuleError
 from dmbot.ui.dmbot_commands import _answer_first, _Button, _Menu, _replace, _Select, _tell
@@ -28,9 +28,13 @@ HIDE_BUTTON = "🙈 Hide from players"
 SHOW_BUTTON = "👁️ Show to players"
 TYPE_BUTTON = "✏️ Type a group"
 KEEP_BUTTON = "✅ Keep what DMbot read"
-NOTHING_TO_SHOW = "Nothing to show yet. Set the land, climate or ruler first."
+NOTHING_TO_SHOW = "Nothing to show yet. Set something first."
 BACK_BUTTON = "↩ Back"
 READ_MARK = " (DMbot read this)"
+# A place's culture and who lives there (#4257; the ux-critic's words, never "people", which is an
+# entry kind, nor "species" or "lineage"): their own screen, `ui/place_peoples`.
+PEOPLES_BUTTON = "🏛️ Culture, who lives here"
+STRENGTH = {"strong": "strongly", "some": "somewhat", "traces": "a little", "once": "once"}
 GROUPS_SHOWN = 23  # (Discord's 25 a menu, less "Not sure" and room for the current ruler)
 
 # The land menu (the SRD's Travel Terrain underneath, in plain words; the D&D word is in the
@@ -74,6 +78,20 @@ def climate_words(f: mf.Fact) -> str:
     return f"{word} and {f.how}" if f.how in ("dry", "wet") else word
 
 
+def culture_words(f: mf.Fact) -> str:
+    """ "strongly dwarven", or "dwarven (in the dwarven quarter)" for part of the place."""
+    word = place_peoples.words_of(f.value, f.words, plural=False)
+    said = f"{STRENGTH[f.how]} {word}" if f.how in STRENGTH else word
+    return f"{said} (in {f.part})" if f.part else said
+
+
+def people_words(f: mf.Fact) -> str:
+    """ "mostly halflings", or "halflings" when no share was said."""
+    word = place_peoples.words_of(f.value, f.words, plural=True)
+    share = place_peoples.HOW_WORDS.get(f.how, "")
+    return f"{share} {word}" if share else word
+
+
 def card_lines(
     held: Mapping[str, mf.Held], names: Mapping[str, str], *, dm: bool, place_name: str = ""
 ) -> str:
@@ -109,9 +127,27 @@ def card_lines(
                 f"\n👑 **{RULED.get(how, 'Ruled by')}:** {' and '.join(groups)}"
                 f"{where(rule)}{mark(rule)}"
             )
-    # (the hint only for this place's own: a bigger place's is checked on its own card)
-    if dm and any(f.status == mf.READ for h in held.values() if h.from_id is None for f in h.facts):
+    # a culture and who lives there: the place's own only, never read up (#4257)
+    if (culture := held.get(mf.CULTURE)) is not None:
+        words = ", ".join(dict.fromkeys(culture_words(f) for f in culture.facts))
+        lines.append(f"\n🏛️ **Culture:** {_md(words)}{mark(culture)}")
+    if (people := held.get(mf.POPULATION)) is not None:
+        words = ", ".join(dict.fromkeys(people_words(f) for f in people.facts))
+        lines.append(f"\n🏘️ **Who lives here:** {_md(words)}{mark(people)}")
+
+    def to_check(layers: frozenset[str]) -> bool:
+        # (only this place's own: a bigger place's is checked on its own card)
+        return dm and any(
+            f.status == mf.READ
+            for layer, h in held.items()
+            if layer in layers and h.from_id is None
+            for f in h.facts
+        )
+
+    if to_check(mf.UP_TREE):
         lines.append(f"\nTap {BUTTON} to check.")
+    if to_check(frozenset({mf.CULTURE, mf.POPULATION})):
+        lines.append(f"\nTap {PEOPLES_BUTTON} to check.")
     return "".join(lines)
 
 
@@ -341,6 +377,8 @@ class WorldMenu(_Menu):
             for how, label in HOW_BUTTONS.items():
                 style = discord.ButtonStyle.success if how == now else discord.ButtonStyle.secondary
                 self.add_item(_Button(self._how(how), label=label, style=style, row=3))
+        # its culture and who lives there (#4257): row 3 never holds more than the 4 above
+        self.add_item(_Button(self._peoples, label=PEOPLES_BUTTON, row=3))
         lands = _own(held, mf.TERRAIN)
         self.land_value = lands[0].value if len(lands) == 1 else None
         if self.land_value is not None:
@@ -462,9 +500,10 @@ class WorldMenu(_Menu):
         self.stop()
         name = f"**{_md(self.name)}**"
         note = (
-            f"👁️ Noted: players who can see {name} see its land, climate and ruler."
+            # (one 🙈 / 👁️ for every layer of the place: its culture and who lives there too)
+            f"👁️ Noted: players who can see {name} see what you set for it."
             if show
-            else f"🙈 Noted: players can't see {name}'s land, climate or ruler."
+            else f"🙈 Noted: players can't see what you set for {name}."
         )
         await show_world(interaction, self.campaign_id, self.entity_id, note)
 
@@ -491,6 +530,12 @@ class WorldMenu(_Menu):
         await interaction.response.send_modal(
             TypeGroupForm(self.campaign_id, self.entity_id, self.name)
         )
+
+    async def _peoples(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.place_peoples import show_peoples
+
+        self.stop()
+        await show_peoples(interaction, self.campaign_id, self.entity_id)
 
     async def _back(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.name_card import show_card
