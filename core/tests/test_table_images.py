@@ -595,6 +595,32 @@ class TableImages(chat.AtTheTableTyped):
         )
         self.assertEqual(len(self.lines()), 1)
 
+    async def test_a_map_asks_its_poster_once_and_a_plain_picture_does_not(self) -> None:
+        self.say_into()
+        self.keeper()
+        self.bot.map_store = cast(Any, object())
+        asked = AsyncMock()
+        with patch("dmbot.ui.map_question.ask", new=asked):
+            self.reads(images.MAP)
+            await self.hear(picture())
+            asked.assert_awaited_once()
+            assert asked.await_args is not None
+            self.assertEqual(asked.await_args.args[1], GUILD_A)  # (the server, then the campaign)
+            asked.reset_mock()
+            self.reads("photo")
+            await self.hear(picture())
+            asked.assert_not_awaited()
+
+    async def test_the_same_map_again_is_not_asked_a_second_time(self) -> None:
+        self.say_into()
+        self.keeper(Result(cast(Any, SimpleNamespace(code="CODE", id=77)), False))
+        self.bot.map_store = cast(Any, object())
+        self.reads(images.MAP)
+        asked = AsyncMock()
+        with patch("dmbot.ui.map_question.ask", new=asked):
+            await self.hear(picture())
+        asked.assert_not_awaited()
+
     async def test_the_same_picture_again_says_no_second_link(self) -> None:
         said = self.say_into()
         self.keeper(Result(cast(Any, SimpleNamespace(code="CODE", id=77)), False))
