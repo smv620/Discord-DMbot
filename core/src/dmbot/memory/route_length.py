@@ -98,9 +98,11 @@ def parse(words: str) -> Length | None:
 
 
 def _sized(words: str, amount: float, unit: str, *, approx: bool) -> Length:
-    if amount > AMOUNT_MAX:
-        return Length(words)  # (no story route is that long: a misread, kept as words only)
-    return Length(words, round(amount, 2), unit, approx)
+    amount = round(amount, 2)
+    if not 0 < amount <= AMOUNT_MAX:
+        # (no story route is that long, nor rounds to nothing: a misread, kept as words only)
+        return Length(words)
+    return Length(words, amount, unit, approx)
 
 
 # A length said of a route, as set phrases only: "two days' ride from", "a day by cart to",
@@ -123,9 +125,11 @@ _PHRASE = re.compile(
 
 
 def find(quote: str) -> str:
-    """The length's words a route's quote states by a set phrase, or "" when it states none."""
-    m = _PHRASE.search(" ".join(quote.split()))
-    return (m["words"] or m["bare"]).strip() if m else ""
+    """The length's words a route's quote states by a set phrase, or "" when it states none, or
+    more than one: a sentence with two lengths may be about two routes, and which is which is a
+    guess this never makes."""
+    found = list(_PHRASE.finditer(" ".join(quote.split())))
+    return (found[0]["words"] or found[0]["bare"]).strip() if len(found) == 1 else ""
 
 
 __all__ = ["DAYS", "HOURS", "MILES", "UNITS", "WORDS_MAX", "Length", "find", "parse"]

@@ -5,9 +5,11 @@ route. Invented names. Needs Postgres."""
 
 from __future__ import annotations
 
+import time
 from typing import Any
 
 from dmbot.campaigns.store import decode_backup, encode_backup
+from dmbot.memory import backup
 from dmbot.memory import route_length as rl
 from dmbot.memory.models import MemoryRuleError, Relation
 from dmbot.memory.store import LENGTH_CHANGED, ROUTE_GONE
@@ -91,6 +93,7 @@ class RouteLength(MemoryTest):
             await self.memory.keep_route_length(
                 GUILD_A, self.c, self.road.id, on="connection", source=DM_SOURCE
             )
+        assert kept.batch is not None
         await self.memory.undo(GUILD_A, self.c, kept.batch)
         self.assertEqual((await self.row()).length_from, "read")
 
@@ -120,6 +123,7 @@ class RouteLength(MemoryTest):
         self.assertEqual((place.length_amount, place.length_approx), (3.0, True))
         water = await self.memory.set_place_form(GUILD_A, self.c, east, "water", source=DM_SOURCE)
         self.assertIsNone(water.value.length_words)  # (only a route has a length)
+        assert water.batch is not None
         await self.memory.undo(GUILD_A, self.c, water.batch)
         back = await self.memory.entity(GUILD_A, self.c, east)
         assert back is not None
@@ -162,6 +166,8 @@ class RouteLength(MemoryTest):
                      upload="Notes")],
         )  # fmt: skip
         waiting = await links.waiting(GUILD_A, self.c, symmetric={"route_to"})
+        # (the keep marks only a route made just now, by the wall clock: the store's clock agrees)
+        self.now = int(time.time()) + 5
         done = await backstory_keep.keep_all(self.memory, links, GUILD_A, self.c, waiting)
         every = await self.memory.relations(GUILD_A, self.c, include_secret=True)
         (route,) = [
@@ -194,3 +200,78 @@ class RouteLength(MemoryTest):
         player = await self.card_lines(dm=False)
         self.assertIn("· a day by cart", player)
         self.assertNotIn("DMbot read this", player)
+
+    async def kept_from_lore(self) -> tuple[Any, Any, Any, str]:
+        from dmbot.memory import backstory_keep
+        from dmbot.memory.backstory_links import BackstoryLinks, NewLink
+
+        easthaven = await self.add("Easthaven", type="place", status="confirmed")
+        links = BackstoryLinks(self.db)
+        await links.add(
+            GUILD_A, self.c,
+            [NewLink(self.bryn, "route_to", easthaven,
+                     "Easthaven is two days by dogsled from Bryn Shander.", detail="road",
+                     upload="Notes")],
+        )  # fmt: skip
+        waiting = await links.waiting(GUILD_A, self.c, symmetric={"route_to"})
+        # (the keep marks only a route made just now, by the wall clock: the store's clock agrees)
+        self.now = int(time.time()) + 5
+        done = await backstory_keep.keep_all(self.memory, links, GUILD_A, self.c, waiting)
+        return backstory_keep, links, done, easthaven
+
+    async def test_undo_all_takes_back_a_kept_route_with_its_length(self) -> None:
+        # (the reviewer's blocker: the length's write sat on the kept row, so Undo all refused it)
+        keep, links, done, easthaven = await self.kept_from_lore()
+        self.assertEqual(await keep.undo_all(self.memory, links, GUILD_A, self.c, done), 1)
+        every = await self.memory.relations(GUILD_A, self.c, include_secret=True)
+        self.assertFalse(
+            [r for r in every if r.predicate == "route_to" and easthaven in (r.subject_id,
+                                                                             r.object_id)]
+        )  # fmt: skip
+        self.assertEqual(len(await links.waiting(GUILD_A, self.c, symmetric={"route_to"})), 1)
+
+    async def test_a_route_place_that_stops_being_a_place_loses_its_length_and_restores(
+        self,
+    ) -> None:
+        east = await self.add("The Eastway", type="place", status="confirmed")
+        await self.memory.set_place_form(GUILD_A, self.c, east, "route", source=DM_SOURCE)
+        await self.set("two days by cart", target=east, on="place")
+        await self.memory.set_entity_type(GUILD_A, self.c, east, "item", source=DM_SOURCE)
+        gone = await self.memory.entity(GUILD_A, self.c, east)
+        assert gone is not None
+        self.assertEqual((gone.form, gone.length_words, gone.length_from), (None, None, None))
+        raw = encode_backup(await self.campaigns.export(GUILD_A, self.c))
+        await self.campaigns.import_backup(GUILD_B, decode_backup(raw), DM)  # (no damaged row)
+
+    async def test_a_route_places_length_goes_through_a_backup(self) -> None:
+        east = await self.add("The Eastway", type="place", status="confirmed")
+        await self.memory.set_place_form(GUILD_A, self.c, east, "route", source=DM_SOURCE)
+        await self.set("a day by cart", source="background", target=east, on="place")
+        raw = encode_backup(await self.campaigns.export(GUILD_A, self.c))
+        restored = await self.campaigns.import_backup(GUILD_B, decode_backup(raw), DM)
+        (place,) = [e for e in await self.memory.entities(GUILD_B, restored.id)
+                    if e.name == "The Eastway"]  # fmt: skip
+        self.assertEqual(
+            (place.length_words, place.length_amount, place.length_from),
+            ("a day by cart", 1.0, "read"),
+        )
+
+    async def test_merged_places_keep_the_dms_length_on_their_folded_route(self) -> None:
+        twin = await self.add("Targos Town", type="place", status="confirmed")
+        other = (
+            await self.relate(twin, "route_to", self.bryn, detail="road", status="confirmed")
+        ).value[0]
+        await self.set("a day by cart", source="background")  # (the kept place's: a read)
+        await self.set("twenty miles", target=other.id)  # (the twin's: the DM's)
+        await self.memory.merge(
+            GUILD_A, self.c, self.targos, twin, source=DM_SOURCE, dm_said_same=True
+        )
+        (road,) = [r for r in await self.memory.relations(GUILD_A, self.c, include_secret=True)
+                   if r.predicate == "route_to"]  # fmt: skip
+        self.assertEqual((road.length_words, road.length_from), ("twenty miles", "dm"))
+
+    def test_a_backup_with_an_empty_length_is_damaged(self) -> None:
+        self.assertFalse(backup._valid("length_words", ""))
+        self.assertTrue(backup._valid("length_words", "two days"))
+        self.assertTrue(backup._valid("length_words", None))
+        self.assertFalse(backup._valid("length_words", "x" * (rl.WORDS_MAX + 1)))

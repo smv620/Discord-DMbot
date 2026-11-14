@@ -45,6 +45,9 @@ class KeptAll:
     kept: list[tuple[Waiting, int | None]] = field(default_factory=list)  # (link, batch)
     # the batches that ended an old connection for each kept change (same order as `kept`)
     ended: list[list[int | None]] = field(default_factory=list)
+    # the batches written on top of the kept connection itself (its stated length, #4255), taken
+    # back before it, since Undo refuses a row changed since (same order as `kept`)
+    on_top: list[list[int | None]] = field(default_factory=list)
     refused: int = 0  # the rules refused it: it stays waiting, to be answered by hand
     worked_out: int = 0  # every worked-out family link waiting for the DM's yes after this keep
 
@@ -306,6 +309,7 @@ async def keep_all(
             else []
         )
         ended: list[int | None] = []
+        on_top: list[int | None] = []
         start = change_start(old, now)
         try:
             await end_replaced(
@@ -369,8 +373,14 @@ async def keep_all(
             if batch is not None:
                 ended.append(batch)
         # A route's stated length, from the route's own quote by set phrases only (#4255): kept as
-        # DMbot's read (only the DM's ✅ makes it what players may see), in the same Undo
-        if made.predicate == route_words.ROUTE_TO and not made.route_state and c.quote:
+        # DMbot's read (only the DM's ✅ makes it what players may see), in the same Undo. Only on
+        # a route made just now: an older twin's length is the DM's or an earlier read's
+        if (
+            made.predicate == route_words.ROUTE_TO
+            and not made.route_state
+            and c.quote
+            and made.created_at >= now
+        ):
             words = route_length.find(c.quote)
             if words:
                 try:
@@ -382,9 +392,11 @@ async def keep_all(
                         on="connection",
                         source=BACKGROUND_SOURCE,
                     )
-                    ended.append(said.batch)
-                except MemoryRuleError:  # (the connection is kept whatever the length does)
-                    log.info("A kept route's length was not stored")
+                    on_top.append(said.batch)
+                except Exception as exc:  # the connection is kept whatever the length does
+                    log.warning(
+                        "A kept route's length could not be stored (%s)", type(exc).__name__
+                    )
         # (only a connection made just now: an older twin's rows are the DM's, not this guess's)
         if c.world == lore_knowledge.GUESS and not made.unrevealed and made.created_at >= now:
             await mark_guess(memory, guild_id, campaign_id, "connection", [made.id])
@@ -396,6 +408,7 @@ async def keep_all(
         await store.remove(guild_id, campaign_id, c)
         done.kept.append((c, written.batch))
         done.ended.append(ended)
+        done.on_top.append(on_top)
         if progress is not None:
             await progress(tried, total)
     done.worked_out = await rework_family(memory, guild_id, campaign_id, [c for c, _ in done.kept])
@@ -436,9 +449,11 @@ async def _undo_all(
     memory: MemoryStore, store: BackstoryLinks, guild_id: int, campaign_id: str, done: KeptAll
 ) -> int:
     back = 0
-    for (c, batch), ended in reversed(list(zip(done.kept, done.ended, strict=True))):
+    rows = list(zip(done.kept, done.ended, done.on_top, strict=True))
+    for (c, batch), ended, on_top in reversed(rows):
         if batch is None and not ended:
             continue
+        await undo_batches(memory, guild_id, campaign_id, on_top)  # (first: it changed the row)
         # (the old connections come back whatever happens to the new one, and the link waits
         # again once the new one is gone: nothing is lost half way)
         if batch is not None:

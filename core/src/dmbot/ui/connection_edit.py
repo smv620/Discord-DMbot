@@ -18,7 +18,7 @@ from dataclasses import dataclass
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.memory import kin, link_edits, route_length, route_words
+from dmbot.memory import kin, link_edits, place_levels, route_length, route_words
 from dmbot.memory.link_words import CONNECTION_WORDS, link_words, predicate_for, reads_both_ways
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED, DM, KNOWS_HOWS, MemoryRuleError, Relation
@@ -338,7 +338,7 @@ class OneConnection(_Menu):
             # a route's stated length, the DM's (#4255; the ux-critic's words): 🛣️ (📏 is Size)
             self.length_words = r.length_words or ""
             self.add_item(_Button(self._length, label=LENGTH_BUTTON, style=grey, row=3))
-            if r.length_words is not None and r.length_from == "read":
+            if r.length_words is not None and r.length_from == place_levels.READ:
                 self.add_item(
                     _Button(self._keep_length, label=KEEP_LENGTH_BUTTON, style=grey, row=3)
                 )

@@ -9562,6 +9562,10 @@ async def _move_relations(
                 upgrade = {**upgrade, "assumed": False}
                 if twin.unrevealed and not moved.unrevealed:
                     upgrade["unrevealed"] = False
+            if twin.predicate == route_words.ROUTE_TO:  # the DM's length over DMbot's read (#4255)
+                length = _merged_length(_relation_row(twin), _relation_row(moved))
+                if length != _length_of(_relation_row(twin)):
+                    upgrade = {**upgrade, **length}
             gone_rows.append(moved.id)
             folded[moved.id] = twin.id
             forget(moved)

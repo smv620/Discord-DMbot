@@ -43,8 +43,9 @@ class TheWords(unittest.TestCase):
                 self.check(words, None, None, False)
         self.assertIsNone(rl.parse("   "))
 
-    def test_no_route_is_that_long(self) -> None:
+    def test_no_route_is_that_long_or_rounds_to_nothing(self) -> None:
         self.check("90000 miles", None, None, False)
+        self.check("0.001 miles", None, None, False)  # (the column refuses a 0)
 
 
 class TheSetPhrases(unittest.TestCase):
@@ -67,6 +68,8 @@ class TheSetPhrases(unittest.TestCase):
             "A road runs from Targos to Bryn Shander.",
             "They spent two days in Targos.",  # (a stay, not a way)
             "The party has three days to reach Easthaven",  # (a deadline)
+            # (two lengths may be two routes: which is which is never guessed)
+            "Targos is a day's ride from Bryn Shander; Easthaven is three days by cart from it",
         ):
             with self.subTest(quote):
                 self.assertEqual(rl.find(quote), "")

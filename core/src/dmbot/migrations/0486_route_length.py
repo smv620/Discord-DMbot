@@ -42,7 +42,7 @@ SQL = (
     ALTER TABLE memory_relations ADD CONSTRAINT memory_relations_length_on_a_route
         CHECK (length_words IS NULL OR predicate = 'route_to');
     ALTER TABLE memory_entities ADD CONSTRAINT memory_entities_length_on_a_route
-        CHECK (length_words IS NULL OR form = 'route');
+        CHECK (length_words IS NULL OR form IS NOT DISTINCT FROM 'route');  -- (NULL is no route)
     """
 )
 

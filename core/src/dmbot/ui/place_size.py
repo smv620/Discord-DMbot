@@ -12,8 +12,8 @@ import logging
 
 import discord
 
-from dmbot.memory import place_levels
-from dmbot.memory.models import DM, MemoryRuleError
+from dmbot.memory import place_levels, route_length
+from dmbot.memory.models import DM, MemoryRuleError, Written
 from dmbot.memory.store import LENGTH_CHANGED
 from dmbot.ui import place_links
 from dmbot.ui.dmbot_commands import _answer_first, _Button, _Menu, _replace, _Select, _tell
@@ -423,6 +423,7 @@ async def set_length(
     if not sees_secrets(campaign, interaction.user.id):  # asked again on every press
         await _tell(interaction, ONLY_DM_LENGTH)
         return
+    written: Written[route_length.Length | None]
     try:
         if keep:
             written = await memory.keep_route_length(

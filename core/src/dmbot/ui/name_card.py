@@ -82,7 +82,7 @@ from dmbot.memory.models import (
 from dmbot.memory.ontology import CORE_TYPES, DISGUISED_AS, FALLBACK_PREDICATE
 from dmbot.memory.search import MAX_RESULTS, Match, find, said_lately
 from dmbot.memory.standing import dm_line_word
-from dmbot.memory.store import SAID_AS_MAX, SETTING_LEVELS, MemoryStore
+from dmbot.memory.store import NO_LENGTH, SAID_AS_MAX, SETTING_LEVELS, MemoryStore
 from dmbot.mentions import NO_PINGS
 from dmbot.said_as import suggest as said_as_suggest
 from dmbot.transcript.respell import contains, done_note, left_note, recaps_note, undone_note
@@ -314,10 +314,6 @@ class Row:
 # (players never get the row), with ✅ That's right on the place's own card.
 ASSUMED_MARK = " (assumed)"
 LENGTH_READ_MARK = " (DMbot read this)"  # (the same words as a place's land or climate, #4255)
-_NO_LENGTH: dict[str, Any] = {
-    "length_words": None, "length_amount": None, "length_unit": None, "length_approx": False,
-    "length_from": None,
-}  # fmt: skip
 
 
 def length_after(r: Relation) -> str:
@@ -325,7 +321,8 @@ def length_after(r: Relation) -> str:
     DMbot's read (only the DM's card ever has one: `_rows` takes it off a player's)."""
     if r.length_words is None:
         return ""
-    return f" · {_md(r.length_words)}" + (LENGTH_READ_MARK if r.length_from == "read" else "")
+    mark = LENGTH_READ_MARK if r.length_from == place_levels.READ else ""
+    return f" · {_md(r.length_words)}{mark}"
 
 
 RIGHT_BUTTON = "✅ That's right"
@@ -419,7 +416,7 @@ def _rows(
         if not secrets and r.length_from != "dm":
             # (a route's length DMbot only read is the DM's until kept: a player never sees it,
             # #4255)
-            r = dataclasses.replace(r, **_NO_LENGTH)
+            r = dataclasses.replace(r, **NO_LENGTH)
         found.setdefault(words, []).append(Row(r.id, words, other.name, r.secret, r, after))
     return [row for group in found.values() for row in group]
 
@@ -894,7 +891,7 @@ async def show_card(
         text += form
     # a route's stated length (#4255): players see only the DM's, or one the DM kept
     route = entity.type == "place" and entity.form == place_levels.ROUTE
-    read_length = entity.length_from == "read"
+    read_length = entity.length_from == place_levels.READ
     shown = route and (secrets or not read_length)
     length = place_size.length_line(entity.length_words, read_length) if shown else ""
     if length and len(text) + len(length) <= CARD_MAX:

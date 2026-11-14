@@ -320,6 +320,8 @@ def _valid(column: str, value: object) -> bool:
     limit = _TEXT_LIMITS.get(column)
     if column == "players_text":  # the column refuses an empty line: none is NULL (#2967)
         return isinstance(value, str) and 1 <= len(value) <= PLAYERS_TEXT_MAX
+    if column == "length_words":  # the same: no length is NULL (#4255)
+        return isinstance(value, str) and 1 <= len(value) <= route_length.WORDS_MAX
     return limit is not None and isinstance(value, str) and len(value) <= limit
 
 
