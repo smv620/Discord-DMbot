@@ -549,6 +549,17 @@ class Steps(DatabaseTest):
         with self.assertRaises(SampleError):  # (accept_all's WrongCampaign, said plainly)
             await accept(self.db, GUILD, other.id)
 
+    async def test_the_sure_step_says_what_is_left_waiting(self) -> None:
+        # (#4382: "accepted 0, left waiting 42" said nothing of what the 42 were)
+        camp = await self.made()
+        got = await cli._sure()(self.db, GUILD, camp.id)
+        for key in (
+            "names kept before", "waiting names", "waiting other names", "waiting connections",
+            "connections: an end not kept", "connections: worked out", "connections: a hand-over",
+        ):  # fmt: skip
+            self.assertEqual(got[key], 0, key)
+        self.assertEqual(got["left waiting"], 0)
+
     async def test_the_backup_goes_to_a_private_file_and_scores_with_counts_only(self) -> None:
         camp = await self.made()
         import tempfile

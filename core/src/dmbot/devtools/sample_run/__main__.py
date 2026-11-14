@@ -465,19 +465,48 @@ def _sure() -> Sure:
             await accept_all.check_campaign(db, guild, campaign)
         except accept_all.WrongCampaign as exc:
             raise SampleError(str(exc)) from exc
-        memory, tally = MemoryStore(db), auto.Tally()
+        memory, tally, links = MemoryStore(db), auto.Tally(), BackstoryLinks(db)
+        kept_before = len(await memory.entities(guild, campaign, statuses=("confirmed",)))
         if not connections_only:
             await auto.accept_names(memory, guild, campaign, tally, kind_of=background_kind)
             await auto.accept_other_names(memory, guild, campaign, tally)
-        await auto.accept_connections(memory, BackstoryLinks(db), guild, campaign, tally)
+        await auto.accept_connections(memory, links, guild, campaign, tally)
         return {
             "accepted": sum(tally.accepted.values()),
             "left waiting": sum(tally.waiting.values()),
             "refused by a rule": sum(tally.refused.values()),
             "changes": len(tally.batches),
+            # #4382: what "left waiting" is, so a run says it without SQL. A lore upload keeps what
+            # DMbot is sure of by itself (`add_sure`, unless the DM asked to be asked first), so
+            # this step often accepts 0: "names kept before" says the upload did it.
+            "names kept before": kept_before,
+            **await _waiting_by_kind(memory, links, guild, campaign, tally),
         }
 
     return sure
+
+
+async def _waiting_by_kind(
+    memory: Any, links: Any, guild: int, campaign: str, tally: Any
+) -> dict[str, int]:
+    """The sure step's "left waiting", split (#4382): names, other names and connections, and the
+    connections by why they wait (an end that isn't a kept entry yet, worked out by DMbot, or a
+    hand-over: each a question for the DM; the AI step decides none of these). Counts only."""
+    from dmbot.memory.auto_accept import CONNECTIONS, NAMES, OTHER_NAMES
+
+    onto = await memory.ontology(guild, campaign)
+    symmetric = {p.key for p in onto.predicates.values() if p.symmetric}
+    still = await links.waiting(guild, campaign, symmetric=symmetric)
+    return {
+        "waiting names": tally.waiting[NAMES],
+        "waiting other names": tally.waiting[OTHER_NAMES],
+        "waiting connections": tally.waiting[CONNECTIONS],
+        "connections: an end not kept": sum(1 for w in still if not w.ready),
+        "connections: worked out": sum(1 for w in still if w.ready and w.inferred),
+        "connections: a hand-over": sum(
+            1 for w in still if w.ready and not w.inferred and w.hand_over
+        ),
+    }
 
 
 def _careful_client(environ: Mapping[str, str]) -> tuple[Any, Callable[[], Awaitable[None]]]:
