@@ -851,3 +851,39 @@ describe("step 10's Back (#4302)", () => {
     expect(api.calls.some((c) => c.startsWith("finish:"))).toBe(true);
   });
 });
+
+describe("the setting-up line (#4301)", () => {
+  const setUpLine = () => screen.queryByText(/^Setting up:/);
+  async function nameIt(name: string, api = mockWizard(), guild = G) {
+    await start(api, guild);
+    await next(2);
+    fireEvent.input(screen.getByLabelText(w.confirm.nameLabel), { target: { value: name } });
+    fireEvent.blur(screen.getByLabelText(w.confirm.nameLabel));
+    await waitFor(async () => expect((await api.get(guild))?.answers.name).toBe(name));
+    return api;
+  }
+
+  it("no name line before a name is saved", async () => {
+    await start();
+    expect(setUpLine()).toBeNull();
+    await next(2);
+    expect(setUpLine()).toBeNull();
+  });
+
+  it("the name shows on step 2 once it is saved", async () => {
+    await nameIt("The Frostmaiden");
+    const line = await screen.findByText(w.settingUp("The Frostmaiden"));
+    expect(line.getAttribute("title")).toBe("The Frostmaiden");
+    // above the step line
+    expect(line.compareDocumentPosition(screen.getByText(w.step(2, 10))) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("the name shows on step 10", async () => {
+    await nameIt("The Frostmaiden");
+    for (let to = 3; to <= 9; to++) await next(to);
+    fireEvent.click(screen.getByLabelText(w.data.no));
+    await waitFor(() => expect((screen.getByRole("button", { name: w.next }) as HTMLButtonElement).disabled).toBe(false));
+    await next(10);
+    expect(screen.getByText(w.settingUp("The Frostmaiden"))).toBeTruthy();
+  });
+});
