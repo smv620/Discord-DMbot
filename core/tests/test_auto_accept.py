@@ -140,6 +140,29 @@ class Sure(Base):
         self.assertEqual(tally.waiting[auto.CONNECTIONS], 2)
         self.assertEqual(tally.accepted[auto.CONNECTIONS], 0)
 
+    async def test_each_waiting_connection_says_why_and_the_reasons_add_up(self) -> None:
+        # (#4382: the sample run's "left waiting" said nothing of what waited)
+        await self.apply()  # (the four names are kept: their connections can be ready)
+        lamp = await self.read_name("The Brass Lamp", "item")
+        await self.memory.confirm_entity(GUILD, self.sample.id, lamp, "item", source=DM_SOURCE)
+        unkept = await self.read_name("Hollin", "character", "npc")
+        await self.links.add(
+            GUILD, self.sample.id,
+            [
+                NewLink(self.dorn, "knows", unkept, "q", upload="a file"),  # an end not kept
+                NewLink(self.mira, "knows", self.dorn, "q", upload="a file", inferred="family"),
+                NewLink(self.dorna, "owns", lamp, "q", upload="a file",
+                        hand_over_from=self.dorn, hand_over="sold"),
+            ],
+        )  # fmt: skip
+        tally = auto.Tally()
+        await auto.accept_connections(self.memory, self.links, GUILD, self.sample.id, tally)
+        self.assertEqual(
+            dict(tally.waiting_why), {auto.ON_A_NAME: 1, auto.WORKED_OUT: 1, auto.HAND_OVER: 1}
+        )
+        self.assertEqual(sum(tally.waiting_why.values()), tally.waiting[auto.CONNECTIONS])
+        self.assertEqual(tally.accepted[auto.CONNECTIONS], 1)  # (Mirelle knows Oakmere)
+
     async def test_a_dry_run_changes_nothing(self) -> None:
         tally = await self.apply(dry_run=True)
         self.assertEqual(tally.accepted[auto.NAMES], 4)
