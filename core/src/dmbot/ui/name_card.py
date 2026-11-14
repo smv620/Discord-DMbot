@@ -3466,6 +3466,11 @@ async def connect(
         detail = route_words.means_of(detail)
     else:
         detail = ""
+    if predicate == place_links.NEXT_TO and await _next_to_changed(
+        interaction, memory, campaign, entity_id, (subject_id, subject[1]), (object_id, obj[1]),
+        detail, secret=secret,
+    ):  # fmt: skip
+        return
     try:
         written = await memory.add_relation(
             campaign.guild_id,
@@ -3510,6 +3515,62 @@ async def connect(
         )
         note += f" {why}, so DMbot will ask you about it after the session."
     await show_card(interaction, campaign.id, entity_id, replace=True, note=note)
+
+
+async def _next_to_changed(
+    interaction: discord.Interaction,
+    memory: MemoryStore,
+    campaign: Campaign,
+    entity_id: str,
+    first: tuple[str, str],
+    second: tuple[str, str],
+    detail: str,
+    *,
+    secret: bool = False,
+) -> bool:
+    """Two places already next to each other with other words, or one-way words the other way
+    round (#4284): the DM's new pick changes the words in one change, so one Undo puts the old words
+    back, rather than adding a second "next to" beside it. `first` is the DM's own subject (the
+    card's place), so the new words read from it. A link the story ended is history and is left;
+    a proposal is the DM's to answer, so it is left too (the pick is saved beside it, as before).
+    Only the oldest open link between the pair is changed, the usual one: two is a rare leftover.
+    The link keeps who may see it. True when it handled the press (changed, or refused)."""
+    pair = {first[0], second[0]}
+    current = [
+        r
+        for r in await memory.relations(
+            campaign.guild_id, campaign.id, entity_id=first[0], confirmed_only=True,
+            include_secret=True,
+        )
+        if r.predicate == place_links.NEXT_TO
+        and {r.subject_id, r.object_id} == pair
+        and r.to_session_at is None
+    ]  # fmt: skip
+    if not current or any(
+        r.detail.casefold() == detail.casefold()
+        and (not next_words.one_way(detail) or r.subject_id == first[0])
+        for r in current
+    ):
+        return False  # (nothing beside them yet, or these words already: the usual save)
+    old = current[0]
+    try:
+        written = await memory.change_relation_words(
+            campaign.guild_id, campaign.id, old.id, place_links.NEXT_TO, detail, source=DM,
+            swap=old.subject_id != first[0],
+        )  # fmt: skip
+    except MemoryRuleError as exc:
+        await _tell(interaction, f"Couldn't change it. {exc}")
+        return True
+    changed(interaction, campaign)
+    said = f"**{_md(first[1])}** {link_words(place_links.NEXT_TO, detail)} **{_md(second[1])}**"
+    if written.value.secret:
+        note = f"🧭 Changed: {said} 🤫 Secret: players can't see it."
+    else:
+        note = f"🧭 Changed: {said}."
+        if secret:  # (it keeps who may see it: the change never hides a shown link by the way)
+            note += " Players can still see it."
+    await show_card(interaction, campaign.id, entity_id, replace=True, note=note)
+    return True
 
 
 # ---- finding a name --------------------------------------------------------------------
