@@ -59,6 +59,18 @@ export const mapsWords = {
   cancel: "Cancel",
   removeAsk: "Remove from maps? The picture stays. You can undo this right after.",
   keepIt: "Keep it",
+  notOpen: "The Maps page is not open yet.",
+  loading: "Loading your maps…",
+  failed: "Couldn't load your maps.",
+  tryAgain: "Try again",
+  workingStage: "Waiting for DMbot to do it",
+  stuck: "This is taking longer than usual. Look at the page again in a minute.",
+  usableNote: "DMbot uses this map.",
+  waitingDmNote: "Waiting for your yes.",
+  wrong: "Something went wrong. Nothing was changed. Press the button again.",
   shownDone: "Shown to the table.",
   hiddenDone: "Hidden from the table.",
 } as const;
+
+/** The page's own name, for the tab and the heading. */
+export const mapsPage = { heading: mapsWords.heading } as const;

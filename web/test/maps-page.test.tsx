@@ -1,0 +1,114 @@
+/** @jsxImportSource preact */
+// @vitest-environment happy-dom
+// The Maps page (#4347): the DM's view and presses with Undo, the confirmations for show and remove, and the player's view.
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { mockApi } from "../src/account/mock";
+import Maps, { refFromPath } from "../src/account/Maps";
+import { mapsWords as w } from "../src/content/maps-words";
+
+const live = vi.hoisted(() => ({ on: true }));
+vi.mock("../src/content/maps-switch", () => ({
+  get MAPS_LIVE() {
+    return live.on;
+  },
+}));
+
+afterEach(() => {
+  cleanup();
+  live.on = true;
+});
+
+const DM = "100.cmp1";
+const PLAYER = "100.cmp1.player";
+const rowFor = (title: string): HTMLElement => screen.getByText(title).closest("li") as HTMLElement;
+
+describe("the Maps page", () => {
+  it("reads the campaign from the address", () => {
+    expect(refFromPath("/account/maps/100.cmp1")).toBe("100.cmp1");
+    expect(refFromPath("/account/maps/")).toBeNull();
+  });
+
+  it("says it is not open yet while the switch is off, and asks for nothing", () => {
+    live.on = false;
+    const api = mockApi("table");
+    render(<Maps api={api} refId={DM} />);
+    expect(screen.getByText(w.notOpen)).toBeTruthy();
+    expect(api.calls.some((c) => c.startsWith("maps:"))).toBe(false);
+  });
+
+  it("shows a DM every map, with the question on a waiting one", async () => {
+    render(<Maps api={mockApi("table")} refId={DM} />);
+    await screen.findByText("Icewind Dale");
+    expect(screen.getAllByRole("listitem").length).toBe(5);
+    expect(within(rowFor("Cave")).getByText(w.dmTitle("Dee"))).toBeTruthy();
+    expect(within(rowFor("Cave")).getByRole("button", { name: w.useYes })).toBeTruthy();
+  });
+
+  it("answers yes, says so, and Undo puts the question back", async () => {
+    render(<Maps api={mockApi("table")} refId={DM} />);
+    await screen.findByText("Cave");
+    fireEvent.click(within(rowFor("Cave")).getByRole("button", { name: w.useYes }));
+    await screen.findByText(w.doneYes);
+    expect(within(rowFor("Cave")).queryByRole("button", { name: w.useYes })).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: w.undoLabel }));
+    await screen.findByText(w.undone);
+    await waitFor(() => expect(within(rowFor("Cave")).getByRole("button", { name: w.useYes })).toBeTruthy());
+  });
+
+  it("asks before showing to the table and before removing, and Cancel changes nothing", async () => {
+    const api = mockApi("table");
+    render(<Maps api={api} refId={DM} />);
+    await screen.findByText("The Keep, floor 1");
+    fireEvent.click(within(rowFor("The Keep, floor 1")).getByRole("button", { name: w.show }));
+    expect(screen.getByText(w.showWarning)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: w.cancel }));
+    expect(api.calls.some((c) => c.startsWith("changeMaps:"))).toBe(false);
+    fireEvent.click(within(rowFor("The Keep, floor 1")).getByRole("button", { name: w.show }));
+    fireEvent.click(screen.getByRole("button", { name: w.showIt }));
+    await screen.findByText(w.shownDone);
+    fireEvent.click(within(rowFor("Icewind Dale")).getByRole("button", { name: w.removeIt }));
+    expect(screen.getByText(w.removeAsk)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: w.keepIt }));
+    expect(screen.getByText("Icewind Dale")).toBeTruthy();
+  });
+
+  it("removes a map after the question, and Undo brings it back", async () => {
+    render(<Maps api={mockApi("table")} refId={DM} />);
+    await screen.findByText("Old road");
+    fireEvent.click(within(rowFor("Old road")).getByRole("button", { name: w.removeIt }));
+    fireEvent.click(within(rowFor("Old road")).getByRole("button", { name: w.removeIt }));
+    await screen.findByText(w.doneRemoved);
+    expect(screen.queryByText("Old road")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: w.undoLabel }));
+    await screen.findByText("Old road");
+  });
+
+  it("shows a player only the shown maps and their own, with no DM buttons", async () => {
+    render(<Maps api={mockApi("table")} refId={PLAYER} />);
+    await screen.findByText("Icewind Dale");
+    expect(screen.queryByText("The Keep, floor 1")).toBeNull();
+    expect(screen.queryByRole("button", { name: w.useYes })).toBeNull();
+    expect(screen.queryByRole("button", { name: w.show })).toBeNull();
+    expect(within(rowFor("Harbour sketch")).getByText(w.waitingPlayer)).toBeTruthy();
+  });
+
+  it("lets a player take their own map back, and says so", async () => {
+    render(<Maps api={mockApi("table")} refId={PLAYER} />);
+    await screen.findByText("Harbour sketch");
+    fireEvent.click(within(rowFor("Harbour sketch")).getByRole("button", { name: w.takeBack }));
+    await screen.findByText(w.takenBack);
+    expect(screen.queryByText("Harbour sketch")).toBeNull();
+  });
+
+  it("says it could not load, with a way to try again", async () => {
+    const api = mockApi("table");
+    api.maps = async () => {
+      throw new Error("down");
+    };
+    render(<Maps api={api} refId={DM} />);
+    await screen.findByText(w.failed);
+    expect(screen.getByRole("button", { name: w.tryAgain })).toBeTruthy();
+  });
+});
