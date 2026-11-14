@@ -802,4 +802,5 @@ class Cards(base.NamesTest):
         found = await connection_edit._find(
             self.it(who), self.campaign.id, self.made.subject_id, self.made.id
         )
+        assert found is not None
         return connection_edit.OneConnection(self.campaign.id, self.made.subject_id, found)
