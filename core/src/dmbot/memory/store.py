@@ -1579,15 +1579,18 @@ class MemoryStore:
         value: str | None,
         *,
         how: str = "",
+        words: str = "",
         source: str,
     ) -> Written[None]:
-        """The DM's word for a place's land, climate or ruler (the edit screen): one change, so one
-        Undo. None is "Not sure" and clears it. For control, `value` is the group's id."""
+        """The DM's word for a place's land, climate, ruler, culture or who lives there (the edit
+        screens): one change, so one Undo. None is "Not sure" and clears the layer (for culture and
+        who lives there, every lineage). For control, `value` is the group's id; `words` are the
+        DM's own for "other" ("duergar", #4257)."""
         if source != DM:
             raise MemoryRuleError("Only the DM can say that.")
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
-            await map_fact_store.set_by_dm(w, onto, place_id, layer, value, how=how)
+            await map_fact_store.set_by_dm(w, onto, place_id, layer, value, how=how, words=words)
             return Written(None, w.batch)
 
     async def show_map_facts(
