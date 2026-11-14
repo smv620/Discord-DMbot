@@ -6282,7 +6282,8 @@ class MemoryStore:
         the extractor's, whoever pressed the button). `knows_how` (#3881): on a `knows` only, how
         the two know each other ("met", "aware" or ""); restating a known one only ever moves it up,
         and "met" moves the other's existing `knows` back up too. `both_ways` (#4154): the DM's
-        direction for a new row (None: its kind's default), which also decides its stored order.
+        direction for a new row (None: its kind's default; stored as True for a campaign's own
+        two-way kind, #4388), which also decides its stored order.
         `assumed` (#4173 slice 3): a place's parent DMbot assumed from where the story was, kept
         held back, never flagged and never written over a stated parent; a stated parent written
         here replaces the place's assumed one (see `_replace_assumed`). `route_state` (#4173 slice
@@ -6305,6 +6306,10 @@ class MemoryStore:
             raise MemoryRuleError(TWO_ENTRIES)
         onto = await _load_ontology(w)
         pred = onto.active_predicate(predicate)
+        if both_ways is None and not pred.core and pred.symmetric:
+            # (a campaign's own two-way kind: its default is in its own table, which the card's
+            # words never read, so its row says it, as migration 0485 did for the older rows, #4388)
+            both_ways = True
         if pred.key == PLAYS:
             # Who plays a character is set on the character, then kept here (#1188).
             raise MemoryRuleError(SAY_WHO_PLAYS)

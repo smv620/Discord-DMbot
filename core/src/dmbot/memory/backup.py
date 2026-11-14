@@ -1014,6 +1014,12 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
     )
     if any(r["type"] not in onto.types for r in by_tag["entity"]):
         raise CampaignError(DAMAGED)
+    # A campaign's own two-way kind's connection carries its direction (#4388, as migration 0485
+    # did for the rows already kept): a file from before has none, which the card reads one way.
+    for r in by_tag["relation"]:
+        own = onto.predicates.get(r["predicate"])
+        if r["both_ways"] is None and own is not None and not own.core and own.symmetric:
+            r["both_ways"] = True
     # A role belongs to a character; only a player character (or a person) has a player;
     # a link is on a character that is in the file.
     if any(

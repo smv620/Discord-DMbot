@@ -22,19 +22,24 @@ from typing import Any
 import discord
 
 from dmbot.maps import words
-from dmbot.maps.store import MapError
+from dmbot.maps.store import MapError, Viewer
+from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.ui.dmbot_commands import _answer_first, _bot
 
 log = logging.getLogger(__name__)
 
 _YES = r"dmbot:mapqy:(?P<guild>[0-9]{1,20}):(?P<id>[0-9]{1,18})"
 _NO = r"dmbot:mapqn:(?P<guild>[0-9]{1,20}):(?P<id>[0-9]{1,18})"
+_BACK = r"dmbot:mapqt:(?P<guild>[0-9]{1,20}):(?P<id>[0-9]{1,18})"
+_UNDO = r"dmbot:mapqu:(?P<guild>[0-9]{1,20}):(?P<campaign>[0-9a-f]{32}):(?P<batch>[0-9]{1,18})"
 
 
-async def _finish(interaction: discord.Interaction, text: str) -> None:
-    """Replace the question with its outcome (no buttons left to press twice)."""
+async def _finish(
+    interaction: discord.Interaction, text: str, view: discord.ui.View | None = None
+) -> None:
+    """Replace the question with its outcome (no question buttons left to press twice)."""
     with contextlib.suppress(discord.HTTPException):
-        await interaction.edit_original_response(content=text, view=None)
+        await interaction.edit_original_response(content=text, view=view)
 
 
 async def _answer(
@@ -73,7 +78,9 @@ async def _answer(
                 audience="table" if from_chat else "dm", storage_mb=bot.settings.picture_storage_mb,
             )  # fmt: skip
             log.info("A map was kept (%s)", "dm" if is_dm else "player")
-            await _finish(interaction, words.said_yes(is_dm, from_chat))
+            back = discord.ui.View(timeout=None)  # (the poster can take it back, only the map)
+            back.add_item(TakeBackButton(guild_id, picture.id))
+            await _finish(interaction, words.said_yes(is_dm, from_chat), back)
             return
         # (a yes pressed a moment before keeps the map: the store leaves it, under its own lock)
         if not await keeper.discard(guild_id, campaign.id, picture, unless_map=True):
@@ -130,6 +137,113 @@ class NoButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], templ
         await _answer(interaction, self.guild_id, self.picture_id, False)
 
 
+class TakeBackButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_BACK):
+    """Take it back, under the poster's "Kept." message: only the map goes, in one change; the
+    picture stays a picture under the normal picture rules. Only the poster, read on every press."""
+
+    def __init__(self, guild_id: int, picture_id: int) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=words.TAKE_BACK_LABEL,
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:mapqt:{guild_id}:{picture_id}",
+            )
+        )
+        self.guild_id, self.picture_id = guild_id, picture_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> TakeBackButton:
+        return cls(int(match["guild"]), int(match["id"]))
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        bot = _bot(interaction)
+        await _answer_first(interaction, in_place=True)
+        store, maps = bot.picture_store, bot.map_store
+        if store is None or maps is None:
+            await _finish(interaction, words.FAILED)
+            return
+        try:
+            picture = await store.by_id(self.guild_id, self.picture_id)
+            if picture is None or picture.gone:
+                await _finish(interaction, words.GONE)
+                return
+            if interaction.user.id != picture.poster_id:
+                await interaction.followup.send(words.NOT_YOURS, ephemeral=True)
+                return
+            here = [
+                m
+                for m in await maps.maps(self.guild_id, picture.campaign_id, Viewer(dm=True))
+                if m.picture_id == picture.id
+            ]
+            mine = here[0] if here else None
+            if mine is None:
+                await _finish(interaction, words.ANSWERED)
+                return
+            gone = await maps.remove_map(self.guild_id, picture.campaign_id, mine.id)
+        except Exception as exc:
+            log.warning("A map take-back failed (%s)", type(exc).__name__)
+            await _finish(interaction, words.FAILED)
+            return
+        log.info("A poster took a map back")
+        undo = discord.ui.View(timeout=None)
+        if gone.batch is not None:
+            await store.mark_map_taken_back(
+                self.guild_id, picture.campaign_id, picture.id, gone.batch
+            )
+            undo.add_item(PosterUndoButton(self.guild_id, picture.campaign_id, gone.batch))
+        await _finish(interaction, words.TOOK_BACK, undo)
+
+
+class PosterUndoButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_UNDO):
+    """↩️ Undo after Take it back. Guarded to the poster's own take-back: the batch must be the one
+    recorded on their picture when they took it back, read on every press, so it never undoes a
+    DM's Remove, Yes or No."""
+
+    def __init__(self, guild_id: int, campaign_id: str, batch: int) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=words.UNDO_LABEL,
+                style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:mapqu:{guild_id}:{campaign_id}:{batch}",
+            )
+        )
+        self.guild_id, self.campaign_id, self.batch = guild_id, campaign_id, batch
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> PosterUndoButton:
+        return cls(int(match["guild"]), match["campaign"], int(match["batch"]))
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        bot = _bot(interaction)
+        await _answer_first(interaction, in_place=True)
+        store, memory = bot.picture_store, bot.memory
+        if store is None or memory is None:
+            await _finish(interaction, words.FAILED)
+            return
+        try:
+            if not await store.taken_back_by(
+                self.guild_id, self.campaign_id, self.batch, interaction.user.id
+            ):
+                await interaction.followup.send(words.NOT_YOUR_CHANGE, ephemeral=True)
+                return
+            await memory.undo(self.guild_id, self.campaign_id, self.batch)
+        except TooLateToUndo as exc:
+            await _finish(interaction, str(exc))
+            return
+        except MemoryRuleError:
+            await _finish(interaction, words.TAKE_BACK_UNDO_FAILED)
+            return
+        except Exception as exc:
+            log.warning("A poster's map undo failed (%s)", type(exc).__name__)
+            await _finish(interaction, words.FAILED)
+            return
+        await _finish(interaction, words.UNDONE)
+
+
 def view(guild_id: int, picture_id: int) -> discord.ui.View:
     out = discord.ui.View(timeout=None)
     out.add_item(YesButton(guild_id, picture_id))
@@ -148,6 +262,8 @@ async def ask(bot: Any, guild_id: int, campaign: Any, picture: Any) -> None:
         await user.send(
             text, view=view(guild_id, picture.id), allowed_mentions=discord.AllowedMentions.none()
         )
+        if bot.picture_store is not None:  # (asked: the one reminder at the next start is for this)
+            await bot.picture_store.mark_map_asked(guild_id, campaign.id, picture.id)
     except (discord.Forbidden, discord.NotFound):
         from dmbot.dm_screen import private_note
 
@@ -158,3 +274,34 @@ async def ask(bot: Any, guild_id: int, campaign: Any, picture: Any) -> None:
             )
     except Exception as exc:
         log.warning("A map question could not be sent (%s)", type(exc).__name__)
+
+
+async def remind(bot: Any, guild_id: int, campaign: Any) -> None:
+    """At a session start: once, in private, each poster who was asked about a map and has not
+    answered ("Not answered yet…"). Never again after that, and never to someone who stopped
+    recording pictures. Counts-only logs; never raises."""
+    store = bot.picture_store
+    if store is None:
+        return
+    try:
+        waiting = await store.unanswered_map_questions(guild_id, campaign.id)
+    except Exception as exc:
+        log.warning("The map reminders could not be listed (%s)", type(exc).__name__)
+        return
+    sent = 0
+    for picture in waiting:
+        try:
+            await store.mark_map_reminded(guild_id, campaign.id, picture.id)  # (once, first)
+            if not bot.consent.has_image_consent(guild_id, picture.poster_id):
+                continue
+            user = await bot.fetch_user(picture.poster_id)
+            name = discord.utils.escape_markdown(campaign.name)
+            await user.send(
+                f"❓ **DMbot has a question** · {name}\n{words.REMINDER}",
+                allowed_mentions=discord.AllowedMentions.none(),
+            )
+            sent += 1
+        except Exception as exc:  # (closed messages, a gone person): the reminder is only a nudge
+            log.info("A map reminder was not sent (%s)", type(exc).__name__)
+    if waiting:
+        log.info("Map reminders: %d waiting, %d sent", len(waiting), sent)
