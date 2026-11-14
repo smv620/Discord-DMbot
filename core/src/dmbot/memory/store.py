@@ -7641,6 +7641,8 @@ class MemoryStore:
             ]
             if not ended and _is_a_reveal(rows):  # 👁️ Show to players on a held-back one (#2404)
                 ended = rows
+            if not ended and _is_a_length_change(rows):  # the DM's 🛣️ Length (#4255)
+                ended = rows
             if len(ended) != 1 or any(r["source"] != DM for r in rows):
                 raise MemoryRuleError(NOT_FOUND)  # only a removal, rewording or reveal by the DM
             for r in rows:  # a secret is not even mentioned, old or not
@@ -8176,6 +8178,16 @@ def _is_a_reveal(rows: list[dict[str, Any]]) -> bool:
     changed_keys = {k for k in {*before, *after} if before.get(k) != after.get(k)}
     # (a reveal of DMbot's assumed place also clears its mark: still the DM's reveal, #4173)
     return bool(changed_keys) and changed_keys <= {"secret", "unrevealed", "assumed"}
+
+
+def _is_a_length_change(rows: list[dict[str, Any]]) -> bool:
+    """One route changed in place, and only in its stated length (#4255): the DM's 🛣️ Length or ✅
+    Length is right, which the card's Undo takes back."""
+    if len(rows) != 1 or rows[0]["op"] != "update":
+        return False
+    before, after = rows[0]["before"] or {}, rows[0]["after"] or {}
+    changed_keys = {k for k in {*before, *after} if before.get(k) != after.get(k)}
+    return bool(changed_keys) and all(k.startswith("length_") for k in changed_keys)
 
 
 async def _let_go_of_anchored(w: Changes, anchor_id: str) -> None:

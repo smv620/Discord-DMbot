@@ -14,7 +14,7 @@ from dmbot.memory.models import CONFIRMED
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.memory.ontology import FALLBACK_PREDICATE
 from dmbot.memory.store import LENGTH_CHANGED
-from dmbot.ui import connection_edit, name_card, who_knows
+from dmbot.ui import connection_edit, name_card, place_size, who_knows
 from dmbot.ui import names as ui
 from tests import test_memory_names as base
 
@@ -768,6 +768,12 @@ class Cards(base.NamesTest):
         again = self.it()
         await page._set_length(again, "two days by cart")
         self.assertIn(connection_edit.NOTHING_CHANGED, self.told(again))
+        undo_it = self.it()
+        await page._set_length(undo_it, "twenty miles")
+        _, card = undo_it.response.edited[0]
+        (undo,) = [c for c in card.children if isinstance(c, name_card.UndoConnectionButton)]
+        await undo.callback(self.it())  # (the card's Undo takes a length change back)
+        self.assertEqual((await self.road()).length_words, "two days by cart")
         off = self.it()
         await page._set_length(off, "")
         self.assertIn("🛣️ Length taken off.", self.told(off))
@@ -804,3 +810,56 @@ class Cards(base.NamesTest):
         )
         assert found is not None
         return connection_edit.OneConnection(self.campaign.id, self.made.subject_id, found)
+
+    async def route_place(self, read: str = "") -> Any:
+        east = await ui.save_name(self.memory, self.campaign, "The Eastway", "place", [], [])
+        await self.memory.set_place_form(GUILD, self.campaign.id, east.id, "route", source="dm")
+        if read:
+            await self.memory.set_route_length(
+                GUILD, self.campaign.id, east.id, read, on="place", source="background"
+            )
+        self.fresh()
+        return east
+
+    async def place_card(self, place: Any, who: int = DM) -> tuple[str, Any]:
+        it = self.it(who)
+        await name_card.show_card(it, self.campaign.id, place.id)
+        text, kw = it.response.sent[0]
+        return text, kw["view"]
+
+    async def test_a_route_places_card_shows_dmbots_read_to_the_dm_only(self) -> None:
+        east = await self.route_place(read="a day by cart")
+        text, view = await self.place_card(east)
+        self.assertIn("🛣️ **Length:** a day by cart (DMbot read this; tap 🛣️ Length to change)", text)
+        self.assertIn(place_size.LENGTH_BUTTON, self.labels(view))
+        self.assertIn(place_size.KEEP_LENGTH_BUTTON, self.labels(view))
+        text, view = await self.place_card(east, MANAGER)
+        self.assertNotIn("a day by cart", text)
+        self.assertNotIn(place_size.LENGTH_BUTTON, self.labels(view))
+
+    async def test_the_dm_keeps_or_changes_a_route_places_length(self) -> None:
+        east = await self.route_place(read="a day by cart")
+        it = self.it()
+        await place_size.set_length(it, self.campaign.id, east.id, "", keep=True)
+        self.assertIn("🛣️ Length kept: **a day by cart**.", self.told(it))
+        stale = self.it()
+        await place_size.set_length(stale, self.campaign.id, east.id, "", keep=True)
+        self.assertIn(LENGTH_CHANGED, self.told(stale))
+        text, _ = await self.place_card(east, MANAGER)  # (kept: the players see it now)
+        self.assertIn("🛣️ **Length:** a day by cart\n", text + "\n")
+        changed = self.it()
+        await place_size.set_length(changed, self.campaign.id, east.id, "two days by cart")
+        self.assertIn("🛣️ Length kept: **two days by cart**.", self.told(changed))
+        same = self.it()
+        await place_size.set_length(same, self.campaign.id, east.id, "two days by cart")
+        self.assertIn(place_size.NOTHING_CHANGED, self.told(same))
+        await place_size.set_length(self.it(MANAGER), self.campaign.id, east.id, "")
+        place = await self.memory.entity(GUILD, self.campaign.id, east.id)
+        assert place is not None
+        self.assertEqual((place.length_words, place.length_from), ("two days by cart", "dm"))
+
+    async def test_a_place_that_is_not_a_route_has_no_length(self) -> None:
+        town = await ui.save_name(self.memory, self.campaign, "Targos", "place", [], [])
+        self.fresh()
+        _, view = await self.place_card(town)
+        self.assertNotIn(place_size.LENGTH_BUTTON, self.labels(view))

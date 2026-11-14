@@ -26,7 +26,16 @@ from discord import app_commands
 
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX
-from dmbot.memory import hand_over, kin, link_edits, name_edits, next_words, route_words, tags
+from dmbot.memory import (
+    hand_over,
+    kin,
+    link_edits,
+    name_edits,
+    next_words,
+    place_levels,
+    route_words,
+    tags,
+)
 from dmbot.memory.gate import NameGuard, safe_label
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.link_words import (
@@ -883,6 +892,13 @@ async def show_card(
     )
     if form and len(text) + len(form) <= CARD_MAX:
         text += form
+    # a route's stated length (#4255): players see only the DM's, or one the DM kept
+    route = entity.type == "place" and entity.form == place_levels.ROUTE
+    read_length = entity.length_from == "read"
+    shown = route and (secrets or not read_length)
+    length = place_size.length_line(entity.length_words, read_length) if shown else ""
+    if length and len(text) + len(length) <= CARD_MAX:
+        text += length
     if entity is not None and entity.type == "place":  # land, climate, ruler (#4256)
         seen_names = {e.id: e.name for e in names.entities.values()}  # (this viewer's names)
         held = await memory.map_facts_up(
@@ -1006,6 +1022,11 @@ async def show_card(
             else None
         ),
         setting_guessed=entity.setting_guessed,
+        route_length=(
+            (entity.length_words or "", read_length)
+            if route and sees_secrets(campaign, interaction.user.id)
+            else None
+        ),
         languages=(
             entity.type == "character"
             and not has_sheet
@@ -1151,6 +1172,7 @@ class NameCard(_Menu):
         assumed: str | None = None,
         setting: bool | None = None,
         setting_guessed: bool = False,
+        route_length: tuple[str, bool] | None = None,
         languages: bool = False,
         thread: bool = False,
         promise: bool = False,
@@ -1236,6 +1258,17 @@ class NameCard(_Menu):
                         _Button(self._place_world, label=place_world.BUTTON, style=grey, row=row)
                     )
                     break
+        # a route place's stated length (#4255): its words, and ✅ for DMbot's read
+        self.length_words = route_length[0] if route_length is not None else ""
+        if route_length is not None:
+            presses = [(self._route_length, place_size.LENGTH_BUTTON)]
+            if route_length[0] and route_length[1]:
+                presses.append((self._keep_route_length, place_size.KEEP_LENGTH_BUTTON))
+            for press, label in presses:
+                for row in (3, 2, 1):
+                    if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                        self.add_item(_Button(press, label=label, style=grey, row=row))
+                        break
         self.assumed = assumed  # the place's assumed parent, its connection's id (#4173 slice 3)
         if assumed is not None:  # (DMbot's guess of where it is: the DM says it's right)
             for row in (3, 2, 1, 0):  # (row 0 too, so a full card still lets the DM clear it)
@@ -1402,6 +1435,16 @@ class NameCard(_Menu):
     async def _place_size(self, interaction: discord.Interaction) -> None:
         self.stop()
         await place_size.show_sizes(interaction, self.campaign_id, self.entity_id)
+
+    async def _route_length(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await place_size.ask_length(
+            interaction, self.campaign_id, self.entity_id, self.length_words
+        )
+
+    async def _keep_route_length(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await place_size.set_length(interaction, self.campaign_id, self.entity_id, "", keep=True)
 
     async def _place_world(self, interaction: discord.Interaction) -> None:
         self.stop()

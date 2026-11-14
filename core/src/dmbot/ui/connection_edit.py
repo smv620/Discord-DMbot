@@ -47,6 +47,7 @@ from dmbot.ui.name_card import (
     show_card,
 )
 from dmbot.ui.names import _campaign_for, _md, _memory, changed, sees_secrets
+from dmbot.ui.place_size import KEEP_LENGTH_BUTTON, LENGTH_BUTTON, NOTHING_CHANGED
 from dmbot.ui.who_knows import WhoKnowsMenu, called, player_characters, who_text
 
 log = logging.getLogger(__name__)
@@ -61,9 +62,6 @@ WEBSITE_LINE = (
 )
 GONE_LINK = "That connection isn't there any more. Open the name card again to see the list."
 UNDO_NOTE = "Wrong? Press **Undo** within 10 minutes."
-LENGTH_BUTTON = "🛣️ Length"  # a route's stated length (#4255)
-KEEP_LENGTH_BUTTON = "✅ Length is right"
-NOTHING_CHANGED = "Nothing changed."
 WORDS_MAX = 100  # the longest "other words": the same as the website's and the store's
 # Whether two people have met (#3881): the DM's word, on a `knows` only.
 HOW_PLACEHOLDER = "Have they met?"
