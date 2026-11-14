@@ -3261,8 +3261,9 @@ def create_app(
             status, detail = recap_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
-    # A campaign's session transcripts, for anyone in the server (#1501): shared by the project's
-    # rule, so not DM-only. The words are the same text Discord's download carries.
+    # A campaign's session transcripts, for the campaign's people (#1501, #3891): shared by the
+    # project's rule, so not DM-only; anyone in the server only when the campaign's channels are
+    # open to everyone. The words are the same text Discord's download carries.
     @app.get("/me/transcripts")
     async def me_transcript_campaigns(signed: Signed) -> dict[str, Any]:
         """The campaigns with a saved transcript in the person's servers (those the plan rule lets
@@ -3514,7 +3515,7 @@ def create_app(
     @app.get("/me/campaigns/{ref}/timeline")
     async def me_timeline(ref: str, signed: Signed) -> dict[str, Any]:
         """The campaign's sessions in order with their recaps and the names shown at the table
-        (#2462). Anyone in the server reads it; a game master sees more recaps."""
+        (#2462). The campaign's people read it (#3891); a game master sees more recaps."""
         session, _token = signed
         try:
             return await timeline.read_timeline(
