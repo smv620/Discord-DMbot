@@ -283,7 +283,7 @@ class Trait:
 class StoryLanguage:
     """A language a character knows from the story (#4229), kept beside the sheets: "Elvish" (one
     of the SRD's, `srd`) or the campaign's own tongue. `given_by` is "read" until the DM checks it
-    ("dm")."""
+    ("dm"); a row the DM said no to ("not", #4362) is never handed out by the store's readers."""
 
     id: str
     entity_id: str
@@ -298,7 +298,7 @@ class Known:
     character's sheet, the source of truth), or the story ("read" by DMbot, or the "dm"'s word)."""
 
     name: str
-    source: str  # "sheet", or GIVEN_BY
+    source: str  # "sheet", "read" or "dm" (never the DM's no: the readers skip it, #4362)
 
 
 @dataclass(frozen=True, slots=True)

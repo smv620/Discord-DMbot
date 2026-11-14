@@ -6,7 +6,7 @@ from __future__ import annotations
 from dmbot.campaigns import CampaignError
 from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.memory import sheets
-from dmbot.memory.models import DM, Known, MemoryRuleError, StoryLanguage
+from dmbot.memory.models import DM, LANGUAGE_NOT, Known, MemoryRuleError, StoryLanguage
 from dmbot.memory.sheet_store import SheetStore
 from tests.test_memory_store import DM as DM_USER
 from tests.test_memory_store import GUILD_A, GUILD_B, MemoryTest
@@ -250,6 +250,49 @@ class TheDmsNo(StoryLanguages):
         kept = await self.memory.story_languages(GUILD_A, self.c, self.npc)
         self.assertEqual([(x.name, x.given_by) for x in kept], [("Dwarvish", DM)])
         self.assertIsNone(await self.read("Giant"))  # (the kept entry's no stands)
+
+    async def merged(self, keep: str, gone: str) -> list[tuple[str, str]]:
+        twin = await self.add("Brewner the Brewer")
+        if keep:
+            made = await self.read("Giant")
+            assert made is not None
+            if keep == LANGUAGE_NOT:
+                await self.memory.remove_story_language(GUILD_A, self.c, made.id, source=DM)
+            elif keep == DM:
+                await self.memory.add_story_language(GUILD_A, self.c, self.npc, "Giant", source=DM)
+        other = await self.read("Giant", twin)
+        assert other is not None
+        if gone == LANGUAGE_NOT:
+            await self.memory.remove_story_language(GUILD_A, self.c, other.id, source=DM)
+        elif gone == DM:
+            await self.memory.add_story_language(GUILD_A, self.c, twin, "Giant", source=DM)
+        done = await self.memory.merge(
+            GUILD_A, self.c, self.npc, twin, source=DM, dm_said_same=True
+        )
+        assert done.batch is not None
+        self.batch = done.batch
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT name, given_by FROM memory_story_languages WHERE guild_id = %s"
+                " AND campaign_id = %s AND entity_id = %s",
+                (GUILD_A, self.c, self.npc),
+            )
+            return [(r["name"], r["given_by"]) for r in await cur.fetchall()]
+
+    async def test_a_merged_no_turns_the_kept_read_into_a_no(self) -> None:
+        self.assertEqual(await self.merged("read", LANGUAGE_NOT), [("Giant", LANGUAGE_NOT)])
+        await self.memory.undo(GUILD_A, self.c, self.batch)  # (Undo of the merge)
+        (back,) = await self.memory.story_languages(GUILD_A, self.c, self.npc)
+        self.assertEqual(back.given_by, "read")
+
+    async def test_a_merged_yes_wins_over_the_kept_no(self) -> None:
+        self.assertEqual(await self.merged(LANGUAGE_NOT, DM), [("Giant", DM)])
+
+    async def test_a_kept_yes_wins_over_a_merged_no(self) -> None:
+        self.assertEqual(await self.merged(DM, LANGUAGE_NOT), [("Giant", DM)])
+
+    async def test_a_no_moves_with_its_entry(self) -> None:
+        self.assertEqual(await self.merged("", LANGUAGE_NOT), [("Giant", LANGUAGE_NOT)])
 
     async def test_the_no_survives_a_backup(self) -> None:
         await self.say_no()

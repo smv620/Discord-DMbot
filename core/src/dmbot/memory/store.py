@@ -454,7 +454,7 @@ _LANGUAGES_KNOWN: LiteralString = (
     " SELECT l.entity_id, l.name, l.given_by, l.created_at AS seq"
     " FROM memory_story_languages l"
     " WHERE l.guild_id = %s AND l.campaign_id = %s AND l.entity_id = ANY(%s)"
-    "   AND l.given_by <> 'not'"  # (the DM's no: #4362)
+    "   AND l.given_by <> 'not'"  # (LANGUAGE_NOT, the DM's no: #4362)
     "   AND NOT EXISTS (SELECT 1 FROM character_sheets s2 WHERE s2.guild_id = l.guild_id"
     "     AND s2.campaign_id = l.campaign_id AND s2.entity_id = l.entity_id)"
     " ORDER BY 1, 4, 2"
@@ -3199,8 +3199,9 @@ class MemoryStore:
         """A language a character knows from the story (#4229): the DM's word ("dm"), or DMbot's
         read of the lore or a session ("read", until the DM checks it). Never in the graph: a
         character with a sheet keeps its languages there, so the DM is told to change the sheet and
-        a read is skipped (None). Kept once per character; the DM's word on one DMbot read checks
-        it."""
+        a read is skipped (None). A read of one the DM said no to is skipped too (None, #4362); the
+        DM's own word turns that no back into a yes. Kept once per character; the DM's word on one
+        DMbot read checks it."""
         name = clean_text(name, STORY_LANGUAGE_MAX)
         key = name_key(name)  # (can come out longer than the name: "ß" is "ss")
         if not key:
@@ -3282,10 +3283,30 @@ class MemoryStore:
         async with self._read(guild_id, campaign_id) as scope:
             rows = await scope.select(
                 STORY_LANGUAGES,
-                " AND entity_id = %s AND given_by <> 'not' ORDER BY created_at, id",  # (#4362)
+                # (LANGUAGE_NOT, the DM's no: never shown, #4362)
+                " AND entity_id = %s AND given_by <> 'not' ORDER BY created_at, id",
                 [entity_id],
             )
         return [_story_language(r) for r in rows]
+
+    async def languages_said_no(
+        self, guild_id: int, campaign_id: str, entity_ids: Sequence[str]
+    ) -> dict[str, set[str]]:
+        """The languages the DM has said no to (#4362), as name keys by character: a lore upload
+        never asks about one of these again ("Does Brewner speak Giant?"), since `languages_known`
+        leaves them out on purpose. DM-side only."""
+        if not entity_ids:
+            return {}
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(
+                STORY_LANGUAGES,
+                " AND entity_id = ANY(%s) AND given_by = 'not'",  # (LANGUAGE_NOT: a literal here)
+                [list(entity_ids)],
+            )
+        out: dict[str, set[str]] = {}
+        for r in rows:
+            out.setdefault(str(r["entity_id"]), set()).add(str(r["name_key"]))
+        return out
 
     async def languages_known(
         self, guild_id: int, campaign_id: str, entity_ids: Sequence[str]
@@ -7611,7 +7632,8 @@ async def _move_rule_links(w: Changes, to_character: bool, keep_id: str, gone_id
 async def _move_story_languages(w: Changes, to_character: bool, keep_id: str, gone_id: str) -> None:
     """A merged entry's languages from the story (#4229) go with it, unless the kept entry is not a
     character (only a character knows languages), has a sheet (the sheet is the source of truth) or
-    already knows that language (then the DM's word wins over DMbot's read). What isn't moved stays
+    already has a row for that language. Then the strongest word is kept: the DM's yes over the DM's
+    no (#4362) over DMbot's read, whichever entry it was on. What isn't moved stays
     behind on the merged entry, unseen. The sheet moves later in a merge, so a kept entry may hold
     story rows and a sheet at once: "Who understands this?" then reads only the sheet. One read of
     both entries' rows, so a merge with none costs one statement."""
