@@ -285,6 +285,24 @@ class MapStore:
             )
             return Written(_map(row), w.batch)
 
+    async def batch_is_theirs(
+        self, guild_id: int, campaign_id: str, batch: int, user_id: int
+    ) -> bool:
+        """Whether this change-log batch is a change to maps this person uploaded and nothing else:
+        the guard on a poster's own Undo (#4344), so a card forwarded to someone else, or a batch
+        number made up, undoes nothing."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                """SELECT count(*) AS n,
+                          count(*) FILTER (WHERE table_name = 'campaign_maps'
+                              AND COALESCE(before->>'right_by', after->>'right_by') = %s) AS mine
+                   FROM memory_changes
+                   WHERE guild_id = %s AND campaign_id = %s AND batch = %s""",
+                (str(user_id), guild_id, campaign_id, batch),
+            )
+            row = await cur.fetchone()
+        return row is not None and int(row["n"]) > 0 and int(row["n"]) == int(row["mine"])
+
     async def maps(
         self,
         guild_id: int,

@@ -240,6 +240,8 @@ AUDIENCE: dict[str, str] = {
             "ui.map_answer.OpenButton",
             "ui.map_answer.UndoButton",
             "ui.map_question.NoButton",
+            "ui.map_question.PosterUndoButton",  # the poster's own change only, read from the log
+            "ui.map_question.TakeBackButton",
             "ui.map_question.YesButton",
             "ui.line_fix.FixLineButton",
             "ui.line_fix.LineFixButton",

@@ -110,3 +110,12 @@ def done_removed() -> str:
 UNDO_LABEL = "Undo"
 UNDONE = "↩️ Undone."
 UNDO_FAILED = "Couldn't undo: that map was changed again since."
+
+
+# The poster's side after a yes (slice 3b-2b): taking it back.
+TAKE_BACK_LABEL = "Take it back"
+TOOK_BACK = "OK. It's no longer a map. The picture is still kept."
+TAKE_BACK_UNDO_FAILED = "Couldn't undo: that was changed again since."
+NOT_YOUR_CHANGE = "Only the person who made this change can undo it."
+_NOT_USING = "Not answered yet, so DMbot isn't using this map."
+REMINDER = _NOT_USING + " You can answer any time from the picture's page."

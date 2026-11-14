@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -354,6 +354,41 @@ class PictureStore:
                 "UPDATE campaign_pictures SET permanent = %s WHERE id = %s", (permanent, pic.id)
             )
             return None
+
+    async def mark_map_asked(self, guild_id: int, campaign_id: str, picture_id: int) -> None:
+        """The poster was just asked whether this picture is a map they may use (#4344). Set once;
+        asking again for the same picture does not move it."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE campaign_pictures SET map_asked_at = %s WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s AND map_asked_at IS NULL",
+                (int(self._clock()), guild_id, campaign_id, picture_id),
+            )
+
+    async def unanswered_map_questions(self, guild_id: int, campaign_id: str) -> Sequence[Picture]:
+        """Kept pictures whose poster was asked about a map, was not reminded yet, and has no map
+        for it: the ones the one reminder at the next session start is for (#4344)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"""SELECT {COLUMNS} FROM campaign_pictures p
+                    WHERE guild_id = %s AND campaign_id = %s AND deleted_at IS NULL
+                      AND map_asked_at IS NOT NULL AND map_reminded_at IS NULL
+                      AND NOT EXISTS (SELECT 1 FROM campaign_maps m
+                                      WHERE m.guild_id = p.guild_id
+                                        AND m.campaign_id = p.campaign_id
+                                        AND m.picture_id = p.id)
+                    ORDER BY id""",
+                (guild_id, campaign_id),
+            )
+            return [_picture(r) for r in await cur.fetchall()]
+
+    async def mark_map_reminded(self, guild_id: int, campaign_id: str, picture_id: int) -> None:
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE campaign_pictures SET map_reminded_at = %s WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s AND map_reminded_at IS NULL",
+                (int(self._clock()), guild_id, campaign_id, picture_id),
+            )
 
     async def delete(
         self, guild_id: int, campaign_id: str, picture_id: int, *, unless_map: bool = False
