@@ -119,8 +119,14 @@ export default function Wizard({ api, guild }: { api: WizardApi; guild: string }
     onPasted: setPasted,
   };
 
+  const named = current.answers.name.trim(); // the campaign's name, once it is saved (#4301)
   return (
     <div>
+      {named !== "" && (
+        <p class="small" title={named} style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {w.settingUp(named)}
+        </p>
+      )}
       <p class="small" role="status">
         {w.step(step, WIZARD_STEPS.length)}
       </p>
