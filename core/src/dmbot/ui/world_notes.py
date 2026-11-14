@@ -16,6 +16,7 @@ from typing import Any
 
 import discord
 
+from dmbot.discord_limits import MESSAGE_MAX, SELECT_OPTIONS_MAX
 from dmbot.memory import map_facts as mf
 from dmbot.memory import world_notes as wn
 from dmbot.memory.models import DM, MemoryRuleError, TooLateToUndo
@@ -50,8 +51,8 @@ TOO_LATE = "Too late to undo. Open the place or the character to change it."
 NOT_UNDONE = "Not undone, because something changed since. Open the place or the character."
 NEVER_AGAIN = "DMbot won't guess this again."
 MAY_COME_BACK = "If your lore says it again later, it comes back here to check."
-MENU_MAX = 25  # (Discord's limit for a menu's choices)
-LIST_MAX = 1700  # the list in the message, so the whole reply stays inside Discord's 2,000
+MENU_MAX = SELECT_OPTIONS_MAX  # (Discord's limit for a menu's choices)
+LIST_MAX = MESSAGE_MAX - 300  # the list, so the reply with a line above it stays inside one message
 LAYER = {mf.TERRAIN: "Land", mf.CLIMATE: "Climate", mf.CONTROL: "Ruler"}
 GROUP = {wn.PLACE: "Places", wn.LANGUAGE: "Languages"}
 ONE = {wn.PLACE: "place", wn.LANGUAGE: "language"}
