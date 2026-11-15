@@ -190,6 +190,12 @@ class Settings:
     r2_access_key: str = field(default="", repr=False)
     r2_secret_key: str = field(default="", repr=False)
     r2_bucket: str = ""
+    # The staging bucket the website puts a sent map in (#4347): the bot reads and deletes there
+    # (the account is the pictures bucket's). Blank: a sent map answers `failed` and no upload is
+    # possible, since the website's own key stays blank until this is set.
+    r2_staging_bucket: str = ""
+    r2_staging_access_key: str = field(default="", repr=False)
+    r2_staging_secret_key: str = field(default="", repr=False)
     # Hand-over by email (#2532): off until slices B to D and the accept page are live. While it is
     # off, 🤝 Hand over keeps its member picker and the email route answers 404.
     handover_email_on: bool = False
@@ -245,6 +251,13 @@ class Settings:
         """Kept pictures are on and the bucket is fully set up (#3274)."""
         return self.pictures_kept and all(
             (self.r2_account_id, self.r2_access_key, self.r2_secret_key, self.r2_bucket)
+        )
+
+    @property
+    def maps_staging_ready(self) -> bool:
+        """The pictures bucket is on and the staging bucket for sent maps is set up (#4347)."""
+        return self.pictures_ready and all(
+            (self.r2_staging_bucket, self.r2_staging_access_key, self.r2_staging_secret_key)
         )
 
     def imports_enabled_for(self, guild_id: int) -> bool:
@@ -737,6 +750,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         r2_access_key=get("R2_ACCESS_KEY_ID"),
         r2_secret_key=get("R2_SECRET_ACCESS_KEY"),
         r2_bucket=get("R2_BUCKET"),
+        r2_staging_bucket=get("R2_STAGING_BUCKET"),
+        r2_staging_access_key=get("R2_STAGING_ACCESS_KEY_ID"),
+        r2_staging_secret_key=get("R2_STAGING_SECRET_ACCESS_KEY"),
         recaps_on=recaps_raw in ("1", "true", "on"),
         handover_email_on=handover_email_raw in ("1", "true", "on"),
         plot_check_on=recaps_raw in ("1", "true", "on")

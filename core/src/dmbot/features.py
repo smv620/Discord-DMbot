@@ -340,6 +340,9 @@ NOT_A_SWITCH: dict[str, str] = {
     "r2_access_key": "a key; never listed",
     "r2_secret_key": "a key; never listed",
     "r2_bucket": "which storage bucket, a setting; never listed",
+    "r2_staging_bucket": "which staging bucket for sent maps, a setting; never listed",
+    "r2_staging_access_key": "a key; never listed",
+    "r2_staging_secret_key": "a key; never listed",
     "admin_primary_id": "who is told of problems; never listed",
     "admin_secondary_id": "who is told of problems; never listed",
 }
