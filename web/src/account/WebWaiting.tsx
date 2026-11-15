@@ -548,7 +548,7 @@ export default function WebWaiting({
                             {b.now ? w.updateIt : w.addIt}
                           </button>
                           <button type="button" class="button secondary" disabled={busy} aria-describedby={`wb-${b.id}`}
-                            onClick={() => void send(answer("skip"), w.done.skip)}>
+                            onClick={() => void send(answer("skip"), b.now ? w.done.leftAsIs : w.done.leftOut)}>
                             {b.now ? w.leaveAsIs : w.leaveOut}
                           </button>
                         </div>

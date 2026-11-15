@@ -125,6 +125,8 @@ export const waitingWords = {
     keep: "Kept.",
     keepSecret: "Kept as a secret.",
     skip: "Skipped.",
+    leftAsIs: "Left as it is.",
+    leftOut: "Left out.",
     pick: "Picked. It now shows under From your backstory.",
     neither: "Neither. No connection was made.",
     tiesPick: "Saved your choice. The fact is now in the list below. Press Keep to add it to your story.",

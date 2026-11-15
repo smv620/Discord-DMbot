@@ -97,6 +97,20 @@ describe("the connection card", () => {
   });
 });
 
+describe("leaving a card", () => {
+  it("says Left out. for a new connection and Left as it is. for an update", async () => {
+    const first = await open({});
+    fireEvent.click(within(first.card).getByRole("button", { name: w.leaveOut }));
+    expect(await screen.findByText(w.done.leftOut)).toBeTruthy();
+    expect(w.done.leftOut).toBe("Left out.");
+    cleanup();
+    const second = await open({ now: { how: "knows", hidden: false } });
+    fireEvent.click(within(second.card).getByRole("button", { name: w.leaveAsIs }));
+    expect(await screen.findByText(w.done.leftAsIs)).toBeTruthy();
+    expect(w.done.leftAsIs).toBe("Left as it is.");
+  });
+});
+
 describe("bolding only what differs (#4429, the owner)", () => {
   const bolds = (card: HTMLElement): string[] => Array.from(card.querySelector("p#wb-c1")!.querySelectorAll("strong")).map((e) => e.textContent ?? "");
 
