@@ -9815,7 +9815,10 @@ async def _guess_place_goes(w: Changes, row: Mapping[str, Any]) -> dict[str, Any
     review of #4299, and the ruling on #4291 for the DM's own pick): the bot never keeps a place
     the DM didn't ask for. Rejected, so it leaves every list, with its declined mark kept, so the
     "never again" check still finds it; Undo brings it back as a guess. Only while it is still
-    hidden and nothing points at it. The change to add, or nothing."""
+    hidden and nothing points at it: no connection, and no land, climate, ruler or culture (a map
+    fact, #4495), open or closed, the DM's or one of DMbot's World notes, as a connection of
+    either counts. The
+    change to add, or nothing."""
     if row.get("source") != SETTING_GUESS_SOURCE or not row.get("hidden_from_players"):
         return {}
     tied = await w.select(
@@ -9823,7 +9826,9 @@ async def _guess_place_goes(w: Changes, row: Mapping[str, Any]) -> dict[str, Any
         " AND status <> 'rejected' AND (subject_id = %s OR object_id = %s)",
         [row["id"], row["id"]],
     )
-    return {} if tied else {"status": REJECTED}
+    if tied or await map_fact_store.ties_place(w, row["id"]):
+        return {}
+    return {"status": REJECTED}
 
 
 async def _live_led_to(
