@@ -312,6 +312,10 @@ async def settle_kind(
     await map_fact_store.drop_on_kind_change(
         w, list(ids), onto.is_a(type_key, "place"), onto.is_a(type_key, "faction")
     )
+    # only a thread has parts (#4471)
+    from dmbot.memory import thread_parts
+
+    await thread_parts.drop_on_kind_change(w, list(ids), onto.is_a(type_key, "thread"))
 
 
 async def move_states(

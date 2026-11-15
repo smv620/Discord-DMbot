@@ -23,6 +23,9 @@ from tests.pg import DatabaseTest
 GUILD, OTHER, DM, SPEAKER = 111, 222, 9, 31
 A, B = sorted((new_id(), new_id()))  # two names ("a" sorts first, as some tables require)
 PLACE = new_id()  # a place, for its land, climate or ruler (#4256)
+QUEST = new_id()  # a story thread, for its parts (#4471)
+# a sub-step whose id sorts before its objective's, so the restore must load the objective first
+STEP, OBJECTIVE = "0" * 32, "f" * 32
 REL, ST, DOC = new_id(), new_id(), new_id()
 
 
@@ -74,8 +77,9 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " VALUES (%s, %s, %s, 'character', 'Aaa', '', 'confirmed', 'dm', 1, NULL, NULL),"
                 " (%s, %s, %s, 'character', 'Bbb', '', 'confirmed', 'dm', 1, %s,"
                 " 'player_character'),"
-                " (%s, %s, %s, 'place', 'Ccc', '', 'confirmed', 'dm', 1, NULL, NULL)",
-                (g, c, A, g, c, B, DM, g, c, PLACE),
+                " (%s, %s, %s, 'place', 'Ccc', '', 'confirmed', 'dm', 1, NULL, NULL),"
+                " (%s, %s, %s, 'quest', 'Ddd', '', 'confirmed', 'dm', 1, NULL, NULL)",
+                (g, c, A, g, c, B, DM, g, c, PLACE, g, c, QUEST),
             ),
             "memory_relations": (
                 "INSERT INTO memory_relations (guild_id, campaign_id, id, subject_id, predicate,"
@@ -196,6 +200,13 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " source, created_at) VALUES (%s, %s, %s, 'Illuskan', 'illuskan', 'confirmed',"
                 " 'dm', 1)",
                 (g, c, new_id()),
+            ),
+            "memory_thread_parts": (  # an objective and its sub-step (#4471)
+                "INSERT INTO memory_thread_parts (guild_id, campaign_id, id, thread_id, kind, words,"
+                " state, under_id, status, source, created_at) VALUES"
+                " (%s, %s, %s, %s, 'objective', 'find Sephek', 'to_do', NULL, 'confirmed', 'dm', 1),"
+                " (%s, %s, %s, %s, 'objective', 'ask around', 'to_do', %s, 'confirmed', 'dm', 1)",
+                (g, c, OBJECTIVE, QUEST, g, c, STEP, QUEST, OBJECTIVE),
             ),
             "memory_map_facts": (  # a place's climate (#4256)
                 "INSERT INTO memory_map_facts (guild_id, campaign_id, id, entity_id, layer, value,"

@@ -192,6 +192,16 @@ MAPS = Table(
      "north_from", "audience", "came_from", "import_tool", "right_by", "right_at", "use_ok",
      "use_by", "use_at", "as_of", "replaces", "created_at"),
 )  # fmt: skip
+# The parts of a story thread (#4471, quests slice 2; design `docs/design/quests.md` §4):
+# objectives, complications, rewards promised and given, help and time limits, beside the thread.
+THREAD_PARTS = Table(
+    "memory_thread_parts",
+    "id",
+    ("id", "thread_id", "kind", "words", "state", "under_id", "who_id", "about_id", "amount",
+     "unit", "position", "due", "terms", "limit_kind", "due_minute", "due_from", "from_session_at",
+     "to_session_at", "from_game_time", "to_game_time", "status", "source", "table_knows",
+     "created_at"),
+)  # fmt: skip
 # A player character's sheet (#723): not in the undo log, but read and backed up like
 # the rest of the campaign's memory.
 SHEETS = Table(
@@ -331,7 +341,7 @@ PLAN_POSITION = Table(
     "plan_position", "id", ("id", "document_id", "chapter_id", "set_by", "created_at")
 )
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
-       STORY_LANGUAGES, CULTURES, MAP_FACTS, MAPS,
+       STORY_LANGUAGES, CULTURES, MAP_FACTS, MAPS, THREAD_PARTS,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
        BELIEFS, EVIDENCE, ALIAS_KNOWERS, KNOWERS, TOLD)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
@@ -378,6 +388,9 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_story_languages", "entity_id", False),  # (#4229)
         ("memory_map_facts", "entity_id", False),  # a place's facts (#4256)
         ("memory_map_facts", "faction_id", False),  # the group that rules it (#4256)
+        ("memory_thread_parts", "thread_id", False),  # a thread's parts (#4471)
+        ("memory_thread_parts", "who_id", False),  # who promised, gave or lent it (#4471)
+        ("memory_thread_parts", "about_id", False),  # the item or event it names (#4471)
         ("campaign_maps", "covers", False),  # the place a map covers (#4346)
         ("memory_states", "entity_id", False),
         ("memory_impressions", "viewer_id", False),
@@ -400,6 +413,8 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("campaign_maps", "replaces", False),
     ),
     "memory_mentions": (("memory_relations", "mention_ids", True),),
+    # a sub-step under its objective, a reward given under its promise (#4471)
+    "memory_thread_parts": (("memory_thread_parts", "under_id", False),),
     "memory_relations": (
         ("memory_flags", "relation_id", False),
         ("memory_flags", "other_id", False),
