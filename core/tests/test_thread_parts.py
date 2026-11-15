@@ -8,6 +8,7 @@ pure helpers need no database; the rest needs Postgres."""
 from __future__ import annotations
 
 import unittest
+from typing import Any
 
 from dmbot.memory import gate
 from dmbot.memory import thread_parts as tp
@@ -310,7 +311,7 @@ class BranchesOnRestore(unittest.TestCase):
 
         onto = Ontology.build(CORE_TYPES, CORE_PREDICATES)
         ids = {i for pair in pairs for i in pair}
-        rows = {
+        rows: dict[str, list[dict[str, Any]]] = {
             "entity": [{"id": i, "type": "quest"} for i in sorted(ids)],
             "relation": [
                 {"subject_id": a, "object_id": b, "predicate": "branch_of",
