@@ -354,6 +354,7 @@ from dmbot.memory.importance_backup import ImportanceSection
 from dmbot.memory.kind_offers_backup import KindOffersSection
 from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
 from dmbot.memory.lookup import CampaignLookup, LookupCache
+from dmbot.memory.map_uploads import MapUploads
 from dmbot.memory.met_store import MetStore
 from dmbot.memory.models import (
     DM,
@@ -1561,6 +1562,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.map_store: MapStore | None = None  # a picture kept as a map (#4344)
         self.pending_maps = PendingMaps()  # a sent map waiting for its owner's yes (#4372)
         self.picture_bucket: Bucket | None = None
+        self.maps_staging: Bucket | None = None  # where the website stages a sent map (#4347)
         self._picture_db: Database | None = None
         self._pictures_told: set[str] = set()  # campaigns told this run that old pictures went
         self._picture_swept = 0.0  # when the leftover-file sweep last ran
@@ -13110,6 +13112,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 actions=store,
                                 clock=self._import_clock_choice(guild.id),
                                 maps=self.map_store,
+                                uploads=MapUploads(
+                                    self.maps_staging,
+                                    self.picture_keeper,
+                                    self.map_store,
+                                    self.settings.picture_storage_mb,
+                                ),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -15674,6 +15682,13 @@ async def run(settings: Settings) -> None:
                 pictures, bot.picture_bucket, settings.picture_storage_mb
             )
             bot.picture_store = pictures
+            if settings.maps_staging_ready:
+                bot.maps_staging = Bucket(
+                    settings.r2_account_id,
+                    settings.r2_staging_bucket,
+                    settings.r2_staging_access_key,
+                    settings.r2_staging_secret_key,
+                )
             if bot.memory is not None:
                 bot.map_store = MapStore(db, bot.memory)  # the two yeses of a map (#4344)
             bot.picture_actions = PictureActions(
