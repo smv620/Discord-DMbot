@@ -211,6 +211,6 @@ class TheDoors(DiscordAccounts):
 
     async def test_a_door_answers_only_for_the_signed_in_persons_own_account(self) -> None:
         async with self.web.user(ALICE.id) as conn:
-            cur = await conn.execute("SELECT dmbot_account_logins(%s) AS r", (ALICE.id + 1,))
+            cur = await conn.execute("SELECT dmbot_web_logins_list(%s) AS r", (ALICE.id + 1,))
             row = await cur.fetchone()
         self.assertIsNone(row and row["r"])

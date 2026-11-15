@@ -26,10 +26,10 @@ NOT_FOUND = "not_found"  # no account here has that key (also for another DMbot 
 
 async def logins_of(db: Database, session: Session) -> list[Login]:
     """The Discord accounts of the signed-in account that still sign in, first first. The website's
-    role has no right on the tables behind this, so it asks the door `dmbot_account_logins`
+    role has no right on the tables behind this, so it asks the door `dmbot_web_logins_list`
     (migration 0506): the same list `dmbot.accounts.logins_of` gives the bot."""
     async with db.user(session.user_id, session=session.id_hash) as conn:
-        cur = await conn.execute("SELECT dmbot_account_logins(%s) AS r", (session.user_id,))
+        cur = await conn.execute("SELECT dmbot_web_logins_list(%s) AS r", (session.user_id,))
         row = await cur.fetchone()
     got = row["r"] if row else None
     if got is None:

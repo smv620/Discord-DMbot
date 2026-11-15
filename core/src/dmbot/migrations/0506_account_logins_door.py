@@ -9,7 +9,7 @@ account_discord_ids"). Three doors for the website's role, none of them a table 
 
 from __future__ import annotations
 
-# - `dmbot_account_logins(acct)`: NULL unless `acct` is the signed-in person's own account number
+# - `dmbot_web_logins_list(acct)`: NULL unless `acct` is the signed-in person's own account number
 #   (`dmbot_current_user()`), else the Discord accounts that still sign in as a JSON object: the
 #   ones added (`id`, `at`) in the order they were added, and whether the account's own first
 #   Discord account was taken off. The page never sees the numbers: the web API turns each into a
@@ -22,7 +22,7 @@ from __future__ import annotations
 # Each pins its search path and is closed to every other role; the website's role gets them by name
 # (`WEB_ROLE_FUNCTIONS`). No table or row changes.
 SQL = r"""
-    CREATE FUNCTION dmbot_account_logins(acct BIGINT) RETURNS JSONB
+    CREATE FUNCTION dmbot_web_logins_list(acct BIGINT) RETURNS JSONB
     LANGUAGE plpgsql STABLE SECURITY DEFINER AS $fn$
     BEGIN
         IF acct IS NULL OR acct IS DISTINCT FROM dmbot_current_user() THEN
@@ -58,7 +58,7 @@ SQL = r"""
     BEGIN
         FOR f IN SELECT p.oid::regprocedure FROM pg_proc p
                  WHERE p.pronamespace = current_schema()::regnamespace
-                   AND p.proname IN ('dmbot_account_logins', 'dmbot_web_account_link',
+                   AND p.proname IN ('dmbot_web_logins_list', 'dmbot_web_account_link',
                                      'dmbot_web_account_unlink')
         LOOP
             EXECUTE format('ALTER FUNCTION %s SET search_path = pg_catalog, %I, pg_temp',
@@ -72,7 +72,7 @@ SQL = r"""
 ISOLATED_TABLES: tuple[str, ...] = ()
 
 WEB_ROLE_FUNCTIONS: tuple[tuple[str, str], ...] = (
-    ("dmbot_account_logins", "dmbot_account_logins(BIGINT)"),
+    ("dmbot_web_logins_list", "dmbot_web_logins_list(BIGINT)"),
     ("dmbot_web_account_link", "dmbot_web_account_link(BIGINT, BIGINT)"),
     ("dmbot_web_account_unlink", "dmbot_web_account_unlink(BIGINT, BIGINT)"),
 )
