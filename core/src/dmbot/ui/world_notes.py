@@ -32,6 +32,7 @@ from dmbot.ui.dmbot_commands import (
 )
 from dmbot.ui.names import _campaign_for, _md, _memory, changed, sees_secrets
 from dmbot.ui.place_world import RULED, climate_words, culture_words, land_words, people_words
+from dmbot.ui.route_condition import words as condition_words
 
 log = logging.getLogger(__name__)
 
@@ -55,6 +56,7 @@ LIST_MAX = MESSAGE_MAX - 300  # the list, so the reply with a line above it stay
 LAYER = {
     mf.TERRAIN: "Land", mf.CLIMATE: "Climate", mf.CONTROL: "Ruler",
     mf.CULTURE: "Culture", mf.POPULATION: "Who lives here",  # (#4257: never "people")
+    mf.CONDITION: "Road condition",  # (#4258; the ux-critic: "condition" alone reads as Poisoned)
 }  # fmt: skip
 GROUP = {wn.PLACE: "Places", wn.LANGUAGE: "Languages"}
 ONE = {wn.PLACE: "place", wn.LANGUAGE: "language"}
@@ -82,6 +84,8 @@ def guess(note: wn.Note) -> str:
         return culture_words(f)
     if note.layer == mf.POPULATION:
         return people_words(f)
+    if note.layer == mf.CONDITION:
+        return condition_words(f)
     return land_words(f) if note.layer == mf.TERRAIN else climate_words(f)
 
 
@@ -240,6 +244,14 @@ class OneNote(_Menu):
 
     async def _change(self, interaction: discord.Interaction) -> None:
         self.stop()
+        if self.note.layer == mf.CONDITION:  # (its own screen, a place's or a road's, #4258)
+            from dmbot.ui.route_condition import show
+
+            await show(
+                interaction, self.campaign_id, entity_id=self.note.entity_id,
+                relation_id=self.note.relation_id,
+            )  # fmt: skip
+            return
         if self.note.kind == wn.PLACE:
             from dmbot.ui.place_world import show_world
 

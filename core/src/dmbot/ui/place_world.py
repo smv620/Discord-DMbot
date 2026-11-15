@@ -386,7 +386,8 @@ class WorldMenu(_Menu):
             self.add_item(_Button(self._part, label=ALL_BUTTON if partly else PART_BUTTON, row=4))
             self.partly = partly
         self.hidden = hidden
-        self.has_own = any(_own(held, layer) for layer in mf.LAYERS)
+        # (this screen's own layers: a route's condition has its own screen, #4258)
+        self.has_own = any(_own(held, layer) for layer in mf.LAYERS if layer != mf.CONDITION)
         self.add_item(_Button(self._shown, label=SHOW_BUTTON if hidden else HIDE_BUTTON, row=4))
         if any(f.status == mf.READ for layer in mf.UP_TREE for f in _own(held, layer)):
             # (picking what a menu already shows may send nothing: this keeps DMbot's read)
