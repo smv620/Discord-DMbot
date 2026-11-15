@@ -28,13 +28,15 @@ class CostLine:
     dollars: float
     tokens_in: int | None = None  # None: the source holds no token counts (the credits ledger)
     tokens_out: int | None = None
+    unpriced: bool = False  # some of its calls had no price on file, so the dollars are short
 
     def text(self) -> str:
         if self.tokens_in is None or self.tokens_out is None:
             tokens = "tokens not recorded"
         else:
             tokens = f"tokens in {self.tokens_in}, out {self.tokens_out}"
-        return f"- {self.name}: {tokens}, cost ${self.dollars:.2f}"
+        short = " (some calls had no price on file)" if self.unpriced else ""
+        return f"- {self.name}: {tokens}, cost ${self.dollars:.2f}{short}"
 
 
 def ledger_lines(credits_by_job: dict[str, int]) -> list[CostLine]:
@@ -63,16 +65,23 @@ def recap_line(report: str) -> CostLine | None:
     found = _SPEND.search(report)
     if found is None:
         return None
-    prices = [float(m) for m in _MONEY.findall(found.group(3))]
-    if not prices:
+    spend = found.group(3)
+    prices = [float(m) for m in _MONEY.findall(spend)]
+    unpriced = "no price" in spend  # (a model with no price on file adds no dollars)
+    if not prices and not unpriced:
         return None
-    return CostLine("recap (no audio)", sum(prices), int(found.group(1)), int(found.group(2)))
+    return CostLine(
+        "recap (no audio)", sum(prices), int(found.group(1)), int(found.group(2)), unpriced
+    )
 
 
-def block(lines: list[CostLine]) -> list[str]:
-    """The lines, then the total (the sum of the lines; 0 for a run with no paid step)."""
+def block(lines: list[CostLine], *, incomplete: bool = False) -> list[str]:
+    """The lines, then the total (the sum of the lines; 0 for a run with no paid step). A total
+    that is known to be short says so: a source that could not be read, or a call with no price."""
+    short = incomplete or any(line.unpriced for line in lines)
     return [
         "Cost of this run:",
         *[line.text() for line in lines],
-        f"total cost ${sum(line.dollars for line in lines):.2f}",
+        f"total cost ${sum(line.dollars for line in lines):.2f}"
+        + (" (incomplete: some of it could not be counted)" if short else ""),
     ]

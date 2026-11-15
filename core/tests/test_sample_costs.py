@@ -56,7 +56,23 @@ class TheCostBlock(unittest.TestCase):
         )
         self.assertNotIn("Mira", line.text())
 
-    def test_a_recap_with_no_price_on_file_has_no_line(self) -> None:
+    def test_a_recap_with_no_price_on_file_is_a_line_that_says_so_and_the_total_is_incomplete(
+        self,
+    ) -> None:
         report = "Calls: 3 (3 fast); tokens in 10, out 5; spend no price on file for this model\n"
-        self.assertIsNone(costs.recap_line(report))
+        line = costs.recap_line(report)
+        assert line is not None
+        self.assertTrue(line.unpriced)
+        self.assertIn("some calls had no price on file", line.text())
+        self.assertIn("incomplete", costs.block([line])[-1])
         self.assertIsNone(costs.recap_line("nothing here"))
+
+    def test_part_of_a_recap_priced_adds_what_is_priced_and_marks_it_short(self) -> None:
+        report = "tokens in 9, out 4; spend $0.100 + no price on file for this model\n"
+        line = costs.recap_line(report)
+        assert line is not None
+        self.assertEqual((round(line.dollars, 3), line.unpriced), (0.1, True))
+
+    def test_a_source_that_could_not_be_read_makes_the_total_incomplete(self) -> None:
+        self.assertIn("incomplete", costs.block([costs.CostLine("x", 0.5)], incomplete=True)[-1])
+        self.assertNotIn("incomplete", costs.block([costs.CostLine("x", 0.5)])[-1])
