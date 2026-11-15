@@ -87,6 +87,19 @@ Run it after any deploy that changes what the story reader or the story graph do
 
 A tie found only as a **waiting suggestion** counts as found-waiting: the reader proposed it and the DM has not said yes. A tie marked **inferred** in the key should only ever be offered; one that is already confirmed is counted so a person can look.
 
+### Story threads and the quest cases (#4453, quests slice 1)
+
+The lore reader suggests story threads (quests, pursuits, hooks); the DM keeps or turns down each one. The sample run's sure step keeps every waiting suggestion **for the score only** (`accept_all.keep_threads`; the bot itself never keeps one) and prints "story threads kept for the score", so the backup holds what the reader found. The check prints one line, `Story threads: found, missed, wrong, doubles, extra, false (hints found)`, scored against each key's `threads` rows (Cerric's and Okthandom's pursuits, Hlin's contract and Find Garret must be found; "Who killed Wit?" is a hint, never missed).
+
+The sample lore has no quest nobody calls a quest, no reward that isn't gold, no quest with no reward, no hook, and no plan, errand or threat that must make nothing. Those are in an invented text, [quest_cases.txt](quest_cases.txt), with its own key, [quest_cases_key.json](quest_cases_key.json) (Supervisor's ruling on #4453). Scoring it is one extra lore upload: run the sample with that file as the lore, then check its lore backup against its key:
+
+```bash
+python -m dmbot.devtools.sample_run ... --lore core/tests/fixtures/story_graph/quest_cases.txt --session SESSION.txt --yes
+python -m dmbot.devtools.graph_key_check LORE_BACKUP --key core/tests/fixtures/story_graph/quest_cases_key.json --docs lore --counts-only
+```
+
+Paste only its `Story threads` line on #3545 (the names and ties of the invented text are not scored).
+
 ## Changes to the keys
 
 - **2026-11-14, the owner's edit of the sample lore (Cerric's languages):** the owner added a paragraph after lore line 18: "From his elven heritage, Norro was raised fluent in Elvish, while his rigorous studies of arcane texts and magic quickly earned him fluency in Draconic as well." (now line 21). The lore and master keys get a `languages` list: Cerric speaks Elvish and Draconic, both stated, line 21. A language is a property of the character, never a tie (owner, 2026-11-14; #4229), so no row is added to `pairs`. The check scores languages as found, missed and extra (a language row the key doesn't list), and only for a key that has the list. A must-not line is added: the Sylvan runes on Claude's wolf figurine (line 48) are writing on an item, not a language he speaks. **Every lore line number moved:** the second half of old line 18 (Qinric, the grandfather, Syllar Sparkwalker, the Spire, the rival apprentices) is now line 24, and every line after it is 6 higher (old 21 is 27, old 93 is 99). Notes that name a lore line moved with them; the session lines are unchanged. Lore key version 3, master key version 2. Lore line numbers in runs from before this change (and in the older entries below) are on the old numbering.
