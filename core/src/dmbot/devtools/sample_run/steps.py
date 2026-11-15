@@ -149,6 +149,10 @@ async def fresh_campaign(
         for campaign_id in kept.delete:
             await campaigns.delete(guild, campaign_id, only_if_owner=dm)
             deleted += 1
+    except CampaignError:  # (a hand-over just now: the store refuses under its lock)
+        say(f"stopped after deleting {deleted} of {len(kept.delete)} old sample campaign(s)")
+        raise
+    try:
         made = await campaigns.create(guild, sample_name.name_for(deploy), dm)
     except CampaignError as exc:  # e.g. a campaign whose name differs only in capitals
         # Deleting comes first because it frees the paid slot: say how far it got (a count only).
