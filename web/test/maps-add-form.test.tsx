@@ -2,7 +2,7 @@
 // @vitest-environment happy-dom
 // The "Add a map" form on the Maps page (#4347, slice B): nothing is sent without the yes, the picture and the name are checked before
 // sending, each refusal shows its words, and a second press while it waits sends once.
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
+import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../src/account/api";
