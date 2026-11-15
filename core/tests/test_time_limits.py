@@ -26,6 +26,11 @@ class Counting(unittest.TestCase):
         self.assertEqual(tl.soon_mark(DAY, 0), DAY // 2)  # (set a day ahead: halfway)
         self.assertEqual(tl.soon_mark(10 * DAY, None), 9 * DAY)  # (when set isn't known)
 
+    def test_soon_at_its_edges(self) -> None:
+        self.assertEqual(tl.soon_mark(5 * DAY, 5 * DAY), 4 * DAY)  # (set at or after it: a day)
+        self.assertEqual(tl.soon_mark(2 * DAY, 0), DAY)  # (exactly two days ahead: a day before)
+        self.assertEqual(tl.left_said(DAY, DAY - 1, Calendar()), "1 hour left (due Day 2)")
+
     def test_the_stage_from_the_clock(self) -> None:
         due = 10 * DAY
         self.assertIsNone(tl.stage(due, 0, 8 * DAY))
@@ -120,14 +125,23 @@ class TheDate(MemoryTest):
         )
         self.assertNotEqual(moved.value.id, self.limit)  # (§4: a deadline moved is a new row)
         self.assertEqual(len(await self.parts(history=True)), 2)
+        same = await self.memory.set_time_limit_date(
+            GUILD_A, self.c, moved.value.id, 7 * DAY, now=3 * DAY, source=DM
+        )
+        self.assertEqual(same.value.id, moved.value.id)  # (the same date again: nothing written)
         cleared = await self.memory.set_time_limit_date(
             GUILD_A, self.c, moved.value.id, None, now=None, source=DM
         )
         self.assertEqual((cleared.value.due_minute, cleared.value.due_from), (None, ""))
-        assert cleared.batch is not None
+        # (clearing a date is a story change too, so a later date is told afresh: history)
+        self.assertEqual(len(await self.parts(history=True)), 3)
+        assert cleared.batch is not None and moved.batch is not None
         await self.memory.undo(GUILD_A, self.c, cleared.batch)
         (back,) = await self.parts()
-        self.assertEqual(back.due_minute, 7 * DAY)
+        self.assertEqual((back.due_minute, back.set_at), (7 * DAY, 2 * DAY))
+        await self.memory.undo(GUILD_A, self.c, moved.batch)  # (the move undone: the first date)
+        (first_again,) = await self.parts()
+        self.assertEqual((first_again.id, first_again.due_minute), (self.limit, 5 * DAY))
 
     async def test_only_a_time_limit_has_a_date_and_only_the_dm_sets_it(self) -> None:
         step = await self.memory.add_thread_part(
@@ -162,13 +176,24 @@ class TheDate(MemoryTest):
         async def calendar(*_: Any) -> Calendar:
             return Calendar()
 
-        clocks = SimpleNamespace(get=get, calendar=calendar)
-        note = presession.PreSession(self.memory, None, None, None, clocks)  # type: ignore[arg-type]
+        async def broken(*_: Any) -> Any:
+            raise RuntimeError("the clock can't be read")
+
         every = await self.memory.threads(GUILD_A, self.c)
-        self.assertEqual(
-            await note._time_limits(GUILD_A, self.c, every),
-            ["Hlin's job: 1 day left (due Day 6)", "The curse: before the shadow claims"],
-        )
+        for clocks, want in (
+            (
+                SimpleNamespace(get=get, calendar=calendar),
+                ["Hlin's job: 1 day left (due Day 6)", "The curse: before the shadow claims"],
+            ),
+            # (no clock, or one that can't be read: every limit by its words, never no line)
+            (None, ["Hlin's job: before the new moon", "The curse: before the shadow claims"]),
+            (
+                SimpleNamespace(get=broken, calendar=calendar),
+                ["Hlin's job: before the new moon", "The curse: before the shadow claims"],
+            ),
+        ):
+            note = presession.PreSession(self.memory, None, None, None, clocks)  # type: ignore[arg-type]
+            self.assertEqual(await note._time_limits(GUILD_A, self.c, every), want)
 
 
 if __name__ == "__main__":

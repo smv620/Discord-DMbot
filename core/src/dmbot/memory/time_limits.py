@@ -11,14 +11,20 @@ DMbot's read the DM kept), DMbot counts it down on the campaign's clock:
   Flamerule 14th", or "Day 12" with no calendar set). Nothing here is a real-world date.
 - **A passed limit changes nothing by itself** (§8.4): the thread, its steps and its rewards stay
   as they are until the DM changes them.
+
+`stage` and its two words are for slice 4b's messages; 4a shows the countdown (`left_said`).
 """
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Iterable
+from typing import Any
 
 from dmbot.timebot import calendar as cal
 from dmbot.timebot.clock import MINUTES_PER_DAY
+
+log = logging.getLogger(__name__)
 
 SOON, PASSED = "soon", "passed"
 TWO_DAYS = 2 * MINUTES_PER_DAY
@@ -76,3 +82,23 @@ def days_from(now: int, days: int) -> int:
     if not 1 <= days <= MOST_DAYS:
         raise ValueError("days")
     return now + days * MINUTES_PER_DAY
+
+
+async def clock_now(
+    clocks: Any, guild_id: int, campaign_id: str
+) -> tuple[int, cal.Calendar] | None:
+    """The clock a limit is counted on (§8.2): the group furthest ahead while the party is split,
+    and the campaign's calendar for its words. `clocks` is a `timebot.store.ClockStore` (or None).
+    None with no game clock; a failure to read it is no clock too, so a card or the pre-session
+    note falls back to the limit's words and never fails for it."""
+    if clocks is None:
+        return None
+    try:
+        stored = await clocks.get(guild_id, campaign_id)
+        if stored is None:
+            return None
+        minutes = [stored.clock.minute, *(g.clock.minute for g in stored.groups)]
+        return max(minutes), await clocks.calendar(guild_id, campaign_id)
+    except Exception:
+        log.warning("Couldn't read the game clock for a time limit", exc_info=True)
+        return None

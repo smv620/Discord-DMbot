@@ -337,15 +337,16 @@ class PreSession:
         parts = await self._memory.parts_of_threads(
             guild_id, campaign_id, list(live), Viewer.the_dm()
         )
-        limits = [p for p in parts if p.kind == tp.TIME_LIMIT and p.state == "running"]
+        # (kept ones only: a read DMbot suggested is never shown as the DM's own)
+        limits = [
+            p
+            for p in parts
+            if p.kind == tp.TIME_LIMIT and p.state == "running" and p.status == "confirmed"
+        ]
         if not limits:
             return []
-        now, calendar = None, Calendar()
-        if self._clocks is not None:
-            stored = await self._clocks.get(guild_id, campaign_id)
-            if stored is not None:
-                now = tl.furthest([stored.clock.minute, *(g.clock.minute for g in stored.groups)])
-                calendar = await self._clocks.calendar(guild_id, campaign_id)
+        clock = await tl.clock_now(self._clocks, guild_id, campaign_id)
+        now, calendar = clock if clock is not None else (None, Calendar())
         dated = sorted(
             (p for p in limits if p.due_minute is not None and now is not None),
             key=lambda p: (p.due_minute or 0, live[p.thread_id]),

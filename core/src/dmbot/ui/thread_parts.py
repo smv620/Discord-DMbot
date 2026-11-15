@@ -136,7 +136,7 @@ FOLDED_SAID = {
 SEEN = " 👁️"
 # A dated limit with no game clock to count on (§8.2: "No game clock here, so I can't count this
 # down.")
-NO_CLOCK = "no game clock yet, so no countdown"
+NO_CLOCK = "no game clock here, so I can't count this down"
 SEEN_NOTE = "👁️ Players can see it (once you show them the thread)."
 ONLY_DM = "Only the DM can change a story thread."
 TOO_LATE = "⚠️ Can't undo: it was changed since. Change it here instead."
@@ -301,24 +301,12 @@ async def _dm(interaction: discord.Interaction, campaign_id: str) -> Any:
 
 
 async def clock_now(client: Any, guild_id: int, campaign_id: str) -> tuple[int, Any] | None:
-    """The clock a time limit is counted on (slice 4, §8.2): the group furthest ahead while the
-    party is split, and the campaign's calendar for its words. None with no game clock; a failure
-    to read it is no clock too, so a card never fails for it."""
-    clocks = getattr(client, "clocks", None)
-    if clocks is None:
-        return None
-    try:
-        stored = await clocks.get(guild_id, campaign_id)
-        if stored is None:
-            return None
-        now = time_limits.furthest([stored.clock.minute, *(g.clock.minute for g in stored.groups)])
-        return (now, await clocks.calendar(guild_id, campaign_id)) if now is not None else None
-    except Exception:
-        log.warning("Couldn't read the game clock for a thread's card", exc_info=True)
-        return None
+    """The clock a time limit is counted on, from the bot's clock store (`time_limits`)."""
+    return await time_limits.clock_now(getattr(client, "clocks", None), guild_id, campaign_id)
 
 
 def dated(parts: Sequence[tp.Part]) -> bool:
+    """Whether a card needs the clock: only a dated time limit is counted on it."""
     return any(p.kind == tp.TIME_LIMIT and p.due_minute is not None for p in parts)
 
 
@@ -790,16 +778,16 @@ class DateMenu(_Menu):
         self.add_item(_Button(self._back, label=BACK, row=1))
 
     async def _days(self, days: int, interaction: discord.Interaction) -> None:
+        self.stop()  # (before the write, as `PartMenu._run`: a quick second tap writes nothing)
         await set_date(interaction, self.campaign_id, self.thread_id, self.part, days)
-        self.stop()
 
     async def _pick(self, interaction: discord.Interaction) -> None:
         # (not stopped: a form closed unsent leaves this screen working)
         await interaction.response.send_modal(DaysForm(self.campaign_id, self.thread_id, self.part))
 
     async def _clear(self, interaction: discord.Interaction) -> None:
-        await set_date(interaction, self.campaign_id, self.thread_id, self.part, None)
         self.stop()
+        await set_date(interaction, self.campaign_id, self.thread_id, self.part, None)
 
     async def _back(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -815,6 +803,11 @@ class DaysForm(discord.ui.Modal, title="When is it due?"):
             label="How many game days from now?", placeholder="3", max_length=4
         )
         self.add_item(self.days)
+
+    async def on_error(  # type: ignore[override]  # a form's has no item (discord.py)
+        self, interaction: discord.Interaction, error: Exception
+    ) -> None:
+        await _failed(interaction, error)
 
     async def on_submit(self, interaction: discord.Interaction) -> None:
         text = self.days.value.strip()

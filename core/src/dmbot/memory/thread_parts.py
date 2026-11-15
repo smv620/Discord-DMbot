@@ -393,24 +393,24 @@ async def set_due(
     """A time limit's game date (slice 4; §8.2): the DM's one tap, or DMbot's read the DM kept
     (`source` 'read'). `now` is the clock's minute (the group furthest ahead), kept as the row's
     `from_game_time` so "soon" can be halfway for a limit set less than two days ahead. Giving a
-    date to words, or clearing it, fills in what the DM knows: in place. Moving a date the limit
-    already had is a change in the story (§4: "a deadline moved"), so the old row stays as history
-    and the new one is told afresh. None clears the date: words only again."""
+    date to a limit that never had one fills in what the DM knows: in place. Any change to a date
+    it has, moved or cleared, is a change in the story (§4: "a deadline moved"), so the old row
+    stays as history and what was told of it stays with it (slice 4b): a later date is told
+    afresh. None clears the date: words only again. The same date again writes nothing."""
     if source not in (DM_SOURCE, READ):
         raise ValueError(f"Not a source for a date: {source}")
     row = await _open_part(w, part_id)
     if row["kind"] != TIME_LIMIT:
         raise ValueError("A date is a time limit's only.")
-    if minute is None:
-        if row["due_minute"] is None:
-            return row
-        return await w.update(
-            THREAD_PARTS, part_id, {"due_minute": None, "due_from": "", "from_game_time": None}
-        )
-    if minute < 0:
+    if minute is not None and minute < 0:
         raise ValueError("minute")
-    new = {"due_minute": minute, "due_from": source, "from_game_time": now}
-    if row["due_minute"] is not None and row["due_minute"] != minute:
+    if minute == row["due_minute"]:
+        return row  # (the same date again: no change, so no Undo that undoes nothing)
+    if minute is None:
+        new: dict[str, Any] = {"due_minute": None, "due_from": "", "from_game_time": None}
+    else:
+        new = {"due_minute": minute, "due_from": source, "from_game_time": now}
+    if row["due_minute"] is not None:
         return await _story_change(w, row, new)
     return await w.update(THREAD_PARTS, part_id, new)
 
