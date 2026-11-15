@@ -17,6 +17,7 @@ pattern and the same rule for getting the DM's attention).
 4. [The `thread_parts` row](#4-the-thread_parts-row)
 5. [The parts, one by one](#5-the-parts-one-by-one)
 6. [Who is doing it: the party without an entry](#6-who-is-doing-it-the-party-without-an-entry)
+   - [6a. Bigger quests and their branches](#6a-bigger-quests-and-their-branches)
 7. [Mysteries, clues and "solved so far"](#7-mysteries-clues-and-solved-so-far)
 8. [Time limits](#8-time-limits)
 9. [How threads get into memory: the readers](#9-how-threads-get-into-memory-the-readers)
@@ -103,6 +104,7 @@ by hand:
 | **Where it stands** | the thread's state, one at a time, with history | `memory_states` | no |
 | **Who is in it** (giver, target, villain, victim) | `in_thread`, the part as its detail | `memory_relations` | one new detail word: "takes it on" |
 | **What moved it** | an event that `advances` or `resolves` it; what `led_to` it | `memory_relations` | no |
+| **A branch of a bigger thread** | a side quest or a mystery inside a quest | `memory_relations` | **one new connection, `branch_of`** |
 | **Progression** | objectives and sub-steps, each with a state | `thread_parts` | **yes** |
 | **Complications** | a setback, twist or new obstacle, each with a state | `thread_parts` | **yes** |
 | **Rewards** | what was offered, by whom, and whether it was paid | `thread_parts` | **yes** |
@@ -118,6 +120,8 @@ by hand:
 - **`clue_to`** (clue → thread; reads "is a clue to", read back "has the clue"). Its detail is one
   of two words: "points to it" (the default) or "false lead". It is the DM's word or a kept read.
   `led_to` stays for what it means: one thing sent the party on to another.
+- **`branch_of`** (thread → thread; reads "is a branch of", read back "has the branch"). One
+  parent at most, no loops (the check `located_in` between places already has). Section 6a.
 - **"takes it on", "the one missing" and "in danger"** join the suggested parts of `in_thread`
   (`threads.ROLES`).
 - Nothing else. No `gives_quest`, `hired`, `seeks` or `wants`: `in_thread` with its part already
@@ -199,6 +203,46 @@ The party is never an entry (owner's ruling, #3157), so a thread can't point at 
   characters, and the game clock's groups while the party is split. A thread doesn't copy it.
 - **The sample keys change to match:** the "party works for Hlin" rows become one quest row with
   its giver, target and reward, and the offer in the Lucky Liar is the event that `led_to` it.
+
+---
+
+## 6a. Bigger quests and their branches
+
+A quest is often one large aim with side branches (owner, 2026-11-15): Cerric's quest is to find
+out what happened to his master, and who killed Wit is a branch of it.
+
+**Three things can hang off a quest, and they are different:**
+
+| It is | When | Example |
+|---|---|---|
+| **an objective** (a part) | a step toward the aim, which is done or not done | "follow the tome's lead: Danneth, in Easthaven" |
+| **a complication** (a part) | something now in the way, which is overcome or not | "the Brotherhood knows who he is; trust no one" |
+| **a branch** (a thread of its own, `branch_of` the bigger one) | a job or a question with **its own** people, clues or ending, that could be settled without settling the bigger one | "who killed Wit?" |
+
+- **A branch is a full thread:** its own kind (often a mystery), state, parts, clues and time
+  limit. It is whoever's the bigger thread is, unless it says otherwise.
+- **Finishing every branch does not finish the bigger thread,** and finishing the bigger one does
+  not finish its branches. Only the DM changes a state.
+- **A clue can bear on both:** `clue_to` may tie one clue to the branch and to the bigger thread.
+- **A complication can grow into a branch.** When what was in the way becomes something the table
+  pursues, the DM (or a session suggestion) makes it a branch; the complication row closes as
+  history and points at it.
+- **One level is the norm, two the limit shown:** the bigger quest, its branches, and a branch's
+  own branches. Deeper nesting is stored but shown flat under the second level.
+- **`branch_of` is for threads that belong together.** `led_to` stays for one thing sending the
+  party on to another, which need not make it a branch.
+
+**How readers suggest a branch:**
+
+- **A branch the text states** (a second job or question, pursued by the same character) is
+  suggested with its bigger thread, in the same bundle.
+- **A question the text raises but nobody is said to pursue** (a death or a disappearance with no
+  cause given, inside a quest's own passage) may be suggested as a branch in the state "Just a
+  hint", at most two for each quest. It is a question the text leaves open, in the text's words,
+  never an answer and never a guess at who or why.
+- **The aim of the bigger thread is the widest one the text states.** "Searching for answers"
+  about a master's disappearance is the quest; the lead being followed is an objective under it,
+  not the quest itself.
 
 ---
 
@@ -353,12 +397,18 @@ are the first rows of the quest keys, and they show both shapes.
 
 | Quest | From | Shape | Whose | Who is in it | Objectives, in the text's words | Reward | Time limit | Clues and leads |
 |---|---|---|---|---|---|---|---|---|
-| **What ties Danneth of Easthaven to Master Sparkwalker's disappearance** | lore | a pursuit | Cerric ("takes it on") | Master Sparkwalker (the one missing), Danneth, the Brotherhood; Easthaven | find answers in Easthaven | none | none | the warning in the locked azure tome; Wit's warning that "they are coming" |
+| **What happened to Master Sparkwalker** | lore | a pursuit | Cerric ("takes it on") | Master Sparkwalker (the one missing), Danneth, the Brotherhood; Easthaven | follow the tome's lead: Danneth, in Easthaven | none | none | the warning in the locked azure tome; Wit's warning that "they are coming" |
+| ↳ **Who killed Wit?** (a branch, "Just a hint") | lore | a question the text leaves open | Cerric | Wit (the victim) | none stated | none | none | Wit's last words |
 | **Why Okthandom's family vanish, and how to break the curse** | lore | a pursuit | Okthandom ("takes it on") | Vaelrith (vanished), Nyssara (in danger); the unseen presence | find answers; break the curse | none | **soft, words only:** "before the shadow claims his sister, his child, and himself" | the ancestral journal; the blood-stained campsite; the whispers Nyssara hears |
 | **Hlin's contract on Sephek Kaltro** | lore | an ask and a taker | the party | Hlin Trollbane (quest giver), Sephek Kaltro (target) | capture or eliminate Sephek Kaltro | only what the text states | none | none in this passage |
 | **Find Garret Velryn** | session | an ask and a taker | the party (Belleros agrees for them) | Keegan Velryn (quest giver), Garret Velryn (target); Kelvin's Cairn | find Garret | 50 gold and a route map, already handed over: "paid" | none stated | the route map; where he was last seen |
 
 **What these fix for the readers:**
+
+- **Cerric's quest is the wide one,** what happened to his master. The Danneth lead is its first
+  objective, and "the Brotherhood knows who you are … trust no one" is a complication on it.
+- **"Who killed Wit?" is a branch,** suggested as a hint because the text gives the death and no
+  cause, and never says who or why.
 
 - **Neither backstory says "quest",** and neither has anyone asking. Both must be found.
 - **"Capture or eliminate" is one objective with the text's own "or",** never two, and never
@@ -411,7 +461,9 @@ Each reader slice is scored on the sample, lore first and then the session, befo
 - **The keys gain rows for:** threads (kind, giver, target), objectives, rewards, time limits (the
   words, and the game date where the key has one), clues with the thread they are a clue to, and
   progress in the session key.
-- **The four quests of section 9.3 are must-find rows.**
+- **The four quests of section 9.3 are must-find rows,** and Cerric's must be found as the wide
+  quest with the Danneth lead as its objective. Its branch is scored as a hint: found is counted,
+  missed is not held against the reader.
 - **The keys include quests nobody calls a quest:** at least one taken in a few lines of talk, one
   with a reward that isn't gold, one with no reward, and one ask that nobody takes up (a hook). They
   also include talk that must make nothing: a plan, an errand and a threat.
@@ -428,7 +480,7 @@ Each reader slice is scored on the sample, lore first and then the session, befo
 |---|---|
 | **Suggestions to check** | after an upload or a session, under "❓ Questions for you" and on the website's Questions page: "Story threads to check", one card per bundle with Keep, Change and No. Counts only in the DM Bot channel |
 | **A thread's card** (🧵 Threads in Discord; a Story threads page on the website) | state; who is in it; objectives as a checklist; complications; reward; time limit with its date and time left; clues found and not found; the table's guess; what moved it. The DM edits every part here |
-| **The Story Graph** | "Cluster by quest" groups every entry tied to a kept thread: by `in_thread`, `advances`, `resolves`, `led_to`, `clue_to`, and the entries its parts point at. The Quests chip shows the thread kinds. Suggestions not yet kept are not drawn |
+| **The Story Graph** | "Cluster by quest" groups every entry tied to a kept thread: by `in_thread`, `advances`, `resolves`, `led_to`, `clue_to`, and the entries its parts point at. A branch's entries sit inside its bigger quest's cluster. The Quests chip shows the thread kinds. Suggestions not yet kept are not drawn |
 | **The Story timeline** | under each session: threads started, objectives met, complications, rewards paid, threads finished. Dated time limits appear as markers at their game date, with those still to come after the latest session |
 | **The pre-session note** | "⏳ Time limits:" beside "🧵 Quiet threads" and "🤝 Due soon" |
 | **Private messages** | a time limit nearing or passed (section 8.4). Nothing else in this design speaks to the DM unasked |
@@ -520,8 +572,8 @@ Each slice is its own PR with tests and a migration number claimed on #2475.
 | # | Slice | Whose | Needs | What the DM gets | Scored on |
 |---|---|---|---|---|---|
 | 1 | **The lore reader suggests threads** with who gave them and who they are aimed at, using only today's kinds and connections. The suggestion card. The keys' "party works for" rows become quest rows | GraphEngineer | nothing new | quests from an upload, and a Story Graph whose quest clusters fill | lore key: threads, givers, targets |
-| 2 | **`thread_parts` and the DM's own editing:** objectives, complications, rewards and time-limit words on the thread's card; "takes it on"; the Story threads page | GraphEngineer, WebDev | slice 1's card | a checklist, a reward and a deadline note on every thread, by hand | none (no reader) |
-| 3 | **The lore reader fills the parts:** objectives, reward and time-limit words in the bundle | GraphEngineer | slice 2 | whole quests from an upload | lore key: objectives, rewards, time-limit words |
+| 2 | **`thread_parts` and the DM's own editing:** objectives, complications, rewards and time-limit words on the thread's card; "takes it on"; `branch_of`, with branches listed under their quest; the Story threads page | GraphEngineer, WebDev | slice 1's card | a checklist, a reward and a deadline note on every thread, by hand | none (no reader) |
+| 3 | **The lore reader fills the parts and the branches:** objectives, complications, reward and time-limit words in the bundle, and a quest's branches with it | GraphEngineer | slice 2 | whole quests from an upload | lore key: objectives, rewards, time-limit words |
 | 4 | **Time limits counted:** the date from the words, the DM's one-tap date, the nearing and passed messages, the pre-session line | GraphEngineer | slice 2; the game clock | "1 day left", told privately | the dates in the keys |
 | 5 | **The session reader suggests new threads and progress** | GraphEngineer | slices 2 and 3 | after each session, "Story threads to check" | session key: new threads, progress, doubles |
 | 6 | **Clues and mysteries:** `clue_to`, the false-lead mark, readers suggesting clues and who found them, the "clues found" count | GraphEngineer, WebDev | slice 5 | "4 of 7 clues found" | keys: clues and their threads |
@@ -558,9 +610,8 @@ quest filter never shows anything DMbot read.
 
 ## 16. Open questions
 
-1. **A thread inside a thread.** A campaign arc that holds several quests can be said today only
-   with `led_to`. A proper "part of" between threads is left until a campaign needs it. For
-   Supervisor, if the sample's adventure shows it matters.
+1. **A thread inside a thread: answered** (owner, 2026-11-15). Branches are `branch_of`
+   (section 6a). This replaces the earlier proposal to wait.
 2. **When to tell the DM a limit is near.** "One game day before, or halfway when it is closer
    than two days" is a starting rule. Whether the DM can set it per thread is for the owner after
    the first live use.
