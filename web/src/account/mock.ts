@@ -392,7 +392,11 @@ export function scenarioMe(scenario: Scenario): Me | null {
     case "offers":
       return {
         ...base,
-        offers: { incoming: incomingOffers, outgoing: [outgoingOffer] },
+        offers: {
+          incoming: incomingOffers,
+          outgoing: [outgoingOffer],
+          closed: [{ id: "offer-closed", campaignName: "Lanternfall", serverName: "Quillon's Corner" }],
+        },
         plan: {
           id: "two-tables",
           status: "active",

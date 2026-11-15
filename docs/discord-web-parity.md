@@ -124,6 +124,7 @@ match. "In Discord" says where the DM finds it today.
 | Rules level (how much DMbot says) and Features on or off | Campaign management | Rules level: Campaign settings (`level`). Features: a read-only list (`FEATURES_LIST_LIVE`, #3693, #3718); turning features on or off stays in Discord until filed |
 | Game masters: add, remove | Game masters | Campaign settings: game masters (`CO_DMS_LIVE`) |
 | Hand over the campaign: offer, accept, decline, withdraw | Handover buttons | Hand a campaign over (`HANDOVER_LIVE`) |
+| A hand-over offer closed because the Discord accounts on an account changed, and why (#2533 slice 3, #4467) | A notice to both people, and the offer message loses its buttons | Account page: "Offers that were closed", for a week, with the reason (no names, no accounts) |
 | Delete this campaign | Delete this campaign | Backup and delete (delete is live) |
 | Campaign invite link; D&D Beyond invite | Campaign management | Campaign settings: the invite panel (`InvitePanel`, `INVITE_LIVE`, switched off) (WebDev confirmed) |
 | Give your adventure (Shared story); read it; match it to files; refresh; remove | Shared story, adventure card | Lore upload and reading, with the right-to-use box (`LORE_LIVE`); matching to files, refresh and remove not checked ⚠ |

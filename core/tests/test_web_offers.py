@@ -90,18 +90,46 @@ class WebOffers(DatabaseTest):
         }
         bob = (await build_me(self.web, self.bob, now=self.now))["offers"]
         self.assertEqual(
-            bob, {"incoming": [{**expected, "personName": ALICE.name}], "outgoing": []}
+            bob,
+            {"incoming": [{**expected, "personName": ALICE.name}], "outgoing": [], "closed": []},
         )
         alice = (await build_me(self.web, self.alice, now=self.now))["offers"]
         self.assertEqual(
-            alice, {"incoming": [], "outgoing": [{**expected, "personName": BOB.name}]}
+            alice,
+            {
+                "incoming": [],
+                "outgoing": [{**expected, "personName": BOB.name}],
+                "closed": [],
+            },
         )
         # Gone once it's past 7 days, or for someone signed in without that server.
         later = await build_me(self.web, self.bob, now=self.now + 7 * DAY)
-        self.assertEqual(later["offers"], {"incoming": [], "outgoing": []})
+        self.assertEqual(later["offers"], {"incoming": [], "outgoing": [], "closed": []})
         elsewhere = await self.sign_in(BOB, [GORRAK])
         outside = await build_me(self.web, elsewhere, now=self.now)
-        self.assertEqual(outside["offers"], {"incoming": [], "outgoing": []})
+        self.assertEqual(outside["offers"], {"incoming": [], "outgoing": [], "closed": []})
+
+    async def test_an_offer_closed_by_an_account_change_is_listed_for_a_week_by_name_only(
+        self,
+    ) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:  # (what the bot's sweep does, #4466)
+            await conn.execute(
+                "UPDATE campaign_handover_offers SET status = 'closed', closed_side = 'receiver',"
+                " decided_at = %s WHERE guild_id = %s",
+                (self.now, THURSDAY.id),
+            )
+        shown = {
+            "id": self.ref,
+            "campaignName": "The Brynwater Crossing",
+            "serverName": THURSDAY.name,
+        }
+        for who in (self.alice, self.bob):
+            offers_now = (await build_me(self.web, who, now=self.now + DAY))["offers"]
+            self.assertEqual(
+                offers_now, {"incoming": [], "outgoing": [], "closed": [shown]}
+            )  # (no person's name, no account, and not an open offer)
+        later = await build_me(self.web, self.bob, now=self.now + 8 * DAY)
+        self.assertEqual(later["offers"]["closed"], [])
 
     async def test_with_plans_enforced_an_owner_at_the_cap_cannot_accept(self) -> None:
         # Try It covers one campaign and Bob already owns one: accepting a second on the site

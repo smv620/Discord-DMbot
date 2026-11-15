@@ -265,6 +265,11 @@ export const text = {
   offerIncomingFree: (person: string, campaign: string, server: string): string =>
     `${person} wants to hand you ${campaign} in ${server}. If you accept, it becomes yours and ${person} stays on as a DM. Tap Accept or No thanks.`,
   offerExpires: (iso: string): string => `Answer by ${shortDateTime(iso)}.`,
+  // An offer the bot closed because the Discord accounts on the DMbot account changed (#4467).
+  // The reason is Supervisor's ruling on #2533, word for word; it names no account.
+  offersClosedHeading: "Offers that were closed",
+  offerClosed: (campaign: string, server: string): string => `${campaign} in ${server}`,
+  offerClosedReason: "This offer was closed because the Discord accounts on the DMbot account changed.",
   accept: "Accept",
   decline: "No thanks",
   // Shown only to the person offered: the plan check happens at Accept, never when the
