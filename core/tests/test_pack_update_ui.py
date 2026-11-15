@@ -105,6 +105,18 @@ class Presses(unittest.IsolatedAsyncioTestCase):
         bot.homebrew_changed.assert_called_once_with(1, "c1")
         self.assertIn("Back on v1", it.sent[0][0])
 
+    async def test_undo_works_from_the_dms_private_chat(self) -> None:
+        """The note goes to the DM privately first: a press there has no server (#3874)."""
+        st = store()
+        st.followed_packs = AsyncMock(return_value=[follow(2, 1)])
+        st.undo_last_pack_take = AsyncMock()
+        bot = bot_with(st)
+        bot.campaigns.guild_of = AsyncMock(return_value=1)
+        it = interaction_in_guild(7, bot)
+        it.guild = None
+        await pack_update.press(it, "c1", SET, "undo", 2)
+        st.undo_last_pack_take.assert_awaited_once_with(1, "c1", 7, SET, 2)
+
     async def test_an_old_button_cannot_undo_a_newer_update(self) -> None:
         st = store()
         st.followed_packs = AsyncMock(return_value=[follow(3, 2)])

@@ -255,6 +255,23 @@ class Pressing(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Back on v3", it.sent[0][0])
         self.assertIn("DMbot will take the next new version; use Pick changes", it.sent[0][0])
 
+    async def test_undo_works_from_the_dms_private_chat(self) -> None:
+        """The note goes to the DM privately first: a press there has no server (#3874)."""
+        bot = bot_with()
+        bot.campaigns.guild_of = AsyncMock(return_value=1)
+        it = interaction(DM, bot)
+        it.guild = None
+        await set_update.press(it, CAMPAIGN, "undo", 4)
+        bot.rule_sets.undo_last_take.assert_awaited_once_with(1, CAMPAIGN, DM, 4)
+
+    async def test_a_private_chat_press_from_a_non_dm_is_refused(self) -> None:
+        bot = bot_with()
+        bot.campaigns.guild_of = AsyncMock(return_value=1)
+        it = interaction(DM + 1, bot)
+        it.guild = None
+        await set_update.press(it, CAMPAIGN, "undo", 4)
+        bot.rule_sets.undo_last_take.assert_not_called()
+
     async def test_pick_undoes_the_take_and_opens_the_picker_in_one_step(self) -> None:
         bot = bot_with(pending_update=AsyncMock(return_value=update(2)))
         it = interaction(DM, bot)

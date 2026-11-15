@@ -6485,7 +6485,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         async def send(text: str, view: discord.ui.View) -> bool:
             # The file's differences are house-rule text: private to the DMs, a pointer in the DM
             # Bot channel, the screen only if no DM can be reached (#3874).
-            return await pointer_note.send(self, campaign, text, lambda: view, HOUSE_FILE_POINTER)
+            pointer = HOUSE_FILE_POINTER if view.children else None  # (only an offer, not an error)
+            return await pointer_note.send(self, campaign, text, lambda: view, pointer)
 
         self._track(
             house_sync.check_linked(self, campaign, send, quiet_if_same=True), "house-file-check"

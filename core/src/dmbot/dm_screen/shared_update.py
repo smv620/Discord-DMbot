@@ -23,6 +23,12 @@ from dmbot.dm_screen import pointer_note
 
 log = logging.getLogger(__name__)
 
+POINTER = (
+    "📚 A shared rule changed at this start: {n} waiting. The details are in your private message."
+)
+GONE_POINTER = (
+    "📚 A shared rule isn't being shared any more. The details are in your private message."
+)
 HEADER = (
     "📚 Shared rules updated at this start. DMbot took the new versions. Buttons are by number:"
 )
@@ -89,11 +95,6 @@ def combined_view(collected: Collected) -> discord.ui.View:
     return view
 
 
-POINTER = (
-    "📚 A shared rule changed at this start: {n} waiting. The details are in your private message."
-)
-
-
 async def post(bot: Any, campaign: Campaign, collected: Collected) -> None:
     """Tell the DMs what was found: nothing, the single note as it always was, or the combined
     note (#3874). The DM Bot channel is read by the campaign's people and the note holds house-rule
@@ -102,16 +103,16 @@ async def post(bot: Any, campaign: Campaign, collected: Collected) -> None:
     updates = collected.updates
     if not updates:
         if collected.gone:
-            await _tell(bot, campaign, "\n".join(collected.gone), None, len(collected.gone))
+            await _tell(bot, campaign, "\n".join(collected.gone), None, GONE_POINTER)
         return
     if len(updates) == 1 and not collected.gone:
         text, make = updates[0].single_text, updates[0].single_view
     else:
         text, make = combined_text(collected), lambda: combined_view(collected)
-    count = len(updates)
-    told = await _tell(bot, campaign, text, make, count)
+    pointer = POINTER.format(n=len(updates))
+    told = await _tell(bot, campaign, text, make, pointer)
     if not told:  # one more try: the update is taken, and the DM needs its Undo
-        told = await _tell(bot, campaign, text, make, count)
+        told = await _tell(bot, campaign, text, make, pointer)
     if not told:
         log.warning(
             "Took %d shared-rules update(s) for campaign %s without a note",
@@ -125,10 +126,10 @@ async def _tell(
     campaign: Campaign,
     text: str,
     make: Callable[[], discord.ui.View] | None,
-    count: int,
+    pointer: str,
 ) -> bool:
     """The words privately (the screen as the fallback) and one counts-only pointer in the DM Bot
     channel. True when the words reached a DM or the screen."""
     return await pointer_note.send(
-        bot, campaign, text, make or (lambda: discord.ui.View()), POINTER.format(n=count)
+        bot, campaign, text, make or (lambda: discord.ui.View()), pointer
     )

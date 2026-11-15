@@ -276,11 +276,21 @@ class Pointer(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(pointer, shared_update.POINTER.format(n=2))
         self.assertNotIn("Pack", pointer)
 
-    async def test_no_reachable_dm_falls_back_to_the_screen_and_still_points(self) -> None:
+    async def test_no_reachable_dm_falls_back_to_the_screen_and_says_nothing_in_the_channel(
+        self,
+    ) -> None:
         bot = bot_with(house=True)
         own = campaign()
         own.dm_bot_channel_id = 77
         await update_notes.check_all(bot, own, 99)
         bot.post_message.assert_awaited_once()
         self.assertEqual(bot.post_message.await_args.args[0], 99)
-        self.assertEqual(bot.post.await_args.args[0], 77)
+        bot.post.assert_not_called()  # (no private message exists to point to)
+
+    async def test_a_gone_note_has_its_own_pointer(self) -> None:
+        bot = bot_with(gone_packs=[pack_follow(1)])
+        bot.ask_privately = AsyncMock(return_value=True)
+        own = campaign()
+        own.dm_bot_channel_id = 77
+        await update_notes.check_all(bot, own, 99)
+        self.assertEqual(bot.post.await_args.args, (77, shared_update.GONE_POINTER))

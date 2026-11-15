@@ -405,6 +405,25 @@ class Safeguards(SyncTest):
         self.assertEqual(it.response.sent[0][0], hs.CLOSED)
         self.assertEqual(len(self.store.rules), 3)
 
+    async def test_an_offer_can_be_answered_from_the_dms_private_chat(self) -> None:
+        """The offer goes to the DM privately first: a press there has no server (#3874)."""
+        _, view = await self.offer()
+        it = self.interaction()
+        it.guild_id = None
+        it.guild = None
+        await self.button(view, "Accept all").callback(it)
+        self.assertNotIn(hs.CLOSED, [text for text, *_ in it.response.sent])
+        self.assertIn("Fresh", [r.rule for r in self.store.rules])
+
+    async def test_a_private_chat_press_from_a_non_dm_changes_nothing(self) -> None:
+        _, view = await self.offer()
+        before = len(self.store.rules)
+        it = self.interaction(user_id=DM + 5)
+        it.guild_id = None
+        it.guild = None
+        await self.button(view, "Accept all").callback(it)
+        self.assertEqual(len(self.store.rules), before)
+
     async def test_accepting_once_retires_the_other_offers_so_nothing_is_added_twice(self) -> None:
         _, view = await self.offer()
         other = hs.Pending(

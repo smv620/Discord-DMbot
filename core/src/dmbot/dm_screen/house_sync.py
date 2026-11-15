@@ -407,7 +407,10 @@ async def press(
 ) -> None:
     """What a button does. The offer, the campaign and the person are checked every time."""
     bot: Any = interaction.client
-    pending: Pending | None = bot.house_syncs.get(key) if interaction.guild_id == guild_id else None
+    # From the DM's private chat (where the offer goes first, #3874) a press has no server; the
+    # offer, its campaign and the DM check below still decide.
+    in_place = interaction.guild_id in (None, guild_id)
+    pending: Pending | None = bot.house_syncs.get(key) if in_place else None
     if pending is None or pending.guild_id != guild_id:
         await interaction.response.send_message(CLOSED, ephemeral=True)
         return

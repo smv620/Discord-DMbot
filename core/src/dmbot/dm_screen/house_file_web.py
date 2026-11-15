@@ -217,7 +217,8 @@ async def _compare(
         async def send(text: str, view: discord.ui.View) -> bool:
             # House-rule text: private to the DMs, a pointer in the DM Bot channel, the screen only
             # if no DM can be reached (#3874).
-            told = await pointer_note.send(bot, campaign, text, lambda: view, HOUSE_FILE_POINTER)
+            pointer = HOUSE_FILE_POINTER if view.children else None  # (only an offer, not an error)
+            told = await pointer_note.send(bot, campaign, text, lambda: view, pointer)
             offers.append(told)
             return told
 
