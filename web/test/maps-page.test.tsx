@@ -184,8 +184,10 @@ describe("the Maps page", () => {
       await screen.findByText("Cave");
       fireEvent.click(within(rowFor("Cave")).getByRole("button", { name: w.useYes }));
       await screen.findByText(w.workingStage);
-      await vi.advanceTimersByTimeAsync(121_000);
-      expect(await screen.findByText(w.stuck)).toBeTruthy();
+      await vi.advanceTimersByTimeAsync(119_000);
+      expect(screen.queryByText(w.stuck)).toBeNull(); // 119 seconds: still working
+      await vi.advanceTimersByTimeAsync(1_000);
+      expect(await screen.findByText(w.stuck)).toBeTruthy(); // 120 seconds: taking longer
       release();
       await screen.findByText(w.doneYes);
     } finally {
@@ -238,7 +240,7 @@ describe("the Maps page", () => {
     await waitFor(() => expect(api.calls.filter((c) => c === `maps:${DM}`).length).toBe(2));
   });
 
-  it("a player's DM-only buttons are absent even after a failed load and a retry", async () => {
+  it("a player never gets the DM's buttons, also after a failed load and a retry", async () => {
     const api = mockApi("table");
     const real = api.maps!.bind(api);
     let fail = true;
@@ -253,6 +255,6 @@ describe("the Maps page", () => {
     await screen.findByText(w.failed);
     fireEvent.click(screen.getByRole("button", { name: w.tryAgain }));
     await screen.findByText("Harbour sketch");
-    for (const name of [w.useYes, w.show, w.removeIt]) expect(screen.queryByRole("button", { name })).toBeNull();
+    for (const name of [w.useYes, w.useNo, w.show, w.hide, w.removeIt]) expect(screen.queryByRole("button", { name })).toBeNull();
   });
 });
