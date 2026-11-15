@@ -215,12 +215,13 @@ class WebSettings:
     cloudflare_account_id: str = ""
     cloudflare_ai_token: str = field(default="", repr=False)
     site_ask_daily: int = 1500
-    # Where the Maps page stages a sent picture (#4347): a SEPARATE staging bucket with its own write
-    # key and a 1-day lifecycle rule, never a write key to the pictures bucket (`pictures_r2_*`,
-    # read-only here). R2 tokens scope to a bucket, not to a prefix, so a write key to the pictures
-    # bucket could let a compromised website overwrite or delete every campaign's kept pictures; a
-    # staging bucket holds only what is waiting for the bot, which copies it into the pictures
-    # bucket. The account is the pictures bucket's. All three blank: an upload answers `uploads_off`.
+    # Where the Maps page stages a sent picture (#4347): a SEPARATE staging bucket with its own
+    # write key and a 1-day lifecycle rule, never a write key to the pictures bucket
+    # (`pictures_r2_*`, read-only here). R2 tokens scope to a bucket, not to a prefix, so a write
+    # key to the pictures bucket could let a compromised website overwrite or delete every
+    # campaign's kept pictures; a staging bucket holds only what waits for the bot, which copies it
+    # into the pictures bucket. The account is the pictures bucket's. All three blank: an upload
+    # answers `uploads_off`.
     maps_staging_r2_bucket: str = ""
     maps_staging_r2_key: str = field(default="", repr=False)
     maps_staging_r2_secret: str = field(default="", repr=False)
