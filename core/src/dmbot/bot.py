@@ -1276,7 +1276,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 campaigns=campaigns,
                 transcripts=transcripts,
                 guild_ids=campaigns.guilds_with_campaigns,
-                post_screen=self._post_to_screen,
+                post_screen=self._post_upkeep,
             )
         if meter is not None:
             self.retention = RetentionJob(
@@ -3608,12 +3608,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except Exception:
             log.exception("The daily owner check failed")
 
-    async def _post_to_screen(self, campaign: Campaign, text: str) -> bool:
-        """Say something on a campaign's DM screen (for the daily jobs); False if it has none
-        or the post failed."""
-        if campaign.dm_screen_channel_id is None:
+    async def _post_upkeep(self, campaign: Campaign, text: str) -> bool:
+        """Say a counts-only upkeep note for a campaign (the daily jobs; #3874): in the DM Bot
+        channel when it has one, else on the DM screen as before. False if it has neither or the
+        post failed. The DM Bot channel is read by the campaign's people, so `text` holds counts
+        and never a name."""
+        channel = campaign.dm_bot_channel_id or campaign.dm_screen_channel_id
+        if channel is None:
             return False
-        return await self.post(campaign.dm_screen_channel_id, text)
+        return await self.post(channel, text)
 
     async def _tell_admin(self, user_id: int, text: str) -> None:
         """A private message to one of DMbot's admins (#972). Raises if it can't be sent, so
