@@ -55,7 +55,7 @@ from dmbot.dm_screen.delete_campaign import DeleteButton
 from dmbot.dm_screen.game_masters import GameMastersButton
 from dmbot.dm_screen.pause import pause_buttons, pause_line
 from dmbot.dm_screen.recap_style import RecapStyleButton
-from dmbot.dm_screen.setting_field import KeepSettingButton, SettingField
+from dmbot.dm_screen.setting_field import KeepSettingButton, PickButton, SettingField
 from dmbot.dm_screen.table_chat_panel import TableChatButton
 from dmbot.dm_screen.transcript_keep import TranscriptsButton
 from dmbot.logs import set_log_context
@@ -285,9 +285,10 @@ def settings_view(
         view.add_item(_row(BackstoryButton(campaign.id), 3))  # upload campaign lore
         # who sees the DM Bot and transcript channels (#3891)
         view.add_item(_row(channel_sync_ui.ChannelsMenuButton(campaign.id), 3))
-        if setting is not None and setting.guessed and setting.entity_id:
-            # DMbot's guess at the campaign's setting waits for the DM's yes (#4291)
-            view.add_item(_row(KeepSettingButton(campaign.id, setting.entity_id), 4))
+        if setting is not None:  # the campaign's setting (#4291)
+            if setting.guessed and setting.entity_id:  # (DMbot's guess waits for the DM's yes)
+                view.add_item(_row(KeepSettingButton(campaign.id, setting.entity_id), 4))
+            view.add_item(_row(PickButton(campaign.id, has_setting=bool(setting.entity_id)), 4))
     return view
 
 
