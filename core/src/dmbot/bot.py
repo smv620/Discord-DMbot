@@ -650,6 +650,7 @@ from dmbot.ui.secret_reveal import RevealButton, reveal_view
 from dmbot.ui.secret_reveal import question_text as reveal_question
 from dmbot.ui.sheets import MySheetButton, OpenCardButton
 from dmbot.ui.story_watch import KnowButton, WordsButton, message_text, watch_view
+from dmbot.ui.thread_questions import ThreadQuestionsButton
 from dmbot.ui.threads import ThreadListButton, ThreadsButton, threads_view
 from dmbot.ui.threads import waiting_text as threads_waiting_text
 from dmbot.ui.trait_questions import TraitQuestionsButton
@@ -1932,6 +1933,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             FamilyTiesButton,
             TraitQuestionsButton,  # 🧬 Lineage and class (#3926)
             WorldNotesButton,  # 🌍 World notes (#4285)
+            ThreadQuestionsButton,  # 📜 Story threads (#4453)
         )  # the Questions message and the card's button (#3435)
         self.question_round = questions_discord.build_round(self)
         self.question_notices = (

@@ -1,0 +1,211 @@
+{
+ "campaign": "quest cases (invented)",
+ "source": "quest_cases.txt in this folder: invented text for DMbot's tests, written for #4453 (quests design #4450 §9.7)",
+ "version": 1,
+ "how_to_read": {
+  "threads": "as in lore_key.json: kind quest or hook; giver, target, taker (a pursuit's own character); missing and in_danger. must_not_threads: talk that must make no thread (a plan, an errand, a threat, a wish); a thread whose name or aim holds one of its words is a false thread"
+ },
+ "nodes": [
+  {
+   "name": "Old Pell",
+   "kind": "person",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Gnashwater",
+   "kind": "creature",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Ilsa Rookwind",
+   "kind": "person",
+   "aliases": [],
+   "note": "the one character named among the travellers"
+  },
+  {
+   "name": "Marta Oakhollow",
+   "kind": "person",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Tobin Oakhollow",
+   "kind": "person",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Brother Dovan Ashe",
+   "kind": "person",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Mother Brena",
+   "kind": "person",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Haska Venn",
+   "kind": "person",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Greyjaw",
+   "kind": "creature",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Corvin Lask",
+   "kind": "person",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Dawnwake",
+   "kind": "item",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Reedmere",
+   "kind": "place",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Grey Cairn",
+   "kind": "place",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Highmoor",
+   "kind": "place",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Lantern Inn",
+   "kind": "place",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Greywash",
+   "kind": "place",
+   "aliases": [],
+   "note": ""
+  }
+ ],
+ "pairs": [],
+ "events": [],
+ "threads": [
+  {
+   "id": "q01",
+   "kind": "quest",
+   "name": "Old Pell's job: Gnashwater",
+   "giver": "Old Pell",
+   "target": "Gnashwater",
+   "taker": "",
+   "missing": [],
+   "in_danger": [],
+   "must_find": true,
+   "hint": false,
+   "line": 3,
+   "note": "an ask and a taker, a gold reward"
+  },
+  {
+   "id": "q02",
+   "kind": "quest",
+   "name": "Marta Oakhollow's job: Tobin Oakhollow",
+   "giver": "Marta Oakhollow",
+   "target": "Tobin Oakhollow",
+   "taker": "",
+   "missing": [],
+   "in_danger": [],
+   "must_find": true,
+   "hint": false,
+   "line": 5,
+   "note": "nobody calls it a quest; taken in two lines (Ilsa agrees for the party, so it is the party's); a reward that isn't gold (a room and her good word). Tobin is who to find: the target (missing is also right)"
+  },
+  {
+   "id": "q03",
+   "kind": "quest",
+   "name": "Brother Dovan Ashe's job: Mother Brena",
+   "giver": "Brother Dovan Ashe",
+   "target": "Mother Brena",
+   "taker": "",
+   "missing": [],
+   "in_danger": [],
+   "must_find": true,
+   "hint": false,
+   "line": 7,
+   "note": "no reward at all"
+  },
+  {
+   "id": "q04",
+   "kind": "hook",
+   "name": "Haska Venn's offer: Greyjaw",
+   "giver": "Haska Venn",
+   "target": "Greyjaw",
+   "taker": "",
+   "missing": [],
+   "in_danger": [],
+   "must_find": true,
+   "hint": false,
+   "line": 9,
+   "note": "an ask nobody has taken up: a hook, starting Not started"
+  },
+  {
+   "id": "q05",
+   "kind": "quest",
+   "name": "Ilsa Rookwind's search: Corvin Lask",
+   "giver": "",
+   "target": "Corvin Lask",
+   "taker": "Ilsa Rookwind",
+   "missing": [],
+   "in_danger": [],
+   "must_find": true,
+   "hint": false,
+   "line": 11,
+   "note": "a pursuit: her own aim (Dawnwake back) and the trail she follows"
+  }
+ ],
+ "must_not_threads": [
+  {
+   "what": "a plan: heading to Highmoor at first light",
+   "words": [
+    "first light",
+    "head to Highmoor"
+   ],
+   "line": 13
+  },
+  {
+   "what": "an errand: passing the oars",
+   "words": [
+    "oars"
+   ],
+   "line": 13
+  },
+  {
+   "what": "a threat: Gnashwater will drown anyone crossing at night",
+   "words": [
+    "drown"
+   ],
+   "line": 13
+  },
+  {
+   "what": "a wish: Dovan dreams of the southern sea",
+   "words": [
+    "southern sea"
+   ],
+   "line": 13
+  }
+ ]
+}
