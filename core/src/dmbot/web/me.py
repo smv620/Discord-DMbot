@@ -118,6 +118,7 @@ async def build_me(
     incoming: list[dict[str, Any]] = []
     recording: list[dict[str, Any]] = []
     outgoing: list[dict[str, Any]] = []
+    closed: list[dict[str, Any]] = []  # offers closed by an account change, for a week (#4467)
     emailed: dict[str, dict[str, Any]] = {}  # campaign ref -> its open offer by email (#2532)
     names = {g.id: g.name for g in session.guilds}  # for the installs list below
     plan_works = plan is not None and plan.usable(now) and plan.status != "lapsed"
@@ -142,13 +143,18 @@ async def build_me(
                 )
                 # Hand-over offers this person sent or was sent here (#614). Only open
                 # ones under 7 days old: an older one is marked expired by the store the
-                # next time anyone touches it, but has already ended.
+                # next time anyone touches it, but has already ended. An offer the bot closed
+                # because the Discord accounts on either side changed (#4467) is listed for the
+                # same seven days after it closed, so the person can see why it went.
                 offered = await conn.execute(
                     "SELECT o.id, o.campaign_id, c.name, o.to_user_id, o.from_name,"
-                    " o.to_name, o.created_at, o.via_email FROM campaign_handover_offers o"
+                    " o.to_name, o.created_at, o.via_email, o.status"
+                    " FROM campaign_handover_offers o"
                     " JOIN campaigns c ON c.id = o.campaign_id AND c.guild_id = o.guild_id"
-                    " WHERE o.guild_id = %(g)s AND o.status = 'open'"
-                    "   AND o.created_at + %(days)s > %(now)s"
+                    " WHERE o.guild_id = %(g)s AND ("
+                    "   (o.status = 'open' AND o.created_at + %(days)s > %(now)s)"
+                    "   OR (o.status = 'closed' AND NOT o.via_email"
+                    "       AND o.decided_at + %(days)s > %(now)s))"
                     "   AND %(me)s IN (o.from_user_id, o.to_user_id)"
                     " ORDER BY o.created_at",
                     {"g": guild.id, "days": HANDOVER_SECONDS, "now": now, "me": session.user_id},
@@ -232,6 +238,16 @@ async def build_me(
                     }
                 )
             for row in await offered.fetchall():
+                if row["status"] == "closed":
+                    # Names no account and says nothing about either side's other logins.
+                    closed.append(
+                        {
+                            "id": offer_ref(guild.id, row["id"]),
+                            "campaignName": row["name"],
+                            "serverName": guild.name,
+                        }
+                    )
+                    continue
                 to_me = row["to_user_id"] == session.user_id
                 if row["via_email"]:
                     # Never the address (it is not stored), and never in the offer lists: it has no
@@ -436,5 +452,5 @@ async def build_me(
         "campaigns": campaigns,
         "servers": servers,
         "installs": installs,
-        "offers": {"incoming": incoming, "outgoing": outgoing},
+        "offers": {"incoming": incoming, "outgoing": outgoing, "closed": closed},
     }

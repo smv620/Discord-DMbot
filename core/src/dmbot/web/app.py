@@ -92,6 +92,7 @@ from dmbot.web import (
     strays,
     support,
     theatre_script,
+    thread_suggestions,
     timeline,
     tokens,
     trait_offers,
@@ -2685,6 +2686,59 @@ def create_app(
         session, _token = signed
         try:
             return {"answer": await world_notes.queue_undo(db, session, ref, batch)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/threads")
+    async def me_campaign_threads(ref: str, signed: Signed) -> dict[str, Any]:
+        """The story threads DMbot found in an upload, waiting for the DM (#4457): DM only,
+        nothing for anyone else."""
+        session, _token = signed
+        try:
+            return await thread_suggestions.read(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/threads/keep", status_code=202)
+    async def me_campaign_thread_keep(ref: str, request: Request, signed: Signed) -> dict[str, str]:
+        """✅ Keep a story thread, with the people left on; polled at `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await thread_suggestions.queue_keep(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/threads/not", status_code=202)
+    async def me_campaign_thread_not(ref: str, request: Request, signed: Signed) -> dict[str, str]:
+        """🚫 Not a story thread: never suggested again."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await thread_suggestions.queue_not(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/threads/undo", status_code=202)
+    async def me_campaign_thread_undo(ref: str, request: Request, signed: Signed) -> dict[str, str]:
+        """↩ Undo of a keep (its change number) or of a 🚫 (the suggestion's id)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await thread_suggestions.queue_undo(db, session, ref, body)}
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
