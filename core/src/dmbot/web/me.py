@@ -153,7 +153,7 @@ async def build_me(
                     " JOIN campaigns c ON c.id = o.campaign_id AND c.guild_id = o.guild_id"
                     " WHERE o.guild_id = %(g)s AND ("
                     "   (o.status = 'open' AND o.created_at + %(days)s > %(now)s)"
-                    "   OR (o.status = 'closed' AND o.decided_at + %(days)s > %(now)s))"
+                    "   OR (o.status = 'closed' AND NOT o.via_email AND o.decided_at + %(days)s > %(now)s))"
                     "   AND %(me)s IN (o.from_user_id, o.to_user_id)"
                     " ORDER BY o.created_at",
                     {"g": guild.id, "days": HANDOVER_SECONDS, "now": now, "me": session.user_id},

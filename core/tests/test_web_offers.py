@@ -128,6 +128,9 @@ class WebOffers(DatabaseTest):
             self.assertEqual(
                 offers_now, {"incoming": [], "outgoing": [], "closed": [shown]}
             )  # (no person's name, no account, and not an open offer)
+        elsewhere = await self.sign_in(BOB, [GORRAK])  # (signed in without that server)
+        outside = await build_me(self.web, elsewhere, now=self.now + DAY)
+        self.assertEqual(outside["offers"]["closed"], [])
         later = await build_me(self.web, self.bob, now=self.now + 8 * DAY)
         self.assertEqual(later["offers"]["closed"], [])
 

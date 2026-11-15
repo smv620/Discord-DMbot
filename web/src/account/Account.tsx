@@ -817,13 +817,13 @@ function ClosedOffersSection({ offers }: { offers: ClosedOffer[] }) {
   return (
     <section aria-labelledby="offers-closed-heading" class="panel" id="offers-closed">
       <h2 id="offers-closed-heading">{text.offersClosedHeading}</h2>
+      <p class="muted">
+        {text.offerClosedReason} {text.offerClosedWeek}
+      </p>
       <ul class="campaigns">
         {offers.map((o) => (
           <li key={o.id} data-offer={o.id}>
-            <p>
-              <strong>{text.offerClosed(o.campaignName, o.serverName)}</strong>
-            </p>
-            <p class="muted">{text.offerClosedReason}</p>
+            <strong>{text.offerClosed(o.campaignName, o.serverName)}</strong>
           </li>
         ))}
       </ul>

@@ -267,8 +267,9 @@ export const text = {
   offerExpires: (iso: string): string => `Answer by ${shortDateTime(iso)}.`,
   // An offer the bot closed because the Discord accounts on the DMbot account changed (#4467).
   // The reason is Supervisor's ruling on #2533, word for word; it names no account.
-  offersClosedHeading: "Offers that were closed",
-  offerClosed: (campaign: string, server: string): string => `${campaign} in ${server}`,
+  offersClosedHeading: "Hand-overs DMbot closed",
+  offerClosed: (campaign: string, server: string): string => `Hand-over of ${campaign} in ${server}`,
+  offerClosedWeek: "Shown for a week.",
   offerClosedReason: "This offer was closed because the Discord accounts on the DMbot account changed.",
   accept: "Accept",
   decline: "No thanks",

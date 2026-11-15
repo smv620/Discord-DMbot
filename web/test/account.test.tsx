@@ -599,7 +599,7 @@ describe("hand-over offers (#614)", () => {
     show("offers");
     const heading = await screen.findByText(text.offersClosedHeading);
     const section = heading.closest("section") as HTMLElement;
-    expect(section.textContent).toContain("Lanternfall in Quillon's Corner");
+    expect(section.textContent).toContain("Hand-over of Lanternfall in Quillon's Corner");
     expect(section.textContent).toContain(
       "This offer was closed because the Discord accounts on the DMbot account changed.",
     );
