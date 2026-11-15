@@ -165,7 +165,8 @@ class TheMigration(unittest.IsolatedAsyncioTestCase):
         self.schema = f"t_{uuid.uuid4().hex[:16]}"
         self.db = await Database.open(
             TEST_URL, schema=self.schema, max_size=2,
-            migrations=tuple(m for m in MIGRATIONS if m[0] != self.NAME),
+            # (0496 and every later one: a later migration may build on 0496's column, #4258)
+            migrations=tuple(m for m in MIGRATIONS if m[0] < self.NAME),
         )  # fmt: skip
         self.memory = MemoryStore(self.db)
 

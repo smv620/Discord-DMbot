@@ -609,6 +609,9 @@ def _score_map_facts(
         if r.get("status") != "rejected" and r.get("to_session_at") is None
     ]
     used: set[str] = set()
+    # a road's condition (#4258): the sample states none, so the key expects none and every row is
+    # a false note; the line is always printed, so a zero shows too
+    report.map_facts.setdefault("condition", Counter())
     for fact in key.get("map_facts", []):
         layer = str(fact["layer"])
         tally = report.map_facts.setdefault(layer, Counter())
