@@ -9,11 +9,14 @@ from typing import Any
 
 from PIL import Image
 
+from dmbot.dm_screen import channel_sync
 from dmbot.maps.store import Viewer
 from dmbot.memory import map_uploads
 from dmbot.memory import web_actions as wa
+from dmbot.memory.models import new_id
 from dmbot.pictures.bucket import BucketError
 from dmbot.pictures.keeper import PictureKeeper
+from dmbot.web.recaps import _scoped
 from tests.test_recap_web import BOB
 from tests.test_web_api import ALICE
 from tests.test_web_maps import MapsDoor
@@ -82,12 +85,27 @@ class Sending(MapsDoor):
             action="maps-add", text=body,
         )  # fmt: skip
 
-    async def send(self, user: int = ALICE.id, here: bool | None = None, **text: Any) -> Any:
+    def rule(self, here: bool = True) -> Any:
+        """The bot's check of a player, as `DMBot._reads_campaign` builds it: the one shared rule,
+        with the member cache's answer (`here`) passed in."""
+
+        async def may(user_id: int) -> bool:
+            campaign = await self.campaigns.get(self.g, self.one.id)
+            assert campaign is not None
+            return await channel_sync.reads_campaign(
+                self.campaigns, self.memory, campaign, user_id, in_server=here
+            )
+
+        return may
+
+    async def apply(self, action: wa.Action, here: bool = True) -> wa.Outcome:
         return await wa.apply(
-            self.memory, self.g, {ALICE.id}, self.action(user, **text),
-            actions=self.actions, maps=self.maps, uploads=self.uploads,
-            still_here=None if here is None else (lambda _user: here),
+            self.memory, self.g, {ALICE.id}, action,
+            actions=self.actions, maps=self.maps, uploads=self.uploads, reads=self.rule(here),
         )  # fmt: skip
+
+    async def send(self, user: int = ALICE.id, here: bool = True, **text: Any) -> Any:
+        return await self.apply(self.action(user, **text), here)
 
 
 class TheApplier(Sending):
@@ -175,7 +193,7 @@ class TheApplier(Sending):
                 id="b" * 32, campaign_id=self.one.id, entity_id="", user_id=BOB.id,
                 action="maps-takeback", text=self.dm_map,
             ),
-            actions=self.actions, maps=self.maps,
+            actions=self.actions, maps=self.maps, reads=self.rule(),
         )  # fmt: skip
         self.assertEqual(theirs.error, wa.NOT_ALLOWED)  # (the DM's map is not Bob's to take back)
         undo = await wa.apply(
@@ -184,7 +202,7 @@ class TheApplier(Sending):
                 id="c" * 32, campaign_id=self.one.id, entity_id="", user_id=BOB.id,
                 action="maps-undo", text="1",
             ),
-            actions=self.actions, maps=self.maps,
+            actions=self.actions, maps=self.maps, reads=self.rule(),
         )  # fmt: skip
         self.assertEqual(undo.error, wa.GONE)  # (no done action of Bob's made that change)
         own = await wa.apply(
@@ -193,7 +211,7 @@ class TheApplier(Sending):
                 id="d" * 32, campaign_id=self.one.id, entity_id="", user_id=BOB.id,
                 action="maps-takeback", text=mine,
             ),
-            actions=self.actions, maps=self.maps,
+            actions=self.actions, maps=self.maps, reads=self.rule(),
         )  # fmt: skip
         self.assertEqual(own.error, "")
 
@@ -226,3 +244,110 @@ class TheApplier(Sending):
         self.maps.add_map = real  # type: ignore[method-assign]
         self.assertEqual(await self.pictures.by_message(self.g, 0), [])
         self.assertIn(f"p/{TOKEN}.png", self.staging.files)
+
+
+class TheSameRuleAsTheDoor(Sending):
+    """#4445: for each kind of person the rule names, the door (`dmbot_web_reads_campaign`) and the
+    bot's shared function give the same answer."""
+
+    async def door_says(self) -> bool:
+        async with self.web.user(self.player.user_id, session=self.player.id_hash) as conn:
+            await _scoped(conn, self.g)
+            cur = await conn.execute(
+                "SELECT dmbot_web_reads_campaign(%s, %s) AS r", (self.g, self.one.id)
+            )
+            found = await cur.fetchone()
+        return bool(found and found["r"])
+
+    async def bot_says(self) -> bool:
+        return bool(await self.rule()(BOB.id))
+
+    async def both(self, expected: bool) -> None:
+        self.assertEqual((await self.door_says(), await self.bot_says()), (expected, expected))
+
+    async def test_a_member_who_is_none_of_the_people_is_refused_by_both(self) -> None:
+        await self.both(False)
+
+    async def test_a_player_of_a_confirmed_character_is_let_in_by_both(self) -> None:
+        await self.make_bob_a_player()
+        await self.sql(
+            "UPDATE memory_entities SET role = 'player_character', status = 'confirmed'"
+            " WHERE guild_id = %s AND played_by = %s",
+            self.g, BOB.id,
+        )  # fmt: skip
+        await self.both(True)
+
+    async def test_someone_added_by_hand_is_let_in_by_both(self) -> None:
+        await self.campaigns.add_channel_person(self.g, self.one.id, BOB.id, ALICE.id, 1000)
+        await self.both(True)
+
+    async def test_someone_recorded_at_a_session_with_no_character_is_let_in_by_both(self) -> None:
+        session = new_id()
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at,"
+                " ended_at, line_count) VALUES (%s, %s, %s, 100, 200, 1)",
+                (session, self.g, self.one.id),
+            )
+            await conn.execute(
+                "INSERT INTO transcript_lines (guild_id, session_id, started_ms, user_id,"
+                " heard, duration_ms) VALUES (%s, %s, 5, %s, 'we meet', 1000)",
+                (self.g, session, BOB.id),
+            )
+        await self.both(True)
+
+    async def test_a_dm_of_the_campaign_is_let_in_by_both(self) -> None:
+        await self.campaigns.add_dm(self.g, self.one.id, BOB.id)
+        await self.both(True)
+
+    async def test_with_everyone_any_member_is_let_in_by_both(self) -> None:
+        await self.campaigns.set_channels_visibility(self.g, self.one.id, "everyone")
+        await self.both(True)
+
+    async def test_someone_who_is_not_in_the_server_is_refused_by_the_bot_even_when_listed(
+        self,
+    ) -> None:
+        await self.campaigns.add_channel_person(self.g, self.one.id, BOB.id, ALICE.id, 1000)
+        self.assertFalse(await self.rule(here=False)(BOB.id))
+        await self.campaigns.set_channels_visibility(self.g, self.one.id, "everyone")
+        self.assertFalse(await self.rule(here=False)(BOB.id))  # (everyone means members only)
+
+    async def test_the_bot_lets_a_listed_person_send_a_map_and_a_stranger_not(self) -> None:
+        self.assertEqual((await self.send(BOB.id)).error, wa.NOT_ALLOWED)
+        await self.campaigns.add_channel_person(self.g, self.one.id, BOB.id, ALICE.id, 1000)
+        self.assertEqual((await self.send(BOB.id)).error, "")  # (no character needed)
+
+    async def test_a_proposed_character_is_refused_by_both(self) -> None:
+        await self.make_bob_a_player()
+        await self.sql(
+            "UPDATE memory_entities SET status = 'proposed' WHERE guild_id = %s AND played_by = %s",
+            self.g, BOB.id,
+        )  # fmt: skip
+        await self.both(False)
+
+    async def test_a_typed_line_is_not_a_recorded_speaker_for_either(self) -> None:
+        session = new_id()
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at,"
+                " ended_at, line_count) VALUES (%s, %s, %s, 100, 200, 1)",
+                (session, self.g, self.one.id),
+            )
+            await conn.execute(
+                "INSERT INTO transcript_lines (guild_id, session_id, started_ms, user_id,"
+                " heard, duration_ms, typed) VALUES (%s, %s, 5, %s, 'typed words', 1000, TRUE)",
+                (self.g, session, BOB.id),
+            )
+        await self.both(False)
+
+    async def test_a_negative_id_is_refused_even_with_everyone(self) -> None:
+        await self.campaigns.set_channels_visibility(self.g, self.one.id, "everyone")
+        self.assertFalse(await self.rule()(-5))
+
+    async def test_without_the_rule_only_a_dm_is_let_in(self) -> None:
+        await self.campaigns.add_channel_person(self.g, self.one.id, BOB.id, ALICE.id, 1000)
+        got = await wa.apply(
+            self.memory, self.g, {ALICE.id}, self.action(BOB.id),
+            actions=self.actions, maps=self.maps, uploads=self.uploads,
+        )  # fmt: skip
+        self.assertEqual(got.error, wa.NOT_ALLOWED)
