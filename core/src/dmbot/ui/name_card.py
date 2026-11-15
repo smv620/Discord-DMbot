@@ -98,6 +98,7 @@ from dmbot.ui import (
     told_name,
 )
 from dmbot.ui import companion as companion_ui
+from dmbot.ui import thread_parts as thread_parts_ui
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
     _answer_first,
@@ -156,6 +157,7 @@ MORE_THAN_ONE_BUTTON = "Allow more than one"
 THREAD_STATE_BUTTON = "🧵 Change state"  # a story thread's buttons (#1662)
 THREAD_INVOLVE_BUTTON = "👥 Who's involved"
 THREAD_LINK_BUTTON = "📌 Link an event"
+CARD_PARTS = 12  # a thread's steps and rewards on its card at most; the rest on 📋 (#4471)
 LED_TO_BUTTON = "➡ Led to…"  # a clue, event or thread led to another (#1679)
 PROMISE_BY_BUTTON = "🤝 Who promised"  # a promise's buttons (#1674)
 PROMISE_TO_BUTTON = "🤝 Promised to"
@@ -795,6 +797,13 @@ async def show_card(
             lines_of_thread = thread_lines(
                 here[0], await _session_numbers(interaction, campaign.id)
             )
+            # its steps, rewards and more, and its branches (#4471)
+            from dmbot.ui.thread_parts import card_lines
+
+            parts, part_names, bigger, branches = await memory.thread_card(
+                campaign.guild_id, campaign.id, entity_id
+            )
+            lines_of_thread += card_lines(parts, part_names, bigger, branches, most=CARD_PARTS)
     elif entity is not None and secrets and entity.type in ("clue", "event"):
         # A clue's or an event's "Led to" / "Came from" (#1679): the DM's word, so the DM's card.
         from dmbot.memory.threads import names_line
@@ -1341,6 +1350,23 @@ class NameCard(_Menu):
                 if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
                     self.add_item(_Button(self._suggest, label=SUGGEST_BUTTON, style=grey, row=row))
                     break
+        if thread:
+            # a story thread's steps, rewards and more, and its bigger thread (#4471): one button,
+            # placed after every other so it never takes a row another needs; never row 4, the
+            # "Show all" select's (the reviewer's finding on #4471)
+            for row in (3, 2, 1, 0):
+                try:  # (Discord's own check: buttons placed without a row count too)
+                    self.add_item(
+                        _Button(
+                            self._thread_parts, label=thread_parts_ui.PARTS_BUTTON, style=grey,
+                            row=row,
+                        )
+                    )  # fmt: skip
+                    break
+                except ValueError:
+                    continue
+            else:
+                log.info("No room on a thread's card for its steps button")
         if say_it_url:  # the DM's private card only: opens the name on the website (#2580)
             try:  # placed wherever there is room; a card that is full simply goes without it
                 self.add_item(discord.ui.Button(label=all_names.SAY_IT, url=say_it_url))
@@ -1407,6 +1433,11 @@ class NameCard(_Menu):
 
     async def _promise_due(self, interaction: discord.Interaction) -> None:
         await self._promise_form(interaction, "due")
+
+    async def _thread_parts(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        self.stop()
+        await thread_parts_ui.open_parts(interaction, self.campaign_id, self.entity_id)
 
     async def _thread_link(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.threads import LinkForm
