@@ -29,6 +29,7 @@ EXPECTED = {
     "did": OTHER,
     "plays": OTHER,
     "led_to": OTHER,
+    "branch_of": OTHER,  # a branch of a bigger thread (#4471)
     "in_thread": OTHER,
     "advances": OTHER,
     "affected": OTHER,

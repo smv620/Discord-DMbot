@@ -22,6 +22,7 @@ from typing import Any
 from dmbot.campaigns.models import Campaign, CampaignError
 from dmbot.campaigns.store import CampaignStore
 from dmbot.db import Database
+from dmbot.devtools.sample_run.costs import CostLine, recap_line
 from dmbot.devtools.sample_run.plan import (
     NAME,
     STEPS,
@@ -516,9 +517,12 @@ async def write_recap(
     session_at: int,
     *,
     run: Callable[[list[str]], Awaitable[int]] | None = None,
+    spent: list[CostLine] | None = None,
 ) -> int:
     """The recap, with no audio, by the same code as `recap_run --session ... --yes`. Its report
-    holds the recap's words, so it is swallowed: only the exit code comes back (0: made)."""
+    holds the recap's words, so it is swallowed: only the exit code comes back (0: made). `spent`
+    (#4087) gets the recap's tokens and dollars, read from its one "tokens in N, out N; spend $X"
+    line and nothing else of the report."""
     if run is None:
         from dmbot.devtools.recap_run import __main__ as rr
 
@@ -526,8 +530,12 @@ async def write_recap(
             return await rr.main_async(rr.parse_args(argv))
 
     argv = ["--session", str(guild), campaign_id, str(session_at), "--yes"]
-    with contextlib.redirect_stdout(io.StringIO()):
-        return await run(argv)
+    swallowed = io.StringIO()
+    with contextlib.redirect_stdout(swallowed):
+        code = await run(argv)
+    if spent is not None and (line := recap_line(swallowed.getvalue())) is not None:
+        spent.append(line)
+    return code
 
 
 def estimate_cost(

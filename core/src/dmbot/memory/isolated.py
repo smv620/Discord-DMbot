@@ -32,7 +32,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 
 WALKED = frozenset({"character", "faction"})  # the kinds that interact (Supervisor, #3740)
-NOT_A_TIE = frozenset({"led_to"})  # the story plan's order, not an interaction
+NOT_A_TIE = frozenset({"led_to", "branch_of"})  # the story plan's order, not an interaction
 LIVE = frozenset({"proposed", "confirmed"})
 
 

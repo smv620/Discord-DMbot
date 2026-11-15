@@ -423,6 +423,23 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         synonyms=("sparked", "set_off"),
     ),
     PredicateTerm(
+        "branch_of",
+        "is a branch of",
+        "A story thread is a branch of a bigger one, as the DM says: a side quest, or a mystery "
+        "inside a quest, with its own people, clues or ending (quests design §6a). One bigger "
+        "thread at most, and never a loop. The DM's word, never guessed.",
+        ("thread",),
+        ("thread",),
+        covers=("who killed Wit, a mystery inside Cerric's search for his master",),
+        not_this=(
+            ("one thing that sent the party on to another", "led_to"),
+            ("who is in a thread and in what part", "in_thread"),
+        ),
+        examples=("Who killed Wit? is a branch of Cerric's search.",),
+        inverse_label="has the branch",
+        synonyms=("side_quest_of", "sub_quest_of"),
+    ),
+    PredicateTerm(
         "of_people",
         "is one of",
         "Belongs to a whole people or kind, as the DM says: a tabaxi, an elf, an outsider. "
