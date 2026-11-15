@@ -1875,7 +1875,8 @@ export interface WebLink {
   knownBy?: { id: string; name: string }[];
   direction: "a-b" | "b-a" | "both";
   /** How a two-way connection reads with both names ("are rivals", "are friends or allies"), sent only when `direction` is
-   * "both" (#4154, core #4166); the page writes "A ↔ B · <pairWords>". Absent from an older API. */
+   * "both" (#4154, core #4166); the connection panel writes "A ↔ B · <pairWords>" and the line panel and the map write "A and B
+   * <pairWords>" (#4196). Absent from an older API, which keeps "A and B: <words>". */
   pairWords?: string;
   /** The kind of connection, for the map's colours and filters (#2942). Absent from an older API. */
   kind?: WebLinkKind;
