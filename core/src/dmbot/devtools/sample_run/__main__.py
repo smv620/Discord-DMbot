@@ -92,6 +92,12 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="the last deploy's summary (default: the newest in --backup-dir), to say what changed",
     )
     parser.add_argument(
+        "--map",
+        type=Path,
+        help="the sample map (#4423), on the server only: added to the kept campaign as the DM's "
+        "map after the session, read closely by the running bot, scored with map_key_check",
+    )
+    parser.add_argument(
         "--part2",
         metavar="CAMPAIGN",
         help="part 2 of 2 (#3545): after the owner answered the kept run's questions, what became "
@@ -440,6 +446,10 @@ async def run(
         try:
             await steps.run_steps(actions, done, say, order)
         finally:  # (a run that stopped part way still counts what it did and spent)
+            if recap and args.map is not None and len(done) == len(order):
+                # (a single run's map step, once the rest is done: `--repeat` does it after the
+                # runs, on the kept campaign)
+                await _map_on(args, {"guild": gid, "campaign": cid}, folder, say)
             if metrics is not None or snapshot is not None:
                 await _measure(db, memory, gid, cid, done, metrics, snapshot, say)
         # The secret connections by source and the split-party counts (Supervisor, #3545): counts
@@ -581,6 +591,8 @@ async def run_many(args: argparse.Namespace, **kw: Any) -> int:
         say("=== recap of the kept run (no audio) ===")
         code = await steps.write_recap(kept["guild"], kept["campaign"], kept["started"])
         say("recap: made" if code == 0 else f"recap: not made (recap_run exit {code})")
+        if args.map is not None:
+            await _map_on(args, kept, folder, say)
     stats = spread.summarize(runs)
     say(f"Sample summary, commit {commit}: {len(runs)} runs, about ${spent:.2f} (#3545)")
     for line in spread.render(stats):
@@ -597,6 +609,28 @@ async def run_many(args: argparse.Namespace, **kw: Any) -> int:
     if runs:
         spread.save(folder / f"summary-{stamp}.json", stats, commit=commit)
     return 1 if failed else 0
+
+
+async def _map_on(
+    args: argparse.Namespace, kept: Mapping[str, Any], folder: Path, say: Callable[[str], None]
+) -> None:
+    """The sample map step (#4423) on the kept campaign: never fails the run, says why it
+    skipped."""
+    from dmbot.db import Database
+    from dmbot.devtools.sample_run import map_step
+    from dmbot.memory.store import MemoryStore
+
+    say("=== the sample map ===")
+    db = await Database.open(os.environ.get("DATABASE_URL", ""), migrate=False, max_size=2)
+    try:
+        await map_step.run(
+            db, MemoryStore(db), int(kept["guild"]), str(kept["campaign"]), args.dm, args.map,
+            folder, say=say,
+        )  # fmt: skip
+    except Exception as exc:  # (the kind only: the map step never fails the run)
+        say(f"map: stopped ({type(exc).__name__})")
+    finally:
+        await db.close()
 
 
 def _newest(folder: Path, pattern: str) -> Path | None:

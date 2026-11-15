@@ -208,7 +208,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         backup = decode_backup(args.backup.read_bytes())
         key = json.loads(args.key.read_text(encoding="utf-8"))
-        campaign = backup.get("campaign") if isinstance(backup, dict) else None
+        if not isinstance(backup, dict):
+            raise ValueError("That file is not a campaign backup.")
+        campaign = backup.get("campaign")
         if not isinstance(campaign, dict) or campaign.get("name") != SAMPLE_CAMPAIGN:
             raise ValueError(f'This campaign is not "{SAMPLE_CAMPAIGN}"; the check is only for it.')
         report = check(backup, key)

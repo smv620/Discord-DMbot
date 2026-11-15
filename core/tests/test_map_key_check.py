@@ -9,10 +9,12 @@ import unittest
 from typing import Any
 
 from dmbot.devtools import map_key_check as mkc
+from dmbot.memory.models import name_key
 
 
 def _key() -> dict[str, Any]:
-    return json.loads(mkc.DEFAULT_KEY.read_text(encoding="utf-8"))
+    key: dict[str, Any] = json.loads(mkc.DEFAULT_KEY.read_text(encoding="utf-8"))
+    return key
 
 
 def _backup(places: list[str], links: list[tuple[str, str, str]], **memory: Any) -> dict[str, Any]:
@@ -78,8 +80,8 @@ class Check(unittest.TestCase):
     def test_in_keeps_its_way_round(self) -> None:
         links = [("Ten-Towns", "in", "Bryn Shander")]  # (the wrong way round)
         self.assertFalse(mkc._linked(
-            [(mkc.name_key(a), k, mkc.name_key(b)) for a, k, b in links],
-            mkc.name_key("Bryn Shander"), "in", mkc.name_key("Ten-Towns"),
+            [(name_key(a), k, name_key(b)) for a, k, b in links],
+            name_key("Bryn Shander"), "in", name_key("Ten-Towns"),
         ))  # fmt: skip
 
     def test_only_the_sample_is_checked(self) -> None:

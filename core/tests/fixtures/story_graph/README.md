@@ -75,6 +75,14 @@ It needs `DATABASE_URL` and `ANTHROPIC_API_KEY` in its environment, the bot runn
 
 **Part 2 of 2: what the owner answered.** Post the summary as "part 1 of 2". Once the owner has answered the kept run's questions in Discord or on the website, run `python -m dmbot.devtools.sample_run --guild GUILD --dm DM_USER_ID --part2 CAMPAIGN_ID` (the id is in the run's last lines). Each question is counted, by kind, as **kept as suggested** (DMbot's own answer: it had it right), **changed**, **turned down** or **not answered yet**, with the share it had right. Then the campaign is scored against the master key again. Post it as "part 2 of 2". It is an owner check: it never holds a deploy. Across deploys these shares are evidence only. No kind is left to DMbot without a design note that cites at least five deploys of them.
 
+**The sample map (#4423).** The owner's Icewind Dale map is published art, so it stays on the server at `/var/lib/dmbot-sample/icewind_dale_map.jpg`, never in the repository, an issue, a PR or a log. Its key is `map_key.json` (readable as `map_key.md`): names and facts only. Add `--map /var/lib/dmbot-sample/icewind_dale_map.jpg` to every sample run.
+- After the runs (and the kept run's recap), the map goes into the **kept** campaign as the DM's own map, through the bot's picture keeper and the map store's own calls: the DM's yes to using it, and the DM's confirmation of the right to use shared material (the bot reads a map closely only for a campaign that has one), with a fingerprint of the file only.
+- The tool waits for the running bot's close read (the bot sweeps every 10 minutes; up to 25 minutes), backs up, and prints `map_key_check`'s counts, each line starting `map:`.
+- With kept pictures off, or a map the bot didn't read in time, it says so and skips. It never fails the run.
+- To score a backup by hand: `python -m dmbot.devtools.map_key_check BACKUP` (counts only, the sample campaign only).
+- What MapBot keeps today is scored: the pins by name, the roads, "in" and "on the shore of", the layer rows read from the map, and the must-not list. The pins' positions, compass directions, distances, the scale and north are listed as **not stored yet**, never as missed, until a MapBot slice keeps them.
+- Key version 1 is a draft read by eye. After the first run, GraphEngineer corrects a pin that is plainly the key's and not MapBot's, in a new version with the reason. A scored version is never rewritten.
+
 ### How dev1 runs it each time (a test campaign, never a real one)
 
 Run it after any deploy that changes what the story reader or the story graph does, on a **throw-away test campaign** made only for this. The documents are public, and the report prints their names, so never run it on any other campaign.
