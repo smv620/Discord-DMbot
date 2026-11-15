@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 
 from dmbot.db import Database
 from dmbot.memory import backstory_keep as keep
-from dmbot.memory import beliefs, evidence, link_edits, name_edits, placing, told
+from dmbot.memory import beliefs, evidence, link_edits, map_uploads, name_edits, placing, told
 from dmbot.memory import claims as claims_mod
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import ALREADY_UNDONE, CLAIMS, Changes
@@ -57,6 +57,7 @@ from dmbot.memory.store import NAMES_NOT_SHOWN as NAMES_NOT_SHOWN_WORDS
 
 if TYPE_CHECKING:
     from dmbot.maps.store import MapStore
+    from dmbot.memory.map_uploads import MapUploads
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
 
 log = logging.getLogger(__name__)
@@ -149,7 +150,12 @@ WORLD_ACTIONS = ("world-keep", "world-not", "world-undo")
 # Only a DM may use, show or remove; the poster alone may take their own map back, so these run
 # before the "sender is a DM" check, which a player is never meant to pass. (`MAP_ACTIONS` above
 # is the place's land, climate and ruler.)
-MAPS_PAGE_ACTIONS = ("maps-use", "maps-show", "maps-remove", "maps-takeback", "maps-undo")
+MAPS_PAGE_ACTIONS = (
+    "maps-use", "maps-show", "maps-remove", "maps-takeback", "maps-undo", "maps-add",
+)  # fmt: skip
+# What a campaign's player (not a DM) may do on the Maps page: send a map, take back their own, and
+# Undo one of those two; the map store checks it is their own map (#4347)
+PLAYER_MAPS_ACTIONS = ("maps-add", "maps-takeback", "maps-undo")
 
 
 async def _map_fact(
@@ -415,7 +421,7 @@ class ActionStore:
             return await cur.fetchone() is not None
 
     async def map_batch_made(
-        self, guild_id: int, campaign_id: str, user_id: int, batch: int
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int, *, own_only: bool = False
     ) -> bool:
         """Whether `batch` is the change this person's own done Maps press made from the website
         (#4347: a DM's use, show or remove, or a poster's take-back), so the page's Undo can only
@@ -423,9 +429,18 @@ class ActionStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
-                " AND user_id = %s AND action IN ('maps-use', 'maps-show', 'maps-remove',"
-                " 'maps-takeback') AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
-                (guild_id, campaign_id, user_id, batch),
+                " AND user_id = %s AND action = ANY(%s) AND state = 'done'"
+                " AND %s = ANY (result_batches) LIMIT 1",
+                (
+                    guild_id,
+                    campaign_id,
+                    user_id,
+                    # `own_only`: a person who is not a DM may Undo only what a player may do
+                    ["maps-add", "maps-takeback"]
+                    if own_only
+                    else ["maps-use", "maps-show", "maps-remove", "maps-takeback", "maps-add"],
+                    batch,
+                ),
             )
             return await cur.fetchone() is not None
 
@@ -528,10 +543,14 @@ async def apply(
     actions: ActionStore | None = None,
     clock: ClockChoiceFn | None = None,
     maps: MapStore | None = None,
+    uploads: MapUploads | None = None,
+    still_here: Callable[[int], bool] | None = None,
 ) -> Outcome:
     """Do one action the way Discord's name card does. Nothing here logs the DM's words."""
     if action.action in MAPS_PAGE_ACTIONS:
-        return await _maps(memory, maps, actions, guild_id, dm_user_ids, action)
+        return await _maps(
+            memory, maps, actions, guild_id, dm_user_ids, action, uploads, still_here
+        )
     if action.user_id not in dm_user_ids:
         return _failed(NOT_ALLOWED)
     cid = action.campaign_id
@@ -943,6 +962,8 @@ async def _maps(
     guild_id: int,
     dm_user_ids: Collection[int],
     a: Action,
+    uploads: MapUploads | None = None,
+    still_here: Callable[[int], bool] | None = None,
 ) -> Outcome:
     """One press on the Maps page (#4347), through the map store's own calls (as Discord's buttons,
     #4373 and #4390), so each is one change and one Undo. A DM may answer a map's use, show or hide
@@ -960,11 +981,26 @@ async def _maps(
         return _failed(FAILED)
     cid = a.campaign_id
     is_dm = a.user_id in dm_user_ids
+    # The door lets any of the campaign's people queue the player actions; the bot is the check
+    # (a person who left or never played here is refused), and the store checks the map is theirs.
+    if (
+        a.action in PLAYER_MAPS_ACTIONS
+        and not is_dm
+        and (
+            not await memory.characters_of(guild_id, cid, a.user_id)
+            # (a character row outlives its player: someone who left the server is refused)
+            or (still_here is not None and not still_here(a.user_id))
+        )
+    ):
+        return _failed(NOT_ALLOWED)
+    if a.action == "maps-add":
+        return await map_uploads.add(uploads, guild_id, cid, is_dm=is_dm, a=a)
     if a.action == "maps-undo":
         if not (a.text.isascii() and a.text.isdigit()) or len(a.text) > 15:
             return _failed(GONE)  # ("²" is a digit to Python and int() refuses it)
         batch = int(a.text)
-        if not await actions.map_batch_made(guild_id, cid, a.user_id, batch):
+        # A DM may Undo their own presses; anyone else only their own add or take-back
+        if not await actions.map_batch_made(guild_id, cid, a.user_id, batch, own_only=not is_dm):
             return _failed(GONE)
         try:
             await memory.undo(guild_id, cid, batch)
@@ -975,7 +1011,7 @@ async def _maps(
                 return Outcome()  # (taken back already: a retried Undo)
             return _failed(GONE if str(exc) == STORE_NOT_FOUND else CHANGED)
         return Outcome()
-    if a.action != "maps-takeback" and not is_dm:
+    if a.action not in PLAYER_MAPS_ACTIONS and not is_dm:
         return _failed(NOT_ALLOWED)
     map_id, _, word = a.text.partition(" ")
     made: int | None  # the change the press made, for the page's Undo (none when nothing changed)
