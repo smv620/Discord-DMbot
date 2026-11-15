@@ -13,7 +13,8 @@ from __future__ import annotations
 # 1. **`now` and `guess` on each waiting connection** (`dmbot_web_waiting`, DM only like the whole
 #    door). `now` is the live, confirmed connection of the same kind between the same two entries
 #    (either way round) whose words differ: `{predicate, detail, hidden}`, `hidden` meaning players
-#    cannot see it (secret or not yet revealed). It carries no name and no quote; the page words it
+#    cannot see it (secret, not yet revealed, assumed, or
+#    touching an audience-limited entry: the same rule the card for a kept one is read by). It carries no name and no quote; the page words it
 #    through the same `link_words` as the waiting connection. A different kind between the two
 #    ("knows" beside "works for", or a friend against an enemy) is left to the bot, which decides
 #    what a keep replaces with the ontology; copying that into SQL would let the two differ. `guess`
@@ -36,11 +37,24 @@ _FIELDS_NEW = (
     "                    'guess', l.inferred_reason,\n"
     "                    'now', (SELECT jsonb_build_object(\n"
     "                                'predicate', r.predicate, 'detail', r.detail,\n"
-    "                                'hidden', r.secret OR r.unrevealed)\n"
+    "                                'hidden', r.secret OR r.unrevealed OR r.assumed\n"
+    "                                          OR COALESCE((SELECT bool_or(e.audience_limited)\n"
+    "                                                       FROM memory_entities e\n"
+    "                                                       WHERE e.guild_id = g AND e.campaign_id = c\n"
+    "                                                         AND e.id IN (r.subject_id, r.object_id)),\n"
+    "                                                      false))\n"
     "                            FROM memory_relations r\n"
     "                            WHERE r.guild_id = g AND r.campaign_id = c\n"
     "                              AND r.status = 'confirmed' AND r.to_session_at IS NULL\n"
     "                              AND r.predicate = l.predicate AND r.detail <> l.detail\n"
+    "                              AND NOT EXISTS (SELECT 1 FROM memory_relations q\n"
+    "                                  WHERE q.guild_id = g AND q.campaign_id = c\n"
+    "                                    AND q.status = 'confirmed' AND q.to_session_at IS NULL\n"
+    "                                    AND q.predicate = l.predicate AND q.detail = l.detail\n"
+    "                                    AND ((q.subject_id = l.subject_id\n"
+    "                                          AND q.object_id = l.object_id)\n"
+    "                                         OR (q.subject_id = l.object_id\n"
+    "                                             AND q.object_id = l.subject_id)))\n"
     "                              AND ((r.subject_id = l.subject_id\n"
     "                                    AND r.object_id = l.object_id)\n"
     "                                   OR (r.subject_id = l.object_id\n"

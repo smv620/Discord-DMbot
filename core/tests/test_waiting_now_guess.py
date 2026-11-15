@@ -54,6 +54,26 @@ class TheNowLine(NowAndGuess):
         (row,) = await self.rows()
         self.assertTrue(row["now"]["hidden"])
 
+    async def test_an_assumed_held_connection_is_hidden_too(self) -> None:
+        await self.update(
+            "UPDATE memory_relations SET assumed = TRUE WHERE guild_id = %s AND id = %s",
+            self.g, self.links["mira-keep"],
+        )  # fmt: skip
+        await self.waiting(detail="friendly")
+        (row,) = await self.rows()
+        self.assertTrue(row["now"]["hidden"])
+
+    async def test_when_a_held_connection_already_says_the_same_there_is_no_now(self) -> None:
+        await self.link("knows", self.mira, self.keep, "twin")  # (same kind, plain words)
+        await self.waiting(detail="friendly")
+        await self.link("knows", self.keep, self.mira, "twin-friendly")
+        await self.update(
+            "UPDATE memory_relations SET detail = 'friendly' WHERE guild_id = %s AND id = %s",
+            self.g, self.links["twin-friendly"],
+        )  # fmt: skip
+        (row,) = await self.rows()
+        self.assertNotIn("now", row)
+
     async def test_a_connection_of_another_kind_has_no_now(self) -> None:
         await self.waiting(predicate="works_for")
         (row,) = await self.rows()
@@ -130,11 +150,12 @@ class TheKeepShowAction(NowAndGuess):
     async def test_a_player_cannot_queue_it(self) -> None:
         await self.waiting(detail="friendly")
         (row,) = await self.rows()
-        with self.assertRaises(RecapError):
+        with self.assertRaises(RecapError) as caught:
             await relationships.queue_waiting(
                 self.web, self.player, self.cref,
                 {"kind": "backstory", "action": "keep", "id": row["id"], "secret": False},
             )  # fmt: skip
+        self.assertEqual(caught.exception.code, "not_allowed")
 
     async def test_a_made_up_id_is_not_found(self) -> None:
         with self.assertRaises(RecapError) as caught:
