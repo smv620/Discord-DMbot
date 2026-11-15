@@ -12403,16 +12403,22 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except Exception as exc:
             log.warning("Import time: the offer could not be kept: %s", type(exc).__name__)
 
-    def _still_in(self, guild_id: int) -> Callable[[int], bool]:
-        """Whether a person is still a member of this server (for the Maps page's player actions:
-        a character outlives its player, #4347). The cache only: a member DMbot cannot see is
-        refused."""
+    def _reads_campaign(
+        self, guild_id: int, campaign: Campaign
+    ) -> Callable[[int], Awaitable[bool]]:
+        """Whether a person may read this campaign's transcripts: the one rule Discord's channels
+        and the website's doors follow (`channel_sync.reads_campaign`), for the Maps page's player
+        actions (#4347, #4445). "Still in the server" is Discord's member cache only: a member
+        DMbot cannot see is refused."""
 
-        def inside(user_id: int) -> bool:
+        async def may(user_id: int) -> bool:
             guild = self.get_guild(guild_id)
-            return guild is not None and guild.get_member(user_id) is not None
+            return await channel_sync.reads_campaign(
+                self.campaigns, self.memory, campaign, user_id,
+                in_server=guild is not None and guild.get_member(user_id) is not None,
+            )  # fmt: skip
 
-        return inside
+        return may
 
     def _import_clock_choice(self, guild_id: int) -> web_actions.ClockChoiceFn:
         """The website's answer to an import clock offer (#3199), applied the way Discord's two
@@ -13142,7 +13148,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                     self.map_store,
                                     self.settings.picture_storage_mb,
                                 ),
-                                still_here=self._still_in(guild.id),
+                                reads=self._reads_campaign(guild.id, campaign),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug

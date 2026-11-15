@@ -561,13 +561,11 @@ async def apply(
     clock: ClockChoiceFn | None = None,
     maps: MapStore | None = None,
     uploads: MapUploads | None = None,
-    still_here: Callable[[int], bool] | None = None,
+    reads: Callable[[int], Awaitable[bool]] | None = None,
 ) -> Outcome:
     """Do one action the way Discord's name card does. Nothing here logs the DM's words."""
     if action.action in MAPS_PAGE_ACTIONS:
-        return await _maps(
-            memory, maps, actions, guild_id, dm_user_ids, action, uploads, still_here
-        )
+        return await _maps(memory, maps, actions, guild_id, dm_user_ids, action, uploads, reads)
     if action.user_id not in dm_user_ids:
         return _failed(NOT_ALLOWED)
     cid = action.campaign_id
@@ -1039,7 +1037,7 @@ async def _maps(
     dm_user_ids: Collection[int],
     a: Action,
     uploads: MapUploads | None = None,
-    still_here: Callable[[int], bool] | None = None,
+    reads: Callable[[int], Awaitable[bool]] | None = None,
 ) -> Outcome:
     """One press on the Maps page (#4347), through the map store's own calls (as Discord's buttons,
     #4373 and #4390), so each is one change and one Undo. A DM may answer a map's use, show or hide
@@ -1057,16 +1055,13 @@ async def _maps(
         return _failed(FAILED)
     cid = a.campaign_id
     is_dm = a.user_id in dm_user_ids
-    # The door lets any of the campaign's people queue the player actions; the bot is the check
-    # (a person who left or never played here is refused), and the store checks the map is theirs.
+    # The door lets anyone who passes the campaign's people rule queue the player actions; the bot
+    # asks the very same rule (`reads`: `channel_sync.reads_campaign`, with "still in the server")
+    # and the store checks the map is theirs. Without the rule at hand, nobody but a DM is let in.
     if (
         a.action in PLAYER_MAPS_ACTIONS
         and not is_dm
-        and (
-            not await memory.characters_of(guild_id, cid, a.user_id)
-            # (a character row outlives its player: someone who left the server is refused)
-            or (still_here is not None and not still_here(a.user_id))
-        )
+        and (reads is None or not await reads(a.user_id))
     ):
         return _failed(NOT_ALLOWED)
     if a.action == "maps-add":
