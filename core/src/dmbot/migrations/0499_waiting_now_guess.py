@@ -13,9 +13,9 @@ from __future__ import annotations
 # 1. **`now` and `guess` on each waiting connection** (`dmbot_web_waiting`, DM only like the whole
 #    door). `now` is the live, confirmed connection of the same kind between the same two entries
 #    (either way round) whose words differ: `{predicate, detail, hidden}`, `hidden` meaning players
-#    cannot see it (secret, not yet revealed, assumed, or
-#    touching an audience-limited entry: the same rule the card for a kept one is read by). It carries no name and no quote; the page words it
-#    through the same `link_words` as the waiting connection. A different kind between the two
+#    cannot see it (secret, not yet revealed, assumed, or touching an audience-limited entry). It
+#    carries no name and no quote; the page words it through the same `link_words` as the waiting
+#    connection. A different kind between the two
 #    ("knows" beside "works for", or a friend against an enemy) is left to the bot, which decides
 #    what a keep replaces with the ontology; copying that into SQL would let the two differ. `guess`
 #    is the reason DMbot inferred it (`inferred_reason`, 0403), "" for a stated one. Until now the
@@ -39,10 +39,10 @@ _FIELDS_NEW = (
     "                                'predicate', r.predicate, 'detail', r.detail,\n"
     "                                'hidden', r.secret OR r.unrevealed OR r.assumed\n"
     "                                          OR COALESCE((SELECT bool_or(e.audience_limited)\n"
-    "                                                       FROM memory_entities e\n"
-    "                                                       WHERE e.guild_id = g AND e.campaign_id = c\n"
-    "                                                         AND e.id IN (r.subject_id, r.object_id)),\n"
-    "                                                      false))\n"
+    "                                                FROM memory_entities e\n"
+    "                                                WHERE e.guild_id = g AND e.campaign_id = c\n"
+    "                                                  AND e.id IN (r.subject_id,\n"
+    "                                                               r.object_id)), false))\n"
     "                            FROM memory_relations r\n"
     "                            WHERE r.guild_id = g AND r.campaign_id = c\n"
     "                              AND r.status = 'confirmed' AND r.to_session_at IS NULL\n"
