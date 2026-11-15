@@ -4217,7 +4217,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )  # the one reminder (#4344, never raises)
         try:
             # (a setup note: the DM Bot channel, the screen only if there is none; #3874)
-            await self._old_chat_notice(guild, campaign, upkeep.channel_for(campaign) or screen_id)
+            fresh = await self.campaigns.get(guild.id, campaign.id) or campaign  # (the DM Bot
+            # channel may have been made just above)
+            await self._old_chat_notice(guild, campaign, upkeep.channel_for(fresh) or screen_id)
         except Exception:
             log.exception("Couldn't tell the DM about the old chat channel")  # never blocks a start
         await self._tell_players_the_clock(
@@ -13580,6 +13582,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         channel = upkeep.channel_for(campaign)
         if channel is not None:
             await self.post(channel, text)
+        else:
+            log.info("A pictures-removed note had nowhere to go (%d pictures)", count)
 
     async def run_picture_actions(self) -> None:
         """What posters and DMs chose on the website's Pictures page, applied through the picture
@@ -15108,18 +15112,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self._npcs_dirty.discard(campaign_id)
 
     async def _old_chat_notice(
-        self, guild: discord.Guild, campaign: Campaign, screen_id: int
+        self, guild: discord.Guild, campaign: Campaign, post_to: int
     ) -> None:
         """A campaign that still has the old `dmb-chat` channel (#3212): DMbot no longer uses it,
-        and says so once, with the button to remove it (never removed by DMbot itself). A channel
-        that is gone already is forgotten. Told once for each run of the bot; nothing is stored."""
-        channel_id = campaign.dmbchat_channel_id
-        if channel_id is None or campaign.id in self._old_chat_told:
+        and says so once, in `post_to` (the DM Bot channel, else the screen; #3874), with the
+        button to remove it (never removed by DMbot itself). A channel that is gone already is
+        forgotten. Told once for each run of the bot; nothing is stored."""
+        old_channel = campaign.dmbchat_channel_id
+        if old_channel is None or campaign.id in self._old_chat_told:
             return
-        if guild.get_channel(channel_id) is None:
+        if guild.get_channel(old_channel) is None:
             return  # not cached, or gone: say nothing (the button forgets a channel that is gone)
         self._old_chat_told.add(campaign.id)
-        await self.post(screen_id, old_chat_notice(channel_id), view=old_chat_view(campaign.id))
+        await self.post(post_to, old_chat_notice(old_channel), view=old_chat_view(campaign.id))
 
     def _usable_transcript(self, guild: discord.Guild, campaign: Campaign) -> int | None:
         """After a restart: the campaign's transcript channel, if it's still one and
