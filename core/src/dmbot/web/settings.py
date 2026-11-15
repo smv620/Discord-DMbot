@@ -215,22 +215,25 @@ class WebSettings:
     cloudflare_account_id: str = ""
     cloudflare_ai_token: str = field(default="", repr=False)
     site_ask_daily: int = 1500
-    # The key the Maps page stages a sent picture with (#4347): a WRITE key to the same private
-    # bucket as `pictures_r2_*` (which stays read-only), kept apart from the bot's own key so each
-    # can be rotated alone. The website only puts and deletes the two staged files; the bot writes
-    # every row. Both blank: an upload answers `uploads_off`.
-    maps_r2_key: str = field(default="", repr=False)
-    maps_r2_secret: str = field(default="", repr=False)
+    # Where the Maps page stages a sent picture (#4347): a SEPARATE staging bucket with its own write
+    # key and a 1-day lifecycle rule, never a write key to the pictures bucket (`pictures_r2_*`,
+    # read-only here). R2 tokens scope to a bucket, not to a prefix, so a write key to the pictures
+    # bucket could let a compromised website overwrite or delete every campaign's kept pictures; a
+    # staging bucket holds only what is waiting for the bot, which copies it into the pictures
+    # bucket. The account is the pictures bucket's. All three blank: an upload answers `uploads_off`.
+    maps_staging_r2_bucket: str = ""
+    maps_staging_r2_key: str = field(default="", repr=False)
+    maps_staging_r2_secret: str = field(default="", repr=False)
 
     @property
     def uploads_ready(self) -> bool:
-        """The bucket and the write key for a sent map are all set (#4347)."""
+        """The staging bucket and its key for a sent map are all set (#4347)."""
         return all(
             (
                 self.pictures_r2_account,
-                self.pictures_r2_bucket,
-                self.maps_r2_key,
-                self.maps_r2_secret,
+                self.maps_staging_r2_bucket,
+                self.maps_staging_r2_key,
+                self.maps_staging_r2_secret,
             )
         )
 
@@ -540,8 +543,9 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         cloudflare_account_id=get("CLOUDFLARE_ACCOUNT_ID"),
         cloudflare_ai_token=get("CLOUDFLARE_AI_TOKEN"),
         site_ask_daily=_site_ask_daily(get("DMBOT_SITE_ASK_DAILY")),
-        maps_r2_key=get("WEB_MAPS_R2_KEY"),
-        maps_r2_secret=get("WEB_MAPS_R2_SECRET"),
+        maps_staging_r2_bucket=get("WEB_MAPS_STAGING_R2_BUCKET"),
+        maps_staging_r2_key=get("WEB_MAPS_STAGING_R2_KEY"),
+        maps_staging_r2_secret=get("WEB_MAPS_STAGING_R2_SECRET"),
         enforce_plans=enforce_raw in ("1", "true", "on"),
         theatre_on=(get("DMBOT_THEATRE_ON") or "0").lower() in ("1", "true", "on"),
         imports_on=imports_raw in ("1", "true", "on"),

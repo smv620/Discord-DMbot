@@ -272,9 +272,9 @@ def create_app(
     if upload_bucket is None and settings.uploads_ready:
         upload_bucket = Bucket(
             settings.pictures_r2_account,
-            settings.pictures_r2_bucket,
-            settings.maps_r2_key,
-            settings.maps_r2_secret,
+            settings.maps_staging_r2_bucket,
+            settings.maps_staging_r2_key,
+            settings.maps_staging_r2_secret,
         )
     if smart_limit is None:
         # Search by meaning on the Names page (#2733): each search is two paid calls to Voyage AI,
