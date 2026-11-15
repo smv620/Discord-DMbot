@@ -231,3 +231,23 @@ class RouteCondition(MemoryTest):
 
 
 DM_USER = 1001
+
+
+class InWorldNotes(RouteCondition):
+    async def test_a_roads_condition_is_a_world_note_and_its_keep_keeps_it(self) -> None:
+        await self.read(Read("", mf.CONDITION, "closed", relation_id=self.road))
+        await self.read(Read(self.pass_, mf.CONDITION, "hard"))
+        notes = [n for n in await self.memory.world_notes(GUILD_A, self.c) if n.layer]
+        place, road = sorted(notes, key=lambda n: n.relation_id)
+        self.assertEqual((place.name, place.value, road.value), ("Icewind Pass", "hard", "closed"))
+        self.assertIn(  # (the road's two places, in the order it was stored)
+            road.name,
+            (
+                "the road between Bryn Shander and Targos",
+                "the road between Targos and Bryn Shander",
+            ),
+        )
+        await self.memory.keep_world_notes(GUILD_A, self.c, [n.id for n in notes], source=DM)
+        got = await self.cond(self.road)
+        assert got is not None
+        self.assertEqual(got.now.status, mf.CONFIRMED)

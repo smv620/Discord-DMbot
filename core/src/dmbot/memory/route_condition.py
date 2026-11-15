@@ -33,6 +33,11 @@ CHANGE = OPEN  # (the value only words of change give)
 # "is out" ends its clause ("the bridge is out."), so "is out of reach" or "is out west" say nothing
 _ENDS_CLAUSE = frozenset({"is out"})
 _WAYS = r"(?:road|way|path|trail)"
+# A name after one of these is part of another road's name ("the road to Icewind Pass is closed"
+# is about that road, not the pass): the safe side says nothing
+_ABOUT_ANOTHER = frozenset(
+    {"to", "from", "toward", "towards", "near", "past", "beyond", "through", "across", "over"}
+)
 _SENTENCE_END = re.compile(r"[.!?;\n]")
 
 
@@ -80,6 +85,9 @@ def read(name: str, text: str, *, is_route: bool) -> Said | None:
     plain, key = _plain(text), _plain(name)
     for m in re.finditer(r"(?<!\w)" + re.escape(key) + r"(?!\w)", plain):
         rest = plain[m.end() :]
+        before = plain[: m.start()].split()
+        if before and before[-1] in _ABOUT_ANOTHER:
+            continue
         said = _phrase_at(rest[1:]) if rest.startswith(" ") else None  # (right after the name)
         if said is not None:
             return said

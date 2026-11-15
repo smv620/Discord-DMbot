@@ -831,3 +831,23 @@ class Roads(unittest.TestCase):
             )
             # (a distance to a mountain and one trip through a branch stay travel facts)
             self.assertEqual(sorted(m["line"] for m in key["map_context"]), [6, 171])
+
+
+class RoadConditions(unittest.TestCase):
+    """The sample keys state no road condition (#4258 4a): the line is always there, and any row,
+    a route place's or a road's, is a false note."""
+
+    def test_none_expected_and_every_row_is_extra(self) -> None:
+        key = {"nodes": [{"name": "Pass", "kind": "place", "aliases": [], "note": ""}], "pairs": []}
+        data = backup([("p", "Pass", "place")], [])
+        self.assertIn(
+            "Place condition: found 0, wrong 0, missed 0, extra 0", gkc.render(gkc.check(data, key))
+        )
+        rows = [
+            {"table": "map_fact", "id": i, "entity_id": place, "relation_id": road,
+             "layer": "condition", "value": "closed", "faction_id": None, "status": "read",
+             "to_session_at": None}
+            for i, place, road in (("f1", "p", None), ("f2", None, "r1"))
+        ]  # fmt: skip
+        report = gkc.check(backup([("p", "Pass", "place")], rows), key)
+        self.assertEqual(report.map_facts["condition"]["extra"], 2)
