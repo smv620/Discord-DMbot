@@ -1,7 +1,8 @@
 """The lore reader's story threads, the code's side (#4453, quests slice 1; design §9.2 to
-§9.6): the quote must stand in the text, names map to one entry each and never to the party, a pursuit needs
-the character who takes it on, doubles are dropped, the name is built by code, and the kind and
-starting state follow the shape. No AI: the answers are written here. Invented names."""
+§9.6): the quote must stand in the text, names map to one entry each and never to the party, a
+pursuit needs the character who takes it on, doubles are dropped, the name is built by code, and
+the kind and starting state follow the shape. No AI: the answers are written here. Invented
+names."""
 
 from __future__ import annotations
 
