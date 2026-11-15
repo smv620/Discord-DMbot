@@ -54,7 +54,8 @@ class Buttons(unittest.TestCase):
         self.assertLessEqual(len(view.children), 25)
         rows: dict[int, int] = {}
         for item in view.children:
-            rows[item.row] = rows.get(item.row, 0) + 1
+            row = item.row or 0
+            rows[row] = rows.get(row, 0) + 1
         self.assertLessEqual(max(rows.values()), 5)
 
     def test_the_button_names_its_place_and_is_plain(self) -> None:
