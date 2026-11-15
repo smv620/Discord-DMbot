@@ -578,6 +578,7 @@ from dmbot.ui import (
     reveal_card,
     shared_rules_defs,
     theatre_button,
+    time_limit_alerts,
 )
 from dmbot.ui import guide as guide_screen
 from dmbot.ui import logic as ui_logic
@@ -1791,6 +1792,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             dm_bot_buttons.OpenButton, dm_bot_buttons.HelpButton, dm_bot_buttons.RuleButton
         )  # #1666, #1691
         self.add_dynamic_items(looked_at.LookedButton, looked_at.OpenCard)  # #1957
+        self.add_dynamic_items(time_limit_alerts.OpenThread)  # (quests slice 4b, #4448)
         self.add_dynamic_items(
             SettingsButton,
             LevelButton,

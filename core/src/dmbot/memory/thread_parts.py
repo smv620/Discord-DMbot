@@ -415,6 +415,18 @@ async def set_due(
     return await w.update(THREAD_PARTS, part_id, new)
 
 
+async def dated_running(scope: Scope) -> list[Part]:
+    """Every kept, standing, running time limit that has a date (slice 4b, §8.4): what the clock
+    is checked against after it moves. The DM's view: the messages go to the DM alone."""
+    rows = await scope.select(
+        THREAD_PARTS,
+        " AND kind = 'time_limit' AND state = 'running' AND status = 'confirmed'"
+        " AND due_minute IS NOT NULL" + _OPEN,
+        [],
+    )
+    return [from_row(r) for r in rows]
+
+
 async def set_state(w: Changes, part_id: str, state: str) -> dict[str, Any]:
     """A change in the story (§4): the old row closes at the story's time and a new one opens with
     the new state; what stood under the old row (sub-steps, rewards given against a promise) moves

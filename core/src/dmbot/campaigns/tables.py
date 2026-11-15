@@ -210,6 +210,7 @@ NOT_IN_BACKUP: dict[str, str] = {
     "backstory_links": _WAIT,
     "backstory_which": _WAIT,
     "thread_suggestions": _WAIT,  # (the lore reader's story threads, #4453: a re-read rebuilds it)
+    "time_limit_told": _WAIT,  # (#4448: which messages were said; a restore tells afresh)
     "secret_exposures": _WAIT,
     "name_actions": _WAIT,
     "setting_actions": _WAIT,

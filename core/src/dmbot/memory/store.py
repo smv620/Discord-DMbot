@@ -1687,6 +1687,40 @@ class MemoryStore:
             row = await thread_parts.set_due(w, part_id, minute, now=now, source=given_by)
             return Written(thread_parts.from_row(row), w.batch)
 
+    async def time_limits_to_tell(
+        self, guild_id: int, campaign_id: str, now: int, *, at: int
+    ) -> list[tuple[str, str, thread_parts.Part, str]]:
+        """After the clock moved to `now` (the group furthest ahead): the dated running limits of
+        live threads whose "soon" or "passed" mark the clock has reached and that weren't said
+        yet, each claimed now so it is said once (slice 4b, §8.4; `time_limit_told`). As (thread
+        id, thread name, the part, the stage). `at` is the wall-clock second, for the record."""
+        from dmbot.memory import time_limit_told
+        from dmbot.memory import time_limits as tl
+
+        async with self._read(guild_id, campaign_id) as scope:
+            dated = await thread_parts.dated_running(scope)
+        staged = [
+            (p, stage)
+            for p in dated
+            if p.due_minute is not None
+            and (stage := tl.stage(p.due_minute, p.set_at, now)) is not None
+        ]
+        if not staged:
+            return []
+        live = {
+            t.thread.id: t.thread.name
+            for t in await self.threads(guild_id, campaign_id)
+            if t.state is not None and t.state.condition in threads_mod.LIVE_STATES
+        }
+        out: list[tuple[str, str, thread_parts.Part, str]] = []
+        async with self._db.guild(guild_id) as conn:
+            for p, stage in staged:
+                if p.thread_id not in live:
+                    continue  # (a finished or dropped thread: its limit says nothing, §8.4)
+                if await time_limit_told.claim(conn, guild_id, campaign_id, p.id, stage, at):
+                    out.append((p.thread_id, live[p.thread_id], p, stage))
+        return out
+
     async def remove_thread_part(
         self, guild_id: int, campaign_id: str, part_id: str, *, source: str
     ) -> Written[None]:
