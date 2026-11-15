@@ -187,8 +187,16 @@ export const webPage = {
   kindChange: "What it is",
   saveKind: "Save what it is",
   edgePanel: (a: string, b: string): string => `${a} and ${b}`,
-  linkText: (a: string, b: string, words: string, direction: "a-b" | "b-a" | "both"): string =>
-    direction === "a-b" ? `${a} ${words} ${b}` : direction === "b-a" ? `${b} ${words} ${a}` : `${a} and ${b}: ${words}`,
+  // A two-way connection reads "A and B are rivals" from the API's pair words (#4196, core #4166); an older API sends none, and the
+  // line stays "A and B: <words>".
+  linkText: (a: string, b: string, words: string, direction: "a-b" | "b-a" | "both", pairWords?: string): string =>
+    direction === "a-b"
+      ? `${a} ${words} ${b}`
+      : direction === "b-a"
+        ? `${b} ${words} ${a}`
+        : pairWords
+          ? `${a} and ${b} ${pairWords}`
+          : `${a} and ${b}: ${words}`,
   wordsLabel: (n: number): string => `Words for connection ${n}`,
   saveWords: (n: number): string => `Save words for connection ${n}`,
   makeSecretShort: "Make secret",
