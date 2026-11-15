@@ -105,7 +105,8 @@ class WordByWord(unittest.TestCase):
         self.assertIn("On day 1 Bryn Shander was the biggest of the Ten Towns", text)
         self.assertIn("Tolly Brightwater", text)
         lines = [line for line in text.split("\n") if line.strip()]
-        self.assertEqual(len(lines), 2 * 24)  # (one line of text for each line drawn)
+        self.assertEqual(len(lines), 24)  # (each paragraph's two lines joined into one, #4307)
+        self.assertIn("sat high above the frozen road", text)
         self.assertEqual(len(text.split()), WORDS)
         self.assertNotIn("   ", text)  # (no wide gaps left between words)
         self.assertGreaterEqual(text.count("\n\n"), 12)  # (the paragraphs stay apart)
@@ -113,6 +114,40 @@ class WordByWord(unittest.TestCase):
     def test_the_page_count_and_picture_pages_are_kept(self) -> None:
         got = nd._pdf_text(_pdf([word_by_word(TOWN), word_by_word(TOWN)]))
         self.assertEqual((got.pages, got.picture_pages), (2, 0))
+
+
+class Reflow(unittest.TestCase):
+    """#4307: a paragraph wrapped at the page's edge is one paragraph again, for the lore reader,
+    whose paragraphs are lines; headings, list items and short lines stay where they are."""
+
+    def test_wrapped_lines_join_and_the_rest_stays(self) -> None:
+        page = "\n".join([
+            "Cerric Vanya'elen (Elf Wizard)",
+            "Cerric grew up in the forests near Lonelywood, where his older",
+            "sister taught him all of the old songs of the Caer-",
+            "Konig shrine. He speaks Elvish and Common.",
+            "",
+            "- a sword of the north",
+            "Bryn Shander",
+            "Bryn Shander is the biggest of the Ten Towns and sits on a hill",
+            "above the road.",
+        ])  # fmt: skip
+        self.assertEqual(
+            nd.reflow(page).split("\n"),
+            [
+                "Cerric Vanya'elen (Elf Wizard)",
+                "Cerric grew up in the forests near Lonelywood, where his older sister taught"
+                " him all of the old songs of the Caer-Konig shrine. He speaks Elvish and Common.",
+                "",
+                "- a sword of the north",
+                "Bryn Shander",
+                "Bryn Shander is the biggest of the Ten Towns and sits on a hill above the road.",
+            ],
+        )
+
+    def test_nothing_is_added_or_lost(self) -> None:
+        page = "one two three four five six seven eight nine ten\neleven twelve.\nthirteen"
+        self.assertEqual(nd.reflow(page).split(), page.split())
 
 
 class ReadAsBefore(unittest.TestCase):
