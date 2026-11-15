@@ -12,14 +12,15 @@ from typing import Any, ClassVar
 import psycopg
 
 from dmbot.campaigns.models import CampaignError
-from dmbot.devtools import graph_key_check
+from dmbot.devtools import graph_key_check, sample_name
 from dmbot.devtools.sample_run import __main__ as cli
 from dmbot.devtools.sample_run import plan, steps
-from dmbot.devtools.sample_run.plan import NAME, Existing, SampleError, Step
+from dmbot.devtools.sample_run.plan import Existing, SampleError, Step
 from dmbot.lore_upload import TEXT_MAX
 from dmbot.transcript.store import TranscriptStore
 from tests.pg import DatabaseTest
 
+NAME = sample_name.name_for(31)  # (the campaign deploy 31 makes)
 GUILD, DM, ELSE = 81, 5, 6
 IST, JAC = 9001, 9002
 SESSION = "[0:00:05] ist: We open the door.\n[0:01:00] jac: I check the lock.\n"
@@ -28,7 +29,9 @@ NOW = 1_800_000_000
 
 class Pure(unittest.TestCase):
     def test_the_name_is_the_one_the_answer_key_scores(self) -> None:
-        self.assertEqual(NAME, graph_key_check.SAMPLE_CAMPAIGN)
+        self.assertEqual(sample_name.OLD_NAME, graph_key_check.SAMPLE_CAMPAIGN)
+        self.assertTrue(graph_key_check.SAMPLE_CAMPAIGN.startswith("test of the frostmaiden"))
+        self.assertTrue(sample_name.is_sample(NAME))
 
     def test_players_are_label_account_pairs(self) -> None:
         self.assertEqual(plan.parse_players("ist=1, jac=2"), {"ist": 1, "jac": 2})
@@ -144,7 +147,7 @@ class Steps(DatabaseTest):
     async def test_the_last_runs_campaign_is_deleted_and_a_new_one_made(self) -> None:
         old = await self.made()
         new = await steps.fresh_campaign(
-            self.db, self.campaigns, GUILD, DM, keep_old=False, today="2026-11-06", say=self.say
+            self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say
         )
         self.assertNotEqual(old.id, new.id)
         self.assertEqual(new.name, NAME)
@@ -154,50 +157,64 @@ class Steps(DatabaseTest):
         self.assertIn(steps.DM_BOT_CHANNEL_NEEDED, self.said)
 
     async def test_it_says_the_dm_bot_channel_is_needed_without_an_id_or_a_name(self) -> None:
-        await steps.fresh_campaign(
-            self.db, self.campaigns, GUILD, DM, keep_old=False, today="d", say=self.say
-        )
+        await steps.fresh_campaign(self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say)
         line = next(x for x in self.said if x.startswith("DM Bot channel"))
         self.assertTrue(line.startswith("DM Bot channel: needed"))
         self.assertNotIn(NAME, line)
         self.assertFalse(any(ch.isdigit() for ch in line))
 
-    async def test_keep_old_renames_it_out_of_the_samples_name_and_never_deletes_it(self) -> None:
-        old = await self.made()
-        await steps.fresh_campaign(
-            self.db, self.campaigns, GUILD, DM, keep_old=True, today="2026-11-06", say=self.say
+    async def test_the_newest_three_are_kept_and_the_older_ones_go(self) -> None:
+        ids = {n: (await self.made(name=sample_name.name_for(n))).id for n in (27, 28, 29, 30)}
+        await steps.fresh_campaign(self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say)
+        names = sorted(c.name for c in await self.campaigns.list_campaigns(GUILD))
+        self.assertEqual([sample_name.name_for(n) for n in (29, 30, 31)], names)
+        self.assertIsNone(await self.campaigns.get(GUILD, ids[27]))
+        self.assertIsNone(await self.campaigns.get(GUILD, ids[28]))
+        self.assertIn("Sample campaigns kept: 29, 30, 31. Deleted: 27, 28.", self.said)
+
+    async def test_an_old_unnumbered_one_goes_first(self) -> None:
+        old = await self.made(name=sample_name.OLD_NAME)
+        await self.made(name=sample_name.name_for(30))
+        await steps.fresh_campaign(self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say)
+        self.assertIsNone(await self.campaigns.get(GUILD, old.id))
+        self.assertIn("Sample campaigns kept: 30, 31. Deleted: 1 unnumbered.", self.said)
+
+    async def test_the_same_deploy_again_makes_one_campaign_not_two(self) -> None:
+        first = await steps.fresh_campaign(
+            self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say
         )
-        kept = await self.campaigns.get(GUILD, old.id)
-        assert kept is not None
-        self.assertTrue(kept.name.startswith(NAME + " (kept 2026-11-06"))
-        # and the next run, which deletes only the exact name, leaves it alone
-        await steps.fresh_campaign(
-            self.db, self.campaigns, GUILD, DM, keep_old=False, today="2026-11-07", say=self.say
+        again = await steps.fresh_campaign(
+            self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say
         )
-        self.assertIsNotNone(await self.campaigns.get(GUILD, old.id))
+        self.assertNotEqual(first.id, again.id)
+        self.assertIsNone(await self.campaigns.get(GUILD, first.id))
+        self.assertEqual([NAME], [c.name for c in await self.campaigns.list_campaigns(GUILD)])
+
+    async def test_a_look_alike_name_is_never_deleted(self) -> None:
+        keep = [
+            await self.made(name=f"{sample_name.name_for(5)} copy"),
+            await self.made(name="Strahd"),
+        ]
+        await steps.fresh_campaign(self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say)
+        for c in keep:
+            self.assertIsNotNone(await self.campaigns.get(GUILD, c.id))
 
     async def test_a_campaign_of_that_name_that_is_not_the_tools_is_refused_untouched(self) -> None:
         theirs = await self.made(owner=ELSE)
         with self.assertRaises(SampleError):
-            await steps.fresh_campaign(
-                self.db, self.campaigns, GUILD, DM, keep_old=False, today="d", say=self.say
-            )
+            await steps.fresh_campaign(self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say)
         self.assertIsNotNone(await self.campaigns.get(GUILD, theirs.id))
         # one somebody played in is refused too
         await self.campaigns.delete(GUILD, theirs.id)
         mine = await self.made()
         await self.transcripts.open_session(GUILD, mine.id, NOW - 1000)  # not an import
         with self.assertRaises(SampleError):
-            await steps.fresh_campaign(
-                self.db, self.campaigns, GUILD, DM, keep_old=False, today="d", say=self.say
-            )
+            await steps.fresh_campaign(self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say)
         self.assertIsNotNone(await self.campaigns.get(GUILD, mine.id))
 
     async def test_a_second_campaign_with_another_name_is_never_touched(self) -> None:
         real = await self.made(name="Frostmaiden")
-        await steps.fresh_campaign(
-            self.db, self.campaigns, GUILD, DM, keep_old=False, today="d", say=self.say
-        )
+        await steps.fresh_campaign(self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say)
         self.assertIsNotNone(await self.campaigns.get(GUILD, real.id))
         with self.assertRaises(CampaignError):  # (the name is free of clashes only once)
             await self.campaigns.create(GUILD, NAME, DM)
@@ -537,7 +554,7 @@ class Steps(DatabaseTest):
             )
         with self.assertRaises(CampaignError):  # the campaign store refuses under its lock
             await steps.fresh_campaign(
-                self.db, self.campaigns, GUILD, DM, keep_old=False, today="d",
+                self.db, self.campaigns, GUILD, DM, deploy=31,
                 say=self.say, found=found,
             )  # fmt: skip
         self.assertIsNotNone(await self.campaigns.get(GUILD, old.id))
@@ -545,9 +562,7 @@ class Steps(DatabaseTest):
     async def test_a_look_alike_name_is_a_plain_refusal_and_nothing_was_deleted(self) -> None:
         like = await self.made(name=NAME.upper())
         with self.assertRaises(SampleError) as err:
-            await steps.fresh_campaign(
-                self.db, self.campaigns, GUILD, DM, keep_old=False, today="d", say=self.say
-            )
+            await steps.fresh_campaign(self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say)
         self.assertIn("look-alike", str(err.exception))
         self.assertIsNotNone(await self.campaigns.get(GUILD, like.id))
 

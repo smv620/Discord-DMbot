@@ -22,9 +22,9 @@ from typing import Any
 from dmbot.campaigns.models import Campaign, CampaignError
 from dmbot.campaigns.store import CampaignStore
 from dmbot.db import Database
+from dmbot.devtools import sample_name
 from dmbot.devtools.sample_run.costs import CostLine, recap_line
 from dmbot.devtools.sample_run.plan import (
-    NAME,
     STEPS,
     Existing,
     SampleError,
@@ -80,10 +80,11 @@ async def require_paid(
 
 
 async def existing_samples(db: Database, campaigns: CampaignStore, guild: int) -> list[Existing]:
-    """The campaigns in this server that carry the sample's name, with what each one holds."""
+    """The campaigns in this server that carry a sample name (numbered or the old one), with what
+    each one holds."""
     out: list[Existing] = []
     for c in await campaigns.list_campaigns(guild):
-        if c.name != NAME:
+        if not sample_name.is_sample(c.name):
             continue
         async with db.guild(guild, snapshot=True) as conn:
             cur = await conn.execute(
@@ -127,47 +128,43 @@ async def fresh_campaign(
     guild: int,
     dm: int,
     *,
-    keep_old: bool,
-    today: str,
+    deploy: int,
     say: Say,
     found: list[Existing] | None = None,
 ) -> Campaign:
-    """Retire the last run's campaign (deleted, or renamed with `keep_old`) and make a new one,
-    paid because the DM owns it. `found`: what `check_existing` returned; asked again when not
-    given. The delete re-checks ownership under the campaign's lock (`only_if_owner`)."""
+    """Make this deploy's sample campaign, "test of the frostmaiden (sample N)" (#4538), paid
+    because the DM owns it, and keep the newest `sample_name.KEEP`: the same N again is deleted
+    first (never two of one number), the oldest beyond the newest three go, and old unnumbered
+    ones always go. `found`: what `check_existing` returned (every one already passed the guard
+    `plan.can_replace`); asked again when not given. Each delete re-checks ownership under the
+    campaign's lock (`only_if_owner`)."""
     found = found if found is not None else await check_existing(db, campaigns, guild, dm)
-    for old in found:
-        if keep_old:
-            await _keep(campaigns, guild, old.campaign_id, today)
-        else:
-            await campaigns.delete(guild, old.campaign_id, only_if_owner=dm)
-    say(f"{len(found)} earlier sample campaign(s) {'kept' if keep_old else 'deleted'}")
+    names = {c.id: c.name for c in await campaigns.list_campaigns(guild)}
+    kept = sample_name.plan_keep(
+        [(old.campaign_id, names[old.campaign_id]) for old in found if old.campaign_id in names],
+        deploy,
+    )
+    for campaign_id in kept.delete:
+        await campaigns.delete(guild, campaign_id, only_if_owner=dm)
     try:
-        made = await campaigns.create(guild, NAME, dm)
+        made = await campaigns.create(guild, sample_name.name_for(deploy), dm)
     except CampaignError as exc:  # e.g. a campaign whose name differs only in capitals
         raise SampleError(
             "the sample campaign could not be made (a campaign with a look-alike name exists)"
         ) from exc
+    say(sample_name.counts_line(kept))
     # This tool has no Discord client, so it cannot make or delete a channel (#4112). The new
     # campaign has no DM Bot channel yet: the bot makes it the way it does for any campaign made
-    # before the channel existed, when the DM presses ⚙️ Manage DMbot. An earlier sample campaign's
-    # channel stays in the server and is deleted by hand; its buttons say it cannot find the
-    # campaign. Said as one counts-only line, so dev1 does it before checking the main menu.
-    say(DM_BOT_CHANNEL_NEEDED)
+    # before the channel existed, when the DM presses ⚙️ Manage DMbot. A deleted campaign's channel
+    # stays in the server and is deleted by hand; its buttons say it cannot find the campaign.
+    # Said as one counts-only line, so dev1 does it before checking the main menu.
+    n_old = len(kept.delete)
+    say(
+        f"{DM_BOT_CHANNEL_NEEDED}"
+        if not n_old
+        else f"{DM_BOT_CHANNEL_NEEDED}; {n_old} old campaign channel(s) to delete by hand"
+    )
     return made
-
-
-async def _keep(campaigns: CampaignStore, guild: int, campaign_id: str, today: str) -> None:
-    """Rename a kept campaign so the sample's name is free; it is never the exact name again, so
-    the tool can never delete it."""
-    for n in range(1, 50):
-        name = f"{NAME} (kept {today}{'' if n == 1 else f' {n}'})"
-        try:
-            await campaigns.rename(guild, campaign_id, name)
-            return
-        except CampaignError:  # the name was taken: try the next
-            continue
-    raise SampleError("could not find a free name to keep the earlier campaign under")
 
 
 def check_lore(text: str, choice: str) -> None:

@@ -1,7 +1,7 @@
 """The whole per-deploy sample run in one command, with no one in Discord (#3547, #3545):
 
     python -m dmbot.devtools.sample_run --guild GUILD --dm DM_USER_ID \\
-        --lore FILE --session FILE [--keep-old] --yes
+        --deploy N --lore FILE --session FILE --yes
 
 The session's speakers are `player_jac`, `player_ist`, `player_owe` and `player_eri` (players who
 are NOT on Discord, imported with the DM's confirmation as the website's import does) and `DM`.
@@ -13,10 +13,12 @@ file as an imported one and waits for the bot to clean, scan and read it, accept
 and scores both, then writes the recap (no audio). The last thing it prints is one block of counts
 and times, ready to paste on #3545.
 
-Only the one campaign called "test of the frostmaiden (sample)" is ever made or deleted, and only
-when it is plainly this tool's. Paid AI calls: the most they can be is printed first, and nothing
-runs without `--yes`. Nothing of the lore, the session or the recap is printed, logged or kept in
-the repository; backups go to a folder outside it. The AI key and database address come from the
+Only campaigns called "test of the frostmaiden (sample N)" (N is the deploy, `--deploy N`) are ever
+made or deleted, and only when they are plainly this tool's. The newest three are kept so the story
+graphs can be compared; the same N again replaces that deploy's campaign (#4538). Paid AI calls:
+the most they can be is printed first, and nothing runs without `--yes`. Nothing of the lore, the
+session or the recap is printed, logged or kept in the repository; backups go to a folder outside
+it. The AI key and database address come from the
 environment, as for `recap_run`.
 """
 
@@ -32,6 +34,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
+from dmbot.devtools import sample_name
 from dmbot.devtools.sample_run import characters, costs, counts, plan, steps
 from dmbot.devtools.sample_run import decide as decide_mod
 from dmbot.devtools.sample_run.plan import SampleError, Step
@@ -105,7 +108,13 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         help="part 2 of 2 (#3545): after the owner answered the kept run's questions, what became "
         "of each one; needs only --guild, --dm and this",
     )
-    parser.add_argument("--keep-old", action="store_true", help="rename the last run's campaign")
+    parser.add_argument(
+        "--deploy",
+        type=int,
+        metavar="N",
+        help="this deploy's number (1 to 9999): the campaign is \"test of the frostmaiden "
+        '(sample N)", and the newest three are kept (#4538)',
+    )
     parser.add_argument("--lore-choice", default="smart", help="world, spoilers or smart")
     parser.add_argument("--date", help="when the past session was held (YYYY-MM-DD)")
     parser.add_argument("--backup-dir", type=Path, default=DEFAULT_BACKUPS)
@@ -135,6 +144,15 @@ def switches(environ: Mapping[str, str]) -> list[str]:
         and value.strip().casefold() in _ON
         and not any(word in name for word in bad)
     )
+
+
+def deploy_number(value: int | None) -> int:
+    """The deploy's number from `--deploy N`, or a refusal that changes nothing (#4538)."""
+    if value is None:
+        raise SampleError(sample_name.SAY_WHICH)
+    if not 1 <= value <= sample_name.DEPLOY_MAX:
+        raise SampleError(f"--deploy is a whole number from 1 to {sample_name.DEPLOY_MAX}")
+    return value
 
 
 def session_start(date: str | None, now: int) -> int:
@@ -178,6 +196,7 @@ async def run(
     say = say or (lambda line: print(line, flush=True))
     if args.lore is None or args.session is None:
         raise SampleError("--lore and --session are needed for a run")
+    deploy = deploy_number(args.deploy)
     accept = accept or _accept_all()
     sure = sure or _sure()
     decide_client = decide_client or _careful_client
@@ -257,7 +276,6 @@ async def run(
     ] = []  # (the decisions' client is made at their first stage, closed at the end)
     try:
         campaigns, memory = steps.campaign_store(db), MemoryStore(db)
-        today = dt.date.today().isoformat()
         gid, dm = args.guild, args.dm
         # The checks that need the database, still before anything is changed or spent.
         await steps.require_paid(db, dm, now, guild_id=gid)
@@ -275,7 +293,7 @@ async def run(
             )
 
         campaign = await steps.fresh_campaign(
-            db, campaigns, gid, dm, keep_old=args.keep_old, today=today, say=say, found=found
+            db, campaigns, gid, dm, deploy=deploy, say=say, found=found
         )
         cid = campaign.id
         where.append(cid)
