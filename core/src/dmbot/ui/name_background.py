@@ -624,6 +624,8 @@ class BackgroundOffer(_Menu):
                         )
                     elif stage == "sorting":
                         waiting.step("Sorting what the players know", done, total)
+                    elif stage == "threads":  # (#4453)
+                        waiting.step("Last step: looking for quests and leads", done, total)
                     elif stage == "who":
                         # (counts only; each lookup moves the count, so a long run never looks
                         # stalled)
@@ -663,6 +665,7 @@ class BackgroundOffer(_Menu):
                     # question itself opens privately from ❓ Questions for you, #3926)
                     knowledge_note=done.knowledge_note
                     + trait_questions_line(done.trait_questions)
+                    + thread_suggestions_line(done.thread_suggestions, done.threads_short)
                     + picture_held_line(len(done.picture_held)),
                     held=done.picture_held,
                 )
@@ -734,6 +737,9 @@ class BackgroundRead:
     # waiting in the DM's Names to check with a note saying so, never added by themselves and
     # never in an "Add all".
     picture_held: frozenset[str] = frozenset()
+    # Story threads the lore holds (#4453): how many new suggestions wait in ❓ Questions for you
+    thread_suggestions: int = 0
+    threads_short: str = ""  # why the story threads weren't read in full, a `THREADS_SHORT` key
 
 
 async def read_background(
@@ -1088,6 +1094,10 @@ async def _read_background(
         done.trait_questions += asked
         done.questions_left += asked
     await store_place_facts(memory, campaign, upload.text)  # land, climate, ruler (#4256)
+    # the story threads it holds (#4453, quests slice 1): suggestions for the DM, never added
+    done.thread_suggestions, done.threads_short = await store_thread_suggestions(
+        bot, campaign, upload.text, label, read_ai, progress, until=started + THREADS_UNTIL_S
+    )
     return done
 
 
@@ -1305,6 +1315,18 @@ def picture_held_line(n: int) -> str:
     return f"\n🖼️ {n} names were read from pictures: check each in 📝 Check new names."
 
 
+def thread_suggestions_line(n: int, short: str = "") -> str:
+    """The count line for the story threads an upload found (#4453), and a line when the step
+    didn't read the whole text (never "none found" for a read that stopped); "" for neither.
+    Counts only: the card opens privately, for a DM, from ❓ Questions for you."""
+    line = (
+        f"\n📜 **{n} story thread{'' if n == 1 else 's'} to check** in ❓ Questions for you."
+        if n
+        else ""
+    )
+    return line + (f"\n{THREADS_SHORT[short]}" if short in THREADS_SHORT else "")
+
+
 def trait_questions_line(n: int) -> str:
     """The count line for an upload whose questions about characters wait: lineage, class
     (#3926) or language (#4229); "" for none."""
@@ -1505,6 +1527,93 @@ async def _road_conditions(
             )
         )  # fmt: skip
     return out
+
+
+THREADS_UNTIL_S = lore_read.LORE_TIME_LIMIT_S - 60.0  # the story threads' call ends by then
+THREADS_MIN_S = 45.0  # with less time left than this, the threads aren't read at all
+# What the upload's summary says when the story threads weren't read in full (#4453; counts only)
+THREADS_SHORT = {
+    "time": "📜 DMbot ran out of time to look for story threads. Upload it again to look.",
+    "funds": "📜 DMbot couldn't look for story threads: the AI allowance is used up.",
+    "stopped": "📜 DMbot stopped early looking for story threads, so it may have missed some.",
+    "failed": "📜 DMbot couldn't look for story threads this time. Upload it again to look.",
+}
+
+
+async def store_thread_suggestions(
+    bot: Any,
+    campaign: Campaign,
+    text: str,
+    label: str,
+    ai: Any,
+    progress: Callable[[str, int, int], None] | None = None,
+    *,
+    until: float | None = None,
+) -> tuple[int, str]:
+    """The quests, pursuits and hooks the lore holds (#4453, quests slice 1; `thread_read`): one AI
+    call, then the code's checks, then waiting suggestions for the DM (`thread_suggestions`),
+    never entries: nothing is added by itself (§9.6). The names they point at are the campaign's
+    people, groups and places (never the party's own group, nor a thread); a name two entries
+    share is left out. A thread the campaign has, or one suggested before (kept or turned down),
+    is never suggested again.
+
+    It is the upload's last step and extra to it: it never fails the upload, and never pushes it
+    past its time (`until`, a monotonic time: the call is cut off there, and skipped when too
+    little is left). Out of AI funds here ends only this step. Returns how many new suggestions,
+    and a key of `THREADS_SHORT` when the step didn't read the whole text ("" when it did)."""
+    from dmbot.ai import OUTPUT_FLOOR, AIOutOfFunds
+    from dmbot.memory import thread_read
+    from dmbot.memory.thread_suggestions import ThreadSuggestionStore
+
+    memory = bot.memory
+    left = None if until is None else until - time.monotonic()
+    if left is not None and left < THREADS_MIN_S:
+        return 0, "time"
+    if progress is not None:
+        progress("threads", 0, 1)
+    said: list[thread_read.Said] = []
+    found: list[thread_read.Suggestion] = []
+    dropped: dict[str, int] = {}
+    short, made = "", 0
+    try:
+        lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+        onto = await memory.ontology(campaign.guild_id, campaign.id)
+        store = ThreadSuggestionStore(memory._db)
+        have = list(await store.known(campaign.guild_id, campaign.id))
+        for t in await memory.threads(campaign.guild_id, campaign.id):
+            have.append((name_key(t.thread.name), frozenset(i.who.id for i in t.involved)))
+        rows = []
+        for entry in lookup.names:
+            who = lookup.entities.get(entry.entity_id)
+            if (
+                who is None
+                or who.status == REJECTED
+                or who.party  # (the party is never one of a thread's people: design §6)
+                or onto.is_a(who.type, "thread")
+            ):
+                continue
+            rows.append((who.id, who.type, entry.text))
+        entries = thread_read.entries_by_name(rows)
+        names = {i: e.name for i, e in lookup.entities.items()}
+        reading = thread_read.read_threads(ai, text, max_tokens=OUTPUT_FLOOR)
+        said, short = await (reading if left is None else asyncio.wait_for(reading, left))
+        found, dropped = thread_read.check(said, text, entries, names, have=have)
+        made = await store.offer(campaign.guild_id, campaign.id, found, label, int(time.time()))
+    except TimeoutError:
+        short = "time"
+    except AIOutOfFunds:
+        short = "funds"  # (the names are stored and shown: only this step ends)
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("Story threads couldn't be suggested (%s)", type(exc).__name__)
+        short = "failed"
+    finally:
+        if progress is not None:
+            progress("threads", 1, 1)
+    log.info(
+        "Story threads: %d listed, %d suggested, %d new%s; dropped %s",
+        len(said), len(found), made, f" ({short})" if short else "", dict(sorted(dropped.items())),
+    )  # fmt: skip
+    return made, short
 
 
 async def ask_languages(
@@ -2300,6 +2409,10 @@ async def announce(
         from dmbot.ui.trait_questions import TraitQuestionsButton
 
         asks.append(partial(TraitQuestionsButton, campaign.id))
+    if done.thread_suggestions:  # (the card opens privately, for a DM: #4453)
+        from dmbot.ui.thread_questions import ThreadQuestionsButton
+
+        asks.append(partial(ThreadQuestionsButton, campaign.id))
     posted: discord.Message | None = await bot.post_upload_notice(
         campaign, notice, done.questions_left, asks
     )

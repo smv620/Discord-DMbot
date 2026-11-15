@@ -85,6 +85,9 @@ READERS = {
     "devtools/sample_run/counts.py": CONFIRMED_ONLY
     + ": dev1's sample report (#3545); counts confirmed secret connections by source, prints "
     "numbers only (no name, id or word), nothing reaches a player",
+    "devtools/sample_run/questions.py": "dev1's part 2 of 2 (#3545): reads every status to see "
+    "what "
+    "the DM did with each waiting connection, prints counts only, nothing reaches a player",
     "devtools/movers_check.py": CONFIRMED_ONLY
     + ": dev1's read-only command (#3363); one SELECT of confirmed, current place ties, prints "
     "counts only (no name, id or word), nothing reaches a player",

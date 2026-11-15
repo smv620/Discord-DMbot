@@ -851,3 +851,57 @@ class RoadConditions(unittest.TestCase):
         ]  # fmt: skip
         report = gkc.check(backup([("p", "Pass", "place")], rows), key)
         self.assertEqual(report.map_facts["condition"]["extra"], 2)
+
+
+class StoryThreads(unittest.TestCase):
+    """Story threads (#4453, quests slice 1; design §9.7): found by their people and part words,
+    wrong by kind, doubles, extras, hints never missed, and the invented quest cases' must-nots."""
+
+    def rel(self, i: str, who: str, thread: str, part: str) -> dict[str, Any]:
+        return {
+            "table": "relation", "id": i, "subject_id": who, "predicate": "in_thread",
+            "object_id": thread, "detail": part, "status": "proposed",
+        }  # fmt: skip
+
+    def test_found_wrong_double_extra_and_hint(self) -> None:
+        key = {
+            "nodes": [{"name": n, "kind": "person", "aliases": [], "note": ""}
+                      for n in ("Hlin", "Sephek", "Cerric", "Syllar", "Wit")],
+            "pairs": [],
+            "threads": [
+                {"id": "t1", "kind": "quest", "name": "x", "giver": "Hlin", "target": "Sephek",
+                 "taker": "", "missing": [], "in_danger": [], "must_find": True, "hint": False},
+                {"id": "t2", "kind": "quest", "name": "y", "giver": "", "target": "",
+                 "taker": "Cerric", "missing": ["Syllar"], "in_danger": [], "must_find": True,
+                 "hint": False},
+                {"id": "t3", "kind": "mystery", "name": "z", "giver": "", "target": "",
+                 "taker": "", "missing": ["Wit"], "in_danger": [], "must_find": False,
+                 "hint": True},
+            ],
+        }  # fmt: skip
+        people = [("h", "Hlin", "npc"), ("s", "Sephek", "npc"), ("c", "Cerric", "npc"),
+                  ("y", "Syllar", "npc"), ("w", "Wit", "npc")]  # fmt: skip
+        threads = [
+            ("q1", "Hlin's job: Sephek", "quest"), ("q2", "again", "quest"),
+            ("q3", "Cerric's search", "hook"), ("q4", "something else", "quest"),
+        ]  # fmt: skip
+        rows = [
+            self.rel("r1", "h", "q1", "quest giver"), self.rel("r2", "s", "q1", "target"),
+            self.rel("r3", "h", "q2", "quest giver"), self.rel("r4", "s", "q2", "target"),
+            self.rel("r5", "c", "q3", "takes it on"),
+        ]  # fmt: skip
+        report = gkc.check(backup(people + threads, rows), key)
+        self.assertEqual(
+            dict(report.threads),
+            {"found": 1, "doubles": 1, "wrong": 1, "extra": 1, "hints found": 0},
+        )
+        self.assertIn("Story threads: found 1, missed 0, wrong 1", gkc.render(report))
+        self.assertEqual(report.extra_entries, Counter())  # (threads are never extra names)
+
+    def test_the_quest_cases_key_reads_and_scores_its_must_nots(self) -> None:
+        key = load("quest_cases_key.json")
+        self.assertEqual(len(key["threads"]), 5)
+        threads = [("q1", "Head to Highmoor at first light", "quest")]
+        report = gkc.check(backup([("p", "Old Pell", "npc"), *threads], []), key)
+        self.assertEqual(report.threads["false"], 1)
+        self.assertEqual(report.threads["missed"], 5)

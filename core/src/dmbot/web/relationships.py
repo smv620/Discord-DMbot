@@ -1049,6 +1049,11 @@ async def queue_waiting(db: Database, session: Session, ref: str, body: object) 
     secret = body.get("secret", False)
     if not isinstance(secret, bool):
         raise RecapError("bad_action")
+    if action == "backstory-keep" and body.get("secret") is False:
+        # An explicit "players may see it" (#4432): the page sends `secret: false` only when the DM
+        # chose it for a connection that was hidden. Leaving `secret` out is a plain keep, which
+        # never reveals a hidden connection it replaces.
+        action = "backstory-keep-show"
     text = ""
     target = "" if action == "backstory-keep-all" else str(body.get("id") or "")
     if action == "backstory-keep-all":
@@ -1377,6 +1382,34 @@ def _claim_statement(row: dict[str, Any]) -> str:
     return f"{base} ({details})" if details else base
 
 
+def _held_words(b: dict[str, Any]) -> dict[str, Any]:
+    """`now` and `guess` of a waiting connection (#4432, #4441). `now` is what a keep would end,
+    as the bot stored it on the row (its ontology decides, as for Discord's card): the held
+    connections between the two names, worded as the waiting one is (never a name or a quote), and
+    whether the players cannot see them. `guess` is DMbot's reason for an inferred one. Left out
+    when there is none."""
+    out: dict[str, Any] = {}
+    now = b.get("now")
+    items = now.get("items") if isinstance(now, dict) else None
+    if isinstance(now, dict) and isinstance(items, list) and items:
+        out["now"] = {
+            "how": ", ".join(
+                link_words(
+                    str(i["predicate"]),
+                    str(i["detail"]),
+                    kin.directional(str(i["detail"])),
+                    str(b.get("subjectKind") or ""),
+                    feeling=True,  # (the waiting page is the DM's alone)
+                )
+                for i in items
+            ),
+            "hidden": bool(now["hidden"]),
+        }
+    if b.get("guess"):
+        out["guess"] = str(b["guess"])
+    return out
+
+
 async def read_waiting(
     db: Database, session: Session, ref: str, *, outside_engine: str | None
 ) -> dict[str, Any]:
@@ -1422,7 +1455,7 @@ async def read_waiting(
     ]
     backstory = [
         {
-            **{k: v for k, v in b.items() if k != "decided"},
+            **{k: v for k, v in b.items() if k not in ("decided", "now", "guess")},
             "how": link_words(
                 str(b["predicate"]),
                 str(b["detail"]),
@@ -1431,6 +1464,7 @@ async def read_waiting(
                 feeling=True,  # (the waiting page is the DM's alone)
             ),
             "check": check_words(b.get("decided")),
+            **_held_words(b),
         }
         for b in got["backstory"]
     ]

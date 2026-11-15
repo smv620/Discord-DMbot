@@ -97,6 +97,24 @@ describe("the connection card", () => {
   });
 });
 
+describe("Keep all and DMbot's guesses", () => {
+  it("a guess is never in Keep all", async () => {
+    const api = mockApi("table");
+    const real = api.webWaiting!.bind(api);
+    api.webWaiting = async (ref) => ({
+      ...(await real(ref)),
+      backstory: [
+        { ...base, id: "c1", guess: "offered him food" },
+        { ...base, id: "c2", object: "Mara" },
+        { ...base, id: "c3", object: "Venn" },
+      ],
+    });
+    render(<WebWaiting api={api} campaignRef={REF} />);
+    await screen.findByRole("heading", { name: w.heading });
+    expect(await screen.findByRole("button", { name: w.keepAll(2) })).toBeTruthy();
+  });
+});
+
 describe("leaving a card", () => {
   it("says Left out. for a new connection and Left as it is. for an update", async () => {
     const first = await open({});

@@ -2163,6 +2163,8 @@ class SuggestionReview(_Menu):
     async def _split(self, interaction: discord.Interaction) -> None:
         """ "These are separate names" (#3383): a list offered as one name becomes a waiting name
         for each part, in one change that can be undone until a part is answered."""
+        # Saving and finding the next card can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
         current = await self._current(interaction)
         if current is None:
             return
@@ -2210,6 +2212,8 @@ class SuggestionReview(_Menu):
 
     async def _yes_group(self, interaction: discord.Interaction) -> None:
         """ "Yes, that group" (#3383, part 2): the list is another name of the group."""
+        # Saving and finding the next card can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
         current = await self._current(interaction)
         if current is None or self.group is None:
             return
@@ -2301,7 +2305,8 @@ class SuggestionReview(_Menu):
 
     async def _undo_split(self, interaction: discord.Interaction) -> None:
         """Take the split back while none of its parts has been answered."""
-        pending = self.split_undo
+        # Saving and finding the next card can take over 3 seconds; Discord gives up then (#537).
+        await _answer_first(interaction, in_place=True)
         campaign = await _campaign_for(interaction, self.campaign_id)
         memory = _memory(interaction)
         if campaign is None or memory is None:
@@ -2309,10 +2314,12 @@ class SuggestionReview(_Menu):
         if not sees_secrets(campaign, interaction.user.id):  # the DM's change, the DM's undo
             await _tell(interaction, logic.NO_CAMPAIGN_ACCESS)
             return
+        # Read and clear the undo in one step with no await between, so two quick presses that
+        # both answered Discord first cannot both undo the same split.
+        pending, self.split_undo = self.split_undo, None
         if pending is None:  # a second press, or an old card
             await _tell(interaction, GONE)
             return
-        self.split_undo = None  # a second quick press finds nothing to undo
         batch, name, original, made = pending
         try:
             if self.undo_kind == "group":
