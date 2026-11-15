@@ -262,6 +262,10 @@ class Suggestion:
     state: str = field(default="")
     reads: tuple[ReadPart, ...] = ()  # (slice 3: its objectives, rewards, help, time limit)
     branches: tuple[ReadBranch, ...] = ()
+    # (slice 5a, #4522: one read from a session holds when the lines it quotes began and who said
+    # them, and no words of the transcript: `session_threads`)
+    line_starts: tuple[int, ...] = ()
+    speaker_ids: tuple[int, ...] = ()
 
     @property
     def people(self) -> frozenset[str]:
@@ -339,9 +343,12 @@ def _short(words: str, most: int) -> str:
 _QUOTES = str.maketrans({"\u2018": "'", "\u2019": "'", "\u201c": '"', "\u201d": '"'})
 
 
-def _plain(text: str) -> str:
-    """For comparing a quote with the text: spaces, case and curly quotes aside."""
+def plain(text: str) -> str:
+    """For comparing a quote with the text: spaces, case and curly quotes aside (both readers)."""
     return " ".join(text.translate(_QUOTES).split()).casefold()
+
+
+_plain = plain
 
 
 def _party(name: str) -> bool:
@@ -576,7 +583,9 @@ def entries_by_name(found: Iterable[tuple[str, str, str]]) -> dict[str, set[str]
 STOPPED, FAILED = "stopped", "failed"  # how a read ended short (said to the DM, never "none")
 
 
-async def read_threads(ai: Any, text: str, *, max_tokens: int) -> tuple[list[Said], str]:
+async def read_threads(
+    ai: Any, text: str, *, max_tokens: int, instructions: str = INSTRUCTIONS
+) -> tuple[list[Said], str]:
     """The one AI call: the text in, the threads it states out, words only; with "" when the
     answer is whole, STOPPED when it was cut off at its limit, FAILED on an AI error. A cut answer
     is reported as stopped early, never as "nothing found" (CLAUDE.md, AI output limits); what
@@ -584,7 +593,7 @@ async def read_threads(ai: Any, text: str, *, max_tokens: int) -> tuple[list[Sai
     from dmbot.ai import AIError, AIOutOfFunds
 
     try:
-        reply = await ai.complete(INSTRUCTIONS, text, max_tokens=max_tokens, schema=SCHEMA)
+        reply = await ai.complete(instructions, text, max_tokens=max_tokens, schema=SCHEMA)
     except AIOutOfFunds:
         raise
     except AIError as exc:

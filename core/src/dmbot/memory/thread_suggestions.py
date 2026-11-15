@@ -10,13 +10,17 @@ chosen people in one change, with this row marked kept in the same transaction (
 one Undo takes it all back and ↩ on the card puts the suggestion back (`unkeep`). 🚫 marks it
 turned down; its name key stops it coming back, and so do its people (`known`). Since slice 3
 (#4500, migration 0507) a suggestion also holds the parts and branches read with it (`extra`); the
-keep writes those the DM left on. Counts only in the log, never names."""
+keep writes those the DM left on. Since slice 5a (#4522, migration 0509) a suggestion may come from
+a session: it holds the session, the numbers of the lines it quotes and who said them, never their
+words, and waits only while all its speakers are recorded (`purge_stopped`, `forget`: the rule of
+every after-session proposal, Supervisor's ruling B on #4522). Counts only in the log, never
+names."""
 
 from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -45,6 +49,9 @@ class Waiting:
     created_at: int
     reads: tuple[ReadPart, ...] = ()  # (slice 3, #4500: its parts, then its branches)
     branches: tuple[ReadBranch, ...] = ()
+    session_id: str | None = None  # (slice 5a: read from this session's lines, not from lore)
+    line_starts: tuple[int, ...] = ()
+    speaker_ids: tuple[int, ...] = ()
 
     @property
     def lines(self) -> tuple[ReadPart | ReadBranch, ...]:
@@ -139,6 +146,18 @@ async def lines_in(
     return from_extra(row["extra"]) if row is not None else ((), ())
 
 
+async def session_at_in(w: Changes, suggestion_id: str) -> int | None:
+    """Inside the keep's own write: the start of the session a suggestion was read from, so the
+    kept thread starts at it (None for one from lore, or one no longer waiting)."""
+    cur = await w.conn.execute(
+        "SELECT session_at FROM thread_suggestions"
+        " WHERE guild_id = %s AND campaign_id = %s AND id = %s AND status = 'waiting'",
+        (w.guild_id, w.campaign_id, suggestion_id),
+    )
+    row = await cur.fetchone()
+    return None if row is None or row["session_at"] is None else int(row["session_at"])
+
+
 async def mark_kept(w: Any, suggestion_id: str, batch: int | None) -> bool:
     """Inside the keep's own write (`MemoryStore.keep_thread`): the suggestion is kept, with the
     change's number. False when it was answered meanwhile (a second press, another screen)."""
@@ -158,11 +177,86 @@ def unkeep_in(batch: int) -> Any:
     async def after(w: Any) -> None:
         await w.conn.execute(
             "UPDATE thread_suggestions SET status = 'waiting', kept_batch = NULL"
-            " WHERE guild_id = %s AND campaign_id = %s AND kept_batch = %s AND status = 'kept'",
+            " WHERE guild_id = %s AND campaign_id = %s AND kept_batch = %s AND status = 'kept'"
+            + _CAN_WAIT,
             (w.guild_id, w.campaign_id, batch),
         )
 
     return after
+
+
+# A session suggestion waits again (an Undo, ↩) only while no withdrawal has touched it: `forget`
+# empties its lines, and its name and aim may hold the words of whoever stopped, so it stays
+# answered (the reviewer on #4522), never waiting again.
+async def forget_session(conn: Any, guild_id: int, session_id: str) -> int:
+    """A session's transcript is deleted: the suggestions read from it that still wait go (their
+    evidence is gone); a kept or turned-down one is the DM's answer and stays, without its lines,
+    and never waits again. In the caller's transaction; returns how many went."""
+    cur = await conn.execute(
+        "DELETE FROM thread_suggestions WHERE guild_id = %s AND session_id = %s"
+        " AND status = 'waiting'",
+        (guild_id, session_id),
+    )
+    await conn.execute(
+        "UPDATE thread_suggestions SET line_starts = '{}', speaker_ids = '{}'"
+        " WHERE guild_id = %s AND session_id = %s AND status <> 'waiting'",
+        (guild_id, session_id),
+    )
+    return int(cur.rowcount or 0)
+
+
+async def _still_there(
+    conn: Any, guild_id: int, campaign_id: str, session_id: str, found: Sequence[Suggestion]
+) -> list[Suggestion]:
+    """The session suggestions whose speakers all still have lines in the session and are still
+    recorded, read under the session row's lock (#4091, #4153; `MetStore.add`'s way): "Delete my
+    transcripts", a DM's removal of a speaker and Stop recording me take this lock or re-check
+    after it, so a suggestion quoting someone gone is never written."""
+    from dmbot.consent import still_recorded
+
+    cur = await conn.execute(
+        "SELECT id FROM transcript_sessions WHERE guild_id = %s AND campaign_id = %s"
+        " AND id = %s FOR UPDATE",
+        (guild_id, campaign_id, session_id),
+    )
+    if await cur.fetchone() is None:
+        return []  # (the session is gone, or not this campaign's)
+    cur = await conn.execute(
+        "SELECT DISTINCT user_id FROM transcript_lines WHERE guild_id = %s AND session_id = %s",
+        (guild_id, session_id),
+    )
+    present = {int(r["user_id"]) for r in await cur.fetchall()}
+    present = set(await still_recorded(conn, guild_id, campaign_id, present))
+    return [s for s in found if set(s.speaker_ids) <= present]
+
+
+_CAN_WAIT = " AND (session_id IS NULL OR cardinality(line_starts) >= 1)"
+
+
+def _ids(people: Collection[int] | None) -> list[int] | None:
+    return None if people is None else sorted({int(p) for p in people})
+
+
+async def forget(conn: Any, guild_id: int, user_id: int, campaign_id: str | None = None) -> int:
+    """Stop recording me, "Delete my transcripts" and a DM's removal of one speaker (only that
+    campaign's, `campaign_id`): delete the waiting suggestions that quote this person. A kept or
+    turned-down one is the DM's answer and stays, without this person's id and its lines, and
+    never waits again (`_CAN_WAIT`). Returns how many went."""
+    cur = await conn.execute(
+        "DELETE FROM thread_suggestions WHERE guild_id = %s AND %s = ANY(speaker_ids)"
+        " AND status = 'waiting' AND (%s::text IS NULL OR campaign_id = %s)",
+        (guild_id, user_id, campaign_id, campaign_id),
+    )
+    gone = int(cur.rowcount)
+    # (answered rows only: an Undo that made a row wait meanwhile is deleted above next time,
+    # never left waiting with nobody, which the CHECK refuses)
+    await conn.execute(
+        "UPDATE thread_suggestions SET speaker_ids = array_remove(speaker_ids, %s),"
+        " line_starts = '{}' WHERE guild_id = %s AND %s = ANY(speaker_ids)"
+        " AND status <> 'waiting' AND (%s::text IS NULL OR campaign_id = %s)",
+        (user_id, guild_id, user_id, campaign_id, campaign_id),
+    )
+    return gone
 
 
 class ThreadSuggestionStore:
@@ -188,23 +282,40 @@ class ThreadSuggestionStore:
         return known
 
     async def offer(
-        self, guild_id: int, campaign_id: str, found: Sequence[Suggestion], upload: str, now: int
+        self,
+        guild_id: int,
+        campaign_id: str,
+        found: Sequence[Suggestion],
+        upload: str,
+        now: int,
+        *,
+        session_id: str | None = None,
+        session_at: int | None = None,
     ) -> int:
         """Keep these suggestions waiting; one already made under the same name is left as it
-        is (turned down stays turned down). How many are new."""
+        is (turned down stays turned down). How many are new. From a session (`session_id`), each
+        carries its lines and speakers (`session_threads`), and one with no speaker is never kept
+        (the consent sweep could not reach it)."""
+        if session_id is not None:
+            found = [s for s in found if s.speaker_ids]
         made = 0
         async with self._db.guild(guild_id) as conn:
+            if session_id is not None and found:
+                found = await _still_there(conn, guild_id, campaign_id, session_id, found)
             for s in found:
                 cur = await conn.execute(
                     "INSERT INTO thread_suggestions (guild_id, campaign_id, id, kind, name,"
-                    " name_key, aim, quote, parts, upload, status, created_at, extra)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'waiting', %s, %s)"
-                    " ON CONFLICT (guild_id, campaign_id, name_key) DO NOTHING",
+                    " name_key, aim, quote, parts, upload, status, created_at, extra, session_id,"
+                    " session_at, line_starts, speaker_ids)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'waiting', %s, %s, %s, %s,"
+                    " %s, %s) ON CONFLICT (guild_id, campaign_id, name_key) DO NOTHING",
                     (
                         guild_id, campaign_id, new_id(), s.kind, s.name[:120],
                         name_key(s.name)[:120] or s.kind, s.aim[:240], s.quote[:400],
                         json.dumps([list(p) for p in s.parts]), upload[:UPLOAD_MAX], max(now, 1),
-                        extra_json(s),
+                        extra_json(s), session_id, session_at if session_id is not None else None,
+                        list(s.line_starts) if session_id is not None else [],
+                        list(s.speaker_ids) if session_id is not None else [],
                     ),
                 )  # fmt: skip
                 made += cur.rowcount
@@ -212,12 +323,19 @@ class ThreadSuggestionStore:
             log.info("Story thread suggestions: %d new of %d", made, len(found))
         return made
 
-    async def waiting(self, guild_id: int, campaign_id: str) -> list[Waiting]:
-        """The suggestions waiting for the DM, oldest first."""
+    async def waiting(
+        self, guild_id: int, campaign_id: str, *, opted_in: Collection[int] | None = None
+    ) -> list[Waiting]:
+        """The suggestions waiting for the DM, oldest first. With `opted_in` (who is recorded in
+        the server now), the consent sweep runs first, so no session suggestion of someone who
+        stopped is ever shown."""
+        if opted_in is not None:
+            await self.purge_stopped(guild_id, campaign_id, opted_in)
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT id, kind, name, aim, quote, parts, upload, created_at, extra"
-                " FROM thread_suggestions WHERE guild_id = %s AND campaign_id = %s"
+                "SELECT id, kind, name, aim, quote, parts, upload, created_at, extra, session_id,"
+                " line_starts, speaker_ids FROM thread_suggestions"
+                " WHERE guild_id = %s AND campaign_id = %s"
                 " AND status = 'waiting' ORDER BY created_at, id",
                 (guild_id, campaign_id),
             )
@@ -227,19 +345,45 @@ class ThreadSuggestionStore:
                 str(r["id"]), str(r["kind"]), str(r["name"]), str(r["aim"]), str(r["quote"]),
                 _parts(r["parts"]), str(r["upload"]), int(r["created_at"]),
                 *from_extra(r["extra"]),
+                session_id=None if r["session_id"] is None else str(r["session_id"]),
+                line_starts=tuple(int(n) for n in r["line_starts"] or ()),
+                speaker_ids=tuple(int(n) for n in r["speaker_ids"] or ()),
             )
             for r in rows
         ]  # fmt: skip
 
-    async def count(self, guild_id: int, campaign_id: str) -> int:
+    async def count(
+        self, guild_id: int, campaign_id: str, *, opted_in: Collection[int] | None = None
+    ) -> int:
+        """How many wait, changing nothing; with `opted_in`, a session suggestion with a speaker
+        who is no longer recorded is not counted (the sweep deletes it when the card is opened)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT count(*) AS n FROM thread_suggestions"
-                " WHERE guild_id = %s AND campaign_id = %s AND status = 'waiting'",
-                (guild_id, campaign_id),
+                " WHERE guild_id = %s AND campaign_id = %s AND status = 'waiting'"
+                " AND (%s::bigint[] IS NULL OR session_id IS NULL OR speaker_ids <@ %s::bigint[])",
+                (guild_id, campaign_id, *([_ids(opted_in)] * 2)),
             )
             row = await cur.fetchone()
         return int(row["n"]) if row is not None else 0
+
+    async def purge_stopped(
+        self, guild_id: int, campaign_id: str, opted_in: Collection[int]
+    ) -> int:
+        """Delete the waiting session suggestions with a speaker who is not recorded in this
+        server now: the consent re-check on the read path, as for reveals and deeds. A lore one
+        has no speakers; a kept or turned-down one is the DM's answer and stays."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "DELETE FROM thread_suggestions WHERE guild_id = %s AND campaign_id = %s"
+                " AND status = 'waiting' AND session_id IS NOT NULL"
+                " AND NOT (speaker_ids <@ %s::bigint[])",
+                (guild_id, campaign_id, _ids(opted_in)),
+            )
+            gone = int(cur.rowcount)
+        if gone:
+            log.info("Story thread suggestions: %d dropped (a speaker stopped recording)", gone)
+        return gone
 
     async def turn_down(self, guild_id: int, campaign_id: str, suggestion_id: str) -> bool:
         """🚫: never suggested again. False when it was answered meanwhile."""
@@ -258,7 +402,7 @@ class ThreadSuggestionStore:
             cur = await conn.execute(
                 "UPDATE thread_suggestions SET status = 'waiting', kept_batch = NULL"
                 " WHERE guild_id = %s AND campaign_id = %s AND kept_batch = %s"
-                " AND status = 'kept'",
+                " AND status = 'kept'" + _CAN_WAIT,
                 (guild_id, campaign_id, batch),
             )
             return bool(cur.rowcount)
@@ -269,7 +413,7 @@ class ThreadSuggestionStore:
             cur = await conn.execute(
                 "UPDATE thread_suggestions SET status = 'waiting'"
                 " WHERE guild_id = %s AND campaign_id = %s AND id = %s"
-                " AND status = 'turned_down'",
+                " AND status = 'turned_down'" + _CAN_WAIT,
                 (guild_id, campaign_id, suggestion_id),
             )
             return bool(cur.rowcount)

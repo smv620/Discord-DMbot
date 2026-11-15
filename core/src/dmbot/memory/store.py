@@ -1958,10 +1958,15 @@ class MemoryStore:
         name = clean_text(name)
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
-            row = await self._new_thread_in(w, onto, name, subtype, state, aim, parts, source)
-            if suggestion_id:
-                from dmbot.memory import thread_suggestions
+            began: int | None = None
+            from dmbot.memory import thread_suggestions
 
+            if suggestion_id:  # (one read from a session starts at that session, #4522)
+                began = await thread_suggestions.session_at_in(w, suggestion_id)
+            row = await self._new_thread_in(
+                w, onto, name, subtype, state, aim, parts, source, from_session_at=began
+            )
+            if suggestion_id:
                 reads, branches = await thread_suggestions.lines_in(w, suggestion_id)
                 if not await thread_suggestions.mark_kept(w, suggestion_id, w.batch):
                     raise MemoryRuleError(thread_suggestions.GONE)
@@ -1992,9 +1997,12 @@ class MemoryStore:
         aim: str,
         parts: Sequence[tuple[str, str]],
         source: str,
+        *,
+        from_session_at: int | None = None,
     ) -> dict[str, Any]:
         """A kept thread inside the caller's write: the entry, its name, its state and its people
-        (merged ones followed, gone ones skipped). For `keep_thread`, its thread and branches."""
+        (merged ones followed, gone ones skipped). For `keep_thread`, its thread and branches;
+        `from_session_at` is the session it was read from, if any."""
         if subtype not in onto.types or not onto.is_a(subtype, "thread"):
             raise MemoryRuleError(THREAD_KINDS_ONLY)
         onto.active_type(subtype)
@@ -2010,7 +2018,7 @@ class MemoryStore:
             },
         )  # fmt: skip
         await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", CONFIRMED, False, None))
-        await states.set_condition(w, onto, row, state, from_session_at=None)
+        await states.set_condition(w, onto, row, state, from_session_at=from_session_at)
         for role, who in parts:
             live = await _followed(w, who)
             if live is None:

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any
 
 import discord
@@ -43,6 +43,7 @@ log = logging.getLogger(__name__)
 
 LABEL = "📜 Story threads"
 HEADING = "📜 **A story thread DMbot found in your lore**"
+HEADING_HEARD = "📜 **A story thread DMbot heard in a session**"  # (#4522, the ux-critic)
 # (the ux-critic's words on #4453)
 KEEP, RENAME, NOT_ONE, SKIP, UNDO = (
     "✅ Keep it", "✏️ Rename", "🚫 Not a story thread", "Skip ›", "↩ Undo",
@@ -72,8 +73,8 @@ AFTER = (
     "only if your DM screen lets them."
 )
 NOTHING_LEFT = (
-    "📜 **Story threads**: nothing to check. 🎉 If a lore upload finds more, it shows in "
-    "❓ Questions for you."
+    "📜 **Story threads**: nothing to check. 🎉 When DMbot finds more in your lore or a session, "
+    "they show in ❓ Questions for you."
 )
 GONE_NOW = "That one was already answered. Here are the ones still waiting."
 TOO_LATE = "⚠️ Can't undo: it was changed since. Change it in 🧵 Threads."
@@ -144,17 +145,19 @@ def card_text(
     on: frozenset[int],
     waiting: frozenset[str] = frozenset(),
     lines_on: frozenset[int] | None = None,
+    heard: Sequence[str] = (),
 ) -> str:
     """The card: the thread's name, kind and the state it is kept with, its aim, who is involved
     (the lines switched on), and the lore it came from with the quote DMbot checked. `on`: which
-    people lines are kept."""
+    people lines are kept. A suggestion from a session (#4522) keeps no quote: `heard` is its
+    lines as the transcript has them now, read when the card is drawn."""
     from dmbot.memory.threads import STATE_WORDS
 
     count = f" ({at} of {of})" if of > 1 else ""
     state = STATE_WORDS.get(s.state, "").lower()
     kind = KIND_WORDS.get(s.kind, s.kind)
     lines = [
-        f"{HEADING}{count}",
+        f"{HEADING if s.session_id is None else HEADING_HEARD}{count}",
         f"**{_md(name or s.name)}** · {kind}, {state} (you can change that after keeping it)",
     ]
     if s.aim:
@@ -178,7 +181,12 @@ def card_text(
         kept = lines_on is None or i in lines_on
         parts.append(f"• {said}" if kept else f"• ~~{said}~~ (left out)")
     tail = []
-    if s.quote:
+    if s.session_id is not None:
+        where = f"Heard in **{_md(s.upload)}**" if s.upload else "Heard in a session"
+        tail.append(f"{where}:" if heard else f"{where}.")
+        if heard:
+            tail.append(f"> {_md(logic.shorten(' … '.join(heard), QUOTE_SHOWN))}")
+    elif s.quote:
         tail.append(f"From **{_md(s.upload)}**:" if s.upload else "From your lore:")
         tail.append(f"> {_md(logic.shorten(s.quote, QUOTE_SHOWN))}")
     tail.append(AFTER)
@@ -193,6 +201,61 @@ def card_text(
         more = f"• …and {len(parts) - len(shown)} more: see the menu below."
         text = joined([*shown, more])
     return fit_message(text)
+
+
+def session_label(started_at: int) -> str:
+    """The card's "Heard in **the session of 14 Nov 2026**" (the session's start, UTC, as the
+    recap list says it)."""
+    from dmbot.ui.recap_again import date_label
+
+    return f"the session of {date_label(started_at)}"
+
+
+def threads_found_text(made: int, stopped: bool, label: str) -> str:
+    """The one counts line in the DM Bot channel after a session (#4522, #3874): counts only, no
+    thread's name (the channel is the campaign's people's), and the session by its date (an
+    import may be an old one, so never "the last session"). Its 📜 button is for a DM."""
+    many = "possible story thread" if made == 1 else "possible story threads"
+    if made:
+        line = (
+            f"📜 DMbot heard {made} {many} in {label}. A DM can keep or turn down each one: "
+            f"press {LABEL}."
+        )
+        return line + (" It stopped early, so it may have missed some." if stopped else "")
+    return f"📜 DMbot stopped early reading {label} for story threads, so it may have missed some."
+
+
+HEARD_MAX = 3  # lines shown under a session suggestion: its evidence, never the scene
+
+
+async def _heard(
+    interaction: discord.Interaction, guild_id: int, s: Waiting, agreed: Collection[int]
+) -> list[str]:
+    """A session suggestion's lines, read from its transcript now (#4522): found by when each
+    began and who said it (never by place: deleting an earlier line moves the places), only lines
+    still there, by one of its speakers who still agrees. Nothing when the transcript can't be
+    read (the card still shows the suggestion; its evidence is only missing)."""
+    transcripts = getattr(interaction.client, "transcripts", None)
+    if s.session_id is None or not s.line_starts or transcripts is None:
+        return []
+    try:
+        lines = await transcripts.lines(guild_id, s.session_id)
+    except Exception as exc:
+        log.warning("Story threads card: couldn't read a session's lines (%s)", type(exc).__name__)
+        return []
+    return heard_lines(lines, s, agreed)
+
+
+def heard_lines(lines: Sequence[Any], s: Waiting, agreed: Collection[int]) -> list[str]:
+    """Pure: the transcript lines a session suggestion points at, at most `HEARD_MAX`."""
+    starts, speakers = set(s.line_starts), set(s.speaker_ids) & set(agreed)
+    out: list[str] = []
+    for line in lines:
+        if line.started_ms in starts and line.user_id in speakers and line.text.strip():
+            out.append(" ".join(line.text.split()))
+            if len(out) >= HEARD_MAX:
+                break
+    return out
 
 
 class ThreadQuestions(_Menu):
@@ -215,7 +278,18 @@ class ThreadQuestions(_Menu):
         memory = _memory(interaction)
         if memory is None:
             return None
-        waiting = await ThreadSuggestionStore(memory._db).waiting(self.guild_id, self.campaign_id)
+        # (the consent sweep first: a session suggestion quoting someone who stopped never shows;
+        # who counts is the campaign's `recorded_in`, so a speaker an import's uploader confirmed
+        # counts here as in the reading, the reviewer on #4522)
+        consent = getattr(interaction.client, "consent", None)
+        agreed = (
+            await consent.recorded_in(self.guild_id, self.campaign_id)
+            if consent is not None
+            else None
+        )
+        waiting = await ThreadSuggestionStore(memory._db).waiting(
+            self.guild_id, self.campaign_id, opted_in=agreed
+        )
         left = [w for w in waiting if w.id not in self.skipped] or waiting
         self.clear_items()
         if not left:
@@ -288,9 +362,10 @@ class ThreadQuestions(_Menu):
             )
             self.add_item(self.what)
         at = waiting.index(s) + 1
+        heard = await _heard(interaction, self.guild_id, s, agreed or ())
         return card_text(
             s, self.names, at, len(waiting), name=self.name, on=self.on, waiting=self.waiting,
-            lines_on=self.lines_on,
+            lines_on=self.lines_on, heard=heard,
         )  # fmt: skip
 
     async def _who_picked(self, interaction: discord.Interaction) -> None:

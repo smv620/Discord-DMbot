@@ -153,6 +153,7 @@ def build_round(bot: DMBot) -> Round | None:
         rule_sets=sets,
         packs=sets if isinstance(sets, PackUpdateStore) else None,
         agreed=bot.consent.consenting,
+        recorded=bot.consent.recorded_in,
     )
     return Round(
         sources=sources,
