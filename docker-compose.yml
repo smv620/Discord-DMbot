@@ -244,6 +244,10 @@ services:
       WEB_PICTURES_R2_BUCKET: ${WEB_PICTURES_R2_BUCKET:-}
       WEB_PICTURES_R2_KEY: ${WEB_PICTURES_R2_KEY:-}
       WEB_PICTURES_R2_SECRET: ${WEB_PICTURES_R2_SECRET:-}
+      # A map sent from the website (#4347) is staged in the same bucket with its OWN write key
+      # (never the bot's, and never the read-only one above); blank: an upload answers "uploads_off".
+      WEB_MAPS_R2_KEY: ${WEB_MAPS_R2_KEY:-}
+      WEB_MAPS_R2_SECRET: ${WEB_MAPS_R2_SECRET:-}
     volumes:
       - recap-audio:/recap-audio:ro
       - bot-status:/status:ro

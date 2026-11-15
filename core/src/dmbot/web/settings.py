@@ -215,6 +215,24 @@ class WebSettings:
     cloudflare_account_id: str = ""
     cloudflare_ai_token: str = field(default="", repr=False)
     site_ask_daily: int = 1500
+    # The key the Maps page stages a sent picture with (#4347): a WRITE key to the same private
+    # bucket as `pictures_r2_*` (which stays read-only), kept apart from the bot's own key so each
+    # can be rotated alone. The website only puts and deletes the two staged files; the bot writes
+    # every row. Both blank: an upload answers `uploads_off`.
+    maps_r2_key: str = field(default="", repr=False)
+    maps_r2_secret: str = field(default="", repr=False)
+
+    @property
+    def uploads_ready(self) -> bool:
+        """The bucket and the write key for a sent map are all set (#4347)."""
+        return all(
+            (
+                self.pictures_r2_account,
+                self.pictures_r2_bucket,
+                self.maps_r2_key,
+                self.maps_r2_secret,
+            )
+        )
 
     @property
     def site_ask_on(self) -> bool:
@@ -522,6 +540,8 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         cloudflare_account_id=get("CLOUDFLARE_ACCOUNT_ID"),
         cloudflare_ai_token=get("CLOUDFLARE_AI_TOKEN"),
         site_ask_daily=_site_ask_daily(get("DMBOT_SITE_ASK_DAILY")),
+        maps_r2_key=get("WEB_MAPS_R2_KEY"),
+        maps_r2_secret=get("WEB_MAPS_R2_SECRET"),
         enforce_plans=enforce_raw in ("1", "true", "on"),
         theatre_on=(get("DMBOT_THEATRE_ON") or "0").lower() in ("1", "true", "on"),
         imports_on=imports_raw in ("1", "true", "on"),
