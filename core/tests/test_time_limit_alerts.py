@@ -21,32 +21,52 @@ from dmbot.ui import time_limit_alerts as alerts
 from tests.test_memory_store import GUILD_A, MemoryTest
 
 SRC = pathlib.Path(__file__).resolve().parents[1] / "src" / "dmbot"
-MOVES = {"change_named", "rejoin"}  # (ClockStore's two calls that move a campaign's clock)
+# ClockStore's calls that move a campaign's clock (or bring back a group that may be ahead).
+# `change_named` is the clock's alone; the others are common names (the names list has its own
+# `undo_split`), so they count only when called on a clock store.
+ONLY_CLOCKS = {"change_named"}
+ON_A_CLOCK = {"change", "rejoin", "undo_split", "undo_rejoin"}
+
+
+def _moves(fn: ast.AST) -> bool:
+    """Whether a function moves a clock, even with the call passed on as a value (as the split
+    Undo does)."""
+    for node in ast.walk(fn):
+        if isinstance(node, ast.Attribute):
+            if node.attr in ONLY_CLOCKS:
+                return True
+            if node.attr in ON_A_CLOCK and "clock" in ast.unparse(node.value):
+                return True
+    return False
 
 
 class EveryClockMove(unittest.TestCase):
     """Supervisor's condition on #4448: every function that moves the clock checks the limits."""
 
-    def test_every_caller_of_change_named_and_rejoin_checks_the_time_limits(self) -> None:
+    def test_every_function_that_moves_the_clock_checks_the_time_limits(self) -> None:
         missing, found = [], 0
         for path in SRC.rglob("*.py"):
-            if path.name == "store.py" and path.parent.name == "timebot":
-                continue  # (the store itself: `change` calls `change_named`)
+            if path.parent.name == "timebot":
+                continue  # (the clock's own store and pure parts: they move nothing by themselves)
             tree = ast.parse(path.read_text(encoding="utf-8"))
             for fn in ast.walk(tree):
                 if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)):
                     continue
+                if not _moves(fn) or any(
+                    isinstance(inner, (ast.FunctionDef, ast.AsyncFunctionDef)) and _moves(inner)
+                    for inner in fn.body
+                ):
+                    continue  # (an outer function is judged by its inner one)
+                found += 1
                 calls = {
                     c.func.attr
                     for c in ast.walk(fn)
                     if isinstance(c, ast.Call) and isinstance(c.func, ast.Attribute)
                 }
-                if calls & MOVES and "clocks" in ast.unparse(fn):
-                    found += 1
-                    if "after_clock" not in calls:
-                        missing.append(f"{path.relative_to(SRC)}:{fn.name}")
+                if "after_clock" not in calls:
+                    missing.append(f"{path.relative_to(SRC)}:{fn.name}")
         self.assertEqual(missing, [])
-        self.assertGreaterEqual(found, 4)  # (press, run_rejoin and the two Undos at least)
+        self.assertGreaterEqual(found, 5)  # (press, run_rejoin, both Undos, the split Undo)
 
 
 class TheMessage(unittest.TestCase):
@@ -103,6 +123,33 @@ class Telling(MemoryTest):
         )
         self.assertEqual(await self.tell(9 * DAY), [tl.SOON])
 
+    async def test_a_limit_made_hard_or_ticked_and_unticked_is_not_told_again(self) -> None:
+        self.assertEqual(await self.tell(5 * DAY), [tl.PASSED])
+        hard = await self.memory.correct_thread_part(
+            GUILD_A, self.c, self.limit, source=DM, limit_kind=tp.HARD
+        )
+        self.assertNotEqual(hard.value.id, self.limit)  # (a story change: a new row)
+        self.assertEqual(await self.tell(6 * DAY), [])
+        met = await self.memory.set_thread_part_state(
+            GUILD_A, self.c, hard.value.id, "met", source=DM
+        )
+        await self.memory.set_thread_part_state(GUILD_A, self.c, met.value.id, "running", source=DM)
+        self.assertEqual(await self.tell(7 * DAY), [])
+
+    async def test_two_moves_at_once_tell_it_once(self) -> None:
+        import asyncio
+
+        both = await asyncio.gather(self.tell(4 * DAY), self.tell(4 * DAY))
+        self.assertEqual(sorted(stage for told in both for stage in told), [tl.SOON])
+
+    async def test_a_suggested_limit_not_kept_is_never_told(self) -> None:
+        # (a read DMbot suggested and the DM hasn't kept: status 'read', never the DM's own)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_thread_parts SET status = 'read' WHERE id = %s", [self.limit]
+            )
+        self.assertEqual(await self.tell(9 * DAY), [])
+
     async def test_a_finished_thread_says_nothing(self) -> None:
         await self.memory.set_condition(GUILD_A, self.c, self.quest, "resolved", source=DM)
         self.assertEqual(await self.tell(9 * DAY), [])
@@ -133,6 +180,12 @@ class Telling(MemoryTest):
         self.assertEqual([u for u, _ in sent], [11, 22])
         self.assertIn("1 day left (due Day 6)", sent[0][1])
         self.assertEqual(await alerts.after_clock(client, GUILD_A, self.c), 0)  # (once)
+
+        async def closed(user_id: int, text: str, view: Any) -> Any:
+            return None  # (private messages closed: claimed anyway, never repeated)
+
+        client._dm_message = closed
+        self.assertEqual(await alerts.after_clock(client, GUILD_A, self.c), 0)
 
         async def broken(*_: Any) -> Any:
             raise RuntimeError("down")

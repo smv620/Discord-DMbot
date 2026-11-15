@@ -1699,14 +1699,19 @@ class MemoryStore:
 
         async with self._read(guild_id, campaign_id) as scope:
             dated = await thread_parts.dated_running(scope)
+        if not dated:
+            return []
+        async with self._db.guild(guild_id) as conn:
+            said = await time_limit_told.told(conn, guild_id, campaign_id)
         staged = [
             (p, stage)
             for p in dated
             if p.due_minute is not None
             and (stage := tl.stage(p.due_minute, p.set_at, now)) is not None
+            and (p.first_id, p.due_minute, stage) not in said
         ]
         if not staged:
-            return []
+            return []  # (nothing new: no threads read, however long ago a limit passed)
         live = {
             t.thread.id: t.thread.name
             for t in await self.threads(guild_id, campaign_id)
@@ -1715,9 +1720,11 @@ class MemoryStore:
         out: list[tuple[str, str, thread_parts.Part, str]] = []
         async with self._db.guild(guild_id) as conn:
             for p, stage in staged:
-                if p.thread_id not in live:
+                if p.thread_id not in live or p.due_minute is None:
                     continue  # (a finished or dropped thread: its limit says nothing, §8.4)
-                if await time_limit_told.claim(conn, guild_id, campaign_id, p.id, stage, at):
+                if await time_limit_told.claim(
+                    conn, guild_id, campaign_id, p.first_id, p.due_minute, stage, at
+                ):
                     out.append((p.thread_id, live[p.thread_id], p, stage))
         return out
 

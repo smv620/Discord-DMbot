@@ -46,8 +46,9 @@ class OpenThread(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=r"dmbot:limit:open:(?P<campaign>[0-9a-f]{32}):(?P<thread>[0-9a-f]{32})",
 ):
-    """The message's one button: the thread's card. Works after a restart; the card checks that
-    whoever presses is a DM of the campaign, every time."""
+    """The message's one button: the thread's card, as a new reply, so the message stays. Works
+    after a restart. It sits in the DM's own private chat; the card itself shows a DM's view only
+    to a DM of the campaign (checked on every press, so a DM removed since sees no secrets)."""
 
     def __init__(self, campaign_id: str, thread_id: str) -> None:
         super().__init__(
@@ -66,9 +67,9 @@ class OpenThread(
         return cls(match["campaign"], match["thread"])
 
     async def callback(self, interaction: discord.Interaction) -> Any:
-        from dmbot.ui.threads import show_thread
+        from dmbot.ui.name_card import show_card
 
-        await show_thread(interaction, self.campaign_id, self.thread_id)
+        await show_card(interaction, self.campaign_id, self.thread_id, replace=False)
 
 
 async def after_clock(client: Any, guild_id: int, campaign_id: str) -> int:
@@ -88,6 +89,8 @@ async def after_clock(client: Any, guild_id: int, campaign_id: str) -> int:
         campaign = await client.campaigns.get(guild_id, campaign_id)
         dms = sorted(campaign.dm_user_ids) if campaign is not None else []
         said = 0
+        # (one by one: the claims are made, so a stop here loses a message, never repeats one;
+        # the 🧵 card and the pre-session note still show every limit)
         for thread_id, name, part, stage in due:
             assert part.due_minute is not None  # (only dated limits are told)
             text = message(name, part.words, tl.left_said(part.due_minute, now, calendar), stage)

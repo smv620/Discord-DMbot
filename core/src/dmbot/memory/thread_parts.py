@@ -98,6 +98,7 @@ class Part:
     due_minute: int | None = None
     due_from: str = ""
     set_at: int | None = None
+    first_id: str = ""  # (the first row of its history: one limit, however it was edited)
 
 
 def read_amount(words: str) -> tuple[float | None, str]:
@@ -142,7 +143,7 @@ def from_row(row: Mapping[str, Any]) -> Part:
         str(row["due"]), str(row["terms"]), str(row["limit_kind"]), str(row["status"]),
         str(row["source"]), bool(row["table_knows"]), row["from_session_at"],
         row["to_session_at"], row.get("due_minute"), str(row.get("due_from") or ""),
-        row.get("from_game_time"),
+        row.get("from_game_time"), str(row.get("first_id") or row["id"]),
     )  # fmt: skip
 
 
@@ -421,7 +422,7 @@ async def dated_running(scope: Scope) -> list[Part]:
     rows = await scope.select(
         THREAD_PARTS,
         " AND kind = 'time_limit' AND state = 'running' AND status = 'confirmed'"
-        " AND due_minute IS NOT NULL" + _OPEN,
+        " AND due_minute IS NOT NULL" + _OPEN + " ORDER BY id",  # (one order: no deadlock)
         [],
     )
     return [from_row(r) for r in rows]

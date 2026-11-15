@@ -1486,6 +1486,8 @@ class SplitUndoButton(
                 if not done:
                     await _reply(interaction, MOVED_ON if self.kind == "split" else SPLIT_GONE)
                     return
+                # (an Undo of a rejoin brings back groups that may be further ahead: slice 4b)
+                await time_limit_alerts.after_clock(client, guild.id, campaign.id)
                 stored = await client.clocks.get(guild.id, campaign.id)
                 if stored is not None:
                     await show(client, campaign, stored)
