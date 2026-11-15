@@ -269,7 +269,8 @@ class TheReader(unittest.TestCase):
         self.assertEqual(bg.cost_text(401), "about $4.01")
 
     def test_the_estimate_is_at_least_a_cent_and_grows(self) -> None:
-        self.assertEqual(bg.estimate_cents(100), 1)
+        self.assertGreaterEqual(bg.estimate_cents(100), 1)  # (never free; a few cents for a small text)
+        self.assertLessEqual(bg.estimate_cents(100), 3)
         self.assertGreater(bg.estimate_cents(200_000), bg.estimate_cents(10_000))
 
     def test_the_document_goes_to_the_ai_as_quoted_data(self) -> None:
