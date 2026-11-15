@@ -7,7 +7,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { mockApi } from "../src/account/mock";
-import Questions, { CATCHING_UP_SECONDS, mergeUnknown, oldestFirst } from "../src/account/Questions";
+import Questions, { CATCHING_UP_SECONDS, inFixedOrder, mergeUnknown, oldestFirst } from "../src/account/Questions";
 import QuestionsIsland from "../src/account/QuestionsIsland";
 import QuestionsLink from "../src/account/QuestionsLink";
 import { kindWords, questionsPage as w } from "../src/content/questions-words";
@@ -87,15 +87,15 @@ describe("the Questions page", () => {
     expect(api.calls.filter((c) => c === "myQuestions")).toHaveLength(0);
   });
 
-  it("lists each campaign with a line for each kind, oldest first, and the page that answers it", async () => {
+  it("lists each campaign with a line for each kind, in the fixed order, and the page that answers it", async () => {
     render(<Questions api={mockApi("table")} />);
     const campaign = (await screen.findByRole("heading", { name: "The Ashen Road" })).closest("section") as HTMLElement;
     const lines = within(campaign).getAllByRole("listitem");
     expect(lines.map((l) => l.querySelector("strong")?.textContent)).toEqual([
       `${kindWords("names").label} · 3`,
-      `${kindWords("connections").label} · 12`,
       `${kindWords("heard").label} · 2`,
-    ]); // (oldest first, by when each kind's oldest question began)
+      `${kindWords("connections").label} · 12`,
+    ]); // (names, then what was said, then the connections: a connection is asked once its names are answered)
   });
 
   it("a kind that links goes to the page that answers it, and one that can't says how in Discord", async () => {
@@ -204,6 +204,20 @@ describe("the Questions page", () => {
       { kind: "n", count: 3, oldest: null },
     ]);
     expect(sorted.map((k) => k.kind)).toEqual(["a", "b", "n"]);
+  });
+
+  it("puts names, then what was said, then facts and connections first, and the rest oldest first (#4193)", () => {
+    const sorted = inFixedOrder([
+      { kind: "connections", count: 1, oldest: 1 },
+      { kind: "readings", count: 1, oldest: 30 },
+      { kind: "claims", count: 1, oldest: 2 },
+      { kind: "maps", count: 1, oldest: 10 },
+      { kind: "names", count: 1, oldest: 50 },
+      { kind: "which", count: 1, oldest: 3 },
+      { kind: "heard", count: 1, oldest: 40 },
+      { kind: "plot", count: 0, oldest: 1 },
+    ]);
+    expect(sorted.map((k) => k.kind)).toEqual(["names", "heard", "claims", "connections", "which", "maps", "readings"]);
   });
 
   it("every known kind has a label, and a link names where it goes", () => {
@@ -430,5 +444,85 @@ describe("DMbot's guesses on the Questions page (#3701)", () => {
     render(<Questions api={api} />);
     expect(await screen.findByText("1 guess waits for you.")).toBeTruthy();
     expect(screen.queryByText(w.nothing)).toBeNull();
+  });
+});
+
+describe("Check everything, one walk through what can be answered here (#4193)", () => {
+  const many = (): QuestionCounts => ({
+    serverNow: now,
+    campaigns: [
+      {
+        ref: "100.cmp1",
+        name: "The Ashen Road",
+        total: 9,
+        countedAt: now - 30,
+        kinds: [
+          { kind: "connections", count: 4, oldest: now - 400 },
+          { kind: "which", count: 2, oldest: now - 300 },
+          { kind: "readings", count: 3, oldest: now - 200 },
+          { kind: "heard", count: 1, oldest: now - 100 },
+        ],
+      },
+    ],
+  });
+  const show = async () => {
+    const api = mockApi("table");
+    api.myQuestions = async () => many();
+    lists.waiting = true;
+    lists.readings = true;
+    render(<Questions api={api} />);
+    await screen.findByText(`${kindWords("connections").label} · 4`);
+    return api;
+  };
+  const connections = kindWords("connections").label;
+  const believe = kindWords("readings").label;
+
+  it("is one button for everything that opens here, with the total of those parts", async () => {
+    await show();
+    expect(screen.getByRole("button", { name: w.checkEverything(9) })).toBeTruthy(); // (the Discord-only kind is not counted)
+  });
+
+  it("has no walk when only one thing can be answered here", async () => {
+    lists.waiting = false;
+    lists.readings = false;
+    names.on = false;
+    render(<Questions api={mockApi("table")} />);
+    await screen.findByRole("heading", { name: "The Ashen Road" });
+    expect(screen.queryByRole("button", { name: /Check everything/ })).toBeNull();
+  });
+
+  it("starts at the first part with its progress line and opens that part's cards", async () => {
+    const api = await show();
+    fireEvent.click(screen.getByRole("button", { name: w.checkEverything(9) }));
+    expect(await screen.findByText(w.partLine(connections, 1, 2, 6))).toBeTruthy();
+    await waitFor(() => expect(api.calls.some((c) => c.startsWith("webWaiting:100.cmp1"))).toBe(true));
+  });
+
+  it("moves to the next part with one line saying what is done and what is next", async () => {
+    const api = await show();
+    fireEvent.click(screen.getByRole("button", { name: w.checkEverything(9) }));
+    fireEvent.click(await screen.findByRole("button", { name: w.nextPart(believe, 3) }));
+    expect(await screen.findByText(w.partLine(believe, 2, 2, 3))).toBeTruthy();
+    expect(screen.getByText(w.partDone(connections, believe, 3))).toBeTruthy();
+    await waitFor(() => expect(api.calls.some((c) => c.startsWith("webReadings:100.cmp1"))).toBe(true));
+  });
+
+  it("stops for now and carries on at the same part with what is left", async () => {
+    await show();
+    fireEvent.click(screen.getByRole("button", { name: w.checkEverything(9) }));
+    fireEvent.click(await screen.findByRole("button", { name: w.nextPart(believe, 3) }));
+    fireEvent.click(await screen.findByRole("button", { name: w.stopForNow }));
+    expect(screen.getByText(w.walkStopped)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: w.carryOn(3) }));
+    expect(await screen.findByText(w.partLine(believe, 2, 2, 3))).toBeTruthy();
+  });
+
+  it("ends after the last part and offers the whole walk again", async () => {
+    await show();
+    fireEvent.click(screen.getByRole("button", { name: w.checkEverything(9) }));
+    fireEvent.click(await screen.findByRole("button", { name: w.nextPart(believe, 3) }));
+    fireEvent.click(await screen.findByRole("button", { name: w.finishWalk }));
+    expect(screen.getByText(w.walkEnded)).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.checkEverything(9) })).toBeTruthy();
   });
 });
