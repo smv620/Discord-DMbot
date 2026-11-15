@@ -115,6 +115,12 @@ async def check_existing(
     return found
 
 
+DM_BOT_CHANNEL_NEEDED = (
+    "DM Bot channel: needed (press ⚙️ Manage DMbot on the new sample campaign; delete the "
+    "earlier campaign's channel by hand)"
+)
+
+
 async def fresh_campaign(
     db: Database,
     campaigns: CampaignStore,
@@ -137,11 +143,18 @@ async def fresh_campaign(
             await campaigns.delete(guild, old.campaign_id, only_if_owner=dm)
     say(f"{len(found)} earlier sample campaign(s) {'kept' if keep_old else 'deleted'}")
     try:
-        return await campaigns.create(guild, NAME, dm)
+        made = await campaigns.create(guild, NAME, dm)
     except CampaignError as exc:  # e.g. a campaign whose name differs only in capitals
         raise SampleError(
             "the sample campaign could not be made (a campaign with a look-alike name exists)"
         ) from exc
+    # This tool has no Discord client, so it cannot make or delete a channel (#4112). The new
+    # campaign has no DM Bot channel yet: the bot makes it the way it does for any campaign made
+    # before the channel existed, when the DM presses ⚙️ Manage DMbot. An earlier sample campaign's
+    # channel stays in the server and is deleted by hand; its buttons say it cannot find the
+    # campaign. Said as one counts-only line, so dev1 does it before checking the main menu.
+    say(DM_BOT_CHANNEL_NEEDED)
+    return made
 
 
 async def _keep(campaigns: CampaignStore, guild: int, campaign_id: str, today: str) -> None:

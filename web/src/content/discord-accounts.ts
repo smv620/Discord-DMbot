@@ -26,9 +26,15 @@ export const discordAccountsWords = {
   // What coming back from Discord says (?discord=added and the like).
   result: {
     added: "Added. That Discord account can now use your plan and campaigns too.",
-    taken: "Not added. That Discord account already belongs to another DMbot account.",
+    // The three refusals are Supervisor's ruled words (#2533, #4467), word for word. `taken` and
+    // `has_account` are the same answer to the person: that account belongs to another DMbot account.
+    taken: "That Discord account is already on another DMbot account. Remove it there first, then add it here.",
+    has_account:
+      "That Discord account is already on another DMbot account. Remove it there first, then add it here.",
     has_campaigns:
-      "Not added. That Discord account runs campaigns or has its own plan. In Discord, use that account to hand its campaigns over, then try again.",
+      "That Discord account is already the DM of its own campaigns. Hand those campaigns over or delete them first, then add the account.",
+    has_plan:
+      "That Discord account pays for its own DMbot plan. Sign in as that account and cancel its plan first, then add it here.",
     already: "That Discord account is already on your account.",
     cancelled: "Not added. You stopped before finishing on Discord.",
     failed: "Not added. Something went wrong. Press Add a Discord account to try again.",
