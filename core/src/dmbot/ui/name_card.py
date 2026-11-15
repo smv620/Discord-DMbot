@@ -799,12 +799,19 @@ async def show_card(
                 here[0], await _session_numbers(interaction, campaign.id)
             )
             # its steps, rewards and more, and its branches (#4471)
-            from dmbot.ui.thread_parts import card_lines
+            from dmbot.ui.thread_parts import card_lines, clock_now, dated
 
             parts, part_names, bigger, branches = await memory.thread_card(
                 campaign.guild_id, campaign.id, entity_id
             )
-            lines_of_thread += card_lines(parts, part_names, bigger, branches, most=CARD_PARTS)
+            clock = (
+                await clock_now(interaction.client, campaign.guild_id, campaign.id)
+                if dated(parts)
+                else None
+            )
+            lines_of_thread += card_lines(
+                parts, part_names, bigger, branches, most=CARD_PARTS, clock=clock
+            )
     elif entity is not None and secrets and entity.type in ("clue", "event"):
         # A clue's or an event's "Led to" / "Came from" (#1679): the DM's word, so the DM's card.
         from dmbot.memory.threads import names_line
