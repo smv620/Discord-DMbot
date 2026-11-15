@@ -10,6 +10,9 @@ from dmbot.migrations._shared import _isolate
 
 # One row is one part of one thread (a thread entry of `memory_entities`), beside it, never an
 # entry of its own (design §12: parts as entries would crowd the names list and the Story Graph).
+# - `first_id`: the id of the first row of this part's history; a change in the story carries it,
+#   so 👁️ / 🙈 and "it was wrong" act on one part's whole history and never on another part that
+#   happens to share its words (the reviewer's finding on #4471).
 # - `kind` and `state`: the kind's short list of states (§5), checked here pair by pair. Nothing
 #   worked out is stored (§13 rule 4): "partly given", "passed", time left and done counts are
 #   computed when shown, so no state says them.
@@ -37,10 +40,10 @@ from dmbot.migrations._shared import _isolate
 # One open row per thread, kind and words (§4). Per campaign with forced row-level security; every
 # foreign key follows a campaign moved to another server (`ON UPDATE CASCADE`, #2550) and goes with
 # its thread (`ON DELETE CASCADE`). An entry it names going leaves the part and its words
-# (`ON DELETE SET NULL`, Supervisor's ruling on #4471); the store clears or deletes them first,
-# logged, so an Undo never loses one unlogged. Logged in the change log, moved by merges and
-# carried by the memory backup section (the DM's own story memory: nothing rebuilds it). No
-# existing row changes.
+# (`ON DELETE SET NULL`, Supervisor's ruling on #4471). The store never deletes an entry a part
+# names (the change log refuses while anything links to it), so this is the database's own guard.
+# Logged in the change log, moved by merges and carried by the memory backup section (the DM's own
+# story memory: nothing rebuilds it). No existing row changes.
 SQL = r"""
     CREATE TABLE memory_thread_parts (
         guild_id        BIGINT NOT NULL,
@@ -49,6 +52,7 @@ SQL = r"""
             REFERENCES campaigns (id, guild_id) ON DELETE CASCADE ON UPDATE CASCADE,
         id              TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{32}$'),
         thread_id       TEXT NOT NULL,
+        first_id        TEXT NOT NULL CHECK (first_id ~ '^[0-9a-f]{32}$'),
         kind            TEXT NOT NULL CHECK (kind IN ('objective', 'complication', 'reward',
                                                       'reward_given', 'help', 'time_limit')),
         words           TEXT NOT NULL CHECK (char_length(words) BETWEEN 1 AND 200),
@@ -119,6 +123,8 @@ SQL = r"""
     -- each foreign key's own index (deleting an entry checks every link)
     CREATE INDEX memory_thread_parts_thread
         ON memory_thread_parts (guild_id, campaign_id, thread_id);
+    CREATE INDEX memory_thread_parts_first
+        ON memory_thread_parts (guild_id, campaign_id, first_id);
     CREATE INDEX memory_thread_parts_under
         ON memory_thread_parts (guild_id, campaign_id, under_id) WHERE under_id IS NOT NULL;
     CREATE INDEX memory_thread_parts_who

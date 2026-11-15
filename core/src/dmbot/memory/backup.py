@@ -1006,6 +1006,7 @@ def _check_thread_part(r: Mapping[str, Any]) -> None:
     if not (
         is_id(r["id"])
         and is_id(r["thread_id"])
+        and is_id(r["first_id"])
         and kind in thread_parts.KINDS
         and r["state"] in thread_parts.STATES[kind]
         and isinstance(r["words"], str)
@@ -1075,6 +1076,9 @@ def _check_thread_parts(by_tag: dict[str, list[dict[str, Any]]], onto: Ontology)
             raise CampaignError(DAMAGED)
         if any(r[c] is not None and r[c] not in entities for c in ("who_id", "about_id")):
             raise CampaignError(DAMAGED)
+        first = parts.get(r["first_id"])  # (the first row of its history, on the same thread)
+        if first is None or first["thread_id"] != r["thread_id"] or first["kind"] != r["kind"]:
+            raise CampaignError(DAMAGED)
         if r["under_id"] is not None:
             parent = parts.get(r["under_id"])
             wanted = (
@@ -1108,11 +1112,13 @@ def _check_branches(by_tag: dict[str, list[dict[str, Any]]], onto: Ontology) -> 
         and r["status"] == "confirmed"
         and r["to_session_at"] is None
     ]
-    if any(
-        not onto.is_a(types.get(a, ""), "thread") or not onto.is_a(types.get(b, ""), "thread")
+    # (a link whose ends are no longer both threads is left as it is: a kind change takes it off
+    # today, but a file from before must still load, CLAUDE.md: a campaign is never lost)
+    pairs = [
+        (a, b)
         for a, b in pairs
-    ):
-        raise CampaignError(DAMAGED)
+        if onto.is_a(types.get(a, ""), "thread") and onto.is_a(types.get(b, ""), "thread")
+    ]
     branches = [a for a, _ in pairs]
     if len(branches) != len(set(branches)) or any(
         threads_mod.loops_through(pairs, a) for a in branches

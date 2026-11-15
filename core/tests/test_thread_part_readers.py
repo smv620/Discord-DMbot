@@ -50,11 +50,12 @@ class OneReader(unittest.TestCase):
         # test_thread_parts.py; this keeps a refactor from dropping one
         for rule in (
             "if viewer.dm:",  # only the DM sees everything
-            "p.thread_id not in threads",  # a thread they may see
-            "p.status != CONFIRMED",  # kept by the DM
-            "not p.table_knows",  # and shown to the table
+            "p.thread_id in threads",  # a thread they may see
+            "p.status == CONFIRMED",  # kept by the DM
+            "p.table_knows",  # and shown to the table
             "who=p.who_id in known",  # a name they may not see is left blank
             "about=p.about_id in known",
+            "under=p.under_id in ids",  # and so is a part it stands under that they may not see
         ):
             self.assertIn(rule, body, rule)
 

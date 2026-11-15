@@ -27,7 +27,7 @@ from typing import Any
 
 from dmbot.memory import gate
 from dmbot.memory._changes import ENTITIES, THREAD_PARTS, Changes, Scope
-from dmbot.memory.models import CONFIRMED, REJECTED, MemoryRuleError, new_id
+from dmbot.memory.models import CONFIRMED, MERGED, REJECTED, MemoryRuleError, new_id
 from dmbot.memory.ontology import Ontology
 
 OBJECTIVE, COMPLICATION, REWARD, REWARD_GIVEN, HELP, TIME_LIMIT = (
@@ -181,13 +181,13 @@ async def _check_names(
         who = await w.get(ENTITIES, who_id, lock=False)
         if (
             who is None
-            or who["status"] == REJECTED
+            or who["status"] in (REJECTED, MERGED)
             or not any(onto.is_a(str(who["type"]), k) for k in ("character", "faction"))
         ):
             raise MemoryRuleError(NOT_WHO)
     if about_id is not None:
         about = await w.get(ENTITIES, about_id, lock=False)
-        if about is None or about["status"] == REJECTED:
+        if about is None or about["status"] in (REJECTED, MERGED):
             raise MemoryRuleError(GONE)
 
 
@@ -274,10 +274,12 @@ async def add(
             [thread_id, under_id],
         )
         position = 1 + max((int(r["position"] or 0) for r in siblings), default=-1)
+    made_id = new_id()
     return await w.insert(
         THREAD_PARTS,
         {
-            "id": new_id(), "thread_id": thread_id, "kind": kind, "words": text, "state": start,
+            "id": made_id, "thread_id": thread_id, "first_id": made_id, "kind": kind,
+            "words": text, "state": start,
             "under_id": under_id, "who_id": who_id, "about_id": about_id, "amount": amount,
             "unit": unit, "position": position, "due": due,
             "terms": _clean(terms, TERMS_MAX), "limit_kind": limit_kind, "due_minute": None,
@@ -333,8 +335,10 @@ async def correct(
         if under == part_id:
             raise MemoryRuleError(WRONG_UNDER if kind == OBJECTIVE else WRONG_PROMISE)
         if kind == OBJECTIVE and under is not None:
-            kids = await w.select(THREAD_PARTS, " AND under_id = %s" + _OPEN, [part_id])
-            if kids:  # (one level deep: an objective with sub-steps stays at the top)
+            # (one level deep: an objective anything ever stood under stays at the top, closed and
+            # taken-off sub-steps too, or a restore would find two levels: the reviewer on #4471)
+            kids = await w.select(THREAD_PARTS, " AND under_id = %s", [part_id])
+            if kids:
                 raise MemoryRuleError(WRONG_UNDER)
         await _check_under(w, thread_id, kind, under)
         new["under_id"] = under
@@ -390,27 +394,48 @@ async def set_state(w: Changes, part_id: str, state: str) -> dict[str, Any]:
 
 
 async def _move_under(w: Changes, old_id: str, new_id_: str | None) -> None:
-    """What stood under one row (sub-steps, rewards given) moves to another, or to the top."""
+    """What stands under one row (sub-steps, rewards given) moves to another, or to the top, where
+    a sub-step goes to the end of the list."""
     kids = await w.select(THREAD_PARTS, " AND under_id = %s" + _OPEN, [old_id])
-    await w.update_rows(THREAD_PARTS, {str(k["id"]): {"under_id": new_id_} for k in kids})
+    if not kids:
+        return
+    after = 0
+    if new_id_ is None and any(k["kind"] == OBJECTIVE for k in kids):
+        tops = await w.select(
+            THREAD_PARTS,
+            " AND thread_id = %s AND kind = 'objective' AND under_id IS NULL" + _OPEN,
+            [kids[0]["thread_id"]],
+        )
+        after = 1 + max((int(r["position"] or 0) for r in tops), default=-1)
+    changes: dict[str, dict[str, Any]] = {}
+    for k in kids:
+        changes[str(k["id"])] = {"under_id": new_id_}
+        if new_id_ is None and k["kind"] == OBJECTIVE:
+            changes[str(k["id"])]["position"] = after
+            after += 1
+    await w.update_rows(THREAD_PARTS, changes)
 
 
 async def remove(w: Changes, part_id: str) -> dict[str, Any]:
-    """The DM says it was wrong: the part is rejected, never history (§4). A sub-step under it moves
-    to the top, and a reward given against it stays as given, not matched (§5a)."""
-    await _open_part(w, part_id)
+    """The DM says it was wrong: the part is rejected with its whole history, never kept as history
+    itself (§4). A sub-step under it moves to the top, and a reward given against it stays as
+    given, not matched (§5a)."""
+    row = await _open_part(w, part_id)
     await _move_under(w, part_id, None)
-    return await w.update(THREAD_PARTS, part_id, {"status": REJECTED_PART})
+    line = await w.select(
+        THREAD_PARTS, " AND first_id = %s AND status <> 'rejected'", [row["first_id"]]
+    )
+    await w.update_rows(THREAD_PARTS, {str(r["id"]): {"status": REJECTED_PART} for r in line})
+    return {**row, "status": REJECTED_PART}
 
 
 async def show(w: Changes, part_id: str, shown: bool) -> bool:
-    """The DM's 👁️ / 🙈 for one part (§10.2). The rows it closed go with it, so what players are
-    told it was matches what they are told it is. True when anything changed."""
+    """The DM's 👁️ / 🙈 for one part (§10.2), with its whole history (`first_id`), so what players
+    are told it was matches what they are told it is, and never another part that shares its words.
+    True when anything changed."""
     row = await _open_part(w, part_id)
     rows = await w.select(
-        THREAD_PARTS,
-        " AND thread_id = %s AND kind = %s AND lower(words) = lower(%s) AND status <> 'rejected'",
-        [row["thread_id"], row["kind"], row["words"]],
+        THREAD_PARTS, " AND first_id = %s AND status <> 'rejected'", [row["first_id"]]
     )
     changed = {str(r["id"]): {"table_knows": shown} for r in rows if r["table_knows"] != shown}
     await w.update_rows(THREAD_PARTS, changed)
@@ -429,8 +454,9 @@ async def parts_for(
     §13 rule 5; `test_thread_part_readers`). The DM sees every part not taken off (waiting reads
     too, once slice 3 writes them). A player sees a part only when its thread is one they may see,
     the DM kept it and showed it to the table; a person or thing it names they may not see is left
-    blank. `shown`: the entries the caller's own list shows that player, when it has worked them
-    out. `history`: closed rows too, oldest first after the standing ones."""
+    blank, and so is a part it stands under that they may not see. `shown`: the entries the
+    caller's own list shows that player, when it has worked them out. `history`: closed rows too.
+    Ordered by thread, kind, the DM's order and when written; the caller groups them."""
     if not thread_ids:
         return []
     rows = await scope.select(
@@ -459,29 +485,34 @@ async def parts_for(
             [sorted(known & {p.thread_id for p in parts})],
         )
     }
-    out: list[Part] = []
-    for p in parts:
-        if p.thread_id not in threads or p.status != CONFIRMED or not p.table_knows:
-            continue
-        out.append(_blank(p, who=p.who_id in known, about=p.about_id in known))
-    return out
+    allowed = [
+        p for p in parts if p.thread_id in threads and p.status == CONFIRMED and p.table_knows
+    ]
+    ids = {p.id for p in allowed}
+    return [
+        _blank(p, who=p.who_id in known, about=p.about_id in known, under=p.under_id in ids)
+        for p in allowed
+    ]
 
 
-def _blank(p: Part, *, who: bool, about: bool) -> Part:
-    if who and about:
+def _blank(p: Part, *, who: bool, about: bool, under: bool) -> Part:
+    if who and about and (under or p.under_id is None):
         return p
     fields = {s: getattr(p, s) for s in Part.__slots__}
     fields["who_id"] = p.who_id if who else None
     fields["about_id"] = p.about_id if about else None
+    fields["under_id"] = p.under_id if under else None
     return Part(**fields)
 
 
-async def move_on_merge(w: Changes, keep_id: str, gone_id: str) -> None:
-    """Two entries said to be one (§4): the parts of a thread merged away move to the kept thread,
-    and what named the gone entry names the kept one. A standing part that would say the same as
-    one the kept thread has is taken off (rejected, logged) and what stood under it moves across,
-    so one open row per thread, kind and words holds. One read when nothing names the gone entry
-    (a merge's statement budget, #164)."""
+async def move_on_merge(w: Changes, keep_id: str, gone_id: str, keep_is_thread: bool) -> None:
+    """Two entries said to be one (§4): what named the gone entry names the kept one. The parts of
+    a thread merged away move to the kept thread; a standing part that would say the same as one
+    the kept thread has is taken off (rejected, logged) and what stood under it moves across (to
+    the top when the kept one is a sub-step, so it stays one level deep), so one open row per
+    thread, kind and words holds. Kept as something that isn't a thread, its parts are deleted
+    (logged), as a kind change does. One read when nothing names the gone entry (a merge's
+    statement budget, #164)."""
     rows = await w.select(
         THREAD_PARTS,
         " AND (thread_id = %s OR who_id = %s OR about_id = %s)",
@@ -490,16 +521,20 @@ async def move_on_merge(w: Changes, keep_id: str, gone_id: str) -> None:
     if not rows:
         return
     moving = [r for r in rows if r["thread_id"] == gone_id]
-    theirs = {}
+    if moving and not keep_is_thread:
+        await _delete(w, moving)
+        rows = [r for r in rows if r["thread_id"] != gone_id]
+        moving = []
+    theirs: dict[tuple[str, str], Mapping[str, Any]] = {}
     if moving:
         theirs = {
-            (str(r["kind"]), str(r["words"]).lower()): str(r["id"])
+            (str(r["kind"]), str(r["words"]).lower()): r
             for r in await w.select(THREAD_PARTS, " AND thread_id = %s" + _OPEN, [keep_id])
         }
     for r in moving:
-        key = (str(r["kind"]), str(r["words"]).lower())
-        if r["status"] != REJECTED_PART and r["to_session_at"] is None and key in theirs:
-            await _move_under(w, str(r["id"]), theirs[key])
+        twin = theirs.get((str(r["kind"]), str(r["words"]).lower()))
+        if r["status"] != REJECTED_PART and r["to_session_at"] is None and twin is not None:
+            await _move_under(w, str(r["id"]), None if twin["under_id"] else str(twin["id"]))
             await w.update(THREAD_PARTS, str(r["id"]), {"status": REJECTED_PART})
     await w.update_rows(
         THREAD_PARTS,
@@ -512,11 +547,21 @@ async def move_on_merge(w: Changes, keep_id: str, gone_id: str) -> None:
     )
 
 
+async def _delete(w: Changes, rows: Sequence[Mapping[str, Any]]) -> None:
+    """Delete these parts (logged), what stands under another first, so the change log's check
+    that nothing links to a deleted row always holds."""
+    left = {str(r["id"]): r for r in rows}
+    while left:
+        parents = {str(r["under_id"]) for r in left.values() if r["under_id"] is not None}
+        leaves = [i for i in left if i not in parents] or list(left)
+        for i in leaves:
+            await w.delete(THREAD_PARTS, i)
+            del left[i]
+
+
 async def drop_on_kind_change(w: Changes, ids: Sequence[str], is_thread: bool) -> None:
     """An entry that is no longer a thread has no parts: they are deleted (logged, so Undo of the
-    kind change brings them back), sub-steps first."""
+    kind change brings them back), what stands under another first."""
     if is_thread or not ids:
         return
-    rows = await w.select(THREAD_PARTS, " AND thread_id = ANY(%s)", [list(ids)])
-    for r in sorted(rows, key=lambda r: r["under_id"] is None):  # (what stands under first)
-        await w.delete(THREAD_PARTS, str(r["id"]))
+    await _delete(w, await w.select(THREAD_PARTS, " AND thread_id = ANY(%s)", [list(ids)]))

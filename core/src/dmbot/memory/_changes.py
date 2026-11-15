@@ -197,10 +197,10 @@ MAPS = Table(
 THREAD_PARTS = Table(
     "memory_thread_parts",
     "id",
-    ("id", "thread_id", "kind", "words", "state", "under_id", "who_id", "about_id", "amount",
-     "unit", "position", "due", "terms", "limit_kind", "due_minute", "due_from", "from_session_at",
-     "to_session_at", "from_game_time", "to_game_time", "status", "source", "table_knows",
-     "created_at"),
+    ("id", "thread_id", "first_id", "kind", "words", "state", "under_id", "who_id", "about_id",
+     "amount", "unit", "position", "due", "terms", "limit_kind", "due_minute", "due_from",
+     "from_session_at", "to_session_at", "from_game_time", "to_game_time", "status", "source",
+     "table_knows", "created_at"),
 )  # fmt: skip
 # A player character's sheet (#723): not in the undo log, but read and backed up like
 # the rest of the campaign's memory.

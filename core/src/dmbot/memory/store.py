@@ -5570,7 +5570,9 @@ class MemoryStore:
         await map_fact_store.move_on_merge(  # land, climate, ruler (#4256)
             w, onto, str(kept["type"]), keep_id, gone_id
         )
-        await thread_parts.move_on_merge(w, keep_id, gone_id)  # a thread's parts (#4471)
+        await thread_parts.move_on_merge(  # a thread's parts (#4471)
+            w, keep_id, gone_id, onto.is_a(str(kept["type"]), "thread")
+        )
         await _move_plan_links(w, keep_id, gone_id)
         await states.move_states(w, onto, keep_id, kept["type"], gone_id)
         if confirm_keys and source != DM:
@@ -9722,6 +9724,8 @@ async def _check_branch_live(w: Changes, relation_id: str | None, branch: str, b
         if not onto.is_a(row["type"], "thread"):
             raise MemoryRuleError(BRANCH_KINDS)
     live = await _live_led_to(w, skip=relation_id, predicate=threads_mod.BRANCH_OF)
+    if (branch, bigger) in live:
+        return  # (the same link again: nothing new, as for "led to"; the reviewer on #4471)
     if any(a == branch for a, _ in live):
         raise MemoryRuleError(BRANCH_ONE)
     if threads_mod.would_loop(live, branch, bigger):

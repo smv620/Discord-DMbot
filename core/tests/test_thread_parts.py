@@ -330,5 +330,99 @@ class BranchesOnRestore(unittest.TestCase):
             self.check(("a", "b"), ("b", "a"))
 
 
+class ReviewersFindings(_Thread):
+    """The reviewer's four on #4471: sub-steps stay one level deep (a backup always loads), a merge
+    into something that isn't a thread drops its parts, a kind change takes a branch link off, and
+    👁️ / 🙈 act on one part's own history only."""
+
+    async def loads(self) -> None:
+        from dmbot.memory.backup import MemorySection
+
+        section = MemorySection()
+        async with self.db.guild(GUILD_A) as conn:
+            rows = await section.dump(conn, GUILD_A, self.c)
+        section.check(rows)  # (raises when the file would not restore)
+
+    async def test_an_objective_anything_stood_under_never_goes_under_another(self) -> None:
+        top = await self.put(tp.OBJECTIVE, "find Sephek")
+        other = await self.put(tp.OBJECTIVE, "find the ship")
+        step = await self.put(tp.OBJECTIVE, "ask around", under_id=top.id)
+        ticked = await self.memory.set_thread_part_state(
+            GUILD_A, self.c, step.id, "done", source=DM
+        )
+        await self.memory.remove_thread_part(GUILD_A, self.c, ticked.value.id, source=DM)
+        with self.assertRaisesRegex(MemoryRuleError, tp.WRONG_UNDER):
+            await self.memory.correct_thread_part(
+                GUILD_A, self.c, top.id, under_id=other.id, source=DM
+            )
+        await self.loads()
+
+    async def test_a_merged_top_step_matching_a_sub_step_brings_its_steps_to_the_top(self) -> None:
+        other = await self.add("Hlin's contract", type="quest", status="confirmed")
+        top = await self.put(tp.OBJECTIVE, "find the ship")
+        await self.put(tp.OBJECTIVE, "find Sephek", under_id=top.id)
+        theirs = await self.memory.add_thread_part(
+            GUILD_A, self.c, other, tp.OBJECTIVE, "Find Sephek", source=DM
+        )
+        await self.memory.add_thread_part(
+            GUILD_A, self.c, other, tp.OBJECTIVE, "ask around", source=DM,
+            under_id=theirs.value.id,
+        )  # fmt: skip
+        await self.memory.merge(GUILD_A, self.c, self.quest, other, source=DM, dm_said_same=True)
+        (moved,) = [p for p in await self.standing() if p.words == "ask around"]
+        self.assertIsNone(moved.under_id)
+        await self.loads()
+
+    async def test_merged_into_something_that_is_no_thread_drops_its_parts(self) -> None:
+        event = await self.add("The ambush", type="event", status="confirmed")
+        await self.put(tp.OBJECTIVE, "find Sephek")
+        await self.memory.merge(GUILD_A, self.c, event, self.quest, source=DM, dm_said_same=True)
+        got = await self.memory.parts_of_threads(
+            GUILD_A, self.c, [event, self.quest], gate.Viewer.the_dm(), history=True
+        )
+        self.assertEqual(got, [])
+        await self.loads()
+
+    async def test_no_longer_a_thread_takes_its_branch_link_off(self) -> None:
+        bigger = await self.add("Cerric's search", type="quest", status="confirmed")
+        await self.memory.branch_of(GUILD_A, self.c, self.quest, bigger, source=DM)
+        await self.memory.set_entity_type(GUILD_A, self.c, bigger, "event", source=DM)
+        self.assertIsNone(await self.memory.bigger_thread(GUILD_A, self.c, self.quest))
+        await self.loads()
+
+    async def test_show_and_hide_act_on_one_parts_own_history(self) -> None:
+        pc = await self.add("Testa", type="player_character", played_by=9, status="confirmed")
+        party = gate.Viewer.player([pc])
+        first = await self.put(tp.OBJECTIVE, "find the cult leader")
+        await self.memory.show_thread_part(GUILD_A, self.c, first.id, True, source=DM)
+        done = await self.memory.set_thread_part_state(GUILD_A, self.c, first.id, "done", source=DM)
+        told = await self.memory.correct_thread_part(
+            GUILD_A, self.c, done.value.id, words="find the cult's leader", in_story=True,
+            source=DM,
+        )  # fmt: skip
+        await self.memory.show_thread_part(GUILD_A, self.c, told.value.id, False, source=DM)
+        seen = await self.memory.parts_of_threads(
+            GUILD_A, self.c, [self.quest], party, history=True
+        )
+        self.assertEqual(seen, [])  # (its whole history hid with it)
+        # a new part with the first one's words is its own: showing it shows nothing older
+        await self.memory.remove_thread_part(GUILD_A, self.c, told.value.id, source=DM)
+        again = await self.put(tp.OBJECTIVE, "find the cult leader")
+        await self.memory.show_thread_part(GUILD_A, self.c, again.id, True, source=DM)
+        seen = await self.memory.parts_of_threads(
+            GUILD_A, self.c, [self.quest], party, history=True
+        )
+        self.assertEqual([p.id for p in seen], [again.id])
+
+    async def test_taking_a_part_off_takes_its_history_with_it(self) -> None:
+        step = await self.put(tp.OBJECTIVE, "find Sephek")
+        done = await self.memory.set_thread_part_state(GUILD_A, self.c, step.id, "done", source=DM)
+        await self.memory.remove_thread_part(GUILD_A, self.c, done.value.id, source=DM)
+        got = await self.memory.parts_of_threads(
+            GUILD_A, self.c, [self.quest], gate.Viewer.the_dm(), history=True
+        )
+        self.assertEqual(got, [])
+
+
 if __name__ == "__main__":
     unittest.main()

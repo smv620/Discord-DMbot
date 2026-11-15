@@ -202,11 +202,13 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 (g, c, new_id()),
             ),
             "memory_thread_parts": (  # an objective and its sub-step (#4471)
-                "INSERT INTO memory_thread_parts (guild_id, campaign_id, id, thread_id, kind, words,"
-                " state, under_id, status, source, created_at) VALUES"
-                " (%s, %s, %s, %s, 'objective', 'find Sephek', 'to_do', NULL, 'confirmed', 'dm', 1),"
-                " (%s, %s, %s, %s, 'objective', 'ask around', 'to_do', %s, 'confirmed', 'dm', 1)",
-                (g, c, OBJECTIVE, QUEST, g, c, STEP, QUEST, OBJECTIVE),
+                "INSERT INTO memory_thread_parts (guild_id, campaign_id, id, thread_id, first_id,"
+                " kind, words, state, under_id, status, source, created_at) VALUES"
+                " (%s, %s, %s, %s, %s, 'objective', 'find Sephek', 'to_do', NULL, 'confirmed',"
+                " 'dm', 1),"
+                " (%s, %s, %s, %s, %s, 'objective', 'ask around', 'to_do', %s, 'confirmed', 'dm',"
+                " 1)",
+                (g, c, OBJECTIVE, QUEST, OBJECTIVE, g, c, STEP, QUEST, STEP, OBJECTIVE),
             ),
             "memory_map_facts": (  # a place's climate (#4256)
                 "INSERT INTO memory_map_facts (guild_id, campaign_id, id, entity_id, layer, value,"
