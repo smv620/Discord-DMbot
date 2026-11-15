@@ -1,12 +1,13 @@
-"""The DM-screen notice for a peek at the Story Graph (#2404): "<name> peeked at the
-Story Graph", posted once for each visit.
+"""The notice for a peek at the Story Graph (#2404): "<name> peeked at the Story Graph", told once
+for each visit. Since #3874 the DM Bot channel (read by the campaign's people) gets only a count,
+and the name goes in a private message to the campaign's DMs (Supervisor's ruling).
 
 A player who turns the peek on (after the page's warning) asks the website's peek door, which
 records the visit in `web_peeks` (only when the campaign's DM screen lets players peek). The bot
-posts one line for each new row on the campaign's DM screen and marks it posted, so a restart never
-posts it twice. The name is the person's own display name as the website kept it; it is made plain
-text here (no mention can ping anyone). A row is deleted 31 days after it was posted (a sign-in
-lasts 30), so a visit is told once.
+tells each new row (a count in the channel, the name privately) and marks it posted, so a
+restart never posts it twice. The name is the person's own display name as the website kept
+it; it is made plain text here (no mention can ping anyone). A row is deleted 31 days after it
+was posted (a sign-in lasts 30), so a visit is told once.
 """
 
 from __future__ import annotations
@@ -29,8 +30,14 @@ class Peek:
     name: str
 
 
+def counts_line(count: int) -> str:
+    """The line for the DM Bot channel: how many peeked, never who."""
+    who = "1 player peeked" if count == 1 else f"{count} players peeked"
+    return f"👀 {who} behind the DM screen."
+
+
 def notice(name: str) -> str:
-    """The line for the DM screen. A name with markdown or a mention in it does neither."""
+    """The private line for a DM. A name with markdown or a mention in it does neither."""
     one_line = " ".join(name.split())  # no new line, so a name cannot fake a second message
     plain = discord.utils.escape_markdown(discord.utils.escape_mentions(one_line), as_needed=False)
     return f"👀 {plain} peeked at the Story Graph."

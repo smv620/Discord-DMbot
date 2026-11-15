@@ -8,7 +8,13 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 from dmbot.bot import DMBot
+from dmbot.recaps.discord import RecapFeatures
 from dmbot.transcript.keep import note_text
+
+
+def _upkeep(campaign: SimpleNamespace) -> tuple[int | None, bool]:
+    """The real rule (recaps/discord.py), applied to the stand-in campaign."""
+    return RecapFeatures._upkeep_channel(None, campaign)  # type: ignore[arg-type]
 
 
 def _campaign(bot_channel: int | None, screen: int | None) -> SimpleNamespace:
@@ -17,7 +23,7 @@ def _campaign(bot_channel: int | None, screen: int | None) -> SimpleNamespace:
 
 class WhereItGoes(unittest.IsolatedAsyncioTestCase):
     async def send(self, bot_channel: int | None, screen: int | None) -> tuple[bool, AsyncMock]:
-        bot = SimpleNamespace(post=AsyncMock(return_value=True))
+        bot = SimpleNamespace(post=AsyncMock(return_value=True), _upkeep_channel=_upkeep)
         told = await DMBot._post_upkeep(bot, _campaign(bot_channel, screen), "note")  # type: ignore[arg-type]
         return told, bot.post
 
@@ -38,3 +44,39 @@ class WhereItGoes(unittest.IsolatedAsyncioTestCase):
     def test_the_note_takes_only_numbers_so_no_name_can_be_in_it(self) -> None:
         text = note_text(3, 90)
         self.assertIn("3 transcripts", text)
+
+
+class PeekLines(unittest.TestCase):
+    def test_the_channel_line_counts_and_never_names(self) -> None:
+        from dmbot.dm_screen.peek_notices import counts_line, notice
+
+        self.assertEqual(counts_line(1), "👀 1 player peeked behind the DM screen.")
+        self.assertEqual(counts_line(3), "👀 3 players peeked behind the DM screen.")
+        self.assertIn("Sam", notice("Sam"))  # (the private line is the one that names)
+        self.assertNotIn("Sam", counts_line(1))
+
+
+class RunningPeeks(unittest.IsolatedAsyncioTestCase):
+    async def test_a_count_in_the_channel_and_each_name_only_to_the_dms(self) -> None:
+        from dmbot.dm_screen.peek_notices import Peek
+
+        campaign = SimpleNamespace(dm_user_ids={7, 8})
+        bot = SimpleNamespace(
+            peek_notices=SimpleNamespace(
+                take=AsyncMock(return_value=[Peek("c1", "Sam"), Peek("c1", "Alex")])
+            ),
+            guilds=[SimpleNamespace(id=1)],
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
+            _post_upkeep=AsyncMock(return_value=True),
+            _dm_user=AsyncMock(return_value=True),
+        )
+        await DMBot.run_peek_notices(bot)  # type: ignore[arg-type]
+        bot._post_upkeep.assert_awaited_once()
+        said = bot._post_upkeep.await_args.args[1]
+        self.assertIn("2 players peeked", said)
+        self.assertNotIn("Sam", said)
+        self.assertNotIn("Alex", said)
+        sent = [call.args for call in bot._dm_user.await_args_list]
+        self.assertEqual(len(sent), 4)  # (two DMs, two names)
+        self.assertEqual({user for user, _ in sent}, {7, 8})
+        self.assertTrue(all("Sam" in t or "Alex" in t for _, t in sent))
