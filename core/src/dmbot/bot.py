@@ -355,6 +355,7 @@ from dmbot.memory.importance_backup import ImportanceSection
 from dmbot.memory.kind_offers_backup import KindOffersSection
 from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
 from dmbot.memory.lookup import CampaignLookup, LookupCache
+from dmbot.memory.map_uploads import MapUploads
 from dmbot.memory.met_store import MetStore
 from dmbot.memory.models import (
     DM,
@@ -1563,6 +1564,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.map_store: MapStore | None = None  # a picture kept as a map (#4344)
         self.pending_maps = PendingMaps()  # a sent map waiting for its owner's yes (#4372)
         self.picture_bucket: Bucket | None = None
+        self.maps_staging: Bucket | None = None  # where the website stages a sent map (#4347)
         self._picture_db: Database | None = None
         self._pictures_told: set[str] = set()  # campaigns told this run that old pictures went
         self._picture_swept = 0.0  # when the leftover-file sweep last ran
@@ -12392,6 +12394,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except Exception as exc:
             log.warning("Import time: the offer could not be kept: %s", type(exc).__name__)
 
+    def _still_in(self, guild_id: int) -> Callable[[int], bool]:
+        """Whether a person is still a member of this server (for the Maps page's player actions:
+        a character outlives its player, #4347). The cache only: a member DMbot cannot see is
+        refused."""
+
+        def inside(user_id: int) -> bool:
+            guild = self.get_guild(guild_id)
+            return guild is not None and guild.get_member(user_id) is not None
+
+        return inside
+
     def _import_clock_choice(self, guild_id: int) -> web_actions.ClockChoiceFn:
         """The website's answer to an import clock offer (#3199), applied the way Discord's two
         buttons do it: the offer is held for this answer (a second answer, from either place,
@@ -13114,6 +13127,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 actions=store,
                                 clock=self._import_clock_choice(guild.id),
                                 maps=self.map_store,
+                                uploads=MapUploads(
+                                    self.maps_staging,
+                                    self.picture_keeper,
+                                    self.map_store,
+                                    self.settings.picture_storage_mb,
+                                ),
+                                still_here=self._still_in(guild.id),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -15691,6 +15711,13 @@ async def run(settings: Settings) -> None:
                 pictures, bot.picture_bucket, settings.picture_storage_mb
             )
             bot.picture_store = pictures
+            if settings.maps_staging_ready:
+                bot.maps_staging = Bucket(
+                    settings.r2_account_id,
+                    settings.r2_staging_bucket,
+                    settings.r2_staging_access_key,
+                    settings.r2_staging_secret_key,
+                )
             if bot.memory is not None:
                 bot.map_store = MapStore(db, bot.memory)  # the two yeses of a map (#4344)
             bot.picture_actions = PictureActions(
