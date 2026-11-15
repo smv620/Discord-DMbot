@@ -8,8 +8,9 @@ keeps it, so no names list, count of names, "Add all" or players' view reads it.
 the upload call it. ✅ Keep goes through `MemoryStore.keep_thread`: the thread, its state and the
 chosen people in one change, with this row marked kept in the same transaction (`mark_kept`), so
 one Undo takes it all back and ↩ on the card puts the suggestion back (`unkeep`). 🚫 marks it
-turned down; its name key stops it coming back, and so do its people (`known`). Counts only in the
-log, never names."""
+turned down; its name key stops it coming back, and so do its people (`known`). Since slice 3
+(#4500, migration 0507) a suggestion also holds the parts and branches read with it (`extra`); the
+keep writes those the DM left on. Counts only in the log, never names."""
 
 from __future__ import annotations
 

@@ -2,7 +2,8 @@
 quests and leads a lore upload found, one card at a time, for the DM to keep or turn down as a
 whole. ✅ Keep it puts the thread on the 🧵 Threads list and the Story Graph with its state and the
 people the DM left on, in one change (↩ Undo right after); 🚫 is remembered, so DMbot never
-suggests it again. Nothing is added by itself (§9.6).
+suggests it again. Nothing is added by itself (§9.6). Since slice 3 (#4500) the card also lists
+what's in it (steps, rewards, help, a time limit, branches), each one the DM can untick.
 
 Asked only in the DM's private chat (the card quotes the DM's own lore and may spoil a backstory);
 opened from ❓ Questions for you. Only a DM of the campaign can open it or answer, checked on every

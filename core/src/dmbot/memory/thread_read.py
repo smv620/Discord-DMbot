@@ -223,7 +223,7 @@ class Said:
 
 @dataclass(frozen=True, slots=True)
 class ReadPart:
-    """One checked part, waiting on its suggestion (#4500): written to `memory_thread_parts` only
+    """One checked part, waiting on its suggestion (#4500): written as a part of the thread only
     when the DM keeps the bundle. `who_id` is an entry of the campaign, or None."""
 
     kind: str

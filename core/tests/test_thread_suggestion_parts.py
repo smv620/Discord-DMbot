@@ -16,7 +16,9 @@ import unittest
 from dmbot.memory import thread_parts as tp
 from dmbot.memory import thread_read as tr
 from dmbot.memory.models import DM, HINTED, name_key
-from dmbot.memory.thread_suggestions import ThreadSuggestionStore, unkeep_in
+from dmbot.memory.thread_suggestions import ThreadSuggestionStore, Waiting, unkeep_in
+from dmbot.ui import logic
+from dmbot.ui import thread_questions as ui
 from tests.test_memory_store import GUILD_A, MemoryTest
 
 TEXT = (
@@ -177,6 +179,57 @@ class TheBranches(unittest.TestCase):
         self.assertEqual([(b.hint, b.missing) for b in got.branches], [(True, ("Ander",))])
         for words in ('"parts"', '"time_limit"', '"branches"', '"back"', "never a guess at who"):
             self.assertIn(words, tr.INSTRUCTIONS)
+
+
+class TheCard(unittest.TestCase):
+    """The 📜 card lists what's in it in the 📋 screen's words (the ux-critic's, #4471), each line
+    one the DM can untick, and never shows a stored word."""
+
+    lines = (
+        tr.ReadPart(tp.OBJECTIVE, "drive Gnashwater off", "to_do", "q"),
+        tr.ReadPart(tp.REWARD, "thirty gold", "owed", "q", "pell", due=tp.AFTERWARDS),
+        tr.ReadPart(tp.HELP, "his mule", "lent", "q", "pell", terms="bring her back fed"),
+        tr.ReadPart(tp.HELP, "a map", "to_keep", "q"),
+        tr.ReadPart(tp.TIME_LIMIT, "before the thaw", "running", "q", limit_kind=tp.HARD),
+    )
+    branch = tr.ReadBranch("mystery", "What happened to Ander?", "x", "q", HINTED)
+
+    def waiting(self) -> Waiting:
+        return Waiting(
+            "s", "quest", "Old Pell's job: Gnashwater", "drive the troll off", "Old Pell offers",
+            ((tr.GIVER, "pell"),), "Notes", 5, self.lines, (self.branch,),
+        )  # fmt: skip
+
+    def test_each_line_in_the_parts_screens_words(self) -> None:
+        said = [ui.line_for(x, NAMES) for x in (*self.lines, self.branch)]
+        self.assertEqual(
+            said,
+            [
+                ("drive Gnashwater off", "Step"),
+                ("thirty gold", "Reward from Old Pell, when the job's done"),
+                ("his mule", "Help from Old Pell, lent (bring her back fed)"),
+                ("a map", "Help, theirs to keep"),
+                ("before the thaw", "Time limit, hard"),
+                ("What happened to Ander?", f"{ui.BRANCH_WORD}, {ui.HINT_SAID}"),
+            ],
+        )
+        for _words, what in said:
+            self.assertLessEqual(len(what), logic.DESCRIPTION_MAX)
+            for stored in ("to_keep", "_", "up_front", "afterwards"):
+                self.assertNotIn(stored, what)
+
+    def test_the_card_lists_them_and_strikes_one_left_out(self) -> None:
+        text = ui.card_text(
+            self.waiting(), NAMES, 1, 1, on=frozenset({0}), lines_on=frozenset({0, 1, 2, 3, 4})
+        )
+        self.assertIn(ui.PARTS_HEADING, text)
+        self.assertIn("• thirty gold (Reward from Old Pell, when the job's done)", text)
+        self.assertIn("~~What happened to Ander?", text)
+        self.assertIn(ui.PARTS_UNTICK, text)
+
+    def test_a_card_from_before_shows_no_parts(self) -> None:
+        old = Waiting("s", "quest", "x", "", "", (), "", 5)
+        self.assertNotIn(ui.PARTS_HEADING, ui.card_text(old, {}, 1, 1, on=frozenset()))
 
 
 class TheKeep(MemoryTest):

@@ -878,6 +878,58 @@ class StoryThreads(unittest.TestCase):
         self.assertIn("Story threads: found 1, missed 0, wrong 1", gkc.render(report))
         self.assertEqual(report.extra_entries, Counter())  # (threads are never extra names)
 
+    def test_parts_and_branches_on_the_matched_thread(self) -> None:
+        """#4500, quests slice 3: a part is found on the thread its key thread matched, "wrong
+        thread" on another, extra when the key doesn't list it; a branch by its `branch_of`."""
+        key = {
+            "nodes": [{"name": n, "kind": "person", "aliases": [], "note": ""}
+                      for n in ("Hlin", "Sephek", "Cerric", "Wit", "Okthan")],
+            "pairs": [],
+            "threads": [
+                {"id": "t1", "kind": "quest", "name": "x", "giver": "Hlin", "target": "Sephek",
+                 "taker": "", "missing": [], "in_danger": [], "must_find": True, "hint": False,
+                 "parts": [{"kind": "objective", "words": ["capture or eliminate"]},
+                           {"kind": "reward", "words": ["gold"]},
+                           {"kind": "time_limit", "words": ["new moon"]}]},
+                {"id": "t2", "kind": "quest", "name": "y", "giver": "", "target": "",
+                 "taker": "Cerric", "missing": [], "in_danger": [], "must_find": True,
+                 "hint": False, "parts": [{"kind": "complication", "words": ["Brotherhood"]}]},
+                {"id": "t3", "kind": "mystery", "name": "z", "giver": "", "target": "",
+                 "taker": "", "missing": ["Wit"], "in_danger": [], "must_find": False,
+                 "hint": True, "branch_of": "t2"},
+                {"id": "t4", "kind": "quest", "name": "w", "giver": "", "target": "",
+                 "taker": "Okthan", "missing": [], "in_danger": [], "must_find": True,
+                 "hint": False, "branch_of": "t2"},
+            ],
+        }  # fmt: skip
+        people = [("h", "Hlin", "npc"), ("s", "Sephek", "npc"), ("c", "Cerric", "npc"),
+                  ("w", "Wit", "npc"), ("o", "Okthan", "npc")]  # fmt: skip
+        threads = [("q1", "Hlin's job", "quest"), ("q2", "Cerric's search", "quest"),
+                   ("q3", "Who killed Wit?", "mystery"), ("q4", "Okthan's", "quest")]  # fmt: skip
+
+        def part(i: str, thread: str, kind: str, words: str) -> dict[str, Any]:
+            return {"table": "thread_part", "id": i, "thread_id": thread, "kind": kind,
+                    "words": words, "status": "confirmed", "to_session_at": None}  # fmt: skip
+
+        rows = [
+            self.rel("r1", "h", "q1", "quest giver"), self.rel("r2", "s", "q1", "target"),
+            self.rel("r3", "c", "q2", "takes it on"), self.rel("r4", "w", "q3", "the one missing"),
+            self.rel("r5", "o", "q4", "takes it on"),
+            {"table": "relation", "id": "b1", "subject_id": "q3", "predicate": "branch_of",
+             "object_id": "q2", "status": "confirmed"},
+            part("p1", "q1", "objective", "Capture or eliminate Sephek"),
+            part("p2", "q2", "reward", "100 gold"),  # (t1's reward, on Cerric's thread)
+            part("p3", "q2", "complication", "the Brotherhood knows him"),
+            part("p4", "q1", "help", "a sled"),  # (the key doesn't list it)
+        ]  # fmt: skip
+        report = gkc.check(backup(people + threads, rows), key)
+        self.assertEqual(
+            dict(report.thread_parts),
+            {"found objective": 1, "found complication": 1, "wrong thread": 1,
+             "missed time_limit": 1, "extra": 2, "branches found": 1, "branches missed": 1},
+        )  # fmt: skip
+        self.assertIn("Thread parts found: objective 1/1, complication 1/1", gkc.render(report))
+
     def test_the_quest_cases_key_reads_and_scores_its_must_nots(self) -> None:
         key = load("quest_cases_key.json")
         self.assertEqual(len(key["threads"]), 5)

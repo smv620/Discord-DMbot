@@ -8,7 +8,7 @@ from __future__ import annotations
 
 # One new column on `thread_suggestions` (0502), `extra`: a JSON object with two lists.
 # - `reads`: the thread's parts as the reader checked them, each {kind, words, state, quote, who,
-#   due, terms, limit_kind}. `kind` is one of `memory_thread_parts`' kinds (0504) and `who` an
+#   due, terms, limit_kind}. `kind` is one of the thread parts' kinds (0504) and `who` an
 #   entry id or null, never a free name (Supervisor's rule for `parts`, 0502).
 # - `branches`: its branches, each {kind, name, aim, quote, state, parts}, with `parts` as the
 #   suggestion's own [part word, entry id] pairs.
