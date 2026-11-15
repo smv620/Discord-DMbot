@@ -998,8 +998,7 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
 
 # Answers to the connections that wait for the DM (#2635, #2642): body `{kind, action, id, secret}`.
 # `kind` "claim" (said at the table; actions confirm, reject; `secret` is "truth but secret") or
-# "backstory" (from the DM's own backstory; actions keep, skip; `secret` true is "keep as secret",
-# false "players see it", and left out "as it is now" for a change; #4432;
+# "backstory" (from the DM's own backstory; actions keep, skip; `secret` is "keep as secret";
 # `keep_all` keeps the ones named in `ids` (at most 50) that are ready now, and no others), or
 # "which" (a "Which Mara?" question, #2652; actions pick, with `entity` the candidate chosen, and
 # neither). A fact kept for "Which one?" (#3463, Family ties) is answered as `claim`: `pick` with
@@ -1051,10 +1050,6 @@ async def queue_waiting(db: Database, session: Session, ref: str, body: object) 
     if not isinstance(secret, bool):
         raise RecapError("bad_action")
     text = ""
-    if action == "backstory-keep" and "secret" in body and not secret:
-        # "secret": false is the DM choosing "players see it" on the card; leaving `secret` out
-        # keeps it as it is now (a hidden connection it replaces stays hidden), #4432
-        text = "show"
     target = "" if action == "backstory-keep-all" else str(body.get("id") or "")
     if action == "backstory-keep-all":
         # Keep all keeps exactly the connections the page showed (ids), never one that turned
