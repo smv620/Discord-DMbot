@@ -321,6 +321,7 @@ from dmbot.memory import (
     scene_move_step,
     scene_step,
     voyage,
+    waiting_now,
     web_actions,
     web_report_requests,
     web_sheets,
@@ -1564,6 +1565,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self._picture_db: Database | None = None
         self._pictures_told: set[str] = set()  # campaigns told this run that old pictures went
         self._picture_swept = 0.0  # when the leftover-file sweep last ran
+        self._waiting_now_at = 0.0  # when the waiting cards' "now" was last refreshed (#4441)
         self._map_close_swept = 0.0  # when the map close-read sweep last ran (#4349)
         self._map_close_task: asyncio.Task[None] | None = None
         # campaign → when its close reads may be tried again after being put off (in memory: a
@@ -13662,6 +13664,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return "not read"
         await store.close_read_done(gid, cid, a_map.id, claimed)
         return "read"
+
+    async def run_waiting_now(self) -> None:
+        """Once a minute, write on each waiting connection what a keep would replace, for the
+        website's card (#4441). Counts only in the log."""
+        store, memory = self.backstory_links, self.memory
+        if store is None or memory is None or time.time() - self._waiting_now_at < 60:
+            return
+        self._waiting_now_at = time.time()
+        changed = 0
+        for guild in list(self.guilds):
+            changed += await waiting_now.refresh_guild(memory, store, guild.id)
+        if changed:
+            log.info("What a keep would replace: %d waiting connections updated", changed)
 
     async def run_picture_sweep(self) -> None:
         """Once a day, delete the picture files no row points to (counts only in the log)."""
