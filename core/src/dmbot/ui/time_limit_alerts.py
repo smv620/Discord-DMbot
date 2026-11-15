@@ -87,7 +87,7 @@ async def after_clock(client: Any, guild_id: int, campaign_id: str) -> int:
         if not due:
             return 0
         campaign = await client.campaigns.get(guild_id, campaign_id)
-        dms = sorted(campaign.dm_user_ids) if campaign is not None else []
+        dms = sorted(campaign.dm_accounts) if campaign is not None else []  # (one per DM, #2533)
         said = 0
         # (one by one: the claims are made, so a stop here loses a message, never repeats one;
         # the 🧵 card and the pre-session note still show every limit)

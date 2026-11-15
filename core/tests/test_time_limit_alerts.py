@@ -164,7 +164,7 @@ class Telling(MemoryTest):
             return Calendar()
 
         async def campaign(*_: Any) -> Any:
-            return SimpleNamespace(dm_user_ids=frozenset({11, 22}))
+            return SimpleNamespace(dm_accounts=frozenset({11, 22}))
 
         async def dm_message(user_id: int, text: str, view: Any) -> Any:
             sent.append((user_id, text))
