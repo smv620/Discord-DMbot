@@ -510,7 +510,10 @@ class FromThePrivateChat(unittest.IsolatedAsyncioTestCase):
         ):
             await ce.begin(cast(Any, it), GUILD, CID)
         run.assert_not_awaited()
-        self.assertIn(names.logic.NO_CAMPAIGN_ACCESS, told.await_args.args)
+        from dmbot.ui import logic
+
+        assert told.await_args is not None
+        self.assertIn(logic.NO_CAMPAIGN_ACCESS, told.await_args.args)
         self.assertNotIn(CID, names._PRIVATE_SERVERS)
 
     async def test_another_servers_id_in_the_button_finds_nothing(self) -> None:
