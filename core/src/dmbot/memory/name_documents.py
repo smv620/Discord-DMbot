@@ -265,8 +265,13 @@ def _by_layout(page: Any, plain: str) -> str:
 # heading, and the next line isn't a list item. Headings, short lines and list items stay as they
 # are; nothing is added or dropped but the line break.
 RUNS_ON = 0.7  # a line at least this share of the page's longest line is one the edge cut
+# A cut line is prose: a page of short lines (a roster, a contents page, a table of names) never
+# joins, or its names would read as one sentence that "connects" them all (#4307's review)
+PROSE_WORDS = 8
 _ENDS = tuple(".!?:;\"'”’)]")
-_ITEM = re.compile(r"^(?:[-*•–]|\d+[.)])\s")
+_ITEM = re.compile(r"^(?:[-*•–—◦▪●·]|\d+[.)]|[a-z][.)])\s")
+_PAGE_NUMBER = re.compile(r"^\d+$")
+_WORD_HYPHEN = re.compile(r"\w-$")
 
 
 def reflow(text: str) -> str:
@@ -277,13 +282,19 @@ def reflow(text: str) -> str:
     joining = False
     for line in lines:
         body = line.strip()
-        if joining and body and not _ITEM.match(body):
-            # (a hyphen at the edge keeps its word whole: "Caer-" + "Konig")
-            out[-1] += ("" if out[-1].endswith("-") else " ") + body
+        if joining and body and not _ITEM.match(body) and not _PAGE_NUMBER.match(body):
+            # (a hyphen after a letter at the edge keeps its word whole, "Caer-" + "Konig", and
+            # keeps the hyphen, since dropping it would break real compounds; a dash gets a space)
+            out[-1] += ("" if _WORD_HYPHEN.search(out[-1]) else " ") + body
         else:
             out.append(body)
         last = out[-1]
-        joining = bool(last) and len(body) >= RUNS_ON * widest and not last.endswith(_ENDS)
+        joining = (
+            bool(last)
+            and len(body) >= RUNS_ON * widest
+            and len(body.split()) >= PROSE_WORDS
+            and not last.endswith(_ENDS)
+        )
     return "\n".join(out)
 
 

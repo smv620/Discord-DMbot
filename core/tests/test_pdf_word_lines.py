@@ -146,8 +146,49 @@ class Reflow(unittest.TestCase):
         )
 
     def test_nothing_is_added_or_lost(self) -> None:
-        page = "one two three four five six seven eight nine ten\neleven twelve.\nthirteen"
-        self.assertEqual(nd.reflow(page).split(), page.split())
+        page = (
+            "one two three four five six seven eight nine ten eleven Caer-\n"
+            "Konig twelve thirteen fourteen fifteen sixteen seventeen -\n"
+            "eighteen nineteen.\nthirteen"
+        )
+        got = nd.reflow(page)
+        self.assertEqual("".join(got.split()), "".join(page.split()))
+        self.assertIn("Caer-Konig", got)
+        self.assertIn("seventeen - eighteen", got)  # (a dash is not a broken word)
+
+    def test_short_lines_stay_apart(self) -> None:
+        for page in (
+            "Bryn Shander\nTolly Brightwater\nCerric Vanya\nDuvessa Shane\nSephek Kaltro",
+            "Contents\nChapter one: the Ten Towns 4\nChapter two: the Spine 12\nIndex 40",
+            "",
+        ):
+            with self.subTest(page=page):
+                self.assertEqual(nd.reflow(page), page)
+
+    def test_lists_and_page_numbers_stay_apart(self) -> None:
+        cut = "The road north from Bryn Shander runs past the lakes and the old"
+        for after in ("a) the first way out of the dale", "— the other road", "12"):
+            with self.subTest(after=after):
+                self.assertEqual(nd.reflow(f"{cut}\n{after}"), f"{cut}\n{after}")
+
+
+class PlainReadingJoined(unittest.TestCase):
+    """#4307 itself: a page the plain reading reads well, one paragraph wrapped over three lines at
+    the page's edge, comes out of the PDF reader as one line (one paragraph for the lore reader)."""
+
+    def test_wrapped_paragraph_is_one_line(self) -> None:
+        lines = [
+            "Cerric Vanya grew up near Lonelywood where his older sister",
+            "taught him the old songs of the shrine and the lake roads to",
+            "Bryn Shander. He speaks Elvish and Common.",
+            "",
+            "Duvessa Shane is the speaker of Bryn Shander and its council.",
+        ]
+        content = "BT /F1 10 Tf 40 760 Td 14 TL " + " ".join(f"({t}) Tj T*" for t in lines) + " ET"
+        got = [line for line in nd._pdf_text(_pdf([content])).split("\n") if line.strip()]
+        self.assertEqual(len(got), 2)
+        self.assertIn("sister taught him", got[0])
+        self.assertIn("lake roads to Bryn Shander.", got[0])
 
 
 class ReadAsBefore(unittest.TestCase):
