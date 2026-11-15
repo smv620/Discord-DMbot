@@ -17,6 +17,7 @@ pattern and the same rule for getting the DM's attention).
 4. [The `thread_parts` row](#4-the-thread_parts-row)
 5. [The parts, one by one](#5-the-parts-one-by-one)
    - [5a. Rewards: promised and given](#5a-rewards-promised-and-given)
+   - [5b. Help for the job: given or lent](#5b-help-for-the-job-given-or-lent)
 6. [Who is doing it: the party without an entry](#6-who-is-doing-it-the-party-without-an-entry)
    - [6a. Bigger quests and their branches](#6a-bigger-quests-and-their-branches)
 7. [Mysteries, clues and "solved so far"](#7-mysteries-clues-and-solved-so-far)
@@ -138,7 +139,7 @@ One row is one part of one thread.
 |---|---|
 | campaign scope, `id` | as every memory table |
 | thread | the thread entry it belongs to |
-| `kind` | `objective`, `complication`, `reward` (promised), `reward_given` (handed over) or `time_limit` |
+| `kind` | `objective`, `complication`, `reward` (promised), `reward_given` (handed over), `help` (given or lent for the job) or `time_limit` |
 | words | what it is, in the source's or the DM's words: "find where Sephek sleeps", "100 gold" |
 | under | for an objective, the objective it is a sub-step of (one level deep). For a `reward_given`, the promised reward it counts against, when there is one |
 | amount | an optional number and unit when the words give one ("100 gold" → 100, gold). Rewards only |
@@ -174,6 +175,7 @@ same thing become one.
 | **Objective** | to do · done · failed · no longer needed | Order and one level of sub-steps. Meeting every objective does **not** finish the thread: only the DM changes a thread's state |
 | **Complication** | in the way · overcome · no longer matters | A setback, a twist, a new obstacle. It may point at the event that brought it |
 | **Reward promised** | owed · settled · won't be given · turned down | Section 5a. Words, who promises it, when it is due (up front, afterwards, or not said), and the item entry when it is a named thing |
+| **Help** | to keep · lent · returned · not returned | Section 5b. Words, who gave or lent it, any terms in the text's words ("returned unharmed"), and the entry when it is a named thing or creature |
 | **Reward given** | (none: it is a record of something handed over) | Section 5a. Words, who gave it, when, and the promise it counts against |
 | **Time limit** | running · met · passed · lifted | Section 8. "Passed" is worked out from the clock, never stored |
 
@@ -195,8 +197,8 @@ and given in part. What was promised and what was handed over are kept as two ki
 matched, so a promise that has been met stops showing as outstanding.
 
 **What counts as a reward:** gold, goods, a named item, a favour, a privilege, standing ("100
-gold", "a route map", "a room whenever you pass", "the town's goodwill"). An item handed over to
-help with the job is a reward given up front.
+gold", "a room whenever you pass", "the town's goodwill"). A reward is given **in exchange for**
+the job. Something given or lent **to do** the job is help, not a reward (section 5b).
 
 **Two kinds of row:**
 
@@ -238,6 +240,42 @@ help with the job is a reward given up front.
   finished or where the reward was due up front.
 - **A reward of standing is only words.** Marking it given never changes a reputation or an
   attitude: those stay the DM's to set (STORY_MEMORY section 5).
+
+---
+
+## 5b. Help for the job: given or lent
+
+(Owner, 2026-11-15.) Some things are handed over to help with a quest and are not payment. In the
+sample session Jebidiah, the kennel master, lends the party sled dogs to find Garret and asks for
+them back unharmed. That is neither a reward nor a gift.
+
+**Reward or help: the test is why it was handed over.**
+
+| The text says | It is |
+|---|---|
+| "in return", "for your trouble", "payment", "there's 50 gold in it" | a **reward** (section 5a) |
+| "take these, you'll need them", "to help you find him", with nothing about giving them back | **help, to keep** |
+| "bring them back", "return them unharmed", "I'll want it back", "borrow" | **help, lent** |
+| nothing that says which | **help, to keep**, and the DM changes it in one tap. DMbot never assumes a debt |
+
+**What a help row holds:** the words ("two sleds and eight dogs"), who gave or lent it, the terms
+in the text's own words ("returned unharmed"), when in the story, and the item or creature entry
+it points at when there is one.
+
+**A loan is something the party owes back:**
+
+- **lent** → **returned** or **not returned**. "Not returned" covers lost, destroyed, harmed or
+  kept; the DM says which in words, and whether the lender minds is the DM's story to tell.
+- **A loan outlives the quest,** as an owed reward does: a finished quest with something still
+  lent keeps showing it.
+- **What the DM sees:** on the quest's card, "Lent by Jebidiah: two sleds and eight dogs (to
+  return unharmed)". In the pre-session note, one line, "↩ To give back:", for loans on finished
+  quests.
+- **Returning what was lent never finishes the quest,** and finishing the quest never returns it.
+
+**It is still who-holds-what:** when the thing lent is an entry (the dogs, a named item), the
+possession links say who has it now and who owns it, as today. The help row adds only that it was
+lent for this quest, and on what terms. Owning stays with the lender.
 
 ---
 
@@ -457,7 +495,7 @@ are the first rows of the quest keys, and they show both shapes.
 | ↳ **Who killed Wit?** (a branch, "Just a hint") | lore | a question the text leaves open | Cerric | Wit (the victim) | none stated | none | none | Wit's last words |
 | **Why Okthandom's family vanish, and how to break the curse** | lore | a pursuit | Okthandom ("takes it on") | Vaelrith (vanished), Nyssara (in danger); the unseen presence | find answers; break the curse | none | **soft, words only:** "before the shadow claims his sister, his child, and himself" | the ancestral journal; the blood-stained campsite; the whispers Nyssara hears |
 | **Hlin's contract on Sephek Kaltro** | lore | an ask and a taker | the party | Hlin Trollbane (quest giver), Sephek Kaltro (target) | capture or eliminate Sephek Kaltro | only what the text states | none | none in this passage |
-| **Find Garret Velryn** | session | an ask and a taker | the party (Belleros agrees for them) | Keegan Velryn (quest giver), Garret Velryn (target); Kelvin's Cairn | find Garret | 50 gold and a route map, both given up front; nothing owed | none stated | the route map; where he was last seen |
+| **Find Garret Velryn** | session | an ask and a taker | the party (Belleros agrees for them) | Keegan Velryn (quest giver), Garret Velryn (target); Kelvin's Cairn | find Garret | 50 gold, given up front; nothing owed. **Help:** a route map from Keegan (to keep); two sleds and eight dogs lent by Jebidiah (to return unharmed) | none stated | the route map; where he was last seen |
 
 **What these fix for the readers:**
 
@@ -469,8 +507,10 @@ are the first rows of the quest keys, and they show both shapes.
 - **Neither backstory says "quest",** and neither has anyone asking. Both must be found.
 - **"Capture or eliminate" is one objective with the text's own "or",** never two, and never
   DMbot's choice of which.
-- **A reward handed over on agreeing is a "given" row from the start,** dated to that moment. The
-  50 gold and the route map are given up front, and nothing is left owed.
+- **A reward handed over on agreeing is a "given" row from the start,** dated to that moment.
+  Keegan's 50 gold is given up front, and nothing is left owed.
+- **Help is kept apart from reward.** Keegan's route map is help to keep. Jebidiah's sleds and
+  dogs are help lent, "to return unharmed", and stay on the quest's card until they go back.
 - **"Before the shadow claims …" is a soft limit with no date,** and stays words.
 - **The clue rows are suggestions too:** the tome's warning and the journal become clue entries
   only when the DM keeps them, each tied to its quest with `clue_to`.
@@ -516,7 +556,7 @@ there (same giver and target, or the same name).
 Each reader slice is scored on the sample, lore first and then the session, before and after:
 
 - **The keys gain rows for:** threads (kind, giver, target), objectives, rewards promised and given
-  (with the promise each given row meets), time limits (the
+  (with the promise each given row meets), help given and lent (with its terms), time limits (the
   words, and the game date where the key has one), clues with the thread they are a clue to, and
   progress in the session key.
 - **The four quests of section 9.3 are must-find rows,** and Cerric's must be found as the wide
@@ -565,6 +605,8 @@ which has none today.
 ## 11. Never
 
 - **Never add a thread, a part or a clue by itself.** A reader suggests; the DM keeps.
+- **Never record help as payment,** and never assume something must be given back unless the text
+  or the DM says so.
 - **Never treat a reward as the end of a quest,** or a quest's end as the reward being settled.
 - **Never invent** a quest, an objective, a reward, a deadline or a clue the text doesn't state, and
   never fill in a part because quests "usually have one".
@@ -591,6 +633,7 @@ which has none today.
 | **A table for each kind of part** | Four copies of the read/keep rule, history, Undo, the backup and the players' rule |
 | **Parts as JSON on the thread entry** | No history for one step and no Undo for one change |
 | **A complication as an event with a new connection** | An event is what happened; a complication is what is now in the way, and it has a state of its own. The part points at the event instead |
+| **Help recorded as a reward given up front** | A loan is not payment: it has to come back, and it says nothing about what the job pays |
 | **One reward row with a state "paid"** (revision 1) | It can't hold a part payment, something given that was never promised, or a reward still owed after the quest ended |
 | **A reward as a promise thread** | A second thread for every paid job, to be kept in step with the first |
 | **The party as an entry, or a stored "taken by the party"** | Ruled out on #3157. A default needs no storage |
