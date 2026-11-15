@@ -1,0 +1,541 @@
+{
+ "campaign": "test of the frostmaiden (sample)",
+ "source": "the owner's Icewind Dale map (Ten-Towns), 1125 x 790 pixels; kept on the server only, never in the repository",
+ "version": "1 (draft: pins and distances read by eye by Supervisor from the owner's copy; correct them after the first run, in a new version, never by rewriting a scored one)",
+ "how_to_read": "What MapBot should read from the sample map (docs/design/mapbot_layers.md, sections 4 to 7). Pins are fractions across and down; a pin counts as found within 0.04 of the key in both directions. Distances are straight lines from the pins and the map's own scale; one counts within 25%. Every answer from this map says 'in a straight line' and names the map.",
+ "map": {
+  "scale": {
+   "must_find": true,
+   "words": "hex = 1 mile",
+   "bar": "0 to 20 miles",
+   "note": "both are on the map; either gives the scale"
+  },
+  "north": {
+   "must_find": true,
+   "words": "compass rose, north up",
+   "note": "shown, so north is not an assumption"
+  },
+  "legend": [
+   {
+    "symbol": "black dot",
+    "means": "Large Town"
+   },
+   {
+    "symbol": "white dot",
+    "means": "Small Town"
+   },
+   {
+    "symbol": "red dotted line",
+    "means": "Road"
+   }
+  ],
+  "covers": "Icewind Dale",
+  "audience": "dm"
+ },
+ "pins": [
+  {
+   "name": "Bryn Shander",
+   "form": "settlement",
+   "at": [
+    0.324,
+    0.566
+   ],
+   "must_find": true,
+   "note": "large town (black dot)"
+  },
+  {
+   "name": "Targos",
+   "form": "settlement",
+   "at": [
+    0.293,
+    0.538
+   ],
+   "must_find": true,
+   "note": "large town"
+  },
+  {
+   "name": "Termalaine",
+   "form": "settlement",
+   "at": [
+    0.366,
+    0.458
+   ],
+   "must_find": true,
+   "note": "large town"
+  },
+  {
+   "name": "Easthaven",
+   "form": "settlement",
+   "at": [
+    0.467,
+    0.591
+   ],
+   "must_find": true,
+   "note": "large town"
+  },
+  {
+   "name": "Lonelywood",
+   "form": "settlement",
+   "at": [
+    0.347,
+    0.437
+   ],
+   "must_find": true,
+   "note": "small town (white dot)"
+  },
+  {
+   "name": "Bremen",
+   "form": "settlement",
+   "at": [
+    0.278,
+    0.51
+   ],
+   "must_find": true,
+   "note": "small town"
+  },
+  {
+   "name": "Caer-Dineval",
+   "form": "settlement",
+   "at": [
+    0.471,
+    0.515
+   ],
+   "must_find": true,
+   "note": "small town"
+  },
+  {
+   "name": "Caer-Konig",
+   "form": "settlement",
+   "at": [
+    0.484,
+    0.462
+   ],
+   "must_find": true,
+   "note": "small town"
+  },
+  {
+   "name": "Good Mead",
+   "form": "settlement",
+   "at": [
+    0.391,
+    0.625
+   ],
+   "must_find": true,
+   "note": "small town"
+  },
+  {
+   "name": "Dougan's Hole",
+   "form": "settlement",
+   "at": [
+    0.353,
+    0.656
+   ],
+   "must_find": true,
+   "note": "small town; not in the lore or session keys: a new name the map alone gives"
+  },
+  {
+   "name": "Kelvin's Cairn",
+   "form": "mountain",
+   "at": [
+    0.458,
+    0.395
+   ],
+   "must_find": true,
+   "note": "the lone peak"
+  },
+  {
+   "name": "Maer Dualdon",
+   "form": "water",
+   "at": [
+    0.316,
+    0.468
+   ],
+   "must_find": true,
+   "note": "lake"
+  },
+  {
+   "name": "Lac Dinneshere",
+   "form": "water",
+   "at": [
+    0.484,
+    0.532
+   ],
+   "must_find": true,
+   "note": "lake; not in the lore or session keys"
+  },
+  {
+   "name": "Redwaters",
+   "form": "water",
+   "at": [
+    0.404,
+    0.652
+   ],
+   "must_find": true,
+   "note": "lake; not in the lore or session keys"
+  },
+  {
+   "name": "Ten-Towns",
+   "form": "area",
+   "at": [
+    0.233,
+    0.605
+   ],
+   "must_find": true,
+   "note": "region label; its pin is the label, never an outline"
+  },
+  {
+   "name": "Icewind Dale",
+   "form": "area",
+   "at": [
+    0.5,
+    0.5
+   ],
+   "must_find": false,
+   "note": "the map's title, the whole map; the map's 'covers', not a pin"
+  },
+  {
+   "name": "Spine of the World",
+   "form": "mountain",
+   "at": [
+    0.582,
+    0.829
+   ],
+   "must_find": true,
+   "note": "mountain range"
+  },
+  {
+   "name": "Sea of Moving Ice",
+   "form": "water",
+   "at": [
+    0.209,
+    0.272
+   ],
+   "must_find": true,
+   "note": "frozen sea; not in the lore or session keys"
+  },
+  {
+   "name": "Reghed Glacier",
+   "form": "area",
+   "at": [
+    0.902,
+    0.165
+   ],
+   "must_find": true,
+   "note": "glacier; not in the lore or session keys"
+  },
+  {
+   "name": "Dwarven Valley",
+   "form": "area",
+   "at": [
+    0.427,
+    0.475
+   ],
+   "must_find": false,
+   "note": "small label between Kelvin's Cairn and Bryn Shander"
+  },
+  {
+   "name": "Shaengarne River",
+   "form": "water",
+   "at": [
+    0.204,
+    0.551
+   ],
+   "must_find": false,
+   "note": "river label, west"
+  },
+  {
+   "name": "The Redrun",
+   "form": "water",
+   "at": [
+    0.187,
+    0.734
+   ],
+   "must_find": false,
+   "note": "small label, south-west"
+  }
+ ],
+ "routes": [
+  {
+   "from": "Bryn Shander",
+   "to": "Targos",
+   "must_find": true,
+   "note": "road (red dots)"
+  },
+  {
+   "from": "Bryn Shander",
+   "to": "Termalaine",
+   "must_find": true,
+   "note": "road north"
+  },
+  {
+   "from": "Termalaine",
+   "to": "Lonelywood",
+   "must_find": true,
+   "note": "road"
+  },
+  {
+   "from": "Bryn Shander",
+   "to": "Easthaven",
+   "name": "Eastway Road",
+   "label": "The Eastway",
+   "must_find": true,
+   "note": "the named road east; the lore's 'Eastway Road' is the same place"
+  },
+  {
+   "from": "Easthaven",
+   "to": "Caer-Dineval",
+   "must_find": true,
+   "note": "road north along Lac Dinneshere"
+  },
+  {
+   "from": "Caer-Dineval",
+   "to": "Caer-Konig",
+   "must_find": true,
+   "note": "road"
+  },
+  {
+   "from": "Good Mead",
+   "to": "Eastway Road",
+   "must_find": false,
+   "note": "short spur"
+  },
+  {
+   "from": "Bryn Shander",
+   "to": "Spine of the World",
+   "must_find": false,
+   "note": "the trail south-west into the mountains; its label is too small to read"
+  }
+ ],
+ "spatial": [
+  {
+   "a": "Targos",
+   "rel": "west of",
+   "b": "Bryn Shander",
+   "must_find": true
+  },
+  {
+   "a": "Termalaine",
+   "rel": "north of",
+   "b": "Bryn Shander",
+   "must_find": true
+  },
+  {
+   "a": "Easthaven",
+   "rel": "east of",
+   "b": "Bryn Shander",
+   "must_find": true
+  },
+  {
+   "a": "Caer-Konig",
+   "rel": "north of",
+   "b": "Easthaven",
+   "must_find": true
+  },
+  {
+   "a": "Kelvin's Cairn",
+   "rel": "north-east of",
+   "b": "Bryn Shander",
+   "must_find": true
+  },
+  {
+   "a": "Spine of the World",
+   "rel": "south of",
+   "b": "Ten-Towns",
+   "must_find": true
+  },
+  {
+   "a": "Sea of Moving Ice",
+   "rel": "north-west of",
+   "b": "Ten-Towns",
+   "must_find": true
+  },
+  {
+   "a": "Reghed Glacier",
+   "rel": "east of",
+   "b": "Ten-Towns",
+   "must_find": false
+  },
+  {
+   "a": "Lonelywood",
+   "rel": "on the shore of",
+   "b": "Maer Dualdon",
+   "must_find": true
+  },
+  {
+   "a": "Termalaine",
+   "rel": "on the shore of",
+   "b": "Maer Dualdon",
+   "must_find": true
+  },
+  {
+   "a": "Targos",
+   "rel": "on the shore of",
+   "b": "Maer Dualdon",
+   "must_find": true
+  },
+  {
+   "a": "Bremen",
+   "rel": "on the shore of",
+   "b": "Maer Dualdon",
+   "must_find": false
+  },
+  {
+   "a": "Caer-Konig",
+   "rel": "on the shore of",
+   "b": "Lac Dinneshere",
+   "must_find": true
+  },
+  {
+   "a": "Caer-Dineval",
+   "rel": "on the shore of",
+   "b": "Lac Dinneshere",
+   "must_find": true
+  },
+  {
+   "a": "Easthaven",
+   "rel": "on the shore of",
+   "b": "Lac Dinneshere",
+   "must_find": true
+  },
+  {
+   "a": "Good Mead",
+   "rel": "on the shore of",
+   "b": "Redwaters",
+   "must_find": false
+  },
+  {
+   "a": "Dougan's Hole",
+   "rel": "on the shore of",
+   "b": "Redwaters",
+   "must_find": true
+  },
+  {
+   "a": "Bryn Shander",
+   "rel": "in",
+   "b": "Ten-Towns",
+   "must_find": false,
+   "note": "the label sits beside the towns; 'in' is a reasonable reading, not one the map states"
+  }
+ ],
+ "distances": [
+  {
+   "from": "Bryn Shander",
+   "to": "Targos",
+   "miles": 2.9,
+   "must_find": true
+  },
+  {
+   "from": "Bryn Shander",
+   "to": "Easthaven",
+   "miles": 11.2,
+   "must_find": true
+  },
+  {
+   "from": "Bryn Shander",
+   "to": "Lonelywood",
+   "miles": 7.3,
+   "must_find": true
+  },
+  {
+   "from": "Bryn Shander",
+   "to": "Kelvin's Cairn",
+   "miles": 14.0,
+   "must_find": true
+  },
+  {
+   "from": "Easthaven",
+   "to": "Caer-Konig",
+   "miles": 7.2,
+   "must_find": true
+  },
+  {
+   "from": "Targos",
+   "to": "Kelvin's Cairn",
+   "miles": 15.1,
+   "must_find": true
+  },
+  {
+   "from": "Targos",
+   "to": "Easthaven",
+   "miles": 13.9,
+   "must_find": true
+  },
+  {
+   "from": "Bryn Shander",
+   "to": "Good Mead",
+   "miles": 6.1,
+   "must_find": true
+  }
+ ],
+ "layers": [
+  {
+   "place": "Spine of the World",
+   "layer": "terrain",
+   "value": "mountain",
+   "must_find": true,
+   "note": "drawn mountain symbols"
+  },
+  {
+   "place": "Kelvin's Cairn",
+   "layer": "terrain",
+   "value": "mountain",
+   "must_find": false
+  },
+  {
+   "place": "Reghed Glacier",
+   "layer": "terrain",
+   "value": "arctic",
+   "must_find": false
+  }
+ ],
+ "agrees_with_text": [
+  {
+   "pair": [
+    "Targos",
+    "Bryn Shander"
+   ],
+   "text": "1 hour (session, line 283)",
+   "map": "about 3 miles in a straight line",
+   "result": "agree: no World note"
+  },
+  {
+   "pair": [
+    "Targos",
+    "Kelvin's Cairn"
+   ],
+   "text": "twenty miles (lore, line 6)",
+   "map": "about 15 miles in a straight line",
+   "result": "text and map differ; the text's route length stays, the map answer names the map. Not a World note (that is only for two maps)"
+  }
+ ],
+ "must_not_find": [
+  {
+   "what": "a culture, population or political control row from this map",
+   "why": "the map shows none of them outright (mapbot_layers 7.2)"
+  },
+  {
+   "what": "a climate row from this map",
+   "why": "snow drawn on a map is not a stated climate; the lore's 'arctic' row comes from the text"
+  },
+  {
+   "what": "weather of any kind",
+   "why": "never stored"
+  },
+  {
+   "what": "an outline (area feature) read by the AI",
+   "why": "areas come only from the DM or an import"
+  },
+  {
+   "what": "a place the map doesn't name (Hundelstone, Fireshear, Luskan, Neverwinter, Waterdeep)",
+   "why": "not on this map; a pin for one is invented"
+  },
+  {
+   "what": "a number of people for any town",
+   "why": "population is words only, and the map gives none"
+  },
+  {
+   "what": "a second entry for Easthaven, Good Mead or Eastway Road",
+   "why": "the map's spelling must match the existing entry (aliases Eashaven, Goodmead, The Eastway)"
+  }
+ ]
+}
