@@ -13036,13 +13036,22 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 by_campaign.setdefault(peek.campaign_id, []).append(peek.name)
             for campaign_id, names in by_campaign.items():
                 with log_context(guild_id=guild.id, campaign_id=campaign_id):
-                    campaign = await self.campaigns.get(guild.id, campaign_id)
-                    if campaign is None:
-                        continue
-                    await self._post_upkeep(campaign, peek_counts_line(len(names)))
-                    for user_id in sorted(campaign.dm_user_ids):
-                        for name in names:
-                            await self._dm_user(user_id, peek_notice(name))
+                    # Each campaign in its own try: the rows were marked posted when taken, so one
+                    # failure must not lose the others' names. Only the error's type is logged.
+                    try:
+                        campaign = await self.campaigns.get(guild.id, campaign_id)
+                        if campaign is None:
+                            continue
+                        try:  # (a courtesy: the names below go out even if it fails)
+                            await self._post_upkeep(campaign, peek_counts_line(len(names)))
+                        except Exception as exc:
+                            log.warning("Peek count not posted: %s", type(exc).__name__)
+                        # (a person with two accounts is told once: `dm_accounts`, not the ids)
+                        for user_id in sorted(campaign.dm_accounts):
+                            for name in names:
+                                await self._dm_user(user_id, peek_notice(name))
+                    except Exception as exc:
+                        log.warning("Peek notices failed: %s", type(exc).__name__)
 
     def _waiting_answers(self, guild_id: int) -> web_actions.Waiting | None:
         """What the website's answers to waiting connections need (#2635): the claims, the

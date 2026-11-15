@@ -60,7 +60,7 @@ class RunningPeeks(unittest.IsolatedAsyncioTestCase):
     async def test_a_count_in_the_channel_and_each_name_only_to_the_dms(self) -> None:
         from dmbot.dm_screen.peek_notices import Peek
 
-        campaign = SimpleNamespace(dm_user_ids={7, 8})
+        campaign = SimpleNamespace(dm_accounts={7, 8})
         bot = SimpleNamespace(
             peek_notices=SimpleNamespace(
                 take=AsyncMock(return_value=[Peek("c1", "Sam"), Peek("c1", "Alex")])
@@ -80,3 +80,37 @@ class RunningPeeks(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(sent), 4)  # (two DMs, two names)
         self.assertEqual({user for user, _ in sent}, {7, 8})
         self.assertTrue(all("Sam" in t or "Alex" in t for _, t in sent))
+
+    def bot_with(self, campaigns: AsyncMock, post: AsyncMock) -> SimpleNamespace:
+        from dmbot.dm_screen.peek_notices import Peek
+
+        return SimpleNamespace(
+            peek_notices=SimpleNamespace(
+                take=AsyncMock(return_value=[Peek("c1", "Sam"), Peek("c2", "Alex")])
+            ),
+            guilds=[SimpleNamespace(id=1)],
+            campaigns=SimpleNamespace(get=campaigns),
+            _post_upkeep=post,
+            _dm_user=AsyncMock(return_value=False),  # (a closed DM: the rest still go)
+        )
+
+    async def test_a_failing_post_or_campaign_never_loses_the_others_names(self) -> None:
+        mine = SimpleNamespace(dm_accounts={7})
+        found = AsyncMock(side_effect=[RuntimeError("db"), mine])
+        bot = self.bot_with(found, AsyncMock(side_effect=RuntimeError("down")))
+        await DMBot.run_peek_notices(bot)  # type: ignore[arg-type]
+        sent = [call.args for call in bot._dm_user.await_args_list]
+        self.assertEqual([user for user, _ in sent], [7])  # (c2's DM went out)
+        self.assertIn("Alex", sent[0][1])
+
+    async def test_a_gone_campaign_gets_nothing(self) -> None:
+        bot = self.bot_with(AsyncMock(return_value=None), AsyncMock())
+        await DMBot.run_peek_notices(bot)  # type: ignore[arg-type]
+        bot._post_upkeep.assert_not_awaited()
+        bot._dm_user.assert_not_awaited()
+
+    async def test_two_campaigns_get_two_count_lines(self) -> None:
+        mine = SimpleNamespace(dm_accounts={7})
+        bot = self.bot_with(AsyncMock(return_value=mine), AsyncMock(return_value=True))
+        await DMBot.run_peek_notices(bot)  # type: ignore[arg-type]
+        self.assertEqual(bot._post_upkeep.await_count, 2)
