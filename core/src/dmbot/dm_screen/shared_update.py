@@ -10,6 +10,7 @@ spare, so a fifth update or more is named in a line and handled from Settings.""
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -17,7 +18,9 @@ from typing import Any
 
 import discord
 
+from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
+from dmbot.dm_screen import private_note
 
 log = logging.getLogger(__name__)
 
@@ -87,23 +90,48 @@ def combined_view(collected: Collected) -> discord.ui.View:
     return view
 
 
-async def post(bot: Any, campaign_id: str, screen_id: int, collected: Collected) -> None:
-    """Post what was found: nothing, the single note as it always was, or the combined note."""
+POINTER = (
+    "📚 A shared rule changed at this start: {n} waiting. The details are in your private message."
+)
+
+
+async def post(bot: Any, campaign: Campaign, collected: Collected) -> None:
+    """Tell the DMs what was found: nothing, the single note as it always was, or the combined
+    note (#3874). The DM Bot channel is read by the campaign's people and the note holds house-rule
+    text, so the channel gets only a pointer with a count, and the words go in a private message to
+    the DMs (the DM screen only if no DM can be reached, as `private_note` does)."""
     updates = collected.updates
     if not updates:
         if collected.gone:
-            await bot.post(screen_id, "\n".join(collected.gone))
+            await _tell(bot, campaign, "\n".join(collected.gone), None, len(collected.gone))
         return
     if len(updates) == 1 and not collected.gone:
-        text, view = updates[0].single_text, updates[0].single_view()
+        text, make = updates[0].single_text, updates[0].single_view
     else:
-        text, view = combined_text(collected), combined_view(collected)
-    posted = await bot.post_message(screen_id, text, view)
-    if posted is None:  # one more try: the update is taken, and the DM needs its Undo
-        posted = await bot.post_message(screen_id, text, view)
-    if posted is None:
+        text, make = combined_text(collected), lambda: combined_view(collected)
+    count = len(updates)
+    told = await _tell(bot, campaign, text, make, count)
+    if not told:  # one more try: the update is taken, and the DM needs its Undo
+        told = await _tell(bot, campaign, text, make, count)
+    if not told:
         log.warning(
             "Took %d shared-rules update(s) for campaign %s without a note",
             len(updates),
-            campaign_id,
+            campaign.id,
         )
+
+
+async def _tell(
+    bot: Any,
+    campaign: Campaign,
+    text: str,
+    make: Callable[[], discord.ui.View] | None,
+    count: int,
+) -> bool:
+    """The words privately (the screen as the fallback) and, when the campaign has a DM Bot
+    channel, one counts-only pointer there. True when the words reached a DM or the screen."""
+    told = bool(await private_note.send(bot, campaign, text, make or (lambda: discord.ui.View())))
+    if told and campaign.dm_bot_channel_id:
+        with contextlib.suppress(Exception):  # (a courtesy: the words have gone out)
+            await bot.post(campaign.dm_bot_channel_id, POINTER.format(n=count))
+    return told

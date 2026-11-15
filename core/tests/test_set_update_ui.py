@@ -25,7 +25,14 @@ def update(n: int) -> rule_sets.Update:
 
 
 def campaign() -> Any:
-    return SimpleNamespace(guild_id=1, id=CAMPAIGN, dm_user_ids=[DM], dm_accounts=[DM])
+    return SimpleNamespace(
+        guild_id=1,
+        id=CAMPAIGN,
+        dm_user_ids=[DM],
+        dm_accounts=[DM],
+        dm_bot_channel_id=None,
+        dm_screen_channel_id=99,
+    )
 
 
 def follow_at(version: int, previous: int | None = 3) -> rule_sets.Follow:
@@ -76,6 +83,7 @@ def bot_with(**sets: Any) -> Any:
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign())),
         post=AsyncMock(return_value=object()),
         post_message=AsyncMock(return_value=object()),
+        ask_privately=AsyncMock(return_value=False),  # (no DM reachable: the screen, as before)
         house_rules=SimpleNamespace(list=AsyncMock(return_value=[])),
     )
 
@@ -314,7 +322,7 @@ class SessionStart(unittest.IsolatedAsyncioTestCase):
     async def test_nothing_new_says_nothing(self) -> None:
         bot = bot_with()
         await set_update.check_update(bot, campaign(), 99)
-        bot.post.assert_not_called()
+        bot.post_message.assert_not_called()
         bot.post_message.assert_not_called()
         bot.rule_sets.take_update.assert_not_called()
 
@@ -322,9 +330,10 @@ class SessionStart(unittest.IsolatedAsyncioTestCase):
         bot = bot_with(is_gone=AsyncMock(return_value=True))
         await set_update.check_update(bot, campaign(), 99)
         bot.rule_sets.stop_updating.assert_awaited_once()
-        self.assertIn("isn't being shared any more", bot.post.await_args.args[1])
+        self.assertIn("isn't being shared any more", bot.post_message.await_args.args[1])
         self.assertIn(
-            "Your table keeps version 4, and it won't get updates.", bot.post.await_args.args[1]
+            "Your table keeps version 4, and it won't get updates.",
+            bot.post_message.await_args.args[1],
         )
 
     async def test_the_gone_note_is_not_said_twice_when_two_checks_race(self) -> None:
@@ -332,7 +341,7 @@ class SessionStart(unittest.IsolatedAsyncioTestCase):
             is_gone=AsyncMock(return_value=True), stop_updating=AsyncMock(return_value=0)
         )
         await set_update.check_update(bot, campaign(), 99)
-        bot.post.assert_not_called()  # the other check already stopped it and said it
+        bot.post_message.assert_not_called()  # the other check already stopped it and said it
 
     async def test_the_note_names_the_house_rules_set_not_another_follow(self) -> None:
         homebrew = rule_sets.Follow("h", "homebrew", "Pack", "Blue", 9, {}, True, 1, None)
@@ -341,7 +350,7 @@ class SessionStart(unittest.IsolatedAsyncioTestCase):
             following=AsyncMock(return_value=[homebrew, follow_at(4)]),
         )
         await set_update.check_update(bot, campaign(), 99)
-        said = bot.post.await_args.args[1]
+        said = bot.post_message.await_args.args[1]
         self.assertIn("Red Table", said)
         self.assertIn("version 4", said)
         self.assertNotIn("Pack", said)
@@ -366,7 +375,7 @@ class SessionStart(unittest.IsolatedAsyncioTestCase):
         with self.assertLogs("dmbot.dm_screen.set_update", level="ERROR") as logged:
             await set_update.check_update(bot, campaign(), 99)
         self.assertIn("Couldn't check for a shared-rules update", logged.output[0])
-        bot.post.assert_not_called()
+        bot.post_message.assert_not_called()
         bot.post_message.assert_not_called()
 
 

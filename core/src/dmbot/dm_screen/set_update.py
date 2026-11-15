@@ -573,7 +573,7 @@ async def check_update(bot: Any, campaign: Campaign, screen_id: int) -> None:
     found = shared_update.Collected()
     await collect(bot, campaign, screen_id, found)
     try:
-        await shared_update.post(bot, campaign.id, screen_id, found)
+        await shared_update.post(bot, campaign, found)
     except Exception:
         log.exception("Couldn't post a shared-rules update note")
 

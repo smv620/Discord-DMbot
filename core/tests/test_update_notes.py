@@ -21,7 +21,10 @@ CAMPAIGN = "c" * 32
 
 
 def campaign() -> Any:
-    return SimpleNamespace(guild_id=1, id=CAMPAIGN, dm_user_ids=[7], dm_accounts=[7])
+    return SimpleNamespace(
+        guild_id=1, id=CAMPAIGN, dm_user_ids=[7], dm_accounts=[7],
+        dm_bot_channel_id=None, dm_screen_channel_id=99,
+    )  # fmt: skip
 
 
 def pack_update_of(n: int) -> PackUpdate:
@@ -59,6 +62,7 @@ def bot_with(
         house_rules=SimpleNamespace(list=AsyncMock(return_value=[])),
         post_message=AsyncMock(return_value=object()),
         post=AsyncMock(return_value=object()),
+        ask_privately=AsyncMock(return_value=False),  # (no DM reachable: the screen, as before)
     )
 
 
@@ -82,7 +86,7 @@ class Combined(unittest.IsolatedAsyncioTestCase):
         bot = bot_with()
         await update_notes.check_all(bot, campaign(), 99)
         bot.post_message.assert_not_called()
-        bot.post.assert_not_called()
+        bot.post_message.assert_not_called()
 
     async def test_two_updates_share_one_note_with_a_row_each(self) -> None:
         bot = bot_with(house=True, packs=1)
@@ -132,7 +136,7 @@ class Combined(unittest.IsolatedAsyncioTestCase):
     async def test_gone_lines_join_the_note_as_plain_lines(self) -> None:
         bot = bot_with(packs=2, gone_packs=[pack_follow(1)])
         await update_notes.check_all(bot, campaign(), 99)
-        bot.post.assert_not_called()
+        bot.post.assert_not_called()  # (the pointer is only for a DM Bot channel)
         text = bot.post_message.await_args.args[1]
         self.assertIn("isn't being shared any more", text)
         self.assertNotIn("1. **Frost** isn't", text)  # a plain line, not a numbered update
@@ -148,9 +152,11 @@ class Combined(unittest.IsolatedAsyncioTestCase):
     async def test_only_gone_lines_are_one_plain_post(self) -> None:
         bot = bot_with(gone_packs=[pack_follow(1), pack_follow(1)])
         await update_notes.check_all(bot, campaign(), 99)
-        bot.post_message.assert_not_called()
-        bot.post.assert_awaited_once()
-        self.assertEqual(bot.post.await_args.args[1].count("isn't being shared any more"), 2)
+        bot.post.assert_not_called()
+        bot.post_message.assert_awaited_once()
+        self.assertEqual(
+            bot.post_message.await_args.args[1].count("isn't being shared any more"), 2
+        )
 
     async def test_a_failing_pack_check_still_posts_the_sets_note(self) -> None:
         bot = bot_with(house=True)
@@ -251,3 +257,30 @@ class Combined(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class Pointer(unittest.IsolatedAsyncioTestCase):
+    """With a DM Bot channel the channel gets a count only; the words go privately (#3874)."""
+
+    async def test_the_channel_gets_a_pointer_and_the_dm_the_words(self) -> None:
+        bot = bot_with(house=True, packs=1)
+        bot.ask_privately = AsyncMock(return_value=True)
+        own = campaign()
+        own.dm_bot_channel_id = 77
+        await update_notes.check_all(bot, own, 99)
+        bot.post_message.assert_not_called()  # (nothing on the screen)
+        words = bot.ask_privately.await_args.args[2]
+        self.assertIn("Shared rules updated", words)
+        (channel, pointer), _ = bot.post.await_args
+        self.assertEqual(channel, 77)
+        self.assertEqual(pointer, shared_update.POINTER.format(n=2))
+        self.assertNotIn("Pack", pointer)
+
+    async def test_no_reachable_dm_falls_back_to_the_screen_and_still_points(self) -> None:
+        bot = bot_with(house=True)
+        own = campaign()
+        own.dm_bot_channel_id = 77
+        await update_notes.check_all(bot, own, 99)
+        bot.post_message.assert_awaited_once()
+        self.assertEqual(bot.post_message.await_args.args[0], 99)
+        self.assertEqual(bot.post.await_args.args[0], 77)

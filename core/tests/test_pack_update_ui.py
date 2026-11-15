@@ -49,6 +49,7 @@ def bot_with(st: Any, *, mine: list[Any] | None = None) -> Any:
         homebrew=SimpleNamespace(list=AsyncMock(return_value=mine or [])),
         homebrew_changed=MagicMock(),
         post_message=AsyncMock(return_value=object()),
+        ask_privately=AsyncMock(return_value=False),  # (no DM reachable: the screen, as before)
         post=AsyncMock(),
     )
 
@@ -161,7 +162,14 @@ class Presses(unittest.IsolatedAsyncioTestCase):
 
 
 def campaign32() -> Any:
-    return SimpleNamespace(guild_id=1, id="c" * 32, dm_user_ids=[7], dm_accounts=[7])
+    return SimpleNamespace(
+        guild_id=1,
+        id="c" * 32,
+        dm_user_ids=[7],
+        dm_accounts=[7],
+        dm_bot_channel_id=None,
+        dm_screen_channel_id=55,
+    )
 
 
 class SessionStart(unittest.IsolatedAsyncioTestCase):
@@ -195,8 +203,8 @@ class SessionStart(unittest.IsolatedAsyncioTestCase):
         bot = bot_with(st)
         await pack_update.check_updates(bot, campaign32(), 55)
         await pack_update.check_updates(bot, campaign32(), 55)
-        self.assertEqual(bot.post.await_count, 1)
-        self.assertIn("isn't being shared any more", bot.post.await_args.args[1])
+        self.assertEqual(bot.post_message.await_count, 1)
+        self.assertIn("isn't being shared any more", bot.post_message.await_args.args[1])
 
     async def test_a_failure_never_raises(self) -> None:
         st = store()
