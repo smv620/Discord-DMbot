@@ -98,6 +98,7 @@ from dmbot.ui import (
     told_name,
 )
 from dmbot.ui import companion as companion_ui
+from dmbot.ui import thread_parts as thread_parts_ui
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
     _answer_first,
@@ -795,6 +796,13 @@ async def show_card(
             lines_of_thread = thread_lines(
                 here[0], await _session_numbers(interaction, campaign.id)
             )
+            # its steps, rewards and more, and its branches (#4471)
+            from dmbot.ui.thread_parts import card_lines
+
+            parts, part_names, bigger, branches = await memory.thread_card(
+                campaign.guild_id, campaign.id, entity_id
+            )
+            lines_of_thread += card_lines(parts, part_names, bigger, branches)
     elif entity is not None and secrets and entity.type in ("clue", "event"):
         # A clue's or an event's "Led to" / "Came from" (#1679): the DM's word, so the DM's card.
         from dmbot.memory.threads import names_line
@@ -1241,6 +1249,14 @@ class NameCard(_Menu):
                     _Button(self._thread_involve, label=THREAD_INVOLVE_BUTTON, style=grey, row=3)
                 )
             self.add_item(_Button(self._thread_link, label=THREAD_LINK_BUTTON, style=grey, row=3))
+            for label, handler in (  # its steps, rewards and more; its bigger thread (#4471)
+                (thread_parts_ui.PARTS_BUTTON, self._thread_parts),
+                (thread_parts_ui.BRANCH_BUTTON, self._thread_branch),
+            ):
+                for row in (2, 1, 4):  # (row 3 is full with the thread's own buttons)
+                    if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                        self.add_item(_Button(handler, label=label, style=grey, row=row))
+                        break
         if standing:  # an NPC, group or place: how it feels about the party (#1655)
             self.add_item(_Button(self._standing, label=STANDING_BUTTON, style=grey, row=3))
         if deed:  # a player character or the party: a deed the DM records (#1732)
@@ -1407,6 +1423,16 @@ class NameCard(_Menu):
 
     async def _promise_due(self, interaction: discord.Interaction) -> None:
         await self._promise_form(interaction, "due")
+
+    async def _thread_parts(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        self.stop()
+        await thread_parts_ui.open_parts(interaction, self.campaign_id, self.entity_id)
+
+    async def _thread_branch(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        self.stop()
+        await thread_parts_ui.open_branch(interaction, self.campaign_id, self.entity_id)
 
     async def _thread_link(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.threads import LinkForm

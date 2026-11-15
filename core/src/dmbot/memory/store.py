@@ -2093,6 +2093,41 @@ class MemoryStore:
             )  # fmt: skip
             return Written(fact, w.batch)
 
+    async def thread_card(
+        self, guild_id: int, campaign_id: str, thread_id: str
+    ) -> tuple[list[thread_parts.Part], dict[str, str], str | None, list[str]]:
+        """What a thread's card shows of its parts and branches (#4471), the DM's in one read:
+        its standing parts (`thread_parts.parts_for`, the DM's view), the names of everyone and
+        everything they and its branch links name, the bigger thread it is a branch of, and its
+        branches (kept threads), A to Z."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            parts = await thread_parts.parts_for(scope, [thread_id], gate.Viewer.the_dm())
+            links = await scope.select(
+                RELATIONS,
+                " AND predicate = 'branch_of' AND status = 'confirmed' AND to_session_at IS NULL"
+                " AND (subject_id = %s OR object_id = %s)",
+                [thread_id, thread_id],
+            )
+            ids = {i for p in parts for i in (p.who_id, p.about_id) if i is not None}
+            ids |= {str(r["subject_id"]) for r in links} | {str(r["object_id"]) for r in links}
+            names = {
+                str(r["id"]): str(r["name"])
+                for r in await scope.select(
+                    ENTITIES, " AND id = ANY(%s) AND status = 'confirmed'", [sorted(ids)]
+                )
+            }
+        bigger = next((str(r["object_id"]) for r in links if r["subject_id"] == thread_id), None)
+        branches = sorted(
+            (str(r["subject_id"]) for r in links if r["object_id"] == thread_id),
+            key=lambda i: names.get(i, "").lower(),
+        )
+        return (
+            parts,
+            names,
+            bigger if bigger in names else None,
+            [b for b in branches if b in names],
+        )
+
     async def bigger_thread(self, guild_id: int, campaign_id: str, thread_id: str) -> str | None:
         """The bigger thread this one is a branch of, if any (#4471): the card's "already a branch
         of …" question. The DM's read."""
