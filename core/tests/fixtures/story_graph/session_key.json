@@ -1,7 +1,7 @@
 {
  "campaign": "test of the frostmaiden (sample)",
  "source": "the public sample session, https://docs.google.com/document/d/1BtHZ4O75886WHOoTq0FCPst2hdg7YLnsaCiI-kNsv-E/edit?usp=sharing (the plain-text export; each connection names its line)",
- "version": 1,
+ "version": 2,
  "goes_with": "the small sample lore, https://docs.google.com/document/d/1zbt7g3r6uFfiSYr3fl_gyaxARhwJPizauI0jmiEa2aw/edit?usp=sharing",
  "how_to_read": {
   "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted); needs_context = only readable with the lore or the recap (for example 'she' is Keegan); recap_only = only in the 'Previously' recap on line 1, so background and never this session's event; by_rule = made by a rule, not read",
@@ -9,7 +9,8 @@
   "must_find": "false = a good find if present, not a miss if absent",
   "current": "false = history: it was true earlier in the session and is not at the end (the graph shows the most recent relationship, #3363)",
   "line": "the line of the session's plain-text export that supports it (blank lines count); 0 = by rule, no line",
-  "route_lengths": "how far a road is, as the session says it (#4255): a property of the road, never a tie; found by the same amount and unit, or the same words when they give none"
+  "route_lengths": "how far a road is, as the session says it (#4255): a property of the road, never a tie; found by the same amount and unit, or the same words when they give none",
+  "threads": "a story thread (quests design, #4450 §9.3; #4453): kind quest, hook or mystery; giver, target and taker (who takes it on, for a pursuit that is one character's own) are key names; missing and in_danger list who the thread is about. The party is never named: a thread is the party's unless it has a taker. hint = a question the text leaves open, counted when found and never missed. Scored as found, missed, wrong (another kind), doubles and extra (a thread the key does not list)"
  },
  "players": {
   "Cerric Vanya'elen": "player_ist",
@@ -390,16 +391,6 @@
    "note": "'he does owe me a favor': Jebidiah owes her a favor (she is 'she', named only in the recap)"
   },
   {
-   "id": "s015",
-   "a": "The party",
-   "relation": "works_for",
-   "b": "Keegan Velryn",
-   "tier": "needs_context",
-   "must_find": true,
-   "line": 135,
-   "note": "'she gave you the 50 gold when Belleros said he would go find him'"
-  },
-  {
    "id": "s016",
    "a": "Claude Ambere",
    "relation": "knows",
@@ -734,5 +725,8 @@
    "doc": "session",
    "note": "'take the dogsled five hours to Easthaven'; read only if that journey is walked"
   }
+ ],
+ "threads": [
+  {"id": "sq01", "kind": "quest", "name": "Find Garret Velryn", "giver": "Keegan Velryn", "target": "Garret Velryn", "taker": "", "missing": [], "in_danger": [], "must_find": false, "hint": false, "lines": [135], "note": "an ask and a taker; replaces s015; a good find until quests slice 5 (the session reader); must-find from then (the session reader)"}
  ]
 }

@@ -742,6 +742,11 @@ def _sure() -> Sure:
             await auto.accept_names(memory, guild, campaign, tally, kind_of=background_kind)
             await auto.accept_other_names(memory, guild, campaign, tally)
         await auto.accept_connections(memory, BackstoryLinks(db), guild, campaign, tally)
+        # the story threads the lore reader suggested (#4453): kept for the score only, as the
+        # bot never keeps one by itself; the key check counts them from the backup
+        threads = (
+            0 if connections_only else await accept_all.keep_threads(db, memory, guild, campaign)
+        )
         counts = {
             "accepted": sum(tally.accepted.values()),
             "left waiting": sum(tally.waiting.values()),
@@ -758,6 +763,7 @@ def _sure() -> Sure:
         return {
             **counts,
             "names kept so far": kept_so_far,
+            "story threads kept for the score": threads,
             "waiting names": tally.waiting[auto.NAMES],
             "waiting other names": tally.waiting[auto.OTHER_NAMES],
             "waiting connections": tally.waiting[auto.CONNECTIONS],

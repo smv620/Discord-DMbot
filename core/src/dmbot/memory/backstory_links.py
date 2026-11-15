@@ -696,6 +696,48 @@ class BackstoryLinks:
                 (guild_id, campaign_id, list(ids)),
             )
 
+    async def campaigns_waiting(self, guild_id: int) -> list[str]:
+        """The campaigns of this server that have a connection waiting (for the refresh of what
+        each would replace, #4441): ids only."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT DISTINCT campaign_id FROM backstory_links WHERE guild_id = %s"
+                " AND NOT assumed ORDER BY campaign_id",
+                (guild_id,),
+            )
+            return [str(r["campaign_id"]) for r in await cur.fetchall()]
+
+    async def set_replaces(
+        self, guild_id: int, campaign_id: str, wanted: Mapping[str, Sequence[Mapping[str, Any]]]
+    ) -> int:
+        """Store, on each waiting row, what a keep would replace (`[{predicate, detail, hidden}]`,
+        empty for none), and when it last changed. Rows already as wanted are left alone. How many
+        rows changed. The website's card reads it through the waiting door as `now`; words and
+        flags only, never a name or a quote."""
+        changed = 0
+        now = int(self._clock())
+        async with self._db.guild(guild_id) as conn:
+            await self._lock(conn, campaign_id)
+            for row_id, items in wanted.items():
+                body = Jsonb(
+                    [
+                        {
+                            "predicate": str(i["predicate"]),
+                            "detail": str(i["detail"]),
+                            "hidden": bool(i["hidden"]),
+                        }
+                        for i in items[:20]
+                    ]
+                )
+                cur = await conn.execute(
+                    "UPDATE backstory_links SET replaces = %s::jsonb, replaces_at = %s"
+                    " WHERE guild_id = %s AND campaign_id = %s AND id = %s"
+                    " AND replaces IS DISTINCT FROM %s::jsonb",
+                    (body, now, guild_id, campaign_id, row_id, body),
+                )
+                changed += cur.rowcount
+        return changed
+
     async def remove(self, guild_id: int, campaign_id: str, link: Waiting) -> None:
         async with self._db.guild(guild_id) as conn:
             await self._lock(conn, campaign_id)
