@@ -2190,26 +2190,26 @@ async def summary(
         _plural(k, len(ids)) for k, ids in sorted(stored.items(), key=lambda x: -len(x[1]))
     )
     # (a name read from a picture is left out of every "Add all": the DM checks each one, #4003)
-    view = BulkConfirm(campaign.id, not_held(stored, held), waiting)
-    return await _deliver(
-        interaction,
-        campaign,
-        (
-            f"📜 **{total} name{'' if total == 1 else 's'} to check** from {_md(label)}: "
-            f"{parts}.\nThey wait in 📝 Check new names, each with its line from your text. "
-            "Nothing is added until you say yes, and **Add all** adds every name of that "
-            "group. DMbot can miss names or put one in the wrong group, so look them over."
-            + (
-                CONNECTIONS_NOTE.format(count=queued, s="" if queued == 1 else "s")
-                if queued
-                else ""
-            )
-            + note
-            + names_note
-            + (CUT_NOTE if cut else "")
-        ),
-        view,
+    text = (
+        f"📜 **{total} name{'' if total == 1 else 's'} to check** from {_md(label)}: "
+        f"{parts}.\nThey wait in 📝 Check new names, each with its line from your text. "
+        "Nothing is added until you say yes, and **Add all** adds every name of that "
+        "group. DMbot can miss names or put one in the wrong group, so look them over."
+        + (CONNECTIONS_NOTE.format(count=queued, s="" if queued == 1 else "s") if queued else "")
+        + note
+        + names_note
+        + (CUT_NOTE if cut else "")
     )
+    offered = not_held(stored, held)
+    view = BulkConfirm(
+        campaign.id,
+        offered,
+        waiting,
+        first_words=text,  # (#4427: the card says what was added and what is left after a press)
+        total=total,
+        extra_left=max(0, total - sum(len(v) for v in offered.values())),
+    )
+    return await _deliver(interaction, campaign, text, view)
 
 
 async def announce(
@@ -3635,10 +3635,23 @@ class BulkConfirm(_Menu):
         queued: int = 0,
         *,
         walk: Walk | None = None,
+        first_words: str = "",
+        total: int = 0,
+        extra_left: int = 0,
+        look_alike: int = 0,
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
         self.walk = walk  # inside "Check everything" (#4192): its own Stop, and the walk goes on
+        # What the card says, so it can say what happened after a press (#4427): its first words,
+        # how many names it first counted (`total`), how many of those are not in "Add all" and
+        # wait for the one-by-one check (`extra_left`; `look_alike` of them sound like a known
+        # name), and how many a press has added so far. A card with no `total` keeps its words.
+        self.first_words = first_words
+        self.total = total
+        self.extra_left = extra_left
+        self.look_alike = look_alike
+        self.added = 0
         self.queued = queued  # connections waiting for these names to be answered
         self.ids = {k: list(v) for k, v in stored.items()}
         # A summary posted in the DM Bot channel is everyone's to see and only the game masters'
@@ -3719,8 +3732,33 @@ class BulkConfirm(_Menu):
 
     def _ending(self) -> Any:
         """On the summary in the channel, once every name is answered the message ends as
-        "✅ All answered" (only an Undo may stay); a card of the DM's own keeps its words."""
-        return ALL_ANSWERED if self.shared and not self.ids else discord.utils.MISSING
+        "✅ All answered" (only an Undo may stay); a card of the DM's own says what happened."""
+        if self.shared or not self.total:
+            return ALL_ANSWERED if self.shared and not self.ids else discord.utils.MISSING
+        return self._card_words()
+
+    def left_to_check(self) -> int:
+        """The names this card counted that are still waiting, to be checked one by one."""
+        return sum(len(ids) for ids in self.ids.values()) + self.extra_left
+
+    def _card_words(self) -> str:
+        """A card of the DM's own after a press or an Undo: its first words while nothing is
+        added, else what was added and what is left, so the counts add up (#4427)."""
+        if not self.added:
+            return self.first_words
+        left = self.left_to_check()
+        if not left:
+            return f"✅ Added {self.added}. Nothing else to check."
+        if self._addable():  # another "Add all" button is still on the card: nothing is "left"
+            return f"✅ Added {self.added} of {self.total}. {left} still waiting."
+        text = (
+            f"✅ Added {self.added} of {self.total}. {left} "
+            f"{'is' if left == 1 else 'are'} left for you to check one by one."
+        )
+        if self.look_alike:
+            n = self.look_alike
+            text += f" {n} of them sound{'s' if n == 1 else ''} like one you know."
+        return text
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         """On the summary in the channel (shared), anyone who can see the channel can press, so
@@ -3797,12 +3835,13 @@ class BulkConfirm(_Menu):
             return
         changed(interaction, campaign)
         self.last = done
+        total = sum(added.values())
+        self.added += total
         self._build()
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
                 content=self._ending(), view=self, allowed_mentions=NO_PINGS
             )
-        total = sum(added.values())
         if not total:
             text = "Nothing was added: those names were already answered."
         elif len(kinds) == 1:
@@ -3816,6 +3855,10 @@ class BulkConfirm(_Menu):
             await interaction.followup.send(text, ephemeral=True, allowed_mentions=NO_PINGS)
         if self.walk is not None:  # the names left to look at one by one, then the next part
             await start_review(interaction, self.campaign_id, bulk=False, walk=self.walk)
+        elif self.total and not self.shared and self.left_to_check() and not self._addable():
+            # (#4427) the names left are offered at once, the same cards the walk uses, once no
+            # "Add all" button remains (a press of one kind must not hide the others)
+            await start_review(interaction, self.campaign_id, bulk=False, walk=None)
         elif total and self.queued:  # their names may be answered now
             await offer_ready(interaction, self.campaign_id)
 
@@ -3848,10 +3891,17 @@ class BulkConfirm(_Menu):
         count = sum(len(ids) for _, _, ids in undone)
         what = _plural(undone[0][0], count) if len(undone) == 1 else f"{count} names"
         self.last = []
+        self.added = max(0, self.added - count)
         self._build()
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
-                content=self.words if self.shared and self.words else discord.utils.MISSING,
+                content=(
+                    self.words
+                    if self.shared and self.words
+                    else self._card_words() or discord.utils.MISSING
+                    if self.total
+                    else discord.utils.MISSING
+                ),
                 view=self,
                 allowed_mentions=NO_PINGS,
             )
