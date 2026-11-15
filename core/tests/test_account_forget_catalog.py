@@ -9,6 +9,7 @@ owner's call), and UNREVIEWED: not yet decided, listed for Supervisor on #4141.
 
 from __future__ import annotations
 
+import re
 from importlib import import_module
 
 from tests.pg import DatabaseTest
@@ -76,6 +77,47 @@ UNREVIEWED: Rules = {  # not yet decided (columns not yet audited): empty since 
 }  # fmt: skip
 
 
+# A column that may hold a person's display name (#4417): found on a table that also has a person-id
+# column, or anywhere when it is named for a person. Each match is decided here, with its reason, as
+# the id columns are. (`campaign_handover_offers` once kept `from_name` beside the id it zeroed.)
+NAME_COLUMN = r"(name|label|who|author|poster|nick|display)"
+PERSON_NAMED = r"(display|username|nick|author|poster|^who$|last_name|from_name|to_name)"
+NAME_ELSEWHERE: Rules = {  # goes with the person's rows or its own forget function
+    "campaign_handover_offers": ("from_name", "to_name"),  # blanked by 0497
+    "dm_players": ("last_name",),  # the DM's list: dmbot_forget_dm_players (0450)
+    "member_directory": ("display_name", "username"),  # deleted: DELETED (0447)
+    "web_sessions": ("display_name",),  # the sessions go with the account
+    "web_users": ("display_name",),  # the account row itself
+    "web_peeks": ("name",),  # deleted by user_id (0431)
+    "npc_notes": ("name",),  # the person's own notes, deleted by user_id (0431)
+    "name_answers": ("undo_name",),  # the person's own queue, deleted (0440)
+    "web_restores": ("name",),  # the person's own queue, deleted (0431)
+    "web_backups": ("file_name",),  # the person's own queue, deleted (0431)
+    "wizard_documents": ("name",),  # their start-up wizard, dmbot_forget_wizard
+}
+NAME_TRANSCRIPTS: Rules = {  # speakers' names: the owner's call with the transcripts (rule 4)
+    "campaign_speakers": ("name",),
+    "import_speakers": ("label",),
+}
+NAME_NOT_A_PERSON: Rules = {  # a name of something else, with the reason
+    "adventure_documents": ("file_name",),  # an uploaded file's name
+    "campaigns": ("name", "name_key"),  # the campaign's own name
+    "homebrew_entries": ("name", "name_key"),  # the rule's name
+    "house_rules": ("source_name",),  # where a rule comes from (a book)
+    "memory_entities": ("name", "unnamed_anchor", "unnamed_role", "unnamed_what"),  # story entries
+    "memory_reveal_proposals": ("check_name",),  # the name of a check
+    "pack_suggestions": ("name",),  # a suggested rule's name
+    "pack_suggestions_sent": ("set_name", "name"),  # a rule set's and a rule's name
+    "rule_set_follows": ("set_name",),  # a rule set's name
+    "rule_set_suggestions_sent": ("set_name",),
+    "rule_sets": ("name",),
+    "session_imports": ("file_name",),  # an imported file's name
+    "trait_answers": ("name_key",),  # the key of a trait name
+    "web_delete_notices": ("campaign_name",),  # the deleted campaign's name
+    "support_replies": ("who",),  # only 'customer', 'ai' or 'person': who wrote, never a name
+}
+
+
 def _covers(rules: Rules, table: str, column: str) -> bool:
     if table not in rules:
         return False
@@ -134,6 +176,50 @@ class EveryPersonColumnHasARule(DatabaseTest):
             "to DELETED or ZEROED in a forget migration, or to a rule here with its reason "
             "(docs/PLAN.md, 'Deleting an account')",
         )
+
+    async def test_no_name_column_is_without_a_decision(self) -> None:
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute(
+                "SELECT table_name, column_name, data_type FROM information_schema.columns"
+                " WHERE table_schema = current_schema() ORDER BY 1, ordinal_position"
+            )
+            columns = [
+                (r["table_name"], r["column_name"], r["data_type"]) for r in await cur.fetchall()
+            ]
+        with_person = {
+            t for t, c, d in columns if d in ("bigint", "ARRAY") and re.search(PERSON_COLUMN, c)
+        }
+        missing = []
+        for table, column, kind in columns:
+            if kind != "text" or not re.search(NAME_COLUMN, column):
+                continue
+            if table not in with_person and not re.search(PERSON_NAMED, column):
+                continue
+            if any(
+                _covers(rules, table, column)
+                for rules in (NAME_ELSEWHERE, NAME_TRANSCRIPTS, NAME_NOT_A_PERSON)
+            ):
+                continue
+            missing.append(f"{table}.{column}")
+        self.assertEqual(
+            missing,
+            [],
+            "a text column that may hold a person's display name has no decision for account "
+            "deletion: blank or delete it in a forget migration, or list it in NAME_ELSEWHERE, "
+            "NAME_TRANSCRIPTS or NAME_NOT_A_PERSON with its reason (#4417)",
+        )
+
+    async def test_the_name_lists_hold_no_stale_entry(self) -> None:
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute(
+                "SELECT table_name, column_name FROM information_schema.columns"
+                " WHERE table_schema = current_schema()"
+            )
+            real = {(r["table_name"], r["column_name"]) for r in await cur.fetchall()}
+        for rules in (NAME_ELSEWHERE, NAME_TRANSCRIPTS, NAME_NOT_A_PERSON):
+            for table, columns in rules.items():
+                for column in columns or ():
+                    self.assertIn((table, column), real, f"{table}.{column} is gone")
 
     async def test_nothing_is_listed_twice_or_for_a_table_that_is_gone(self) -> None:
         async with self.db.unscoped() as conn:
