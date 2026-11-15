@@ -19,6 +19,7 @@ from dmbot.memory.models import CONFIRMED, REJECTED, MemoryRuleError, NewName, n
 from dmbot.memory.ontology import PredicateTerm
 from dmbot.ui import name_background as ui_bg
 from dmbot.ui import names as names_ui
+from dmbot.ui.name_background import HIDE_PLAYERS
 from dmbot.ui.name_lists import Upload, _ai_busy, _ai_reads
 from tests import lore_fake
 from tests.test_memory_names import DM, GUILD, MANAGER, NamesTest
@@ -535,7 +536,7 @@ class ThePath(NamesTest):
             for it in pressed
             for c in it.followup.send.await_args_list
         ]
-        self.assertTrue(any("Keep this?" in text for text in said), said)
+        self.assertTrue(any("add it?" in text for text in said), said)
 
     async def test_the_end_of_check_new_names_offers_them(self) -> None:
         await self.read()
@@ -545,7 +546,7 @@ class ThePath(NamesTest):
         offered = it.followup.send.await_args
         self.assertIsNotNone(offered)
         self.assertIn(
-            "Keep this?",
+            "add it?",
             offered.args[0] if offered.args else offered.kwargs.get("content", ""),
         )
 
@@ -586,7 +587,7 @@ class ThePath(NamesTest):
         _, view = await self.offer()
         self.assertIn("From your text:", view.text())
         self.assertIn("Connection 1 of 3", view.text())
-        await self.button(view, "✅ Keep").callback(self.it())
+        await self.button(view, "✅ Add it").callback(self.it())
         (rel,) = await self.relations()
         self.assertEqual((rel.status, rel.secret), (CONFIRMED, False))
         self.assertEqual(len(await self.waiting()), 2)
@@ -618,7 +619,7 @@ class ThePath(NamesTest):
                 ),
                 self.assertLogs("dmbot.ui.name_background", level="INFO") as logged,
             ):
-                await self.button(view, "✅ Keep").callback(press)
+                await self.button(view, "✅ Add it").callback(press)
             line = next(m for m in logged.output if "was refused" in m)
             self.assertIn(logged_as, line)
             self.assertNotIn(card.subject, line)  # (the log never has the names)
@@ -651,7 +652,7 @@ class ThePath(NamesTest):
 
     async def test_keep_leaves_a_public_twin_alone_and_the_dms_secret_press_does_not(self) -> None:
         # (#3025) what each button hands the store: only the DM's own 🤫 may hide an old fact
-        for label, flags in (("✅ Keep", True), ("🤫 Keep as secret", False)):
+        for label, flags in (("✅ Add it", True), (HIDE_PLAYERS, False)):
             with self.subTest(label):
                 await self.asyncTearDown()
                 await self.asyncSetUp()
@@ -668,7 +669,9 @@ class ThePath(NamesTest):
                     return await _real(*args, **kw)
 
                 with patch.object(self.memory, "add_relation", spy):
-                    await self.button(view, label).callback(self.it())
+                    if label != "✅ Add it":  # hide first, then save
+                        await self.button(view, label).callback(self.it())
+                    await self.button(view, "✅ Add it").callback(self.it())
                 self.assertEqual(seen, [flags])
 
     async def test_a_truth_upload_pins_what_is_kept_and_an_asserted_one_does_not(self) -> None:
@@ -687,7 +690,7 @@ class ThePath(NamesTest):
             await offer._read(self.it())
             await self.confirm_all()
             _, view = await self.offer()
-            await self.button(view, "✅ Keep").callback(self.it())
+            await self.button(view, "✅ Add it").callback(self.it())
             (rel,) = await self.relations()
             pinned = await self.memory.pinned_connections(GUILD, self.campaign.id)
             self.assertEqual(pinned, {rel.id} if truth else set())
@@ -720,7 +723,9 @@ class ThePath(NamesTest):
         await self.read()
         await self.confirm_all()
         _, view = await self.offer()
-        await self.button(view, "🤫 Keep as secret").callback(self.it())
+        await self.button(view, HIDE_PLAYERS).callback(self.it())
+        self.assertIn("🤫 Hidden from players.", view.text())
+        await self.button(view, "✅ Add it").callback(self.it())
         (rel,) = await self.relations()
         self.assertTrue(rel.secret)
         self.assertEqual(await self.memory.relations(GUILD, self.campaign.id), [])  # not public
@@ -729,7 +734,7 @@ class ThePath(NamesTest):
         await self.read()
         await self.confirm_all()
         _, first = await self.offer()
-        await self.button(first, "❌ No").callback(self.it())
+        await self.button(first, "❌ Leave it out").callback(self.it())
         _, again = await self.offer()  # as after a restart: a new view reads the store
         self.assertIn("Connection 1 of 2", again.text())
 
@@ -737,7 +742,7 @@ class ThePath(NamesTest):
         await self.read()
         await self.confirm_all()
         _, view = await self.offer()
-        await self.button(view, "❌ No").callback(self.it())
+        await self.button(view, "❌ Leave it out").callback(self.it())
         await self.button(view, "⏭️ Skip the rest").callback(self.it())
         self.assertEqual(view.text(), "📜 Done. Kept 0 connections. Left out 3.")
         self.assertEqual(await self.waiting(), [])
@@ -747,7 +752,7 @@ class ThePath(NamesTest):
         await self.read()
         await self.confirm_all()
         _, view = await self.offer()
-        for label in ("✅ Keep", "🤫 Keep as secret", "❌ No", "⏭️ Skip the rest"):
+        for label in ("✅ Add it", HIDE_PLAYERS, "❌ Leave it out", "⏭️ Skip the rest"):
             await self.button(view, label).callback(self.it(MANAGER))
         self.assertEqual(len(await self.waiting()), 3)
         self.assertEqual(await self.relations(), [])
@@ -810,10 +815,10 @@ class ThePath(NamesTest):
         _, view = await self.offer()
         it = self.it()
         with patch.object(self.memory, "add_relation", side_effect=MemoryRuleError("raw words")):
-            await self.button(view, "✅ Keep").callback(it)
+            await self.button(view, "✅ Add it").callback(it)
         said = it.followup.send.await_args.args[0]
         self.assertNotIn("raw words", said)
-        self.assertIn("❌ No", said)
+        self.assertIn("the ❌ button", said)
         self.assertEqual(len(await self.waiting()), 3)
 
     # ---- a lasting way back, and what the wiring must keep ------------------------------------
@@ -825,7 +830,7 @@ class ThePath(NamesTest):
         await names_ui.start_review(it, self.campaign.id)
         asked = it.followup.send.await_args
         self.assertIsNotNone(asked)
-        self.assertIn("Keep this?", asked.args[0])
+        self.assertIn("add it?", asked.args[0])
 
     async def test_the_names_card_carries_a_lasting_button_while_any_wait(self) -> None:
         from dmbot.memory.lookup import LookupCache
@@ -842,7 +847,7 @@ class ThePath(NamesTest):
         await next(
             b for b in view.children if getattr(b, "label", "") == "📜 Check the connections (3)"
         ).callback(pressed)
-        self.assertIn("Keep this?", pressed.followup.send.await_args.args[0])
+        self.assertIn("add it?", pressed.followup.send.await_args.args[0])
 
     async def test_the_names_card_has_no_such_button_when_none_wait(self) -> None:
         from dmbot.memory.lookup import LookupCache
@@ -864,7 +869,7 @@ class ThePath(NamesTest):
             await self.memory.set_hidden_from_players(
                 GUILD, self.campaign.id, ids[name], True, source="dm"
             )
-        await self.button(view, "✅ Keep").callback(self.it())
+        await self.button(view, "✅ Add it").callback(self.it())
         (rel,) = await self.relations()
         # not secret (the names are only not shown yet), but never shown to players before both are
         self.assertEqual((rel.secret, rel.unrevealed), (False, True))
@@ -1266,8 +1271,8 @@ class ThePath(NamesTest):
     async def test_plain_keep_is_off_for_a_connection_that_uses_a_secret_name(self) -> None:
         view = ui_bg.ConnectionOffer(self.campaign.id)
         view._set([Waiting("a", "knows", "b", "q", True, "Belleros", "Waterdeep", True)])
-        self.assertTrue(view.keep.disabled)
-        self.assertIn("Only 🤫 Keep as secret works", view.text())
+        self.assertTrue(view.toggle.disabled)
+        self.assertIn("🤫 Hidden from players: it uses a secret name.", view.text())
 
     # ---- the reading --------------------------------------------------------------------------
 
@@ -1308,7 +1313,7 @@ class ThePath(NamesTest):
         self.assertEqual((queued.predicate, queued.detail), ("associated_with", "pays"))
         _, view = await self.offer()
         self.assertIn("pays", view.text())
-        await self.button(view, "✅ Keep").callback(self.it())
+        await self.button(view, "✅ Add it").callback(self.it())
         (rel,) = await self.relations()
         self.assertEqual((rel.predicate, rel.detail), ("associated_with", "pays"))
 
@@ -1331,7 +1336,7 @@ class ThePath(NamesTest):
         self.assertEqual((queued.predicate, queued.detail), ("kin_of", "parent"))
         _, view = await self.offer()
         self.assertIn("is the parent of", view.text())  # not "is family of"
-        await self.button(view, "✅ Keep").callback(self.it())
+        await self.button(view, "✅ Add it").callback(self.it())
         (rel,) = await self.relations()
         self.assertEqual((rel.predicate, rel.detail, rel.directional), ("kin_of", "parent", True))
         ids = await self.ids()
