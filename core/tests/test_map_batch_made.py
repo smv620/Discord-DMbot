@@ -10,12 +10,18 @@ from tests.test_web_maps import MapsDoor
 
 class TheBatchesOfDoneActions(MapsDoor):
     async def done(self, action: str, text: str, batch: int, *, state_done: bool = True) -> None:
+        """Queue `action` as Alice, then finish it: done, or failed with its batch still
+        written, when `state_done` is False (only the state filter can refuse that batch)."""
         got = await self.add_action(action, text)  # Alice queues it; she is the DM
         self.assertEqual(got["status"], "ok", got)
         claimed = await self.actions.claim_next(self.g)
-        assert claimed is not None
+        self.assertIsNotNone(claimed, f"nothing claimed after queuing {action}")
+        assert claimed is not None  # for mypy; the line above reports the failure
+        self.assertEqual(claimed.action, action)  # the oldest waiting row, so ours here
         if state_done:
             await self.actions.finish(self.g, claimed, error="", result_batches=(batch,))
+        else:
+            await self.actions.finish(self.g, claimed, error="not applied", result_batches=(batch,))
 
     async def five_done(self) -> None:
         """One done action of each Maps kind, in batches 11 to 15."""
@@ -52,6 +58,7 @@ class TheBatchesOfDoneActions(MapsDoor):
 
     async def test_an_action_that_is_not_done_has_no_batch_to_undo(self) -> None:
         await self.done("maps-takeback", self.bobs, 11, state_done=False)
+        # The batch is written on the failed row, so only the done state keeps it from Undo.
         self.assertFalse(await self.actions.map_batch_made(self.g, self.one.id, ALICE.id, 11))
         self.assertFalse(await self.actions.map_batch_made(self.g, self.one.id, ALICE.id, 99999))
 
