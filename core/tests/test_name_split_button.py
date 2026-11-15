@@ -205,3 +205,18 @@ class SplitButton(NamesTest):
             await self.button(view, UNDO).callback(it)
         self.assertEqual(saw, [True])
         self.assertEqual(await self.waiting_names(), ["Aldmoor, Quillgate, Fenwick"])
+
+    async def test_two_quick_undo_presses_undo_the_split_once(self) -> None:
+        # Both presses answer Discord before they save; only one may take the undo.
+        await self.waiting("Aldmoor, Quillgate, Fenwick")
+        view, _it = await self.card()
+        await self.button(view, SPLIT).callback(self.it())
+        saw: list[bool] = []
+        with self.answers_first("undo_split", saw, self.it()):
+            await asyncio.gather(
+                self.button(view, UNDO).callback(self.it()),
+                self.button(view, UNDO).callback(self.it()),
+            )
+        self.assertEqual(len(saw), 1)
+        self.assertEqual(await self.waiting_names(), ["Aldmoor, Quillgate, Fenwick"])
+        self.assertEqual(len(view.queue), len(set(view.queue)))
