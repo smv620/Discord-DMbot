@@ -32,7 +32,6 @@ These are the ties the check should find most surely: the session repeats or sha
 | m115 | Garret Velryn | spouse | Keegan Velryn | stated | 102 | 1 | 'whose husband' / only in the 'Previously' recap ('whose husband, Garret'): background, no session date |
 | m116 | Garret Velryn | member | Explorer's League | stated | 102 | 168 | 'a noted member' / 'a member of the Explorers' League' (also 201: 'his stature in the Explorers' League') |
 | m117 | Garret Velryn | last_seen_in | Kelvin's Cairn | stated | 102 | 192 | vanished five days ago leading an expedition up it / 'Kelvin's Cairn to find Garret': the lore and the recap say he vanished leading an expe |
-| m118 | The party | works_for | Keegan Velryn | stated | 102 | 135 | 50 gold and a route map to find Garret / 'she gave you the 50 gold when Belleros said he would go find him' |
 
 ## All connections
 
@@ -106,14 +105,12 @@ These are the ties the check should find most surely: the session repeats or sha
 | m066 | Auril the Frostmaiden | associate | The Everlasting Rime | stated | yes | yes | lore | L57 | casts it each night before midnight (line 4) |
 | m067 | The Everlasting Rime | in | Icewind Dale | stated | yes | yes | lore | L4 | holds the Ten-Towns in a frozen vice |
 | m068 | Hlin Trollbane | works_in | Lonelywood | stated | yes | yes | lore | L59 | operates out of it |
-| m069 | The party | works_for | Hlin Trollbane | stated | yes | yes | lore | L59 | 100 gold to capture or eliminate Kaltro (line 73) |
 | m070 | Hlin Trollbane | enemy_of | Sephek Kaltro | inferred | no | yes | lore | L59 | she hires against him; she is not his servant (#3256) |
 | m071 | Sephek Kaltro | works_for | Torrga Icevein | stated | yes | yes | lore | L63 | her bodyguard (also line 61) |
 | m072 | Torrga Icevein | leads | Torg's Caravan | stated | yes | yes | lore | L63 | under her own heading on line 62 |
 | m073 | Sephek Kaltro | member | Torg's Caravan | inferred | no | yes | lore | L61 | accompanies it |
 | m074 | Sephek Kaltro | last_seen_in | Easthaven | stated | no | yes | lore | L102 | his last known location |
 | m075 | Speaker Masthew | leads | Termalaine | stated | yes | yes | lore | L65 |  |
-| m076 | The party | works_for | Speaker Masthew | stated | yes | yes | lore | L84 | 50 gold, then 250 for the mine (line 93) |
 | m077 | Veron Braig | owns | The Blue Clam | stated | yes | yes | lore | L67 |  |
 | m078 | Veron Braig | works_in | The Blue Clam | stated | yes | yes | lore | L67 | owner and proprietor |
 | m079 | The Blue Clam | in | Termalaine | stated | yes | yes | lore | L67 |  |
@@ -155,7 +152,6 @@ These are the ties the check should find most surely: the session repeats or sha
 | m115 | Garret Velryn | spouse | Keegan Velryn | stated | yes | yes | lore+session | L102, S1 | 'whose husband' / only in the 'Previously' recap ('whose husband, Garret'): background, no session date |
 | m116 | Garret Velryn | member | Explorer's League | stated | yes | yes | lore+session | L102, S168 | 'a noted member' / 'a member of the Explorers' League' (also 201: 'his stature in the Explorers' League') |
 | m117 | Garret Velryn | last_seen_in | Kelvin's Cairn | stated | yes | yes | lore+session | L102, S192 | vanished five days ago leading an expedition up it / 'Kelvin's Cairn to find Garret': the lore and the recap say he vanished leading an expedition up it |
-| m118 | The party | works_for | Keegan Velryn | stated | yes | yes | lore+session | L102, S135 | 50 gold and a route map to find Garret / 'she gave you the 50 gold when Belleros said he would go find him' |
 | m119 | Jebidiah | works_in | Targos | inferred | no | yes | lore | L102 | a kennel master the party met there |
 | m134 | Cerric Vanya'elen | comes_from | Temple of the Seldarine | stated | no | yes | lore | L18 | born in the Temple of the Seldarine (the more exact place; m019 says the city) |
 | m135 | Syllar Sparkwalker | mentor_of | Cerric Vanya'elen | stated | no | yes | lore | L24 | served as Keeper of the Sparkwalker Spire "under Master Syllar Sparkwalker", "alongside rival apprentices Emmerich and Wit": an apprentice of his (m011 says works_for) |
@@ -396,3 +392,16 @@ The check script looks for these names: `Wyvern poison`, `Dog sleds`, `two sleds
 - Glyph travels with the party (travels_with, #3176)
 - who a marching order puts ahead of whom is not a tie
 - the road ambush as a deed ('attacked'), until session events have their own design note
+
+## Story threads (quests slice 1, #4453; design #4450 §9.3)
+
+Who gave it, who it is aimed at, and who takes it on when it is one character's own pursuit. The party is never named: a thread is the party's unless it has a taker. These replace the old "the party works for" rows. **Hint**: a question the text leaves open, counted when found and never missed.
+
+| ID | Kind | Thread | Giver | Target | Takes it on | About (missing / in danger) | Must find | Line | Note |
+|---|---|---|---|---|---|---|---|---|---|
+| L-lq01 | quest | What happened to Master Sparkwalker |  |  | Cerric Vanya'elen | Syllar Sparkwalker (missing) | yes | 27 | a pursuit (§9.3): the WIDE aim, searching for answers; the Danneth lead is its objective (slice 3) |
+| L-lq02 | mystery | Who killed Wit? |  |  |  | Wit (missing) | hint | 27 | a hint branch of lq01 (§6a): counted when found, never missed; branches are read from slice 3 |
+| L-lq03 | quest | Why Okthandom's family vanish, and how to break the curse |  |  | Okthandom Korran | Vaelrith (missing), Nyssara (in danger) | yes | 33 | a pursuit (§9.3) |
+| L-lq04 | quest | Hlin's contract on Sephek Kaltro | Hlin Trollbane | Sephek Kaltro |  |  | yes | 73 | an ask and a taker; replaces l069 'the party works for Hlin' (§6); capture or eliminate, one objective |
+| L-lq05 | quest | Speaker Masthew's bounty on the mine | Speaker Masthew | The gemstone mine |  |  | no | 84 | an ask and a taker, already paid (line 93); replaces l076; not one of §9.3's four, so a good find |
+| L-lq06 | quest | Find Garret Velryn | Keegan Velryn | Garret Velryn |  |  | yes | 102 | an ask and a taker (Belleros agrees for the party); replaces l118; the session (sq01) is the same thread |

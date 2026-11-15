@@ -49,18 +49,15 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | l015 | Syllar Sparkwalker | mentor_of | Emmerich | inferred | no | yes | 24 | Cerric's fellow apprentices |
 | l016 | Syllar Sparkwalker | mentor_of | Wit | inferred | no | yes | 24 |  |
 | l037 | Belleros Stormgrace | member | Explorer's League | stated | yes | yes | 42 | 'a scout associated with the Explorer's League' |
-| l069 | The party | works_for | Hlin Trollbane | stated | yes | yes | 59 | 100 gold to capture or eliminate Kaltro (line 73) |
 | l071 | Sephek Kaltro | works_for | Torrga Icevein | stated | yes | yes | 63 | her bodyguard (also line 61) |
 | l072 | Torrga Icevein | leads | Torg's Caravan | stated | yes | yes | 63 | under her own heading on line 62 |
 | l073 | Sephek Kaltro | member | Torg's Caravan | inferred | no | yes | 61 | accompanies it |
 | l075 | Speaker Masthew | leads | Termalaine | stated | yes | yes | 65 |  |
-| l076 | The party | works_for | Speaker Masthew | stated | yes | yes | 84 | 50 gold, then 250 for the mine (line 93) |
 | l083 | Cerric Vanya'elen | member | The party | stated | yes | yes | 73 | 'our four adventurers' |
 | l084 | Belleros Stormgrace | member | The party | stated | yes | yes | 73 | 'our four adventurers' |
 | l085 | Okthandom Korran | member | The party | stated | yes | yes | 73 | 'our four adventurers' |
 | l086 | Claude Ambere | member | The party | stated | yes | yes | 73 | 'our four adventurers' |
 | l116 | Garret Velryn | member | Explorer's League | stated | yes | yes | 102 | 'a noted member' |
-| l118 | The party | works_for | Keegan Velryn | stated | yes | yes | 102 | 50 gold and a route map to find Garret |
 
 ### Feelings and opposition (15)
 
@@ -355,3 +352,16 @@ No other character's language is stated, so any other language row is extra.
 
 - Glyph travels with the party (travels_with, #3176)
 - who a marching order puts ahead of whom is not a tie
+
+## Story threads (quests slice 1, #4453; design #4450 §9.3)
+
+Who gave it, who it is aimed at, and who takes it on when it is one character's own pursuit. The party is never named: a thread is the party's unless it has a taker. These replace the old "the party works for" rows. **Hint**: a question the text leaves open, counted when found and never missed.
+
+| ID | Kind | Thread | Giver | Target | Takes it on | About (missing / in danger) | Must find | Line | Note |
+|---|---|---|---|---|---|---|---|---|---|
+| lq01 | quest | What happened to Master Sparkwalker |  |  | Cerric Vanya'elen | Syllar Sparkwalker (missing) | yes | 27 | a pursuit (§9.3): the WIDE aim, searching for answers; the Danneth lead is its objective (slice 3) |
+| lq02 | mystery | Who killed Wit? |  |  |  | Wit (missing) | hint | 27 | a hint branch of lq01 (§6a): counted when found, never missed; branches are read from slice 3 |
+| lq03 | quest | Why Okthandom's family vanish, and how to break the curse |  |  | Okthandom Korran | Vaelrith (missing), Nyssara (in danger) | yes | 33 | a pursuit (§9.3) |
+| lq04 | quest | Hlin's contract on Sephek Kaltro | Hlin Trollbane | Sephek Kaltro |  |  | yes | 73 | an ask and a taker; replaces l069 'the party works for Hlin' (§6); capture or eliminate, one objective |
+| lq05 | quest | Speaker Masthew's bounty on the mine | Speaker Masthew | The gemstone mine |  |  | no | 84 | an ask and a taker, already paid (line 93); replaces l076; not one of §9.3's four, so a good find |
+| lq06 | quest | Find Garret Velryn | Keegan Velryn | Garret Velryn |  |  | yes | 102 | an ask and a taker (Belleros agrees for the party); replaces l118 |

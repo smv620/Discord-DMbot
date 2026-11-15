@@ -34,7 +34,6 @@ What the graph should hold after the sample session is read: [the session transc
 | s012 | The kennel | in | Targos | inferred | no | yes | 132 | the party is in Targos (171) and walks down the road to it |
 | s013 | Jebidiah | knows (friendly) | Garret Velryn | stated | no | yes | 132 | 'Garret's done a lot for me' |
 | s014 | Jebidiah | associate | Keegan Velryn | needs_context | yes | yes | 21 | 'he does owe me a favor': Jebidiah owes her a favor (she is 'she', named only in the recap) |
-| s015 | The party | works_for | Keegan Velryn | needs_context | yes | yes | 135 | 'she gave you the 50 gold when Belleros said he would go find him' |
 | s016 | Claude Ambere | knows (friendly) | Okthandom Korran | stated | yes | yes | 448 | offers his wineskin: 'ok we friend' |
 | s017 | Cerric Vanya'elen | knows (friendly) | Okthandom Korran | stated | no | yes | 442 | 'What's wrong Oak' |
 | s018 | Belleros Stormgrace | knows (wary) | Cerric Vanya'elen | stated | no | yes | 114 | 'that's very self-serving' |
@@ -159,3 +158,11 @@ How far a road is, as the session says it (#4255): a property of the road, never
 
 - Glyph travels with the party (travels_with, #3176)
 - the road ambush as a deed ('attacked'), until session events have their own design note
+
+## Story threads (quests slice 1, #4453; design #4450 §9.3)
+
+Who gave it, who it is aimed at, and who takes it on when it is one character's own pursuit. The party is never named: a thread is the party's unless it has a taker. These replace the old "the party works for" rows. **Hint**: a question the text leaves open, counted when found and never missed.
+
+| ID | Kind | Thread | Giver | Target | Takes it on | About (missing / in danger) | Must find | Line | Note |
+|---|---|---|---|---|---|---|---|---|---|
+| sq01 | quest | Find Garret Velryn | Keegan Velryn | Garret Velryn |  |  | yes | 135 | an ask and a taker; replaces s015; scored from quests slice 5 (the session reader) |

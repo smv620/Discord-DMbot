@@ -16,7 +16,8 @@
   "in": "which documents say it: lore, session, or both (a both tie is checked twice: once in each document, and the master counts it once)",
   "sources": "for each document that says it: the key id there and the line of its plain-text export",
   "languages": "a character's languages are a property of the character, never a tie (owner, 2026-11-14; #4229): {character, language, line, note, doc (the document that says it)}; scored as found, missed, and extra (a language the key does not list)",
-  "route_lengths": "how far a road is, as the session says it (#4255): a property of the road, never a tie; found by the same amount and unit, or the same words when they give none"
+  "route_lengths": "how far a road is, as the session says it (#4255): a property of the road, never a tie; found by the same amount and unit, or the same words when they give none",
+  "threads": "a story thread (quests design, #4450 §9.3; #4453): kind quest, hook or mystery; giver, target and taker (who takes it on, for a pursuit that is one character's own) are key names; missing and in_danger list who the thread is about. The party is never named: a thread is the party's unless it has a taker. hint = a question the text leaves open, counted when found and never missed. Scored as found, missed, wrong (another kind), doubles and extra (a thread the key does not list)"
  },
  "players": {
   "Cerric Vanya'elen": "player_ist",
@@ -2308,25 +2309,6 @@
    "note": "operates out of it"
   },
   {
-   "id": "m069",
-   "a": "The party",
-   "relation": "works_for",
-   "b": "Hlin Trollbane",
-   "tier": "stated",
-   "must_find": true,
-   "in": [
-    "lore"
-   ],
-   "sources": [
-    {
-     "doc": "lore",
-     "id": "l069",
-     "line": 59
-    }
-   ],
-   "note": "100 gold to capture or eliminate Kaltro (line 73)"
-  },
-  {
    "id": "m070",
    "a": "Hlin Trollbane",
    "relation": "enemy_of",
@@ -2438,25 +2420,6 @@
      "line": 65
     }
    ]
-  },
-  {
-   "id": "m076",
-   "a": "The party",
-   "relation": "works_for",
-   "b": "Speaker Masthew",
-   "tier": "stated",
-   "must_find": true,
-   "in": [
-    "lore"
-   ],
-   "sources": [
-    {
-     "doc": "lore",
-     "id": "l076",
-     "line": 84
-    }
-   ],
-   "note": "50 gold, then 250 for the mine (line 93)"
   },
   {
    "id": "m077",
@@ -3323,31 +3286,6 @@
    "note": "vanished five days ago leading an expedition up it / 'Kelvin's Cairn to find Garret': the lore and the recap say he vanished leading an expedition up it"
   },
   {
-   "id": "m118",
-   "a": "The party",
-   "relation": "works_for",
-   "b": "Keegan Velryn",
-   "tier": "stated",
-   "must_find": true,
-   "in": [
-    "lore",
-    "session"
-   ],
-   "sources": [
-    {
-     "doc": "lore",
-     "id": "l118",
-     "line": 102
-    },
-    {
-     "doc": "session",
-     "id": "s015",
-     "line": 135
-    }
-   ],
-   "note": "50 gold and a route map to find Garret / 'she gave you the 50 gold when Belleros said he would go find him'"
-  },
-  {
    "id": "m119",
    "a": "Jebidiah",
    "relation": "works_in",
@@ -4157,6 +4095,106 @@
    "line": 192,
    "doc": "session",
    "note": "'take the dogsled five hours to Easthaven'; read only if that journey is walked"
+  }
+ ],
+ "threads": [
+  {
+   "id": "L-lq01",
+   "kind": "quest",
+   "name": "What happened to Master Sparkwalker",
+   "giver": "",
+   "target": "",
+   "taker": "Cerric Vanya'elen",
+   "missing": [
+    "Syllar Sparkwalker"
+   ],
+   "in_danger": [],
+   "must_find": true,
+   "hint": false,
+   "line": 27,
+   "note": "a pursuit (§9.3): the WIDE aim, searching for answers; the Danneth lead is its objective (slice 3)",
+   "doc": "lore"
+  },
+  {
+   "id": "L-lq02",
+   "kind": "mystery",
+   "name": "Who killed Wit?",
+   "giver": "",
+   "target": "",
+   "taker": "",
+   "missing": [
+    "Wit"
+   ],
+   "in_danger": [],
+   "must_find": false,
+   "hint": true,
+   "line": 27,
+   "note": "a hint branch of lq01 (§6a): counted when found, never missed; branches are read from slice 3",
+   "doc": "lore"
+  },
+  {
+   "id": "L-lq03",
+   "kind": "quest",
+   "name": "Why Okthandom's family vanish, and how to break the curse",
+   "giver": "",
+   "target": "",
+   "taker": "Okthandom Korran",
+   "missing": [
+    "Vaelrith"
+   ],
+   "in_danger": [
+    "Nyssara"
+   ],
+   "must_find": true,
+   "hint": false,
+   "line": 33,
+   "note": "a pursuit (§9.3)",
+   "doc": "lore"
+  },
+  {
+   "id": "L-lq04",
+   "kind": "quest",
+   "name": "Hlin's contract on Sephek Kaltro",
+   "giver": "Hlin Trollbane",
+   "target": "Sephek Kaltro",
+   "taker": "",
+   "missing": [],
+   "in_danger": [],
+   "must_find": true,
+   "hint": false,
+   "line": 73,
+   "note": "an ask and a taker; replaces l069 'the party works for Hlin' (§6); capture or eliminate, one objective",
+   "doc": "lore"
+  },
+  {
+   "id": "L-lq05",
+   "kind": "quest",
+   "name": "Speaker Masthew's bounty on the mine",
+   "giver": "Speaker Masthew",
+   "target": "The gemstone mine",
+   "taker": "",
+   "missing": [],
+   "in_danger": [],
+   "must_find": false,
+   "hint": false,
+   "line": 84,
+   "note": "an ask and a taker, already paid (line 93); replaces l076; not one of §9.3's four, so a good find",
+   "doc": "lore"
+  },
+  {
+   "id": "L-lq06",
+   "kind": "quest",
+   "name": "Find Garret Velryn",
+   "giver": "Keegan Velryn",
+   "target": "Garret Velryn",
+   "taker": "",
+   "missing": [],
+   "in_danger": [],
+   "must_find": true,
+   "hint": false,
+   "line": 102,
+   "note": "an ask and a taker (Belleros agrees for the party); replaces l118; the session (sq01) is the same thread",
+   "doc": "both"
   }
  ]
 }
