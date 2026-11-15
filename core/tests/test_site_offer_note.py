@@ -17,7 +17,7 @@ def offers(**kw: object) -> SiteOffers:
         get_guild=lambda _: None,
         guild_ids=lambda: [],
         wait_until_ready=AsyncMock(),
-        spawn=lambda coro, _name: coro.close(),
+        spawn=lambda coro, _name: None,
         **kw,  # type: ignore[arg-type]
     )
 
@@ -32,6 +32,7 @@ class Note(unittest.IsolatedAsyncioTestCase):
         post = AsyncMock()
         await offers(note=note, post=post)._screen_note(CAMPAIGN, OFFER)  # type: ignore[arg-type]
         post.assert_not_awaited()
+        assert note.await_args is not None
         told, text, pointer = note.await_args.args
         self.assertIs(told, CAMPAIGN)
         self.assertIn("Frostmaiden", text)
@@ -45,4 +46,5 @@ class Note(unittest.IsolatedAsyncioTestCase):
     async def test_without_a_note_sender_the_screen_post_is_kept(self) -> None:
         post = AsyncMock()
         await offers(post=post)._screen_note(CAMPAIGN, OFFER)  # type: ignore[arg-type]
+        assert post.await_args is not None
         self.assertEqual(post.await_args.args[0], 555)
