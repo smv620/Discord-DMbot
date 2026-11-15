@@ -4,8 +4,8 @@ gave each, who it is aimed at and who takes it on, for the DM to keep or turn do
 
 One AI call reads the text; everything after it is code:
 - **The AI says words, never decides.** It returns each thread's shape, its aim in the text's words,
-  the names in it and a short quote. Code checks the quote against the text and each name against
-  the quote, maps names to the campaign's entries, keeps the party out, drops doubles and builds
+  the names in it and a short quote. Code checks the quote against the text, maps each name to one
+  of the campaign's entries, keeps the party out, drops doubles and builds
   the thread's name. A line it can't check is dropped, and a thread with nothing checked is
   dropped whole: a missed quest costs the DM one tap, a false one the DM's trust (§9.2).
 - **Two shapes make a quest** (§9.2): an ask with a taker, and a pursuit a character set themself
@@ -45,6 +45,7 @@ GIVER, TARGET, TAKER, MISSING, DANGER = (
 AIM_MAX = 200  # the aim's words kept on the thread's description; longer is cut at a word
 QUOTE_MAX = 400
 THREADS_MAX = 20  # at most this many suggestions from one text (a flood costs the DM's trust)
+PEOPLE_MAX = 10  # people on one suggestion: its card's menu and message stay within Discord
 NAME_MAX = 80
 
 INSTRUCTIONS = """You read a Dungeon Master's campaign notes and list the story threads in them: \
@@ -275,6 +276,7 @@ def check(
                 entity = one(name)
                 if entity is not None and all(e != entity for _, e in parts):
                     parts.append((role, entity))
+        parts = parts[:PEOPLE_MAX]
         if s.shape == PURSUIT and not any(r == TAKER for r, _ in parts):
             drop("no_taker")
             continue
@@ -303,10 +305,14 @@ def entries_by_name(found: Iterable[tuple[str, str, str]]) -> dict[str, set[str]
     return out
 
 
-async def read_threads(ai: Any, text: str, *, max_tokens: int) -> list[Said]:
-    """The one AI call: the text in, the threads it states out, words only. An AI error or a cut
-    answer gives what could be parsed (a cut JSON answer gives nothing): the read is extra and
-    never stops an upload."""
+STOPPED, FAILED = "stopped", "failed"  # how a read ended short (said to the DM, never "none")
+
+
+async def read_threads(ai: Any, text: str, *, max_tokens: int) -> tuple[list[Said], str]:
+    """The one AI call: the text in, the threads it states out, words only; with "" when the
+    answer is whole, STOPPED when it was cut off at its limit, FAILED on an AI error. A cut answer
+    is reported as stopped early, never as "nothing found" (CLAUDE.md, AI output limits); what
+    could be parsed of it is still used. Out of funds is raised for the caller."""
     from dmbot.ai import AIError, AIOutOfFunds
 
     try:
@@ -315,7 +321,7 @@ async def read_threads(ai: Any, text: str, *, max_tokens: int) -> list[Said]:
         raise
     except AIError as exc:
         log.warning("Story threads couldn't be read (%s)", type(exc).__name__)
-        return []
+        return [], FAILED
     said = parse(reply.text)
     log.info("Story threads read: %d listed%s", len(said), " (cut)" if reply.cut else "")
-    return said
+    return said, STOPPED if reply.cut else ""

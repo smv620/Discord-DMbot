@@ -657,6 +657,8 @@ def _score_threads(
             for field, role in THREAD_ROLES.items()
             if t.get(field)
         ]
+        # (a person to find is the target or "the one missing": either word is right, #4453)
+        alike = {"target": ("target", "the one missing")}
         if not need:  # (a thread about someone, with nobody giving or taking it)
             need = [
                 (role, graph.ids(names.get(n, [n])))
@@ -668,7 +670,14 @@ def _score_threads(
             th
             for th in sorted(threads)
             if need
-            and all(any((role, i) in parts.get(th, set()) for i in ids) for role, ids in need)
+            and all(
+                any(
+                    (word, i) in parts.get(th, set())
+                    for i in ids
+                    for word in alike.get(role, (role,))
+                )
+                for role, ids in need
+            )
         ]
         used.update(hits)
         right = [th for th in hits if str(graph.entities[th]["type"]) in wanted_kinds]

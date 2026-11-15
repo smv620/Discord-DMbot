@@ -9276,16 +9276,18 @@ async def flag_kept(w: Changes, relation_id: str) -> list[Flag]:
 
 
 async def _followed(w: Changes, entity_id: str) -> str | None:
-    """The entry an id stands for now: itself, or the one it was merged into (a short chain is
-    followed); None when it is gone or turned down."""
+    """The kept entry an id stands for now: itself, or the one it was merged into (a short chain is
+    followed); None when it is gone, turned down, or a name the DM hasn't kept yet. A kept thread
+    never confirms a connection to a waiting name (a connection to one waits on it elsewhere,
+    `auto_accept.ON_A_NAME`; the reviewer's point on #4453): the card says it is left out."""
     seen: set[str] = set()
     while entity_id not in seen:
         seen.add(entity_id)
         row = await w.get(ENTITIES, entity_id, lock=False)
-        if row is None or row["status"] == REJECTED:
+        if row is None:
             return None
         if not row.get("merged_into"):
-            return entity_id
+            return entity_id if row["status"] == CONFIRMED else None
         entity_id = str(row["merged_into"])
     return None
 

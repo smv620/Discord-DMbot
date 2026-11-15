@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dmbot.memory import thread_read as tr
 from dmbot.memory.models import DM, MemoryRuleError, name_key
-from dmbot.memory.thread_suggestions import GONE, ThreadSuggestionStore
+from dmbot.memory.thread_suggestions import GONE, ThreadSuggestionStore, unkeep_in
 from tests.test_memory_store import GUILD_A, MemoryTest
 
 
@@ -54,8 +54,8 @@ class Suggestions(MemoryTest):
             sorted([(self.pell, tr.GIVER), (self.troll, tr.TARGET)]),
         )
         self.assertEqual(await self.store.count(GUILD_A, self.c), 0)
-        await self.memory.undo(GUILD_A, self.c, batch)
-        self.assertTrue(await self.store.unkeep(GUILD_A, self.c, batch))
+        # (the card's ↩ Undo: the thread goes and the suggestion waits, in one write)
+        await self.memory.undo(GUILD_A, self.c, batch, after=unkeep_in(batch))
         self.assertEqual(await self.memory.threads(GUILD_A, self.c), [])
         self.assertEqual(await self.store.count(GUILD_A, self.c), 1)
 
@@ -92,6 +92,15 @@ class Suggestions(MemoryTest):
         await self.keep()
         (t,) = await self.memory.threads(GUILD_A, self.c)
         self.assertEqual([(i.who.id, i.role) for i in t.involved], [(pell2, tr.GIVER)])
+
+    async def test_a_name_the_dm_hasnt_kept_is_left_out(self) -> None:
+        """(the reviewer's point on #4453: keeping a thread never confirms a connection to a waiting
+        name; the card says it is left out)"""
+        waiting = await self.add("Tobin", status="proposed")
+        await self.store.offer(GUILD_A, self.c, [self.job()], "", 5)
+        await self.keep(parts=[(tr.GIVER, self.pell), (tr.MISSING, waiting)])
+        (t,) = await self.memory.threads(GUILD_A, self.c)
+        self.assertEqual([i.who.id for i in t.involved], [self.pell])
 
     async def test_only_the_dm_keeps(self) -> None:
         with self.assertRaises(MemoryRuleError):
@@ -131,12 +140,48 @@ class FromTheUpload(MemoryTest):
         campaign = await self.campaigns.get(GUILD_A, self.c)
         assert campaign is not None
         bot = SimpleNamespace(memory=self.memory)
-        made = await store_thread_suggestions(bot, campaign, text, "Notes", FakeAI())
-        self.assertEqual(made, 1)
+        made, short = await store_thread_suggestions(bot, campaign, text, "Notes", FakeAI())
+        self.assertEqual((made, short), (1, ""))
         (s,) = await ThreadSuggestionStore(self.db).waiting(GUILD_A, self.c)
         self.assertEqual(
             (s.name, s.kind, s.upload), ("Old Pell's job: Gnashwater", "quest", "Notes")
         )
         self.assertEqual(await self.memory.threads(GUILD_A, self.c), [])  # (never added by itself)
-        again = await store_thread_suggestions(bot, campaign, text, "Notes", FakeAI())
+        again, _ = await store_thread_suggestions(bot, campaign, text, "Notes", FakeAI())
         self.assertEqual(again, 0)  # (the same thread is never suggested twice)
+
+    async def test_out_of_time_out_of_funds_and_a_cut_answer_never_fail_the_upload(self) -> None:
+        import asyncio
+        import time
+        from types import SimpleNamespace
+
+        from dmbot.ai import AIOutOfFunds, Reply
+        from dmbot.ui.name_background import store_thread_suggestions, thread_suggestions_line
+
+        campaign = await self.campaigns.get(GUILD_A, self.c)
+        assert campaign is not None
+        bot = SimpleNamespace(memory=self.memory)
+
+        class Slow:
+            async def complete(self, *_: object, **__: object) -> Reply:
+                await asyncio.sleep(5)
+                return Reply('{"threads": []}', False)
+
+        class Broke:
+            async def complete(self, *_: object, **__: object) -> Reply:
+                raise AIOutOfFunds("no credits")
+
+        class Cut:
+            async def complete(self, *_: object, **__: object) -> Reply:
+                return Reply('{"threads": [{"shape": "ask"', True)
+
+        late = time.monotonic() + 1  # (less than the step's least time: not even started)
+        got = await store_thread_suggestions(bot, campaign, "x", "", Slow(), until=late)
+        self.assertEqual(got, (0, "time"))
+        broke = await store_thread_suggestions(bot, campaign, "x", "", Broke())
+        self.assertEqual(broke, (0, "funds"))  # (only this step ends: the upload is done)
+        cut = await store_thread_suggestions(bot, campaign, "x", "", Cut())
+        self.assertEqual(cut, (0, "stopped"))  # (said as stopped early, never "none found")
+        self.assertIn("stopped early", thread_suggestions_line(0, "stopped"))
+        self.assertEqual(thread_suggestions_line(0, ""), "")
+        self.assertIn("2 story threads to check", thread_suggestions_line(2, ""))

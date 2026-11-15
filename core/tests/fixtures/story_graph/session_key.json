@@ -1,7 +1,7 @@
 {
  "campaign": "test of the frostmaiden (sample)",
  "source": "the public sample session, https://docs.google.com/document/d/1BtHZ4O75886WHOoTq0FCPst2hdg7YLnsaCiI-kNsv-E/edit?usp=sharing (the plain-text export; each connection names its line)",
- "version": 1,
+ "version": 2,
  "goes_with": "the small sample lore, https://docs.google.com/document/d/1zbt7g3r6uFfiSYr3fl_gyaxARhwJPizauI0jmiEa2aw/edit?usp=sharing",
  "how_to_read": {
   "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted); needs_context = only readable with the lore or the recap (for example 'she' is Keegan); recap_only = only in the 'Previously' recap on line 1, so background and never this session's event; by_rule = made by a rule, not read",
@@ -727,21 +727,6 @@
   }
  ],
  "threads": [
-  {
-   "id": "sq01",
-   "kind": "quest",
-   "name": "Find Garret Velryn",
-   "giver": "Keegan Velryn",
-   "target": "Garret Velryn",
-   "taker": "",
-   "missing": [],
-   "in_danger": [],
-   "must_find": true,
-   "hint": false,
-   "lines": [
-    135
-   ],
-   "note": "an ask and a taker; replaces s015; scored from quests slice 5 (the session reader)"
-  }
+  {"id": "sq01", "kind": "quest", "name": "Find Garret Velryn", "giver": "Keegan Velryn", "target": "Garret Velryn", "taker": "", "missing": [], "in_danger": [], "must_find": false, "hint": false, "lines": [135], "note": "an ask and a taker; replaces s015; a good find until quests slice 5 (the session reader); must-find from then (the session reader)"}
  ]
 }

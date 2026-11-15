@@ -15,8 +15,11 @@ ALLOWED = {
     "memory/thread_suggestions.py": "the one reader and writer (the DM's card and the upload)",
     "migrations/0502_thread_suggestions.py": "creates the table",
     "campaigns/tables.py": "only names the table: a wait, left out of backups",
+    "lineage.py": "only names the table, on the list of what is never stamped",
 }
-NAMES = re.compile(r"\bthread_suggestions\b(?!\.py)")
+# The table's name inside any string literal (SQL split over lines included); a module path
+# ("dmbot.memory.thread_suggestions") or a file name is no read of the table
+NAMES = re.compile(r"""["'][^"'\n]*(?<![.\w])thread_suggestions(?![\w.])[^"'\n]*["']""")
 
 
 class OneReader(unittest.TestCase):
@@ -24,10 +27,7 @@ class OneReader(unittest.TestCase):
         found = {
             str(p.relative_to(SRC))
             for p in SRC.rglob("*.py")
-            if any(
-                NAMES.search(line) and ("FROM" in line or "INTO" in line or "UPDATE" in line
-                                         or "TABLE" in line or '"thread_suggestions"' in line)
-                for line in p.read_text(encoding="utf-8").splitlines()
-            )
-        }  # fmt: skip
+            if NAMES.search(p.read_text(encoding="utf-8"))
+        }
         self.assertEqual(found - set(ALLOWED), set(), "a new reader of thread_suggestions")
+        self.assertEqual(set(ALLOWED) - found, set(), "a listed file no longer names the table")

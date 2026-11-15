@@ -38,7 +38,7 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | l093 | Bruni Stonewake | sibling | Thorin | stated | yes | yes | 84 | 'Thorin, his miner brother Bruni' |
 | l115 | Garret Velryn | spouse | Keegan Velryn | stated | yes | yes | 102 | 'whose husband' |
 
-### Teaching and work (19)
+### Teaching and work (16)
 
 | id | from | tie | to | tier | must find | current | line | note |
 |---|---|---|---|---|---|---|---|---|
@@ -100,7 +100,7 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | l108 | Fizzlebomb | owns | Aurora's Wind | stated | yes | yes | 96 | 'Fizzlebomb's vessel'; the owner flagged this as missing |
 | l114 | Garret Velryn | owns | Boy | inferred | yes | yes | 102 | Boy led the party to Keegan's home: the owner says he is Garret's dog. The text never says it; offer it to the DM, never extract it |
 
-### Places and other ties (53)
+### Places and other ties (60)
 
 | id | from | tie | to | tier | must find | current | line | note |
 |---|---|---|---|---|---|---|---|---|

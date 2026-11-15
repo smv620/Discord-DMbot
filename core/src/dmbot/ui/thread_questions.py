@@ -19,7 +19,7 @@ from typing import Any
 import discord
 
 from dmbot.memory.models import DM, MemoryRuleError, TooLateToUndo
-from dmbot.memory.thread_suggestions import ThreadSuggestionStore, Waiting
+from dmbot.memory.thread_suggestions import ThreadSuggestionStore, Waiting, unkeep_in
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
@@ -48,6 +48,7 @@ KEEP, RENAME, NOT_ONE, SKIP, UNDO = (
 KIND_WORDS = {"quest": "a quest", "hook": "a hook: a lead nobody has taken up yet"}
 WHO_HEADING = "**Who's involved:**"
 UNTICK = "Untick anyone who doesn't belong in it."
+NOT_KEPT_YET = "name not kept yet, so it's left out: keep the name, then add them on the thread"
 WHO_HOLDER = "Who's involved"
 AFTER = (
     "Keep it, and it goes on your 🧵 Threads list and the website's Story Graph. Players see it "
@@ -79,7 +80,14 @@ def undone_text(name: str) -> str:
 
 
 def card_text(
-    s: Waiting, names: Mapping[str, str], at: int, of: int, *, name: str = "", on: frozenset[int]
+    s: Waiting,
+    names: Mapping[str, str],
+    at: int,
+    of: int,
+    *,
+    name: str = "",
+    on: frozenset[int],
+    waiting: frozenset[str] = frozenset(),
 ) -> str:
     """The card: the thread's name, kind and the state it is kept with, its aim, who is involved
     (the lines switched on), and the lore it came from with the quote DMbot checked. `on`: which
@@ -100,9 +108,12 @@ def card_text(
     if people:
         lines.append(WHO_HEADING)
         for i, who, part in people:
-            lines.append(
-                f"• {_md(who)} ({part})" if i in on else f"• ~~{_md(who)} ({part})~~ (left out)"
-            )
+            if s.parts[i][1] in waiting:  # (a name the DM hasn't kept: never kept with it)
+                lines.append(f"• ~~{_md(who)} ({part})~~ ({NOT_KEPT_YET})")
+            else:
+                lines.append(
+                    f"• {_md(who)} ({part})" if i in on else f"• ~~{_md(who)} ({part})~~ (left out)"
+                )
         lines.append(UNTICK)
     if s.quote:
         lines.append(f"From **{_md(s.upload)}**:" if s.upload else "From your lore:")
@@ -142,11 +153,13 @@ class ThreadQuestions(_Menu):
         if self.current is None or self.current.id != s.id:
             self.name, self.on = "", frozenset(range(len(s.parts)))
         self.current = s
-        self.names = {}
+        self.names, self.waiting = {}, frozenset[str]()
         for _, who in s.parts:
             e = await memory.entity(self.guild_id, self.campaign_id, who)
             if e is not None:
                 self.names[who] = e.name
+                if e.status != "confirmed":
+                    self.waiting |= {who}
         self.add_item(_Button(self._keep, label=KEEP, style=discord.ButtonStyle.success))
         self.add_item(_Button(self._rename, label=RENAME, style=discord.ButtonStyle.secondary))
         self.add_item(_Button(self._not_one, label=NOT_ONE, style=discord.ButtonStyle.danger))
@@ -154,7 +167,11 @@ class ThreadQuestions(_Menu):
             self.add_item(_Button(self._skip, label=SKIP, style=discord.ButtonStyle.secondary))
         if self.undo is not None:
             self.add_item(_Button(self._undo, label=UNDO, style=discord.ButtonStyle.secondary))
-        people = [(i, who) for i, (_, who) in enumerate(s.parts) if who in self.names]
+        people = [
+            (i, who)
+            for i, (_, who) in enumerate(s.parts)
+            if who in self.names and who not in self.waiting
+        ]
         if people:
             self.who = _Select(
                 self._who_picked,
@@ -174,7 +191,9 @@ class ThreadQuestions(_Menu):
             )
             self.add_item(self.who)
         at = waiting.index(s) + 1
-        return card_text(s, self.names, at, len(waiting), name=self.name, on=self.on)
+        return card_text(
+            s, self.names, at, len(waiting), name=self.name, on=self.on, waiting=self.waiting
+        )
 
     async def _who_picked(self, interaction: discord.Interaction) -> None:
         self.on = frozenset(int(v) for v in self.who.values)
@@ -199,6 +218,9 @@ class ThreadQuestions(_Menu):
 
     async def _show(self, interaction: discord.Interaction, said: str) -> None:
         await _answer_first(interaction, in_place=True)
+        # (every press draws a card that quotes the DM's lore: who presses is checked each time)
+        if await _dm_campaign(interaction, self.campaign_id) is None:
+            return
         shown = await self._load(interaction)
         if shown is None:
             if self.undo is None:
@@ -221,9 +243,8 @@ class ThreadQuestions(_Menu):
         try:
             if what == "undo" and self.undo is not None:
                 how, ref, was = self.undo
-                if how == "keep":
-                    await memory.undo(g, c, int(ref))
-                    await store.unkeep(g, c, int(ref))
+                if how == "keep":  # (the thread goes and the suggestion waits, in one write)
+                    await memory.undo(g, c, int(ref), after=unkeep_in(int(ref)))
                 else:
                     await store.unturn(g, c, str(ref))
                 self.undo, said = None, undone_text(was)

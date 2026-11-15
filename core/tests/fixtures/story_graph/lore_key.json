@@ -1,7 +1,7 @@
 {
  "campaign": "test of the frostmaiden (sample)",
  "source": "the public sample lore, https://docs.google.com/document/d/1zbt7g3r6uFfiSYr3fl_gyaxARhwJPizauI0jmiEa2aw/edit?usp=sharing (the plain-text export; each connection names its line)",
- "version": 3,
+ "version": 4,
  "how_to_read": {
   "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted as a fact); by_rule = made by a rule, not read",
   "relation": "parent_of, grandparent_of, sibling, spouse, uncle_of, apprentice_of, mentor_of, owns, carries, knows (+ one of nine feeling words), member, leads, works_for, enemy_of, rival_of, held_captive_by, found, associate; place ties by word: lives_in, lived_in, works_in, comes_from, last_seen_in (a character, creature or group), kept_in, was_kept_in (an item); in (only a place inside a place)",
@@ -1941,27 +1941,11 @@
   "who a marching order puts ahead of whom is not a tie"
  ],
  "map_facts": [
-  {
-   "place": "Icewind Dale",
-   "layer": "climate",
-   "value": "arctic",
-   "line": 4,
-   "note": "the North held in a frozen vice, no sun, no warmth; also the treacherous tundra (line 42). Not one of slice 2's set phrases, so its reader misses it: scored as missed until a reader says it"
-  }
+  {"place": "Icewind Dale", "layer": "climate", "value": "arctic", "line": 4, "note": "the North held in a frozen vice, no sun, no warmth; also the treacherous tundra (line 42). Not one of slice 2's set phrases, so its reader misses it: scored as missed until a reader says it"}
  ],
  "languages": [
-  {
-   "character": "Cerric Vanya'elen",
-   "language": "Elvish",
-   "line": 21,
-   "note": "'raised fluent in Elvish' (from his elven heritage); the owner added this paragraph on 2026-11-14"
-  },
-  {
-   "character": "Cerric Vanya'elen",
-   "language": "Draconic",
-   "line": 21,
-   "note": "'earned him fluency in Draconic as well' (from his studies of arcane texts)"
-  }
+  {"character": "Cerric Vanya'elen", "language": "Elvish", "line": 21, "note": "'raised fluent in Elvish' (from his elven heritage); the owner added this paragraph on 2026-11-14"},
+  {"character": "Cerric Vanya'elen", "language": "Draconic", "line": 21, "note": "'earned him fluency in Draconic as well' (from his studies of arcane texts)"}
  ],
  "must_not_find": [
   "a kind of creature is not an entry (#3373 rule, Supervisor 2026-11-04): no entry or tie for the white roc, ice kobolds, grell, electric eel or owlbears; one particular creature is (the mind flayer whose skull held the Psi crystal)",
@@ -1975,97 +1959,11 @@
   "the Sylvan runes on Claude's wolf figurine (line 48) are writing on an item, not a language Claude speaks: no language row for him"
  ],
  "threads": [
-  {
-   "id": "lq01",
-   "kind": "quest",
-   "name": "What happened to Master Sparkwalker",
-   "giver": "",
-   "target": "",
-   "taker": "Cerric Vanya'elen",
-   "missing": [
-    "Syllar Sparkwalker"
-   ],
-   "in_danger": [],
-   "must_find": true,
-   "hint": false,
-   "line": 27,
-   "note": "a pursuit (§9.3): the WIDE aim, searching for answers; the Danneth lead is its objective (slice 3)"
-  },
-  {
-   "id": "lq02",
-   "kind": "mystery",
-   "name": "Who killed Wit?",
-   "giver": "",
-   "target": "",
-   "taker": "",
-   "missing": [
-    "Wit"
-   ],
-   "in_danger": [],
-   "must_find": false,
-   "hint": true,
-   "line": 27,
-   "note": "a hint branch of lq01 (§6a): counted when found, never missed; branches are read from slice 3"
-  },
-  {
-   "id": "lq03",
-   "kind": "quest",
-   "name": "Why Okthandom's family vanish, and how to break the curse",
-   "giver": "",
-   "target": "",
-   "taker": "Okthandom Korran",
-   "missing": [
-    "Vaelrith"
-   ],
-   "in_danger": [
-    "Nyssara"
-   ],
-   "must_find": true,
-   "hint": false,
-   "line": 33,
-   "note": "a pursuit (§9.3)"
-  },
-  {
-   "id": "lq04",
-   "kind": "quest",
-   "name": "Hlin's contract on Sephek Kaltro",
-   "giver": "Hlin Trollbane",
-   "target": "Sephek Kaltro",
-   "taker": "",
-   "missing": [],
-   "in_danger": [],
-   "must_find": true,
-   "hint": false,
-   "line": 73,
-   "note": "an ask and a taker; replaces l069 'the party works for Hlin' (§6); capture or eliminate, one objective"
-  },
-  {
-   "id": "lq05",
-   "kind": "quest",
-   "name": "Speaker Masthew's bounty on the mine",
-   "giver": "Speaker Masthew",
-   "target": "The gemstone mine",
-   "taker": "",
-   "missing": [],
-   "in_danger": [],
-   "must_find": false,
-   "hint": false,
-   "line": 84,
-   "note": "an ask and a taker, already paid (line 93); replaces l076; not one of §9.3's four, so a good find"
-  },
-  {
-   "id": "lq06",
-   "kind": "quest",
-   "name": "Find Garret Velryn",
-   "giver": "Keegan Velryn",
-   "target": "Garret Velryn",
-   "taker": "",
-   "missing": [],
-   "in_danger": [],
-   "must_find": true,
-   "hint": false,
-   "line": 102,
-   "note": "an ask and a taker (Belleros agrees for the party); replaces l118"
-  }
+  {"id": "lq01", "kind": "quest", "name": "What happened to Master Sparkwalker", "giver": "", "target": "", "taker": "Cerric Vanya'elen", "missing": ["Syllar Sparkwalker"], "in_danger": [], "must_find": true, "hint": false, "line": 27, "note": "a pursuit (§9.3): the WIDE aim, searching for answers; the Danneth lead is its objective (slice 3)"},
+  {"id": "lq02", "kind": "mystery", "name": "Who killed Wit?", "giver": "", "target": "", "taker": "", "missing": ["Wit"], "in_danger": [], "must_find": false, "hint": true, "line": 27, "note": "a hint branch of lq01 (§6a): counted when found, never missed; branches are read from slice 3"},
+  {"id": "lq03", "kind": "quest", "name": "Why Okthandom's family vanish, and how to break the curse", "giver": "", "target": "", "taker": "Okthandom Korran", "missing": ["Vaelrith"], "in_danger": ["Nyssara"], "must_find": true, "hint": false, "line": 33, "note": "a pursuit (§9.3)"},
+  {"id": "lq04", "kind": "quest", "name": "Hlin's contract on Sephek Kaltro", "giver": "Hlin Trollbane", "target": "Sephek Kaltro", "taker": "", "missing": [], "in_danger": [], "must_find": true, "hint": false, "line": 73, "note": "an ask and a taker; replaces l069 'the party works for Hlin' (§6); capture or eliminate, one objective"},
+  {"id": "lq05", "kind": "quest", "name": "Speaker Masthew's bounty on the mine", "giver": "Speaker Masthew", "target": "The gemstone mine", "taker": "", "missing": [], "in_danger": [], "must_find": false, "hint": false, "line": 84, "note": "an ask and a taker, already paid (line 93); replaces l076; not one of §9.3's four, so a good find"},
+  {"id": "lq06", "kind": "quest", "name": "Find Garret Velryn", "giver": "Keegan Velryn", "target": "Garret Velryn", "taker": "", "missing": [], "in_danger": [], "must_find": true, "hint": false, "line": 102, "note": "an ask and a taker (Belleros agrees for the party); replaces l118"}
  ]
 }

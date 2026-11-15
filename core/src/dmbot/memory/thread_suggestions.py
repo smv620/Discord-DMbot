@@ -67,6 +67,21 @@ async def mark_kept(w: Any, suggestion_id: str, batch: int | None) -> bool:
     return bool(cur.rowcount)
 
 
+def unkeep_in(batch: int) -> Any:
+    """For `MemoryStore.undo`'s `after`: the suggestion a keep made waits again, inside the Undo's
+    own write, so the thread and the suggestion never part (a stop between two writes would lose
+    the suggestion unseen: the reviewer's finding on #4453)."""
+
+    async def after(w: Any) -> None:
+        await w.conn.execute(
+            "UPDATE thread_suggestions SET status = 'waiting', kept_batch = NULL"
+            " WHERE guild_id = %s AND campaign_id = %s AND kept_batch = %s AND status = 'kept'",
+            (w.guild_id, w.campaign_id, batch),
+        )
+
+    return after
+
+
 class ThreadSuggestionStore:
     def __init__(self, db: Any) -> None:
         self._db = db
