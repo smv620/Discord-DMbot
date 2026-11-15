@@ -118,7 +118,8 @@ by hand:
 - **`clue_to`** (clue → thread; reads "is a clue to", read back "has the clue"). Its detail is one
   of two words: "points to it" (the default) or "false lead". It is the DM's word or a kept read.
   `led_to` stays for what it means: one thing sent the party on to another.
-- **"takes it on"** joins the suggested parts of `in_thread` (`threads.ROLES`).
+- **"takes it on", "the one missing" and "in danger"** join the suggested parts of `in_thread`
+  (`threads.ROLES`).
 - Nothing else. No `gives_quest`, `hired`, `seeks` or `wants`: `in_thread` with its part already
   says who gave it and who it is aimed at.
 
@@ -186,8 +187,10 @@ The party is never an entry (owner's ruling, #3157), so a thread can't point at 
 
 - **A thread is the party's by default.** Nothing is stored to say so.
 - **A thread is someone else's when it says so:** an `in_thread` connection with the part "takes
-  it on", from a character or a group. That covers a personal quest (one player character), a
-  rival party's quest, and a villain's goal.
+  it on", from a character or a group. That covers a personal quest (one player character, such as
+  the pursuit a backstory sets up), a rival party's quest, and a villain's goal.
+- **A personal quest stays personal** when the rest of the party helps. It becomes the party's only
+  when the DM says so.
 - **"The party was hired by Hlin" is a quest,** not a connection: a quest thread whose giver is
   Hlin (`in_thread`, "quest giver") and whose target is Sephek (`in_thread`, "target"). Whether
   the party took the job is the thread's state: "Not started" while it is only offered, "Happening
@@ -315,6 +318,19 @@ So a short exchange at the table, agreeing to search for a lost person in return
 the innkeeper's good word, is a quest suggestion with a giver (the innkeeper), a target (the lost
 person), one objective ("find him") and a reward ("a meal and her good word").
 
+**The second shape: a pursuit a character has set themself** (owner, 2026-11-15). Nobody asks and
+nobody pays. A character is already **doing something about it**: searching, hunting, following a
+lead. Backstories in lore are full of these.
+
+- **What makes it a quest and not just a wish:** a stated aim, **and** an action or a lead the
+  character is following ("following this lead, he journeyed north … searching for answers"; "hunts
+  across Icewind Dale searching for answers to break the curse").
+- **It is that character's quest:** the suggestion carries "takes it on" for them (section 6).
+- **When the aim is to find something out,** the question is its first objective, and what the
+  text gives as leads become clue suggestions tied to it.
+- **A wish with no action or lead** ("she dreams of going home one day") is a `goal` suggestion at
+  most, and nothing when the text only hints at it.
+
 **How sure DMbot must be:**
 
 - **An ask and a taker make a quest suggestion,** started as "Happening now".
@@ -324,20 +340,48 @@ person), one objective ("find him") and a reward ("a meal and her good word").
 - **A reward is never required.** Many quests are taken for nothing.
 - **A reward of standing is only words on the reward part.** It never changes a reputation or an
   attitude by itself: those stay the DM's to set (STORY_MEMORY section 5).
-- **Not a quest:** a plan the party makes with nobody asking ("let's head north tomorrow"), an
-  errand done within the same scene ("pass me that rope"), a threat, or a wish nobody acts on. A
-  party's own aim that lasts ("we want to clear our names") is a `goal` suggestion.
+- **One character agreeing in front of the others takes it for the party.** "Takes it on" is only
+  for a quest that is that character's own.
+- **Not a quest:** a plan for the next step with no aim behind it ("let's head north tomorrow"),
+  an errand done within the same scene ("pass me that rope"), a threat, or a wish nobody acts on.
 - **When DMbot can't tell,** it suggests nothing. A missed quest costs the DM one tap to add; a
   flood of false ones costs the DM's trust in the list.
 
-### 9.3 The lore reader
-- It suggests a thread only when the text has the shape in section 9.2: **an ask, and at least
-  one of** who wants it, who it is aimed at, or what is offered for it. A plan, a rumour with no ask,
+### 9.3 The sample's quests, worked through
+The sample lore and session (`core/tests/fixtures/story_graph/`) hold four the owner named. They
+are the first rows of the quest keys, and they show both shapes.
+
+| Quest | From | Shape | Whose | Who is in it | Objectives, in the text's words | Reward | Time limit | Clues and leads |
+|---|---|---|---|---|---|---|---|---|
+| **What ties Danneth of Easthaven to Master Sparkwalker's disappearance** | lore | a pursuit | Cerric ("takes it on") | Master Sparkwalker (the one missing), Danneth, the Brotherhood; Easthaven | find answers in Easthaven | none | none | the warning in the locked azure tome; Wit's warning that "they are coming" |
+| **Why Okthandom's family vanish, and how to break the curse** | lore | a pursuit | Okthandom ("takes it on") | Vaelrith (vanished), Nyssara (in danger); the unseen presence | find answers; break the curse | none | **soft, words only:** "before the shadow claims his sister, his child, and himself" | the ancestral journal; the blood-stained campsite; the whispers Nyssara hears |
+| **Hlin's contract on Sephek Kaltro** | lore | an ask and a taker | the party | Hlin Trollbane (quest giver), Sephek Kaltro (target) | capture or eliminate Sephek Kaltro | only what the text states | none | none in this passage |
+| **Find Garret Velryn** | session | an ask and a taker | the party (Belleros agrees for them) | Keegan Velryn (quest giver), Garret Velryn (target); Kelvin's Cairn | find Garret | 50 gold and a route map, already handed over: "paid" | none stated | the route map; where he was last seen |
+
+**What these fix for the readers:**
+
+- **Neither backstory says "quest",** and neither has anyone asking. Both must be found.
+- **"Capture or eliminate" is one objective with the text's own "or",** never two, and never
+  DMbot's choice of which.
+- **A reward handed over on agreeing is "paid" from the start,** not "offered".
+- **"Before the shadow claims …" is a soft limit with no date,** and stays words.
+- **The clue rows are suggestions too:** the tome's warning and the journal become clue entries
+  only when the DM keeps them, each tied to its quest with `clue_to`.
+- **The missing people are who the quest is about,** not targets to act against. The part word for
+  them is "the one missing" or "in danger", in the text's sense; `in_thread`'s part is free words,
+  and the suggested list (`threads.ROLES`) gains those two.
+- **Each of the four replaces a "works for" or loose row** in today's keys with one quest row and
+  its parts (the "party works for Hlin" and "party works for Keegan" rows).
+
+### 9.4 The lore reader
+- It suggests a thread only when the text has one of the two shapes in section 9.2: **an ask, with
+  at least one of** who wants it, who it is aimed at, or what is offered for it; **or a pursuit,
+  with its aim and the action or lead** the character is following. A plan, a rumour with no ask,
   or a motive DMbot would have to guess makes nothing.
 - A published adventure the DM shared states its quests, clues and time limits outright. Those are
   read the same way, under the DM's existing right-to-use confirmation, and start DM-only.
 
-### 9.4 The session reader
+### 9.5 The session reader
 After a session, never during play, it suggests:
 
 - **a new thread,** when the table's talk has the shape in section 9.2, or raises a question the
@@ -349,7 +393,7 @@ It is given the campaign's open threads and their open parts, so progress is att
 it belongs to. Code, not the AI, decides whether a suggestion is a new thread or the one already
 there (same giver and target, or the same name).
 
-### 9.5 Rules for both
+### 9.6 Rules for both
 - **A reader writes `read`, never `confirmed`.** `MemoryStore.new_thread` and the thread writers
   learn one new source for suggestions; the DM's keep is still the only way to a confirmed row.
 - **Nothing a reader suggests is added by itself,** including what lore uploads otherwise add as
@@ -361,12 +405,13 @@ there (same giver and target, or the same name).
 - **Lengths are targets, never checks,** and the generous output limits apply.
 - **Reading is metered AI use,** and every wait shows progress.
 
-### 9.6 Scoring
+### 9.7 Scoring
 Each reader slice is scored on the sample, lore first and then the session, before and after:
 
 - **The keys gain rows for:** threads (kind, giver, target), objectives, rewards, time limits (the
   words, and the game date where the key has one), clues with the thread they are a clue to, and
   progress in the session key.
+- **The four quests of section 9.3 are must-find rows.**
 - **The keys include quests nobody calls a quest:** at least one taken in a few lines of talk, one
   with a reward that isn't gold, one with no reward, and one ask that nobody takes up (a hook). They
   also include talk that must make nothing: a plan, an errand and a threat.
@@ -462,7 +507,7 @@ which has none today.
 9. **Discord and the website stay level,** and `docs/discord-web-parity.md` is updated each slice.
 10. **Plain words.** The DM never sees "part", "bundle", `thread_parts` or a status word. The
     ux-critic checks each slice's words before code.
-11. **Each reader slice is scored** as in section 9.6, with its numbers in the PR.
+11. **Each reader slice is scored** as in section 9.7, with its numbers in the PR.
 12. **The ontology change** (`clue_to`, "takes it on") is one reviewed code release, with its
     definitions, "not this" lines and examples.
 
