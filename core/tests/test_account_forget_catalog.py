@@ -83,7 +83,7 @@ UNREVIEWED: Rules = {  # not yet decided (columns not yet audited): empty since 
 NAME_COLUMN = r"(name|label|who|author|poster|nick|display)"
 PERSON_NAMED = r"(display|username|nick|author|poster|^who$|last_name|from_name|to_name)"
 NAME_ELSEWHERE: Rules = {  # goes with the person's rows or its own forget function
-    "campaign_handover_offers": ("from_name", "to_name"),  # blanked by 0496
+    "campaign_handover_offers": ("from_name", "to_name"),  # blanked by 0497
     "dm_players": ("last_name",),  # the DM's list: dmbot_forget_dm_players (0450)
     "member_directory": ("display_name", "username"),  # deleted: DELETED (0447)
     "web_sessions": ("display_name",),  # the sessions go with the account
