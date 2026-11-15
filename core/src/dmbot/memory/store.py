@@ -246,7 +246,6 @@ ONLY_PLACES = "Only a place has a size, and this isn't a place now."
 SETTING_LEVELS = place_levels.SETTING_LEVELS
 SETTING_PLACE = "Confirm this place first, then make it the setting."
 SETTING_SIZE = "Tap 📏 Size and kind first and pick Region or bigger."
-SETTING_NAME = "Type the name of the world."
 SETTING_TWO = (
     "More than one place has that name. Open the one you mean and tap 🌍 Make it the setting."
 )
@@ -1384,9 +1383,7 @@ class MemoryStore:
         which: the DM picks from the place's own card)."""
         if source != DM:
             raise MemoryRuleError("Only the DM can say that.")
-        world = clean_text(name)
-        if not world:
-            raise MemoryRuleError(SETTING_NAME)
+        world = clean_text(name)  # (refuses an empty name)
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
 
@@ -1404,20 +1401,43 @@ class MemoryStore:
             ]
             if len(found) > 1:
                 raise MemoryRuleError(SETTING_TWO)
-            for r in await w.select(ENTITIES, " AND setting", []):
+            if found and found[0].get("place_level") not in SETTING_LEVELS:
+                raise MemoryRuleError(SETTING_SIZE)  # (before any write)
+            now = await w.select(ENTITIES, " AND setting", [])
+            if (
+                found
+                and [r["id"] for r in now] == [found[0]["id"]]
+                and now[0].get("setting_from") == DM
+            ):
+                return Written(_entity(found[0]), None)  # (already the DM's word: nothing to write)
+            for r in now:
                 if found and r["id"] == found[0]["id"]:
                     continue
                 # (the DM taking away DMbot's guess is a no to it: never guessed again)
                 gone_from = "declined" if r.get("setting_from") == place_levels.READ else None
-                await w.update(ENTITIES, r["id"], {"setting": False, "setting_from": gone_from})
+                change: dict[str, Any] = {"setting": False, "setting_from": gone_from}
+                # (a place DMbot made for its guess goes with it, as ✖ does: it never keeps one
+                # the DM didn't ask for)
+                if r.get("source") == SETTING_GUESS_SOURCE and r.get("hidden_from_players"):
+                    tied = await w.select(
+                        RELATIONS,
+                        " AND status <> 'rejected' AND (subject_id = %s OR object_id = %s)",
+                        [r["id"], r["id"]],
+                    )
+                    if not tied:
+                        change["status"] = REJECTED
+                await w.update(ENTITIES, r["id"], change)
             if found:
-                if found[0].get("place_level") not in SETTING_LEVELS:
-                    raise MemoryRuleError(SETTING_SIZE)
-                change: dict[str, Any] = {"setting": True, "setting_from": DM}
-                # (only a place DMbot made for a guess is shown now: never one the DM hid)
-                if found[0].get("source") == SETTING_GUESS_SOURCE:
+                place = found[0]
+                change = {"setting": True, "setting_from": DM}
+                # (only the place DMbot made for a guess, still hidden for it: never one the DM hid)
+                if (
+                    place.get("source") == SETTING_GUESS_SOURCE
+                    and place.get("setting_from") == place_levels.READ
+                    and place.get("hidden_from_players")
+                ):
                     change["hidden_from_players"] = False
-                row = await w.update(ENTITIES, str(found[0]["id"]), change)
+                row = await w.update(ENTITIES, str(place["id"]), change)
                 return Written(_entity(row), w.batch)
             row = await w.insert(
                 ENTITIES,

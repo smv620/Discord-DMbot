@@ -42,6 +42,42 @@ class Choosing(MemoryTest):
         made = await self.memory.choose_setting(GUILD_A, self.c, "Eberron", source=BY_DM)
         self.assertTrue(made.value.hidden_from_players)
 
+    async def test_a_refusal_leaves_the_old_setting_alone(self) -> None:
+        guess = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        assert guess.value is not None
+        town = await self.add("Phandalin", type="place", status=CONFIRMED)
+        await self.memory.set_place_level(GUILD_A, self.c, town, "settlement", source=BY_DM)
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.choose_setting(GUILD_A, self.c, "Phandalin", source=BY_DM)
+        kept = await self.memory.entity(GUILD_A, self.c, guess.value.id)
+        assert kept is not None
+        self.assertTrue(kept.setting_guessed)  # (not turned into a "no")
+
+    async def test_choosing_what_is_already_chosen_writes_nothing(self) -> None:
+        first = await self.memory.choose_setting(GUILD_A, self.c, "Golarion", source=BY_DM)
+        again = await self.memory.choose_setting(GUILD_A, self.c, "Golarion", source=BY_DM)
+        self.assertEqual(again.value.id, first.value.id)
+        self.assertIsNone(again.batch)
+
+    async def test_a_hidden_guess_place_is_shown_when_chosen_and_undo_hides_it(self) -> None:
+        guess = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        assert guess.value is not None
+        made = await self.memory.choose_setting(GUILD_A, self.c, "Faerûn", source=BY_DM)
+        self.assertEqual(made.value.id, guess.value.id)
+        self.assertFalse(made.value.hidden_from_players)
+        assert made.batch is not None
+        await self.memory.undo(GUILD_A, self.c, made.batch)
+        back = await self.memory.entity(GUILD_A, self.c, guess.value.id)
+        assert back is not None
+        self.assertTrue(back.hidden_from_players)
+
+    async def test_a_place_made_for_a_replaced_guess_goes_with_it(self) -> None:
+        guess = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        assert guess.value is not None
+        await self.memory.choose_setting(GUILD_A, self.c, "Golarion", source=BY_DM)
+        gone = await self.memory.entity(GUILD_A, self.c, guess.value.id)
+        self.assertTrue(gone is None or gone.status == "rejected")
+
     async def test_a_small_place_of_that_name_is_refused_and_nothing_changes(self) -> None:
         town = await self.add("Phandalin", type="place", status=CONFIRMED)
         await self.memory.set_place_level(GUILD_A, self.c, town, "settlement", source=BY_DM)
