@@ -154,6 +154,11 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.adventure_card.SeeButton",
             "dm_screen.backstory_button.BackstoryButton",
             "dm_screen.links_ready.ReadyButton",
+            "ui.map_show.ActButton",  # _dm_campaign re-checked on every press (#4414)
+            "ui.map_show.BackButton",  # the same
+            "ui.map_show.CampaignSelect",  # the same
+            "ui.map_show.MapSelect",  # the same
+            "ui.map_show.UndoButton",  # the same
             "ui.theatre_button.ScriptButton",  # press() checks dm_user_ids (#3244)
             "ui.theatre_button.OldScriptButton",  # the same checks, then the new question (#3478)
             "ui.kind_offer.OpenButton",  # _is_dm on every press (#3033)
@@ -232,6 +237,7 @@ AUDIENCE: dict[str, str] = {
             "ui.family_ties.FamilyTiesButton",  # `_campaign_for` before anything is shown
             "ui.trait_questions.TraitQuestionsButton",  # the same DM check (`_dm_campaign`)
             "ui.world_notes.WorldNotesButton",  # the screen asks `sees_secrets` first (#4285)
+            "ui.thread_questions.ThreadQuestionsButton",  # `_dm_campaign` first (#4453)
             "questions.board.LookAlikesButton",  # the screen it opens asks `sees_secrets`
             "questions.board.QuestionsButton",  # checks `dm_user_ids` before sending the list
             "ui.continuity.ContinuityButton",

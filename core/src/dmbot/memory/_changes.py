@@ -162,6 +162,13 @@ STORY_LANGUAGES = Table(
     "id",
     ("id", "entity_id", "name", "name_key", "srd", "given_by", "created_at"),
 )
+# The campaign's named cultures (#4257 slice 3b, #4229's catalogue), beside the graph: never an
+# entry. A place's culture row may point at one (`MAP_FACTS.culture_id`).
+CULTURES = Table(
+    "memory_cultures",
+    "id",
+    ("id", "name", "name_key", "lineage", "status", "source", "created_at"),
+)
 # A place's land, climate and who rules it (#4256, MapBot layers slice 2), beside the graph: a
 # layer row never says one place is in, next to or reachable from another (design §13.2).
 MAP_FACTS = Table(
@@ -169,7 +176,8 @@ MAP_FACTS = Table(
     "id",
     ("id", "entity_id", "layer", "value", "words", "faction_id", "how", "part",
      "from_session_at", "to_session_at", "from_game_time", "to_game_time", "status", "source",
-     "also_text", "table_knows", "created_at"),
+     "also_text", "table_knows", "created_at", "culture_id"),
+    defaults={"culture_id": None},  # (a named culture, #4257 slice 3b)
 )  # fmt: skip
 # One map: a kept picture DMbot knows is a map (#4344, MapBot layers slice 3a). It is in the log so
 # that each DM action on a map (keep, yes or no to using it, show to the table, remove) is one Undo
@@ -183,6 +191,16 @@ MAPS = Table(
      "scale_unit", "scale_from", "grid_kind", "grid_cell_px", "grid_cell_distance", "north_angle",
      "north_from", "audience", "came_from", "import_tool", "right_by", "right_at", "use_ok",
      "use_by", "use_at", "as_of", "replaces", "created_at"),
+)  # fmt: skip
+# The parts of a story thread (#4471, quests slice 2; design `docs/design/quests.md` §4):
+# objectives, complications, rewards promised and given, help and time limits, beside the thread.
+THREAD_PARTS = Table(
+    "memory_thread_parts",
+    "id",
+    ("id", "thread_id", "first_id", "kind", "words", "state", "under_id", "who_id", "about_id",
+     "amount", "unit", "position", "due", "terms", "limit_kind", "due_minute", "due_from",
+     "from_session_at", "to_session_at", "from_game_time", "to_game_time", "status", "source",
+     "table_knows", "created_at"),
 )  # fmt: skip
 # A player character's sheet (#723): not in the undo log, but read and backed up like
 # the rest of the campaign's memory.
@@ -323,7 +341,7 @@ PLAN_POSITION = Table(
     "plan_position", "id", ("id", "document_id", "chapter_id", "set_by", "created_at")
 )
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
-       STORY_LANGUAGES, MAP_FACTS, MAPS,
+       STORY_LANGUAGES, CULTURES, MAP_FACTS, MAPS, THREAD_PARTS,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
        BELIEFS, EVIDENCE, ALIAS_KNOWERS, KNOWERS, TOLD)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
@@ -370,6 +388,9 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_story_languages", "entity_id", False),  # (#4229)
         ("memory_map_facts", "entity_id", False),  # a place's facts (#4256)
         ("memory_map_facts", "faction_id", False),  # the group that rules it (#4256)
+        ("memory_thread_parts", "thread_id", False),  # a thread's parts (#4471)
+        ("memory_thread_parts", "who_id", False),  # who promised, gave or lent it (#4471)
+        ("memory_thread_parts", "about_id", False),  # the item or event it names (#4471)
         ("campaign_maps", "covers", False),  # the place a map covers (#4346)
         ("memory_states", "entity_id", False),
         ("memory_impressions", "viewer_id", False),
@@ -383,12 +404,17 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         # (`plan_divergences` is not listed on purpose: it is derived from the plan and the table
         # and unlogged, so it simply goes with the entry and is worked out again when needed.)
     ),
+    # (a logged delete of a culture is refused while a row points at it: the database's cascade
+    # would delete those rows outside the log)
+    "memory_cultures": (("memory_map_facts", "culture_id", False),),
     # (the database would set these to NULL outside the log: #4346)
     "campaign_maps": (
         ("memory_map_facts", "map_id", False),
         ("campaign_maps", "replaces", False),
     ),
     "memory_mentions": (("memory_relations", "mention_ids", True),),
+    # a sub-step under its objective, a reward given under its promise (#4471)
+    "memory_thread_parts": (("memory_thread_parts", "under_id", False),),
     "memory_relations": (
         ("memory_flags", "relation_id", False),
         ("memory_flags", "other_id", False),

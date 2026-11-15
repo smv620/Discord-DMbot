@@ -23,6 +23,9 @@ ALLOWED = {
     "memory/_changes.py": "the change log's description of the table (Undo, merges)",
     "memory/states.py": "forgetting a character deletes all its rows, the no included",
     "campaigns/tables.py": "only names the table, on the backup section's list",
+    "devtools/sample_run/questions.py": "dev1's part 2 (#3545): counts a language the DM said "
+    "no to "
+    "('not') as turned down; counts only, writes nothing",
     "lineage.py": "only names the table, on the list that carries the build's stamp",
     "migrations/0448_story_languages.py": "creates the table",
     "migrations/0451_language_questions.py": "only names the table in a comment",

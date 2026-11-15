@@ -134,3 +134,21 @@ FIRST_25 = "Showing the first 25."
 
 def too_big(mb: int) -> str:
     return f"That picture is too big. Send one under {mb} MB."
+
+
+# Showing a map to the table, or hiding it again: the Maps page on the website and `/dmbot maps` in
+# Discord say the same words (#4414). Nothing here names a map, a person or a place.
+SHOW_LABEL = "Show to the table"
+HIDE_LABEL = "Hide from the table"
+SHOW_SURE = "Players will see everything on this map."
+SHOW_YES_LABEL = "Yes, show it"
+BACK_LABEL = "Back"
+NOW_SHOWN = "Shown to the table."
+NOW_HIDDEN = "Hidden. Only the DMs of this campaign can see it."
+SEEN_NOW_TABLE = "Everyone at the table can see it."
+NO_MAPS = "This campaign has no maps you can use yet."
+NOT_A_DM = "You're not a DM of a campaign on this server."
+PICK_MAP = "Pick a map"
+PICK_CAMPAIGN = "Pick a campaign"
+UNTITLED = "A map"
+OUT_OF_DATE = "That menu is out of date. Run /dmbot maps again."

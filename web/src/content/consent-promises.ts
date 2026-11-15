@@ -5,7 +5,7 @@
 // except "dm-screen", which is the hard rule in CLAUDE.md (Transcripts are shared; the DM screen is not
 // pushed to players).
 //
-// TERMS_VERSION: 6
+// TERMS_VERSION: 7
 // That line must equal TERMS_VERSION in core/src/dmbot/consent.py. core/tests/test_consent_promises.py
 // fails when the bot's terms version goes up and this number does not, so whoever changes the terms
 // has to read this list and the two pages that show it, then bump the number here.
@@ -25,7 +25,11 @@ export const consentPromises: ConsentPromise[] = [
   },
   {
     id: "questions",
-    text: "If you ask DMbot a question in its chat channel, your name and the question are posted there for everyone to read.",
+    text: "If you ask DMbot a question in the table's chat (\"Hey DMbot, …\"), your name and the question are posted there for everyone to read.",
+  },
+  {
+    id: "pictures",
+    text: "If you post a picture in the table's chat, DMbot sends it to the AI to be described and keeps it with the campaign. Only post pictures you have the right to share: by posting one, you let your table use it in this game. Anyone with its link can see it, until you or your DM make it private or delete it.",
   },
   {
     id: "ai",
@@ -37,7 +41,7 @@ export const consentPromises: ConsentPromise[] = [
   },
   {
     id: "transcript",
-    text: "Everyone in your Discord server can read and download the written text of the game (the transcript). It stays there even if you stop later.",
+    text: "This campaign's people can read and download the written text of the game (the transcript): its DMs, its players and anyone recorded at its table. If your DM chose to, everyone in your Discord server can. It stays there even if you stop later.",
   },
   {
     id: "stop",

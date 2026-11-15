@@ -17,6 +17,7 @@ import time
 from collections import Counter
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
+from difflib import SequenceMatcher
 from functools import partial
 from typing import Any, cast
 
@@ -622,6 +623,8 @@ class BackgroundOffer(_Menu):
                         )
                     elif stage == "sorting":
                         waiting.step("Sorting what the players know", done, total)
+                    elif stage == "threads":  # (#4453)
+                        waiting.step("Last step: looking for quests and leads", done, total)
                     elif stage == "who":
                         # (counts only; each lookup moves the count, so a long run never looks
                         # stalled)
@@ -661,6 +664,7 @@ class BackgroundOffer(_Menu):
                     # question itself opens privately from ❓ Questions for you, #3926)
                     knowledge_note=done.knowledge_note
                     + trait_questions_line(done.trait_questions)
+                    + thread_suggestions_line(done.thread_suggestions, done.threads_short)
                     + picture_held_line(len(done.picture_held)),
                     held=done.picture_held,
                 )
@@ -732,6 +736,9 @@ class BackgroundRead:
     # waiting in the DM's Names to check with a note saying so, never added by themselves and
     # never in an "Add all".
     picture_held: frozenset[str] = frozenset()
+    # Story threads the lore holds (#4453): how many new suggestions wait in ❓ Questions for you
+    thread_suggestions: int = 0
+    threads_short: str = ""  # why the story threads weren't read in full, a `THREADS_SHORT` key
 
 
 async def read_background(
@@ -1086,6 +1093,10 @@ async def _read_background(
         done.trait_questions += asked
         done.questions_left += asked
     await store_place_facts(memory, campaign, upload.text)  # land, climate, ruler (#4256)
+    # the story threads it holds (#4453, quests slice 1): suggestions for the DM, never added
+    done.thread_suggestions, done.threads_short = await store_thread_suggestions(
+        bot, campaign, upload.text, label, read_ai, progress, until=started + THREADS_UNTIL_S
+    )
     return done
 
 
@@ -1303,6 +1314,18 @@ def picture_held_line(n: int) -> str:
     return f"\n🖼️ {n} names were read from pictures: check each in 📝 Check new names."
 
 
+def thread_suggestions_line(n: int, short: str = "") -> str:
+    """The count line for the story threads an upload found (#4453), and a line when the step
+    didn't read the whole text (never "none found" for a read that stopped); "" for neither.
+    Counts only: the card opens privately, for a DM, from ❓ Questions for you."""
+    line = (
+        f"\n📜 **{n} story thread{'' if n == 1 else 's'} to check** in ❓ Questions for you."
+        if n
+        else ""
+    )
+    return line + (f"\n{THREADS_SHORT[short]}" if short in THREADS_SHORT else "")
+
+
 def trait_questions_line(n: int) -> str:
     """The count line for an upload whose questions about characters wait: lineage, class
     (#3926) or language (#4229); "" for none."""
@@ -1408,19 +1431,22 @@ async def store_place_facts(
         elif onto.is_a(who.type, "faction"):
             groups.setdefault(entry.text, set()).add(who.id)
     group_ids = {name: next(iter(ids)) for name, ids in groups.items() if len(ids) == 1}
+    known = {entry.text for entry in lookup.names}  # (never read as a named culture, #4257 3b)
     found: list[map_fact_store.Read] = []
     counts: Counter[str] = Counter()
     for name, ids in places.items():
         if len(ids) != 1 or not re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", text, re.I):
             continue
-        read = map_facts.read_facts(name, text, group_ids)
+        read = map_facts.read_facts(name, text, group_ids, known)
         if not read:
             counts["unknown"] += 1
         for f in read:
             counts[f.layer] += 1
             value = group_ids[f.value] if f.layer == map_facts.CONTROL else f.value
             found.append(
-                map_fact_store.Read(next(iter(ids)), f.layer, value, f.how, session_at, f.part)
+                map_fact_store.Read(
+                    next(iter(ids)), f.layer, value, f.how, session_at, f.part, f.culture
+                )
             )
     if not found:
         return 0
@@ -1439,6 +1465,93 @@ async def store_place_facts(
         dict(sorted(written.value.items())),
     )  # fmt: skip
     return written.value["written"]
+
+
+THREADS_UNTIL_S = lore_read.LORE_TIME_LIMIT_S - 60.0  # the story threads' call ends by then
+THREADS_MIN_S = 45.0  # with less time left than this, the threads aren't read at all
+# What the upload's summary says when the story threads weren't read in full (#4453; counts only)
+THREADS_SHORT = {
+    "time": "📜 DMbot ran out of time to look for story threads. Upload it again to look.",
+    "funds": "📜 DMbot couldn't look for story threads: the AI allowance is used up.",
+    "stopped": "📜 DMbot stopped early looking for story threads, so it may have missed some.",
+    "failed": "📜 DMbot couldn't look for story threads this time. Upload it again to look.",
+}
+
+
+async def store_thread_suggestions(
+    bot: Any,
+    campaign: Campaign,
+    text: str,
+    label: str,
+    ai: Any,
+    progress: Callable[[str, int, int], None] | None = None,
+    *,
+    until: float | None = None,
+) -> tuple[int, str]:
+    """The quests, pursuits and hooks the lore holds (#4453, quests slice 1; `thread_read`): one AI
+    call, then the code's checks, then waiting suggestions for the DM (`thread_suggestions`),
+    never entries: nothing is added by itself (§9.6). The names they point at are the campaign's
+    people, groups and places (never the party's own group, nor a thread); a name two entries
+    share is left out. A thread the campaign has, or one suggested before (kept or turned down),
+    is never suggested again.
+
+    It is the upload's last step and extra to it: it never fails the upload, and never pushes it
+    past its time (`until`, a monotonic time: the call is cut off there, and skipped when too
+    little is left). Out of AI funds here ends only this step. Returns how many new suggestions,
+    and a key of `THREADS_SHORT` when the step didn't read the whole text ("" when it did)."""
+    from dmbot.ai import OUTPUT_FLOOR, AIOutOfFunds
+    from dmbot.memory import thread_read
+    from dmbot.memory.thread_suggestions import ThreadSuggestionStore
+
+    memory = bot.memory
+    left = None if until is None else until - time.monotonic()
+    if left is not None and left < THREADS_MIN_S:
+        return 0, "time"
+    if progress is not None:
+        progress("threads", 0, 1)
+    said: list[thread_read.Said] = []
+    found: list[thread_read.Suggestion] = []
+    dropped: dict[str, int] = {}
+    short, made = "", 0
+    try:
+        lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+        onto = await memory.ontology(campaign.guild_id, campaign.id)
+        store = ThreadSuggestionStore(memory._db)
+        have = list(await store.known(campaign.guild_id, campaign.id))
+        for t in await memory.threads(campaign.guild_id, campaign.id):
+            have.append((name_key(t.thread.name), frozenset(i.who.id for i in t.involved)))
+        rows = []
+        for entry in lookup.names:
+            who = lookup.entities.get(entry.entity_id)
+            if (
+                who is None
+                or who.status == REJECTED
+                or who.party  # (the party is never one of a thread's people: design §6)
+                or onto.is_a(who.type, "thread")
+            ):
+                continue
+            rows.append((who.id, who.type, entry.text))
+        entries = thread_read.entries_by_name(rows)
+        names = {i: e.name for i, e in lookup.entities.items()}
+        reading = thread_read.read_threads(ai, text, max_tokens=OUTPUT_FLOOR)
+        said, short = await (reading if left is None else asyncio.wait_for(reading, left))
+        found, dropped = thread_read.check(said, text, entries, names, have=have)
+        made = await store.offer(campaign.guild_id, campaign.id, found, label, int(time.time()))
+    except TimeoutError:
+        short = "time"
+    except AIOutOfFunds:
+        short = "funds"  # (the names are stored and shown: only this step ends)
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("Story threads couldn't be suggested (%s)", type(exc).__name__)
+        short = "failed"
+    finally:
+        if progress is not None:
+            progress("threads", 1, 1)
+    log.info(
+        "Story threads: %d listed, %d suggested, %d new%s; dropped %s",
+        len(said), len(found), made, f" ({short})" if short else "", dict(sorted(dropped.items())),
+    )  # fmt: skip
+    return made, short
 
 
 async def ask_languages(
@@ -2190,26 +2303,26 @@ async def summary(
         _plural(k, len(ids)) for k, ids in sorted(stored.items(), key=lambda x: -len(x[1]))
     )
     # (a name read from a picture is left out of every "Add all": the DM checks each one, #4003)
-    view = BulkConfirm(campaign.id, not_held(stored, held), waiting)
-    return await _deliver(
-        interaction,
-        campaign,
-        (
-            f"📜 **{total} name{'' if total == 1 else 's'} to check** from {_md(label)}: "
-            f"{parts}.\nThey wait in 📝 Check new names, each with its line from your text. "
-            "Nothing is added until you say yes, and **Add all** adds every name of that "
-            "group. DMbot can miss names or put one in the wrong group, so look them over."
-            + (
-                CONNECTIONS_NOTE.format(count=queued, s="" if queued == 1 else "s")
-                if queued
-                else ""
-            )
-            + note
-            + names_note
-            + (CUT_NOTE if cut else "")
-        ),
-        view,
+    text = (
+        f"📜 **{total} name{'' if total == 1 else 's'} to check** from {_md(label)}: "
+        f"{parts}.\nThey wait in 📝 Check new names, each with its line from your text. "
+        "Nothing is added until you say yes, and **Add all** adds every name of that "
+        "group. DMbot can miss names or put one in the wrong group, so look them over."
+        + (CONNECTIONS_NOTE.format(count=queued, s="" if queued == 1 else "s") if queued else "")
+        + note
+        + names_note
+        + (CUT_NOTE if cut else "")
     )
+    offered = not_held(stored, held)
+    view = BulkConfirm(
+        campaign.id,
+        offered,
+        waiting,
+        first_words=text,  # (#4427: the card says what was added and what is left after a press)
+        total=total,
+        extra_left=max(0, total - sum(len(v) for v in offered.values())),
+    )
+    return await _deliver(interaction, campaign, text, view)
 
 
 async def announce(
@@ -2234,6 +2347,10 @@ async def announce(
         from dmbot.ui.trait_questions import TraitQuestionsButton
 
         asks.append(partial(TraitQuestionsButton, campaign.id))
+    if done.thread_suggestions:  # (the card opens privately, for a DM: #4453)
+        from dmbot.ui.thread_questions import ThreadQuestionsButton
+
+        asks.append(partial(ThreadQuestionsButton, campaign.id))
     posted: discord.Message | None = await bot.post_upload_notice(
         campaign, notice, done.questions_left, asks
     )
@@ -3128,16 +3245,83 @@ HAND_OVER_SAID = {
     "lost": " ({a} lost it)",
 }
 HAND_OVER_KEEP = {
-    "sale": "✅ Keep also means **{a}** no longer has it.\n",
+    "sale": "Keeping it also means **{a}** no longer has it.\n",
     # (a theft or a loss never changes who owns it, whoever that is)
-    "taken": "✅ Keep also means **{a}** no longer has it with them. Who owns it doesn't change.\n",
+    "taken": "Keeping it also means **{a}** no longer has it with them. Who owns it doesn't "
+    "change.\n",
     # (kept unseen, it never changes what the players see of the one before)
     "waits": "Players don't know this yet, so to them **{a}** still has it. Once they do, you can "
     "change that on the item's name card.\n",
 }
-SECRET_NOTE = "🤫 Keep as secret hides it from players."
-# (🤫 keeps it hidden, and a hidden keep leaves what the players see of the one before as it is)
-HAND_OVER_SECRET = "🤫 Keep as secret hides it from players. **{a}** stays as they know them."
+# (a hidden keep leaves what the players see of the one before as it is, #4115)
+HAND_OVER_SECRET = "**{a}** stays as they know them."
+SHOW_PLAYERS = "👁️ Let players see it"
+HIDE_PLAYERS = "🤫 Hide from players"
+SECRET_NAME_LINE = "🤫 Hidden from players: it uses a secret name."
+
+
+@dataclass(frozen=True, slots=True)
+class PlayersView:
+    """What a connection card says about the players, and what pressing the main button does
+    about it (#4429): one place, so the line, the toggle's label and the saved flags agree."""
+
+    line: str
+    label: str  # the toggle button's words ("" = no toggle: a secret name stays hidden)
+    secret: bool  # saved as the DM's own hidden connection
+    unrevealed: bool | None  # saved as waiting to be said at the table (None = the upload's say)
+    reveal: bool  # players are to see it even if the old one was hidden
+    hidden_after: bool
+
+
+def players_view(
+    *,
+    change: bool,
+    now_hidden: bool,
+    now_secret: bool,
+    waits: bool,
+    name_secret: bool,
+    choice: bool | None,
+) -> PlayersView:
+    """The Players line of a connection card. `change` = it replaces one the campaign has;
+    `now_hidden`/`now_secret` describe that old one; `waits` = a new one would wait to be said at
+    the table; `choice` = the DM's toggle (True hides, False shows, None = the default). Pure."""
+    if name_secret:  # the text used a secret name: never a public connection naming it
+        return PlayersView(SECRET_NAME_LINE, "", True, None, False, True)
+    if change:
+        after = now_hidden if choice is None else choice
+        if not now_hidden and not after:
+            line = "👁️ Players can see it now, and will still see it after the update."
+            return PlayersView(line, HIDE_PLAYERS, False, False, False, False)
+        if now_hidden and after:
+            line = "🤫 Hidden from players now, and still will be after the update."
+            return PlayersView(line, SHOW_PLAYERS, now_secret, not now_secret, False, True)
+        if after:
+            line = "🤫 Players can see it now. After the update it will be hidden."
+            return PlayersView(line, SHOW_PLAYERS, True, None, False, True)
+        line = "👁️ Hidden from players now. After the update they will see it."
+        return PlayersView(line, HIDE_PLAYERS, False, False, True, False)
+    if choice is True:
+        return PlayersView("🤫 Hidden from players.", SHOW_PLAYERS, True, None, False, True)
+    if choice is None and waits:
+        line = "👁️ Players will see it once it comes up at the table."
+        return PlayersView(line, HIDE_PLAYERS, False, None, False, True)
+    return PlayersView(
+        "👁️ Players will see it.", HIDE_PLAYERS, False, False if choice is False else None,
+        choice is False, False,
+    )  # fmt: skip
+
+
+def bold_what_changed(now: str, proposed: str) -> str:
+    """`proposed` with only the words that differ from `now` in bold, so the DM sees at a glance
+    what the update changes (#4429). A whole new connection word is bold whole. Pure."""
+    a, b = now.split(), proposed.split()
+    out: list[str] = []
+    for op, _i1, _i2, j1, j2 in SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        words = b[j1:j2]
+        if not words:
+            continue
+        out.append(f"**{' '.join(words)}**" if op != "equal" else " ".join(words))
+    return " ".join(out)
 
 
 def hand_over_lines(c: Waiting, waits: bool = False, ends: bool = True) -> tuple[str, str]:
@@ -3177,18 +3361,20 @@ class ConnectionOffer(_Menu):
         self.shown_ids: set[str] = set()  # entries the players see, read for a hand-over (#4115)
         self.busy = asyncio.Lock()  # a second press waits for the first, so none is counted twice
         grey = discord.ButtonStyle.secondary
-        self.keep = _Button(
-            partial(self._answer, False), label="✅ Keep", style=discord.ButtonStyle.success
-        )
+        self.choice: bool | None = None  # the DM's Players toggle on this card (True = hidden)
+        self._card_key: tuple[str, str, str] | None = None
+        self.keep = _Button(self._answer, label="✅ Add it", style=discord.ButtonStyle.success)
         self.add_item(self.keep)
-        self.add_item(_Button(partial(self._answer, True), label="🤫 Keep as secret", style=grey))
-        self.add_item(_Button(self._no, label="❌ No", style=grey))
-        self.add_item(_Button(self._skip, label="⏭️ Skip the rest", style=grey, row=1))
-        self.all_button = _Button(self._keep_all, label="✅ Keep all", style=grey, row=1)
+        self.no_button = _Button(self._no, label="❌ Leave it out", style=grey)
+        self.add_item(self.no_button)
+        self.toggle = _Button(self._toggle, label=HIDE_PLAYERS, style=grey, row=1)
+        self.add_item(self.toggle)
+        self.add_item(_Button(self._skip, label="⏭️ Skip the rest", style=grey, row=2))
+        self.all_button = _Button(self._keep_all, label="✅ Keep all", style=grey, row=2)
         self.add_item(self.all_button)
         self.all_done: keep.KeptAll | None = None  # what Keep all kept, for Undo
-        self.undo_button = _Button(self._undo_all, label="↩️ Undo", style=grey, row=1)
-        add_stop(self, walk, row=1)
+        self.undo_button = _Button(self._undo_all, label="↩️ Undo", style=grey, row=2)
+        add_stop(self, walk, row=2)
 
     async def _ready(self, interaction: discord.Interaction, campaign: Campaign) -> list[Waiting]:
         """The connections to ask now, oldest first (the queue read and cleaned again)."""
@@ -3221,6 +3407,15 @@ class ConnectionOffer(_Menu):
         ]
 
     def _set(self, ready: list[Waiting]) -> None:
+        # The card on screen stays first while it is still waiting: a re-read must not swap it
+        # for another one under the DM's hand (the Players toggle belongs to this card, #4429).
+        shown = self.current
+        if shown is not None:
+            at = (shown.subject_id, shown.predicate, shown.object_id)
+            for i, w in enumerate(ready):
+                if (w.subject_id, w.predicate, w.object_id) == at:
+                    ready = [w, *ready[:i], *ready[i + 1 :]]
+                    break
         mine = self._this_upload(ready)
         self.all_button.label = f"✅ Keep all {len(mine)}" if len(mine) > 1 else "✅ Keep all"
         self.all_button.disabled = len(mine) < 2
@@ -3228,10 +3423,18 @@ class ConnectionOffer(_Menu):
         self.left = len(ready)
         self.total = max(self.total, self.kept + self.left_out + self.left)
         self.current = ready[0] if ready else None
-        self.keep.disabled = bool(self.current and self.current.secret)
-        self.keep.label = (
-            "✅ Change it" if self.current and self._pair_old(self.current) else "✅ Keep"
-        )
+        c = self.current
+        key = (c.subject_id, c.predicate, c.object_id) if c else None
+        if key != self._card_key:  # a new card starts from its own default, never the last one's
+            self._card_key = key
+            self.choice = None
+        changes = bool(c and self._pair_old(c))
+        self.keep.label = "✅ Update it" if changes else "✅ Add it"
+        self.no_button.label = "❌ Leave it as it is" if changes else "❌ Leave it out"
+        if c is not None:
+            view = self._players(c)
+            self.toggle.label = view.label or HIDE_PLAYERS
+            self.toggle.disabled = not view.label
 
     async def load(self, interaction: discord.Interaction) -> bool:
         campaign = await _campaign_for(interaction, self.campaign_id)
@@ -3243,12 +3446,23 @@ class ConnectionOffer(_Menu):
     def _old(self, c: Waiting) -> list[Relation]:
         return self.changes.get((c.subject_id, c.predicate, c.object_id), [])
 
+    def _players(self, c: Waiting) -> PlayersView:
+        """What the card says about the players for `c`, and what ✅ saves (#4429)."""
+        old = self._pair_old(c)
+        return players_view(
+            change=bool(old),
+            now_hidden=bool(old) and all(r.secret or r.unrevealed for r in old),
+            now_secret=any(r.secret for r in old),
+            waits=keep.kept_unrevealed(c, False, self.shown_ids),
+            name_secret=c.secret,
+            choice=self.choice,
+        )
+
     def _hand_over_waits(self, c: Waiting) -> bool:
         """Whether keeping this hand-over leaves the one before's part as it is for now: what is
-        kept waits to be said at the table (or is secret) and their part is one the players see,
-        which a hidden tie never ends (#4115, `keep.end_replaced`)."""
-        hidden = c.secret or keep.kept_unrevealed(c, c.secret, self.shown_ids)
-        return hidden and self._hand_over_seen(c)
+        kept is hidden from the players and their part is one they see, which a hidden tie never
+        ends (#4115, `keep.end_replaced`)."""
+        return self._players(c).hidden_after and self._hand_over_seen(c)
 
     def _hand_over_seen(self, c: Waiting) -> bool:
         """Whether a tie the hand-over would end is one the players can see."""
@@ -3268,16 +3482,6 @@ class ConnectionOffer(_Menu):
             return plain
         return link_words(r.predicate, r.detail, r.directional, feeling=True, knows_how=r.knows_how)
 
-    def _change_line(self, c: Waiting, how: str, bracket: str = "") -> str:
-        """What is there now, then what the text says. Nothing changes until the DM says yes, and
-        the old connection is ended, not deleted (#3021)."""
-        old = ", ".join(self._reads(r) for r in self._pair_old(c))
-        return (
-            f"🔁 Now: **{_md(c.subject)}** {_md(old)} **{_md(c.object)}**\n"
-            f"Your text: **{_md(c.subject)}** {how} **{_md(c.object)}**{bracket}\n"
-            "✅ Change it swaps the old one for this. Nothing changes until you press it.\n"
-        )
-
     def text(self) -> str:
         """The card, with the walk's part line above it when this is inside "Check everything"."""
         if self.walk is None or self.current is None:
@@ -3292,51 +3496,61 @@ class ConnectionOffer(_Menu):
             return f"📜 Done. Kept {self.kept} connection{'' if self.kept == 1 else 's'}.{left}"
         how = link_words(
             c.predicate, c.detail, kin.directional(c.detail), feeling=True,
-            # (as it will read once kept, so "Now" and "Your text" compare like with like, #3881)
+            # (as it will read once kept, so "Now" and "Proposed" compare like with like, #3881)
             knows_how=keep.kept_how(c, self._old(c)) if c.predicate == "knows" else None,
         )  # fmt: skip
         if how == c.predicate.replace("_", " "):
             how = self.words.get(c.predicate, how)
-        note = (
-            "It uses a secret name, so players won't see it. Only 🤫 Keep as secret works."
-            if c.secret
-            else SECRET_NOTE
-        )
+        view = self._players(c)
         who = self.characters.get(c.known_by)
+        mine = ""
         if who is not None:
-            mine = _md(who[:40])
-            note += (
-                f"\n👥 ✅ Keep: you and **{mine}**'s character know it."
-                if not c.secret
-                else f"\n👥 **{mine}**'s character won't know it: it uses a secret name."
+            name = _md(who[:40])
+            mine = (
+                f"👥 **{name}**'s character will know it.\n"
+                if not (view.secret or c.secret)
+                else f"👥 **{name}**'s character won't know it: it is hidden.\n"
             )
         waits = self._hand_over_waits(c)
         ends = bool(keep.hand_over_ties(c, self._old(c))) if c.hand_over else False
         handed = hand_over_lines(c, waits, ends) if c.hand_over else ("", "")
-        if c.hand_over and not waits and not c.secret and self._hand_over_seen(c):
-            note = HAND_OVER_SECRET.format(a=_md(c.hand_over_name[:40])) + note.removeprefix(
-                SECRET_NOTE
-            )
-        note = handed[1] + note
+        extra = handed[1]
+        if c.hand_over and view.hidden_after and self._hand_over_seen(c):
+            extra += HAND_OVER_SECRET.format(a=_md(c.hand_over_name[:40])) + "\n"
+        source = (
+            f"\U0001f914 DMbot's guess. Your text doesn't say this directly: "
+            f"{_md(c.inferred.rstrip('.'))}.\n"
+            if c.inferred
+            else f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
+        )
+        checked = who_resolve.checked_line(c.decided)
+        n = self.kept + self.left_out + 1
         if self._pair_old(c):
+            old = ", ".join(self._reads(r) for r in self._pair_old(c))
+            now = f"{_md(c.subject)} {_md(old)} {_md(c.object)}"
+            proposed = bold_what_changed(now, f"{_md(c.subject)} {how} {_md(c.object)}")
             return (
-                f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** "
-                "Change this?\n"
+                f"📜 **Connection {n} of {self.total}:** update it?\n"
                 + self._scope(c)
-                + self._change_line(c, how, handed[0])
-                + f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
-                + who_resolve.checked_line(c.decided)
-                + inferred_line(c.inferred)
-                + f"{note}"
+                + f"Now: {now}\n"
+                + f"Proposed: {proposed}{handed[0]}\n"
+                + mine
+                + source
+                + checked
+                + extra
+                + f"{view.line}\n"
+                + "Nothing changes unless you press ✅ Update it."
             )
         return (
-            f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** Keep this?\n"
+            f"📜 **Connection {n} of {self.total}:** add it?\n"
             + self._scope(c)
-            + f"**{_md(c.subject)}** {how} **{_md(c.object)}**{handed[0]}\n"
-            f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
-            + who_resolve.checked_line(c.decided)
-            + inferred_line(c.inferred)
-            + f"{note}"
+            + f"Proposed: **{_md(c.subject)}** {how} **{_md(c.object)}**{handed[0]}\n"
+            + mine
+            + source
+            + checked
+            + extra
+            + f"{view.line}\n"
+            + "Nothing is added unless you press ✅ Add it."
         )
 
     def _scope(self, c: Waiting) -> str:
@@ -3421,7 +3635,25 @@ class ConnectionOffer(_Menu):
         self._set(ready)
         return now
 
-    async def _answer(self, secret: bool, interaction: discord.Interaction) -> None:
+    async def _toggle(self, interaction: discord.Interaction) -> None:
+        """Flip the Players line of this card only; nothing is saved until ✅ (#4429)."""
+        await interaction.response.defer()
+        async with self.busy:
+            campaign = await self._dm(interaction)
+            if campaign is None or self.current is None:
+                return
+            c = await self._same(interaction, campaign)
+            if c is None:
+                return
+            # (the button says what it does: Hide sets True, Let players see it sets False)
+            self.choice = self._players(c).label == HIDE_PLAYERS
+            self._set(await self._ready(interaction, campaign))
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(
+                    content=self.text(), view=self, allowed_mentions=NO_PINGS
+                )
+
+    async def _answer(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
         async with self.busy:
             campaign = await self._dm(interaction)
@@ -3436,6 +3668,8 @@ class ConnectionOffer(_Menu):
             # don't know) is kept as secret whichever button was pressed: never a public
             # connection naming a hidden end.
             old = self._old(c)
+            view = self._players(c)
+            secret = view.secret
             now = int(time.time())
             start = keep.change_start(old, now)
             ended: list[int | None] = []
@@ -3444,7 +3678,12 @@ class ConnectionOffer(_Menu):
                 await keep.end_replaced(
                     memory, campaign.guild_id, campaign.id, old, start, ended, link=c,
                     hidden=secret or c.secret
-                    or keep.kept_unrevealed(c, secret or c.secret, shown),
+                    or ((
+                        view.unrevealed
+                        if view.unrevealed is not None
+                        else keep.kept_unrevealed(c, secret or c.secret, shown)
+                    )
+                    and not view.reveal),
                 )  # fmt: skip
                 kept = await memory.add_relation(
                     campaign.guild_id, campaign.id, c.subject_id, c.predicate, c.object_id,
@@ -3453,14 +3692,18 @@ class ConnectionOffer(_Menu):
                     directional=kin.directional(c.detail),  # "a is the parent of b" keeps its order
                     # a backstory connection waits to be said at the table (#2404), unless the
                     # upload said the players know it and both its ends are shown (#2959)
-                    unrevealed=keep.kept_unrevealed(c, secret or c.secret, shown),
+                    unrevealed=(
+                        view.unrevealed
+                        if view.unrevealed is not None
+                        else keep.kept_unrevealed(c, secret or c.secret, shown)
+                    ),
                     # ✅ Keep: the uploader's character knows it from the start; 🤫 Keep as secret
                     # is the DM's alone (#2935)
                     known_by=[c.known_by] if c.known_by and not (secret or c.secret) else (),
                     from_session_at=start if old else None,  # (starts as the old one ends)
                     # a secret SPELLING in the text never hides what the players were shown (#3025);
                     # the DM's own 🤫 button is their word and does
-                    keep_flags=not secret,
+                    keep_flags=not secret and not view.reveal,
                     # whether they've met, from the quote's own words (#3881)
                     knows_how=keep.kept_how(c, old),
                 )  # fmt: skip
@@ -3479,7 +3722,7 @@ class ConnectionOffer(_Menu):
                 # (the card says what to do, not the rule's own words: those are for the log)
                 await _tell(
                     interaction,
-                    "DMbot couldn't keep that one. Press ❌ No to move on, or try again.",
+                    "DMbot couldn't keep that one. Press the ❌ button to move on, or try again.",
                 )
                 return
             made = kept.value[0]
@@ -3635,10 +3878,23 @@ class BulkConfirm(_Menu):
         queued: int = 0,
         *,
         walk: Walk | None = None,
+        first_words: str = "",
+        total: int = 0,
+        extra_left: int = 0,
+        look_alike: int = 0,
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
         self.walk = walk  # inside "Check everything" (#4192): its own Stop, and the walk goes on
+        # What the card says, so it can say what happened after a press (#4427): its first words,
+        # how many names it first counted (`total`), how many of those are not in "Add all" and
+        # wait for the one-by-one check (`extra_left`; `look_alike` of them sound like a known
+        # name), and how many a press has added so far. A card with no `total` keeps its words.
+        self.first_words = first_words
+        self.total = total
+        self.extra_left = extra_left
+        self.look_alike = look_alike
+        self.added = 0
         self.queued = queued  # connections waiting for these names to be answered
         self.ids = {k: list(v) for k, v in stored.items()}
         # A summary posted in the DM Bot channel is everyone's to see and only the game masters'
@@ -3719,8 +3975,33 @@ class BulkConfirm(_Menu):
 
     def _ending(self) -> Any:
         """On the summary in the channel, once every name is answered the message ends as
-        "✅ All answered" (only an Undo may stay); a card of the DM's own keeps its words."""
-        return ALL_ANSWERED if self.shared and not self.ids else discord.utils.MISSING
+        "✅ All answered" (only an Undo may stay); a card of the DM's own says what happened."""
+        if self.shared or not self.total:
+            return ALL_ANSWERED if self.shared and not self.ids else discord.utils.MISSING
+        return self._card_words()
+
+    def left_to_check(self) -> int:
+        """The names this card counted that are still waiting, to be checked one by one."""
+        return sum(len(ids) for ids in self.ids.values()) + self.extra_left
+
+    def _card_words(self) -> str:
+        """A card of the DM's own after a press or an Undo: its first words while nothing is
+        added, else what was added and what is left, so the counts add up (#4427)."""
+        if not self.added:
+            return self.first_words
+        left = self.left_to_check()
+        if not left:
+            return f"✅ Added {self.added}. Nothing else to check."
+        if self._addable():  # another "Add all" button is still on the card: nothing is "left"
+            return f"✅ Added {self.added} of {self.total}. {left} still waiting."
+        text = (
+            f"✅ Added {self.added} of {self.total}. {left} "
+            f"{'is' if left == 1 else 'are'} left for you to check one by one."
+        )
+        if self.look_alike:
+            n = self.look_alike
+            text += f" {n} of them sound{'s' if n == 1 else ''} like one you know."
+        return text
 
     async def interaction_check(self, interaction: discord.Interaction) -> bool:
         """On the summary in the channel (shared), anyone who can see the channel can press, so
@@ -3797,12 +4078,13 @@ class BulkConfirm(_Menu):
             return
         changed(interaction, campaign)
         self.last = done
+        total = sum(added.values())
+        self.added += total
         self._build()
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
                 content=self._ending(), view=self, allowed_mentions=NO_PINGS
             )
-        total = sum(added.values())
         if not total:
             text = "Nothing was added: those names were already answered."
         elif len(kinds) == 1:
@@ -3816,6 +4098,10 @@ class BulkConfirm(_Menu):
             await interaction.followup.send(text, ephemeral=True, allowed_mentions=NO_PINGS)
         if self.walk is not None:  # the names left to look at one by one, then the next part
             await start_review(interaction, self.campaign_id, bulk=False, walk=self.walk)
+        elif self.total and not self.shared and self.left_to_check() and not self._addable():
+            # (#4427) the names left are offered at once, the same cards the walk uses, once no
+            # "Add all" button remains (a press of one kind must not hide the others)
+            await start_review(interaction, self.campaign_id, bulk=False, walk=None)
         elif total and self.queued:  # their names may be answered now
             await offer_ready(interaction, self.campaign_id)
 
@@ -3848,10 +4134,17 @@ class BulkConfirm(_Menu):
         count = sum(len(ids) for _, _, ids in undone)
         what = _plural(undone[0][0], count) if len(undone) == 1 else f"{count} names"
         self.last = []
+        self.added = max(0, self.added - count)
         self._build()
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
-                content=self.words if self.shared and self.words else discord.utils.MISSING,
+                content=(
+                    self.words
+                    if self.shared and self.words
+                    else self._card_words() or discord.utils.MISSING
+                    if self.total
+                    else discord.utils.MISSING
+                ),
                 view=self,
                 allowed_mentions=NO_PINGS,
             )

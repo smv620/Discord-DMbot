@@ -160,6 +160,7 @@ from dmbot.dm_screen import (
     house_sync,
     import_button,
     links_ready,
+    orphan_channels,
     pack_suggestion,
     pack_update,
     peek_view,
@@ -321,6 +322,7 @@ from dmbot.memory import (
     scene_move_step,
     scene_step,
     voyage,
+    waiting_now,
     web_actions,
     web_report_requests,
     web_sheets,
@@ -354,6 +356,7 @@ from dmbot.memory.importance_backup import ImportanceSection
 from dmbot.memory.kind_offers_backup import KindOffersSection
 from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
 from dmbot.memory.lookup import CampaignLookup, LookupCache
+from dmbot.memory.map_uploads import MapUploads
 from dmbot.memory.met_store import MetStore
 from dmbot.memory.models import (
     DM,
@@ -568,6 +571,7 @@ from dmbot.ui import (
     map_answer,
     map_question,
     map_send,
+    map_show,
     name_pass_undo,
     player_id,
     recap_audio,
@@ -650,6 +654,7 @@ from dmbot.ui.secret_reveal import RevealButton, reveal_view
 from dmbot.ui.secret_reveal import question_text as reveal_question
 from dmbot.ui.sheets import MySheetButton, OpenCardButton
 from dmbot.ui.story_watch import KnowButton, WordsButton, message_text, watch_view
+from dmbot.ui.thread_questions import ThreadQuestionsButton
 from dmbot.ui.threads import ThreadListButton, ThreadsButton, threads_view
 from dmbot.ui.threads import waiting_text as threads_waiting_text
 from dmbot.ui.trait_questions import TraitQuestionsButton
@@ -748,6 +753,8 @@ DISK_CHECK_FIRST_S = 60  # the disk check (#4075), then every `disk_check.CHECK_
 WIZARD_SWEEP_EVERY_S = 3600  # drafts past their week are removed, with their documents
 CHANNEL_SYNC_FIRST_S = 120  # the first look at who sees each campaign's channels (#3891)
 CHANNEL_SYNC_EVERY_S = 3600  # and then every hour
+ORPHAN_CHANNELS_FIRST_S = 600  # the look for channels of campaigns that are gone (#4479)
+ORPHAN_CHANNELS_EVERY_S = 6 * 3600  # (a channel goes after being seen twice a day apart)
 OWNER_START_WAIT_S = 2  # at a start the table is waiting
 OWNER_ASK_EVERY_S = 3600  # Discord is asked about one campaign's owner at most this often
 OWNER_LOOK_TIMEOUT_S = 6  # asking Discord about an owner must not hold up a start
@@ -1561,9 +1568,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.map_store: MapStore | None = None  # a picture kept as a map (#4344)
         self.pending_maps = PendingMaps()  # a sent map waiting for its owner's yes (#4372)
         self.picture_bucket: Bucket | None = None
+        self.maps_staging: Bucket | None = None  # where the website stages a sent map (#4347)
         self._picture_db: Database | None = None
         self._pictures_told: set[str] = set()  # campaigns told this run that old pictures went
         self._picture_swept = 0.0  # when the leftover-file sweep last ran
+        self._waiting_now_at = 0.0  # when the waiting cards' "now" was last refreshed (#4441)
         self._map_close_swept = 0.0  # when the map close-read sweep last ran (#4349)
         self._map_close_task: asyncio.Task[None] | None = None
         # campaign → when its close reads may be tried again after being put off (in memory: a
@@ -1851,6 +1860,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             map_answer.ActButton, map_answer.OpenButton, map_answer.UndoButton
         )  # the DM's side, #4344
         self.add_dynamic_items(map_question.TakeBackButton, map_question.PosterUndoButton)  # #4344
+        self.add_dynamic_items(  # a DM shows or hides a map, #4414
+            map_show.CampaignSelect, map_show.MapSelect, map_show.ActButton,
+            map_show.BackButton, map_show.UndoButton,
+        )  # fmt: skip
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
@@ -1932,6 +1945,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             FamilyTiesButton,
             TraitQuestionsButton,  # 🧬 Lineage and class (#3926)
             WorldNotesButton,  # 🌍 World notes (#4285)
+            ThreadQuestionsButton,  # 📜 Story threads (#4453)
         )  # the Questions message and the card's button (#3435)
         self.question_round = questions_discord.build_round(self)
         self.question_notices = (
@@ -1974,6 +1988,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 else []
             ),
             self._watched(self._channel_sync_loop(), "channel-sync"),
+            self._watched(self._orphan_channels_loop(), "orphan-channels"),
             self._watched(self._wizard_finish_loop(), "wizard-finish"),
             *(
                 [self._watched(self._member_names_loop(), "member-names")]
@@ -3712,8 +3727,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 campaign = await self.campaigns.get(guild_id, campaign.id) or campaign
             except Exception:
                 log.exception("Couldn't reload the campaign after settling the cap")
+        starter_is_owner = campaign.is_owner(starter_id)  # (any Discord login of the owner)
         if campaign.paused:  # the owner's choice, or the plan's: not a plan check, so always
-            return hours.PAUSED_OWNER if starter_id == owner else hours.PAUSED_OTHER
+            return hours.PAUSED_OWNER if starter_is_owner else hours.PAUSED_OTHER
         if not self.settings.enforce_plans or self.meter is None:
             return None
         if owner is None:
@@ -3727,7 +3743,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return None
         refused = hours.refusal(
             check.verdict,
-            is_owner=starter_id == owner,
+            is_owner=starter_is_owner,
             site_url=self.settings.site_url,
             can_change_plan=check.can_change_plan,
             renews=check.renews,
@@ -3748,10 +3764,22 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         return hours.campaigns_refusal(
             room.cap,
             room.owned,
-            is_owner=starter_id == owner,
+            is_owner=starter_is_owner,
             site_url=self.settings.site_url,
             can_change_plan=room.can_change_plan,
         )
+
+    async def _account_number(self, user_id: int) -> int:
+        """The DMbot account a Discord user belongs to, as its number: a plan, its hours and its
+        campaign count are the account's, so a Discord login added to an account is on the
+        account's plan (#2533, slice 2b). Someone who never signed in to the website is their own
+        account, and a failed lookup falls back to the Discord ID, as the plan checks fail open."""
+        try:
+            found = await accounts.account_of(self.campaigns.db, user_id)
+        except Exception:
+            log.warning("Couldn't resolve a Discord ID to its account; using the ID")
+            return user_id
+        return user_id if found is None else found
 
     async def create_refusal(self, guild_id: int, user_id: int) -> str | None:
         """Why this person may not make one more campaign, or None (#437 part 2c). Only when
@@ -3762,6 +3790,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         check still refuses them until one is paused.)"""
         if not self.settings.enforce_plans or self.meter is None:
             return None
+        user_id = await self._account_number(user_id)  # (the plan is the account's, #2533)
         await self._settle_cap(guild_id, user_id, 1.0)  # shrunk plan: pause extras (3 s deadline)
         try:
             async with asyncio.timeout(GATE_TIMEOUT_S):
@@ -3786,6 +3815,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         fail-open as `create_refusal`; the store checks again as the backstop."""
         if not self.settings.enforce_plans or self.meter is None:
             return None
+        user_id = await self._account_number(user_id)  # (the plan is the account's, #2533)
         await self._settle_cap(guild_id, user_id, GATE_TIMEOUT_S)
         try:
             async with asyncio.timeout(GATE_TIMEOUT_S):
@@ -12373,6 +12403,23 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except Exception as exc:
             log.warning("Import time: the offer could not be kept: %s", type(exc).__name__)
 
+    def _reads_campaign(
+        self, guild_id: int, campaign: Campaign
+    ) -> Callable[[int], Awaitable[bool]]:
+        """Whether a person may read this campaign's transcripts: the one rule Discord's channels
+        and the website's doors follow (`channel_sync.reads_campaign`), for the Maps page's player
+        actions (#4347, #4445). "Still in the server" is Discord's member cache only: a member
+        DMbot cannot see is refused."""
+
+        async def may(user_id: int) -> bool:
+            guild = self.get_guild(guild_id)
+            return await channel_sync.reads_campaign(
+                self.campaigns, self.memory, campaign, user_id,
+                in_server=guild is not None and guild.get_member(user_id) is not None,
+            )  # fmt: skip
+
+        return may
+
     def _import_clock_choice(self, guild_id: int) -> web_actions.ClockChoiceFn:
         """The website's answer to an import clock offer (#3199), applied the way Discord's two
         buttons do it: the offer is held for this answer (a second answer, from either place,
@@ -13095,6 +13142,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 actions=store,
                                 clock=self._import_clock_choice(guild.id),
                                 maps=self.map_store,
+                                uploads=MapUploads(
+                                    self.maps_staging,
+                                    self.picture_keeper,
+                                    self.map_store,
+                                    self.settings.picture_storage_mb,
+                                ),
+                                reads=self._reads_campaign(guild.id, campaign),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -13648,6 +13702,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         await store.close_read_done(gid, cid, a_map.id, claimed)
         return "read"
 
+    async def run_waiting_now(self) -> None:
+        """Once a minute, write on each waiting connection what a keep would replace, for the
+        website's card (#4441). Counts only in the log."""
+        store, memory = self.backstory_links, self.memory
+        if store is None or memory is None or time.time() - self._waiting_now_at < 60:
+            return
+        self._waiting_now_at = time.time()
+        changed = 0
+        for guild in list(self.guilds):
+            changed += await waiting_now.refresh_guild(memory, store, guild.id)
+        if changed:
+            log.info("What a keep would replace: %d waiting connections updated", changed)
+
     async def run_picture_sweep(self) -> None:
         """Once a day, delete the picture files no row points to (counts only in the log)."""
         db, bucket = self._picture_db, self.picture_bucket
@@ -13655,6 +13722,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         self._picture_swept = time.time()
         await picture_sweep.sweep(db, bucket)
+        if self.maps_staging is not None:  # (sent maps nobody picked up, #4347)
+            await picture_sweep.sweep_staging(self.maps_staging)
 
     async def run_web_report_requests(self) -> None:
         """The reports DMs asked for again on the website (#2805): each asker must still be a DM of
@@ -14642,6 +14711,46 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     await asyncio.sleep(OWNER_CHECK_GAP_S)
             log.info("Channel sync: %d campaign(s) looked at", looked)
             await asyncio.sleep(CHANNEL_SYNC_EVERY_S)
+
+    async def _orphan_channels_loop(self) -> None:
+        """Delete the DM Bot, transcript and DM screen channels DMbot made for a campaign that no
+        longer exists (#4479), after the grace in `dm_screen/orphan_channels`. A server's trouble
+        never stops the rest; counts only in the log; the server's owner is told once a sweep that
+        deleted something."""
+        sightings = orphan_channels.Sightings()
+        await asyncio.sleep(ORPHAN_CHANNELS_FIRST_S)
+        while True:
+            for guild in list(self.guilds):
+                try:
+                    with log_context(guild_id=guild.id):
+                        await self._orphan_channels_in(guild, sightings)
+                except Exception:
+                    log.exception("Orphaned channels: a server's look failed")
+            await asyncio.sleep(ORPHAN_CHANNELS_EVERY_S)
+
+    async def _orphan_channels_in(
+        self, guild: discord.Guild, sightings: orphan_channels.Sightings
+    ) -> None:
+        # every channel any live campaign of this server points to (read in one go)
+        live = await self.campaigns.special_channel_ids(guild.id)
+        me = guild.me
+        found = await orphan_channels.sweep(
+            guild.id,
+            guild.text_channels,
+            live,
+            sightings,
+            can_manage=me is not None and me.guild_permissions.manage_channels,
+        )
+        if found.seen or found.deleted or found.failed:
+            log.info(
+                "Orphaned channels: %d seen, %d deleted, %d failed%s",
+                found.seen,
+                found.deleted,
+                found.failed,
+                f" ({found.skipped})" if found.skipped else "",
+            )
+        if found.deleted and guild.owner_id:
+            await self.dm_user(guild.owner_id, orphan_channels.told_words(found.deleted))
 
     async def upgrade_dm_bot_channel(self, campaign: Campaign) -> int | None:
         """A campaign made before the DM Bot channel (#1666) gets one when its ⚙️ Manage DMbot is
@@ -15659,6 +15768,13 @@ async def run(settings: Settings) -> None:
                 pictures, bot.picture_bucket, settings.picture_storage_mb
             )
             bot.picture_store = pictures
+            if settings.maps_staging_ready:
+                bot.maps_staging = Bucket(
+                    settings.r2_account_id,
+                    settings.r2_staging_bucket,
+                    settings.r2_staging_access_key,
+                    settings.r2_staging_secret_key,
+                )
             if bot.memory is not None:
                 bot.map_store = MapStore(db, bot.memory)  # the two yeses of a map (#4344)
             bot.picture_actions = PictureActions(

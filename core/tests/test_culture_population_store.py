@@ -55,8 +55,9 @@ class CulturePopulation(MemoryTest):
             await self.set(mf.POPULATION, "halfling", "strong")  # (a culture's word)
         await self.set(mf.POPULATION, "halfling")  # ("populated by halflings": no share)
         await self.set(mf.CULTURE, mf.OTHER, "strong", words="duergar")
-        values = {(f.layer, f.value, f.words) for f in await self.facts(self.town)}
-        self.assertIn((mf.CULTURE, mf.OTHER, "duergar"), values)
+        # ("Something else…" on a culture is a named culture since 3b: Supervisor, #4257)
+        named = [f for f in await self.facts(self.town) if mf.is_named(f.layer, f.value)]
+        self.assertEqual([f.words for f in named], ["duergar"])
 
     async def test_a_read_waits_for_the_dm_and_keeps_its_part(self) -> None:
         got = await self.memory.add_read_map_facts(

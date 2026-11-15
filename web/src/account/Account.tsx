@@ -24,6 +24,7 @@ import {
   type AccountApi,
   type Campaign,
   type Character,
+  type ClosedOffer,
   type DiscordAccount,
   type Me,
   type MyPlan,
@@ -417,6 +418,7 @@ function SignedIn({
           onNews={setOfferNews}
         />
       )}
+      {(me.offers.closed ?? []).length > 0 && <ClosedOffersSection offers={me.offers.closed ?? []} />}
       <CampaignsSection me={me} api={api} />
       <CharactersSection />
       <SharedRulesSection me={me} />
@@ -803,6 +805,26 @@ function OffersSection({
       <ul class="campaigns">
         {offers.map((o) => (
           <OfferRow key={o.id} offer={o} free={free} onNews={onNews} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+/** Offers the bot closed because the Discord accounts changed (#4467): listed for a week so the
+ * person can see why an offer went. Nothing to press: it only says what happened. */
+function ClosedOffersSection({ offers }: { offers: ClosedOffer[] }) {
+  return (
+    <section aria-labelledby="offers-closed-heading" class="panel" id="offers-closed">
+      <h2 id="offers-closed-heading">{text.offersClosedHeading}</h2>
+      <p class="muted">
+        {text.offerClosedReason} {text.offerClosedWeek}
+      </p>
+      <ul class="campaigns">
+        {offers.map((o) => (
+          <li key={o.id} data-offer={o.id}>
+            <strong>{text.offerClosed(o.campaignName, o.serverName)}</strong>
+          </li>
         ))}
       </ul>
     </section>

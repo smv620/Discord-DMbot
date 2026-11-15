@@ -416,8 +416,12 @@ class CampaignStore:
         clock: Callable[[], float] = time.time,
         has_free_slot: SlotCheck = plan_works,
         restore_needs_slot: bool = False,
+        logins_are_accounts: bool = False,
     ) -> None:
         self._db = db
+        # The website acts as a signed-in account and passes its account number, never a login
+        # (and its database role cannot call the account doors): no lookup is made (#2533).
+        self._logins_are_accounts = logins_are_accounts
         # Whether the schema has the account doors (0392, 0395, #2533). Always true once migrated;
         # a test that opens an older schema on purpose has neither, and then every person is their
         # own account. Asked once, then remembered.
@@ -624,6 +628,11 @@ class CampaignStore:
         check_dm_screen_level(dm_screen_level)
         try:
             async with self._db.guild(guild_id) as conn:
+                # The tables hold the account's number, never a second Discord ID (#2533): a
+                # campaign made by an added Discord login belongs to its account and its plan.
+                account = await self._account_of(conn, dm_user_id)
+                if account is None:
+                    raise CampaignError(NOT_A_LOGIN)
                 campaign_id = await self._insert(
                     conn,
                     guild_id,
@@ -635,11 +644,11 @@ class CampaignStore:
                     None,
                     dm_screen_visibility,
                     dm_screen_level,
-                    dm_user_id,
+                    account,
                 )
                 await conn.execute(
                     "INSERT INTO campaign_dms (campaign_id, guild_id, user_id) VALUES (%s, %s, %s)",
-                    (campaign_id, guild_id, dm_user_id),
+                    (campaign_id, guild_id, account),
                 )
                 if invite is not None:
                     await conn.execute(
@@ -1159,7 +1168,12 @@ class CampaignStore:
         that hangs off it, so nothing is read back and written again and nothing can be left
         behind (tests/test_campaign_tables.py lists the tables; tests/test_campaign_move.py proves
         them). What belongs to the old server is reset: channels and messages, which the new
-        owner makes again with /dmbot start; who recorded is not carried (see `consenting`)."""
+        owner makes again with /dmbot start; who recorded is not carried (see `consenting`).
+
+        The owner and the DM list hold account numbers (#2533): a Discord login given as either
+        owner is stored as its account."""
+        new_owner = await self._login_account(conn, new_owner)
+        old_owner = await self._account_of(conn, old_owner) or old_owner
         await _scope(conn, guild_id)
         cur = await conn.execute(
             "SELECT name FROM campaigns WHERE guild_id = %s AND id = %s", (guild_id, campaign_id)
@@ -1284,9 +1298,13 @@ class CampaignStore:
             campaign = await self._require(conn, guild_id, campaign_id)
             if campaign.owner_user_id is None:
                 raise CampaignError(NO_OWNER_YET)
-            if campaign.owner_user_id != from_user_id:
+            # By account: the owner may offer from any of their Discord logins, and an offer to
+            # another login of their own account is an offer to themselves (#2533).
+            from_account = await self._account_of(conn, from_user_id)
+            if from_account is None or campaign.owner_user_id != from_account:
                 raise CampaignError(NOT_THE_OWNER)
-            if to_user_id == from_user_id:
+            to_account = await self._account_of(conn, to_user_id)
+            if to_account == from_account:
                 raise CampaignError(OFFER_TO_SELF)
             # An open offer past its 7 days no longer counts: mark it, so the new one can
             # be the campaign's one open offer.
@@ -1302,11 +1320,14 @@ class CampaignStore:
             try:  # the index is the last word, should a writer ever skip the lock
                 cur = await conn.execute(
                     "INSERT INTO campaign_handover_offers (guild_id, campaign_id,"
-                    " from_user_id, to_user_id, from_name, to_name, created_at, delivered_at)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING *",
+                    " from_user_id, to_user_id, from_name, to_name, created_at, delivered_at,"
+                    " from_account, to_account)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *",
                     (
                         guild_id, campaign_id, from_user_id, to_user_id, *names, now,
-                        now if delivered else None,
+                        now if delivered else None, from_account,
+                        # (a person with no account yet is their own number)
+                        to_user_id if to_account is None else to_account,
                     ),
                 )  # fmt: skip
             except pg_errors.UniqueViolation as exc:
@@ -1419,7 +1440,11 @@ class CampaignStore:
     async def offers_to_end(self, guild_id: int, now: int) -> list[HandoverOffer]:
         """Offers in this server whose 7 days are up and whose owner hasn't been told,
         oldest first. Open ones past their days are marked expired first (#690). Before
-        telling the owner, `claim_end_notice` each."""
+        telling the owner, `claim_end_notice` each. Offers whose people's accounts changed are
+        closed first (#2533, slice 3), and come back here as ended like the rest. (Closing takes
+        no campaign lock: an answer holds it and sets the status, and the update only closes a
+        row that is still open.)"""
+        await self.close_changed_offers(guild_id, now)
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "UPDATE campaign_handover_offers SET status = 'expired',"
@@ -1430,11 +1455,46 @@ class CampaignStore:
             )
             cur = await conn.execute(
                 "SELECT * FROM campaign_handover_offers"
-                " WHERE guild_id = %s AND status = 'expired' AND end_told_at IS NULL"
+                " WHERE guild_id = %s AND status IN ('expired', 'closed') AND end_told_at IS NULL"
                 " ORDER BY id",
                 (guild_id,),
             )
             return [_to_offer(row) for row in await cur.fetchall()]
+
+    async def close_changed_offers(self, guild_id: int, now: int) -> int:
+        """Close the open offers whose people are no longer who they were (#2533, slice 3): an
+        account gained or lost a Discord login, so the person offered to, or the owner who
+        offered, is a different account now, or both are one account. The offer becomes
+        `closed` (with `closed_side`), nothing moves, and the sweep that follows tells both
+        people once. An offer made before this, by email, or under a move is left alone. How
+        many were closed."""
+        closed = 0
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT * FROM campaign_handover_offers WHERE guild_id = %s AND status = 'open'"
+                " AND from_account IS NOT NULL AND to_account IS NOT NULL AND NOT via_email"
+                " AND move_to_guild_id IS NULL ORDER BY id",
+                (guild_id,),
+            )
+            for row in await cur.fetchall():
+                # None: a first login its account took off itself, nobody's login any more
+                from_now = await self._account_of(conn, int(row["from_user_id"]))
+                to_now = await self._account_of(conn, int(row["to_user_id"]))
+                if from_now is None or from_now != int(row["from_account"]):
+                    side = "offerer"
+                elif to_now is None or to_now != int(row["to_account"]):
+                    side = "receiver"
+                else:
+                    continue
+                if from_now is not None and from_now == to_now:
+                    side = "same"
+                done = await conn.execute(
+                    "UPDATE campaign_handover_offers SET status = 'closed', closed_side = %s,"
+                    " decided_at = %s WHERE guild_id = %s AND id = %s AND status = 'open'",
+                    (side, now, guild_id, row["id"]),
+                )
+                closed += done.rowcount
+        return closed
 
     async def claim_end_notice(self, guild_id: int, offer_id: int, now: int) -> bool:
         """Mark an ended offer told, just before telling its owner: False if someone else
@@ -1495,7 +1555,14 @@ class CampaignStore:
         tell the owner in Discord (#737)."""
         async with self._db.guild(guild_id) as conn:
             offer = await self._offer(conn, guild_id, offer_id)
-            if offer is None or offer.to_user_id != user_id:
+            # By account (#2533): the offer is theirs when it was made to any login of the account
+            # that is answering, and the plan, the owner and the DM list are the account's.
+            account = await self._account_of(conn, user_id)
+            if (
+                offer is None
+                or account is None
+                or await self._account_of(conn, offer.to_user_id) != account
+            ):
                 return "gone"
             await self._lock(conn, guild_id, offer.campaign_id)
             offer = await self._offer(conn, guild_id, offer_id, lock=True)
@@ -1505,20 +1572,23 @@ class CampaignStore:
             if (
                 offer is None
                 or not offer.is_open(now)
+                # An account change closes the offer at the next sweep; until then it is not
+                # answerable by whoever the person offered to has become (#2533, slice 3).
+                or not await self._still_between(conn, offer)
                 or campaign is None
-                or campaign.owner_user_id != offer.from_user_id
+                or campaign.owner_user_id != await self._account_of(conn, offer.from_user_id)
             ):
                 return "gone"
-            if not await self._has_free_slot(conn, user_id, now):
+            if not await self._has_free_slot(conn, account, now):
                 return "no_free_slot"
             await conn.execute(
                 "UPDATE campaigns SET owner_user_id = %s WHERE guild_id = %s AND id = %s",
-                (user_id, guild_id, campaign.id),
+                (account, guild_id, campaign.id),
             )
             await conn.execute(
                 "INSERT INTO campaign_dms (campaign_id, guild_id, user_id) VALUES (%s, %s, %s)"
                 " ON CONFLICT DO NOTHING",
-                (campaign.id, guild_id, user_id),
+                (campaign.id, guild_id, account),
             )
             # Last on purpose: the website's policies (schema, web_accept_handover) allow
             # the owner and DM writes above only while this offer is still open.
@@ -1526,6 +1596,16 @@ class CampaignStore:
             if announce:
                 await offer_notify.send(conn, guild_id, offer_id, offer_notify.DECIDED)
             return "accepted"
+
+    async def _still_between(self, conn: Conn, offer: HandoverOffer) -> bool:
+        """Whether the two people are still on the accounts the offer was made between (#2533,
+        slice 3). An offer without them (older, or by email) always is."""
+        if offer.from_account is None or offer.to_account is None:
+            return True
+        return (
+            await self._account_of(conn, offer.from_user_id) == offer.from_account
+            and await self._account_of(conn, offer.to_user_id) == offer.to_account
+        )
 
     async def decline_handover(
         self, guild_id: int, offer_id: int, user_id: int, now: int, *, announce: bool = False
@@ -1572,19 +1652,21 @@ class CampaignStore:
         async with self._db.guild(guild_id) as conn:
             await self._lock(conn, guild_id, campaign_id)
             campaign = await self._get(conn, guild_id, campaign_id)
+            account = await self._account_of(conn, user_id)  # (the owner is stored as the account)
             if (
                 campaign is None
                 or campaign.owner_user_id is not None
                 or user_id not in campaign.dm_user_ids
+                or account is None
             ):
                 return "gone"
-            if not await self._has_free_slot(conn, user_id, now):
+            if not await self._has_free_slot(conn, account, now):
                 return "no_free_slot"
             # Taking it on also ends the 120-day countdown a deleted account started (#1059).
             await conn.execute(
                 "UPDATE campaigns SET owner_user_id = %s, owner_left_at = NULL,"
                 " owner_missing_since = NULL WHERE guild_id = %s AND id = %s",
-                (user_id, guild_id, campaign_id),
+                (account, guild_id, campaign_id),
             )
             return "taken"
 
@@ -1871,13 +1953,15 @@ class CampaignStore:
         # copy of an old campaign isn't deleted by the next daily run (#964).
         restored_at = int(self._clock())
         async with self._db.guild(guild_id) as conn:
+            # The owner and the DM list hold the account's number, not a login's (#2533).
+            account = await self._login_account(conn, importer_id)
             if replace_campaign_id is not None:
                 await self._lock(conn, guild_id, replace_campaign_id)
                 existing = await self._require(conn, guild_id, replace_campaign_id)
                 if importer_id not in existing.dm_user_ids:
                     raise CampaignError(NOT_THIS_DM)
                 if existing.owner_user_id is None:  # the importer becomes its owner
-                    await self._require_slot(conn, importer_id)
+                    await self._require_slot(conn, account)
                 campaign_id = replace_campaign_id
                 for section in self._sections.values():
                     await section.clear(conn, guild_id, campaign_id)
@@ -1910,13 +1994,13 @@ class CampaignStore:
                         info["recaps_text"],
                         info["recaps_audio"],
                         info["recaps_email"],
-                        importer_id,
+                        account,
                         guild_id,
                         campaign_id,
                     ),
                 )
             else:
-                await self._require_slot(conn, importer_id)
+                await self._require_slot(conn, account)
                 name = await self._free_name(conn, guild_id, info["name"])
                 try:
                     campaign_id = await self._insert(
@@ -1930,7 +2014,7 @@ class CampaignStore:
                         restored_at,
                         info["dm_screen_visibility"],
                         info["dm_screen_level"],
-                        importer_id,
+                        account,
                     )
                     if info["rules_cards"]:  # a new campaign starts with them off
                         await conn.execute(
@@ -2043,7 +2127,7 @@ class CampaignStore:
                 " SELECT %s, %s, u FROM unnest(ARRAY[%s, (SELECT owner_user_id FROM campaigns"
                 "   WHERE guild_id = %s AND id = %s)]::BIGINT[]) AS u"
                 " WHERE u IS NOT NULL ON CONFLICT DO NOTHING",
-                (campaign_id, guild_id, importer_id, guild_id, campaign_id),
+                (campaign_id, guild_id, account, guild_id, campaign_id),
             )
             if in_transaction is not None:
                 await in_transaction(conn, campaign_id)
@@ -2189,7 +2273,7 @@ class CampaignStore:
         account they belong to, else their own ID (someone who has never signed in to the website
         is their own account). None for a first Discord ID its account took off itself: it is
         nobody's login any more and must not be stored as anyone."""
-        if not await self._has_accounts(conn):
+        if self._logins_are_accounts or not await self._has_accounts(conn):
             return user_id
         cur = await conn.execute(
             "SELECT dmbot_account_of(%s) AS account, dmbot_account_taken_off(%s) AS gone",
@@ -2199,6 +2283,19 @@ class CampaignStore:
         if row is not None and row["account"] is not None:
             return int(row["account"])
         return None if row is not None and row["gone"] else user_id
+
+    async def _login_account(self, conn: Conn, user_id: int) -> int:
+        """`_account_of` for a write: the account number to store for this Discord login, or a
+        CampaignError (NOT_A_LOGIN) for a first login its account took off (#2533, slice 2b)."""
+        account = await self._account_of(conn, user_id)
+        if account is None:
+            raise CampaignError(NOT_A_LOGIN)
+        return account
+
+    async def account_for(self, conn: Conn, user_id: int) -> int | None:
+        """The account number of a Discord login or account number, for the code that moves a
+        campaign (`campaigns/moves.py`): None for a login taken off its account."""
+        return await self._account_of(conn, user_id)
 
     async def _has_accounts(self, conn: Conn) -> bool:
         if self._accounts is None:
@@ -2409,6 +2506,9 @@ def _to_offer(row: dict[str, Any]) -> HandoverOffer:
         move_asked_at=row_int(row, "move_asked_at"),
         move_failed_for=row_int(row, "move_failed_for"),
         move_failed_reason=row.get("move_failed_reason"),
+        from_account=row_int(row, "from_account"),
+        to_account=row_int(row, "to_account"),
+        closed_side=row.get("closed_side"),
     )
 
 
