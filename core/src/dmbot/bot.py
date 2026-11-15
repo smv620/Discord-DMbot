@@ -570,6 +570,7 @@ from dmbot.ui import (
     map_answer,
     map_question,
     map_send,
+    map_show,
     name_pass_undo,
     player_id,
     recap_audio,
@@ -1856,6 +1857,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             map_answer.ActButton, map_answer.OpenButton, map_answer.UndoButton
         )  # the DM's side, #4344
         self.add_dynamic_items(map_question.TakeBackButton, map_question.PosterUndoButton)  # #4344
+        self.add_dynamic_items(  # a DM shows or hides a map, #4414
+            map_show.CampaignSelect, map_show.MapSelect, map_show.ActButton,
+            map_show.BackButton, map_show.UndoButton,
+        )  # fmt: skip
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
