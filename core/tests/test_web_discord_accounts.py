@@ -171,7 +171,7 @@ class Removing(DiscordAccounts):
         refused = await self.client.post(
             f"/me/discord-accounts/{used['key']}/remove", headers=headers
         )
-        self.assertEqual((refused.status_code, refused.json()["error"]), (409, "in_use"))
+        self.assertEqual((refused.status_code, refused.json()["error"]), (409, "account_in_use"))
         done = await self.client.post(
             f"/me/discord-accounts/{added['key']}/remove", headers=headers
         )

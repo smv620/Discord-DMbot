@@ -713,7 +713,7 @@ def create_app(
             raise HTTPException(status_code=404, detail="not_found")
         # (the account in use is its own answer: it is not "the only one")
         raise HTTPException(
-            status_code=409, detail="in_use" if done.code == "in_use" else "last_account"
+            status_code=409, detail="account_in_use" if done.code == "in_use" else "last_account"
         )
 
     change_limit = RateLimit(60 * 60, count=6)  # asks to change the email, counted by account

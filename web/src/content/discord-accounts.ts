@@ -41,7 +41,7 @@ export const discordAccountsWords = {
   } as Record<string, string>,
   problem: {
     "not-found": "That Discord account is already gone. The list is up to date now.",
-    "in-use": "The one you're using now can't be removed. Sign in with another one first.",
+    "account-in-use": "The one you're using now can't be removed. Sign in with another one first.",
     "last-account": "This is your only Discord account, so it can't be removed.",
     "slow-down": "Too many tries just now. Wait a minute and try again.",
     default: "That didn't work, and nothing was changed. Try again in a moment.",

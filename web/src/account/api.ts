@@ -2760,7 +2760,7 @@ export type ApiErrorKind =
   | "backup-too-many-files" // more transcripts files than one backup carries (#2772)
   | "backup-part" // one file of a backup did not come through, so the set is not complete (#2772)
   | "backup-unfinished" // a copy that can never be a whole backup (its main file already taken, or files missing)
-  | "in-use" // the Discord account in use now can't be removed (#4473)
+  | "account-in-use" // the Discord account in use now can't be removed (#4473)
   | "last-account" // the only Discord account on a DMbot account can't be removed (#2534)
   | "not-a-backup" // the file is not a DMbot backup (#2745)
   | "too-many-parts" // the copy asks for more transcripts files than the restore takes (#2745)
@@ -3502,7 +3502,7 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   already_subscribed: "already-subscribed",
   not_found: "not-found",
   bad_email: "bad-email",
-  in_use: "in-use",
+  account_in_use: "account-in-use",
   bad_target: "bad-target",
   names_not_shown: "names-not-shown",
   name_unnamed: "name-unnamed",
