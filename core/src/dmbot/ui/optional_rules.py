@@ -13,6 +13,7 @@ import discord
 
 from dmbot.campaigns import Campaign, CampaignError
 from dmbot.discord_limits import MESSAGE_MAX
+from dmbot.dm_screen import upkeep
 from dmbot.mentions import NO_PINGS
 from dmbot.rules import optional
 from dmbot.rules.optional import NO_SCREEN_NOTE, covered_note, main_rules, screen_line
@@ -142,12 +143,13 @@ class OptionalRulesMenu(_Menu):
             await _tell(interaction, GONE)
             return
         self.stop()
-        # The DM screen keeps a record. Noted before the reply, so a failed reply can't
-        # leave a saved change unrecorded.
+        # The DM Bot channel keeps a record (the DM screen if there is none). Noted before the
+        # reply, so a failed reply can't leave a saved change unrecorded.
         noted = True
-        if campaign.dm_screen_channel_id is not None:
+        channel = upkeep.channel_for(campaign)  # (the DM Bot channel, not the live-play screen)
+        if channel is not None:
             noted = await _bot(interaction).post(
-                campaign.dm_screen_channel_id,
+                channel,
                 screen_line(chosen, turn_on, interaction.user.mention),
             )
         news = f"{'✅' if turn_on else '⬜'} **{chosen.name}** is now {'on' if turn_on else 'off'}."

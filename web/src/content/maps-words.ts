@@ -31,7 +31,7 @@ export const mapsWords = {
   // The website's own
   heading: "Maps",
   lead: "Pictures of places in your story. DMbot reads a map only after a DM says yes, and only a DM shows it to the table.",
-  emptyDm: "No maps yet. When someone posts one in Discord, it shows up here.",
+  emptyDm: "No maps yet. Add one with the form, or post one in Discord and it shows up here.",
   emptyPlayer: "No maps have been shown to the table yet.",
   addedBy: (name: string, via: "website" | "discord"): string => `Added by ${name} ${via === "discord" ? "in Discord" : "on the website"}`,
   shown: "Shown to the table",

@@ -1,7 +1,8 @@
 """The old `#dmb-chat` channel (#3212): DMbot no longer makes, reads or posts in it.
 
 The table's chat is now the voice channel's own text chat, or the one channel the DM picked. A
-campaign that still has an old channel gets **one notice** on the DM screen with a button to remove
+campaign that still has an old channel gets **one notice** in the DM Bot channel (the DM screen if
+there is none) with a button to remove
 it. DMbot never deletes the channel by itself: the DM presses **Remove the old channel**, sees one
 confirmation, and only then it goes. Only the campaign's DMs may press either button, checked
 again on every press, and only a channel DMbot named like a DMbot chat channel is ever deleted.

@@ -39,6 +39,7 @@ import discord
 from dmbot import ai_feed
 from dmbot.audio.segmenter import Utterance
 from dmbot.campaigns import Campaign
+from dmbot.dm_screen import upkeep
 from dmbot.dm_screen.recap_panel import PlanFacts, audio_how
 from dmbot.entitlements import RECAP_AUDIO_PLANS
 from dmbot.logs import log_context
@@ -1591,8 +1592,8 @@ class RecapFeatures:
         The flag says it is the DM Bot channel, which the campaign's people can read, so the
         words there are counts only: no recap title, no names."""
         if campaign.dm_bot_channel_id:
-            return campaign.dm_bot_channel_id, True
-        return campaign.dm_screen_channel_id, False
+            return upkeep.channel_for(campaign), True
+        return upkeep.channel_for(campaign), False
 
     async def recap_told(self, gid: int, cid: str, job: Job) -> None:
         """Tell the DM that their recap is ready, or could not be written. A ready recap goes in
