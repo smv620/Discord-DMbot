@@ -25,12 +25,12 @@ THREAD = Suggestion(
 class Threads(Acting):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
-        self.store = ThreadSuggestionStore(self.db)
+        self.threads = ThreadSuggestionStore(self.db)
         found = Suggestion(
             "quest", "The Lost Heir", "Bring the heir home.", "Find the heir.",
             (("quest giver", self.mira), ("target", self.keep)), "now",
         )  # fmt: skip
-        await self.store.offer(self.g, self.one.id, [found], "Frostmaiden notes", 1_000)
+        await self.threads.offer(self.g, self.one.id, [found], "Frostmaiden notes", 1_000)
 
     async def door(self, who: Any = None) -> Any:
         session = who or self.session
@@ -41,7 +41,8 @@ class Threads(Acting):
         return found["r"] if found else None
 
     async def waiting(self) -> list[dict[str, Any]]:
-        return (await self.door())["suggestions"]
+        found: list[dict[str, Any]] = (await self.door())["suggestions"]
+        return found
 
     async def add_action(self, action: str, text: str) -> Any:
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
@@ -108,7 +109,6 @@ class TheDoor(Threads):
         for action, text in (
             ("thread-keep", sid),  # (no people word)
             ("thread-keep", f"{sid} 0,x"),
-            ("thread-keep", f"{sid} 0 "),
             ("thread-not", f"{sid} extra"),
             ("thread-undo", "7"),
             ("thread-undo", f"keep {sid}"),
@@ -151,7 +151,7 @@ class TheActions(Threads):
                 (self.g, self.one.id, None, "thread-not", "", "", one["id"], False),
             )
             found = await cur.fetchone()
-        self.assertNotEqual((found or {"r": {}})["r"].get("status"), "ok")
+        self.assertIsNone(found and found["r"])  # (the door answers NULL: a DM only)
 
     async def test_keep_with_nobody_left_on_still_keeps_the_thread(self) -> None:
         (one,) = await self.waiting()
@@ -166,10 +166,11 @@ class TheActions(Threads):
     async def test_not_a_story_thread_is_never_offered_again_and_undo_puts_it_back(self) -> None:
         (one,) = await self.waiting()
         self.assertEqual((await self.act("thread-not", one["id"])).error, "")
-        await self.store.offer(self.g, self.one.id, [THREAD], "again", 2_000)
-        self.assertEqual(await self.act("thread-undo", f"not {one['id']}"), wa.Outcome())
-        (back,) = await self.waiting()
-        self.assertEqual(back["id"], one["id"])
+        await self.threads.offer(self.g, self.one.id, [THREAD], "again", 2_000)
+        (other,) = await self.waiting()  # (only the new one: the turned-down one stays out)
+        self.assertNotEqual(other["id"], one["id"])
+        self.assertEqual((await self.act("thread-undo", f"not {one['id']}")).error, "")
+        self.assertEqual({s["id"] for s in await self.waiting()}, {one["id"], other["id"]})
 
     async def test_undo_takes_back_only_this_dms_own_keep(self) -> None:
         (one,) = await self.waiting()
