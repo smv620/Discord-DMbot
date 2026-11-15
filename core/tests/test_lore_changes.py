@@ -112,6 +112,19 @@ class TheChange(NamesTest):
         self.assertNotIn("update it?", "\n".join(lines))
         self.assertNotIn("Nothing changes unless", "\n".join(lines))
 
+    async def test_card_now_after_proposed(self) -> None:
+        # #4529: "Now:" comes after the PROPOSED line, never before it.
+        await self.read("enemy")
+        text = (await self.card()).text()
+        self.assertLess(text.index("🙋❓ **PROPOSED:**"), text.index("Now: "))
+
+    async def test_card_no_nothing_changes_footer(self) -> None:
+        # #4529: the ✅ buttons say what they do, so the footers are gone.
+        await self.read("enemy")
+        update = (await self.card()).text()
+        self.assertNotIn("Nothing changes unless", update)
+        self.assertNotIn("Nothing is added unless", update)
+
     async def test_card_proposed_is_second_line_on_an_add(self) -> None:
         await self.read("works for")
         lines = (await self.card()).text().splitlines()
