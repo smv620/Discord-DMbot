@@ -56,7 +56,9 @@ NOT_PROMISED = "No, it wasn't promised"
 NONE = "none"  # a menu choice's value for "none of them" (Discord refuses an empty value)
 # A time limit's game date (quests slice 4, §8.2: the DM's one tap)
 # (📅, not ⏰: the part's own "⏰ Still running" sits on the same screen; the ux-critic)
-SET_DATE, CHANGE_DATE = "📅 Set a date", "📅 Change the date"
+SET_DATE_BUTTON = "📅 Set a date"  # (…_BUTTON: the website's check reads the bot's labels by it)
+CHANGE_DATE_BUTTON = "📅 Change the date"
+SET_DATE, CHANGE_DATE = SET_DATE_BUTTON, CHANGE_DATE_BUTTON
 CLEAR_DATE = "🗑️ Clear the date"
 PICK_DAY = "Other number of days…"
 QUICK_SAID = {1: "Tomorrow", 3: "In 3 days", 7: "In a week"}
