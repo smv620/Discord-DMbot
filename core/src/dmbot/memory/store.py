@@ -1630,6 +1630,65 @@ class MemoryStore:
             kept = await map_fact_store.keep_read(w, onto, place_id, layers)
             return Written(kept, w.batch)
 
+    # ---- A road's, pass's or bridge's condition (#4258, MapBot layers slice 4a) ---------------
+
+    async def route_conditions(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        viewer: gate.Viewer,
+        *,
+        place_ids: Sequence[str] = (),
+        relation_ids: Sequence[str] = (),
+        shown: Collection[str] | None = None,
+    ) -> dict[str, map_fact_store.Condition]:
+        """Each route's condition with what it ended, by place or connection id, as `viewer` may
+        see it (`map_fact_store.conditions_for`)."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await map_fact_store.conditions_for(
+                scope, viewer, place_ids=place_ids, relation_ids=relation_ids, shown=shown
+            )
+
+    async def set_route_condition(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        value: str | None,
+        *,
+        words: str = "",
+        place_id: str = "",
+        relation_id: str = "",
+        source: str,
+    ) -> Written[None]:
+        """The DM's 🚧 Condition for a route place or a known road between two places: one change,
+        so one Undo. A different value keeps the old one as history; None is "Not sure"."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            await map_fact_store.set_condition(
+                w, onto, value, words=words, place_id=place_id, relation_id=relation_id
+            )
+            return Written(None, w.batch)
+
+    async def keep_road_condition(
+        self, guild_id: int, campaign_id: str, relation_id: str, *, source: str
+    ) -> Written[int]:
+        """The DM's ✅ on a road's condition DMbot read: one change, so one Undo."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            return Written(await map_fact_store.keep_route(w, relation_id), w.batch)
+
+    async def show_road_condition(
+        self, guild_id: int, campaign_id: str, relation_id: str, shown: bool, *, source: str
+    ) -> Written[int]:
+        """The DM's 🙈 / 👁️ for a road's condition: one change, so one Undo."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            return Written(await map_fact_store.show_route(w, relation_id, shown), w.batch)
+
     # ---- World notes: DMbot's guesses about the world, for the DM to check (#4285) ----------
 
     async def world_notes(self, guild_id: int, campaign_id: str) -> list[world_notes.Note]:

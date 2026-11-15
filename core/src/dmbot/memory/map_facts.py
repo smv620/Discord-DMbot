@@ -10,14 +10,20 @@ import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import NamedTuple
 
-from dmbot.memory import place_levels, place_peoples
+from dmbot.memory import place_levels, place_peoples, route_condition
 
 TERRAIN, CLIMATE, CONTROL = "terrain", "climate", "control"
 CULTURE, POPULATION = place_peoples.CULTURE, place_peoples.POPULATION  # (#4257, slice 3a)
-LAYERS = (TERRAIN, CLIMATE, CONTROL, CULTURE, POPULATION)
+CONDITION = route_condition.CONDITION  # a road's, pass's or bridge's (#4258, slice 4a)
+LAYERS = (TERRAIN, CLIMATE, CONTROL, CULTURE, POPULATION, CONDITION)
 # Read up the place tree (§6): a town takes its region's land, climate and ruler. Culture and who
 # lives there are never read up: a dwarven kingdom's human town is not dwarven.
 UP_TREE = frozenset({TERRAIN, CLIMATE, CONTROL})
+# Layers whose change in the story closes the old row as history at the story's time, instead of
+# rejecting it (§6, Supervisor's point 2 on #4258). The code is the same for every layer; climate,
+# control, culture and who lives there are history in §6 too, but each joins this set only in its
+# own later slice, with its own test. Until then they behave as before.
+HISTORY = frozenset({CONDITION})
 OTHER = "other"  # a value off the list, kept with the text's own words
 WORDS_MAX = 60  # the text's own words for "other", and a part ("the northern half")
 READ, CONFIRMED, REJECTED = "read", "confirmed", "rejected"
@@ -33,6 +39,7 @@ VALUES: dict[str, tuple[str, ...]] = {
     CONTROL: (),  # a faction entry, never a word
     CULTURE: tuple(place_peoples.LINEAGES),  # a lineage, shown as its adjective ("dwarven")
     POPULATION: tuple(place_peoples.LINEAGES),  # a lineage, shown as its plural ("halflings")
+    CONDITION: route_condition.VALUES,
 }  # fmt: skip
 # The value's shade (`how`): '' is none. Climate's dry or wet lives here (Supervisor, point 1).
 HOWS: dict[str, tuple[str, ...]] = {
@@ -41,6 +48,7 @@ HOWS: dict[str, tuple[str, ...]] = {
     CONTROL: ("rules", "claims", "occupies", "protects"),
     CULTURE: place_peoples.CULTURE_HOWS,
     POPULATION: place_peoples.POPULATION_HOWS,
+    CONDITION: (),  # (no shade: the four words say it)
 }
 # A culture always says how strong (the migration's check); every other layer may say nothing.
 HOW_NEEDED = frozenset({CULTURE})
@@ -75,6 +83,8 @@ def allowed_on(layer: str, *, form: str | None, level: str | None) -> bool:
         return form is None
     if layer == CLIMATE:
         return level is None or place_levels.RANK[level] <= place_levels.RANK["region"]
+    if layer == CONDITION:  # (a road, a pass, a bridge: a place whose form is a route, #4258)
+        return form == place_levels.ROUTE
     return layer in (CONTROL, CULTURE, POPULATION)  # (any place: a quarter, a town, a realm)
 
 
@@ -194,6 +204,7 @@ class Fact(NamedTuple):
     status: str
     source: str
     table_knows: bool
+    relation_id: str = ""  # a condition on a known `route_to` (#4258); `place_id` is then ''
 
 
 class Held(NamedTuple):
@@ -255,7 +266,7 @@ def meet(layer: str, old_source: str, old_status: str, new_source: str, changed:
         return NOTE  # (the DM's own row stands against everything but the DM)
     if layer in CORRECTED:
         return CORRECT if RANK[new_source] > RANK[old_source] or new_source == FROM_DM else NOTE
-    if changed:  # (no reader says words of change yet: slice 2's phrases never do)
+    if changed and layer in HISTORY:  # (words of change: "reopened", "was cleared", #4258)
         return CLOSE
     return CORRECT if RANK[new_source] > RANK[old_source] or new_source == FROM_DM else NOTE
 
@@ -265,12 +276,13 @@ def for_players(facts: Iterable[Fact], known: Collection[str]) -> list[Fact]:
     `map_fact_store.facts_for` and the website's player view (#4287) can never disagree): a row is
     shown only when the DM has confirmed it and marked it as known to the table, the place is an
     entry this viewer knows, and for a ruler, so is the group (`known`: the entries the gate shows
-    this viewer). A value DMbot read from the DM's notes is the DM's until the DM confirms it."""
+    this viewer; for a route's condition on a connection, the connections it shows, #4258). A value
+    DMbot read from the DM's notes is the DM's until the DM confirms it."""
     return [
         f
         for f in facts
         if f.table_knows
         and f.status == CONFIRMED
-        and f.place_id in known
+        and (f.relation_id in known if f.relation_id else f.place_id in known)
         and (f.layer != CONTROL or f.value in known)
     ]

@@ -41,6 +41,7 @@ from dmbot.memory import (
     picture_read,
     place_levels,
     pronouns,
+    route_condition,
     route_words,
     story_chain,
     traits_read,
@@ -1412,10 +1413,20 @@ async def store_place_facts(
     known = {entry.text for entry in lookup.names}  # (never read as a named culture, #4257 3b)
     found: list[map_fact_store.Read] = []
     counts: Counter[str] = Counter()
+    changed: dict[str, bool] = {}  # (a condition said with words of change, by place)
     for name, ids in places.items():
         if len(ids) != 1 or not re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", text, re.I):
             continue
         read = map_facts.read_facts(name, text, group_ids, known)
+        place = lookup.entities[next(iter(ids))]
+        # a road's, pass's or bridge's condition (#4258): lore only in 4a (Supervisor), and only
+        # right after a route's own name
+        said = route_condition.read(
+            name, text, is_route=session_at is None and place.form == place_levels.ROUTE
+        )
+        if said is not None:
+            read.append(map_facts.Found(map_facts.CONDITION, said.value))
+            changed[next(iter(ids))] = said.changed
         if not read:
             counts["unknown"] += 1
         for f in read:
@@ -1423,9 +1434,18 @@ async def store_place_facts(
             value = group_ids[f.value] if f.layer == map_facts.CONTROL else f.value
             found.append(
                 map_fact_store.Read(
-                    next(iter(ids)), f.layer, value, f.how, session_at, f.part, f.culture
+                    next(iter(ids)),
+                    f.layer,
+                    value,
+                    f.how,
+                    session_at,
+                    f.part,
+                    f.culture,
+                    changed=f.layer == map_facts.CONDITION and changed.get(next(iter(ids)), False),
                 )
             )
+    if session_at is None:
+        found += await _road_conditions(memory, campaign, text, places, counts)
     if not found:
         return 0
     try:
@@ -1436,13 +1456,55 @@ async def store_place_facts(
         log.warning("Place facts couldn't be kept (%s)", type(exc).__name__)
         return 0
     log.info(
-        "Place facts read: terrain=%d climate=%d control=%d culture=%d population=%d unknown=%d;"
-        " %s",
+        "Place facts read: terrain=%d climate=%d control=%d culture=%d population=%d"
+        " condition=%d unknown=%d; %s",
         counts[map_facts.TERRAIN], counts[map_facts.CLIMATE], counts[map_facts.CONTROL],
-        counts[map_facts.CULTURE], counts[map_facts.POPULATION], counts["unknown"],
+        counts[map_facts.CULTURE], counts[map_facts.POPULATION], counts[map_facts.CONDITION],
+        counts["unknown"],
         dict(sorted(written.value.items())),
     )  # fmt: skip
     return written.value["written"]
+
+
+async def _road_conditions(
+    memory: MemoryStore,
+    campaign: Campaign,
+    text: str,
+    places: Mapping[str, set[str]],
+    counts: Counter[str],
+) -> list[map_fact_store.Read]:
+    """The condition of a road between two places (#4258): "the road between A and B is …" or
+    "the road from A to B is …", written only when A and B are each one place of the campaign and
+    exactly one known road joins them (never a trip the party made or plans). A road with two
+    candidates says nothing: DMbot can't tell which."""
+    said = route_condition.read_between(text)
+    if not said:
+        return []
+    by_key = {name.casefold(): ids for name, ids in places.items()}
+    roads = [
+        r
+        for r in await memory.relations(campaign.guild_id, campaign.id, include_secret=True)
+        if r.predicate == route_words.ROUTE_TO and r.route_state == route_words.KNOWN
+    ]
+    out: list[map_fact_store.Read] = []
+    for one in said:
+        a = by_key.get(one.a) or by_key.get("the " + one.a, set())  # ("the Spine", "Spine")
+        b = by_key.get(one.b) or by_key.get("the " + one.b, set())
+        if len(a) != 1 or len(b) != 1:
+            continue
+        pair = a | b
+        joins = [r for r in roads if {r.subject_id, r.object_id} == pair]
+        if len(joins) != 1:
+            counts["road_unclear"] += 1
+            continue
+        counts[map_facts.CONDITION] += 1
+        out.append(
+            map_fact_store.Read(
+                "", map_facts.CONDITION, one.said.value, relation_id=joins[0].id,
+                changed=one.said.changed,
+            )
+        )  # fmt: skip
+    return out
 
 
 async def ask_languages(

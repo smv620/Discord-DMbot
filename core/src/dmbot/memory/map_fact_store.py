@@ -9,9 +9,9 @@ from collections import Counter
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import Any, NamedTuple
 
-from dmbot.memory import gate, place_peoples
+from dmbot.memory import gate, place_levels, place_peoples, route_words
 from dmbot.memory import map_facts as mf
-from dmbot.memory._changes import CULTURES, ENTITIES, MAP_FACTS, Changes, Scope
+from dmbot.memory._changes import CULTURES, ENTITIES, MAP_FACTS, RELATIONS, Changes, Scope
 from dmbot.memory.models import REJECTED as ENTRY_REJECTED
 from dmbot.memory.models import MemoryRuleError, new_id
 from dmbot.memory.ontology import Ontology
@@ -22,6 +22,10 @@ ONLY_BIG = "Only a region or bigger has its own climate. Set it on the region th
 NOT_A_GROUP = "Only a group can rule a place."
 GONE = "That's gone. Open the card again to see it as it is now."
 BAD_WORD = "That isn't one of the choices."
+ONLY_ROUTES = (
+    "Only a road, a pass or a bridge has a condition. To make this place one, tap 📏 Size and kind"
+    " and pick \u201cA road or route\u201d."
+)  # (the ux-critic's words on #4258)
 
 
 # What a World notes 🚫 turned down (`reject_row`): nothing (checked or gone already), the row, or
@@ -39,7 +43,7 @@ def _fact(r: Mapping[str, Any], names: Mapping[str, str] | None = None) -> mf.Fa
     culture = r.get("culture_id")
     return mf.Fact(
         id=str(r["id"]),
-        place_id=str(r["entity_id"]),
+        place_id=str(r["entity_id"] or ""),  # ('' for a condition on a connection, #4258)
         layer=str(r["layer"]),
         value=str(
             r["faction_id"] if r["layer"] == mf.CONTROL else culture if culture else r["value"]
@@ -50,6 +54,7 @@ def _fact(r: Mapping[str, Any], names: Mapping[str, str] | None = None) -> mf.Fa
         status=str(r["status"]),
         source=str(r["source"]),
         table_knows=bool(r["table_knows"]),
+        relation_id=str(r.get("relation_id") or ""),
     )
 
 
@@ -224,6 +229,9 @@ async def set_by_dm(
         await _check_value(w, onto, place, layer, value, how, words)
     if value is not None and mf.is_named(layer, value):
         await _keep_cultures(w, [{"culture_id": value}])  # (the DM picked it: it is theirs)
+    if layer == mf.CONDITION:  # (one value at a time, kept as history: its own rule, #4258)
+        await set_condition(w, onto, value, words=words, place_id=place_id)
+        return
     every = await w.select(MAP_FACTS, " AND entity_id = %s" + _OPEN, [place_id])
     known = any(bool(r["table_knows"]) for r in every)
     # (a part's row, "the dwarven quarter", is read only: the DM's set acts on the whole place, but
@@ -291,7 +299,14 @@ async def prune(w: Changes, onto: Ontology, place_id: str) -> int:
 async def show_to_table(w: Changes, onto: Ontology, place_id: str, shown: bool) -> int:
     """The DM's 🙈 / 👁️ for a place's land, climate and ruler, all at once: how many rows changed."""
     await _place(w, onto, place_id)
-    rows = await w.select(MAP_FACTS, " AND entity_id = %s" + _OPEN, [place_id])
+    # (a condition's closed rows too, so what players are told it was before matches what they are
+    # told it is now, #4258)
+    rows = await w.select(
+        MAP_FACTS,
+        " AND entity_id = %s AND status <> 'rejected'"
+        " AND (to_session_at IS NULL OR layer = 'condition')",
+        [place_id],
+    )
     changed = {
         str(r["id"]): {"table_knows": shown} for r in rows if bool(r["table_knows"]) != shown
     }
@@ -333,6 +348,8 @@ class Read(NamedTuple):
     session_at: int | None = None  # the session it was read from: said at the table
     part: str = ""  # only part of the place: "the dwarven quarter" (#4257)
     culture: str = ""  # a named culture's name, as the text wrote it; `value` then '' (3b)
+    relation_id: str = ""  # a condition of a known road between two places (#4258); no place
+    changed: bool = False  # said with words of change ("reopened", #4258)
 
 
 async def add_read(w: Changes, onto: Ontology, found: Iterable[Read]) -> Counter[str]:
@@ -344,8 +361,14 @@ async def add_read(w: Changes, onto: Ontology, found: Iterable[Read]) -> Counter
     counts: Counter[str] = Counter()
     for f in found:
         try:
-            place = await _place(w, onto, f.place_id)
-            if str(place["status"]) == ENTRY_REJECTED:
+            if f.relation_id:  # (a road between two places: its condition only, #4258)
+                await _known_road(w, f.relation_id)
+                if f.layer != mf.CONDITION or not mf.valid(f.layer, f.value):
+                    raise MemoryRuleError(BAD_WORD)
+                place: dict[str, Any] = {"form": place_levels.ROUTE, "place_level": None}
+            else:
+                place = await _place(w, onto, f.place_id)
+            if str(place.get("status")) == ENTRY_REJECTED:
                 raise MemoryRuleError(GONE)  # (a waiting name may hold them: they are DM-only)
             if f.culture and f.layer == mf.CULTURE:
                 if not mf.valid(f.layer, mf.OTHER, f.how) or not mf.allowed_on(
@@ -361,11 +384,11 @@ async def add_read(w: Changes, onto: Ontology, found: Iterable[Read]) -> Counter
         except MemoryRuleError:
             counts["not_allowed"] += 1
             continue
+        target, at = _target(f.place_id, f.relation_id)
         rows = await w.select(
-            MAP_FACTS,
-            " AND entity_id = %s AND layer = %s AND lower(part) = lower(%s)",
-            [f.place_id, f.layer, f.part],
-        )
+            MAP_FACTS, target + " AND layer = %s AND lower(part) = lower(%s)",
+            [at, f.layer, f.part],
+        )  # fmt: skip
         if any(
             r["status"] == mf.REJECTED and _fact(r).value == f.value for r in rows
         ):  # (the DM said no to it, or something surer did: it is never read again)
@@ -392,24 +415,34 @@ async def add_read(w: Changes, onto: Ontology, found: Iterable[Read]) -> Counter
             others = []
         else:
             others = now
+        if f.changed and not others:
+            counts["change_alone"] += 1  # ("reopened" with nothing it ends says nothing, #4258)
+            continue
         outcome = mf.KEEP
         for x in others:
-            outcome = mf.meet(f.layer, x.source, x.status, mf.FROM_TEXT, changed=False)
+            outcome = mf.meet(f.layer, x.source, x.status, mf.FROM_TEXT, changed=f.changed)
             if outcome == mf.NOTE:
                 break
         if outcome == mf.NOTE:
             counts["noted"] += 1
             continue
-        for x in others:
-            await w.update(MAP_FACTS, x.id, {"status": mf.REJECTED})
-            counts["corrected"] += 1
+        since = f.session_at
+        if outcome == mf.CLOSE:  # (the story changed it: the old row is history from now)
+            since = f.session_at if f.session_at is not None else await story_now(w)
+            await _close(w, [r for r in rows if str(r["id"]) in {x.id for x in others}], since)
+            counts["closed"] += len(others)
+        else:
+            for x in others:
+                await w.update(MAP_FACTS, x.id, {"status": mf.REJECTED})
+                counts["corrected"] += 1
         await w.insert(
             MAP_FACTS,
             {
-                "id": new_id(), "entity_id": f.place_id, "layer": f.layer,
+                "id": new_id(), "entity_id": f.place_id or None,
+                "relation_id": f.relation_id or None, "layer": f.layer,
                 **_row_value(f.layer, f.value), "words": "", "how": f.how,
                 "part": f.part[: mf.WORDS_MAX],
-                "from_session_at": f.session_at, "to_session_at": None,
+                "from_session_at": since, "to_session_at": None,
                 "from_game_time": None, "to_game_time": None, "status": mf.READ,
                 "source": mf.FROM_TEXT, "also_text": True,
                 "table_knows": f.session_at is not None, "created_at": w.now,
@@ -530,3 +563,201 @@ async def reject_row(w: Changes, fact_id: str) -> int:
             await w.update_rows(MAP_FACTS, {str(r["id"]): {"status": mf.REJECTED} for r in others})
             return NAME_TOO
     return ROW_ONLY
+
+
+# ---- A route's condition (#4258, MapBot layers slice 4a; Supervisor's ruling on #4258) ----------
+# A condition is about a road, a pass or a bridge: a route place, or a known `route_to` connection
+# between two places (the migration's trigger refuses a travelled or planned leg). It holds one
+# value at a time, and it is the first layer whose change in the story is kept as history: the old
+# row is closed at the story's time (`to_session_at`) and the new one opens from it, so the card
+# can say "closed since session 5 (open before)". Rejecting stays for "that was wrong".
+
+ONLY_KNOWN_ROAD = "A condition goes on a road, not on a trip the party took or planned."
+
+
+class Condition(NamedTuple):
+    """A route's open condition, when it began in the story (None: since before it) and the one it
+    ended, if any (the newest closed row the viewer may see)."""
+
+    now: mf.Fact
+    since_at: int | None
+    before: mf.Fact | None
+
+
+def _target(place_id: str, relation_id: str) -> tuple[str, str]:
+    """The rows of one place or one connection: (the WHERE part, its value)."""
+    if relation_id:
+        return " AND relation_id = %s", relation_id
+    return " AND entity_id = %s", place_id
+
+
+async def _known_road(w: Changes, relation_id: str) -> dict[str, Any]:
+    row = await w.get(RELATIONS, relation_id)
+    if row is None:
+        raise MemoryRuleError(GONE)
+    if row["predicate"] != route_words.ROUTE_TO or row.get("route_state") != route_words.KNOWN:
+        raise MemoryRuleError(ONLY_KNOWN_ROAD)
+    return row
+
+
+async def story_now(w: Changes) -> int:
+    """The story's time for a change said now: the campaign's latest session's start, or, before
+    any session, now (the card then says "since the start")."""
+    cur = await w.conn.execute(
+        "SELECT max(started_at) AS at FROM transcript_sessions"
+        " WHERE guild_id = %s AND campaign_id = %s",
+        w.ids,
+    )
+    row = await cur.fetchone()
+    return int(row["at"]) if row is not None and row["at"] is not None else int(w.now)
+
+
+async def _close(w: Changes, rows: Iterable[Mapping[str, Any]], at: int) -> None:
+    """Close open rows as history at `at` (layer-agnostic: any layer in `map_facts.HISTORY`). Never
+    before a row began, so a session imported out of order can't break the time order."""
+    for r in rows:
+        start = r["from_session_at"]
+        await w.update(
+            MAP_FACTS, str(r["id"]), {"to_session_at": at if start is None else max(at, start)}
+        )
+
+
+async def set_condition(
+    w: Changes,
+    onto: Ontology,
+    value: str | None,
+    *,
+    words: str = "",
+    place_id: str = "",
+    relation_id: str = "",
+) -> None:
+    """The DM's word for a route's condition (the 🚧 menu): one change, so one Undo.
+    - the same value again only confirms it;
+    - a different value closes the condition the DM kept as history from the story's time and
+      opens the new one from then; one DMbot read and the DM never kept is rejected instead (a guess
+      the DM corrects is no part of the story);
+    - None ("Not sure") rejects the open condition: that was wrong.
+    Whether players see it follows the route's other rows."""
+    if bool(place_id) == bool(relation_id):
+        raise MemoryRuleError(GONE)
+    if relation_id:
+        await _known_road(w, relation_id)
+    else:
+        place = await _place(w, onto, place_id)
+        if not mf.allowed_on(mf.CONDITION, form=place.get("form"), level=place.get("place_level")):
+            raise MemoryRuleError(ONLY_ROUTES)
+    if value is not None and (
+        not mf.valid(mf.CONDITION, value)
+        or (value == mf.OTHER) != bool(words.strip())
+        or len(words) > mf.WORDS_MAX
+    ):
+        raise MemoryRuleError(BAD_WORD)
+    target, at = _target(place_id, relation_id)
+    every = await w.select(MAP_FACTS, target + _OPEN, [at])
+    known = any(bool(r["table_knows"]) for r in every)
+    now = [r for r in every if r["layer"] == mf.CONDITION]
+    if value is None:
+        await w.update_rows(MAP_FACTS, {str(r["id"]): {"status": mf.REJECTED} for r in now})
+        return
+    words = words.strip() if value == mf.OTHER else ""
+    same = [r for r in now if r["value"] == value and (value != mf.OTHER or r["words"] == words)]
+    for r in same:
+        change = {"status": mf.CONFIRMED, "source": mf.FROM_DM, "table_knows": known}
+        if any(r[k] != v for k, v in change.items()):
+            await w.update(MAP_FACTS, str(r["id"]), change)
+    others = [r for r in now if r not in same]
+    kept = [r for r in others if r["status"] == mf.CONFIRMED]
+    await w.update_rows(
+        MAP_FACTS, {str(r["id"]): {"status": mf.REJECTED} for r in others if r not in kept}
+    )
+    since = await story_now(w) if kept else None  # (a first condition: since before the story)
+    if since is not None:
+        await _close(w, kept, since)
+    if same:
+        return
+    await w.insert(
+        MAP_FACTS,
+        {
+            "id": new_id(), "entity_id": place_id or None, "relation_id": relation_id or None,
+            "layer": mf.CONDITION, "value": value, "faction_id": None, "culture_id": None,
+            "words": words, "how": "", "part": "", "from_session_at": since,
+            "to_session_at": None, "from_game_time": None, "to_game_time": None,
+            "status": mf.CONFIRMED, "source": mf.FROM_DM, "also_text": False,
+            "table_knows": known, "created_at": w.now,
+        },
+    )  # fmt: skip
+
+
+async def conditions_for(
+    scope: Scope,
+    viewer: gate.Viewer,
+    *,
+    place_ids: Sequence[str] = (),
+    relation_ids: Sequence[str] = (),
+    shown: Collection[str] | None = None,
+) -> dict[str, Condition]:
+    """Each route's open condition with what it ended, by place or connection id, as `viewer` may
+    see it: the players' rule of `map_facts.for_players` for both rows (a closed row a player may
+    not see is never told as "before"). `shown`: the entries and connections the caller's own
+    list shows that player. The third reader of the table, named in `test_map_fact_readers`."""
+    if not place_ids and not relation_ids:
+        return {}
+    rows = await scope.select(
+        MAP_FACTS,
+        " AND layer = 'condition' AND status <> 'rejected'"
+        " AND (entity_id = ANY(%s) OR relation_id = ANY(%s)) ORDER BY created_at, id",
+        [list(place_ids), list(relation_ids)],
+    )
+    facts = [(_fact(r), r) for r in rows]
+    if relation_ids:  # (a road taken away, or ended, keeps its rows for Undo but shows nothing)
+        live = {
+            str(r["id"])
+            for r in await scope.select(
+                RELATIONS, " AND id = ANY(%s) AND status <> 'rejected' AND to_session_at IS NULL",
+                [list(relation_ids)],
+            )
+        }
+        facts = [(f, r) for f, r in facts if not f.relation_id or f.relation_id in live]
+    if not viewer.dm:
+        if shown is None:
+            seen = await gate.visible_to(scope, viewer)
+            known = {f.place_id for f, _ in facts if seen.knows(gate.ENTRY, f.place_id)} | {
+                f.relation_id for f, _ in facts if seen.knows(gate.CONNECTION, f.relation_id)
+            }
+        else:
+            known = set(shown)
+        allowed = {f.id for f in mf.for_players([f for f, _ in facts], known)}
+        facts = [(f, r) for f, r in facts if f.id in allowed]
+    out: dict[str, Condition] = {}
+    for f, r in facts:
+        if r["to_session_at"] is None:
+            out[f.relation_id or f.place_id] = Condition(f, r["from_session_at"], None)
+    for f, r in sorted(facts, key=lambda p: p[1]["to_session_at"] or 0):
+        held = out.get(f.relation_id or f.place_id)
+        if r["to_session_at"] is not None and held is not None and f.value != held.now.value:
+            out[f.relation_id or f.place_id] = held._replace(before=f)
+    return out
+
+
+async def keep_route(w: Changes, relation_id: str) -> int:
+    """The DM's ✅ on a road's condition DMbot read (the connection's edit page). How many."""
+    rows = await w.select(
+        MAP_FACTS, " AND relation_id = %s AND status = 'read'" + _OPEN, [relation_id]
+    )
+    await w.update_rows(
+        MAP_FACTS, {str(r["id"]): {"status": mf.CONFIRMED, "source": mf.FROM_DM} for r in rows}
+    )
+    return len(rows)
+
+
+async def show_route(w: Changes, relation_id: str, shown: bool) -> int:
+    """The DM's 🙈 / 👁️ for a road's condition: its open and closed rows, so what players are
+    told before matches what they are told now. How many changed."""
+    rows = await w.select(
+        MAP_FACTS, " AND relation_id = %s AND status <> 'rejected'", [relation_id]
+    )
+    changed = {
+        str(r["id"]): {"table_knows": shown} for r in rows if bool(r["table_knows"]) != shown
+    }
+    await w.update_rows(MAP_FACTS, changed)
+    return len(changed)
