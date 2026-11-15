@@ -916,6 +916,7 @@ class SessionStartPointer(SessionStart):
             self.real._check_house_file(mine, SCREEN)
             await self.settle()
         self.assertEqual(self.posts, [])  # (nothing on the screen)
-        asked = self.real.ask_privately.await_args  # type: ignore[attr-defined]
+        asked = self.real.ask_privately.await_args
+        assert asked is not None
         self.assertIn("1 to add", asked.args[2])
         self.assertEqual(told, [(77, HOUSE_FILE_POINTER)])
