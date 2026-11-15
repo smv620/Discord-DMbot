@@ -43,7 +43,9 @@ describe("maps words", () => {
     expect(w.saving(5)).toBe("Saving your map… 5 seconds so far.");
     expect(w.lastMoved(12)).toBe("Last moved 12 seconds ago.");
     expect(w.stalled(30, "20 seconds")).toBe("Still working after 30 seconds, but nothing has moved for 20 seconds. Give it a minute. If it stops, check the picture and try again.");
-    expect(w.badFile(10)).toBe("That didn't work. Check the picture is a PNG or JPG under 10 MB and try again.");
+    expect(w.badFile(10)).toBe("That didn't work. Check the picture is a PNG, JPG or WebP under 10 MB and try again.");
+    expect(w.addedDm).toBe("Added to your maps.");
+    for (const key of ["uploadsOff", "tooSoon", "notYours", "signedOut", "notKept", "network"] as const) expect(typeof w[key]).toBe("string");
     expect(w.dmTitle("Ana")).toBe("A map from Ana: use it?");
     expect(w.answeredBy("Ana", true)).toBe("Ana already answered: yes.");
     expect(w.answeredBy("Ana", false)).toBe("Ana already answered: no.");

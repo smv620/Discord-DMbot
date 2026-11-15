@@ -1751,6 +1751,26 @@ class MemoryStore:
             row = await thread_parts.set_state(w, part_id, state)
             return Written(thread_parts.from_row(row), w.batch)
 
+    async def set_time_limit_date(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        part_id: str,
+        minute: int | None,
+        *,
+        now: int | None,
+        source: str,
+        given_by: str = thread_parts.DM_SOURCE,
+    ) -> Written[thread_parts.Part]:
+        """A time limit's game date, or None to make it words only again (quests slice 4; §8.2;
+        `thread_parts.set_due`). Only the DM: the one-tap date (`given_by` 'dm'), or DMbot's read
+        the DM kept (`given_by` 'read', slice 4c). One change, one Undo."""
+        if source != DM:
+            raise MemoryRuleError(thread_parts.ONLY_DM)
+        async with self._write(guild_id, campaign_id, source) as w:
+            row = await thread_parts.set_due(w, part_id, minute, now=now, source=given_by)
+            return Written(thread_parts.from_row(row), w.batch)
+
     async def remove_thread_part(
         self, guild_id: int, campaign_id: str, part_id: str, *, source: str
     ) -> Written[None]:
@@ -1819,6 +1839,65 @@ class MemoryStore:
             onto = await _load_ontology(w)
             kept = await map_fact_store.keep_read(w, onto, place_id, layers)
             return Written(kept, w.batch)
+
+    # ---- A road's, pass's or bridge's condition (#4258, MapBot layers slice 4a) ---------------
+
+    async def route_conditions(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        viewer: gate.Viewer,
+        *,
+        place_ids: Sequence[str] = (),
+        relation_ids: Sequence[str] = (),
+        shown: Collection[str] | None = None,
+    ) -> dict[str, map_fact_store.Condition]:
+        """Each route's condition with what it ended, by place or connection id, as `viewer` may
+        see it (`map_fact_store.conditions_for`)."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await map_fact_store.conditions_for(
+                scope, viewer, place_ids=place_ids, relation_ids=relation_ids, shown=shown
+            )
+
+    async def set_route_condition(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        value: str | None,
+        *,
+        words: str = "",
+        place_id: str = "",
+        relation_id: str = "",
+        source: str,
+    ) -> Written[None]:
+        """The DM's 🚧 Condition for a route place or a known road between two places: one change,
+        so one Undo. A different value keeps the old one as history; None is "Not sure"."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            await map_fact_store.set_condition(
+                w, onto, value, words=words, place_id=place_id, relation_id=relation_id
+            )
+            return Written(None, w.batch)
+
+    async def keep_road_condition(
+        self, guild_id: int, campaign_id: str, relation_id: str, *, source: str
+    ) -> Written[int]:
+        """The DM's ✅ on a road's condition DMbot read: one change, so one Undo."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            return Written(await map_fact_store.keep_route(w, relation_id), w.batch)
+
+    async def show_road_condition(
+        self, guild_id: int, campaign_id: str, relation_id: str, shown: bool, *, source: str
+    ) -> Written[int]:
+        """The DM's 🙈 / 👁️ for a road's condition: one change, so one Undo."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            return Written(await map_fact_store.show_route(w, relation_id, shown), w.batch)
 
     # ---- World notes: DMbot's guesses about the world, for the DM to check (#4285) ----------
 
@@ -7455,6 +7534,8 @@ class MemoryStore:
         # and who knows it (#2935): the list follows the statement to its new row, so new words or
         # a turn never quietly tell nobody or everybody (#4154, the reviewer's finding)
         await knowers.move_rows(w, "relation_id", relation_id, new.id)
+        # and a road's condition (#4258), as its length does
+        await map_fact_store.move_road(w, relation_id, new.id)
         check_status_change(current["status"], REJECTED, w.source)
         await w.update(RELATIONS, relation_id, {"status": REJECTED})
         return new
@@ -10098,6 +10179,8 @@ async def _move_relations(
                 # kept from the players, keep the DM's own list). Only a fact the players were
                 # shown, folding into one they were not, hands over nothing.
                 await knowers.move_rows(w, "relation_id", relation_id, folded[relation_id])
+            # a road's condition goes to its twin too (#4258), as its length does
+            await map_fact_store.move_road(w, relation_id, folded[relation_id])
         await _delete_relation(w, relation_id)
     # A place that now has a stated parent keeps no assumed one (#4173 slice 3: a merge of a place
     # with a guess and one with a stated parent)

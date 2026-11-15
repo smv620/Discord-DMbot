@@ -3,8 +3,10 @@ checked like a trait, and kept as DMbot's read beside the sheets. Invented names
 
 from __future__ import annotations
 
+import json
 import unittest
 from collections import Counter
+from pathlib import Path
 
 from dmbot.memory import lore_read
 from dmbot.memory.models import CONFIRMED
@@ -13,6 +15,7 @@ from dmbot.memory.traits_read import Spoken, read_languages, read_traits
 from dmbot.ui.name_background import store_languages
 from tests.test_memory_store import GUILD_A, MemoryTest
 
+FIXTURES = Path(__file__).parent / "fixtures" / "story_graph"
 TEXT = (
     "Brewner speaks Dwarvish and Giant. Mira knows the old tongue of Netheril. Vexnir is a duergar."
 )
@@ -102,6 +105,28 @@ class TheReader(unittest.TestCase):
         self.assertIn("Never a guess from a name, a look, a lineage or a homeland", asked)
 
 
+class TheKeys(unittest.TestCase):
+    """#4379: the sample keys hold a character's languages in their own list, never as a
+    connection between two names."""
+
+    def test_languages_are_a_list_of_their_own_and_never_a_connection(self) -> None:
+        for name in ("lore_key.json", "master_key.json"):
+            key = json.loads((FIXTURES / name).read_text(encoding="utf-8"))
+            spoken = {x["language"].lower() for x in key["languages"]}
+            self.assertTrue(spoken, name)
+            # (a language edge needs a language node: no node is one, and every pair's ends are
+            # nodes, so none can be)
+            names = {n["name"].lower() for n in key["nodes"]}
+            names |= {a.lower() for n in key["nodes"] for a in n.get("aliases", [])}
+            self.assertFalse(names & spoken, name)
+            for pair in key["pairs"]:
+                for end in ("a", "b"):
+                    self.assertIn(str(pair[end]).lower(), names, (name, pair.get("id")))
+                relation = str(pair.get("relation", ""))
+                for word in ("language", "speak", "tongue"):
+                    self.assertNotIn(word, relation, (name, pair.get("id")))
+
+
 class Kept(MemoryTest):
     async def test_kept_as_dmbots_read_on_the_one_character_with_that_name(self) -> None:
         brewner = await self.add("Brewner", status=CONFIRMED)
@@ -119,6 +144,8 @@ class Kept(MemoryTest):
         self.assertEqual(kept, 2)
         (dwarvish,) = await self.memory.story_languages(GUILD_A, self.c, brewner)
         self.assertEqual((dwarvish.name, dwarvish.given_by), ("Dwarvish", "read"))
+        # (a language is the character's own, never a connection: the owner, #4379)
+        self.assertEqual(await self.memory.relations(GUILD_A, self.c, include_secret=True), [])
         for tom in (twin_a, twin_b):  # two entries share "Tom": DMbot can't tell whose
             self.assertEqual(await self.memory.story_languages(GUILD_A, self.c, tom), [])
 

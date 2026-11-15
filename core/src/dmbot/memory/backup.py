@@ -130,12 +130,14 @@ _TAGS: dict[str, Table] = {
     "rule_link": RULE_LINKS,
     "story_language": STORY_LANGUAGES,  # a character's languages from the story (#4229)
     "culture": CULTURES,  # the campaign's named cultures (#4257 slice 3b), before their rows
-    "map_fact": MAP_FACTS,  # a place's land, climate and who rules it (#4256)
     "thread_part": THREAD_PARTS,  # a story thread's parts (#4471), after its entries
     "state": STATES,
     "claim": CLAIMS,
     "alias": ALIASES,
     "relation": RELATIONS,
+    # a place's land, climate and who rules it (#4256), after the connections since a road's
+    # condition names one (#4258)
+    "map_fact": MAP_FACTS,
     "perspective": PERSPECTIVES,  # who holds beliefs (#2409)
     "alias_knower": ALIAS_KNOWERS,  # which characters know an other name (#2935)
     "knower": KNOWERS,  # which characters know each statement (#2995)
@@ -765,7 +767,8 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
         elif isinstance(raw, dict) and raw.get("table") == "alias":
             raw = {"said_as": None, **raw}  # from before the narrator's spelling (#1419)
         elif isinstance(raw, dict) and raw.get("table") == "map_fact":
-            raw = {"culture_id": None, **raw}  # from before named cultures (#4257 slice 3b)
+            # (from before named cultures, #4257 slice 3b, and road conditions, #4258)
+            raw = {"culture_id": None, "relation_id": None, **raw}
         elif isinstance(raw, dict) and raw.get("table") == "predicate":
             raw = {**_NEW_PREDICATE_FIELDS, **raw}
             if raw.get("key") in core_predicates:
@@ -1232,13 +1235,24 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
     cultures = {r["id"] for r in by_tag["culture"]}
     if len({r["name_key"] for r in by_tag["culture"]}) != len(by_tag["culture"]):
         raise CampaignError(DAMAGED)  # (one culture per name)
+    # a road's condition (#4258) names a known road between two places in the file
+    roads = {
+        r["id"]
+        for r in by_tag["relation"]
+        if r["predicate"] == "route_to" and r.get("route_state", "") == ""
+    }
     for r in by_tag["map_fact"]:
-        place = places.get(r["entity_id"])
+        if r["relation_id"] is not None:
+            if r["relation_id"] not in roads:
+                raise CampaignError(DAMAGED)
+            place: Mapping[str, Any] | None = {"form": place_levels.ROUTE, "place_level": None}
+        else:
+            place = places.get(r["entity_id"])
         if r["culture_id"] is not None and r["culture_id"] not in cultures:
             raise CampaignError(DAMAGED)
         key = (
-            r["entity_id"], r["layer"], r["value"], r["faction_id"] or "",
-            r["culture_id"] or "", r["part"].lower(),
+            r["entity_id"] or "", r["relation_id"] or "", r["layer"], r["value"],
+            r["faction_id"] or "", r["culture_id"] or "", r["part"].lower(),
         )  # fmt: skip
         is_open = r["status"] != map_facts.REJECTED and r["to_session_at"] is None
         if is_open and key in open_keys:
@@ -1246,7 +1260,9 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
         if is_open:
             open_keys.add(key)
         if not is_open:  # (history: its place or group may have changed since; it must exist)
-            if r["entity_id"] not in every or (r["faction_id"] or r["entity_id"]) not in every:
+            if r["relation_id"] is None and (
+                r["entity_id"] not in every or (r["faction_id"] or r["entity_id"]) not in every
+            ):
                 raise CampaignError(DAMAGED)
             continue
         if (
@@ -1273,7 +1289,10 @@ def _check_map_fact(r: Mapping[str, Any]) -> None:
     ints = ("from_session_at", "to_session_at", "from_game_time", "to_game_time")
     if not (
         is_id(r["id"])
-        and is_id(r["entity_id"])
+        # (exactly one of a place or, for a condition only, a road: #4258)
+        and (r["entity_id"] is None) != (r["relation_id"] is None)
+        and is_id(r["entity_id"] or r["relation_id"])
+        and (r["relation_id"] is None or r["layer"] == map_facts.CONDITION)
         and r["layer"] in map_facts.LAYERS
         and isinstance(r["value"], str)
         and isinstance(r["how"], str)

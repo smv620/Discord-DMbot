@@ -92,6 +92,12 @@ class Part:
     table_knows: bool
     since: int | None
     closed: int | None
+    # A time limit's game date (slice 4, #4448): the minute it falls due, who gave it ('dm', or
+    # 'read' for DMbot's read the DM kept), and the clock's minute when it was set, for §8.4's
+    # "halfway when set less than two days ahead". None while it is words only.
+    due_minute: int | None = None
+    due_from: str = ""
+    set_at: int | None = None
 
 
 def read_amount(words: str) -> tuple[float | None, str]:
@@ -135,7 +141,8 @@ def from_row(row: Mapping[str, Any]) -> Part:
         None if amount is None else float(amount), str(row["unit"]), row["position"],
         str(row["due"]), str(row["terms"]), str(row["limit_kind"]), str(row["status"]),
         str(row["source"]), bool(row["table_knows"]), row["from_session_at"],
-        row["to_session_at"],
+        row["to_session_at"], row.get("due_minute"), str(row.get("due_from") or ""),
+        row.get("from_game_time"),
     )  # fmt: skip
 
 
@@ -378,6 +385,34 @@ async def _story_change(
     )  # fmt: skip
     await _move_under(w, part_id, str(made["id"]))
     return made
+
+
+async def set_due(
+    w: Changes, part_id: str, minute: int | None, *, now: int | None, source: str = DM_SOURCE
+) -> dict[str, Any]:
+    """A time limit's game date (slice 4; §8.2): the DM's one tap, or DMbot's read the DM kept
+    (`source` 'read'). `now` is the clock's minute (the group furthest ahead), kept as the row's
+    `from_game_time` so "soon" can be halfway for a limit set less than two days ahead. Giving a
+    date to a limit that never had one fills in what the DM knows: in place. Any change to a date
+    it has, moved or cleared, is a change in the story (§4: "a deadline moved"), so the old row
+    stays as history and what was told of it stays with it (slice 4b): a later date is told
+    afresh. None clears the date: words only again. The same date again writes nothing."""
+    if source not in (DM_SOURCE, READ):
+        raise ValueError(f"Not a source for a date: {source}")
+    row = await _open_part(w, part_id)
+    if row["kind"] != TIME_LIMIT:
+        raise ValueError("A date is a time limit's only.")
+    if minute is not None and minute < 0:
+        raise ValueError("minute")
+    if minute == row["due_minute"]:
+        return row  # (the same date again: no change, so no Undo that undoes nothing)
+    if minute is None:
+        new: dict[str, Any] = {"due_minute": None, "due_from": "", "from_game_time": None}
+    else:
+        new = {"due_minute": minute, "due_from": source, "from_game_time": now}
+    if row["due_minute"] is not None:
+        return await _story_change(w, row, new)
+    return await w.update(THREAD_PARTS, part_id, new)
 
 
 async def set_state(w: Changes, part_id: str, state: str) -> dict[str, Any]:
