@@ -454,3 +454,87 @@ class TheKindsPartOfTheWalk(unittest.IsolatedAsyncioTestCase):
             ):
                 self.assertEqual(await ce._count_reveals(bot, GUILD, CID), 0)
         counted.assert_awaited_once()
+
+
+class FromThePrivateChat(unittest.IsolatedAsyncioTestCase):
+    """The walk starts from the DM's private message, where a press has no server (#4528): the
+    button's own server is used, and a non-DM still gets no access."""
+
+    def press(self, user: int, *, guild_of: int | None = None) -> Any:
+        campaign = SimpleNamespace(guild_id=GUILD, id=CID, dm_user_ids=[7], dm_accounts=[7])
+
+        async def get(guild_id: int, campaign_id: str) -> Any:
+            return campaign if (guild_id, campaign_id) == (GUILD, CID) else None
+
+        it = SimpleNamespace(
+            guild=None,
+            guild_id=None,
+            user=SimpleNamespace(id=user),
+            message=SimpleNamespace(channel=SimpleNamespace(id=5), id=6),
+            response=SimpleNamespace(
+                is_done=lambda: True, send_message=AsyncMock(), defer=AsyncMock()
+            ),
+            followup=SimpleNamespace(send=AsyncMock()),
+            client=SimpleNamespace(
+                campaigns=SimpleNamespace(get=get, guild_of=AsyncMock(return_value=guild_of))
+            ),
+        )
+        return it
+
+    async def test_a_dm_starts_the_walk_even_when_the_database_cannot_name_the_server(self) -> None:
+        from dmbot.ui import names
+
+        names._PRIVATE_SERVERS.pop(CID, None)
+        it = self.press(7, guild_of=None)
+        counts = {NAMES: 5, CLAIMS: 2}
+        with (
+            patch.object(ce, "waiting_counts", AsyncMock(return_value=counts)),
+            patch.object(ce, "run_part", AsyncMock()) as run,
+            patch.object(names, "_is_manager", return_value=False),
+        ):
+            await ce.begin(cast(Any, it), GUILD, CID)
+        run.assert_awaited_once()
+        walk = run.await_args.args[1]  # type: ignore[union-attr]
+        self.assertEqual((walk.guild_id, walk.campaign_id, walk.parts[0]), (GUILD, CID, NAMES))
+        self.assertEqual(names._PRIVATE_SERVERS[CID], GUILD)  # (the cards it opens find it)
+
+    async def test_a_non_dm_gets_no_access_and_nothing_is_remembered(self) -> None:
+        from dmbot.ui import names
+
+        names._PRIVATE_SERVERS.pop(CID, None)
+        it = self.press(99)
+        with (
+            patch.object(ce, "run_part", AsyncMock()) as run,
+            patch.object(names, "_is_manager", return_value=False),
+            patch.object(names, "_tell", AsyncMock()) as told,
+        ):
+            await ce.begin(cast(Any, it), GUILD, CID)
+        run.assert_not_awaited()
+        self.assertIn(names.logic.NO_CAMPAIGN_ACCESS, told.await_args.args)
+        self.assertNotIn(CID, names._PRIVATE_SERVERS)
+
+    async def test_another_servers_id_in_the_button_finds_nothing(self) -> None:
+        from dmbot.ui import names
+
+        names._PRIVATE_SERVERS.pop(CID, None)
+        it = self.press(7)
+        with (
+            patch.object(ce, "run_part", AsyncMock()) as run,
+            patch.object(names, "_is_manager", return_value=False),
+            patch.object(names, "_tell", AsyncMock()),
+        ):
+            await ce.begin(cast(Any, it), GUILD + 1, CID)
+        run.assert_not_awaited()
+        self.assertNotIn(CID, names._PRIVATE_SERVERS)
+
+
+class TheHeadingTotal(unittest.TestCase):
+    def test_the_heading_says_the_total_the_button_says(self) -> None:
+        asks = [ask(NAMES, 12), ask(CLAIMS, 14), ask(CONNECTIONS, 33)]
+        combined = combine(
+            asks, "your import", walk=lambda total: discord.ui.Button(label=str(total))
+        )
+        assert combined is not None
+        text, _ = combined
+        self.assertTrue(text.startswith("**59 things to check** from your import:"))
+        self.assertNotIn("3 questions", text)

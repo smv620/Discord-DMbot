@@ -92,6 +92,10 @@ def combine(
     lines = "\n".join(f"• {ask.line}" for ask in asks)
     # (no ❓ here: the private message already opens with DMbot's own "has a question" line)
     head = f"**{len(asks)} questions** about {about}:"
+    if use_walk and all(a.count for a in walked):
+        # The same number as the walk's button: "3 questions" above "Check everything (59)" read
+        # as three questions to the DM (#4528). Counts only; no name.
+        head = f"**{sum(a.count for a in walked)} things to check** from {about}:"
     press = WALK_PRESS if use_walk else "Press a button to answer."
     text = f"{head}\n{lines}\n{press}"
     return text, view
