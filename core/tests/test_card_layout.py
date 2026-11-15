@@ -19,7 +19,7 @@ KINDS: tuple[dict[str, bool], ...] = (
     {"thread": True},
     {"thread": True, "promise": True},
 )
-SHARED = ("others", "sheet", "led", "book", "say")
+SHARED = ("others", "sheet", "led", "book", "say", "players_line", "suggest", "hide")
 
 
 class Layout(unittest.TestCase):
@@ -47,6 +47,20 @@ class Layout(unittest.TestCase):
             book=True, say=True, sheet=True, others=True,
         )  # fmt: skip
         self.assertTrue(card.children)
+
+    def test_a_thread_card_keeps_its_steps_button_and_the_players_line(self) -> None:
+        """#4471: a story thread's 📋 never takes a row another button needs (the reviewer saw 💬
+        dropped from a promise's card), and never the menu's row."""
+        from dmbot.ui.thread_parts import PARTS_BUTTON
+
+        for promise in (False, True):
+            card = self.build(
+                thread=True, promise=promise, led=True, say=True, suggest=True,
+                players_line=True, hide=True, others=True,
+            )  # fmt: skip
+            labels = [getattr(c, "label", None) for c in card.children]
+            self.assertIn(PARTS_BUTTON, labels, promise)
+            self.assertIn(name_card.PLAYERS_LINE_BUTTON, labels, promise)
 
 
 if __name__ == "__main__":
