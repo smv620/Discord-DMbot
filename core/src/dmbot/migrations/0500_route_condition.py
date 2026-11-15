@@ -18,7 +18,8 @@ from __future__ import annotations
 # The connection's foreign key goes with it (`ON DELETE CASCADE`; the store deletes them first,
 # logged, and an Undo that would delete the road is refused while it has one, so the cascade never
 # deletes a row unlogged) and follows a campaign moved to another server (#2550). The
-# open-row index takes `relation_id` in. Condition is the first layer whose change in the story
+# open-row index takes `relation_id` in, so the place's foreign key gets an index of its own.
+# Condition is the first layer whose change in the story
 # closes the old row as history (`to_session_at`) instead of rejecting it (Supervisor's point 2);
 # that needs nothing new here. The layer check is read back from the table as it is and must be
 # found exactly once, so a drift stops the migration. No row is changed.
@@ -61,6 +62,9 @@ SQL = r"""
         WHERE status <> 'rejected' AND to_session_at IS NULL;
     CREATE INDEX memory_map_facts_route
         ON memory_map_facts (guild_id, campaign_id, relation_id) WHERE relation_id IS NOT NULL;
+    -- the place's foreign key had the open index for its checks; with COALESCE in it, it needs
+    -- its own (deleting a campaign or a place checks every link; test_memory_store's Indexes)
+    CREATE INDEX memory_map_facts_place ON memory_map_facts (guild_id, campaign_id, entity_id);
 
     CREATE FUNCTION dmbot_map_fact_known_route() RETURNS trigger
         LANGUAGE plpgsql
