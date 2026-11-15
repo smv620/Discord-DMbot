@@ -16,7 +16,7 @@ import { kindWords, type QuestionHow, questionsPage as words } from "../content/
 import { type AccountApi, ApiError, type QuestionCampaign, type QuestionCounts, type QuestionKind } from "./api";
 import { campaignHref } from "./campaignLinks";
 import { TRAIT_QUESTIONS_LIVE } from "../content/trait-questions-switch";
-import QuestionsHere, { groupOf } from "./QuestionsHere";
+import QuestionsHere, { groupOf, type HereGroup } from "./QuestionsHere";
 
 /** The bot counts every minute or so: five minutes without a count and the numbers are said to be old. */
 export const CATCHING_UP_SECONDS = 300;
@@ -31,6 +31,16 @@ export function oldestFirst(kinds: QuestionKind[]): QuestionKind[] {
   return [...kinds]
     .filter((k) => k.count > 0)
     .sort((a, b) => (a.oldest ?? Number.MAX_SAFE_INTEGER) - (b.oldest ?? Number.MAX_SAFE_INTEGER));
+}
+
+/** The order a walk through everything goes in, as Discord's (`dm_questions.ORDER`, #4192): a connection is only asked once both its
+ * names are answered, and a fact reads better once its names are settled. Kinds not named here follow, oldest first. */
+const ORDER = ["names", "heard", "lookalikes", "claims", "connections", "which", "family"];
+
+/** The page's kinds in the fixed order: names, then what was said, then the connections, then the rest oldest first. */
+export function inFixedOrder(kinds: QuestionKind[]): QuestionKind[] {
+  const rank = (kind: string): number => (ORDER.includes(kind) ? ORDER.indexOf(kind) : ORDER.length);
+  return oldestFirst(kinds).sort((a, b) => rank(a.kind) - rank(b.kind));
 }
 
 /** Kinds this page has no words for are one line, "Other questions", with their counts added up. */
@@ -62,13 +72,44 @@ function howFor(kind: string, api: AccountApi): QuestionHow {
 
 function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; serverNow: number; api: AccountApi }) {
   const [open, setOpen] = useState<Set<string>>(new Set());
-  const kinds = oldestFirst(mergeUnknown(campaign.kinds)).filter((k) => kindWords(k.kind).how !== "hidden");
+  const kinds = inFixedOrder(mergeUnknown(campaign.kinds)).filter((k) => kindWords(k.kind).how !== "hidden");
   // The first line of each group carries its toggle and panel; the others say they are answered with it.
   const lead = new Map<string, string>();
   for (const k of kinds) {
     const g = groupOf(k.kind);
     if (g !== null && howFor(k.kind, api) === "here" && !lead.has(g)) lead.set(g, k.kind);
   }
+  // The walk (#4193): one button through everything that can be answered here, in the fixed order, a part at a time. Its parts are
+  // the panels that open here (the first kind of each group stands for the group, with the whole group's count).
+  const parts = [...lead.entries()].map(([group, kind]) => ({
+    group: group as HereGroup,
+    label: kindWords(kind).label,
+    count: kinds.filter((k) => groupOf(k.kind) === group && howFor(k.kind, api) === "here").reduce((n, k) => n + k.count, 0),
+  }));
+  const [walk, setWalk] = useState<number | null>(null);
+  const [resume, setResume] = useState(0);
+  const [stopped, setStopped] = useState(false); // (stopping on the first part must still read "Carry on")
+  const [note, setNote] = useState<string | null>(null);
+  const goTo = (i: number): void => {
+    // (an earlier "stopped" or "ended" line goes when a walk starts again)
+    setNote(walk !== null ? words.partDone(parts[walk]?.label ?? "", parts[i]?.label ?? "", parts[i]?.count ?? 0) : null);
+    setWalk(i);
+    setResume(i);
+    setStopped(false);
+  };
+  const stop = (): void => {
+    setResume(walk ?? 0);
+    setStopped(true);
+    setWalk(null);
+    setNote(words.walkStopped);
+  };
+  const finish = (): void => {
+    setResume(0);
+    setStopped(false);
+    setWalk(null);
+    setNote(words.walkEnded);
+  };
+  const walking = walk !== null ? parts[walk] : undefined;
   // The bot has never counted this campaign (null) or not lately: the numbers can't be vouched for, so there is no all-clear.
   // DMbot's own matches (#3701): shown with the Names page's panel, so both go live together.
   const guesses = NAME_MATCHES_LIVE && api.nameMatches !== undefined ? (campaign.guesses ?? 0) : 0;
@@ -90,6 +131,43 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
       ) : (
         <>
           <p>{words.campaignLine(kinds.reduce((n, k) => n + k.count, 0))}</p>
+          {parts.length >= 2 && (
+            <div class="stack">
+              {walking === undefined ? (
+                <button type="button" class="button" onClick={() => goTo(resume)}>
+                  {!stopped
+                    ? words.checkEverything(parts.reduce((n, p) => n + p.count, 0))
+                    : words.carryOn(parts.slice(resume).reduce((n, p) => n + p.count, 0))}
+                </button>
+              ) : (
+                <section class="stack" aria-label={walking.label}>
+                  <p role="status">
+                    <strong>{words.partLine(walking.label, (walk ?? 0) + 1, parts.length, walking.count)}</strong>
+                  </p>
+                  <QuestionsHere key={walking.group} api={api} campaignRef={campaign.ref} group={walking.group} id={`q-${campaign.ref}-walk`} />
+                  <div class="row">
+                    {(walk ?? 0) + 1 < parts.length ? (
+                      <button type="button" class="button" onClick={() => goTo((walk ?? 0) + 1)}>
+                        {words.nextPart(parts[(walk ?? 0) + 1]?.label ?? "", parts[(walk ?? 0) + 1]?.count ?? 0)}
+                      </button>
+                    ) : (
+                      <button type="button" class="button" onClick={finish}>
+                        {words.finishWalk}
+                      </button>
+                    )}
+                    <button type="button" class="button secondary" onClick={stop}>
+                      {words.stopForNow}
+                    </button>
+                  </div>
+                </section>
+              )}
+              {note !== null && (
+                <p class="small muted" role="status">
+                  {note}
+                </p>
+              )}
+            </div>
+          )}
           <ul class="stack">
             {kinds.map((k) => {
               const w = kindWords(k.kind);
@@ -116,7 +194,7 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
                       >
                         {open.has(k.kind) ? words.hideHere : words.showHere}
                       </button>
-                      {open.has(k.kind) && (
+                      {open.has(k.kind) && walking?.group !== groupOf(k.kind) && (
                         <QuestionsHere api={api} campaignRef={campaign.ref} group={groupOf(k.kind) ?? "names"} id={`q-${campaign.ref}-${k.kind}`} />
                       )}
                     </>

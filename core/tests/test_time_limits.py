@@ -13,6 +13,7 @@ from dmbot.memory import presession
 from dmbot.memory import thread_parts as tp
 from dmbot.memory import time_limits as tl
 from dmbot.memory.models import DM
+from dmbot.timebot import calendar as cal
 from dmbot.timebot.calendar import Calendar
 from dmbot.timebot.clock import MINUTES_PER_DAY as DAY
 from dmbot.ui import thread_parts as ui
@@ -53,6 +54,121 @@ class Counting(unittest.TestCase):
                 tl.days_from(0, bad)
         self.assertEqual(tl.furthest([5, 900, 40]), 900)
         self.assertIsNone(tl.furthest([]))
+
+
+class ReadingADate(unittest.TestCase):
+    """Slice 4c (§8.2): a date the words name is read by code on the campaign's calendar, never by
+    the AI, and only offered: the DM taps to count down to it (Supervisor's choice B)."""
+
+    harptos = cal.Calendar(cal.HARPTOS, cal.day_one(1492, "Flamerule", 1))
+
+    def said(self, words: str, now: int = 0) -> str | None:
+        due = tl.date_in_words(words, self.harptos, now)
+        return None if due is None else tl.date_said(due, self.harptos)
+
+    def test_a_harptos_date_in_its_several_spellings(self) -> None:
+        for words in ("by the 14th of Flamerule", "before Flamerule 14", "Flamerule 14th, 1492 DR"):
+            self.assertEqual(self.said(words), "Flamerule 14th, 1492 DR", words)
+        self.assertEqual(self.said("before Midsummer"), "Midsummer, 1492 DR")
+        self.assertEqual(self.said("by the Feast of the Moon"), "Feast of the Moon, 1492 DR")
+
+    def test_a_date_with_no_year_is_its_next_coming(self) -> None:
+        self.assertEqual(self.said("by Hammer 3"), "Hammer 3rd, 1493 DR")
+        today = (cal.day_number_of(1492, "Flamerule", 20, self.harptos.start) - 1) * DAY  # type: ignore[arg-type]
+        self.assertEqual(self.said("by Flamerule 14", today), "Flamerule 14th, 1493 DR")
+        # (today is no offer: its countdown would be over at once; its next coming is)
+        self.assertEqual(self.said("by Flamerule 20", today), "Flamerule 20th, 1493 DR")
+        self.assertEqual(self.said("by Flamerule 20", today + 10 * 60), "Flamerule 20th, 1493 DR")
+        self.assertEqual(self.said("by Flamerule 21", today + 10 * 60), "Flamerule 21st, 1492 DR")
+
+    def test_shieldmeet_comes_once_in_four_years(self) -> None:
+        start = self.harptos.start
+        assert start is not None
+        after = (cal.day_number_of(1492, "Eleasis", 1, start) - 1) * DAY
+        self.assertEqual(self.said("before Shieldmeet"), "Shieldmeet, 1492 DR")
+        self.assertEqual(self.said("before Shieldmeet", after), "Shieldmeet, 1496 DR")
+        self.assertIsNone(self.said("Shieldmeet, 1493 DR"))  # (no Shieldmeet that year)
+
+    def test_a_year_rolls_over_from_a_late_day_one(self) -> None:
+        late = cal.Calendar(cal.HARPTOS, cal.day_one(1492, "Nightal", 30))
+        due = tl.date_in_words("by Hammer 1", late, 0)
+        assert due is not None
+        self.assertEqual(tl.date_said(due, late), "Hammer 1st, 1493 DR")
+
+    def test_a_number_is_a_year_only_when_it_reads_as_one(self) -> None:
+        self.assertEqual(self.said("by Midsummer, 1500 gold"), "Midsummer, 1492 DR")
+        self.assertEqual(self.said("Flamerule 14, 3 guards"), "Flamerule 14th, 1492 DR")
+        self.assertEqual(self.said("Flamerule 14, 1493."), "Flamerule 14th, 1493 DR")
+
+    def test_nothing_further_ahead_than_a_typed_number_may_be(self) -> None:
+        self.assertIsNone(self.said("Flamerule 14th, 1510 DR"))
+        self.assertIsNone(tl.date_in_words("by Day 99999", cal.Calendar(), 0))
+
+    def test_words_only_when_it_cant_tell(self) -> None:
+        for words in (
+            "before the new moon", "before the thaw", "in three days",
+            "Flamerule 14 or Flamerule 20",  # (two dates: DMbot can't tell which)
+            "Flamerule 14 or Midsummer", "by Midsummer or the 14th of Flamerule",
+            "the 1st of Midsummer",  # (a festival has no days)
+            "Flamerule 14th, 1491 DR",  # (before Day 1)
+            "by Flamerule 31",  # (a day the month hasn't got)
+        ):  # fmt: skip
+            self.assertIsNone(self.said(words), words)
+
+    def test_with_no_calendar_only_day_n(self) -> None:
+        days = cal.Calendar()
+        self.assertEqual(tl.date_in_words("by Day 12", days, 5 * DAY), cal.minute_of(12))
+        for words in ("Flamerule 14", "day 3", "Day 3 or day 4", "day 0"):
+            self.assertIsNone(tl.date_in_words(words, days, 5 * DAY), words)
+
+    def test_the_offer_on_the_card_and_its_button(self) -> None:
+        limit = part(tp.TIME_LIMIT, words="by the 14th of Flamerule")
+        (line,) = ui.card_lines([limit], {}, None, [], clock=(0, self.harptos))
+        self.assertIn("DMbot reads this as Flamerule 14th, 1492 DR, not counting yet", line)
+        self.assertLessEqual(len(ui.COUNT_DOWN), 25)  # (fits a phone, #112)
+        self.assertIn(ui.COUNT_DOWN, ui.READS_AS)
+        for done in (
+            part(tp.TIME_LIMIT, words="by the 14th of Flamerule", due_minute=DAY),
+            part(tp.TIME_LIMIT, words="by the 14th of Flamerule", state="met"),
+        ):
+            for line in ui.card_lines([done], {}, None, [], clock=(0, self.harptos)):
+                self.assertNotIn("reads this as", line)
+
+
+class TheOffer(unittest.IsolatedAsyncioTestCase):
+    """`read_offer`: only a running, undated limit whose words name a date, and a fault in the
+    clock is no offer, never a broken menu."""
+
+    harptos = cal.Calendar(cal.HARPTOS, cal.day_one(1492, "Flamerule", 1))
+
+    def client(self, broken: bool = False) -> Any:
+        async def get(_g: int, _c: str) -> Any:
+            if broken:
+                raise RuntimeError("clock")
+            return SimpleNamespace(clock=SimpleNamespace(minute=0), groups=())
+
+        async def calendar(_g: int, _c: str) -> Any:
+            return self.harptos
+
+        return SimpleNamespace(clocks=SimpleNamespace(get=get, calendar=calendar))
+
+    async def test_offered_only_where_it_can_be(self) -> None:
+        limit = part(tp.TIME_LIMIT, words="by the 14th of Flamerule")
+        offer = await ui.read_offer(self.client(), GUILD_A, "c1", limit)
+        assert offer is not None
+        due, said, now, left = offer
+        self.assertEqual(due, cal.minute_of(14))
+        self.assertEqual((said, now), ("Flamerule 14th, 1492 DR", 0))
+        self.assertEqual(left, "13 days left (due Flamerule 14th, 1492 DR)")
+        for no in (
+            part(tp.TIME_LIMIT, words="by the 14th of Flamerule", due_minute=DAY),
+            part(tp.TIME_LIMIT, words="by the 14th of Flamerule", state="met"),
+            part(tp.TIME_LIMIT, words="before the thaw"),
+            part(tp.OBJECTIVE, words="by the 14th of Flamerule"),
+        ):
+            self.assertIsNone(await ui.read_offer(self.client(), GUILD_A, "c1", no))
+        with self.assertLogs("dmbot.memory.time_limits", "WARNING"):
+            self.assertIsNone(await ui.read_offer(self.client(True), GUILD_A, "c1", limit))
 
 
 class TheCard(unittest.TestCase):
@@ -142,6 +258,17 @@ class TheDate(MemoryTest):
         await self.memory.undo(GUILD_A, self.c, moved.batch)  # (the move undone: the first date)
         (first_again,) = await self.parts()
         self.assertEqual((first_again.id, first_again.due_minute), (self.limit, 5 * DAY))
+
+    async def test_the_dms_tap_on_a_read_date_keeps_it_as_dmbots_read(self) -> None:
+        """(4c: `due_from` read, so the card can say where the date came from; one Undo)"""
+        kept = await self.memory.set_time_limit_date(
+            GUILD_A, self.c, self.limit, 5 * DAY, now=0, source=DM, given_by=tp.READ
+        )
+        self.assertEqual((kept.value.due_minute, kept.value.due_from), (5 * DAY, tp.READ))
+        with self.assertRaises(ValueError):  # (only the DM's word or DMbot's read)
+            await self.memory.set_time_limit_date(
+                GUILD_A, self.c, self.limit, 6 * DAY, now=0, source=DM, given_by="lore"
+            )
 
     async def test_only_a_time_limit_has_a_date_and_only_the_dm_sets_it(self) -> None:
         step = await self.memory.add_thread_part(

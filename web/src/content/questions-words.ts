@@ -19,7 +19,17 @@ export interface QuestionKindWords {
 export const questionsPage = {
   heading: "Questions for you",
   loading: "Loading…",
-  intro: "DMbot is waiting on these answers, campaign by campaign. The oldest question comes first.",
+  intro: "DMbot needs your answers on these, campaign by campaign. Check everything takes you through them in order: names, then what was said, then the connections.",
+  // One walk through everything that can be answered here (#4193), as Discord's ✅ Check everything.
+  checkEverything: (total: number): string => `✅ Check everything (${total})`,
+  carryOn: (left: number): string => `✅ Carry on (${left} left)`,
+  stopForNow: "Stop for now",
+  nextPart: (label: string, count: number): string => `Next: ${label} (${count})`,
+  finishWalk: "Done",
+  partLine: (label: string, part: number, parts: number, count: number): string => `${label}, part ${part} of ${parts} · ${count} waiting`,
+  partDone: (done: string, next: string, count: number): string => `${done} done. Next: ${next} (${count}).`,
+  walkStopped: "Stopped. Your answers are kept.",
+  walkEnded: "That's everything you can answer here for now. 🎉",
   // Said once, under the list; each Discord-only kind then needs only the short line.
   discordWhere: "Some questions are answered in Discord: open ⚙️ Manage DMbot, then 📬 Questions for you.",
   nothing: "Nothing waiting for you. 🎉",

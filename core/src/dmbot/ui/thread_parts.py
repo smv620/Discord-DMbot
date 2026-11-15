@@ -62,6 +62,10 @@ SET_DATE, CHANGE_DATE = SET_DATE_BUTTON, CHANGE_DATE_BUTTON
 CLEAR_DATE = "🗑️ Clear the date"
 PICK_DAY = "Other number of days…"
 QUICK_SAID = {1: "Tomorrow", 3: "In 3 days", 7: "In a week"}
+# (slice 4c: DMbot's read of a date in the words, offered, never counted until the DM taps)
+COUNT_DOWN = "📅 Start the countdown"
+GONE_BY = "⚠️ Nothing was changed: the game clock has moved on. Tap 📅 Set a date instead."
+READS_AS = f"📅 DMbot reads this as **{{date}}**. Nothing counts down until you tap {COUNT_DOWN}."
 NO_CLOCK_YET = (
     "⚠️ No game clock yet, so nothing was dated. Set one up: ⚙️ Manage DMbot, then Game clock."
 )
@@ -145,6 +149,7 @@ TOO_LATE = "⚠️ Can't undo: it was changed since. Change it here instead."
 NO_WORDS = "⚠️ Type a few words, then try again."
 # the store's refusals, in the ux-critic's words
 SAID_FOR = {
+    GONE_BY: GONE_BY,  # (4c: a read date the clock passed while the menu was open)
     tp.SAME_PART: "⚠️ This thread already has that. Pick it from the list to change it.",
     tp.WRONG_UNDER: "⚠️ A smaller step can only go under a main step of this thread.",
     tp.NO_WORDS: NO_WORDS,
@@ -251,6 +256,14 @@ def card_lines(
         # (slice 4: a dated limit counts down on the clock, `clock` = (now, the calendar); with no
         # game clock it can't be counted, and the card says so once)
         left = ""
+        offered = (
+            time_limits.offer_for(p.words, clock)
+            if p.due_minute is None and clock is not None and p.state == "running"
+            else None
+        )
+        if offered is not None and clock is not None:  # (4c: the read, offered on 📋)
+            said = time_limits.date_said(offered, clock[1])
+            left = f" · DMbot reads this as {said}, not counting yet"
         if p.due_minute is not None:
             left = (
                 f" · {time_limits.left_said(p.due_minute, clock[0], clock[1])}"
@@ -308,8 +321,9 @@ async def clock_now(client: Any, guild_id: int, campaign_id: str) -> tuple[int, 
 
 
 def dated(parts: Sequence[tp.Part]) -> bool:
-    """Whether a card needs the clock: only a dated time limit is counted on it."""
-    return any(p.kind == tp.TIME_LIMIT and p.due_minute is not None for p in parts)
+    """Whether a card needs the clock: a time limit is counted on it, or its words read on the
+    calendar (slice 4c)."""
+    return any(p.kind == tp.TIME_LIMIT for p in parts)
 
 
 async def open_parts(
@@ -408,7 +422,7 @@ class PartsScreen(_Menu):
                 TowardMenu(self.campaign_id, self.thread_id, self.owed, self.names, part_id=None),
             )
         else:
-            await interaction.response.send_modal(AddForm(self.campaign_id, self.thread_id, kind))
+            await _open_form(interaction, self, AddForm(self.campaign_id, self.thread_id, kind))
 
     async def _pick(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -417,10 +431,17 @@ class PartsScreen(_Menu):
         if part is None:
             await open_parts(interaction, self.campaign_id, self.thread_id)
             return
+        got = await _dm(interaction, self.campaign_id)  # (the DM check, and the server it is on)
+        if got is None:
+            return
+        offer = await read_offer(interaction.client, got[0].guild_id, self.campaign_id, part)
+        text = _part_text(part, self.names)
+        if offer is not None:
+            text += f"\n{READS_AS.format(date=offer[1])}"
         await _replace(
             interaction,
-            _part_text(part, self.names),
-            PartMenu(self.campaign_id, self.thread_id, part, self.owed, self.names),
+            text,
+            PartMenu(self.campaign_id, self.thread_id, part, self.owed, self.names, offer),
         )
 
     async def _undo(self, batch: int, interaction: discord.Interaction) -> None:
@@ -494,9 +515,11 @@ class Choose(_Menu):
         self.add_item(_Button(self._back, label=BACK, row=1))
 
     async def _picked(self, value: str, interaction: discord.Interaction) -> None:
-        # (not stopped: a form closed unsent leaves this screen working; sending redraws it)
-        await interaction.response.send_modal(
-            AddForm(self.campaign_id, self.thread_id, self.kind, **{self.field: value})
+        # (not stopped: a form closed unsent leaves this screen working; sending stops it)
+        await _open_form(
+            interaction,
+            self,
+            AddForm(self.campaign_id, self.thread_id, self.kind, **{self.field: value}),
         )
 
     async def _back(self, interaction: discord.Interaction) -> None:
@@ -522,7 +545,32 @@ WHO_LABEL = {
 }
 
 
-class AddForm(discord.ui.Modal):
+class _Form(discord.ui.Modal):
+    """A form that stops the menu it was opened from once it has been sent and done (#4504). The
+    menu stays running while the form is open, so a form closed unsent leaves the screen working;
+    but once the form is done a new screen has taken the message, and the old menu's timeout would
+    otherwise blank it ten minutes later (discord.py never stops a view that a newer one replaced).
+    Stopped only after the form's work, so a failure ("Try once more") leaves the menu working.
+    Each form writes `_submit`, never `on_submit`."""
+
+    opener: discord.ui.View | None = None
+
+    async def _submit(self, interaction: discord.Interaction) -> None:
+        raise NotImplementedError
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self._submit(interaction)
+        if self.opener is not None:
+            self.opener.stop()
+
+
+async def _open_form(interaction: discord.Interaction, menu: discord.ui.View, form: _Form) -> None:
+    """Every form on these screens opens through here, so each one knows its menu (#4504)."""
+    form.opener = menu
+    await interaction.response.send_modal(form)
+
+
+class AddForm(_Form):
     def __init__(
         self,
         campaign_id: str,
@@ -563,7 +611,7 @@ class AddForm(discord.ui.Modal):
     ) -> None:
         await _failed(interaction, error)
 
-    async def on_submit(self, interaction: discord.Interaction) -> None:
+    async def _submit(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.threads import link_by_name
 
         await _answer_first(interaction, in_place=True)
@@ -626,9 +674,13 @@ class PartMenu(_Menu):
         part: tp.Part,
         owed: Sequence[tp.Part],
         names: Mapping[str, str],
+        offer: tuple[int, str, int, str] | None = None,
     ) -> None:
         super().__init__()
         self.campaign_id, self.thread_id, self.part = campaign_id, thread_id, part
+        self.offer = (
+            offer  # (slice 4c: a date read from the words, its words, the clock's now, time left)
+        )
         self.owed, self.names = list(owed), dict(names)
         words = STATE_BUTTONS[part.kind]
         if len(words) > 1:
@@ -652,6 +704,15 @@ class PartMenu(_Menu):
         if part.kind == tp.REWARD_GIVEN and owed:
             self.add_item(_Button(self._toward, label=TOWARD, row=2))
         if part.kind == tp.TIME_LIMIT and part.state == "running":
+            if offer is not None:
+                self.add_item(
+                    _Button(
+                        self._count_down,
+                        label=COUNT_DOWN,
+                        style=discord.ButtonStyle.primary,
+                        row=2,
+                    )
+                )
             dated = part.due_minute is not None
             self.add_item(_Button(self._date, label=CHANGE_DATE if dated else SET_DATE, row=2))
         self.add_item(_Button(self._back, label=BACK, row=2))
@@ -713,14 +774,35 @@ class PartMenu(_Menu):
         )
 
     async def _words(self, interaction: discord.Interaction) -> None:
-        await interaction.response.send_modal(
-            WordsForm(self.campaign_id, self.thread_id, self.part)
-        )
+        await _open_form(interaction, self, WordsForm(self.campaign_id, self.thread_id, self.part))
 
     async def _sub_step(self, interaction: discord.Interaction) -> None:
-        await interaction.response.send_modal(
-            AddForm(self.campaign_id, self.thread_id, tp.OBJECTIVE, under_id=self.part.id)
+        await _open_form(
+            interaction,
+            self,
+            AddForm(self.campaign_id, self.thread_id, tp.OBJECTIVE, under_id=self.part.id),
         )
+
+    async def _count_down(self, interaction: discord.Interaction) -> None:
+        """The DM keeps DMbot's read of the date (§8.2, Supervisor's choice B): `due_from` read.
+        Read again on the clock as it is at the tap, so a menu left open while the game moved on
+        never writes a date already past, nor counts "soon" from a stale moment."""
+        assert self.offer is not None
+        offered = self.offer[0]
+        words = _md(self.part.words)
+        kept: list[str] = []
+
+        async def write(memory: Any, c: Any) -> Any:
+            fresh = await read_offer(interaction.client, c.guild_id, c.id, self.part)
+            if fresh is None or fresh[0] != offered:
+                raise MemoryRuleError(GONE_BY)
+            due, _said, now, left = fresh
+            kept.append(left)
+            return await memory.set_time_limit_date(
+                c.guild_id, c.id, self.part.id, due, now=now, source=DM, given_by=tp.READ
+            )
+
+        await self._run(interaction, write, lambda _d: f"✅ Date set: **{words}**, {kept[0]}.")
 
     async def _date(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -784,8 +866,8 @@ class DateMenu(_Menu):
         await set_date(interaction, self.campaign_id, self.thread_id, self.part, days)
 
     async def _pick(self, interaction: discord.Interaction) -> None:
-        # (not stopped: a form closed unsent leaves this screen working)
-        await interaction.response.send_modal(DaysForm(self.campaign_id, self.thread_id, self.part))
+        # (not stopped: a form closed unsent leaves this screen working; sending stops it)
+        await _open_form(interaction, self, DaysForm(self.campaign_id, self.thread_id, self.part))
 
     async def _clear(self, interaction: discord.Interaction) -> None:
         self.stop()
@@ -797,7 +879,7 @@ class DateMenu(_Menu):
         await open_parts(interaction, self.campaign_id, self.thread_id)
 
 
-class DaysForm(discord.ui.Modal, title="When is it due?"):
+class DaysForm(_Form, title="When is it due?"):
     def __init__(self, campaign_id: str, thread_id: str, part: tp.Part) -> None:
         super().__init__(timeout=VIEW_TIMEOUT_S)
         self.campaign_id, self.thread_id, self.part = campaign_id, thread_id, part
@@ -811,7 +893,7 @@ class DaysForm(discord.ui.Modal, title="When is it due?"):
     ) -> None:
         await _failed(interaction, error)
 
-    async def on_submit(self, interaction: discord.Interaction) -> None:
+    async def _submit(self, interaction: discord.Interaction) -> None:
         text = self.days.value.strip()
         days = int(text) if text.isascii() and text.isdigit() else 0
         if not 1 <= days <= time_limits.MOST_DAYS:
@@ -819,6 +901,34 @@ class DaysForm(discord.ui.Modal, title="When is it due?"):
             await open_date(interaction, self.campaign_id, self.thread_id, self.part, DAYS_NUMBER)
             return
         await set_date(interaction, self.campaign_id, self.thread_id, self.part, days)
+
+
+async def read_offer(
+    client: Any, guild_id: int, campaign_id: str, part: tp.Part
+) -> tuple[int, str, int, str] | None:
+    """A running time limit with no date whose words name one on the campaign's calendar (slice
+    4c, §8.2): (its due minute, the date in words, the clock's now, the time left as the cards say
+    it), offered to the DM for one tap,
+    never counted until the DM taps (Supervisor's choice B). None with no clock or no date."""
+    if part.kind != tp.TIME_LIMIT or part.state != "running" or part.due_minute is not None:
+        return None
+    clock = await clock_now(client, guild_id, campaign_id)
+    if clock is None:
+        return None
+    due = time_limits.offer_for(part.words, clock)
+    if due is None:
+        return None
+    now, calendar = clock
+    try:
+        return (
+            due,
+            time_limits.date_said(due, calendar),
+            now,
+            time_limits.left_said(due, now, calendar),
+        )
+    except Exception:  # (an offer never breaks the menu: the DM can still tap 📅 Set a date)
+        log.warning("Couldn't word a date read from a time limit", exc_info=True)
+        return None
 
 
 DAYS_NUMBER = f"⚠️ Nothing was changed. Type a number of game days, 1 to {time_limits.MOST_DAYS}."
@@ -889,9 +999,13 @@ class TowardMenu(_Menu):
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         under = None if self.pick.values[0] == NONE else self.pick.values[0]
-        if self.part_id is None:  # (not stopped first: a form closed unsent leaves this working)
-            await interaction.response.send_modal(
-                AddForm(self.campaign_id, self.thread_id, tp.REWARD_GIVEN, under_id=under)
+        if (
+            self.part_id is None
+        ):  # (not stopped first: a form closed unsent leaves this working; sending stops it)
+            await _open_form(
+                interaction,
+                self,
+                AddForm(self.campaign_id, self.thread_id, tp.REWARD_GIVEN, under_id=under),
             )
             return
         await _answer_first(interaction, in_place=True)
@@ -918,7 +1032,7 @@ class TowardMenu(_Menu):
         await open_parts(interaction, self.campaign_id, self.thread_id)
 
 
-class WordsForm(discord.ui.Modal, title="Change the words"):
+class WordsForm(_Form, title="Change the words"):
     def __init__(self, campaign_id: str, thread_id: str, part: tp.Part) -> None:
         super().__init__(timeout=VIEW_TIMEOUT_S)
         self.campaign_id, self.thread_id, self.part = campaign_id, thread_id, part
@@ -932,7 +1046,7 @@ class WordsForm(discord.ui.Modal, title="Change the words"):
     ) -> None:
         await _failed(interaction, error)
 
-    async def on_submit(self, interaction: discord.Interaction) -> None:
+    async def _submit(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
         new = " ".join(self.words.value.split())
         if not new:
