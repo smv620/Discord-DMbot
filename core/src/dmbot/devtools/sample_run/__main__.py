@@ -481,7 +481,6 @@ def _sure() -> Sure:
             "left waiting": sum(tally.waiting.values()),
             "refused by a rule": sum(tally.refused.values()),
             "changes": len(tally.batches),
-            "story threads kept for the score": threads,
         }
         if connections_only:  # (after the AI's answers: only "accepted" is read, names untouched)
             return counts
@@ -493,6 +492,7 @@ def _sure() -> Sure:
         return {
             **counts,
             "names kept so far": kept_so_far,
+            "story threads kept for the score": threads,
             "waiting names": tally.waiting[auto.NAMES],
             "waiting other names": tally.waiting[auto.OTHER_NAMES],
             "waiting connections": tally.waiting[auto.CONNECTIONS],

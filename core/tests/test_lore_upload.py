@@ -146,7 +146,14 @@ class TheWorker(NamesTest):
         shaped = [ctx.step for shaping, ctx in seen if shaping]
         self.assertTrue(first and shaped)
         self.assertTrue(all(step.startswith("Reading it.") for step in first))
-        self.assertTrue(all(step.startswith("Finding names. (part ") for step in shaped))
+        # (the shaping calls, and the story threads' one call at the end, #4453)
+        self.assertTrue(
+            all(
+                step.startswith(("Finding names. (part ", "Finding how they connect."))
+                for step in shaped
+            )
+        )
+        self.assertTrue(any(step.startswith("Finding names. (part ") for step in shaped))
         self.assertIsNone(ai_feed._current.get())
 
     def test_the_step_words_are_the_pages_and_hold_counts_only(self) -> None:
