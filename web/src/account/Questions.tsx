@@ -90,7 +90,8 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
   const [resume, setResume] = useState(0);
   const [note, setNote] = useState<string | null>(null);
   const goTo = (i: number): void => {
-    if (walk !== null) setNote(words.partDone(parts[walk]?.label ?? "", parts[i]?.label ?? "", parts[i]?.count ?? 0));
+    // (an earlier "stopped" or "ended" line goes when a walk starts again)
+    setNote(walk !== null ? words.partDone(parts[walk]?.label ?? "", parts[i]?.label ?? "", parts[i]?.count ?? 0) : null);
     setWalk(i);
     setResume(i);
   };
