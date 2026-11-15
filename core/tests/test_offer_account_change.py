@@ -5,11 +5,12 @@ or both end up on one account. Needs Postgres; invented numbers."""
 from __future__ import annotations
 
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 from dmbot.campaigns import CampaignStore
 from dmbot.dm_screen import handover, site_offers
+from dmbot.mentions import NO_PINGS
 from tests.pg import DatabaseTest
 from tests.test_account_discord_ids import add_user, link, unlink
 
@@ -162,3 +163,72 @@ class Telling(DatabaseTest):
         got = await self.told("same")
         self.assertEqual(set(got), {OWNER})
         self.assertEqual(got[OWNER], handover.CLOSED_DM_TO_DM.format(campaign="Frostmaiden"))
+
+    async def test_the_persons_offer_message_loses_its_buttons_and_says_it_was_closed(
+        self,
+    ) -> None:
+        # With the offer's own message on record, the person's message is edited in place.
+        partial = SimpleNamespace(edit=AsyncMock())
+        asked: list[int] = []
+
+        def record(mid: int) -> Any:
+            asked.append(mid)
+            return partial
+
+        people: dict[int, Any] = {}
+        guild: Any = SimpleNamespace()
+        campaign: Any = SimpleNamespace(name="Frostmaiden")
+
+        async def get(_guild: Any, user_id: int) -> Any:
+            people[user_id] = SimpleNamespace(
+                send=AsyncMock(),
+                dm_channel=SimpleNamespace(get_partial_message=lambda mid: record(mid))
+                if user_id == PERSON
+                else None,
+                create_dm=AsyncMock(side_effect=OSError),
+            )
+            return people[user_id]
+
+        offer = SimpleNamespace(
+            from_user_id=OWNER,
+            to_user_id=PERSON,
+            closed_side="receiver",
+            message_id=555,
+            via_email=False,
+            delivered_at=1,
+        )
+        with patch.object(site_offers, "_member", get):
+            await site_offers._tell_closed(guild, offer, campaign)  # type: ignore[arg-type]
+        self.assertEqual(asked, [555])  # the offer's own message, not another one
+        partial.edit.assert_awaited_once()
+        kwargs = partial.edit.await_args.kwargs
+        self.assertIs(kwargs["allowed_mentions"], NO_PINGS)
+        self.assertEqual(
+            kwargs["content"], handover.CLOSED_RECEIVER_TO_RECEIVER.format(campaign="Frostmaiden")
+        )
+        self.assertIsNone(kwargs["view"])  # the buttons are gone
+        people[PERSON].send.assert_not_awaited()  # no new message for the person
+        people[OWNER].send.assert_awaited_once()
+        self.assertEqual(
+            cast(Any, people[OWNER].send.await_args).args[0],
+            handover.CLOSED_RECEIVER_TO_DM.format(campaign="Frostmaiden"),
+        )
+
+    async def test_without_an_offer_message_the_person_gets_a_new_private_message(self) -> None:
+        guild, sent, get = self.guild_with()
+        campaign: Any = SimpleNamespace(name="Frostmaiden")
+        offer: Any = SimpleNamespace(
+            from_user_id=OWNER,
+            to_user_id=PERSON,
+            closed_side="receiver",
+            message_id=None,
+            via_email=False,
+            delivered_at=1,
+        )
+        with patch.object(site_offers, "_member", get):
+            await site_offers._tell_closed(guild, offer, campaign)
+        sent[PERSON].assert_awaited_once()
+        self.assertEqual(
+            cast(Any, sent[PERSON].await_args).args[0],
+            handover.CLOSED_RECEIVER_TO_RECEIVER.format(campaign="Frostmaiden"),
+        )
