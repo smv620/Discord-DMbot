@@ -142,6 +142,18 @@ describe("the Maps page", () => {
     await screen.findByText(w.takeBackUndoFailed);
   });
 
+  it("the DM's empty list points at the form and at Discord; a player's says no maps have been shown", async () => {
+    const api = mockApi("table");
+    api.maps = async () => ({ canManage: true, maps: [] });
+    render(<Maps api={api} refId={DM} />);
+    expect(await screen.findByText("No maps yet. Add one with the form, or post one in Discord and it shows up here.")).toBeTruthy();
+    cleanup();
+    const player = mockApi("table");
+    player.maps = async () => ({ canManage: false, maps: [] });
+    render(<Maps api={player} refId={PLAYER} />);
+    expect(await screen.findByText(w.emptyPlayer)).toBeTruthy();
+  });
+
   it("says it could not load, with a way to try again", async () => {
     const api = mockApi("table");
     api.maps = async () => {
