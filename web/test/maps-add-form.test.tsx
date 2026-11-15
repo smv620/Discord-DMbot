@@ -109,7 +109,7 @@ describe("the Add a map form", () => {
     fireEvent.click(screen.getByRole("button", { name: w.yesLabel }));
     expect(await screen.findByText(w.badFile(10))).toBeTruthy();
     api.addMap = async () => {
-      throw new ApiError("server");
+      throw new Error("down"); // a true network failure: the request never got an answer
     };
     fireEvent.click(screen.getByRole("button", { name: w.yesLabel }));
     expect(await screen.findByText(w.network)).toBeTruthy();
@@ -184,5 +184,28 @@ describe("the Add a map form's progress and Undo", () => {
     expect(await screen.findByText(w.badFile(10))).toBeTruthy();
     fireEvent.change(screen.getByLabelText(w.chooseFile), { target: { files: [picture("other.png")] } });
     expect(screen.queryByText(w.badFile(10))).toBeNull();
+  });
+});
+
+describe("each refusal's words, and the form keeps its values", () => {
+  it.each([
+    ["uploads-off", () => w.uploadsOff],
+    ["too-soon", () => w.tooSoon],
+    ["not-allowed", () => w.notYours],
+    ["signed-out", () => w.signedOut],
+    ["full", () => w.full],
+    ["gone", () => w.gone],
+    ["server", () => w.notKept],
+  ])("a refusal of kind %s shows its own words", async (kind, words) => {
+    const api = mockApi("table");
+    api.addMap = async () => {
+      throw new ApiError(kind as never);
+    };
+    render(<Maps api={api} refId={DM} />);
+    await screen.findByText("Cave");
+    await choose(picture(), "Mill");
+    fireEvent.click(screen.getByRole("button", { name: w.yesLabel }));
+    expect(await screen.findByText(words())).toBeTruthy();
+    expect((screen.getByLabelText(w.nameIt) as HTMLInputElement).value).toBe("Mill");
   });
 });

@@ -54,7 +54,18 @@ export default function MapAddForm({ api, refId, canManage, onAdded }: { api: Ac
       setSaid(canManage ? w.addedDm : w.addedPlayer);
       onAdded();
     } catch (error) {
-      setProblem(error instanceof ApiError && error.kind === "bad-file" ? w.badFile(10) : w.network);
+      const kind = error instanceof ApiError ? error.kind : "network";
+      setProblem(
+        kind === "bad-file" ? w.badFile(10)
+          : kind === "uploads-off" ? w.uploadsOff
+          : kind === "too-soon" ? w.tooSoon
+          : kind === "not-allowed" ? w.notYours
+          : kind === "signed-out" ? w.signedOut
+          : kind === "full" ? w.full
+          : kind === "gone" ? w.gone
+          : kind === "network" ? w.network
+          : w.notKept,
+      );
     } finally {
       flight.current = false;
       setBusy(false);
