@@ -24,7 +24,8 @@ _ID = r"(?P<campaign>[0-9a-f]{32}):(?P<entity>[0-9a-f]{32})"
 LABEL = "Campaign setting"
 KEEP_LABEL = "Keep it"
 NOT_SET = (
-    f"• **{LABEL}:** not set. Open a big place's card (a region or bigger) and tap "
+    f"• **{LABEL}:** not set yet. To pick one, open the card of a region or a bigger "
+    "place and tap "
     "🌍 Make it the setting."
 )
 ONLY_DMS = "Only the DM can change the campaign's setting."
@@ -51,7 +52,8 @@ def line(field: SettingField | None) -> list[str]:
     name = discord.utils.escape_markdown(field.name)
     if field.guessed:
         return [
-            f"• **{LABEL}:** {name}? DMbot guessed this from your adventure. Keep it if it's right."
+            f"• **{LABEL}:** {name} (DMbot's guess from your adventure). "
+            f"Tap ✅ {KEEP_LABEL} if it's right."
         ]
     return [f"• **{LABEL}:** {name}"]
 

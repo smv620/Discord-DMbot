@@ -21,11 +21,11 @@ class Words(unittest.TestCase):
 
     def test_a_guess_says_so_and_asks(self) -> None:
         text = settings_text(campaign(), None, DM, SettingField(PLACE, "Faerûn", True))
-        self.assertIn("Faerûn? DMbot guessed this from your adventure.", text)
+        self.assertIn("Faerûn (DMbot's guess from your adventure).", text)
 
     def test_no_setting_says_where_to_pick_one(self) -> None:
         text = settings_text(campaign(), None, DM, SettingField(None, None, False))
-        self.assertIn("**Campaign setting:** not set.", text)
+        self.assertIn("**Campaign setting:** not set yet.", text)
         self.assertIn("🌍 Make it the setting", text)
 
     def test_an_unreadable_setting_draws_no_line(self) -> None:
