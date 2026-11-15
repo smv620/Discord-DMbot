@@ -12,6 +12,10 @@ checks each answer with the tagger's own parser, in memory: no database, nothing
 spends more than `--max-usd` and stops there. The key is ANTHROPIC_API_KEY, as for the bot; it is
 never printed.
 
+The batches are the extractor's, with each line's own time, so lines said in the same moment stay
+together, as the bot does. Unlike the bot's, they hold everything said: the off-topic filter (an AI
+pass) and the "Previously" recap are not taken out, so read the numbers as batches of all talk.
+
 It prints, for each tag: the session key's rows of that kind and how many fall in a batch carrying
 the tag (reach), and with a neighbour batch too; the share of batches tagged (load); how many of
 those were only "maybe"; then the calls, failed batches, tokens and dollars. Counts only, never a
@@ -26,6 +30,7 @@ import json
 import math
 import os
 import sys
+from collections import Counter
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -60,10 +65,19 @@ def lines_of(text: str) -> tuple[list[tagger.Line], list[int], int]:
     return lines, starts, unplaced
 
 
-def batches_of(lines: Sequence[tagger.Line]) -> list[list[tagger.Line]]:
-    """The extractor's own batches (`extractor.batches`): each line its own moment, as a plain
-    file's lines are kept in order."""
-    said = [extractor.Said(x.number, 0, x.text, started_ms=x.number) for x in lines]
+def times_of(text: str) -> list[int]:
+    """Each line's time as the importer gives it (a plain file with none gets one a line), so the
+    extractor's rule keeps lines said in the same moment in one batch (the reviewer on #4456)."""
+    return [u.at_ms for u in importer.parse(text).utterances]
+
+
+def batches_of(
+    lines: Sequence[tagger.Line], times: Sequence[int] | None = None
+) -> list[list[tagger.Line]]:
+    """The extractor's own batches (`extractor.batches`), each line at its own time (`times`; one
+    a line when none is given)."""
+    at = list(times) if times is not None else [x.number for x in lines]
+    said = [extractor.Said(x.number, 0, x.text, started_ms=at[i]) for i, x in enumerate(lines)]
     by_number = {x.number: x for x in lines}
     return [[by_number[s.number] for s in group] for group in extractor.batches(said)]
 
@@ -94,11 +108,19 @@ async def measure(
     spent = 0
     for i, batch in enumerate(batches):
         body = tagger.INSTRUCTIONS + tagger.batch_text(batch, _before(batches, i))
-        worst = micro_usd(model, int(len(body) / CHARS_PER_TOKEN) * 2, OUTPUT_FLOOR)
+        # (two calls at most, each up to the floor's answer: the retry's counts too)
+        worst = micro_usd(model, int(len(body) / CHARS_PER_TOKEN) * 2, 2 * OUTPUT_FLOOR)
         if spent + worst > max_micro:
             break
-        got = await tagger.tag_batch(ai, batch, _before(batches, i), max_tokens=OUTPUT_FLOOR)
-        spent += micro_usd(got.model or model, got.input_tokens, got.output_tokens)
+        try:
+            got = await tagger.tag_batch(ai, batch, _before(batches, i), max_tokens=OUTPUT_FLOOR)
+        except (AIOutOfFunds, AIError) as exc:  # (stop here; what was done is still reported)
+            print(f"The AI service stopped it at batch {i + 1}: {type(exc).__name__}")
+            break
+        spent += micro_usd(
+            got.model or model, got.input_tokens, got.output_tokens, got.cache_read_tokens,
+            got.cache_write_tokens,
+        )  # fmt: skip
         done.append(got)
     return done, spent
 
@@ -125,13 +147,18 @@ def print_report(
         print(f"{key:8} {rows:>4} {reach:>9} {near:>9} {load:>9} {int(r['maybe']):>5}")
     calls = sum(t.calls for t in done)
     failed = sum(1 for t in done if t.status == tagger.FAILED)
-    dropped = sum(sum(t.dropped.values()) for t in done)
+    dropped: Counter[str] = Counter()
+    for t in done:
+        dropped.update(t.dropped)
     print(
-        f"{len(done)} of {batches} batches tagged, {calls} call(s), {failed} failed, "
-        f"{dropped} tag(s) dropped by the checks; "
+        f"{len(done)} of {batches} batches tagged, {calls} call(s), {failed} failed; "
         f"{sum(t.input_tokens for t in done)} tokens in, "
-        f"{sum(t.output_tokens for t in done)} out, ${spent / 1_000_000:.2f}"
+        f"{sum(t.output_tokens for t in done)} out, "
+        f"{sum(t.cache_read_tokens for t in done)} read from the cache, "
+        f"{sum(t.cache_write_tokens for t in done)} written to it; ${spent / 1_000_000:.2f}"
     )
+    said = ", ".join(f"{n} {why}" for why, n in sorted(dropped.items())) or "none"
+    print(f"dropped by the checks: {said}")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -149,13 +176,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     except Exception as exc:  # the type only: a parse error can quote the file
         print(f"Couldn't read those files ({type(exc).__name__}).", file=sys.stderr)
         return 2
-    batches = batches_of(lines)
+    batches = batches_of(lines, times_of(text))
     spans = score.spans([[x.number for x in b] for b in batches], starts, text.count("\n") + 1)
     rows = score.key_rows(key)
     got = estimate(batches, model)
     print(
-        f"{len(lines)} lines in {len(batches)} batches ({unplaced} not placed in the file); "
-        f"{len(rows)} key rows to reach (model {model}, tier FAST)\n"
+        f"{len(lines)} lines in {len(batches)} batches of all talk ({unplaced} not placed in the "
+        f"file); {len(rows)} key rows to reach, {score.outside(rows, spans)} outside the "
+        f"session's lines (model {model}, tier FAST)\n"
         f"estimate, not measured: {got['tokens_in']:.0f} tokens in, {got['tokens_out']:.0f} out, "
         f"${got['dollars']:.2f}"
     )
@@ -174,16 +202,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         finally:
             await client.close()
 
-    try:
-        done, spent = asyncio.run(go())
-    except (AIOutOfFunds, AIError) as exc:
-        print(f"The AI service stopped it: {type(exc).__name__}", file=sys.stderr)
-        return 1
+    done, spent = asyncio.run(go())
     table = score.report(
         spans[: len(done)],
         [t.tags for t in done],
         [t.status == tagger.FAILED for t in done],
-        [(tag, line) for tag, line in rows if line <= (spans[len(done) - 1].last if done else 0)],
+        score.measured_rows(rows, spans, len(done)),
     )
     print_report(table, len(batches), done, spent)
     return 0

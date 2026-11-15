@@ -76,6 +76,23 @@ def key_rows(key: Mapping[str, Any]) -> list[tuple[str, int]]:
     return out
 
 
+def measured_rows(
+    rows: Sequence[tuple[str, int]], batch_spans: Sequence[Span], done: int
+) -> list[tuple[str, int]]:
+    """The key rows the measured part of the session could reach: a run the cap stopped early is
+    scored on the batches it tagged only."""
+    if done <= 0:
+        return []
+    last = batch_spans[done - 1].last
+    return [(tag, line) for tag, line in rows if line <= last]
+
+
+def outside(rows: Sequence[tuple[str, int]], batch_spans: Sequence[Span]) -> int:
+    """Key rows no batch covers (before the first spoken line, past the end): a sign the file is
+    not the export the key's line numbers were written on, when there are many."""
+    return sum(1 for _, line in rows if not any(s.first <= line <= s.last for s in batch_spans))
+
+
 def report(
     batch_spans: Sequence[Span],
     tagged: Sequence[Sequence[tagger.Tagged]],

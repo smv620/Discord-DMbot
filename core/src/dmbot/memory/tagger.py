@@ -145,6 +145,8 @@ class Line:
 
 @dataclass(frozen=True, slots=True)
 class Tagged:
+    """One tag on a batch: the lines of the batch that made the tagger set it, and how sure."""
+
     tag: str
     lines: tuple[int, ...]
     sure: str  # YES or MAYBE: both count as tagged; kept for scoring (§4)
@@ -162,6 +164,8 @@ class Tagging:
     output_tokens: int
     dropped: Counter[str]
     model: str = ""
+    cache_read_tokens: int = 0  # (not in `input_tokens`: the service counts them apart)
+    cache_write_tokens: int = 0
 
 
 def _quote(text: str) -> str:
@@ -197,10 +201,10 @@ def parse(text: str, numbers: Sequence[int]) -> tuple[list[Tagged], Counter[str]
             dropped["shape"] += 1
             continue
         tag, sure, lines = item.get("tag"), item.get("sure"), item.get("lines")
-        if tag not in BY_KEY:
+        if not isinstance(tag, str) or tag not in BY_KEY:  # (never trust the schema: §9)
             dropped["not_a_tag"] += 1
             continue
-        if sure not in (YES, MAYBE):
+        if not isinstance(sure, str) or sure not in (YES, MAYBE):
             dropped["not_yes_or_maybe"] += 1
             continue
         good = {
@@ -213,6 +217,9 @@ def parse(text: str, numbers: Sequence[int]) -> tuple[list[Tagged], Counter[str]
         had, was = found.get(str(tag), (set(), MAYBE))
         found[str(tag)] = (had | good, YES if YES in (was, sure) else MAYBE)
     tags = [Tagged(t, tuple(sorted(found[t][0])), found[t][1]) for t in BY_KEY if t in found]
+    malformed = dropped["shape"] + dropped["not_a_tag"] + dropped["not_yes_or_maybe"]
+    if data["tags"] and not tags and malformed == len(data["tags"]):
+        return None  # (every item was junk: unreadable, retried, never "nothing here")
     return tags, dropped
 
 
@@ -224,7 +231,7 @@ async def tag_batch(
     handle: it ends a run, it doesn't fail a batch."""
     body = batch_text(lines, before)
     numbers = [x.number for x in lines]
-    calls = tokens_in = tokens_out = 0
+    calls = tokens_in = tokens_out = cache_read = cache_write = 0
     model = ""
     dropped: Counter[str] = Counter()
     for _ in range(2):
@@ -232,10 +239,17 @@ async def tag_batch(
         calls += 1
         tokens_in += int(getattr(reply, "input_tokens", 0) or 0)
         tokens_out += int(getattr(reply, "output_tokens", 0) or 0)
+        cache_read += int(getattr(reply, "cache_read_tokens", 0) or 0)
+        cache_write += int(getattr(reply, "cache_write_tokens", 0) or 0)
         model = str(getattr(reply, "model", "") or model)
         got = None if reply.cut or getattr(reply, "refused", False) else parse(reply.text, numbers)
         if got is not None:
             tags, dropped = got
-            return Tagging(tuple(tags), OK, calls, tokens_in, tokens_out, dropped, model)
+            return Tagging(
+                tuple(tags), OK, calls, tokens_in, tokens_out, dropped, model, cache_read,
+                cache_write,
+            )  # fmt: skip
     log.info("Tagger: a batch of %d lines failed twice; it goes to every reader", len(lines))
-    return Tagging((), FAILED, calls, tokens_in, tokens_out, dropped, model)
+    return Tagging(
+        (), FAILED, calls, tokens_in, tokens_out, dropped, model, cache_read, cache_write
+    )
