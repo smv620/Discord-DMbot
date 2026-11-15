@@ -3,7 +3,7 @@ and Supervisor's ruling of 2026-11-15).
 
 A. `asked`: how many questions wait for the DM, by kind, counted by the one definition the bot and
    the website use (`questions.counts.count_kinds`). Every run.
-B. `snapshot`, then `answered`: on the run that is kept, the items waiting at its end are written
+B. `waiting`, then `classify`: on the run that is kept, the items waiting at its end are written
    to a server-only file (their ids and DMbot's suggestion). Once the owner has answered in
    Discord, `sample_run --part2` reads the same items again and sorts each one:
    - "kept as suggested": the DM kept DMbot's own answer, unchanged (DMbot had it right);
@@ -45,7 +45,7 @@ async def asked(sources: Any, guild_id: int, campaign_id: str) -> dict[str, int]
     return {kinds.LABELS.get(k, k): c.n for k, c in got.items() if c.n}
 
 
-async def _rows(conn: Any, sql: str, ids: tuple[int, str]) -> list[dict[str, Any]]:
+async def _rows(conn: Any, sql: str, ids: tuple[Any, ...]) -> list[dict[str, Any]]:
     cur = await conn.execute(sql, ids)
     return [dict(r) for r in await cur.fetchall()]
 
@@ -77,8 +77,9 @@ async def read_state(db: Any, guild_id: int, campaign_id: str) -> dict[str, list
             "claims": await _rows(conn, "SELECT id, status FROM memory_claims" + _SCOPE, ids),
             "map_facts": await _rows(
                 conn,
-                "SELECT id, entity_id, layer, value, faction_id, status"
-                " FROM memory_map_facts" + _SCOPE,
+                "SELECT id, entity_id, layer, value, faction_id, status FROM memory_map_facts"
+                + _SCOPE
+                + " AND to_session_at IS NULL",
                 ids,
             ),
             "languages": await _rows(
@@ -97,29 +98,52 @@ async def read_state(db: Any, guild_id: int, campaign_id: str) -> dict[str, list
         }
 
 
-def waiting(state: Mapping[str, Sequence[Mapping[str, Any]]]) -> dict[str, list[dict[str, Any]]]:
-    """The items waiting for the DM in `state`, with DMbot's suggestion: what `snapshot` keeps."""
+async def waiting(
+    db: Any, memory: Any, guild_id: int, campaign_id: str
+) -> dict[str, list[dict[str, Any]]]:
+    """The questions waiting for the DM at a run's end, each kind read from the list the DM is
+    shown, with DMbot's suggestion: what `--part2` follows. The waiting connections and World notes
+    come from their own stores' lists (which leave out what is never asked: an assumed parent, a
+    pair the campaign already holds, a language a sheet already has); things said are the claims the
+    DM's list shows (no readings, no "Which one?")."""
+    from dmbot.memory import world_notes
+    from dmbot.memory.backstory_links import BackstoryLinks
+    from dmbot.memory.claims import UNPLACED_REASON
+
+    state = await read_state(db, guild_id, campaign_id)
+    onto = await memory.ontology(guild_id, campaign_id)
+    symmetric = {p.key for p in onto.predicates.values() if p.symmetric}
+    links = await BackstoryLinks(db).waiting(guild_id, campaign_id, symmetric=symmetric)
+    async with db.guild(guild_id) as conn:
+        claims = await _rows(
+            conn,
+            "SELECT id FROM memory_claims" + _SCOPE + " AND status = 'proposed' AND reading IS NULL"
+            " AND reason <> %s",
+            (guild_id, campaign_id, UNPLACED_REASON),
+        )
+    notes = await memory.world_notes(guild_id, campaign_id)
+    facts = {r["id"]: r for r in state["map_facts"]}
+    places, languages = [], []
+    for n in notes:
+        kind, row_id = world_notes.split_id(n.id)
+        if kind == world_notes.PLACE and row_id in facts:
+            f = facts[row_id]
+            places.append({
+                "id": row_id, "place": f["entity_id"], "layer": f["layer"],
+                "value": f["faction_id"] or f["value"],
+            })  # fmt: skip
+        elif kind == world_notes.LANGUAGE:
+            languages.append({"id": row_id})
     return {
         NAMES: [
             {"id": r["id"], "type": r["type"], "name": r["name"]}
             for r in state["entities"]
             if r["status"] == "proposed"
         ],
-        CONNECTIONS: [
-            {"s": r["subject_id"], "p": r["predicate"], "o": r["object_id"]} for r in state["links"]
-        ],
-        FACTS: [{"id": r["id"]} for r in state["claims"] if r["status"] == "proposed"],
-        PLACES: [
-            {
-                "id": r["id"],
-                "place": r["entity_id"],
-                "layer": r["layer"],
-                "value": r["faction_id"] or r["value"],
-            }
-            for r in state["map_facts"]
-            if r["status"] == "read"
-        ],
-        LANGUAGES: [{"id": r["id"]} for r in state["languages"] if r["given_by"] == "read"],
+        CONNECTIONS: [{"s": w.subject_id, "p": w.predicate, "o": w.object_id} for w in links],
+        FACTS: [{"id": r["id"]} for r in claims],
+        PLACES: places,
+        LANGUAGES: languages,
         TRAITS: [
             {"who": r["entity_id"], "kind": r["kind"], "key": r["name_key"]}
             for r in state["traits"]
@@ -132,12 +156,17 @@ def _key(text: str) -> str:
     return " ".join(str(text).split()).casefold()
 
 
-def classify(
-    before: Mapping[str, Sequence[Mapping[str, Any]]],
-    now: Mapping[str, Sequence[Mapping[str, Any]]],
-) -> dict[str, Counter[str]]:
+# Layers whose values sit side by side (`map_fact_store.BESIDE`): a read turned down there is never
+# "changed" by another lineage the DM kept
+_BESIDE = ("culture", "population")
+State = Mapping[str, Sequence[Mapping[str, Any]]]
+
+
+def classify(before: State, now: State) -> dict[str, Counter[str]]:
     """Each item that waited (`before`, from `waiting`) sorted by what became of it in `now` (from
-    `read_state`). Pure."""
+    `read_state`). A claim the rules dropped is no answer of the DM's and is left out. Pure."""
+    from dmbot.memory.models import name_key
+
     out: dict[str, Counter[str]] = {kind: Counter() for kind in FOLLOWED}
     entities = {r["id"]: r for r in now["entities"]}
     for item in before.get(NAMES, []):
@@ -168,6 +197,8 @@ def classify(
     claims = {r["id"]: r["status"] for r in now["claims"]}
     for item in before.get(FACTS, []):
         status = claims.get(item["id"])
+        if status == "dropped":
+            continue  # (a rule dropped it: no answer of the DM's)
         out[FACTS][
             KEPT if status == "confirmed" else OPEN if status == "proposed" else TURNED_DOWN
         ] += 1
@@ -178,7 +209,7 @@ def classify(
             out[PLACES][OPEN] += 1
         elif f is not None and f["status"] == "confirmed":
             out[PLACES][KEPT] += 1
-        elif any(
+        elif item["layer"] not in _BESIDE and any(
             r["entity_id"] == item["place"] and r["layer"] == item["layer"]
             and r["status"] == "confirmed"
             for r in now["map_facts"]
@@ -187,18 +218,23 @@ def classify(
         else:
             out[PLACES][TURNED_DOWN] += 1
     languages = {r["id"]: r["given_by"] for r in now["languages"]}
+    kept_languages = {
+        (r["entity_id"], r["name_key"]) for r in now["languages"] if r["given_by"] == "dm"
+    }
     for item in before.get(LANGUAGES, []):
         given = languages.get(item["id"])
         out[LANGUAGES][KEPT if given == "dm" else OPEN if given == "read" else TURNED_DOWN] += 1
     offers = {(r["entity_id"], r["kind"], r["name_key"]): r["state"] for r in now["traits"]}
-    rules = {(r["entity_id"], r["kind"]): _key(r["name"]) for r in now["rule_links"]}
+    rules = {(r["entity_id"], r["kind"], name_key(str(r["name"]))) for r in now["rule_links"]}
     for item in before.get(TRAITS, []):
         state = offers.get((item["who"], item["kind"], item["key"]))
         if state == "waiting":
             out[TRAITS][OPEN] += 1
         elif state == "never":
             out[TRAITS][TURNED_DOWN] += 1
-        elif rules.get((item["who"], item["kind"])) == item["key"]:
+        elif (item["who"], item["kind"], item["key"]) in rules or (
+            item["kind"] == "language" and (item["who"], item["key"]) in kept_languages
+        ):  # (a kept language goes beside the sheets, never to a rules link: #4229)
             out[TRAITS][KEPT] += 1
         else:
             out[TRAITS][CHANGED] += 1
@@ -228,8 +264,10 @@ def save(path: Path, items: Mapping[str, Any]) -> None:
         json.dump(items, f)
 
 
-def load(path: Path) -> dict[str, list[dict[str, Any]]]:
-    data = json.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(data, dict) or "campaign" not in data:
-        raise ValueError("not a sample run's question snapshot")
-    return data
+def load(path: Path) -> dict[str, Any] | None:
+    """A snapshot, or None for a file that isn't one (never a crash on a stray file)."""
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) and "campaign" in data else None

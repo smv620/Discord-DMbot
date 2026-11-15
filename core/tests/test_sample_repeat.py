@@ -13,6 +13,7 @@ from unittest import mock
 
 from dmbot.devtools.sample_run import __main__ as cli
 from dmbot.devtools.sample_run import spread
+from dmbot.devtools.sample_run import steps as sample_steps
 
 
 def _args(folder: str, *extra: str) -> Any:
@@ -23,49 +24,85 @@ def _args(folder: str, *extra: str) -> Any:
 
 
 class Repeat(unittest.TestCase):
-    def go(self, folder: str, cost: float, *extra: str) -> tuple[list[dict[str, Any]], list[str]]:
+    def go(
+        self, folder: str, costs: list[float], *extra: str, fail_at: int = 0
+    ) -> tuple[list[dict[str, Any]], list[str], list[str], int]:
         made: list[dict[str, Any]] = []
         said: list[str] = []
+        recaps: list[str] = []
 
         async def run(args: Any, **kw: Any) -> int:
+            i = len(made)
             made.append({"recap": kw["recap"], "snapshot": kw["snapshot"]})
+            kw["kept"].update(guild=1, campaign=f"c{i}", started=100)
             kw["metrics"].update(
-                {"spend: the bot's AI ($)": cost, "backup and score (both, sure + AI): ties found":
-                 40 + len(made), "questions: total": 30}
+                {"spend: the bot's AI ($)": costs[i % len(costs)],
+                 "backup and score (both, sure + AI): ties found": 41 + i,
+                 "questions: total": 30}
             )  # fmt: skip
+            if fail_at and i + 1 == fail_at:
+                raise RuntimeError("stand-in")
             return 0
 
-        with mock.patch.object(cli, "run", run):
-            asyncio.run(cli.run_many(_args(folder, *extra), say=said.append))
-        return made, said
+        async def recap(guild: int, campaign: str, started: int) -> int:
+            recaps.append(campaign)
+            return 0
 
-    def test_five_runs_the_last_kept_and_a_summary_saved(self) -> None:
+        with (
+            mock.patch.object(cli, "run", run),
+            mock.patch.object(sample_steps, "write_recap", recap),
+        ):
+            code = asyncio.run(cli.run_many(_args(folder, *extra), say=said.append))
+        return made, said, recaps, code
+
+    def test_five_runs_one_recap_for_the_kept_run_and_a_summary_saved(self) -> None:
         with tempfile.TemporaryDirectory() as d:
-            made, said = self.go(d, 0.5)
-            self.assertEqual(len(made), 5)
-            self.assertEqual([m["recap"] for m in made], [False] * 4 + [True])
-            self.assertEqual([m["snapshot"] is not None for m in made], [False] * 4 + [True])
+            made, said, recaps, code = self.go(d, [0.5])
+            self.assertEqual((len(made), code), (5, 0))
+            self.assertEqual({m["recap"] for m in made}, {False})
+            self.assertEqual(len({m["snapshot"] for m in made}), 1)  # (the last written is kept)
+            self.assertEqual(recaps, ["c4"])
             text = "\n".join(said)
             self.assertIn(
                 "backup and score (both, sure + AI): ties found: median 43 (41 to 45, spread 4, "
                 "5 runs)",
                 text,
             )
-            self.assertIn("questions: total: median 30 (30 to 30, spread 0, 5 runs)", text)
             [saved] = Path(d).glob("summary-*.json")
             self.assertEqual(spread.load(saved)[0], "abc1234")
 
-    def test_the_cap_stops_new_runs_and_keeps_the_last_one_made(self) -> None:
+    def test_the_cap_keeps_room_for_the_recap(self) -> None:
+        # ($5 less the $0.75 recap reserve is $4.25: 1.5 + 1.5 = 3.0, a third would make 4.5)
         with tempfile.TemporaryDirectory() as d:
-            made, said = self.go(d, 1.5)  # (1.5, 3.0, 4.5: a fourth would pass $5)
-        self.assertEqual([m["recap"] for m in made], [False, False, True])
-        self.assertIn("Sample summary, commit abc1234: 3 runs, about $4.50 (#3545)", said)
+            made, said, recaps, _ = self.go(d, [1.5])
+        self.assertEqual(len(made), 2)
+        self.assertEqual(recaps, ["c1"])  # (the last one made is the one kept)
+        self.assertIn("Stopped after 2 runs: another would pass $5.", said)
+
+    def test_a_dear_first_run_still_gets_its_recap(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            made, _, recaps, _ = self.go(d, [3.0])
+        self.assertEqual((len(made), recaps), (1, ["c0"]))
+
+    def test_rising_costs_stop_before_the_cap(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            made, said, _, _ = self.go(d, [0.5, 1.0, 2.0, 2.0, 2.0])
+        spent = [line for line in said if line.startswith("Sample summary")]
+        self.assertEqual(len(made), 3)  # (0.5, 1.5, 3.5; a fourth at 2.0 would pass 4.25)
+        self.assertIn("3 runs, about $3.50", spent[0])
+
+    def test_a_failed_run_stops_but_the_summary_is_kept(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            made, said, recaps, code = self.go(d, [0.5], fail_at=3)
+            self.assertEqual((len(made), code, recaps), (3, 1, []))
+            self.assertIn("run 3 stopped: RuntimeError", said)
+            self.assertEqual(len(list(Path(d).glob("summary-*.json"))), 1)
 
     def test_the_next_deploy_is_compared_with_the_last_summary(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             old = spread.summarize([{"backup and score (both, sure + AI): ties found": 30}] * 5)
             spread.save(Path(d, "summary-20000101-000000.json"), old, commit="old1")
-            _, said = self.go(d, 0.5)
+            _, said, _, _ = self.go(d, [0.5])
         self.assertIn(
             "backup and score (both, sure + AI): ties found: 30 → 43 (+13; spreads 0 and 4):"
             " changed",

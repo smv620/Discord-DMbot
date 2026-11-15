@@ -47,6 +47,14 @@ class Spread(unittest.TestCase):
         ]
         self.assertEqual(spread.sure_flags(spread.summarize(other_read)), [])  # (it followed)
 
+    def test_the_sessions_sure_step_follows_the_ais_lore_decisions(self) -> None:
+        runs = [
+            {"lore read: names": 60, "AI decides (lore): calls": c, "session import: lines": 172,
+             "sure (session): accepted": 30 + c}
+            for c in (3, 4)
+        ]  # fmt: skip
+        self.assertEqual(spread.sure_flags(spread.summarize(runs)), [])
+
     def test_a_summary_comes_back_as_it_was_saved(self) -> None:
         stats = spread.summarize([{"a": 1}, {"a": 3}])
         with tempfile.TemporaryDirectory() as d:
@@ -61,9 +69,72 @@ def _state(**rows: list[dict[str, object]]) -> dict[str, list[dict[str, object]]
     return {k: list(rows.get(k, [])) for k in empty}
 
 
+def _before(state: dict[str, list[dict[str, object]]]) -> dict[str, list[dict[str, object]]]:
+    """What `questions.waiting` gives, built from plain rows (it reads the stores' lists)."""
+    return {
+        q.NAMES: [
+            {"id": r["id"], "type": r["type"], "name": r["name"]}
+            for r in state["entities"] if r["status"] == "proposed"
+        ],
+        q.CONNECTIONS: [
+            {"s": r["subject_id"], "p": r["predicate"], "o": r["object_id"]}
+            for r in state["links"]
+        ],
+        q.PLACES: [
+            {"id": r["id"], "place": r["entity_id"], "layer": r["layer"], "value": r["value"]}
+            for r in state["map_facts"]
+        ],
+    }  # fmt: skip
+
+
 class Answered(unittest.TestCase):
+    def test_things_said_languages_and_lineage(self) -> None:
+        before = {
+            q.FACTS: [{"id": "c1"}, {"id": "c2"}, {"id": "c3"}],
+            q.LANGUAGES: [{"id": "l1"}, {"id": "l2"}],
+            q.TRAITS: [
+                {"who": "e1", "kind": "class", "key": "wizard"},
+                {"who": "e1", "kind": "species", "key": "halfelf"},  # (models.name_key)
+                {"who": "e2", "kind": "language", "key": "elvish"},
+                {"who": "e2", "kind": "class", "key": "rogue"},
+            ],
+        }
+        now = _state(
+            claims=[{"id": "c1", "status": "confirmed"}, {"id": "c2", "status": "dropped"},
+                    {"id": "c3", "status": "rejected"}],
+            languages=[{"id": "l1", "entity_id": "e1", "name_key": "dwarvish", "given_by": "dm"},
+                       {"id": "lx", "entity_id": "e2", "name_key": "elvish", "given_by": "dm"}],
+            rule_links=[{"entity_id": "e1", "kind": "class", "name": "Fighter"},
+                        {"entity_id": "e1", "kind": "class", "name": "Wizard"},
+                        {"entity_id": "e1", "kind": "species", "name": "Half-Elf"}],
+            traits=[{"entity_id": "e2", "kind": "class", "name_key": "rogue", "state": "never"}],
+        )  # fmt: skip
+        got = q.classify(before, now)
+        self.assertEqual(dict(got[q.FACTS]), {q.KEPT: 1, q.TURNED_DOWN: 1})  # (dropped: no answer)
+        self.assertEqual(dict(got[q.LANGUAGES]), {q.KEPT: 1, q.TURNED_DOWN: 1})
+        self.assertEqual(dict(got[q.TRAITS]), {q.KEPT: 3, q.TURNED_DOWN: 1})
+
+    def test_a_turned_down_lineage_beside_a_kept_one_is_not_changed(self) -> None:
+        before = {q.PLACES: [{"id": "m1", "place": "p", "layer": "culture", "value": "elf"}]}
+        now = _state(map_facts=[
+            {"id": "m1", "entity_id": "p", "layer": "culture", "value": "elf",
+             "faction_id": None, "status": "rejected"},
+            {"id": "m2", "entity_id": "p", "layer": "culture", "value": "dwarf",
+             "faction_id": None, "status": "confirmed"},
+        ])  # fmt: skip
+        self.assertEqual(dict(q.classify(before, now)[q.PLACES]), {q.TURNED_DOWN: 1})
+
+    def test_the_snapshot_is_owner_only_and_a_stray_file_is_skipped(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d, "questions.json")
+            q.save(path, {"campaign": "c", "guild": 1})
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            self.assertEqual(q.load(path), {"campaign": "c", "guild": 1})
+            Path(d, "stray.json").write_text("not json")
+            self.assertIsNone(q.load(Path(d, "stray.json")))
+
     def test_each_kind_sorted_by_what_the_dm_did(self) -> None:
-        before = q.waiting(
+        before = _before(
             _state(
                 entities=[
                     {"id": i, "type": "person", "name": n, "status": "proposed",
@@ -94,7 +165,7 @@ class Answered(unittest.TestCase):
                  "merged_into": None},  # turned down
                 {"id": "e4", "type": "person", "name": "Dask", "status": "proposed",
                  "merged_into": None},  # not answered
-                {"id": "e5", "type": "person", "name": "Hale", "status": "confirmed",
+                {"id": "e5", "type": "person", "name": "Hale", "status": "merged",
                  "merged_into": "e1"},  # changed (the same as another entry)
             ],
             relations=[

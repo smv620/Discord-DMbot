@@ -23,9 +23,11 @@ Metrics = Mapping[str, float]
 
 # A step's own name starts each measure ("sure (lore): accepted"); these are the sure steps and
 # the steps that feed them (`plan.STEPS_DECIDE`)
+# (the session's sure step comes after the AI's lore decisions and the session import, which vary
+# by design, so it is flagged only when none of them varied either)
 SURE_INPUTS = {
     "sure (lore)": ("lore read",),
-    "sure (session)": ("lore read", "session import"),
+    "sure (session)": ("lore read", "sure (lore)", "AI decides (lore)", "session import"),
 }
 _MONEY = re.compile(r"^\$(\d+(?:\.\d+)?)$")
 

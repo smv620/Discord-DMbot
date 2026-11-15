@@ -17,7 +17,7 @@ class Snapshot(MemoryTest):
         await self.add("Oro", status=PROPOSED, source="background")
         other = (await CampaignStore(self.db).create(GUILD_A, "Elsewhere", DM_USER)).id
         await self.add("Brin", campaign=other, status=PROPOSED, source="background")
-        before = q.waiting(await q.read_state(self.db, GUILD_A, self.c))
+        before = await q.waiting(self.db, self.memory, GUILD_A, self.c)
         self.assertEqual(len(before[q.NAMES]), 2)  # (never the other campaign's)
         await self.memory.confirm_entity(GUILD_A, self.c, kept, "npc", source=DM)
         got = q.classify(before, await q.read_state(self.db, GUILD_A, self.c))

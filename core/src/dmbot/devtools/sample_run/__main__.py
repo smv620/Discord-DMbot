@@ -55,6 +55,9 @@ DEFAULT_BACKUPS = Path("/var/lib/dmbot-sample-backups")
 DEFAULT_REPEAT = 5  # Supervisor's ruling on #3545 (2026-11-15)
 MAX_USD = 5.0  # the cap a deploy, the same ruling
 USD_PER_CREDIT = 0.001  # `credits.MICRO_PER_CREDIT`: 1 credit = 1,000 micro-dollars
+# Set aside for the kept run's recap before any run starts: the recap writer is not on the bot's
+# credit ledger, so its cost is never measured here; runs 16 and 17 on #3545 cost $0.40 to $0.60
+RECAP_RESERVE_USD = 0.75
 _ON = {"1", "true", "on", "yes"}
 
 
@@ -158,10 +161,12 @@ async def run(
     recap: bool = True,
     metrics: dict[str, float] | None = None,
     snapshot: Path | None = None,
+    kept: dict[str, Any] | None = None,
 ) -> int:
     """One sample run. `recap`: write the recap (only the kept run does, #3545). `metrics`: filled
     with the run's numeric counts, scores, questions waiting and spend, for `--repeat`. `snapshot`:
-    where the questions still waiting at the end are written for `--part2`."""
+    where the questions still waiting at the end are written for `--part2`. `kept`: filled with
+    the campaign and the session's start, so `--repeat` can write the kept run's recap after."""
     say = say or (lambda line: print(line, flush=True))
     if args.lore is None or args.session is None:
         raise SampleError("--lore and --session are needed for a run")
@@ -263,6 +268,8 @@ async def run(
             db, campaigns, gid, dm, keep_old=args.keep_old, today=today, say=say, found=found
         )
         cid = campaign.id
+        if kept is not None:
+            kept.update(guild=gid, campaign=cid, started=started)
 
         async def lore_step() -> Mapping[str, int | str]:
             upload = await steps.queue_lore(
@@ -430,9 +437,11 @@ async def run(
             }  # fmt: skip
         if not recap:
             del actions["recap (no audio)"]
-        await steps.run_steps(actions, done, say, order)
-        if metrics is not None or snapshot is not None:
-            await _measure(db, memory, gid, cid, done, metrics, snapshot, say)
+        try:
+            await steps.run_steps(actions, done, say, order)
+        finally:  # (a run that stopped part way still counts what it did and spent)
+            if metrics is not None or snapshot is not None:
+                await _measure(db, memory, gid, cid, done, metrics, snapshot, say)
         # The secret connections by source and the split-party counts (Supervisor, #3545): counts
         # only, read after every step, for dev1's report.
         try:
@@ -467,18 +476,21 @@ async def _measure(
 ) -> None:
     """At a run's end (#3545): its numbers for the spread, the questions left for the DM (A), what
     the bot's AI cost it, and for the kept run the snapshot part 2 reads. Counts only are said."""
+    from dmbot.consent import ConsentStore
     from dmbot.devtools.sample_run import questions, spread
     from dmbot.memory.backstory_links import BackstoryLinks
     from dmbot.memory.claims import ClaimStore
     from dmbot.questions import counts as question_counts
+    from dmbot.transcript.waiting_questions import WaitingQuestionStore
 
     if metrics is not None:
         for step in done:
             metrics.update(spread.step_metrics(step.name, step.counts))
     try:
         sources = question_counts.Sources(
-            db=db, memory=memory, claims=ClaimStore(memory), backstory=BackstoryLinks(db)
-        )
+            db=db, memory=memory, claims=ClaimStore(memory), backstory=BackstoryLinks(db),
+            heard=WaitingQuestionStore(db), agreed=ConsentStore(db).consenting,
+        )  # fmt: skip
         asked = await questions.asked(sources, gid, cid)
     except Exception as exc:  # (a count that can't be read never fails the run)
         say(f"Questions waiting for the DM: not counted ({type(exc).__name__})")
@@ -490,18 +502,31 @@ async def _measure(
             metrics["questions: total"] = total
             metrics.update({f"questions: {k}": v for k, v in asked.items()})
     if metrics is not None:
-        async with db.guild(gid) as conn:
-            cur = await conn.execute(
-                "SELECT COALESCE(sum(credits), 0) AS c FROM ai_credit_spend"
-                " WHERE guild_id = %s AND campaign_id = %s",
-                (gid, cid),
-            )
-            row = await cur.fetchone()
-        metrics["spend: the bot's AI ($)"] = round(int(row["c"] if row else 0) * USD_PER_CREDIT, 4)
+        try:
+            async with db.guild(gid) as conn:
+                cur = await conn.execute(
+                    "SELECT COALESCE(sum(credits), 0) AS c FROM ai_credit_spend"
+                    " WHERE guild_id = %s AND campaign_id = %s",
+                    (gid, cid),
+                )
+                row = await cur.fetchone()
+        except Exception as exc:
+            say(f"Spend: not read ({type(exc).__name__})")
+        else:
+            credits = int(row["c"] if row else 0)
+            metrics["spend: the bot's AI ($)"] = round(credits * USD_PER_CREDIT, 4)
     if snapshot is not None:
-        state = await questions.read_state(db, gid, cid)
-        questions.save(snapshot, {"campaign": cid, "guild": gid, **questions.waiting(state)})
-        say(f"Questions kept for part 2 of 2: {snapshot.name} (run --part2 {cid} once answered)")
+        try:
+            questions.save(
+                snapshot,
+                {"campaign": cid, "guild": gid, **await questions.waiting(db, memory, gid, cid)},
+            )
+        except Exception as exc:
+            say(f"Questions for part 2: not kept ({type(exc).__name__})")
+        else:
+            say(
+                f"Questions kept for part 2 of 2: {snapshot.name} (run --part2 {cid} once answered)"
+            )
 
 
 def _cost(metrics: Mapping[str, float]) -> float:
@@ -511,10 +536,11 @@ def _cost(metrics: Mapping[str, float]) -> float:
 async def run_many(args: argparse.Namespace, **kw: Any) -> int:
     """`--repeat N` (#3545): N fresh sample campaigns, back to back, then one summary of every
     count as its median, range and spread, the noise of each step, and what changed since the last
-    deploy's summary. Each run replaces the sample campaign, so the last is the one kept: only it
-    writes the recap and the snapshot for part 2. A run is started only while the money spent so
-    far plus the dearest run so far stays within `--max-usd`; the run that leaves no room for
-    another is made the kept one."""
+    deploy's summary. Each run replaces the sample campaign, so the last one made is the one kept:
+    each run writes the question snapshot (the last written is the kept run's), and the recap is
+    written once, after the runs, for the kept campaign. The recap's cost is set aside first; a run
+    is then started only while what was spent plus the dearest run so far still fits `--max-usd`.
+    A run that fails stops the runs; the summary of those done is still printed and saved."""
     from dmbot.devtools import common
     from dmbot.devtools.sample_run import spread
 
@@ -523,29 +549,39 @@ async def run_many(args: argparse.Namespace, **kw: Any) -> int:
     if not args.yes or n == 1:
         return await run(args, **kw)
     folder = steps.keep_folder(args.backup_dir)
+    commit = common.commit(args.commit, tool="sample_run")  # (before any money is spent)
     stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%d-%H%M%S")
+    snap = folder / f"questions-{stamp}.json"
+    budget = args.max_usd - RECAP_RESERVE_USD
+    if budget <= 0:
+        raise SampleError(f"--max-usd must leave room for the recap (${RECAP_RESERVE_USD:g})")
     runs: list[dict[str, float]] = []
+    kept: dict[str, Any] = {}
     spent = dearest = 0.0
+    failed: str | None = None
     for i in range(1, n + 1):
-        if runs and spent + dearest > args.max_usd:
+        if runs and spent + dearest > budget:
             say(f"Stopped after {len(runs)} runs: another would pass ${args.max_usd:g}.")
             break
-        last = i == n or (bool(runs) and spent + 2 * dearest > args.max_usd)
-        say(f"=== run {i} of {n}{' (kept)' if last else ''} ===")
+        say(f"=== run {i} of {n} ===")
         metrics: dict[str, float] = {}
-        snap = folder / f"questions-{stamp}.json" if last else None
         try:
-            await run(args, recap=last, metrics=metrics, snapshot=snap, **kw)
-        finally:  # (a run that stopped part way still counts what it did and spent)
-            if metrics:
-                runs.append(metrics)
-                spent += _cost(metrics)
-                dearest = max(dearest, _cost(metrics))
-                say(f"run {i}: about ${_cost(metrics):.2f}; ${spent:.2f} so far")
-        if last:
+            await run(args, recap=False, metrics=metrics, snapshot=snap, kept=kept, **kw)
+        except Exception as exc:  # (the kind only; the summary of the runs done still comes)
+            failed = type(exc).__name__ if not isinstance(exc, SampleError) else str(exc)
+            say(f"run {i} stopped: {failed}")
+        if metrics:
+            runs.append(metrics)
+            spent += _cost(metrics)
+            dearest = max(dearest, _cost(metrics))
+            say(f"run {i}: about ${_cost(metrics):.2f}; ${spent:.2f} so far")
+        if failed:
             break
+    if kept and not failed:
+        say("=== recap of the kept run (no audio) ===")
+        code = await steps.write_recap(kept["guild"], kept["campaign"], kept["started"])
+        say("recap: made" if code == 0 else f"recap: not made (recap_run exit {code})")
     stats = spread.summarize(runs)
-    commit = common.commit(args.commit, tool="sample_run")
     say(f"Sample summary, commit {commit}: {len(runs)} runs, about ${spent:.2f} (#3545)")
     for line in spread.render(stats):
         say(line)
@@ -558,8 +594,9 @@ async def run_many(args: argparse.Namespace, **kw: Any) -> int:
         say(f"Since {old_commit or 'the last summary'}: " + ("nothing moved" if not moved else ""))
         for line in moved:
             say(line)
-    spread.save(folder / f"summary-{stamp}.json", stats, commit=commit)
-    return 0
+    if runs:
+        spread.save(folder / f"summary-{stamp}.json", stats, commit=commit)
+    return 1 if failed else 0
 
 
 def _newest(folder: Path, pattern: str) -> Path | None:
@@ -580,7 +617,7 @@ async def part2(args: argparse.Namespace, say: Callable[[str], None] | None = No
     snap = None
     for path in sorted(folder.glob("questions-*.json"), reverse=True):
         data = questions.load(path)
-        if data.get("campaign") == args.part2 and data.get("guild") == args.guild:
+        if data and data.get("campaign") == args.part2 and data.get("guild") == args.guild:
             snap = data
             break
     if snap is None:
