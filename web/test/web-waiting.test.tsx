@@ -145,9 +145,9 @@ describe("connections from a backstory", () => {
     expect(await screen.findByText(w.kept(2))).toBeTruthy();
     expect(api.calls).toContain(`answerWaiting:${REF}:backstory:keep_all:b1,b2`);
     // the one waiting on a name is still there, with the reason, and no Keep for it
-    const waiting = screen.getByText("Rook knows Newcomer").closest(".panel") as HTMLElement;
+    const waiting = screen.getByText("Proposed: Rook knows Newcomer").closest(".panel") as HTMLElement;
     expect(within(waiting).getByText(w.waitingOn(["Newcomer"]))).toBeTruthy();
-    expect(within(waiting).queryByRole("button", { name: w.keep })).toBeNull();
+    expect(within(waiting).queryByRole("button", { name: w.addIt })).toBeNull();
     expect(within(waiting).getByRole("button", { name: w.skip })).toBeTruthy();
   });
 
@@ -171,27 +171,32 @@ describe("connections from a backstory", () => {
     expect(api.calls).toContain("answered:50");
   });
 
-  it("Keep as secret, Keep and Skip each send their own answer", async () => {
+  it("Add it, Add it hidden and Leave it out each send their own answer", async () => {
     const api = await open();
-    press(w.keepSecret, screen.getByText("Rook knows Far Hall").closest(".panel") as HTMLElement);
+    const far = screen.getByText("Proposed: Rook knows Far Hall").closest(".panel") as HTMLElement;
+    press(w.hideFromPlayers, far);
+    expect(within(far).getByText(w.playersNew(true))).toBeTruthy(); // (the toggle only changes the line)
+    expect(api.calls.some((c) => c.startsWith("answerWaiting:"))).toBe(false);
+    press(w.addIt, far);
     expect(await screen.findByText(w.done.keepSecret)).toBeTruthy();
     await settled();
     expect(api.calls).toContain(`answerWaiting:${REF}:backstory:keep:b1:secret`);
-    press(w.keep, screen.getByText("Mira Voss grew up in Harrow's Keep").closest(".panel") as HTMLElement);
+    press(w.addIt, screen.getByText("Proposed: Mira Voss grew up in Harrow's Keep").closest(".panel") as HTMLElement);
     expect(await screen.findByText(w.done.keep)).toBeTruthy();
     await settled();
     expect(api.calls).toContain(`answerWaiting:${REF}:backstory:keep:b4`);
-    press(w.skip, screen.getByText("Rook knows Newcomer").closest(".panel") as HTMLElement);
+    press(w.skip, screen.getByText("Proposed: Rook knows Newcomer").closest(".panel") as HTMLElement);
     expect(await screen.findByText(w.done.skip)).toBeTruthy();
     expect(api.calls).toContain(`answerWaiting:${REF}:backstory:skip:b3`);
   });
 
-  it("a secret connection says players won't see it", async () => {
+  it("a secret name says so, has no toggle, and is added hidden", async () => {
     await open();
-    const secret = screen.getByText("Rook grew up with Mira Voss").closest(".panel") as HTMLElement;
-    expect(within(secret).getByText(w.secretNote)).toBeTruthy();
-    expect(within(secret).queryByRole("button", { name: w.keepSecret })).toBeNull();
-    expect(within(secret).getByRole("button", { name: w.keepIsSecret })).toBeTruthy(); // (as on Discord)
+    const secret = screen.getByText("Proposed: Rook grew up with Mira Voss").closest(".panel") as HTMLElement;
+    expect(within(secret).getByText(w.playersSecretName)).toBeTruthy();
+    expect(within(secret).queryByRole("button", { name: w.hideFromPlayers })).toBeNull();
+    expect(within(secret).queryByRole("button", { name: w.letPlayersSee })).toBeNull();
+    expect(within(secret).getByRole("button", { name: w.addIt })).toBeTruthy();
   });
 });
 
@@ -374,10 +379,10 @@ describe("after an answer", () => {
     held = true; // the re-read after the answer is slow
     press(w.reject, screen.getByText("Roan is dead").closest(".panel") as HTMLElement);
     await screen.findByText(w.done.reject);
-    for (const b of screen.getAllByRole("button", { name: w.keep })) expect((b as HTMLButtonElement).disabled).toBe(true);
+    for (const b of screen.getAllByRole("button", { name: w.addIt })) expect((b as HTMLButtonElement).disabled).toBe(true);
     held = false;
     release();
-    await waitFor(() => expect((screen.getAllByRole("button", { name: w.keep })[0] as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() => expect((screen.getAllByRole("button", { name: w.addIt })[0] as HTMLButtonElement).disabled).toBe(false));
   });
 
   it("puts focus on the heading, since the answered item has gone", async () => {
@@ -429,9 +434,9 @@ describe("after an answer", () => {
 describe("skipping a connection that waits on a name", () => {
   it("dismisses it: skipping writes no fact", async () => {
     const api = await open();
-    press(w.skip, screen.getByText("Rook knows Newcomer").closest(".panel") as HTMLElement);
+    press(w.skip, screen.getByText("Proposed: Rook knows Newcomer").closest(".panel") as HTMLElement);
     expect(await screen.findByText(w.done.skip)).toBeTruthy();
-    await waitFor(() => expect(screen.queryByText("Rook knows Newcomer")).toBeNull());
+    await waitFor(() => expect(screen.queryByText("Proposed: Rook knows Newcomer")).toBeNull());
     expect(api.calls).toContain(`answerWaiting:${REF}:backstory:skip:b3`);
   });
 

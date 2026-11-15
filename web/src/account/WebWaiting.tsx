@@ -69,6 +69,8 @@ export default function WebWaiting({
 }) {
   const [list, setList] = useState<Waiting | null>(null);
   const [failed, setFailed] = useState(false);
+  // The DM's change to "can players see it?" on a connection card, by item id; nothing is saved until Add it or Update it (#4430).
+  const [flip, setFlip] = useState<Record<string, boolean>>({});
   const [sending, setSending] = useState<{ since: number; stage: string; keepAll: boolean; look: WaitingLook | null } | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   // A private message's "Open on the website" names one waiting item (#3663): it is opened once the list is here, or the page
@@ -491,67 +493,61 @@ export default function WebWaiting({
                     >
                       {w.keepAll(ids.length)}
                     </button>
+                    <span class="small muted">{w.keepAllPlayers}</span>
                   </div>
                 )}
-                {u.items.map((b) => (
+                {u.items.map((b) => {
+                  // Q2 (#4430): who sees it. A secret name is always hidden; an update starts as it is now; a new one starts shown.
+                  const hidden = b.secret ? true : (flip[b.id] ?? b.now?.hidden ?? false);
+                  const answer = (action: "keep" | "skip") =>
+                    action === "skip"
+                      ? ({ kind: "backstory", action: "skip", id: b.id } as const)
+                      : ({ kind: "backstory", action: "keep", id: b.id, ...(b.secret ? {} : hidden ? { secret: true } : b.now?.hidden ? { secret: false } : {}) } as const);
+                  return (
                   <div key={b.id} class="panel" id={itemDomId(b.id)} tabIndex={-1}>
-                    <p id={`wb-${b.id}`}>{`${b.subject} ${b.how} ${b.object}`}{handOf(b) ? ` (${handOf(b)})` : ""}</p>
+                    {b.now && <p class="small">{w.nowLine(b.subject, b.now.how, b.object)}</p>}
+                    <p id={`wb-${b.id}`}>{w.proposedLine(b.subject, b.how, b.object, handOf(b) ? ` (${handOf(b)})` : "")}</p>
                     {b.check && <p class="small muted">{w.checkLine(b.check)}</p>}
-                    {b.quote && <p class="muted small">“{b.quote}”</p>}
-                    {b.secret && <p class="small">{w.secretNote}</p>}
+                    {b.guess && <p class="small">{w.guessLine(b.guess)}</p>}
+                    {b.quote && <p class="muted small">{w.fromText(b.quote)}</p>}
                     {handOf(b) && b.ready && <p class="small">{handKeeps(b.handOver!, b.handOverName!, b.secret)}</p>}
+                    <p class="small">{b.secret ? w.playersSecretName : b.now ? w.playersUpdate(b.now.hidden, hidden) : w.playersNew(hidden)}</p>
                     {b.ready ? (
-                      <div class="row">
-                        <button
-                          type="button"
-                          class="button"
-                          disabled={busy}
-                          aria-describedby={`wb-${b.id}`}
-                          onClick={() => void send({ kind: "backstory", action: "keep", id: b.id }, w.done.keep)}
-                        >
-                          {b.secret ? w.keepIsSecret : w.keep}
-                        </button>
-                        {!b.secret && (
-                          <button
-                            type="button"
-                            class="button secondary"
-                            disabled={busy}
-                            aria-describedby={`wb-${b.id}`}
-                            onClick={() =>
-                              void send({ kind: "backstory", action: "keep", id: b.id, secret: true }, w.done.keepSecret)
-                            }
-                          >
-                            {w.keepSecret}
+                      <>
+                        <p class="small">{b.now ? w.nothingChangesUpdate : w.nothingChangesAdd}</p>
+                        <div class="row">
+                          <button type="button" class="button" disabled={busy} aria-describedby={`wb-${b.id}`}
+                            onClick={() => void send(answer("keep"), hidden ? w.done.keepSecret : w.done.keep)}>
+                            {b.now ? w.updateIt : w.addIt}
                           </button>
+                          <button type="button" class="button secondary" disabled={busy} aria-describedby={`wb-${b.id}`}
+                            onClick={() => void send(answer("skip"), w.done.skip)}>
+                            {b.now ? w.leaveAsIs : w.leaveOut}
+                          </button>
+                        </div>
+                        {!b.secret && (
+                          <div class="row">
+                            <button type="button" class="button secondary" disabled={busy} aria-describedby={`wb-${b.id}`}
+                              onClick={() => setFlip({ ...flip, [b.id]: !hidden })}>
+                              {hidden ? w.letPlayersSee : w.hideFromPlayers}
+                            </button>
+                          </div>
                         )}
-                        <button
-                          type="button"
-                          class="button secondary"
-                          disabled={busy}
-                          aria-describedby={`wb-${b.id}`}
-                          onClick={() => void send({ kind: "backstory", action: "skip", id: b.id }, w.done.skip)}
-                        >
-                          {w.skip}
-                        </button>
-                      </div>
+                      </>
                     ) : (
                       <>
                         <p class="small">{w.waitingOn(b.waitingOn)}</p>
                         <div class="row">
-                          <button
-                            type="button"
-                            class="button secondary"
-                            disabled={busy}
-                            aria-describedby={`wb-${b.id}`}
-                            onClick={() => void send({ kind: "backstory", action: "skip", id: b.id }, w.done.skip)}
-                          >
+                          <button type="button" class="button secondary" disabled={busy} aria-describedby={`wb-${b.id}`}
+                            onClick={() => void send({ kind: "backstory", action: "skip", id: b.id }, w.done.skip)}>
                             {w.skip}
                           </button>
                         </div>
                       </>
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             );
           })}

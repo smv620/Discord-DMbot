@@ -31,6 +31,31 @@ export const waitingWords = {
   fromUpload: (label: string): string => `From ${label}`,
   fromEarlier: "From an earlier upload",
   keep: "Keep",
+  // The connection card asks two questions apart (#4430, words from #4429): Q1 update or add it, Q2 can players see it.
+  nowLine: (subject: string, how: string, object: string): string => `Now: ${subject} ${how} ${object}`,
+  proposedLine: (subject: string, how: string, object: string, hand: string): string => `Proposed: ${subject} ${how} ${object}${hand}`,
+  guessLine: (guess: string): string => `🤔 DMbot's guess (your text doesn't say it outright): ${guess}.`,
+  fromText: (quote: string): string => `From your text: “${quote}”`,
+  // The Players line: how it is now and how it will be after (an update), or how it will be (a new one).
+  playersNew: (hidden: boolean): string => (hidden ? "🤫 Hidden from players." : "👁️ Players will see it."),
+  playersUpdate: (nowHidden: boolean, hidden: boolean): string =>
+    !nowHidden && !hidden
+      ? "👁️ Players can see it now, and still will after the update."
+      : nowHidden && hidden
+        ? "🤫 Hidden from players now, and still will be after the update."
+        : !nowHidden
+          ? "🤫 Players can see it now. After the update it will be hidden."
+          : "👁️ Hidden from players now. After the update they will see it.",
+  playersSecretName: "🤫 Hidden from players: it uses a secret name.",
+  hideFromPlayers: "🤫 Hide from players",
+  letPlayersSee: "👁️ Let players see it",
+  updateIt: "✅ Update it",
+  addIt: "✅ Add it",
+  leaveAsIs: "❌ Leave it as it is",
+  leaveOut: "❌ Leave it out",
+  nothingChangesUpdate: "Nothing changes until you press ✅ Update it.",
+  nothingChangesAdd: "Nothing is added until you press ✅ Add it.",
+  keepAllPlayers: "Keep all uses what each card says about players.",
   keepSecret: "Keep as secret",
   keepIsSecret: "Keep (secret)",
   skip: "Skip",
