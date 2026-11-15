@@ -1303,7 +1303,8 @@ class CampaignStore:
             from_account = await self._account_of(conn, from_user_id)
             if from_account is None or campaign.owner_user_id != from_account:
                 raise CampaignError(NOT_THE_OWNER)
-            if await self._account_of(conn, to_user_id) == from_account:
+            to_account = await self._account_of(conn, to_user_id)
+            if to_account == from_account:
                 raise CampaignError(OFFER_TO_SELF)
             # An open offer past its 7 days no longer counts: mark it, so the new one can
             # be the campaign's one open offer.
@@ -1319,11 +1320,14 @@ class CampaignStore:
             try:  # the index is the last word, should a writer ever skip the lock
                 cur = await conn.execute(
                     "INSERT INTO campaign_handover_offers (guild_id, campaign_id,"
-                    " from_user_id, to_user_id, from_name, to_name, created_at, delivered_at)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING *",
+                    " from_user_id, to_user_id, from_name, to_name, created_at, delivered_at,"
+                    " from_account, to_account)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *",
                     (
                         guild_id, campaign_id, from_user_id, to_user_id, *names, now,
-                        now if delivered else None,
+                        now if delivered else None, from_account,
+                        # (a person with no account yet is their own number)
+                        to_user_id if to_account is None else to_account,
                     ),
                 )  # fmt: skip
             except pg_errors.UniqueViolation as exc:
@@ -1436,7 +1440,9 @@ class CampaignStore:
     async def offers_to_end(self, guild_id: int, now: int) -> list[HandoverOffer]:
         """Offers in this server whose 7 days are up and whose owner hasn't been told,
         oldest first. Open ones past their days are marked expired first (#690). Before
-        telling the owner, `claim_end_notice` each."""
+        telling the owner, `claim_end_notice` each. Offers whose people's accounts changed are
+        closed first (#2533, slice 3), and come back here as ended like the rest."""
+        await self.close_changed_offers(guild_id, now)
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "UPDATE campaign_handover_offers SET status = 'expired',"
@@ -1447,11 +1453,48 @@ class CampaignStore:
             )
             cur = await conn.execute(
                 "SELECT * FROM campaign_handover_offers"
-                " WHERE guild_id = %s AND status = 'expired' AND end_told_at IS NULL"
+                " WHERE guild_id = %s AND status IN ('expired', 'closed') AND end_told_at IS NULL"
                 " ORDER BY id",
                 (guild_id,),
             )
             return [_to_offer(row) for row in await cur.fetchall()]
+
+    async def close_changed_offers(self, guild_id: int, now: int) -> int:
+        """Close the open offers whose people are no longer who they were (#2533, slice 3): an
+        account gained or lost a Discord login, so the person offered to, or the owner who
+        offered, is a different account now, or both are one account. The offer becomes
+        `closed` (with `closed_side`), nothing moves, and the sweep that follows tells both
+        people once. An offer made before this, by email, or under a move is left alone. How
+        many were closed."""
+        closed = 0
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT * FROM campaign_handover_offers WHERE guild_id = %s AND status = 'open'"
+                " AND from_account IS NOT NULL AND to_account IS NOT NULL AND NOT via_email"
+                " AND move_to_guild_id IS NULL ORDER BY id",
+                (guild_id,),
+            )
+            for row in await cur.fetchall():
+                nobody = 0  # a first login its account took off itself is nobody's now
+                from_now = await self._account_of(conn, int(row["from_user_id"]))
+                to_now = await self._account_of(conn, int(row["to_user_id"]))
+                from_now = nobody if from_now is None else from_now
+                to_now = int(row["to_user_id"]) if to_now is None else to_now
+                if from_now == to_now:
+                    side = "same"
+                elif from_now != int(row["from_account"]):
+                    side = "offerer"
+                elif to_now != int(row["to_account"]):
+                    side = "receiver"
+                else:
+                    continue
+                done = await conn.execute(
+                    "UPDATE campaign_handover_offers SET status = 'closed', closed_side = %s,"
+                    " decided_at = %s WHERE guild_id = %s AND id = %s AND status = 'open'",
+                    (side, now, guild_id, row["id"]),
+                )
+                closed += done.rowcount
+        return closed
 
     async def claim_end_notice(self, guild_id: int, offer_id: int, now: int) -> bool:
         """Mark an ended offer told, just before telling its owner: False if someone else
@@ -2450,6 +2493,9 @@ def _to_offer(row: dict[str, Any]) -> HandoverOffer:
         move_asked_at=row_int(row, "move_asked_at"),
         move_failed_for=row_int(row, "move_failed_for"),
         move_failed_reason=row.get("move_failed_reason"),
+        from_account=row_int(row, "from_account"),
+        to_account=row_int(row, "to_account"),
+        closed_side=row.get("closed_side"),
     )
 
 

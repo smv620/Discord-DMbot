@@ -134,6 +134,26 @@ TOLD_EXPIRED = (
     "**{name}** didn't answer your offer of **{campaign}** within {days} days, so it ended. "
     + _OFFER_AGAIN
 )
+# An offer closed because a Discord account was added to or taken off an account (#2533, slice 3;
+# Supervisor's words, 2026-11-15). The pair is chosen by whose account changed. Nothing moved.
+_OFFER_AGAIN_BUTTON = "To offer it again, press 🤝 Hand over."
+CLOSED_DM_TO_DM = (
+    "📪 Your offer to hand over **{campaign}** was closed, because the Discord accounts on your "
+    "DMbot account changed. Nothing moved. " + _OFFER_AGAIN_BUTTON
+)
+CLOSED_DM_TO_RECEIVER = (
+    "📪 The offer to hand over **{campaign}** to you was closed, because the Discord accounts on "
+    "the DM's DMbot account changed. Nothing moved. Ask the DM to offer it again if you still "
+    "want it."
+)
+CLOSED_RECEIVER_TO_DM = (
+    "📪 Your offer to hand over **{campaign}** was closed, because the Discord accounts on the "
+    "other person's DMbot account changed. Nothing moved. " + _OFFER_AGAIN_BUTTON
+)
+CLOSED_RECEIVER_TO_RECEIVER = (
+    "📪 The offer to hand over **{campaign}** to you was closed, because the Discord accounts on "
+    "your DMbot account changed. Nothing moved. Ask the DM to offer it again if you still want it."
+)
 # An offer made by email (#2532; PLAN): there is no name, and the campaign never moved.
 TOLD_EXPIRED_EMAIL = (
     "They didn't answer within {days} days, so the offer ended. The campaign is still yours. "
