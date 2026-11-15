@@ -244,6 +244,13 @@ services:
       WEB_PICTURES_R2_BUCKET: ${WEB_PICTURES_R2_BUCKET:-}
       WEB_PICTURES_R2_KEY: ${WEB_PICTURES_R2_KEY:-}
       WEB_PICTURES_R2_SECRET: ${WEB_PICTURES_R2_SECRET:-}
+      # A map sent from the website (#4347) is staged in a SEPARATE staging bucket (1-day lifecycle
+      # rule) with its own write key. Never a write key to the pictures bucket: R2 tokens scope to a
+      # bucket, so that key could overwrite every campaign's pictures. The bot copies a staged file
+      # into the pictures bucket. Blank: an upload answers "uploads_off".
+      WEB_MAPS_STAGING_R2_BUCKET: ${WEB_MAPS_STAGING_R2_BUCKET:-}
+      WEB_MAPS_STAGING_R2_KEY: ${WEB_MAPS_STAGING_R2_KEY:-}
+      WEB_MAPS_STAGING_R2_SECRET: ${WEB_MAPS_STAGING_R2_SECRET:-}
     volumes:
       - recap-audio:/recap-audio:ro
       - bot-status:/status:ro

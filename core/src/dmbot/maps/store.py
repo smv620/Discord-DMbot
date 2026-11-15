@@ -377,6 +377,18 @@ class MapStore:
 
     # ---- the close read's sweep (#4349, MapBot 6b-2; migration 0488 says what the marks mean) ----
 
+    async def close_read_tries(self, guild_id: int, campaign_id: str, map_id: str) -> int:
+        """How many times the sweep has tried this map's close read (0 for a map that is gone):
+        a count only, for `sample_run --map` to stop waiting once the bot has given up (#4423)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT close_read_tries FROM campaign_maps WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s",
+                (guild_id, campaign_id, map_id),
+            )
+            row = await cur.fetchone()
+        return int(row["close_read_tries"]) if row else 0
+
     async def close_read_waiting(self, guild_id: int) -> list[tuple[str, Map]]:
         """The maps in this server still to be read closely, oldest first, each with its campaign:
         DMbot may use them (`may_use_map`), none has been read, and none failed 3 times. Claimed

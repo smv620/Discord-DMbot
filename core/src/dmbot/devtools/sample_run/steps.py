@@ -484,6 +484,32 @@ def score(path: Path, docs: str) -> list[str]:
     return out.getvalue().splitlines()
 
 
+def score_numbers(path: Path, docs: str) -> dict[str, int]:
+    """The answer-key check's totals as numbers (#3545's spread): entries and ties found, missing,
+    wrong and waiting over every group, and the extras. Counts only."""
+    from collections import Counter
+
+    from dmbot.campaigns.store import decode_backup
+    from dmbot.devtools import graph_key_check as gkc
+
+    summary = gkc.summarize(gkc.check(decode_backup(path.read_bytes()), master_key(), docs))
+    out: dict[str, int] = {}
+    for part in ("entries", "ties"):
+        total: Counter[str] = Counter()
+        for counts in summary[part].values():
+            total.update(counts)
+        out.update({
+            f"{part} found": total[gkc.FOUND],
+            f"{part} wrong": total[gkc.WRONG],
+            f"{part} waiting": total[gkc.WAITING],
+            f"{part} missing": total[gkc.MISSING],
+            f"{part} must missed": total["must_missed"],
+        })  # fmt: skip
+    out["extra entries"] = sum(summary["extra_entries"].values())
+    out["extra ties"] = int(summary["extra_ties"])
+    return out
+
+
 async def write_recap(
     guild: int,
     campaign_id: str,
