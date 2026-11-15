@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { mapsWords as w } from "../content/maps-words";
 import { MAPS_LIVE } from "../content/maps-switch";
 import { ApiError, type AccountApi, type MapItem, type MapsChange, type MapsRead } from "./api";
+import MapAddForm from "./MapAddForm";
 import WorkProgress from "./WorkProgress";
 
 /** The campaign in the address: `/account/maps/<server>.<campaign>`. */
@@ -182,6 +183,7 @@ export default function Maps({ api, refId }: { api: AccountApi; refId: string })
           </li>
         ))}
       </ul>
+      {api.addMap && <MapAddForm api={api} refId={refId} canManage={read.canManage} onAdded={() => void load()} />}
       {said && (
         <p class="row">
           <span class={said.ok ? "small" : "small warn"} role={said.ok ? "status" : "alert"}>{said.text}</span>
