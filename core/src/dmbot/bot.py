@@ -3028,8 +3028,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     return
                 agreed = await self.consent.consenting(gid)
                 presession = PreSession(
-                    self.memory, RecallService(self.memory), ClaimStore(self.memory), self.recaps
-                )
+                    self.memory, RecallService(self.memory), ClaimStore(self.memory), self.recaps,
+                    # (getattr: the tests' stand-in bots have no clock store)
+                    getattr(self, "clocks", None),
+                )  # fmt: skip
                 async with asyncio.timeout(PRESESSION_NOTE_WAIT_S):  # never a stuck connection
                     note = await presession.note(
                         gid,
