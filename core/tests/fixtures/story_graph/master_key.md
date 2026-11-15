@@ -90,6 +90,7 @@ These are the ties the check should find most surely: the session repeats or sha
 | m050 | Caer-Dineval | in | Ten-Towns | stated | yes | yes | lore | L96 | listed with its sacrifice (also line 7) |
 | m051 | Caer-Konig | in | Ten-Towns | stated | yes | yes | lore | L96 | listed with its sacrifice (also line 7) |
 | m052 | Lonelywood | in | Ten-Towns | stated | yes | yes | lore | L96 | listed with its sacrifice (also line 7) |
+| m147 | Dougan's Hole | in | Ten-Towns | stated | yes | yes | lore | L96 | listed with its sacrifice (added to the lore on 2026-11-15; not on line 7) |
 | m053 | Ten-Towns | in | Icewind Dale | stated | yes | yes | lore | L63 |  |
 | m054 | Sacrifice of souls | in | Targos | stated | yes | yes | lore | L7 | held there every ten-day (line 96) |
 | m055 | Sacrifice of souls | in | Bryn Shander | stated | yes | yes | lore | L7 | held there every ten-day (line 96) |
@@ -378,7 +379,6 @@ How far a road is, as the session says it (#4255): a property of the road, never
 - 'The Brotherhood' in the note is named once and nothing is said about it: no members, no leader, and it is not the Explorer's League
 - the unnamed boy who shouts the news, the unnamed beggar woman's prophecy and the unnamed ghost's own name: do not invent names for them
 - 'Eashaven' is Easthaven spelled wrongly (one place, not two)
-- the Ten-Towns settlement 'Dougan's Hole' is not in this document, so it must not appear
 - line 1, the DM's long 'Previously...' speech, is the recap of the earlier session: none of its events (the Rime sacrifices, the wolf figurine sale, the ferry, the ice troll, Fizzlebomb overboard, the owlbears, Boy found, Keegan's plea) may be dated to this session or retold as this session's events; its ties are background only
 - the two barbarians are 'the attackers' and nothing more: no entry named 'the morningstar barbarian' or 'the maul barbarian' (#3244 rule 3); since the owner's #3736 and #3740 rule each is kept as a person the story never names (the two unnamed entries, a good find, not a must), and no edge like 'hits' or 'swings at' for any blow, jab, fumble or frighten (single actions, rule 1); nothing is expected until slice 6 types a repeated fight
 - a plan is not a fact: 'we go to Easthaven then circle back through the dwarven city', and 'the caravan from Easthaven will likely go to Goodmead, Bryn Shander or Caer-Konig' (a prediction, rule 5)
@@ -388,7 +388,7 @@ How far a road is, as the session says it (#4255): a property of the road, never
 - distances, speeds and times (the map context below) are travel facts, not ties between people
 - 'she' and 'the lady' are never a new person: they are Keegan Velryn, and 'he' in Jebidiah's lines is Jebidiah
 
-The check script looks for these names: `Wyvern poison`, `Dog sleds`, `two sleds and eight dogs`, `scroll of Detect Magic`, `scroll of Identify`, `Potion of Healing`, `waterproof backpacks`, `morningstar barbarian`, `maul barbarian`, `barbarians`, `the attackers`, `Dougan's Hole`, `Eashaven`, `chardalyn maul`, `chardalyn morningstar`, `The Brotherhood members`, `White roc`, `Ice kobolds`, `Grell`, `Electric eel`, `Owlbears`.
+The check script looks for these names: `Wyvern poison`, `Dog sleds`, `two sleds and eight dogs`, `scroll of Detect Magic`, `scroll of Identify`, `Potion of Healing`, `waterproof backpacks`, `morningstar barbarian`, `maul barbarian`, `barbarians`, `the attackers`, `Eashaven`, `chardalyn maul`, `chardalyn morningstar`, `The Brotherhood members`, `White roc`, `Ice kobolds`, `Grell`, `Electric eel`, `Owlbears`.
 - the Sylvan runes on Claude's wolf figurine (line 48) are writing on an item, not a language Claude speaks: no language row for him
 
 ## Waits for a later slice
