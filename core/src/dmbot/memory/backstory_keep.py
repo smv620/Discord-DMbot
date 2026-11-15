@@ -326,6 +326,7 @@ async def keep_all(
             if hide:
                 keeps_secret = players == "hide" or any(r.secret for r in pair)
                 secret, unrevealed = keeps_secret, not keeps_secret
+                flags = flags and players != "hide"  # the DM's own hide beats an old twin
             else:
                 secret, unrevealed = False, False
                 flags = flags and not now_hidden  # a shown one is not hidden by an old flag

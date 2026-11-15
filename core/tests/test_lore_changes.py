@@ -262,3 +262,19 @@ class TheCardToggle(TheChange):
                 self.memory, self.store, GUILD, self.campaign.id, [one],
                 one_press=True, players="maybe",
             )  # fmt: skip
+
+    async def test_a_hide_beats_an_identical_visible_twin(self) -> None:
+        # (#4432) the hide choice is the DM's own word: an existing public twin is hidden too
+        await self.read("enemy")
+        view = await self.card()
+        await next(b for b in view.children if b.label == "✅ Update it").callback(self.it())
+        await self.read("friend")
+        await self.read("enemy")  # the same kind again, now an update of the same pair
+        waiting = await self.store.waiting(GUILD, self.campaign.id)
+        if waiting:
+            await keep.keep_all(
+                self.memory, self.store, GUILD, self.campaign.id, waiting[:1],
+                one_press=True, players="hide",
+            )  # fmt: skip
+        live = [r for r in await self.relations() if r.to_session_at is None]
+        self.assertTrue(all(r.secret or r.unrevealed for r in live if r.predicate == "knows"))

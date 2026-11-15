@@ -3392,8 +3392,8 @@ class ConnectionOffer(_Menu):
             name = _md(who[:40])
             mine = (
                 f"👥 **{name}**'s character will know it.\n"
-                if not view.hidden_after
-                else f"👥 **{name}**'s character won't know it while it is hidden.\n"
+                if not (view.secret or c.secret)
+                else f"👥 **{name}**'s character won't know it: it is hidden.\n"
             )
         waits = self._hand_over_waits(c)
         ends = bool(keep.hand_over_ties(c, self._old(c))) if c.hand_over else False
@@ -3462,10 +3462,7 @@ class ConnectionOffer(_Menu):
         if moved:  # (#4115: keeping one changes who has an item, so each is seen first)
             left.append(f"{moved} where an item changes hands")
         if not left:
-            return (
-                f"✅ Keep all keeps these {len(mine)} from {_md(c.upload)}. "
-                "Keep all uses what each card says about players.\n"
-            )
+            return f"✅ Keep all keeps these {len(mine)} from {_md(c.upload)}.\n"
         decide = left[0] if len(left) == 1 else ", ".join(left[:-1]) + " and " + left[-1]
         # (the counter above counts every one waiting; this says which the button covers and
         # which the DM checks, so the two numbers are never read as one, #4320)
@@ -3477,7 +3474,7 @@ class ConnectionOffer(_Menu):
         )
         return (
             f"✅ Keep all {len(mine)} keeps just the {len(mine)} from {_md(c.upload)}. "
-            f"{others}: {decide}. Keep all uses what each card says about players.\n"
+            f"{others}: {decide}.\n"
         )
 
     async def _show(self, interaction: discord.Interaction, ready: list[Waiting]) -> None:
