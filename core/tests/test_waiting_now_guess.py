@@ -71,18 +71,87 @@ class TheNowLine(NowAndGuess):
     async def test_the_website_says_what_discords_card_says_for_a_twin_the_other_way_round(
         self,
     ) -> None:
-        # (#4441) the bot's rule decides, not a same-kind match in the door: whatever the card on
-        # Discord would end, the website says
+        # (#4441) the bot's rule decides, not a same-kind match in the door: here Discord's card
+        # updates the plain "knows" Mira holds, so the website says "Now: knows" too
         await self.link("knows", self.mira, self.keep, "twin")
         await self.waiting(detail="friendly")
         await self.link("knows", self.keep, self.mira, "twin-friendly")
         (row,) = await self.rows()
         waiting = await self.backstory.waiting(self.g, self.one.id)
         ends = await keep_changes(self.memory, self.g, self.one.id, waiting)
-        discord = {
-            r.predicate for found in ends.values() for r in found if r.subject_id == self.mira
-        }
-        self.assertEqual("now" in row, bool(discord))
+        self.assertEqual(
+            sorted(
+                r.predicate for found in ends.values() for r in found if r.subject_id == self.mira
+            ),
+            ["knows"],
+        )
+        self.assertEqual(row["now"], {"how": "knows", "hidden": False})
+
+    async def test_a_secret_held_connection_it_would_end_reads_hidden(self) -> None:
+        await self.link("ally_of", self.mira, self.keep, "alliance")
+        await self.update(
+            "UPDATE memory_relations SET secret = TRUE WHERE guild_id = %s AND id = %s",
+            self.g, self.links["alliance"],
+        )  # fmt: skip
+        await self.waiting(predicate="enemy_of")
+        (row,) = await self.rows()
+        self.assertEqual(row["now"], {"how": "is a friend or ally of", "hidden": True})
+
+    async def test_several_held_connections_are_worded_together(self) -> None:
+        words = relationships._held_words(
+            {
+                "now": {
+                    "items": [
+                        {"predicate": "ally_of", "detail": "", "hidden": False},
+                        {"predicate": "knows", "detail": "friendly", "hidden": True},
+                    ],
+                    "hidden": False,
+                }
+            }
+        )
+        self.assertIn(", ", words["now"]["how"])
+        self.assertEqual(words["now"]["hidden"], False)
+        self.assertEqual(relationships._held_words({"now": {"items": [], "hidden": False}}), {})
+        self.assertEqual(relationships._held_words({"now": None}), {})
+
+    async def test_an_unchanged_row_is_not_written_again_and_another_campaigns_is_not_touched(
+        self,
+    ) -> None:
+        await self.link("ally_of", self.mira, self.keep, "alliance")
+        await self.waiting(predicate="enemy_of")
+        first = await waiting_now.refresh(self.memory, self.backstory, self.g, self.one.id)
+        again = await waiting_now.refresh(self.memory, self.backstory, self.g, self.one.id)
+        self.assertEqual((first, again), (1, 0))
+        # a campaign with nothing waiting is not touched, and is not listed
+        self.assertEqual(await self.backstory.campaigns_waiting(self.g), [self.one.id])
+        self.assertEqual(
+            await self.backstory.set_replaces(
+                self.g, "f" * 32, {"0" * 32: [{"predicate": "x", "detail": "", "hidden": False}]}
+            ),
+            0,
+        )
+
+    async def test_at_most_twenty_held_connections_are_stored(self) -> None:
+        await self.waiting(predicate="enemy_of")
+        (row,) = await self.backstory.waiting(self.g, self.one.id)
+        many = [{"predicate": "knows", "detail": f"d{n}", "hidden": False} for n in range(30)]
+        await self.backstory.set_replaces(self.g, self.one.id, {row.id: many})
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT jsonb_array_length(replaces) AS n FROM backstory_links WHERE id = %s",
+                (row.id,),
+            )
+            got = await cur.fetchone()
+        assert got is not None
+        self.assertEqual(got["n"], 20)
+
+    async def test_one_server_failing_does_not_stop_the_others(self) -> None:
+        async def boom(guild_id: int) -> list[str]:
+            raise RuntimeError("database down")
+
+        real, self.backstory.campaigns_waiting = self.backstory.campaigns_waiting, boom  # type: ignore[method-assign]
+        self.assertEqual(await waiting_now.refresh_guild(self.memory, self.backstory, self.g), 0)
+        self.backstory.campaigns_waiting = real  # type: ignore[method-assign]
 
     async def test_a_connection_of_another_kind_that_can_sit_beside_it_has_no_now(self) -> None:
         await self.waiting(predicate="works_for")

@@ -711,8 +711,9 @@ class BackstoryLinks:
         self, guild_id: int, campaign_id: str, wanted: Mapping[str, Sequence[Mapping[str, Any]]]
     ) -> int:
         """Store, on each waiting row, what a keep would replace (`[{predicate, detail, hidden}]`,
-        empty for none), and when it was looked at. How many rows changed. The website's card reads
-        it through the waiting door as `now`; words and flags only, never a name or a quote."""
+        empty for none), and when it last changed. Rows already as wanted are left alone. How many
+        rows changed. The website's card reads it through the waiting door as `now`; words and
+        flags only, never a name or a quote."""
         changed = 0
         now = int(self._clock())
         async with self._db.guild(guild_id) as conn:

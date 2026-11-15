@@ -16,11 +16,12 @@ from __future__ import annotations
 # never differ.
 #
 # Two columns, both new with a default (nothing changes for an old row; no row-level security
-# opens): `replaces` (the list, empty for a new connection) and `replaces_at` (when the bot last
-# looked, 0 for never). The door: 0499's `'now', (SELECT ... LIMIT 1),` is swapped for the stored
-# list, as `{items, hidden}`; `hidden` is true when every held connection is hidden from the players
-# or an end of the pair is audience-limited (as 0499 said). The swap is found by its first and last
-# lines, each exactly once, so a drift stops the migration (the 0403 and 0436 way).
+# opens): `replaces` (the list, empty for a new connection) and `replaces_at` (when what a keep
+# would replace last changed, 0 for never). The door: 0499's `'now', (SELECT ... LIMIT 1),` is
+# swapped for the stored list, as `{items, hidden}`; `hidden` is true when every held connection is
+# hidden from the players or an end of the pair is audience-limited (as 0499 said). The swap is
+# found by its first and last lines, each exactly once, so a drift stops the migration (the 0403
+# and 0436 way).
 _START = "'now', (SELECT jsonb_build_object("
 _END = "ORDER BY r.created_at DESC, r.id LIMIT 1),"
 _NEW = (

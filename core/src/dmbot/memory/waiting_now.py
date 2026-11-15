@@ -4,7 +4,11 @@ Discord's connection card reads the ontology directly (`backstory_keep.changes_a
 that keeping an enemy ends an alliance. The website reads the waiting list through a database door
 that cannot run the ontology, so the bot writes the answer onto each waiting row, every minute while
 anything waits, and the door returns it as `now`. One rule for both: this module calls the very same
-`changes_among` the card does, so the two can never differ except for the minute between looks. The
+`changes_among` the card does, so the two can never differ except for the minute between looks (a
+connection that has only just arrived shows no "Now:" until the next look). Reading the waiting
+list cleans it up (rows the campaign
+already holds are dropped), so this is a small write path once a minute for each campaign that has
+something waiting; a server with nothing waiting costs one cheap query. The
 press itself reads everything again (`keep_all` finds what to end at that moment), so a stale line
 can never end the wrong thing, only describe it a minute late. Words and flags only, never a name or
 a quote; counts only in the log.
@@ -57,7 +61,12 @@ async def refresh_guild(memory: MemoryStore, store: BackstoryLinks, guild_id: in
     """Every campaign of this server that has something waiting; one that fails is skipped (the
     others still go) and only its error class is logged."""
     changed = 0
-    for campaign_id in await store.campaigns_waiting(guild_id):
+    try:
+        campaigns = await store.campaigns_waiting(guild_id)
+    except Exception as exc:  # (one server's failure never starves the others)
+        log.warning("The waiting campaigns could not be listed (%s)", type(exc).__name__)
+        return 0
+    for campaign_id in campaigns:
         try:
             changed += await refresh(memory, store, guild_id, campaign_id)
         except Exception as exc:
