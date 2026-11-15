@@ -27,6 +27,7 @@ from dmbot.memory import (
     map_facts,
     notify,
     place_levels,
+    place_peoples,
     route_length,
     route_words,
     sheets,
@@ -40,6 +41,7 @@ from dmbot.memory._changes import (
     BELIEFS,
     CLAIMS,
     CORRECTIONS,
+    CULTURES,
     ENTITIES,
     EVIDENCE,
     FLAGS,
@@ -124,6 +126,7 @@ _TAGS: dict[str, Table] = {
     "entity": ENTITIES,
     "rule_link": RULE_LINKS,
     "story_language": STORY_LANGUAGES,  # a character's languages from the story (#4229)
+    "culture": CULTURES,  # the campaign's named cultures (#4257 slice 3b), before their rows
     "map_fact": MAP_FACTS,  # a place's land, climate and who rules it (#4256)
     "state": STATES,
     "claim": CLAIMS,
@@ -559,6 +562,8 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         elif table is MAP_FACTS:
             # (its own check: its `how`, `status` and `source` mean other things than elsewhere)
             _check_map_fact(raw)
+        elif table is CULTURES:
+            _check_culture(raw)
         elif table is KNOWERS:  # four statement columns, exactly one set (`_check_knowers`)
             if not all(
                 raw[c] is None or is_id(raw[c])
@@ -753,6 +758,8 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
             }  # (older files)
         elif isinstance(raw, dict) and raw.get("table") == "alias":
             raw = {"said_as": None, **raw}  # from before the narrator's spelling (#1419)
+        elif isinstance(raw, dict) and raw.get("table") == "map_fact":
+            raw = {"culture_id": None, **raw}  # from before named cultures (#4257 slice 3b)
         elif isinstance(raw, dict) and raw.get("table") == "predicate":
             raw = {**_NEW_PREDICATE_FIELDS, **raw}
             if raw.get("key") in core_predicates:
@@ -1072,9 +1079,17 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
     groups = {r["id"] for r in by_tag["entity"] if onto.is_a(r["type"], "faction")}
     every = {r["id"] for r in by_tag["entity"]}
     open_keys: set[tuple[str, ...]] = set()
+    cultures = {r["id"] for r in by_tag["culture"]}
+    if len({r["name_key"] for r in by_tag["culture"]}) != len(by_tag["culture"]):
+        raise CampaignError(DAMAGED)  # (one culture per name)
     for r in by_tag["map_fact"]:
         place = places.get(r["entity_id"])
-        key = (r["entity_id"], r["layer"], r["value"], r["faction_id"] or "", r["part"].lower())
+        if r["culture_id"] is not None and r["culture_id"] not in cultures:
+            raise CampaignError(DAMAGED)
+        key = (
+            r["entity_id"], r["layer"], r["value"], r["faction_id"] or "",
+            r["culture_id"] or "", r["part"].lower(),
+        )  # fmt: skip
         is_open = r["status"] != map_facts.REJECTED and r["to_session_at"] is None
         if is_open and key in open_keys:
             raise CampaignError(DAMAGED)  # (one open row per place, layer, value and part)
@@ -1125,12 +1140,29 @@ def _check_map_fact(r: Mapping[str, Any]) -> None:
     ):
         raise CampaignError(DAMAGED)
     control = r["layer"] == map_facts.CONTROL
+    named = r["culture_id"] is not None  # (a named culture, #4257 slice 3b: its value is '')
     if (
         control != (r["faction_id"] is not None)
         or (r["faction_id"] is not None and not is_id(r["faction_id"]))
-        or control != (r["value"] == "")
+        or (named and (r["layer"] != map_facts.CULTURE or not is_id(r["culture_id"])))
+        or (control or named) != (r["value"] == "")
         or (r["value"] == map_facts.OTHER) != (words != "")
-        or not map_facts.valid(r["layer"], r["value"], r["how"])
+        or not map_facts.valid(r["layer"], r["culture_id"] or r["value"], r["how"])
+    ):
+        raise CampaignError(DAMAGED)
+
+
+def _check_culture(r: Mapping[str, Any]) -> None:
+    """One of the campaign's named cultures (#4257 slice 3b), as the store writes it."""
+    if not (
+        is_id(r["id"])
+        and isinstance(r["name"], str)
+        and 0 < len(r["name"]) <= map_facts.WORDS_MAX
+        and r["name_key"] == place_peoples.culture_key(r["name"])
+        and (r["lineage"] == "" or r["lineage"] in place_peoples.LINEAGES)
+        and r["status"] in (map_facts.READ, map_facts.CONFIRMED, map_facts.REJECTED)
+        and r["source"] in (map_facts.FROM_DM, map_facts.FROM_TEXT)
+        and _valid("created_at", r["created_at"])
     ):
         raise CampaignError(DAMAGED)
 
