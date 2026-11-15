@@ -59,6 +59,7 @@ _STAGES = {
     "pictures": q.FINDING_NAMES,  # (the words in its pictures, #4003: names too)
     "who": q.FINDING_LINKS,
     "sorting": q.FINDING_LINKS,
+    "threads": q.FINDING_LINKS,  # (the story threads, #4453)
 }
 
 

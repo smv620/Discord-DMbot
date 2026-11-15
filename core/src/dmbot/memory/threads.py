@@ -34,7 +34,12 @@ PROMISE_WORDS = {
     ABANDONED: "Broken or let go",
 }
 PROMISE = "promise"
-ROLES = ("quest giver", "target", "villain", "victim", "reward")
+# (#4453, quests slice 1, Supervisor's answer 1: "takes it on" makes a quest one character's own
+# pursuit, the party's otherwise; "the one missing" and "in danger" are who a quest is about)
+ROLES = (
+    "quest giver", "target", "villain", "victim", "reward", "takes it on", "the one missing",
+    "in danger",
+)  # fmt: skip
 ALL_STATES = (HINTED, OPEN, GOING, RESOLVED, ABANDONED)
 LIVE_STATES = (HINTED, OPEN, GOING)  # a thread in one of these can stall
 STALLED_AFTER = 3  # sessions, unless DMBOT_THREAD_STALLED_SESSIONS says otherwise

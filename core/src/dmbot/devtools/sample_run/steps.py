@@ -540,7 +540,7 @@ def estimate_cost(
     from dmbot.transcript.import_job import MAX_WINDOWS
     from dmbot.transcript.topics import WINDOW_LINES
 
-    lore = 6 + math.ceil(lore_words / 1500)
+    lore = 7 + math.ceil(lore_words / 1500)  # (one more since the story threads' read, #4453)
     windows = min(MAX_WINDOWS, math.ceil(session_lines / WINDOW_LINES))
     story = max(1, math.ceil(session_chars / 20_000))
     recap = pl.MAX_CALLS + max(1, math.ceil(session_chars / WINDOW_CHARS)) - 1

@@ -146,6 +146,9 @@ class Report:
     # A road's stated length (#4255; a property of the road, never a tie): found, missed, and extra
     # (a length on a road the key does not list). Counts only.
     route_lengths: Counter[str] = field(default_factory=Counter)
+    # Story threads (#4453, quests slice 1): found, missed, wrong (another kind), doubles (one key
+    # thread suggested twice), extra (a thread the key doesn't list), hints found
+    threads: Counter[str] = field(default_factory=Counter)
 
 
 def _live(row: Mapping[str, Any]) -> bool:
@@ -476,6 +479,8 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
         if e.get("unnamed"):
             report.unnamed_extras += 1  # (their own line: a description, not an extra name)
             continue
+        if str(e["type"]) in THREAD_TYPES:
+            continue  # (a story thread is scored on its own line, #4453, never as an extra name)
         report.extra_entries[_kind_for(str(e["type"]))] += 1
     for name in key.get("must_not_names", ()):
         # (a must-not name is still found in a description too, as before; only one that is a
@@ -502,6 +507,7 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
         1 for e in graph.entities.values() if e["type"] in ("event", "deed")
     )
     _score_map_facts(report, graph, key, names)
+    _score_threads(report, graph, key, names)
     _score_languages(report, graph, key, names, wanted)
     _score_route_lengths(report, graph, key, names, wanted)
     return report
@@ -623,6 +629,80 @@ def _score_map_facts(
             report.map_facts.setdefault(str(r["layer"]), Counter())["extra"] += 1
 
 
+THREAD_TYPES = frozenset({"thread", "quest", "mystery", "hook", "goal", "promise"})
+# The key's people of a thread, by the part word `in_thread` carries (`thread_read`)
+THREAD_ROLES = {"giver": "quest giver", "target": "target", "taker": "takes it on"}
+
+
+def _score_threads(
+    report: Report, graph: Graph, key: Mapping[str, Any], names: Mapping[str, list[str]]
+) -> None:
+    """The key's `threads` (#4453; quests design §9.7): a backup thread is the key's when it has
+    every person the key names in the same part (who gave it, who it's aimed at, who takes it on;
+    with none of those, who it is about). It is found when its kind matches too, wrong when not;
+    a second backup thread for one key thread is a double; a backup thread no key thread is is an
+    extra. A hint is counted when found and never missed. Only the key's rows count as missed
+    when they are must-find."""
+    threads = {i for i, e in graph.entities.items() if str(e["type"]) in THREAD_TYPES}
+    parts: dict[str, set[tuple[str, str]]] = {}
+    for r in graph.relations:
+        if r.get("predicate") == "in_thread" and str(r["object_id"]) in threads:
+            role = str(r.get("detail") or "").strip().lower()
+            parts.setdefault(str(r["object_id"]), set()).add((role, str(r["subject_id"])))
+    used: set[str] = set()
+    for t in key.get("threads", []):
+        wanted_kinds = {str(t["kind"])}
+        need: list[tuple[str, set[str]]] = [
+            (role, graph.ids(names.get(t[field], [t[field]])))
+            for field, role in THREAD_ROLES.items()
+            if t.get(field)
+        ]
+        # (a person to find is the target or "the one missing": either word is right, #4453)
+        alike = {"target": ("target", "the one missing")}
+        if not need:  # (a thread about someone, with nobody giving or taking it)
+            need = [
+                (role, graph.ids(names.get(n, [n])))
+                for role, people in (("the one missing", t.get("missing", [])),
+                                     ("in danger", t.get("in_danger", [])))
+                for n in people
+            ]  # fmt: skip
+        hits = [
+            th
+            for th in sorted(threads)
+            if need
+            and all(
+                any(
+                    (word, i) in parts.get(th, set())
+                    for i in ids
+                    for word in alike.get(role, (role,))
+                )
+                for role, ids in need
+            )
+        ]
+        used.update(hits)
+        right = [th for th in hits if str(graph.entities[th]["type"]) in wanted_kinds]
+        if t.get("hint"):
+            report.threads["hints found"] += 1 if hits else 0
+            continue
+        if right:
+            report.threads["found"] += 1
+        elif hits:
+            report.threads["wrong"] += 1
+        elif t.get("must_find", True):
+            report.threads["missed"] += 1
+        report.threads["doubles"] += max(0, len(hits) - 1)
+    report.threads["extra"] += len(threads - used)
+    # talk that must make no thread (§9.7: a plan, an errand, a threat, a wish), by its words
+    for rule in key.get("must_not_threads", []):
+        words = [str(w).casefold() for w in rule.get("words", [])]
+        for th in threads:
+            e = graph.entities[th]
+            said = f"{e.get('name', '')} {e.get('description', '')}".casefold()
+            if any(w in said for w in words):
+                report.threads["false"] += 1
+                break
+
+
 def _kind_for(entry_type: str) -> str:
     for kind, types in ENTRY_TYPES.items():
         if entry_type in types:
@@ -656,6 +736,7 @@ def summarize(report: Report) -> dict[str, Any]:
         "event_entries": {"expected": report.events_expected, "in_backup": report.events_in_backup},
         "player_characters": {"found": report.players_found, "expected": report.players_expected},
         "map_facts": {layer: dict(c) for layer, c in sorted(report.map_facts.items())},
+        "threads": dict(report.threads),
         **({"languages": dict(report.languages)} if report.languages else {}),
         **({"route_lengths": dict(report.route_lengths)} if report.route_lengths else {}),
     }
@@ -699,6 +780,13 @@ def render(report: Report, counts_only: bool = False) -> str:
     if report.languages:  # (#4229: a character's languages, a property, not a tie)
         c = report.languages
         lines.append(f"Languages: found {c['found']}, missed {c['missed']}, extra {c['extra']}")
+    if report.threads:  # (#4453: story threads, quests slice 1)
+        c = report.threads
+        lines.append(
+            f"Story threads: found {c['found']}, missed {c['missed']}, wrong {c['wrong']}, "
+            f"doubles {c['doubles']}, extra {c['extra']}, false {c['false']} "
+            f"(hints found {c['hints found']})"
+        )
     if report.route_lengths:  # (#4255: a road's length, a property of the road, not a tie)
         c = report.route_lengths
         lines.append(f"Road lengths: found {c['found']}, missed {c['missed']}, extra {c['extra']}")

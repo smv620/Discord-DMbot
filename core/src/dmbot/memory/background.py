@@ -324,9 +324,10 @@ def estimate_cents(chars: int) -> int:
     tokens_in = chars / 4
     listed = max(600.0, tokens_in / 8)  # the plain list, at its fullest (a quote on every line)
     shaped = listed * 1.5  # the same list as JSON
-    # The text goes in three times over: a retry or a continuation sends it again with the list so
-    # far, and the second look at names with no relationship (#2757) sends it once more.
-    cost = tokens_in * 3 * careful_in + listed * careful_out + listed * fast_in + shaped * fast_out
+    # The text goes in four times over: a retry or a continuation sends it again with the list so
+    # far, the second look at names with no relationship (#2757) sends it once more, and the story
+    # threads' read (#4453) once more again.
+    cost = tokens_in * 4 * careful_in + listed * careful_out + listed * fast_in + shaped * fast_out
     cents = cost / 1_000_000 * 100 * 1.5
     return max(1, int(cents) + (1 if cents % 1 else 0))
 

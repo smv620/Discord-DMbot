@@ -321,6 +321,7 @@ from dmbot.memory import (
     scene_move_step,
     scene_step,
     voyage,
+    waiting_now,
     web_actions,
     web_report_requests,
     web_sheets,
@@ -354,6 +355,7 @@ from dmbot.memory.importance_backup import ImportanceSection
 from dmbot.memory.kind_offers_backup import KindOffersSection
 from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
 from dmbot.memory.lookup import CampaignLookup, LookupCache
+from dmbot.memory.map_uploads import MapUploads
 from dmbot.memory.met_store import MetStore
 from dmbot.memory.models import (
     DM,
@@ -650,6 +652,7 @@ from dmbot.ui.secret_reveal import RevealButton, reveal_view
 from dmbot.ui.secret_reveal import question_text as reveal_question
 from dmbot.ui.sheets import MySheetButton, OpenCardButton
 from dmbot.ui.story_watch import KnowButton, WordsButton, message_text, watch_view
+from dmbot.ui.thread_questions import ThreadQuestionsButton
 from dmbot.ui.threads import ThreadListButton, ThreadsButton, threads_view
 from dmbot.ui.threads import waiting_text as threads_waiting_text
 from dmbot.ui.trait_questions import TraitQuestionsButton
@@ -1561,9 +1564,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.map_store: MapStore | None = None  # a picture kept as a map (#4344)
         self.pending_maps = PendingMaps()  # a sent map waiting for its owner's yes (#4372)
         self.picture_bucket: Bucket | None = None
+        self.maps_staging: Bucket | None = None  # where the website stages a sent map (#4347)
         self._picture_db: Database | None = None
         self._pictures_told: set[str] = set()  # campaigns told this run that old pictures went
         self._picture_swept = 0.0  # when the leftover-file sweep last ran
+        self._waiting_now_at = 0.0  # when the waiting cards' "now" was last refreshed (#4441)
         self._map_close_swept = 0.0  # when the map close-read sweep last ran (#4349)
         self._map_close_task: asyncio.Task[None] | None = None
         # campaign → when its close reads may be tried again after being put off (in memory: a
@@ -1932,6 +1937,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             FamilyTiesButton,
             TraitQuestionsButton,  # 🧬 Lineage and class (#3926)
             WorldNotesButton,  # 🌍 World notes (#4285)
+            ThreadQuestionsButton,  # 📜 Story threads (#4453)
         )  # the Questions message and the card's button (#3435)
         self.question_round = questions_discord.build_round(self)
         self.question_notices = (
@@ -12388,6 +12394,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except Exception as exc:
             log.warning("Import time: the offer could not be kept: %s", type(exc).__name__)
 
+    def _still_in(self, guild_id: int) -> Callable[[int], bool]:
+        """Whether a person is still a member of this server (for the Maps page's player actions:
+        a character outlives its player, #4347). The cache only: a member DMbot cannot see is
+        refused."""
+
+        def inside(user_id: int) -> bool:
+            guild = self.get_guild(guild_id)
+            return guild is not None and guild.get_member(user_id) is not None
+
+        return inside
+
     def _import_clock_choice(self, guild_id: int) -> web_actions.ClockChoiceFn:
         """The website's answer to an import clock offer (#3199), applied the way Discord's two
         buttons do it: the offer is held for this answer (a second answer, from either place,
@@ -13110,6 +13127,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 actions=store,
                                 clock=self._import_clock_choice(guild.id),
                                 maps=self.map_store,
+                                uploads=MapUploads(
+                                    self.maps_staging,
+                                    self.picture_keeper,
+                                    self.map_store,
+                                    self.settings.picture_storage_mb,
+                                ),
+                                still_here=self._still_in(guild.id),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -13662,6 +13686,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return "not read"
         await store.close_read_done(gid, cid, a_map.id, claimed)
         return "read"
+
+    async def run_waiting_now(self) -> None:
+        """Once a minute, write on each waiting connection what a keep would replace, for the
+        website's card (#4441). Counts only in the log."""
+        store, memory = self.backstory_links, self.memory
+        if store is None or memory is None or time.time() - self._waiting_now_at < 60:
+            return
+        self._waiting_now_at = time.time()
+        changed = 0
+        for guild in list(self.guilds):
+            changed += await waiting_now.refresh_guild(memory, store, guild.id)
+        if changed:
+            log.info("What a keep would replace: %d waiting connections updated", changed)
 
     async def run_picture_sweep(self) -> None:
         """Once a day, delete the picture files no row points to (counts only in the log)."""
@@ -15674,6 +15711,13 @@ async def run(settings: Settings) -> None:
                 pictures, bot.picture_bucket, settings.picture_storage_mb
             )
             bot.picture_store = pictures
+            if settings.maps_staging_ready:
+                bot.maps_staging = Bucket(
+                    settings.r2_account_id,
+                    settings.r2_staging_bucket,
+                    settings.r2_staging_access_key,
+                    settings.r2_staging_secret_key,
+                )
             if bot.memory is not None:
                 bot.map_store = MapStore(db, bot.memory)  # the two yeses of a map (#4344)
             bot.picture_actions = PictureActions(
