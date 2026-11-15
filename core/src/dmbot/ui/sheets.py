@@ -524,13 +524,23 @@ async def _add_locked(
     )
 
 
+# What the DM Bot channel hears of a sheet added to the cast: the fact, never the name.
+SHEET_POINTER = (
+    "📋 A character sheet was added to the cast. The details are in your private message."
+)
+
+
 async def _tell_the_dm(bot: DMBot, campaign: Any, entity_id: str, name: str) -> None:
-    """One line on the DM screen, with the name card's button: rename, merge or remove it."""
-    if campaign.dm_screen_channel_id is None:
-        return
-    view = discord.ui.View(timeout=None)
-    view.add_item(OpenCardButton(campaign.id, entity_id))
-    await bot.post_message(campaign.dm_screen_channel_id, DM_ADDED.format(name=_md(name)), view)
+    """One line to the DMs, with the name card's button: rename, merge or remove it. It names the
+    character, so it goes to the DMs privately (the DM screen only if none can be reached) and the
+    DM Bot channel gets a pointer with no name (#3874)."""
+
+    def make() -> discord.ui.View:
+        view = discord.ui.View(timeout=None)
+        view.add_item(OpenCardButton(campaign.id, entity_id))
+        return view
+
+    await bot.tell_dms_with_pointer(campaign, DM_ADDED.format(name=_md(name)), SHEET_POINTER, make)
 
 
 class OpenCardButton(
