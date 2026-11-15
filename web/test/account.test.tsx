@@ -595,6 +595,23 @@ describe("hand-over offers (#614)", () => {
     expect(api.calls).toContain(`withdraw:${outgoingOffer.id}`);
   });
 
+  it("an offer closed by an account change is listed with the ruled reason and nothing else", async () => {
+    show("offers");
+    const heading = await screen.findByText(text.offersClosedHeading);
+    const section = heading.closest("section") as HTMLElement;
+    expect(section.textContent).toContain("Hand-over of Lanternfall in Quillon's Corner");
+    expect(section.textContent).toContain(
+      "This offer was closed because the Discord accounts on the DMbot account changed.",
+    );
+    expect(within(section).queryByRole("button")).toBeNull();
+  });
+
+  it("no closed offers, no section", async () => {
+    show("table");
+    await screen.findAllByRole("heading");
+    expect(screen.queryByText(text.offersClosedHeading)).toBeNull();
+  });
+
   it("an offer that already ended reloads the page instead of failing quietly", async () => {
     const api = mockApi("offers");
     api.acceptOffer = () => Promise.reject(new ApiError("offer-gone"));

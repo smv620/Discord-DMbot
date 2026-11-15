@@ -273,6 +273,14 @@ export interface Offer {
   expiresAt: string;
 }
 
+/** A hand-over closed because the Discord accounts on a DMbot account changed (#4467). It names
+ * no person and no account, and stays listed for a week. */
+export interface ClosedOffer {
+  id: string;
+  campaignName: string;
+  serverName: string;
+}
+
 /** Free access (#771, #806): never says why someone has it. */
 export interface Access {
   kind: "free" | "paid" | "none";
@@ -372,7 +380,7 @@ export interface Me {
   /** The narrated-recaps add-on (#1390). Missing from an API older than #1389. */
   recapAudio?: RecapAudio;
   /** Hand-overs offered to you, and the ones you offered (#614). */
-  offers: { incoming: Offer[]; outgoing: Offer[] };
+  offers: { incoming: Offer[]; outgoing: Offer[]; closed?: ClosedOffer[] };
 }
 
 /** One of the person's own characters (#1164), read-only. Fields are missing when the sheet has

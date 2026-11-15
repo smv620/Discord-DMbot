@@ -37,6 +37,7 @@ EVERY_ACTION = (
     "world-keep", "world-not", "world-undo",  # World notes (#4285)
     "backstory-keep-show",  # "Let players see it" on the website's waiting card (#4432)
     "maps-add",  # a map sent from the website (#4347, slice B)
+    "thread-keep", "thread-not", "thread-undo",  # story threads DMbot found (#4457)
 )  # fmt: skip
 
 
