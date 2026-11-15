@@ -39,6 +39,7 @@ import {
   NAME_POLL_MS,
   READING_POLLS,
   errorKinds,
+  SIGNED_OUT_EVENT,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
 import type { AccountApi, ApiHelpers, HandOverQuestion, MapsRead, MapsResult, NodeSummary, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
@@ -55,7 +56,7 @@ export function countOf(counts: unknown, key: string): number | undefined {
   return undefined;
 }
 
-export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<AccountApi> {
+export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Partial<AccountApi> {
   return {
     namesFixed: async (recapRef) =>
       (await call("GET", `/me/recaps/${encodeURIComponent(recapRef)}/names-fixed`)) as NamesFixed,
@@ -573,6 +574,58 @@ export default function namesArea({ call, waitForAnswer }: ApiHelpers): Partial<
       if (!queued?.answer) throw new ApiError("server");
       const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
       return { batch: typeof got.batch === "number" ? got.batch : null } as MapsResult;
+    },
+    // A picture sent to be a map (#4347): the file itself goes as the body, with the name and the person's own yes in headers, and
+    // `onLook` hears how far it has got (sending the file, then DMbot saving it) so the page can show the wait. Then the bot's answer is
+    // waited for, as for every press, and gives back the map and the change for Undo.
+    addMap: async (ref, upload, onLook) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const started = Date.now();
+      let moved = started;
+      const look = (stage: "sending" | "saving"): void =>
+        onLook?.({ stage, seconds: Math.floor((Date.now() - started) / 1000), quiet: Math.floor((Date.now() - moved) / 1000) });
+      const queued = await new Promise<{ answer?: string }>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open("POST", `${root}${base}/maps`);
+        xhr.withCredentials = true;
+        xhr.setRequestHeader("X-DMbot-Request", "1");
+        xhr.setRequestHeader("Content-Type", upload.file.type || "application/octet-stream");
+        xhr.setRequestHeader("X-Map-Title", encodeURIComponent(upload.title));
+        xhr.setRequestHeader("X-Map-Rights", upload.rights ? "yes" : "no");
+        xhr.upload.onprogress = () => {
+          moved = Date.now();
+          look("sending");
+        };
+        xhr.onerror = () => reject(new ApiError("network"));
+        xhr.ontimeout = () => reject(new ApiError("network"));
+        xhr.onload = () => {
+          if (xhr.status === 401) {
+            if (typeof window !== "undefined") window.dispatchEvent(new Event(SIGNED_OUT_EVENT));
+            return reject(new ApiError("signed-out"));
+          }
+          let body: { answer?: string; error?: unknown; detail?: unknown } = {};
+          try {
+            body = JSON.parse(xhr.responseText) as typeof body;
+          } catch {
+            // (no words in the answer: the status says enough)
+          }
+          if (xhr.status >= 200 && xhr.status < 300) return resolve(body);
+          const code = String(body.error ?? (typeof body.detail === "string" ? body.detail : ""));
+          reject(new ApiError(xhr.status === 413 ? "bad-file" : (errorKinds[code] ?? "server")));
+        };
+        look("sending");
+        xhr.send(upload.file);
+      });
+      if (!queued?.answer) throw new ApiError("server");
+      moved = Date.now();
+      let last = "";
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`, (answer) => {
+        if (answer.state !== last) moved = Date.now(); // (a new stage counts as moving)
+        last = answer.state;
+        look("saving");
+      });
+      const made = got as { mapId?: string | null; batch?: number | null };
+      return { mapId: typeof made.mapId === "string" ? made.mapId : "", batch: typeof made.batch === "number" ? made.batch : null };
     },
     changeWebLink: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}/web`;
