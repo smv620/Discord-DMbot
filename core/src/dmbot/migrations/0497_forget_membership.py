@@ -1,4 +1,4 @@
-"""0496_forget_membership
+"""0497_forget_membership
 
 Who is in a campaign, on account deletion (#4148; Supervisor's ruling on the issue, 2026-11-14):
 `dmbot_forget_membership()`, called from `accounts.delete_person` after

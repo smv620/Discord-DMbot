@@ -93,7 +93,7 @@ class EveryPersonColumnHasARule(DatabaseTest):
         part_f = import_module("dmbot.migrations.0493_forget_decisions_2")
         part_g = import_module("dmbot.migrations.0494_forget_own_records")
         part_h = import_module("dmbot.migrations.0495_forget_recap_approval")
-        part_i = import_module("dmbot.migrations.0496_forget_membership")
+        part_i = import_module("dmbot.migrations.0497_forget_membership")
         done = {
             *part_a.DELETED, *part_a.ZEROED, *part_b.ZEROED, *part_c.DELETED, *part_d.ZEROED,
             *part_e.DELETED, *part_f.ZEROED, *part_g.DELETED, *part_g.ZEROED, *part_g.MOVES,
