@@ -713,7 +713,8 @@ async def conditions_for(
         live = {
             str(r["id"])
             for r in await scope.select(
-                RELATIONS, " AND id = ANY(%s) AND status <> 'rejected' AND to_session_at IS NULL",
+                RELATIONS,
+                " AND id = ANY(%s) AND status <> 'rejected' AND to_session_at IS NULL",
                 [list(relation_ids)],
             )
         }
