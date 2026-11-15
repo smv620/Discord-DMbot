@@ -238,6 +238,7 @@ from dmbot.dm_screen.quiet_stop import (
 from dmbot.dm_screen.recap_panel import RecapsButton
 from dmbot.dm_screen.recap_style import RecapStyleButton
 from dmbot.dm_screen.retired_channels import remove_old_channels
+from dmbot.dm_screen.setting_field import KeepSettingButton
 from dmbot.dm_screen.settings import (
     AskBeforeAddingButton,
     BackToSettingsButton,
@@ -1801,6 +1802,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             RuleLookupButton,
             RulesCardsButton,
             AskBeforeAddingButton,
+            KeepSettingButton,
             channel_sync_ui.ChannelsMenuButton,
             channel_sync_ui.ChannelsChoiceButton,
             channel_sync_ui.PeopleButton,
