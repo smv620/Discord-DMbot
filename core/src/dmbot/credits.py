@@ -134,7 +134,7 @@ def estimate(job_kind: str, units: float, *, allowance: int, used: int) -> Estim
 
 def lore_estimate(chars: int, *, allowance: int = 0, used: int = 0) -> Estimate:
     """What reading a lore text of `chars` characters will cost. It uses the model-priced figure the
-    lore card already worked out (`memory.background.estimate_cents`: the text goes in three times,
+    lore card already worked out (`memory.background.estimate_cents`: the text goes in four times,
     at the list prices, with a margin), rather than a per-word guess. It prices the read itself;
     the extra steps some options add (who a pronoun means, the AI's call on who knows it) are not
     in it, and the margin is what absorbs them. The charge is logged beside it so the two can be

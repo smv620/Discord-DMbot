@@ -1,7 +1,7 @@
 {
  "campaign": "test of the frostmaiden (sample)",
  "source": "the public sample lore, https://docs.google.com/document/d/1zbt7g3r6uFfiSYr3fl_gyaxARhwJPizauI0jmiEa2aw/edit?usp=sharing (the plain-text export; each connection names its line)",
- "version": 3,
+ "version": 4,
  "how_to_read": {
   "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted as a fact); by_rule = made by a rule, not read",
   "relation": "parent_of, grandparent_of, sibling, spouse, uncle_of, apprentice_of, mentor_of, owns, carries, knows (+ one of nine feeling words), member, leads, works_for, enemy_of, rival_of, held_captive_by, found, associate; place ties by word: lives_in, lived_in, works_in, comes_from, last_seen_in (a character, creature or group), kept_in, was_kept_in (an item); in (only a place inside a place)",
@@ -10,7 +10,8 @@
   "current": "false = history: it was true and is not now (the graph shows the most recent relationship, #3363)",
   "line": "the line of the document's plain-text export that supports it (blank lines count)",
   "map_facts": "a place's land, climate or ruler (#4256): layer terrain, climate or control; value a word of that layer's list, or the ruling group's key name; scored per layer as found, wrong, missed and extra (a row the key does not list)",
-  "languages": "a character's languages are a property of the character, never a tie (owner, 2026-11-14; #4229): {character, language, line, note}; scored as found, missed, and extra (a language the key does not list)"
+  "languages": "a character's languages are a property of the character, never a tie (owner, 2026-11-14; #4229): {character, language, line, note}; scored as found, missed, and extra (a language the key does not list)",
+  "threads": "a story thread (quests design, #4450 §9.3; #4453): kind quest, hook or mystery; giver, target and taker (who takes it on, for a pursuit that is one character's own) are key names; missing and in_danger list who the thread is about. The party is never named: a thread is the party's unless it has a taker. hint = a question the text leaves open, counted when found and never missed. Scored as found, missed, wrong (another kind), doubles and extra (a thread the key does not list)"
  },
  "players": {
   "Cerric Vanya'elen": "player_ist",
@@ -404,6 +405,12 @@
   },
   {
    "name": "Good Mead",
+   "kind": "place",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Dougan's Hole",
    "kind": "place",
    "aliases": [],
    "note": ""
@@ -1115,6 +1122,16 @@
    "note": "listed with its sacrifice (also line 7)"
   },
   {
+   "id": "l127",
+   "a": "Dougan's Hole",
+   "relation": "in",
+   "b": "Ten-Towns",
+   "tier": "stated",
+   "must_find": true,
+   "line": 96,
+   "note": "listed with its sacrifice (added to the lore on 2026-11-15; not on line 7)"
+  },
+  {
    "id": "l053",
    "a": "Ten-Towns",
    "relation": "in",
@@ -1274,16 +1291,6 @@
    "note": "operates out of it"
   },
   {
-   "id": "l069",
-   "a": "The party",
-   "relation": "works_for",
-   "b": "Hlin Trollbane",
-   "tier": "stated",
-   "must_find": true,
-   "line": 59,
-   "note": "100 gold to capture or eliminate Kaltro (line 73)"
-  },
-  {
    "id": "l070",
    "a": "Hlin Trollbane",
    "relation": "enemy_of",
@@ -1341,16 +1348,6 @@
    "tier": "stated",
    "must_find": true,
    "line": 65
-  },
-  {
-   "id": "l076",
-   "a": "The party",
-   "relation": "works_for",
-   "b": "Speaker Masthew",
-   "tier": "stated",
-   "must_find": true,
-   "line": 84,
-   "note": "50 gold, then 250 for the mine (line 93)"
   },
   {
    "id": "l077",
@@ -1758,16 +1755,6 @@
    "note": "vanished five days ago leading an expedition up it"
   },
   {
-   "id": "l118",
-   "a": "The party",
-   "relation": "works_for",
-   "b": "Keegan Velryn",
-   "tier": "stated",
-   "must_find": true,
-   "line": 102,
-   "note": "50 gold and a route map to find Garret"
-  },
-  {
    "id": "l119",
    "a": "Jebidiah",
    "relation": "works_in",
@@ -1984,7 +1971,14 @@
   "'The Brotherhood' in the note is named once and nothing is said about it: no members, no leader, and it is not the Explorer's League",
   "the unnamed boy who shouts the news, the unnamed beggar woman's prophecy and the unnamed ghost's own name: do not invent names for them",
   "'Eashaven' is Easthaven spelled wrongly (one place, not two)",
-  "the Ten-Towns settlement 'Dougan's Hole' is not in this document, so it must not appear",
   "the Sylvan runes on Claude's wolf figurine (line 48) are writing on an item, not a language Claude speaks: no language row for him"
+ ],
+ "threads": [
+  {"id": "lq01", "kind": "quest", "name": "What happened to Master Sparkwalker", "giver": "", "target": "", "taker": "Cerric Vanya'elen", "missing": ["Syllar Sparkwalker"], "in_danger": [], "must_find": true, "hint": false, "line": 27, "note": "a pursuit (§9.3): the WIDE aim, searching for answers; the Danneth lead is its objective (slice 3)"},
+  {"id": "lq02", "kind": "mystery", "name": "Who killed Wit?", "giver": "", "target": "", "taker": "", "missing": ["Wit"], "in_danger": [], "must_find": false, "hint": true, "line": 27, "note": "a hint branch of lq01 (§6a): counted when found, never missed; branches are read from slice 3"},
+  {"id": "lq03", "kind": "quest", "name": "Why Okthandom's family vanish, and how to break the curse", "giver": "", "target": "", "taker": "Okthandom Korran", "missing": ["Vaelrith"], "in_danger": ["Nyssara"], "must_find": true, "hint": false, "line": 33, "note": "a pursuit (§9.3)"},
+  {"id": "lq04", "kind": "quest", "name": "Hlin's contract on Sephek Kaltro", "giver": "Hlin Trollbane", "target": "Sephek Kaltro", "taker": "", "missing": [], "in_danger": [], "must_find": true, "hint": false, "line": 73, "note": "an ask and a taker; replaces l069 'the party works for Hlin' (§6); capture or eliminate, one objective"},
+  {"id": "lq05", "kind": "quest", "name": "Speaker Masthew's bounty on the mine", "giver": "Speaker Masthew", "target": "The gemstone mine", "taker": "", "missing": [], "in_danger": [], "must_find": false, "hint": false, "line": 84, "note": "an ask and a taker, already paid (line 93); replaces l076; not one of §9.3's four, so a good find"},
+  {"id": "lq06", "kind": "quest", "name": "Find Garret Velryn", "giver": "Keegan Velryn", "target": "Garret Velryn", "taker": "", "missing": [], "in_danger": [], "must_find": true, "hint": false, "line": 102, "note": "an ask and a taker (Belleros agrees for the party); replaces l118"}
  ]
 }

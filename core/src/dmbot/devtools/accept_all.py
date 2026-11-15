@@ -160,6 +160,28 @@ async def accept_same_person(
             _refused(counts, SAME_PERSON, exc)
 
 
+async def keep_threads(db: Database, memory: MemoryStore, guild: int, campaign: str) -> int:
+    """Every story thread the lore reader suggested (#4453), kept as the DM's ✅ keeps it (the
+    thread, its state and all its people, through `MemoryStore.keep_thread`), so the sample's
+    backup holds what the reader found and the key check can score it. The sample campaign only
+    (the caller checked). Never in the bot: there a reader's suggestion is only ever kept by the
+    DM (design §9.6). How many kept."""
+    from dmbot.memory.models import DM
+    from dmbot.memory.thread_suggestions import ThreadSuggestionStore
+
+    kept = 0
+    for s in await ThreadSuggestionStore(db).waiting(guild, campaign):
+        try:
+            await memory.keep_thread(
+                guild, campaign, s.name, s.kind, s.state, aim=s.aim, parts=list(s.parts),
+                source=DM, suggestion_id=s.id,
+            )  # fmt: skip
+            kept += 1
+        except Exception as exc:  # the type only
+            log.warning("A story thread couldn't be kept (%s)", type(exc).__name__)
+    return kept
+
+
 async def run(
     db: Database, guild: int, campaign: str, *, dry_run: bool, memory: MemoryStore | None = None
 ) -> Counts:

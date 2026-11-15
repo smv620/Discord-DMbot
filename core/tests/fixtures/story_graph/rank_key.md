@@ -64,6 +64,7 @@
 | Termalaine | 3 | key_location | where the mine quest begins |
 | Bremen | 1 |  | named in the sacrifices |
 | Good Mead | 1 |  | named in the sacrifices |
+| Dougan's Hole | 1 |  | named in the sacrifices |
 | Caer-Dineval | 1 |  | named in the sacrifices |
 | Caer-Konig | 1 |  | named in the sacrifices |
 | Lonelywood | 2 |  | where the party met |

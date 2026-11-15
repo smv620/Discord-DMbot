@@ -160,6 +160,7 @@ from dmbot.dm_screen import (
     house_sync,
     import_button,
     links_ready,
+    orphan_channels,
     pack_suggestion,
     pack_update,
     peek_view,
@@ -321,6 +322,7 @@ from dmbot.memory import (
     scene_move_step,
     scene_step,
     voyage,
+    waiting_now,
     web_actions,
     web_report_requests,
     web_sheets,
@@ -651,6 +653,7 @@ from dmbot.ui.secret_reveal import RevealButton, reveal_view
 from dmbot.ui.secret_reveal import question_text as reveal_question
 from dmbot.ui.sheets import MySheetButton, OpenCardButton
 from dmbot.ui.story_watch import KnowButton, WordsButton, message_text, watch_view
+from dmbot.ui.thread_questions import ThreadQuestionsButton
 from dmbot.ui.threads import ThreadListButton, ThreadsButton, threads_view
 from dmbot.ui.threads import waiting_text as threads_waiting_text
 from dmbot.ui.trait_questions import TraitQuestionsButton
@@ -749,6 +752,8 @@ DISK_CHECK_FIRST_S = 60  # the disk check (#4075), then every `disk_check.CHECK_
 WIZARD_SWEEP_EVERY_S = 3600  # drafts past their week are removed, with their documents
 CHANNEL_SYNC_FIRST_S = 120  # the first look at who sees each campaign's channels (#3891)
 CHANNEL_SYNC_EVERY_S = 3600  # and then every hour
+ORPHAN_CHANNELS_FIRST_S = 600  # the look for channels of campaigns that are gone (#4479)
+ORPHAN_CHANNELS_EVERY_S = 6 * 3600  # (a channel goes after being seen twice a day apart)
 OWNER_START_WAIT_S = 2  # at a start the table is waiting
 OWNER_ASK_EVERY_S = 3600  # Discord is asked about one campaign's owner at most this often
 OWNER_LOOK_TIMEOUT_S = 6  # asking Discord about an owner must not hold up a start
@@ -1566,6 +1571,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self._picture_db: Database | None = None
         self._pictures_told: set[str] = set()  # campaigns told this run that old pictures went
         self._picture_swept = 0.0  # when the leftover-file sweep last ran
+        self._waiting_now_at = 0.0  # when the waiting cards' "now" was last refreshed (#4441)
         self._map_close_swept = 0.0  # when the map close-read sweep last ran (#4349)
         self._map_close_task: asyncio.Task[None] | None = None
         # campaign → when its close reads may be tried again after being put off (in memory: a
@@ -1934,6 +1940,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             FamilyTiesButton,
             TraitQuestionsButton,  # 🧬 Lineage and class (#3926)
             WorldNotesButton,  # 🌍 World notes (#4285)
+            ThreadQuestionsButton,  # 📜 Story threads (#4453)
         )  # the Questions message and the card's button (#3435)
         self.question_round = questions_discord.build_round(self)
         self.question_notices = (
@@ -1976,6 +1983,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 else []
             ),
             self._watched(self._channel_sync_loop(), "channel-sync"),
+            self._watched(self._orphan_channels_loop(), "orphan-channels"),
             self._watched(self._wizard_finish_loop(), "wizard-finish"),
             *(
                 [self._watched(self._member_names_loop(), "member-names")]
@@ -13683,6 +13691,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         await store.close_read_done(gid, cid, a_map.id, claimed)
         return "read"
 
+    async def run_waiting_now(self) -> None:
+        """Once a minute, write on each waiting connection what a keep would replace, for the
+        website's card (#4441). Counts only in the log."""
+        store, memory = self.backstory_links, self.memory
+        if store is None or memory is None or time.time() - self._waiting_now_at < 60:
+            return
+        self._waiting_now_at = time.time()
+        changed = 0
+        for guild in list(self.guilds):
+            changed += await waiting_now.refresh_guild(memory, store, guild.id)
+        if changed:
+            log.info("What a keep would replace: %d waiting connections updated", changed)
+
     async def run_picture_sweep(self) -> None:
         """Once a day, delete the picture files no row points to (counts only in the log)."""
         db, bucket = self._picture_db, self.picture_bucket
@@ -14679,6 +14700,46 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     await asyncio.sleep(OWNER_CHECK_GAP_S)
             log.info("Channel sync: %d campaign(s) looked at", looked)
             await asyncio.sleep(CHANNEL_SYNC_EVERY_S)
+
+    async def _orphan_channels_loop(self) -> None:
+        """Delete the DM Bot, transcript and DM screen channels DMbot made for a campaign that no
+        longer exists (#4479), after the grace in `dm_screen/orphan_channels`. A server's trouble
+        never stops the rest; counts only in the log; the server's owner is told once a sweep that
+        deleted something."""
+        sightings = orphan_channels.Sightings()
+        await asyncio.sleep(ORPHAN_CHANNELS_FIRST_S)
+        while True:
+            for guild in list(self.guilds):
+                try:
+                    with log_context(guild_id=guild.id):
+                        await self._orphan_channels_in(guild, sightings)
+                except Exception:
+                    log.exception("Orphaned channels: a server's look failed")
+            await asyncio.sleep(ORPHAN_CHANNELS_EVERY_S)
+
+    async def _orphan_channels_in(
+        self, guild: discord.Guild, sightings: orphan_channels.Sightings
+    ) -> None:
+        # every channel any live campaign of this server points to (read in one go)
+        live = await self.campaigns.special_channel_ids(guild.id)
+        me = guild.me
+        found = await orphan_channels.sweep(
+            guild.id,
+            guild.text_channels,
+            live,
+            sightings,
+            can_manage=me is not None and me.guild_permissions.manage_channels,
+        )
+        if found.seen or found.deleted or found.failed:
+            log.info(
+                "Orphaned channels: %d seen, %d deleted, %d failed%s",
+                found.seen,
+                found.deleted,
+                found.failed,
+                f" ({found.skipped})" if found.skipped else "",
+            )
+        if found.deleted and guild.owner_id:
+            await self.dm_user(guild.owner_id, orphan_channels.told_words(found.deleted))
 
     async def upgrade_dm_bot_channel(self, campaign: Campaign) -> int | None:
         """A campaign made before the DM Bot channel (#1666) gets one when its ⚙️ Manage DMbot is

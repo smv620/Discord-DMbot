@@ -1133,6 +1133,7 @@ STEP_WORDS = {
     "pictures": "Finding names in its pictures.",
     "who": "Finding how they connect.",
     "sorting": "Finding how they connect.",
+    "threads": "Finding how they connect.",  # (the story threads, #4453: the page's own words)
 }
 
 

@@ -25,6 +25,7 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
         "memory_story_languages",  # an NPC's languages from the story (#4229)
         "memory_cultures",  # the campaign's named cultures (#4257 slice 3b)
         "memory_map_facts",  # a place's land, climate and who rules it (#4256)
+        "memory_thread_parts",  # a story thread's parts (#4471)
         "memory_states",
         "memory_claims",
         "memory_aliases",
@@ -208,6 +209,7 @@ NOT_IN_BACKUP: dict[str, str] = {
     "recap_name_checks": _WAIT,
     "backstory_links": _WAIT,
     "backstory_which": _WAIT,
+    "thread_suggestions": _WAIT,  # (the lore reader's story threads, #4453: a re-read rebuilds it)
     "secret_exposures": _WAIT,
     "name_actions": _WAIT,
     "setting_actions": _WAIT,
@@ -301,4 +303,6 @@ SERVER_BOUND_COLUMNS: dict[str, str] = {
     "upload_notices.channel_id": "left: the notice stays in the old server; its buttons name the "
     "old server, so they find nothing after a move",
     "upload_notices.message_id": "left: as its channel",
+    "memory_thread_parts.thread_id": "not Discord's: a story thread entry of the campaign's memory "
+    "(#4471), which moves with the campaign like every entry",
 }

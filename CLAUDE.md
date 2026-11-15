@@ -135,11 +135,13 @@ CI runs all of the above on every pull request. Never merge red CI.
   had no branch to run on, so merges went one per CI cycle). It is never merged or deployed: it
   only carries the CI run, and the PRs then merge as themselves.
   **Supervisor's own docs-only PRs** (owner, 2026-10-10): a PR by Supervisor that changes
-  only `docs/PLAN.md`, `docs/STORY_MEMORY.md`, `CLAUDE.md` or `README.md` (owner, 2026-11-14: the
-  README is kept up to date) merges on Supervisor's
+  only documentation merges on Supervisor's
   "Supervisor review: approved" on its current head, plus RepoManager's compliance check
   and green CI. That approval is the design review: never hold it as "self-approval", and
   don't wait for the owner. A compliance problem goes back to Supervisor like any send-back.
+  **Documentation is Supervisor's to update** (owner, 2026-11-15): `docs/` (everything except the three
+  testing logs, which stay dev1's, and `docs/design/`, which is the Expert's), `README.md` and `CLAUDE.md`.
+  Code, tests and website words stay with the developers, and Supervisor reviews them.
   **How an approval is recorded** (owner, 2026-10-10, after approvals were misread):
   Supervisor's verdict is a **PR review** (event COMMENT) on the exact head commit, whose
   body starts "Supervisor review: approved" or "Supervisor review: changes needed", plus the
@@ -274,7 +276,8 @@ dev1 as a note on the issue.
   "Supervisor review: changes needed" with a numbered list. A send-back says what is
   wrong, where, why it matters, what to change and how to prove it. Scope questions from
   any session go in the issue; Supervisor answers there. **Supervisor writes no
-  application code:** anything that needs code becomes an issue for a developer. It
+  application code:** anything that needs code becomes an issue for a developer. It keeps the
+  documentation up to date itself (see "Documentation is Supervisor's to update" above). It
   never deploys, touches the live server or merges code PRs (log-only PRs excepted).
   **Nothing waits on the owner except live testing at a table with real people and
   recordings the owner makes on their own time.** Architecture, design, scope,

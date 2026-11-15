@@ -31,8 +31,10 @@ from dmbot.memory import (
     route_length,
     route_words,
     sheets,
+    thread_parts,
     whereabouts,
 )
+from dmbot.memory import threads as threads_mod
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import (
     ALIAS_KNOWERS,
@@ -55,6 +57,7 @@ from dmbot.memory._changes import (
     SHEETS,
     STATES,
     STORY_LANGUAGES,
+    THREAD_PARTS,
     TOLD,
     TYPES,
     Table,
@@ -128,6 +131,7 @@ _TAGS: dict[str, Table] = {
     "story_language": STORY_LANGUAGES,  # a character's languages from the story (#4229)
     "culture": CULTURES,  # the campaign's named cultures (#4257 slice 3b), before their rows
     "map_fact": MAP_FACTS,  # a place's land, climate and who rules it (#4256)
+    "thread_part": THREAD_PARTS,  # a story thread's parts (#4471), after its entries
     "state": STATES,
     "claim": CLAIMS,
     "alias": ALIASES,
@@ -400,7 +404,7 @@ class MemorySection:
                                 *(_db_value(c, r[c]) for c in table.columns),
                                 *((r.get("made_by"),) if stamped else ()),
                             )
-                            for r in by_tag[tag]
+                            for r in _load_order(tag, by_tag[tag])
                         ],
                     )
             # Check links now, not at commit, so a broken file gives a plain message.
@@ -564,6 +568,8 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             _check_map_fact(raw)
         elif table is CULTURES:
             _check_culture(raw)
+        elif table is THREAD_PARTS:
+            _check_thread_part(raw)  # (its own words for `kind`, `state`, `status` and `source`)
         elif table is KNOWERS:  # four statement columns, exactly one set (`_check_knowers`)
             if not all(
                 raw[c] is None or is_id(raw[c])
@@ -978,6 +984,148 @@ def _other_version(snapshot: Any) -> bool:
     return isinstance(snapshot, dict) and snapshot.get("v") != sheets.SNAPSHOT_VERSION
 
 
+def _load_order(tag: str, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """A thread's parts load what others stand under first (its foreign key to itself is checked
+    row by row): top-level objectives and promises, then sub-steps and rewards given (#4471)."""
+    if tag != "thread_part":
+        return rows
+    return sorted(rows, key=lambda r: r["under_id"] is not None)
+
+
+_POSITION_MAX = 2_147_483_647  # (the table's INTEGER)
+
+
+def _check_thread_part(r: Mapping[str, Any]) -> None:
+    """One part of a story thread (#4471), as the store writes it: a kind and one of its states,
+    each field only on the kinds it belongs to, and its own status, source and story time. Whether
+    its thread, the entries it names and what it stands under are in the file is checked with the
+    rest (`_check_thread_parts`)."""
+    kind = r["kind"]
+    ints = ("from_session_at", "to_session_at", "from_game_time", "to_game_time", "due_minute")
+    amount, position = r["amount"], r["position"]
+    if not (
+        is_id(r["id"])
+        and is_id(r["thread_id"])
+        and is_id(r["first_id"])
+        and kind in thread_parts.KINDS
+        and r["state"] in thread_parts.STATES[kind]
+        and isinstance(r["words"], str)
+        and 0 < len(r["words"]) <= thread_parts.WORDS_MAX
+        and all(r[c] is None or is_id(r[c]) for c in ("under_id", "who_id", "about_id"))
+        and (
+            amount is None
+            or (
+                isinstance(amount, (int, float))
+                and not isinstance(amount, bool)
+                and 0 < amount <= thread_parts.AMOUNT_MAX
+            )
+        )
+        and isinstance(r["unit"], str)
+        and len(r["unit"]) <= thread_parts.UNIT_MAX
+        and (
+            position is None
+            or (
+                isinstance(position, int)
+                and not isinstance(position, bool)
+                and 0 <= position <= _POSITION_MAX
+            )
+        )
+        and r["due"] in ("", thread_parts.UP_FRONT, thread_parts.AFTERWARDS)
+        and isinstance(r["terms"], str)
+        and len(r["terms"]) <= thread_parts.TERMS_MAX
+        and r["limit_kind"] in ("", thread_parts.SOFT, thread_parts.HARD)
+        and r["due_from"] in ("", "read", "dm")
+        and r["status"] in (thread_parts.READ, "confirmed", thread_parts.REJECTED_PART)
+        and r["source"] in (thread_parts.DM_SOURCE, thread_parts.LORE, thread_parts.SESSION)
+        and isinstance(r["table_knows"], bool)
+        and _valid("created_at", r["created_at"])
+        and all(r[c] is None or _valid("from_session_at", r[c]) for c in ints)
+    ):
+        raise CampaignError(DAMAGED)
+    rewards = (thread_parts.REWARD, thread_parts.REWARD_GIVEN)
+    if (
+        (kind not in rewards and (amount is not None or r["unit"]))
+        or (position is not None and kind != thread_parts.OBJECTIVE)
+        or (r["due"] and kind != thread_parts.REWARD)
+        or (r["terms"] and kind != thread_parts.HELP)
+        or (
+            r["under_id"] is not None
+            and kind not in (thread_parts.OBJECTIVE, thread_parts.REWARD_GIVEN)
+        )
+        or (r["who_id"] is not None and kind not in (*rewards, thread_parts.HELP))
+        or (
+            kind != thread_parts.TIME_LIMIT
+            and (r["limit_kind"] or r["due_minute"] is not None or r["due_from"])
+        )
+        or ((r["due_minute"] is None) != (r["due_from"] == ""))
+        or r["under_id"] == r["id"]
+    ):
+        raise CampaignError(DAMAGED)
+
+
+def _check_thread_parts(by_tag: dict[str, list[dict[str, Any]]], onto: Ontology) -> None:
+    """A thread's parts against the rest of the file (#4471): on a thread, naming entries the file
+    holds, standing under a part of the same thread of the right kind (one level deep), and one
+    open row per thread, kind and words, as the database says."""
+    entities = {r["id"]: r for r in by_tag["entity"]}
+    parts = {r["id"]: r for r in by_tag["thread_part"]}
+    open_keys: set[tuple[str, str, str]] = set()
+    for r in by_tag["thread_part"]:
+        thread = entities.get(r["thread_id"])
+        if thread is None or not onto.is_a(thread["type"], "thread"):
+            raise CampaignError(DAMAGED)
+        if any(r[c] is not None and r[c] not in entities for c in ("who_id", "about_id")):
+            raise CampaignError(DAMAGED)
+        first = parts.get(r["first_id"])  # (the first row of its history, on the same thread)
+        if first is None or first["thread_id"] != r["thread_id"] or first["kind"] != r["kind"]:
+            raise CampaignError(DAMAGED)
+        if r["under_id"] is not None:
+            parent = parts.get(r["under_id"])
+            wanted = (
+                thread_parts.OBJECTIVE
+                if r["kind"] == thread_parts.OBJECTIVE
+                else thread_parts.REWARD
+            )
+            if (
+                parent is None
+                or parent["thread_id"] != r["thread_id"]
+                or parent["kind"] != wanted
+                or parent["under_id"] is not None
+            ):
+                raise CampaignError(DAMAGED)
+        if r["status"] != thread_parts.REJECTED_PART and r["to_session_at"] is None:
+            key = (r["thread_id"], r["kind"], r["words"].lower())
+            if key in open_keys:
+                raise CampaignError(DAMAGED)
+            open_keys.add(key)
+
+
+def _check_branches(by_tag: dict[str, list[dict[str, Any]]], onto: Ontology) -> None:
+    """The live "branch of" links (#4471, quests design §6a): between two threads, one bigger
+    thread at most for each, and never a loop. Checked on restore as on add and merge (Supervisor's
+    ruling on #4471), unlike "led to", whose restore trusts the file (`_checked_rows`)."""
+    types = {r["id"]: r["type"] for r in by_tag["entity"]}
+    pairs = [
+        (r["subject_id"], r["object_id"])
+        for r in by_tag["relation"]
+        if r["predicate"] == threads_mod.BRANCH_OF
+        and r["status"] == "confirmed"
+        and r["to_session_at"] is None
+    ]
+    # (a link whose ends are no longer both threads is left as it is: a kind change takes it off
+    # today, but a file from before must still load, CLAUDE.md: a campaign is never lost)
+    pairs = [
+        (a, b)
+        for a, b in pairs
+        if onto.is_a(types.get(a, ""), "thread") and onto.is_a(types.get(b, ""), "thread")
+    ]
+    branches = [a for a, _ in pairs]
+    if len(branches) != len(set(branches)) or any(
+        threads_mod.loops_through(pairs, a) for a in branches
+    ):
+        raise CampaignError(DAMAGED)
+
+
 def _db_value(column: str, value: Any) -> Any:
     return Jsonb(value) if column in ("sheet", "reading") and value is not None else value
 
@@ -1074,6 +1222,8 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
     if any(r["known"] != bool(r["rules_source"]) for r in by_tag["rule_link"]):
         raise CampaignError(DAMAGED)
     _check_story_languages(by_tag["story_language"], characters)
+    _check_thread_parts(by_tag, onto)  # a thread's parts (#4471)
+    _check_branches(by_tag, onto)  # a branch of a bigger thread (#4471)
     # a place's land, climate and ruler (#4256): on a place, ruled by a group, allowed there
     places = {r["id"]: r for r in by_tag["entity"] if onto.is_a(r["type"], "place")}
     groups = {r["id"] for r in by_tag["entity"] if onto.is_a(r["type"], "faction")}
