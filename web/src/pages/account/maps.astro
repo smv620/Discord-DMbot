@@ -1,0 +1,16 @@
+---
+import MapsIsland from "../../account/MapsIsland";
+import { mapsPage } from "../../content/maps-words";
+import Base from "../../layouts/Base.astro";
+import "../../styles/account.css";
+---
+
+<Base title="Maps" description="The maps of a campaign: which ones DMbot may use and which the table sees." noindex>
+  <div class="account">
+    <h1>{mapsPage.heading}</h1>
+    <MapsIsland client:load />
+    <noscript>
+      <p>This page needs JavaScript to show the maps. Turn it on, then reload the page.</p>
+    </noscript>
+  </div>
+</Base>
