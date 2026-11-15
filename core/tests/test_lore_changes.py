@@ -181,7 +181,7 @@ class TheCardWords(NamesTest):
                 name_secret=False, choice=choice,
             )  # fmt: skip
 
-        self.assertIn("still will after the update", line(False, None).line)
+        self.assertIn("will still see it after the update", line(False, None).line)
         self.assertIn("still will be after the update", line(True, None).line)  # stays hidden
         self.assertTrue(line(True, None).hidden_after)
         self.assertIn("After the update it will be hidden", line(False, True).line)
@@ -216,7 +216,7 @@ class TheCardToggle(TheChange):
         await self.read("enemy")
         view = await self.card()
         before = view.text()
-        self.assertIn("still will after the update", before)
+        self.assertIn("will still see it after the update", before)
         await next(b for b in view.children if b.label == ui_bg.HIDE_PLAYERS).callback(self.it())
         after = view.text()
         self.assertIn("After the update it will be hidden", after)

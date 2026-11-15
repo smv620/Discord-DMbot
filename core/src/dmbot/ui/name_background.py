@@ -3174,7 +3174,7 @@ def players_view(
     if change:
         after = now_hidden if choice is None else choice
         if not now_hidden and not after:
-            line = "👁️ Players can see it now, and still will after the update."
+            line = "👁️ Players can see it now, and will still see it after the update."
             return PlayersView(line, HIDE_PLAYERS, False, False, False, False)
         if now_hidden and after:
             line = "🤫 Hidden from players now, and still will be after the update."
@@ -3402,7 +3402,7 @@ class ConnectionOffer(_Menu):
         if c.hand_over and view.hidden_after and self._hand_over_seen(c):
             extra += HAND_OVER_SECRET.format(a=_md(c.hand_over_name[:40])) + "\n"
         source = (
-            f"\U0001f914 DMbot's guess (your text doesn't say it outright): "
+            f"\U0001f914 DMbot's guess. Your text doesn't say this directly: "
             f"{_md(c.inferred.rstrip('.'))}.\n"
             if c.inferred
             else f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
@@ -3423,7 +3423,7 @@ class ConnectionOffer(_Menu):
                 + checked
                 + extra
                 + f"{view.line}\n"
-                + "Nothing changes until you press ✅ Update it."
+                + "Nothing changes unless you press ✅ Update it."
             )
         return (
             f"📜 **Connection {n} of {self.total}:** add it?\n"
@@ -3434,7 +3434,7 @@ class ConnectionOffer(_Menu):
             + checked
             + extra
             + f"{view.line}\n"
-            + "Nothing is added until you press ✅ Add it."
+            + "Nothing is added unless you press ✅ Add it."
         )
 
     def _scope(self, c: Waiting) -> str:
