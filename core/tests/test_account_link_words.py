@@ -48,7 +48,7 @@ class LinkingWithWords(DatabaseTest):
 
     async def test_one_with_its_own_plan_gets_the_ruled_words(self) -> None:
         # As give_plan in test_owner_campaigns does: the account row, then its plan. The door
-        # checks the plan before the account, so this answers has_plan.
+        # checks a plan before a plain account (after taken and has_campaigns), so this is has_plan.
         async with self.db.user(OTHER_ACCOUNT) as conn:
             await conn.execute(
                 "INSERT INTO web_users (user_id, email, created_at, last_sign_in_at)"
