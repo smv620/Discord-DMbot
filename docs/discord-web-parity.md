@@ -246,6 +246,9 @@ Every row in Section 1 marked "built, switched off" or "in an open PR" is on the
 - Which voice channel the bot listens to, the table's text channel and the DM-screen channel.
 - Joining, leaving and recording in voice, and anything live at the table: "Hey DMbot" answers, live
   rules alerts, the initiative tracker during play.
+- A quest's time-limit messages ("⏰ … 1 day left", "time's up", #4448 slice 4b): private messages
+  to the DMs when the game clock moves, so Discord's alone. The website shows the same countdown on
+  the thread's card (#4503).
 - Discord server roles and permissions, and inviting the bot.
 - A player's own consent button in their private messages. The website has its own consent screens,
   and the consent rules stay as they are.
