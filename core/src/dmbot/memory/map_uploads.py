@@ -20,6 +20,7 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
+from dmbot.maps import words
 from dmbot.pictures.bucket import BucketError
 from dmbot.pictures.keeper import Context as PictureContext
 
@@ -84,6 +85,7 @@ async def add(
     size = int(got["size"])
     picture = None
     new = False
+    final = True  # whether the staged files go: not when the same upload may be sent again
     try:
         if size > MAX_STAGED:
             return Outcome(error=BAD_FILE)
@@ -91,11 +93,16 @@ async def add(
             data = await uploads.staging.get(key)
         except BucketError as exc:
             # a 404 is a file that is gone; anything else may work again, so it is `failed`
+            final = False
             return Outcome(error=EXPIRED if str(exc) == "status 404" else FAILED)
         if len(data) != size:
             return Outcome(error=BAD_FILE)
-        # No chat-capture consent is recorded: sending a map is the person's own act, and its
-        # right-to-use yes is on the map (as for `/dmbot map`).
+        # The person's own yes ("may I use and save this map here?") was given on the website
+        # before anything was staged (`web/maps_upload.py` refuses without it), and only that route
+        # holds a key to the staging bucket, under tokens of 128 random bits, so a file here is one
+        # that said yes; the map row records it, with who and when.
+        # No chat-capture consent is recorded: sending a map is the person's own act (as for
+        # `/dmbot map`).
         kept = await uploads.keeper.keep(
             PictureContext(
                 guild_id=guild_id, campaign_id=campaign_id, poster_id=a.user_id, session_id="",
@@ -106,7 +113,12 @@ async def add(
         )  # fmt: skip
         picture, new = kept.picture, kept.new
         if picture is None:
-            return Outcome(error=BAD_FILE if kept.why_not == "refused" else FAILED)
+            if kept.why_not == "refused":
+                return Outcome(error=BAD_FILE)
+            if kept.why_not == "full":  # (no room: nothing to retry until something is removed)
+                return Outcome(error=MAP_REFUSED, result_other=words.BUSY)
+            final = False  # (the bucket or database failed: the page sends it again)
+            return Outcome(error=FAILED)
         try:
             made = await uploads.maps.add_map(
                 guild_id, campaign_id, picture_id=picture.id, uploader_id=a.user_id,
@@ -118,12 +130,17 @@ async def add(
             if new:
                 await uploads.keeper.discard(guild_id, campaign_id, picture, unless_map=True)
             return Outcome(error=MAP_REFUSED, result_other=str(exc))
+        except Exception:
+            if new:  # (a database error: no stray picture is left behind, and it may be sent again)
+                await uploads.keeper.discard(guild_id, campaign_id, picture, unless_map=True)
+            final = False
+            raise
         log.info("A sent map was kept (%s)", "dm" if is_dm else "player")
         batches = (made.batch,) if made.batch is not None else ()
         return Outcome(result_id=str(made.value.id), batches=batches)
     finally:
         # best effort: a file left behind goes with the staging bucket's own one-day rule
-        for staged in (key, preview_key):
+        for staged in (key, preview_key) if final else ():
             try:
                 await uploads.staging.delete(staged)
             except BucketError as exc:

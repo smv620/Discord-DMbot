@@ -14,8 +14,9 @@ from dmbot.memory import map_uploads
 from dmbot.memory import web_actions as wa
 from dmbot.pictures.bucket import BucketError
 from dmbot.pictures.keeper import PictureKeeper
+from tests.test_recap_web import BOB
 from tests.test_web_api import ALICE
-from tests.test_web_maps import BOB, MapsDoor
+from tests.test_web_maps import MapsDoor
 
 TOKEN = "ab" * 16
 SHA = "cd" * 32
@@ -81,10 +82,11 @@ class Sending(MapsDoor):
             action="maps-add", text=body,
         )  # fmt: skip
 
-    async def send(self, user: int = ALICE.id, dms: set[int] | None = None, **text: Any) -> Any:
+    async def send(self, user: int = ALICE.id, here: bool | None = None, **text: Any) -> Any:
         return await wa.apply(
-            self.memory, self.g, {ALICE.id} if dms is None else dms, self.action(user, **text),
+            self.memory, self.g, {ALICE.id}, self.action(user, **text),
             actions=self.actions, maps=self.maps, uploads=self.uploads,
+            still_here=None if here is None else (lambda _user: here),
         )  # fmt: skip
 
 
@@ -194,3 +196,33 @@ class TheApplier(Sending):
             actions=self.actions, maps=self.maps,
         )  # fmt: skip
         self.assertEqual(own.error, "")
+
+    async def test_a_player_who_left_the_server_is_refused_though_their_character_stays(
+        self,
+    ) -> None:
+        await self.make_bob_a_player()
+        self.assertEqual((await self.send(BOB.id, here=False)).error, wa.NOT_ALLOWED)
+        self.assertEqual((await self.send(BOB.id, here=True)).error, "")
+
+    async def test_a_file_that_could_not_be_kept_is_left_for_a_second_try(self) -> None:
+        async def down(key: str, data: bytes) -> None:
+            raise BucketError("status 500")
+
+        self.kept.put = down  # type: ignore[method-assign]
+        self.assertEqual((await self.send()).error, wa.FAILED)
+        self.assertIn(f"p/{TOKEN}.png", self.staging.files)  # (not deleted: it may be sent again)
+        del self.kept.put
+        self.assertEqual((await self.send()).error, "")
+
+    async def test_a_database_error_after_the_picture_was_kept_leaves_no_stray_picture(
+        self,
+    ) -> None:
+        async def boom(*args: Any, **kw: Any) -> Any:
+            raise RuntimeError("database down")
+
+        real, self.maps.add_map = self.maps.add_map, boom  # type: ignore[method-assign]
+        with self.assertRaises(RuntimeError):
+            await self.send()
+        self.maps.add_map = real  # type: ignore[method-assign]
+        self.assertEqual(await self.pictures.by_message(self.g, 0), [])
+        self.assertIn(f"p/{TOKEN}.png", self.staging.files)

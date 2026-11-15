@@ -541,10 +541,13 @@ async def apply(
     clock: ClockChoiceFn | None = None,
     maps: MapStore | None = None,
     uploads: MapUploads | None = None,
+    still_here: Callable[[int], bool] | None = None,
 ) -> Outcome:
     """Do one action the way Discord's name card does. Nothing here logs the DM's words."""
     if action.action in MAPS_PAGE_ACTIONS:
-        return await _maps(memory, maps, actions, guild_id, dm_user_ids, action, uploads)
+        return await _maps(
+            memory, maps, actions, guild_id, dm_user_ids, action, uploads, still_here
+        )
     if action.user_id not in dm_user_ids:
         return _failed(NOT_ALLOWED)
     cid = action.campaign_id
@@ -957,6 +960,7 @@ async def _maps(
     dm_user_ids: Collection[int],
     a: Action,
     uploads: MapUploads | None = None,
+    still_here: Callable[[int], bool] | None = None,
 ) -> Outcome:
     """One press on the Maps page (#4347), through the map store's own calls (as Discord's buttons,
     #4373 and #4390), so each is one change and one Undo. A DM may answer a map's use, show or hide
@@ -979,7 +983,11 @@ async def _maps(
     if (
         a.action in PLAYER_MAPS_ACTIONS
         and not is_dm
-        and not await memory.characters_of(guild_id, cid, a.user_id)
+        and (
+            not await memory.characters_of(guild_id, cid, a.user_id)
+            # (a character row outlives its player: someone who left the server is refused)
+            or (still_here is not None and not still_here(a.user_id))
+        )
     ):
         return _failed(NOT_ALLOWED)
     if a.action == "maps-add":

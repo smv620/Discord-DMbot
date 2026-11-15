@@ -12390,6 +12390,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except Exception as exc:
             log.warning("Import time: the offer could not be kept: %s", type(exc).__name__)
 
+    def _still_in(self, guild_id: int) -> Callable[[int], bool]:
+        """Whether a person is still a member of this server (for the Maps page's player actions:
+        a character outlives its player, #4347). The cache only: a member DMbot cannot see is
+        refused."""
+
+        def inside(user_id: int) -> bool:
+            guild = self.get_guild(guild_id)
+            return guild is not None and guild.get_member(user_id) is not None
+
+        return inside
+
     def _import_clock_choice(self, guild_id: int) -> web_actions.ClockChoiceFn:
         """The website's answer to an import clock offer (#3199), applied the way Discord's two
         buttons do it: the offer is held for this answer (a second answer, from either place,
@@ -13118,6 +13129,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                     self.map_store,
                                     self.settings.picture_storage_mb,
                                 ),
+                                still_here=self._still_in(guild.id),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
