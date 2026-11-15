@@ -64,6 +64,32 @@ class Closing(DatabaseTest):
         (closed,) = await self.ended()
         self.assertEqual(closed.closed_side, "same")
 
+    async def test_the_new_account_cannot_accept_before_the_sweep_closes_it(self) -> None:
+        offer_id = await self.offer()
+        await add_user(self.db, OTHER)
+        self.assertEqual(await link(self.db, OTHER, PERSON), "ok")  # the person joins another
+        self.assertEqual(
+            await self.store.accept_handover(GUILD, offer_id, PERSON, NOW + 30), "gone"
+        )
+        self.assertEqual(await self.store.accept_handover(GUILD, offer_id, OTHER, NOW + 30), "gone")
+        campaign = await self.store.get(GUILD, self.campaign.id)
+        assert campaign is not None
+        self.assertEqual(campaign.owner_user_id, OWNER)  # (nothing moved)
+
+    async def test_a_person_whose_first_login_is_taken_off_closes_it_for_the_receiver(self) -> None:
+        await add_user(self.db, PERSON)
+        self.assertEqual(await link(self.db, PERSON, OTHER), "ok")  # so a login may be removed
+        offer_id = await self.offer()
+        self.assertEqual(await unlink(self.db, PERSON, PERSON), "ok")
+        (closed,) = await self.ended()
+        self.assertEqual((closed.id, closed.closed_side), (offer_id, "receiver"))
+
+    async def test_an_owner_whose_first_login_is_taken_off_closes_it_for_the_offerer(self) -> None:
+        await self.offer()  # (made from OWNER, the account's first login; SECOND is its other)
+        self.assertEqual(await unlink(self.db, OWNER, OWNER), "ok")
+        (closed,) = await self.ended()
+        self.assertEqual(closed.closed_side, "offerer")
+
     async def test_an_offer_is_told_about_once_and_not_closed_again(self) -> None:
         await self.offer()
         await add_user(self.db, OTHER)
@@ -99,6 +125,7 @@ class Telling(DatabaseTest):
             closed_side=side,
             message_id=None,
             via_email=False,
+            delivered_at=1,
         )
         campaign = SimpleNamespace(name="Frostmaiden")
         with patch.object(site_offers, "_member", get):
@@ -116,6 +143,20 @@ class Telling(DatabaseTest):
         self.assertEqual(
             got[PERSON], handover.CLOSED_RECEIVER_TO_RECEIVER.format(campaign="Frostmaiden")
         )
+
+    async def test_an_offer_never_sent_tells_only_the_owner(self) -> None:
+        guild, sent, get = self.guild_with()
+        offer = SimpleNamespace(
+            from_user_id=OWNER,
+            to_user_id=PERSON,
+            closed_side="receiver",
+            message_id=None,
+            via_email=False,
+            delivered_at=None,
+        )
+        with patch.object(site_offers, "_member", get):
+            await site_offers._tell_closed(guild, offer, SimpleNamespace(name="Frostmaiden"))  # type: ignore[arg-type]
+        self.assertEqual(set(sent), {OWNER})
 
     async def test_one_account_is_told_once_with_the_first_words_only(self) -> None:
         got = await self.told("same")

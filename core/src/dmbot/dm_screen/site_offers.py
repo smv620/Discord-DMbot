@@ -623,7 +623,7 @@ async def _tell_closed(guild: discord.Guild, offer: HandoverOffer, campaign: Cam
     with contextlib.suppress(discord.HTTPException):
         owner = await _member(guild, offer.from_user_id)
         await owner.send(to_owner.format(campaign=md(campaign.name)), allowed_mentions=NO_PINGS)
-    if offer.closed_side == "same":
+    if offer.closed_side == "same" or offer.delivered_at is None:  # (nothing was ever sent to them)
         return
     text = to_person.format(campaign=md(campaign.name))
     with contextlib.suppress(discord.HTTPException):

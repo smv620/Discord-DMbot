@@ -1441,7 +1441,9 @@ class CampaignStore:
         """Offers in this server whose 7 days are up and whose owner hasn't been told,
         oldest first. Open ones past their days are marked expired first (#690). Before
         telling the owner, `claim_end_notice` each. Offers whose people's accounts changed are
-        closed first (#2533, slice 3), and come back here as ended like the rest."""
+        closed first (#2533, slice 3), and come back here as ended like the rest. (Closing takes
+        no campaign lock: an answer holds it and sets the status, and the update only closes a
+        row that is still open.)"""
         await self.close_changed_offers(guild_id, now)
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
@@ -1475,19 +1477,17 @@ class CampaignStore:
                 (guild_id,),
             )
             for row in await cur.fetchall():
-                nobody = 0  # a first login its account took off itself is nobody's now
+                # None: a first login its account took off itself, nobody's login any more
                 from_now = await self._account_of(conn, int(row["from_user_id"]))
                 to_now = await self._account_of(conn, int(row["to_user_id"]))
-                from_now = nobody if from_now is None else from_now
-                to_now = int(row["to_user_id"]) if to_now is None else to_now
-                if from_now == to_now:
-                    side = "same"
-                elif from_now != int(row["from_account"]):
+                if from_now is None or from_now != int(row["from_account"]):
                     side = "offerer"
-                elif to_now != int(row["to_account"]):
+                elif to_now is None or to_now != int(row["to_account"]):
                     side = "receiver"
                 else:
                     continue
+                if from_now is not None and from_now == to_now:
+                    side = "same"
                 done = await conn.execute(
                     "UPDATE campaign_handover_offers SET status = 'closed', closed_side = %s,"
                     " decided_at = %s WHERE guild_id = %s AND id = %s AND status = 'open'",
@@ -1572,6 +1572,9 @@ class CampaignStore:
             if (
                 offer is None
                 or not offer.is_open(now)
+                # An account change closes the offer at the next sweep; until then it is not
+                # answerable by whoever the person offered to has become (#2533, slice 3).
+                or not await self._still_between(conn, offer)
                 or campaign is None
                 or campaign.owner_user_id != await self._account_of(conn, offer.from_user_id)
             ):
@@ -1593,6 +1596,16 @@ class CampaignStore:
             if announce:
                 await offer_notify.send(conn, guild_id, offer_id, offer_notify.DECIDED)
             return "accepted"
+
+    async def _still_between(self, conn: Conn, offer: HandoverOffer) -> bool:
+        """Whether the two people are still on the accounts the offer was made between (#2533,
+        slice 3). An offer without them (older, or by email) always is."""
+        if offer.from_account is None or offer.to_account is None:
+            return True
+        return (
+            await self._account_of(conn, offer.from_user_id) == offer.from_account
+            and await self._account_of(conn, offer.to_user_id) == offer.to_account
+        )
 
     async def decline_handover(
         self, guild_id: int, offer_id: int, user_id: int, now: int, *, announce: bool = False
