@@ -91,7 +91,8 @@ async def run(
         say(f"map: skipped (the picture was not kept: {got.why_not})")
         return {"skipped": 1}
     try:
-        made = await MapStore(db, memory).add_map(
+        maps = MapStore(db, memory)
+        made = await maps.add_map(
             guild_id, campaign_id, picture_id=got.picture.id, uploader_id=dm,
             uploader_is_dm=True, right_to_use=True, kind="region", came_from="website",
             title=TITLE, audience="dm", storage_mb=settings.picture_storage_mb,
@@ -107,7 +108,7 @@ async def run(
     began = clock()
     read, tries = False, 0
     while clock() - began < WAIT_S:
-        read, tries = await _state(db, guild_id, campaign_id, got.picture.id, made.value.id)
+        read, tries = await _state(db, maps, guild_id, campaign_id, got.picture.id, made.value.id)
         if read or tries >= CLOSE_READ_TRIES:
             break
         await sleep(POLL_S)
@@ -131,18 +132,12 @@ async def run(
 
 
 async def _state(
-    db: Any, guild_id: int, campaign_id: str, picture_id: int, map_id: str
+    db: Any, maps: Any, guild_id: int, campaign_id: str, picture_id: int, map_id: str
 ) -> tuple[bool, int]:
-    """(read closely, the bot's tries so far) for the sample map."""
+    """(read closely, the bot's tries so far) for the sample map; the tries through the map
+    store, the one reader of the maps table (design rule 4)."""
     read = await _read_closely(db, guild_id, campaign_id, picture_id)
-    async with db.guild(guild_id) as conn:
-        cur = await conn.execute(
-            "SELECT close_read_tries FROM campaign_maps WHERE guild_id = %s AND campaign_id = %s"
-            " AND id = %s",
-            (guild_id, campaign_id, map_id),
-        )
-        row = await cur.fetchone()
-    return read, int(row["close_read_tries"]) if row else 0
+    return read, await maps.close_read_tries(guild_id, campaign_id, map_id)
 
 
 async def _read_closely(db: Any, guild_id: int, campaign_id: str, picture_id: int) -> bool:
