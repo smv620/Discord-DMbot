@@ -29,10 +29,9 @@ beforeAll(async () => {
     parsePage(await container.renderToString(component, { request: new Request(`https://dmbot.example${path}`) }));
   page = await render(WhatsNew, "/whats-new");
   // The older entries are one page for each month (#4203): their entry lists, put together, stand for the old single page.
-  const container2 = container;
   const merged = parsePage("<html><body><main></main></body></html>");
   for (const mp of monthPages(splitEntries(entries, new Date()).older)) {
-    const html = await container2.renderToString(Month, { props: { page: mp }, params: { month: mp.slug }, request: new Request(`https://dmbot.example/whats-new/${mp.slug}`) });
+    const html = await container.renderToString(Month, { props: { page: mp }, params: { month: mp.slug }, request: new Request(`https://dmbot.example/whats-new/${mp.slug}`) });
     const doc = parsePage(html);
     for (const el of doc.querySelectorAll("main .entry")) merged.querySelector("main")?.append(merged.importNode(el, true));
   }

@@ -66,7 +66,9 @@ export function monthName(month: string): string {
   return `${MONTH_NAMES[Number(number) - 1] ?? month} ${year}`;
 }
 
-/** The older entries (newest first) as one page for each month, newest month first, a long month in equal parts (#4203). Every entry
+/** (A part's slug names its place in the month, so adding entries can move which entries a part holds: nothing links to a part from
+ * outside, and the pages are kept out of search results.)
+ * The older entries (newest first) as one page for each month, newest month first, a long month in equal parts (#4203). Every entry
  * is on exactly one page and a page holds only its own month. Pure. */
 export function monthPages(older: Entry[]): MonthPage[] {
   const byMonth = new Map<string, Entry[]>();
