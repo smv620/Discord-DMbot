@@ -194,6 +194,7 @@ def _store(db: Database, session: Session, now: int) -> CampaignStore:
         db.as_person(session.user_id, session.id_hash),
         clock=lambda: now,
         has_free_slot=campaign_cap.has_paid_room_for_one_more,
+        logins_are_accounts=True,
     )
 
 
