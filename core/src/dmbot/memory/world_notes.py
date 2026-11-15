@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 from dmbot.memory import gate, language_rows, map_fact_store
 from dmbot.memory import map_facts as mf
-from dmbot.memory._changes import ENTITIES, STORY_LANGUAGES, Changes, Scope
+from dmbot.memory._changes import ENTITIES, RELATIONS, STORY_LANGUAGES, Changes, Scope
 from dmbot.memory.models import DM, MemoryRuleError
 
 PLACE, LANGUAGE = "place", "language"
@@ -47,6 +47,7 @@ class Note:
     made_at: int = 0
     fact: mf.Fact | None = None  # a place's reading itself (its words, "partly", dry or wet)
     ruler: str = ""  # who rules it, by name, for a ruler line
+    relation_id: str = ""  # a road's condition (#4258): `entity_id` is then the road's first place
 
 
 def note_id(kind: str, row_id: str) -> str:
@@ -89,9 +90,34 @@ async def read(scope: Scope) -> list[Note]:
         )
     }
     out: list[Note] = []
-    for fact, session_at, made_at in await map_fact_store.dm_read_notes(
-        scope, gate.Viewer.the_dm()
-    ):
+    read = await map_fact_store.dm_read_notes(scope, gate.Viewer.the_dm())
+    # a road's condition (#4258): a known road the DM hasn't taken away, between two kept places
+    on_roads = sorted({f.relation_id for f, _, _ in read if f.relation_id})
+    roads = {
+        str(r["id"]): (str(r["subject_id"]), str(r["object_id"]))
+        for r in (
+            await scope.select(
+                RELATIONS,
+                " AND id = ANY(%s) AND status <> 'rejected' AND to_session_at IS NULL",
+                [on_roads],
+            )
+            if on_roads
+            else []
+        )
+        if r["subject_id"] in names and r["object_id"] in names
+    }
+    for fact, session_at, made_at in read:
+        if fact.relation_id:
+            if fact.relation_id in roads:
+                a, b = roads[fact.relation_id]
+                out.append(
+                    Note(
+                        note_id(PLACE, fact.id), PLACE, a,
+                        f"the road between {names[a]} and {names[b]}", fact.value, fact.layer,
+                        fact.how, session_at, made_at, fact, relation_id=fact.relation_id,
+                    )
+                )  # fmt: skip
+            continue
         if fact.place_id in names and (fact.layer != mf.CONTROL or fact.value in names):
             out.append(
                 Note(
