@@ -20,6 +20,7 @@ import json
 import logging
 import re
 import time
+import urllib.parse
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Annotated, Any
@@ -36,6 +37,7 @@ from dmbot.consent import ConsentStore
 from dmbot.db import Database
 from dmbot.link_tokens import check_link_token, check_unsubscribe_token
 from dmbot.logs import mask_tokens
+from dmbot.pictures.bucket import Bucket
 from dmbot.recaps import voice
 from dmbot.site_ask import answer as answer_words
 from dmbot.site_ask.service import Limited, SiteAsk
@@ -62,6 +64,7 @@ from dmbot.web import (
     imports,
     line_fixes,
     lore,
+    maps_upload,
     member_lookup,
     met_list,
     my_lines,
@@ -242,6 +245,7 @@ def create_app(
     site_ask: SiteAsk | None = None,
     admin_sessions: AdminSessions | None = None,
     admin_tries: FailedTries | None = None,
+    upload_bucket: maps_upload.Bucket | None = None,
     clock: Clock = _system_clock,
 ) -> FastAPI:
     """`payments` None: no payment company is set up yet; buying answers payments_off.
@@ -263,6 +267,15 @@ def create_app(
         # The data export (#1150): once a minute per person, counted by account, not address.
         export_limit = RateLimit(60)
     said_as_limit = RateLimit(60, count=20)
+    # A sent map (#4347): ten pictures in ten minutes for one person, counted by account.
+    map_upload_limit = RateLimit(10 * 60, count=10)
+    if upload_bucket is None and settings.uploads_ready:
+        upload_bucket = Bucket(
+            settings.pictures_r2_account,
+            settings.maps_staging_r2_bucket,
+            settings.maps_staging_r2_key,
+            settings.maps_staging_r2_secret,
+        )
     if smart_limit is None:
         # Search by meaning on the Names page (#2733): each search is two paid calls to Voyage AI,
         # so one person gets 20 a minute, counted by account.
@@ -2243,6 +2256,13 @@ def create_app(
         "bad_target": (400, "bad_target"),
         "too_soon": (429, "too_soon"),
     }
+    # A sent map's own refusals (#4347); the rest are the relationship ones above.
+    map_upload_refusals = {
+        "needs_rights": (400, "needs_rights"),
+        "bad_file": (400, "bad_file"),
+        "uploads_off": (503, "uploads_off"),
+        "failed": (502, "failed"),
+    }
 
     @app.post("/me/campaigns/{ref}/web/peek")
     async def me_campaign_web_peek(ref: str, signed: Signed) -> dict[str, Any]:
@@ -2511,6 +2531,53 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.post("/me/campaigns/{ref}/maps", status_code=202)
+    async def me_maps_add(ref: str, request: Request, signed: Signed) -> dict[str, str]:
+        """Send a picture to be a map (#4347): the picture itself as the body, its name in
+        `X-Map-Title` (percent-encoded) and the person's own yes to "Is this a map you're allowed to
+        use and save in this campaign?" as `X-Map-Rights: yes`. Answers 202 with the answer id the
+        page polls (`.../web/answers/{id}` gives `mapId` and the change for Undo)."""
+        session, _token = signed
+        if map_upload_limit.take(f"user-{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        try:
+            await maps_upload.ensure_person(db, session, ref)  # (before any of the body is read)
+        except RecapError as err:
+            map_upload_limit.give_back(f"user-{session.user_id}")
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        data = bytearray()
+        too_big = HTTPException(status_code=413, detail="bad_file")
+        try:
+            if int(request.headers.get("content-length") or 0) > maps_upload.MAX_BYTES:
+                raise too_big
+            async for chunk in request.stream():
+                data.extend(chunk)
+                if len(data) > maps_upload.MAX_BYTES:
+                    raise too_big  # (a body that lies about its length is cut off here)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="bad_file") from None
+        try:
+            return {
+                "answer": await maps_upload.add(
+                    db,
+                    session,
+                    ref,
+                    upload_bucket,
+                    bytes(data),
+                    urllib.parse.unquote(request.headers.get("x-map-title", "")),
+                    rights=request.headers.get("x-map-rights") == "yes",
+                )
+            }
+        except RecapError as err:
+            if err.code in ("needs_rights", "bad_name", "uploads_off"):
+                # (refused before any work: no turn spent. A bad file already cost a decode.)
+                map_upload_limit.give_back(f"user-{session.user_id}")
+            status, detail = map_upload_refusals.get(
+                err.code, relationship_refusals.get(err.code, (404, "not_found"))
+            )
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.post("/me/campaigns/{ref}/maps/{map_id}/use", status_code=202)
     async def me_campaign_map_use(
         ref: str, map_id: str, request: Request, signed: Signed
@@ -2549,6 +2616,16 @@ def create_app(
         session, _token = signed
         try:
             return {"answer": await map_pages.queue_remove(db, session, ref, map_id)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/maps/{map_id}/takeback", status_code=202)
+    async def me_campaign_map_takeback(ref: str, map_id: str, signed: Signed) -> dict[str, str]:
+        """A poster takes their own map back (the picture stays kept)."""
+        session, _token = signed
+        try:
+            return {"answer": await map_pages.queue_takeback(db, session, ref, map_id)}
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
