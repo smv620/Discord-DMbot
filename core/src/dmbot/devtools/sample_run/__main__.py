@@ -32,7 +32,7 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
-from dmbot.devtools.sample_run import characters, counts, plan, steps
+from dmbot.devtools.sample_run import characters, costs, counts, plan, steps
 from dmbot.devtools.sample_run import decide as decide_mod
 from dmbot.devtools.sample_run.plan import SampleError, Step
 from dmbot.transcript import import_plan as ip
@@ -250,6 +250,8 @@ async def run(
     )  # before the run: it cannot mask an error
     db = await Database.open(url, migrate=False, max_size=4)
     done: list[Step] = []
+    spent: list[costs.CostLine] = []  # the recap's own figures, for the block at the end (#4087)
+    where: list[str] = []  # the campaign's id once it is known: the ledger is read from it
     decider: list[
         Any
     ] = []  # (the decisions' client is made at their first stage, closed at the end)
@@ -276,6 +278,7 @@ async def run(
             db, campaigns, gid, dm, keep_old=args.keep_old, today=today, say=say, found=found
         )
         cid = campaign.id
+        where.append(cid)
         if kept is not None:
             kept.update(guild=gid, campaign=cid, started=started)
 
@@ -403,7 +406,7 @@ async def run(
             return {**got, "players not on Discord": len(roles)}
 
         async def recap_step() -> Mapping[str, int | str]:
-            code = await steps.write_recap(gid, cid, started)
+            code = await steps.write_recap(gid, cid, started, spent=spent)
             if code != 0:
                 raise SampleError(f"the recap was not made (recap_run exit {code})")
             return {"made": 1}
@@ -462,6 +465,9 @@ async def run(
         except Exception as exc:  # (a count that can't be read never fails the run)
             say(f"Counts: not read ({type(exc).__name__})")
     finally:
+        # The bot's own AI by step, read here so a run that stopped part way still counts what the
+        # bot spent before it stopped (the db is open on every path only until the next line).
+        ledger = await _ledger(db, args.guild, where[0], say) if where else []
         await db.close()
         if decider:  # the run's decisions, all stages together: counts and agreement only
             if metrics is not None:
@@ -473,7 +479,35 @@ async def run(
             done, commit=commit, switches=switches(os.environ), today=dt.date.today().isoformat()
         ):
             say(line)
+        if metrics is None:  # (a `--repeat` run already reports its spend in its metrics line)
+            lines = [*(ledger or []), *spent]
+            if decider and decider[0].run.calls:
+                run = decider[0].run
+                lines.append(costs.decision_line(run.input_tokens, run.output_tokens, run.cost))
+            for line in costs.block(lines, incomplete=ledger is None):
+                say(line)
     return 0
+
+
+async def _ledger(
+    db: Database, gid: int, cid: str, say: Callable[[str], None]
+) -> list[costs.CostLine] | None:
+    """What the bot's own AI work cost this campaign, by kind of job, from the credits ledger
+    (#4087). It holds credits, never tokens, so those lines say so. A read that fails never fails
+    the run: the line says it was not read and the total says it is incomplete (None). The bot
+    flushes its charges a moment after each call, so the very last one can be missing."""
+    try:
+        async with db.guild(gid) as conn:
+            cur = await conn.execute(
+                "SELECT job_kind, COALESCE(sum(credits), 0) AS c FROM ai_credit_spend"
+                " WHERE guild_id = %s AND campaign_id = %s GROUP BY job_kind",
+                (gid, cid),
+            )
+            rows = await cur.fetchall()
+    except Exception as exc:
+        say(f"Cost by step: the ledger was not read ({type(exc).__name__})")
+        return None
+    return costs.ledger_lines({str(r["job_kind"]): int(r["c"]) for r in rows})
 
 
 async def _measure(

@@ -16,6 +16,7 @@ from dmbot.campaigns.store import NO_ROOM_TO_UNPAUSE, NOT_THE_OWNER_PAUSE
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.sessions import SessionStore
+from tests.test_account_discord_ids import link
 from tests.test_owner_campaigns import (
     ALICE,
     BOB,
@@ -343,6 +344,45 @@ class BotSide(BotTest):
         with self.assertRaises(CampaignError):
             await self.bot.set_paused(GUILD_A, a.id, ALICE, True)
         self.assertEqual(await self.paused_ids(ALICE), set())
+
+
+class PausedForAnAddedLogin(BotTest):
+    """An account's added Discord login gets the same pause words and unpause answer as
+    the account's first login (#2533, slice 2b)."""
+
+    SECOND = 9002
+
+    async def with_login(self) -> None:
+        # After give_plan, which already made ALICE's account row.
+        self.assertEqual(await link(self.db, ALICE, self.SECOND), "ok")
+
+    async def test_the_added_login_gets_the_owner_pause_words(self) -> None:
+        await self.give_plan(ALICE, 2)
+        await self.with_login()
+        a = await self.make(GUILD_A, "One", ALICE)
+        await self.store.set_paused(GUILD_A, a.id, ALICE, True, NOW)
+        paused = cast(Campaign, await self.store.get(GUILD_A, a.id))
+        self.assertEqual(
+            await self.bot.plan_refusal(GUILD_A, paused, self.SECOND), hours.PAUSED_OWNER
+        )
+        self.assertEqual(await self.bot.plan_refusal(GUILD_A, paused, BOB), hours.PAUSED_OTHER)
+
+    async def test_the_added_login_gets_the_same_unpause_answer_as_the_first_login(self) -> None:
+        await self.give_plan(ALICE, 1)
+        await self.with_login()
+        a = await self.make(GUILD_A, "Old", ALICE, played=100)
+        await self.store.set_paused(GUILD_A, a.id, ALICE, True, NOW)
+        await self.make(GUILD_B, "New", ALICE, played=200)  # the plan's one campaign is running
+        added = await self.bot.unpause_refusal(GUILD_A, self.SECOND)
+        self.assertEqual(added, await self.bot.unpause_refusal(GUILD_A, ALICE))
+        self.assertIsNotNone(added)
+
+    async def test_the_added_login_unpauses_when_there_is_room(self) -> None:
+        await self.give_plan(ALICE, 2)
+        await self.with_login()
+        a = await self.make(GUILD_A, "One", ALICE)
+        await self.store.set_paused(GUILD_A, a.id, ALICE, True, NOW)
+        self.assertIsNone(await self.bot.unpause_refusal(GUILD_A, self.SECOND))
 
 
 class PauseButtonAndResume(BotTest):
