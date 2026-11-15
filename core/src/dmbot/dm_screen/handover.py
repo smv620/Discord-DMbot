@@ -664,23 +664,23 @@ HANDOVER_POINTER = "🔁 A campaign hand-over was answered. The details are in y
 
 
 async def _tell_screen(interaction: discord.Interaction, campaign: Campaign, text: str) -> None:
-    """The outcome in the campaign's #dm-screen as well (best effort: the answer stands
-    either way). Only from a process that serves the server: another one has no copy of
-    the channel, and the private message to the owner still says it."""
-    post = getattr(interaction.client, "post", None)
-    note = getattr(interaction.client, "tell_dms_with_pointer", None)
-    if (campaign.dm_screen_channel_id is None or post is None) and note is None:
-        return
+    """The outcome noted for the campaign's DMs as well (best effort: the answer stands either
+    way). It names people, so the DMs get it privately and the DM Bot channel a pointer (#3874);
+    the #dm-screen only where the client has no such sender. Only from a process that serves the
+    server: another one has no copy of the channel, and the private message to the owner still
+    says it. The DMs include the two people already told: this is the campaign's record."""
     if interaction.client.get_guild(campaign.guild_id) is None:  # served elsewhere
         return
+    note = getattr(interaction.client, "tell_dms_with_pointer", None)
+    post = getattr(interaction.client, "post", None)
     try:
-        if note is not None:  # names in it: the DMs privately, a pointer in the DM Bot channel
+        if note is not None:
             await note(campaign, text, HANDOVER_POINTER)
         elif post is not None and campaign.dm_screen_channel_id is not None:
             await post(campaign.dm_screen_channel_id, text)  # logs a Discord failure itself
     except Exception:
         with log_context(guild_id=campaign.guild_id, campaign_id=campaign.id):
-            log.warning("Couldn't note a hand-over answer on the DM screen", exc_info=True)
+            log.warning("Couldn't note a hand-over answer to the DMs", exc_info=True)
 
 
 async def _offer_guild(interaction: discord.Interaction, guild_id: int) -> discord.Guild | None:
