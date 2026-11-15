@@ -711,7 +711,10 @@ def create_app(
             return Response(status_code=204)
         if done.code in (discord_accounts.NOT_FOUND, "not_linked"):
             raise HTTPException(status_code=404, detail="not_found")
-        raise HTTPException(status_code=409, detail="last_account")
+        # (the account in use is its own answer: it is not "the only one")
+        raise HTTPException(
+            status_code=409, detail="in_use" if done.code == "in_use" else "last_account"
+        )
 
     change_limit = RateLimit(60 * 60, count=6)  # asks to change the email, counted by account
     handover_limit = RateLimit(  # offers by email, a minute's worth, by account

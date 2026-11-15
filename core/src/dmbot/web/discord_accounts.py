@@ -61,7 +61,9 @@ async def add(db: Database, session: Session, discord_id: int, *, now: int) -> s
     if result.ok:
         return "added"
     # `has_account` and `taken` have the same words for the person: it is on another account
-    return {"has_account": "taken", "not_yours": "failed"}.get(result.code, result.code)
+    code = {"has_account": "taken"}.get(result.code, result.code)
+    # (only the codes the page has words for ever reach the address)
+    return code if code in ("has_campaigns", "has_plan", "taken") else "failed"
 
 
 async def remove(

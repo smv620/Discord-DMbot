@@ -133,6 +133,35 @@ class Adding(DiscordAccounts):
         start = await self.client.get("/auth/discord/add")
         self.assertEqual(start.headers["location"], f"{SITE}/account?discord=signed_out")
 
+    async def test_a_state_that_was_already_used_is_refused(self) -> None:
+        start = await self.client.get("/auth/discord/add")
+        state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+        self.discord.user_info = DiscordUser(id=ADDED, name="Mira's phone", email=None)
+        first = await self.client.get(
+            "/auth/discord/callback", params={"state": state, "code": "good-code"}
+        )
+        self.assertEqual(first.headers["location"], f"{SITE}/account?discord=added")
+        self.client.cookies.delete("__Host-dmbot_discord_add")  # (the cookie was cleared)
+        again = await self.client.get(
+            "/auth/discord/callback", params={"state": state, "code": "good-code"}
+        )
+        self.assertEqual(again.headers["location"], f"{SITE}/account?discord=failed")
+
+    async def test_the_discord_token_is_given_back_even_when_the_add_is_refused(self) -> None:
+        await CampaignStore(self.db).create(1, "Frostmaiden", OWNS_CAMPAIGNS)
+        before = len(self.discord.revoked)
+        await self.add(OWNS_CAMPAIGNS)
+        self.assertEqual(len(self.discord.revoked), before + 1)
+
+    async def test_an_expired_state_is_refused(self) -> None:
+        start = await self.client.get("/auth/discord/add")
+        state = parse_qs(urlsplit(start.headers["location"]).query)["state"][0]
+        self.now += 3600
+        done = await self.client.get(
+            "/auth/discord/callback", params={"state": state, "code": "good-code"}
+        )
+        self.assertNotIn("discord=added", done.headers["location"])
+
 
 class Removing(DiscordAccounts):
     async def test_an_added_account_comes_off_and_the_one_in_use_never_does(self) -> None:
@@ -142,7 +171,7 @@ class Removing(DiscordAccounts):
         refused = await self.client.post(
             f"/me/discord-accounts/{used['key']}/remove", headers=headers
         )
-        self.assertEqual(refused.status_code, 409)
+        self.assertEqual((refused.status_code, refused.json()["error"]), (409, "in_use"))
         done = await self.client.post(
             f"/me/discord-accounts/{added['key']}/remove", headers=headers
         )
