@@ -6,9 +6,9 @@ the file, puts the two files in the bucket under random keys (`p/<token>.<ext>` 
 `p/<token>-preview.webp`, as the picture keeper does) and queues one `maps-add` action
 (migration 0498). The bot re-checks the sender and the files, writes the rows, and deletes the
 files if it refuses; a file nobody picked up is swept by the picture sweep (about an hour).
-Nothing is stored for anyone outside the campaign's people, for a picture the person did not say they may use, or for a
-file that is not a PNG, JPEG or WebP picture by its own bytes (an SVG is never one). The picture
-is re-encoded first, so no location data or hidden text rides along. Words, ids and sizes only
+Nothing is stored for anyone outside the campaign's people, for a picture the person did not
+say they may use, or for a file that is not a PNG, JPEG or WebP picture by its own bytes (an
+SVG is never one). The picture is re-encoded first, so no location data or hidden text rides along. Words, ids and sizes only
 are queued, never a word of the picture.
 """
 
