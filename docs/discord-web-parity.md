@@ -71,7 +71,7 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | House rules (read), the house-rules file, rules sharing and rulesets | `/account/house-rules`, `/account/sharing` | read live; file and sharing switched off | `HOUSE_FILE_LIVE`, `RULE_SHARING_LIVE`, `RULESETS_LIVE` |
 | Homebrew (read and file) | `/account/homebrew` | live | none |
 | Pictures gallery | `/account/pictures` | built, switched off | `PICTURES_LIVE` |
-| Maps page: the list, a DM's yes or no, show or hide for the table, remove, a poster's take-back, Undo | `/account/maps` | built, switched off | `MAPS_LIVE` (#4347); Discord has no show or hide yet: its half is #4414 |
+| Maps page: the list, a DM's yes or no, show or hide for the table, remove, a poster's take-back, Undo | `/account/maps` | built, switched off | `MAPS_LIVE` (#4347); Discord: `/dmbot maps` shows a map to the table or hides it, with the same warning and an Undo (#4414); the rest of the page (the DM's yes or no, a poster's take-back) is in Questions and the map's own question |
 | Story timeline | `/account/timeline` | live | none |
 | Plot check (ask, answer an issue, chat, decide a proposal) | campaign | built, switched off | `PLOT_CHECK_LIVE` |
 | Story mode | campaign | built, switched off | `STORY_MODE_LIVE` |
@@ -123,6 +123,7 @@ match. "In Discord" says where the DM finds it today.
 | Table chat on or off, and which chat | Table chat | Discord-only: the table's chat is a Discord channel |
 | Rules level (how much DMbot says) and Features on or off | Campaign management | Rules level: Campaign settings (`level`). Features: a read-only list (`FEATURES_LIST_LIVE`, #3693, #3718); turning features on or off stays in Discord until filed |
 | Game masters: add, remove | Game masters | Campaign settings: game masters (`CO_DMS_LIVE`) |
+| The campaign's setting (the world the story is in): see it, keep DMbot's guess (#4291) | ⚙️ Manage DMbot: the Campaign setting line, ✅ Keep it (picking another world follows) | WebDev's half of #4291 (the website's Campaign setting field) |
 | Hand over the campaign: offer, accept, decline, withdraw | Handover buttons | Hand a campaign over (`HANDOVER_LIVE`) |
 | A hand-over offer closed because the Discord accounts on an account changed, and why (#2533 slice 3, #4467) | A notice to both people, and the offer message loses its buttons | Account page: "Offers that were closed", for a week, with the reason (no names, no accounts) |
 | Delete this campaign | Delete this campaign | Backup and delete (delete is live) |

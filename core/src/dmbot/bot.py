@@ -238,6 +238,7 @@ from dmbot.dm_screen.quiet_stop import (
 from dmbot.dm_screen.recap_panel import RecapsButton
 from dmbot.dm_screen.recap_style import RecapStyleButton
 from dmbot.dm_screen.retired_channels import remove_old_channels
+from dmbot.dm_screen.setting_field import KeepSettingButton
 from dmbot.dm_screen.settings import (
     AskBeforeAddingButton,
     BackToSettingsButton,
@@ -571,6 +572,7 @@ from dmbot.ui import (
     map_answer,
     map_question,
     map_send,
+    map_show,
     name_pass_undo,
     player_id,
     recap_audio,
@@ -1274,7 +1276,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 campaigns=campaigns,
                 transcripts=transcripts,
                 guild_ids=campaigns.guilds_with_campaigns,
-                post_screen=self._post_to_screen,
+                post_screen=self._post_upkeep,
             )
         if meter is not None:
             self.retention = RetentionJob(
@@ -1801,6 +1803,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             RuleLookupButton,
             RulesCardsButton,
             AskBeforeAddingButton,
+            KeepSettingButton,
             channel_sync_ui.ChannelsMenuButton,
             channel_sync_ui.ChannelsChoiceButton,
             channel_sync_ui.PeopleButton,
@@ -1859,6 +1862,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             map_answer.ActButton, map_answer.OpenButton, map_answer.UndoButton
         )  # the DM's side, #4344
         self.add_dynamic_items(map_question.TakeBackButton, map_question.PosterUndoButton)  # #4344
+        self.add_dynamic_items(  # a DM shows or hides a map, #4414
+            map_show.CampaignSelect, map_show.MapSelect, map_show.ActButton,
+            map_show.BackButton, map_show.UndoButton,
+        )  # fmt: skip
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
@@ -3601,12 +3608,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except Exception:
             log.exception("The daily owner check failed")
 
-    async def _post_to_screen(self, campaign: Campaign, text: str) -> bool:
-        """Say something on a campaign's DM screen (for the daily jobs); False if it has none
-        or the post failed."""
-        if campaign.dm_screen_channel_id is None:
+    async def _post_upkeep(self, campaign: Campaign, text: str) -> bool:
+        """Say a counts-only upkeep note for a campaign (the daily jobs; #3874): in the DM Bot
+        channel when it has one, else on the DM screen as before. False if it has neither or the
+        post failed. The DM Bot channel is read by the campaign's people, so `text` holds counts
+        and never a name."""
+        channel = campaign.dm_bot_channel_id or campaign.dm_screen_channel_id
+        if channel is None:
             return False
-        return await self.post(campaign.dm_screen_channel_id, text)
+        return await self.post(channel, text)
 
     async def _tell_admin(self, user_id: int, text: str) -> None:
         """A private message to one of DMbot's admins (#972). Raises if it can't be sent, so
@@ -12398,16 +12408,22 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except Exception as exc:
             log.warning("Import time: the offer could not be kept: %s", type(exc).__name__)
 
-    def _still_in(self, guild_id: int) -> Callable[[int], bool]:
-        """Whether a person is still a member of this server (for the Maps page's player actions:
-        a character outlives its player, #4347). The cache only: a member DMbot cannot see is
-        refused."""
+    def _reads_campaign(
+        self, guild_id: int, campaign: Campaign
+    ) -> Callable[[int], Awaitable[bool]]:
+        """Whether a person may read this campaign's transcripts: the one rule Discord's channels
+        and the website's doors follow (`channel_sync.reads_campaign`), for the Maps page's player
+        actions (#4347, #4445). "Still in the server" is Discord's member cache only: a member
+        DMbot cannot see is refused."""
 
-        def inside(user_id: int) -> bool:
+        async def may(user_id: int) -> bool:
             guild = self.get_guild(guild_id)
-            return guild is not None and guild.get_member(user_id) is not None
+            return await channel_sync.reads_campaign(
+                self.campaigns, self.memory, campaign, user_id,
+                in_server=guild is not None and guild.get_member(user_id) is not None,
+            )  # fmt: skip
 
-        return inside
+        return may
 
     def _import_clock_choice(self, guild_id: int) -> web_actions.ClockChoiceFn:
         """The website's answer to an import clock offer (#3199), applied the way Discord's two
@@ -13137,7 +13153,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                     self.map_store,
                                     self.settings.picture_storage_mb,
                                 ),
-                                still_here=self._still_in(guild.id),
+                                reads=self._reads_campaign(guild.id, campaign),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -13711,6 +13727,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         self._picture_swept = time.time()
         await picture_sweep.sweep(db, bucket)
+        if self.maps_staging is not None:  # (sent maps nobody picked up, #4347)
+            await picture_sweep.sweep_staging(self.maps_staging)
 
     async def run_web_report_requests(self) -> None:
         """The reports DMs asked for again on the website (#2805): each asker must still be a DM of
