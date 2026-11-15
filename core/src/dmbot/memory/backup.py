@@ -34,6 +34,7 @@ from dmbot.memory import (
     thread_parts,
     whereabouts,
 )
+from dmbot.memory import threads as threads_mod
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import (
     ALIAS_KNOWERS,
@@ -1095,6 +1096,30 @@ def _check_thread_parts(by_tag: dict[str, list[dict[str, Any]]], onto: Ontology)
             open_keys.add(key)
 
 
+def _check_branches(by_tag: dict[str, list[dict[str, Any]]], onto: Ontology) -> None:
+    """The live "branch of" links (#4471, quests design §6a): between two threads, one bigger
+    thread at most for each, and never a loop. Checked on restore as on add and merge (Supervisor's
+    ruling on #4471), unlike "led to", whose restore trusts the file (`_checked_rows`)."""
+    types = {r["id"]: r["type"] for r in by_tag["entity"]}
+    pairs = [
+        (r["subject_id"], r["object_id"])
+        for r in by_tag["relation"]
+        if r["predicate"] == threads_mod.BRANCH_OF
+        and r["status"] == "confirmed"
+        and r["to_session_at"] is None
+    ]
+    if any(
+        not onto.is_a(types.get(a, ""), "thread") or not onto.is_a(types.get(b, ""), "thread")
+        for a, b in pairs
+    ):
+        raise CampaignError(DAMAGED)
+    branches = [a for a, _ in pairs]
+    if len(branches) != len(set(branches)) or any(
+        threads_mod.loops_through(pairs, a) for a in branches
+    ):
+        raise CampaignError(DAMAGED)
+
+
 def _db_value(column: str, value: Any) -> Any:
     return Jsonb(value) if column in ("sheet", "reading") and value is not None else value
 
@@ -1192,6 +1217,7 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
         raise CampaignError(DAMAGED)
     _check_story_languages(by_tag["story_language"], characters)
     _check_thread_parts(by_tag, onto)  # a thread's parts (#4471)
+    _check_branches(by_tag, onto)  # a branch of a bigger thread (#4471)
     # a place's land, climate and ruler (#4256): on a place, ruled by a group, allowed there
     places = {r["id"]: r for r in by_tag["entity"] if onto.is_a(r["type"], "place")}
     groups = {r["id"] for r in by_tag["entity"] if onto.is_a(r["type"], "faction")}

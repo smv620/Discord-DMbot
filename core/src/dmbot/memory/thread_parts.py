@@ -290,9 +290,11 @@ _EDITABLE = ("words", "who_id", "about_id", "due", "terms", "limit_kind", "under
 
 
 async def correct(w: Changes, onto: Ontology, part_id: str, **changes: Any) -> dict[str, Any]:
-    """The DM corrects a standing part in place (§4: a mistake is never
-    history). Words, who or what it names, a reward's due time, help's terms, a time limit's soft
-    or hard, or where it sits. A reward's amount follows its new words."""
+    """The DM changes a standing part from its card. Supervisor's boundary on #4471: rewording that
+    doesn't change what is true, who or what it names, and where it sits are corrected in place
+    (never history); a change to what is true (a reward's amount through its new words, when it is
+    due, a loan's terms, a soft limit made hard) is a change in the story, so the old row closes and
+    a new one opens, as a tick does (`_story_change`). When in doubt, a change in the story."""
     unknown = set(changes) - set(_EDITABLE)
     if unknown:
         raise ValueError(f"Not a correction: {sorted(unknown)}")
@@ -336,7 +338,36 @@ async def correct(w: Changes, onto: Ontology, part_id: str, **changes: Any) -> d
         await _check_names(w, onto, kind, who, about)
         new["who_id"], new["about_id"] = who, about
     new = {k: v for k, v in new.items() if row[k] != v}
+    if new.keys() & _STORY_FIELDS:
+        return await _story_change(w, row, new)
     return await w.update(THREAD_PARTS, part_id, new) if new else row
+
+
+# What changing says something new happened in the story, not that the words were wrong (#4471).
+_STORY_FIELDS = frozenset({"state", "amount", "unit", "due", "terms", "limit_kind"})
+
+
+async def _story_change(
+    w: Changes, row: Mapping[str, Any], new: Mapping[str, Any]
+) -> dict[str, Any]:
+    """The old row closes at the story's time (never before it began) and a new one opens with the
+    changes; what stood under the old row (sub-steps, rewards given against a promise) moves to the
+    new one. §4's history rule, ruled for route condition on #4258."""
+    part_id = str(row["id"])
+    start = row["from_session_at"]
+    at = await story_now(w)
+    at = at if start is None else max(at, int(start))
+    await w.update(THREAD_PARTS, part_id, {"to_session_at": at})
+    made = await w.insert(
+        THREAD_PARTS,
+        {
+            **{c: row[c] for c in THREAD_PARTS.columns},
+            **new,
+            "id": new_id(), "from_session_at": at, "to_session_at": None, "created_at": w.now,
+        },
+    )  # fmt: skip
+    await _move_under(w, part_id, str(made["id"]))
+    return made
 
 
 async def set_state(w: Changes, part_id: str, state: str) -> dict[str, Any]:
@@ -349,20 +380,7 @@ async def set_state(w: Changes, part_id: str, state: str) -> dict[str, Any]:
         raise MemoryRuleError(NOT_A_STATE)
     if state == row["state"]:
         return row
-    start = row["from_session_at"]
-    at = await story_now(w)
-    at = at if start is None else max(at, int(start))  # (never before the row began)
-    await w.update(THREAD_PARTS, part_id, {"to_session_at": at})
-    made = await w.insert(
-        THREAD_PARTS,
-        {
-            **{c: row[c] for c in THREAD_PARTS.columns},
-            "id": new_id(), "state": state, "from_session_at": at, "to_session_at": None,
-            "created_at": w.now,
-        },
-    )  # fmt: skip
-    await _move_under(w, part_id, str(made["id"]))
-    return made
+    return await _story_change(w, row, {"state": state})
 
 
 async def _move_under(w: Changes, old_id: str, new_id_: str | None) -> None:

@@ -150,6 +150,32 @@ class EachKind(_Thread):
             await self.memory.remove_thread_part(GUILD_A, self.c, mine.id, source="background")
 
 
+class CorrectOrHistory(_Thread):
+    """Supervisor's boundary on #4471: rewording is corrected in place; a new amount, due time,
+    loan terms or soft-or-hard is a change in the story, so the old row stays as history."""
+
+    async def test_rewording_in_place_and_a_new_amount_as_history(self) -> None:
+        promise = await self.put(tp.REWARD, "100 gold", who_id=self.hlin)
+        same = await self.memory.correct_thread_part(
+            GUILD_A, self.c, promise.id, words="100 gold coins", source=DM
+        )
+        self.assertEqual((same.value.id, same.value.amount), (promise.id, 100.0))
+        more = await self.memory.correct_thread_part(
+            GUILD_A, self.c, promise.id, words="150 gold", source=DM
+        )
+        self.assertNotEqual(more.value.id, promise.id)
+        self.assertEqual(more.value.amount, 150.0)
+        later = await self.memory.correct_thread_part(
+            GUILD_A, self.c, more.value.id, due=tp.AFTERWARDS, source=DM
+        )
+        self.assertNotEqual(later.value.id, more.value.id)
+        history = await self.memory.parts_of_threads(
+            GUILD_A, self.c, [self.quest], gate.Viewer.the_dm(), history=True
+        )
+        self.assertEqual(len(history), 3)  # (two closed rows and the one standing)
+        self.assertEqual([p.id for p in await self.standing()], [later.value.id])
+
+
 class Under(_Thread):
     async def test_sub_steps_one_level_deep_and_they_follow_a_tick(self) -> None:
         top = await self.put(tp.OBJECTIVE, "find Sephek")
@@ -234,7 +260,7 @@ class BranchOf(_Thread):
         wit = await self.add("Who killed Wit?", type="quest", status="confirmed")
         search = await self.add("Cerric's search", type="quest", status="confirmed")
         made = await self.memory.branch_of(GUILD_A, self.c, wit, search, source=DM)
-        self.assertTrue(made.value.secret)  # (the DM's story plan)
+        self.assertFalse(made.value.secret)  # (players see it when both threads are shown)
         with self.assertRaisesRegex(MemoryRuleError, "already a branch of another"):
             await self.memory.branch_of(GUILD_A, self.c, wit, self.quest, source=DM)
         with self.assertRaisesRegex(MemoryRuleError, "loop"):
@@ -252,6 +278,36 @@ class BranchOf(_Thread):
         await self.memory.branch_of(GUILD_A, self.c, b, self.quest, source=DM)
         with self.assertRaisesRegex(MemoryRuleError, "can't be joined yet"):
             await self.memory.merge(GUILD_A, self.c, b, a, source=DM, dm_said_same=True)
+
+
+class BranchesOnRestore(unittest.TestCase):
+    """A backup with two bigger threads for one, or a loop of branches, is refused (Supervisor's
+    ruling on #4471: checked on restore as on add and merge)."""
+
+    def check(self, *pairs: tuple[str, str]) -> None:
+        from dmbot.memory.backup import _check_branches
+        from dmbot.memory.ontology import CORE_PREDICATES, CORE_TYPES, Ontology
+
+        onto = Ontology.build(CORE_TYPES, CORE_PREDICATES)
+        ids = {i for pair in pairs for i in pair}
+        rows = {
+            "entity": [{"id": i, "type": "quest"} for i in sorted(ids)],
+            "relation": [
+                {"subject_id": a, "object_id": b, "predicate": "branch_of",
+                 "status": "confirmed", "to_session_at": None}
+                for a, b in pairs
+            ],
+        }  # fmt: skip
+        _check_branches(rows, onto)
+
+    def test_one_bigger_thread_and_no_loop(self) -> None:
+        from dmbot.campaigns.models import CampaignError
+
+        self.check(("a", "b"), ("c", "b"), ("b", "d"))  # (fine: a tree)
+        with self.assertRaises(CampaignError):
+            self.check(("a", "b"), ("a", "c"))
+        with self.assertRaises(CampaignError):
+            self.check(("a", "b"), ("b", "a"))
 
 
 if __name__ == "__main__":

@@ -36,9 +36,11 @@ from dmbot.migrations._shared import _isolate
 #
 # One open row per thread, kind and words (§4). Per campaign with forced row-level security; every
 # foreign key follows a campaign moved to another server (`ON UPDATE CASCADE`, #2550) and goes with
-# its thread or the entry it names (`ON DELETE CASCADE`; the store deletes them first, logged, so an
-# Undo never loses one unlogged). Logged in the change log, moved by merges and carried by the
-# memory backup section (the DM's own story memory: nothing rebuilds it). No existing row changes.
+# its thread (`ON DELETE CASCADE`). An entry it names going leaves the part and its words
+# (`ON DELETE SET NULL`, Supervisor's ruling on #4471); the store clears or deletes them first,
+# logged, so an Undo never loses one unlogged. Logged in the change log, moved by merges and
+# carried by the memory backup section (the DM's own story memory: nothing rebuilds it). No
+# existing row changes.
 SQL = r"""
     CREATE TABLE memory_thread_parts (
         guild_id        BIGINT NOT NULL,
@@ -78,10 +80,10 @@ SQL = r"""
             ON DELETE CASCADE ON UPDATE CASCADE,
         FOREIGN KEY (guild_id, campaign_id, who_id)
             REFERENCES memory_entities (guild_id, campaign_id, id)
-            ON DELETE CASCADE ON UPDATE CASCADE,
+            ON DELETE SET NULL (who_id) ON UPDATE CASCADE,
         FOREIGN KEY (guild_id, campaign_id, about_id)
             REFERENCES memory_entities (guild_id, campaign_id, id)
-            ON DELETE CASCADE ON UPDATE CASCADE,
+            ON DELETE SET NULL (about_id) ON UPDATE CASCADE,
         FOREIGN KEY (guild_id, campaign_id, under_id)
             REFERENCES memory_thread_parts (guild_id, campaign_id, id)
             ON DELETE CASCADE ON UPDATE CASCADE,

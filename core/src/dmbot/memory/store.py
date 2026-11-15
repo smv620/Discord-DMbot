@@ -2071,13 +2071,14 @@ class MemoryStore:
     ) -> Written[Relation]:
         """The DM says one kept thread is a branch of a bigger one (#4471, quests design §6a): a
         side quest, or a mystery inside a quest. One bigger thread at most and no loop
-        (`_check_branch_live`); kept secret, the DM's story plan, as "led to" is."""
+        (`_check_branch_live`). Players see it only when both threads are shown to them, as any
+        connection (Supervisor's ruling on #4471)."""
         if source != DM:
             raise MemoryRuleError("Only the DM can do that.")
         async with self._write(guild_id, campaign_id, source) as w:
             fact, _flags = await self.add_relation_in(
                 w, branch_id, threads_mod.BRANCH_OF, bigger_id, confidence=1.0,
-                status=CONFIRMED, secret=True, from_session_at=from_session_at,
+                status=CONFIRMED, from_session_at=from_session_at,
             )  # fmt: skip
             return Written(fact, w.batch)
 
@@ -6513,8 +6514,9 @@ class MemoryStore:
             secret = True
             await _check_led_to_live(w, None, subject_id, object_id)
         if pred.key == threads_mod.BRANCH_OF:
-            # (#4471) a branch is the DM's story plan, kept secret like "led to", and checked
-            secret = True
+            # (#4471) whatever the path, one bigger thread at most and never a loop. Not secret
+            # (Supervisor's ruling): players see it as any connection, only when both threads are
+            # shown to them.
             await _check_branch_live(w, None, subject_id, object_id)
         types = {
             subject_id: (await _entity_row(w, subject_id))["type"],
