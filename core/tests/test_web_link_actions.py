@@ -759,41 +759,36 @@ class TheEdits(Editing):
                         self.g, self.one.id, rel.id, source=DM_SOURCE, status="rejected"
                     )
 
-    async def test_the_websites_players_choice_gets_through_the_door_to_a_replaced_connection(
-        self,
-    ) -> None:
-        for sent, hidden in (({"secret": False}, False), ({}, True)):
-            with self.subTest(sent=sent):
-                old = await self.memory.add_relation(
-                    self.g, self.one.id, self.mira, "knows", self.hall, source=DM_SOURCE,
-                    confidence=1.0, status="confirmed", secret=True, detail="friendly",
-                )  # fmt: skip
-                assert old.value
-                await self.backstory.add(
-                    self.g,
-                    self.one.id,
-                    [NewLink(self.mira, "knows", self.hall, "quote", detail="hostile")],
-                )
-                (link,) = [
-                    w
-                    for w in await self.backstory.waiting(self.g, self.one.id)
-                    if w.subject_id == self.mira and w.object_id == self.hall
-                ]
-                await self.queue(kind="backstory", action="keep", id=link.id, **sent)
-                self.assertEqual([o.error for o in await self.apply_waiting()], [""])
-                live = [r for r in await self.knows_hall() if r.to_session_at is None]
-                self.assertEqual(
-                    [
-                        (r.detail, r.secret or r.unrevealed)
-                        for r in live
-                        if r.subject_id == self.mira
-                    ],
-                    [("hostile", hidden)],
-                )
-                for r in await self.knows_hall():  # clear it for the next round
-                    await self.memory.update_relation(
-                        self.g, self.one.id, r.id, source=DM_SOURCE, status="rejected"
-                    )
+    async def keep_over_a_hidden_connection(self, **sent: Any) -> list[tuple[str, bool]]:
+        """A hidden "knows (friendly)" is replaced by a waiting "knows (hostile)" that the website
+        keeps with `sent`; what the live connection now says, and whether players can't see it."""
+        old = await self.memory.add_relation(
+            self.g, self.one.id, self.mira, "knows", self.hall, source=DM_SOURCE,
+            confidence=1.0, status="confirmed", secret=True, detail="friendly",
+        )  # fmt: skip
+        assert old.value
+        await self.backstory.add(
+            self.g,
+            self.one.id,
+            [NewLink(self.mira, "knows", self.hall, "quote", detail="hostile")],
+        )
+        (link,) = [
+            w
+            for w in await self.backstory.waiting(self.g, self.one.id)
+            if w.subject_id == self.mira and w.object_id == self.hall
+        ]
+        await self.queue(kind="backstory", action="keep", id=link.id, **sent)
+        self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+        live = [r for r in await self.knows_hall() if r.to_session_at is None]
+        return [(r.detail, r.secret or r.unrevealed) for r in live if r.subject_id == self.mira]
+
+    async def test_the_websites_players_choice_shows_a_replaced_hidden_connection(self) -> None:
+        self.assertEqual(
+            await self.keep_over_a_hidden_connection(secret=False), [("hostile", False)]
+        )
+
+    async def test_a_plain_website_keep_leaves_a_replaced_hidden_connection_hidden(self) -> None:
+        self.assertEqual(await self.keep_over_a_hidden_connection(), [("hostile", True)])
 
     async def test_keep_all_writes_every_ready_one_and_the_discord_undo_takes_them_back(
         self,
