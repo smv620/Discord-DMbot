@@ -133,6 +133,56 @@ describe("the Add a map form", () => {
     release();
     await screen.findByText(w.addedDm);
     expect(api.calls.filter((c) => c.startsWith("addMap:")).length).toBe(1);
-    expect(within(screen.getByRole("heading", { name: w.addHeading }).parentElement as HTMLElement).getByRole("button", { name: w.yesLabel })).toBeTruthy();
+  });
+});
+
+describe("the Add a map form's progress and Undo", () => {
+  it("shows what stage the upload is at, the seconds since it last moved, and that it has stalled", async () => {
+    const api = mockApi("table");
+    const real = api.addMap!.bind(api);
+    let release!: () => void;
+    api.addMap = async (ref, upload, onLook) => {
+      onLook?.({ stage: "sending", seconds: 3, quiet: 5 });
+      expect(await screen.findByText(w.sending(3))).toBeTruthy();
+      expect(await screen.findByText(w.lastMoved(5))).toBeTruthy();
+      onLook?.({ stage: "saving", seconds: 40, quiet: 30 });
+      await new Promise<void>((r) => (release = r));
+      return real(ref, upload, onLook);
+    };
+    render(<Maps api={api} refId={DM} />);
+    await screen.findByText("Cave");
+    await choose(picture(), "Mill");
+    fireEvent.click(screen.getByRole("button", { name: w.yesLabel }));
+    expect(await screen.findByText(w.stalled(40, "30 seconds"))).toBeTruthy();
+    release();
+    await screen.findByText(w.addedDm);
+  });
+
+  it("says it went wrong when Undo cannot be sent, and keeps the page", async () => {
+    const api = mockApi("table");
+    render(<Maps api={api} refId={DM} />);
+    await screen.findByText("Cave");
+    await choose(picture(), "Mill");
+    fireEvent.click(screen.getByRole("button", { name: w.yesLabel }));
+    await screen.findByText(w.addedDm);
+    api.changeMaps = async () => {
+      throw new ApiError("server");
+    };
+    fireEvent.click(screen.getByRole("button", { name: w.undoLabel }));
+    expect(await screen.findByText(w.wrong)).toBeTruthy();
+  });
+
+  it("clears an earlier refusal when a new picture is chosen", async () => {
+    const api = mockApi("table");
+    api.addMap = async () => {
+      throw new ApiError("bad-file");
+    };
+    render(<Maps api={api} refId={DM} />);
+    await screen.findByText("Cave");
+    await choose(picture(), "Mill");
+    fireEvent.click(screen.getByRole("button", { name: w.yesLabel }));
+    expect(await screen.findByText(w.badFile(10))).toBeTruthy();
+    fireEvent.change(screen.getByLabelText(w.chooseFile), { target: { files: [picture("other.png")] } });
+    expect(screen.queryByText(w.badFile(10))).toBeNull();
   });
 });

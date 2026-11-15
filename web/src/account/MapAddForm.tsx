@@ -72,6 +72,7 @@ export default function MapAddForm({ api, refId, canManage, onAdded }: { api: Ac
   }
 
   async function undo(batch: number): Promise<void> {
+    if (!api.changeMaps) return setSaid(w.wrong);
     try {
       await api.changeMaps!(refId, { action: "undo", batch });
       setUndoBatch(null);
@@ -96,7 +97,10 @@ export default function MapAddForm({ api, refId, canManage, onAdded }: { api: Ac
       )}
       <label class="field">
         {w.chooseFile}
-        <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={(e) => setFile((e.target as HTMLInputElement).files?.[0] ?? null)} />
+        <input ref={fileInput} type="file" accept="image/png,image/jpeg,image/webp" disabled={busy} onChange={(e) => {
+          setProblem(null);
+          setFile((e.target as HTMLInputElement).files?.[0] ?? null);
+        }} />
       </label>
       <label class="field">
         {w.nameIt}
