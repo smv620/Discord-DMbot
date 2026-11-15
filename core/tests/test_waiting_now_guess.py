@@ -7,7 +7,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from dmbot.memory import waiting_now
 from dmbot.memory import web_actions as wa
+from dmbot.memory.backstory_keep import changes_among as keep_changes
+from dmbot.memory.backstory_keep import keep_all
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink
 from dmbot.web import relationships
 from dmbot.web.recaps import RecapError
@@ -29,6 +32,8 @@ class NowAndGuess(Web):
         )
 
     async def rows(self) -> list[dict[str, Any]]:
+        # the bot writes what a keep would replace on each row (#4441); the door returns it
+        await waiting_now.refresh(self.memory, self.backstory, self.g, self.one.id)
         return list((await self.got())["backstory"])
 
     async def waiting(self, predicate: str = "knows", detail: str = "", **kw: Any) -> None:
@@ -63,26 +68,66 @@ class TheNowLine(NowAndGuess):
         (row,) = await self.rows()
         self.assertTrue(row["now"]["hidden"])
 
-    async def test_when_a_held_connection_already_says_the_same_there_is_no_now(self) -> None:
-        await self.link("knows", self.mira, self.keep, "twin")  # (same kind, plain words)
+    async def test_the_website_says_what_discords_card_says_for_a_twin_the_other_way_round(
+        self,
+    ) -> None:
+        # (#4441) the bot's rule decides, not a same-kind match in the door: whatever the card on
+        # Discord would end, the website says
+        await self.link("knows", self.mira, self.keep, "twin")
         await self.waiting(detail="friendly")
         await self.link("knows", self.keep, self.mira, "twin-friendly")
-        await self.update(
-            "UPDATE memory_relations SET detail = 'friendly' WHERE guild_id = %s AND id = %s",
-            self.g, self.links["twin-friendly"],
-        )  # fmt: skip
         (row,) = await self.rows()
-        self.assertNotIn("now", row)
+        waiting = await self.backstory.waiting(self.g, self.one.id)
+        ends = await keep_changes(self.memory, self.g, self.one.id, waiting)
+        discord = {
+            r.predicate for found in ends.values() for r in found if r.subject_id == self.mira
+        }
+        self.assertEqual("now" in row, bool(discord))
 
-    async def test_a_connection_of_another_kind_has_no_now(self) -> None:
+    async def test_a_connection_of_another_kind_that_can_sit_beside_it_has_no_now(self) -> None:
         await self.waiting(predicate="works_for")
         (row,) = await self.rows()
         self.assertNotIn("now", row)
 
-    async def test_the_same_words_are_no_change_and_have_no_now(self) -> None:
-        await self.waiting(detail="")
+    async def test_an_alliance_an_enemy_would_end_is_now_though_the_kind_differs(self) -> None:
+        # (#4441) the ontology decides, as for Discord's card: an ally against an enemy
+        await self.link("ally_of", self.mira, self.keep, "alliance")
+        await self.waiting(predicate="enemy_of")
         (row,) = await self.rows()
-        self.assertNotIn("now", row)
+        self.assertEqual(row["now"]["how"], "is a friend or ally of")
+        self.assertFalse(row["now"]["hidden"])
+
+    async def test_what_a_press_ends_is_what_the_card_said(self) -> None:
+        await self.link("ally_of", self.mira, self.keep, "alliance")
+        await self.waiting(predicate="enemy_of")
+        (row,) = await self.rows()
+        self.assertEqual(row["now"]["how"], "is a friend or ally of")
+        done = await keep_all(
+            self.memory, self.backstory, self.g, self.one.id,
+            await self.backstory.waiting(self.g, self.one.id), one_press=False,
+        )  # fmt: skip
+        self.assertEqual(len(done.kept), 1)
+        ended = [
+            r for r in await self.memory.relations(self.g, self.one.id, include_secret=True)
+            if r.predicate == "ally_of" and {r.subject_id, r.object_id} == {self.mira, self.keep}
+        ]  # fmt: skip
+        self.assertTrue(ended and all(r.to_session_at is not None for r in ended))  # (as said)
+
+    async def test_a_changed_held_connection_is_read_again_on_the_next_look(self) -> None:
+        await self.link("ally_of", self.mira, self.keep, "alliance")
+        await self.waiting(predicate="enemy_of")
+        (row,) = await self.rows()
+        self.assertEqual(row["now"]["how"], "is a friend or ally of")
+        await self.update(
+            "UPDATE memory_relations SET to_session_at = 5 WHERE guild_id = %s AND id = %s",
+            self.g, self.links["alliance"],
+        )  # fmt: skip
+        (again,) = await self.rows()
+        self.assertNotIn("now", again)
+
+    async def test_the_same_words_are_already_known_and_not_asked(self) -> None:
+        await self.waiting(detail="")  # (the campaign holds exactly this): cleaned away, no card
+        self.assertEqual(await self.rows(), [])
 
     async def test_an_ended_connection_is_not_now(self) -> None:
         await self.update(

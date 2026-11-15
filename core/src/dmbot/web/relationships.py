@@ -1379,19 +1379,25 @@ def _claim_statement(row: dict[str, Any]) -> str:
 
 
 def _held_words(b: dict[str, Any]) -> dict[str, Any]:
-    """`now` and `guess` of a waiting connection (#4432). `now` is the connection the campaign holds
-    between the same two entries, worded as the waiting one is (never a name or a quote); `guess`
-    is DMbot's reason for an inferred one. Left out when there is none."""
+    """`now` and `guess` of a waiting connection (#4432, #4441). `now` is what a keep would end,
+    as the bot stored it on the row (its ontology decides, as for Discord's card): the held
+    connections between the two names, worded as the waiting one is (never a name or a quote), and
+    whether the players cannot see them. `guess` is DMbot's reason for an inferred one. Left out
+    when there is none."""
     out: dict[str, Any] = {}
     now = b.get("now")
-    if isinstance(now, dict):
+    items = now.get("items") if isinstance(now, dict) else None
+    if isinstance(now, dict) and isinstance(items, list) and items:
         out["now"] = {
-            "how": link_words(
-                str(now["predicate"]),
-                str(now["detail"]),
-                kin.directional(str(now["detail"])),
-                str(b.get("subjectKind") or ""),
-                feeling=True,  # (the waiting page is the DM's alone)
+            "how": ", ".join(
+                link_words(
+                    str(i["predicate"]),
+                    str(i["detail"]),
+                    kin.directional(str(i["detail"])),
+                    str(b.get("subjectKind") or ""),
+                    feeling=True,  # (the waiting page is the DM's alone)
+                )
+                for i in items
             ),
             "hidden": bool(now["hidden"]),
         }
