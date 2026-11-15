@@ -37,7 +37,7 @@ async def offer(
     if guild is None:
         return None
     person = db.as_person(session.user_id, session.id_hash)
-    store = CampaignStore(person, clock=lambda: now)
+    store = CampaignStore(person, clock=lambda: now, logins_are_accounts=True)
     campaign = await store.get(guild_id, campaign_id)
     if campaign is None or campaign.owner_user_id != session.user_id:
         return None
@@ -66,7 +66,11 @@ async def withdraw(db: Database, session: Session, ref: str, *, now: int) -> boo
     guild_id, campaign_id = int(match[1]), match[2]
     if all(g.id != guild_id for g in session.guilds):
         return False
-    store = CampaignStore(db.as_person(session.user_id, session.id_hash), clock=lambda: now)
+    store = CampaignStore(
+        db.as_person(session.user_id, session.id_hash),
+        clock=lambda: now,
+        logins_are_accounts=True,
+    )
     offer = await store.open_offer(guild_id, campaign_id, now)
     if offer is None or offer.from_user_id != session.user_id:
         return False

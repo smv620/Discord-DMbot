@@ -9,14 +9,14 @@ from __future__ import annotations
 import time
 from unittest.mock import AsyncMock, patch
 
-from dmbot import hours, usage
+from dmbot import entitlements, hours, usage
 from dmbot.bot import DMBot
 from dmbot.campaigns import Campaign, CampaignError
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
 from dmbot.sessions import SessionStore
 from tests.test_account_discord_ids import add_user, link
-from tests.test_usage import GUILD_A, NOW, OWNER, UsageTest
+from tests.test_usage import GUILD_A, GUILD_B, NOW, OWNER, UsageTest
 from tests.test_web_accounts_db import INSERT_PLAN, PLAN_ROW
 
 OWNER_2 = 9001  # a second Discord account of the owner
@@ -95,6 +95,19 @@ class PlanByAccount(UsageTest):
         self.assertEqual(made.dm_accounts, frozenset({OWNER}))
         self.assertTrue(made.is_owner(OWNER_2) and made.is_dm(OWNER_2))
 
+    async def test_someone_who_never_signed_in_is_their_own_account(self) -> None:
+        made = await self.campaigns.create(GUILD_A, "No website account", 4242)
+        self.assertEqual(made.owner_user_id, 4242)
+        self.assertEqual(await self.bot._account_number(4242), 4242)
+        self.assertEqual(await self.bot._account_number(OWNER_2), OWNER)
+
+    async def test_a_failed_lookup_falls_back_to_the_discord_id(self) -> None:
+        with (
+            patch("dmbot.bot.accounts.account_of", AsyncMock(side_effect=RuntimeError("down"))),
+            self.assertLogs("dmbot.bot", "WARNING"),
+        ):
+            self.assertEqual(await self.bot._account_number(OWNER_2), OWNER_2)
+
     async def test_a_first_login_taken_off_cannot_make_a_campaign(self) -> None:
         from tests.test_account_discord_ids import unlink
 
@@ -117,3 +130,77 @@ class PlanByAccount(UsageTest):
                 "SELECT user_id FROM try_it_used WHERE user_id IN (%s, %s)", (OWNER, OWNER_2)
             )
             self.assertEqual([r["user_id"] for r in await cur.fetchall()], [OWNER])
+
+
+class HandOversByAccount(UsageTest):
+    """Ownership writes store the account, whichever login of it acted (#2533, slice 2b)."""
+
+    RECIP = 6001
+    RECIP_2 = 6002  # a second login of the recipient's account
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        await add_user(self.db, OWNER)
+        await link(self.db, OWNER, OWNER_2)
+        await add_user(self.db, self.RECIP)
+        self.assertEqual(await link(self.db, self.RECIP, self.RECIP_2), "ok")
+        # The recipient's account has room (the free list is by account: the added login is not
+        # on it, so the slot check passing proves it is read for the account, #2533).
+        entitlements.configure_free_users((self.RECIP,))
+
+    async def owner_of(self, campaign_id: str, guild: int = GUILD_A) -> int | None:
+        found = await self.campaigns.get(guild, campaign_id)
+        assert found is not None
+        return found.owner_user_id
+
+    async def offer(self, from_login: int, to_login: int) -> int:
+        offer = await self.campaigns.offer_handover(
+            GUILD_A, self.a.id, from_login, to_login, NOW, from_name="A", to_name="B"
+        )
+        return offer.id
+
+    async def test_the_owner_may_offer_from_an_added_login(self) -> None:
+        await self.offer(OWNER_2, self.RECIP)  # (does not raise NOT_THE_OWNER)
+
+    async def test_an_offer_to_another_login_of_the_owners_own_account_is_to_themselves(
+        self,
+    ) -> None:
+        with self.assertRaises(CampaignError):
+            await self.offer(OWNER, OWNER_2)
+
+    async def test_an_added_login_of_the_person_offered_may_accept_and_the_account_owns_it(
+        self,
+    ) -> None:
+        offer_id = await self.offer(OWNER, self.RECIP)
+        result = await self.campaigns.accept_handover(GUILD_A, offer_id, self.RECIP_2, NOW + 10)
+        self.assertEqual(result, "accepted")
+        self.assertEqual(await self.owner_of(self.a.id), self.RECIP)  # the account, not the login
+        kept = await self.campaigns.get(GUILD_A, self.a.id)
+        assert kept is not None
+        self.assertIn(self.RECIP, kept.dm_accounts)
+        self.assertNotIn(self.RECIP_2, kept.dm_accounts)
+        self.assertTrue(kept.is_owner(self.RECIP_2))
+
+    async def test_a_stranger_login_cannot_accept_someone_elses_offer(self) -> None:
+        offer_id = await self.offer(OWNER, self.RECIP)
+        self.assertEqual(
+            await self.campaigns.accept_handover(GUILD_A, offer_id, 4242, NOW + 10), "gone"
+        )
+
+    async def test_an_added_login_may_take_on_a_campaign_with_no_owner(self) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET owner_user_id = NULL WHERE guild_id = %s AND id = %s",
+                (GUILD_A, self.a.id),
+            )
+        await self.campaigns.add_dm(GUILD_A, self.a.id, self.RECIP_2)
+        self.assertEqual(
+            await self.campaigns.take_ownership(GUILD_A, self.a.id, self.RECIP_2, NOW), "taken"
+        )
+        self.assertEqual(await self.owner_of(self.a.id), self.RECIP)
+
+    async def test_a_backup_restored_by_an_added_login_belongs_to_the_account(self) -> None:
+        backup = await self.campaigns.export(GUILD_A, self.a.id)
+        restored = await self.campaigns.import_backup(GUILD_B, backup, self.RECIP_2)
+        self.assertEqual(restored.owner_user_id, self.RECIP)
+        self.assertIn(self.RECIP, restored.dm_accounts)
