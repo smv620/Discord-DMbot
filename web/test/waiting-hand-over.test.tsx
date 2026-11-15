@@ -15,6 +15,9 @@ afterEach(() => {
   cleanup();
 });
 
+/** A paragraph by all of its text: the Proposed line has bold parts, so it is not one text node. */
+const whole = (text: string) => (_: string, el: Element | null): boolean => el?.tagName === "P" && el.textContent === text;
+
 const row = (over: Partial<WaitingBackstory> = {}): WaitingBackstory => ({
   id: "b1",
   subject: "Belleros",
@@ -60,19 +63,19 @@ describe("a waiting hand-over", () => {
       handOverName: "Claude",
     });
     expect(
-      await screen.findByText("Belleros owns the Frost Brand (Claude sold it)"),
+      await screen.findByText(whole("Proposed: Belleros owns the Frost Brand (Claude sold it)")),
     ).toBeTruthy();
     expect(screen.getByText(handKeeps("sold", "Claude", false))).toBeTruthy();
-    expect(screen.getByRole("button", { name: w.keep })).toBeTruthy();
-    expect(screen.getByRole("button", { name: w.skip })).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.addIt })).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.leaveOut })).toBeTruthy();
   });
 
   it("a plain connection keeps its Keep and has no bracket", async () => {
     await show({});
     expect(
-      await screen.findByText("Belleros owns the Frost Brand"),
+      await screen.findByText(whole("Proposed: Belleros owns the Frost Brand")),
     ).toBeTruthy();
-    expect(screen.getByRole("button", { name: w.keep })).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.addIt })).toBeTruthy();
     expect(screen.queryByText(/no longer has it/)).toBeNull();
   });
 
@@ -89,9 +92,9 @@ describe("a waiting hand-over", () => {
       handOverName: null,
     });
     expect(
-      await screen.findByText("Belleros owns the Frost Brand"),
+      await screen.findByText(whole("Proposed: Belleros owns the Frost Brand")),
     ).toBeTruthy();
-    expect(screen.getByRole("button", { name: w.keep })).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.addIt })).toBeTruthy();
   });
 
   it("Keep all leaves a hand-over out", async () => {
@@ -120,11 +123,11 @@ describe("a waiting hand-over", () => {
     });
     expect(
       await screen.findByText(
-        "Belleros owns the Frost Brand (taken from Claude)",
+        whole("Proposed: Belleros owns the Frost Brand (taken from Claude)"),
       ),
     ).toBeTruthy();
     expect(screen.getByText(handKeeps("stolen", "Claude", true))).toBeTruthy();
-    expect(screen.getByRole("button", { name: w.keepIsSecret })).toBeTruthy();
-    expect(screen.getByRole("button", { name: w.skip })).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.addIt })).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.leaveOut })).toBeTruthy();
   });
 });

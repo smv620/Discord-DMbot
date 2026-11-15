@@ -56,9 +56,8 @@ def test_request_asks_first_and_says_dmbot_never_decides() -> None:
     assert "never decides anything" in text
     assert "ignores your voice" in text and "still play as normal" in text
     assert "If you say no, DMbot asks again next session" in text  # no false promise
-    assert (  # PLAN.md: the whole server, and it stays after a stop
-        "Anyone in this server can read and download that text. "
-        "It stays there even if you stop later." in text
+    assert (  # PLAN.md: the campaign's people (#3891), and it stays after a stop
+        f"{c.WHO_CAN_READ} It stays there even if you stop later." in text
     )
     assert c.CLOUD_NOTE not in text
     assert c.CLOUD_NOTE in c.request_text("Dragon Club", voice=None, dm=None, cloud=True)
@@ -80,7 +79,7 @@ def test_reminder_is_short_and_shows_the_date() -> None:
     assert "To stop being recorded, press 🗂️ Menu below." in text and text.count("\n") == 0
     assert "🛑" not in text
     # Also reaches people who said yes before the whole server could read it (#35).
-    assert "Anyone in this server can read the text" in text
+    assert c.WHO_CAN_READ in text
     assert c.OUTSIDE_NOTE not in text  # local Whisper keeps voices on the server
     outside = c.reminder_text("Dragon Club", None, 1_760_000_000, cloud=True, company="Deepgram")
     assert "Your voice and Discord name go to Deepgram" in outside
