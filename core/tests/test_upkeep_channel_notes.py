@@ -51,6 +51,31 @@ class Notes(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(ok)
         self.assertEqual(bot.post.await_args.args[0], 11)
 
+    async def test_an_optional_rule_note_falls_back_to_the_screen_or_says_nothing(self) -> None:
+        some = optional.CATALOG[0]
+        screen_only = _campaign(None, 22)
+        bot = self.bot(screen_only)
+        await DMBot.apply_optional_rule(bot, screen_only, some, False, 5)  # type: ignore[arg-type]
+        self.assertEqual(bot.post.await_args.args[0], 22)
+        neither = _campaign(None, None)
+        quiet = self.bot(neither)
+        self.assertTrue(
+            await DMBot.apply_optional_rule(quiet, neither, some, True, 5)  # type: ignore[arg-type]
+        )
+        quiet.post.assert_not_awaited()
+
+    async def test_a_failed_post_is_false_and_the_note_holds_only_the_rule_and_a_mention(
+        self,
+    ) -> None:
+        some = optional.CATALOG[0]
+        campaign = _campaign(11, 22)
+        bot = self.bot(campaign)
+        bot.post = AsyncMock(return_value=False)
+        self.assertFalse(
+            await DMBot.apply_optional_rule(bot, campaign, some, True, 5)  # type: ignore[arg-type]
+        )
+        self.assertEqual(bot.post.await_args.args[1], optional.screen_line(some, True, "<@5>"))
+
     async def test_a_level_note_goes_to_the_dm_bot_channel_and_else_the_screen(self) -> None:
         for bot_channel, want in ((11, 11), (None, 22)):
             campaign = _campaign(bot_channel, 22)

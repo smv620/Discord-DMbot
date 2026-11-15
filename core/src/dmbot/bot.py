@@ -8672,8 +8672,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         """How much DMbot says in this campaign's DM screen (#504, #515): saved, and a
         running session (or one still finishing) follows the change from now on. Under
         the session lock, so a session starting meanwhile can't miss it (#553). A change
-        from `was` (the level the DM saw) is noted in the DM screen, so a co-DM knows why
-        DMbot went quiet."""
+        from `was` (the level the DM saw) is noted in the DM Bot channel (the screen if none), so
+        a co-DM knows why DMbot went quiet."""
         campaign = await self.campaigns.set_dm_screen_level(guild_id, campaign_id, level)
         async with self.session_lock(guild_id):
             for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
