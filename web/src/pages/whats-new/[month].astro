@@ -1,0 +1,24 @@
+---
+import EntryList from "../../components/EntryList.astro";
+import Base from "../../layouts/Base.astro";
+import { entries, monthHeading, monthPages, olderHeading, splitEntries } from "../../content/whats-new";
+
+// One month of the older changes (#4203), or one part of a long month, from the same entry files as every other page. A month page is
+// an archive: it is kept out of search results, and /whats-new/older lists them all.
+export function getStaticPaths() {
+  const { older } = splitEntries(entries, new Date());
+  return monthPages(older).map((page) => ({ params: { month: page.slug }, props: { page } }));
+}
+
+// (A test renders this file without the build's paths: it then shows the newest month.)
+const pages = monthPages(splitEntries(entries, new Date()).older);
+const page = Astro.props.page ?? pages[0];
+---
+
+<Base title={page ? monthHeading(page) : olderHeading} description="Older changes to DMbot for one month, newest first, in plain words." noindex>
+  <h1>{page ? monthHeading(page) : olderHeading}</h1>
+
+  <EntryList entries={page?.entries ?? []} />
+
+  <p><a href="/whats-new/older">Back to {olderHeading}</a></p>
+</Base>
