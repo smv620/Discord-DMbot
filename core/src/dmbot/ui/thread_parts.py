@@ -408,7 +408,7 @@ class PartsScreen(_Menu):
                 TowardMenu(self.campaign_id, self.thread_id, self.owed, self.names, part_id=None),
             )
         else:
-            await interaction.response.send_modal(AddForm(self.campaign_id, self.thread_id, kind))
+            await _open_form(interaction, self, AddForm(self.campaign_id, self.thread_id, kind))
 
     async def _pick(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -494,9 +494,11 @@ class Choose(_Menu):
         self.add_item(_Button(self._back, label=BACK, row=1))
 
     async def _picked(self, value: str, interaction: discord.Interaction) -> None:
-        # (not stopped: a form closed unsent leaves this screen working; sending redraws it)
-        await interaction.response.send_modal(
-            AddForm(self.campaign_id, self.thread_id, self.kind, **{self.field: value})
+        # (not stopped: a form closed unsent leaves this screen working; sending stops it)
+        await _open_form(
+            interaction,
+            self,
+            AddForm(self.campaign_id, self.thread_id, self.kind, **{self.field: value}),
         )
 
     async def _back(self, interaction: discord.Interaction) -> None:
@@ -522,7 +524,32 @@ WHO_LABEL = {
 }
 
 
-class AddForm(discord.ui.Modal):
+class _Form(discord.ui.Modal):
+    """A form that stops the menu it was opened from once it has been sent and done (#4504). The
+    menu stays running while the form is open, so a form closed unsent leaves the screen working;
+    but once the form is done a new screen has taken the message, and the old menu's timeout would
+    otherwise blank it ten minutes later (discord.py never stops a view that a newer one replaced).
+    Stopped only after the form's work, so a failure ("Try once more") leaves the menu working.
+    Each form writes `_submit`, never `on_submit`."""
+
+    opener: discord.ui.View | None = None
+
+    async def _submit(self, interaction: discord.Interaction) -> None:
+        raise NotImplementedError
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await self._submit(interaction)
+        if self.opener is not None:
+            self.opener.stop()
+
+
+async def _open_form(interaction: discord.Interaction, menu: discord.ui.View, form: _Form) -> None:
+    """Every form on these screens opens through here, so each one knows its menu (#4504)."""
+    form.opener = menu
+    await interaction.response.send_modal(form)
+
+
+class AddForm(_Form):
     def __init__(
         self,
         campaign_id: str,
@@ -563,7 +590,7 @@ class AddForm(discord.ui.Modal):
     ) -> None:
         await _failed(interaction, error)
 
-    async def on_submit(self, interaction: discord.Interaction) -> None:
+    async def _submit(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.threads import link_by_name
 
         await _answer_first(interaction, in_place=True)
@@ -713,13 +740,13 @@ class PartMenu(_Menu):
         )
 
     async def _words(self, interaction: discord.Interaction) -> None:
-        await interaction.response.send_modal(
-            WordsForm(self.campaign_id, self.thread_id, self.part)
-        )
+        await _open_form(interaction, self, WordsForm(self.campaign_id, self.thread_id, self.part))
 
     async def _sub_step(self, interaction: discord.Interaction) -> None:
-        await interaction.response.send_modal(
-            AddForm(self.campaign_id, self.thread_id, tp.OBJECTIVE, under_id=self.part.id)
+        await _open_form(
+            interaction,
+            self,
+            AddForm(self.campaign_id, self.thread_id, tp.OBJECTIVE, under_id=self.part.id),
         )
 
     async def _date(self, interaction: discord.Interaction) -> None:
@@ -784,8 +811,8 @@ class DateMenu(_Menu):
         await set_date(interaction, self.campaign_id, self.thread_id, self.part, days)
 
     async def _pick(self, interaction: discord.Interaction) -> None:
-        # (not stopped: a form closed unsent leaves this screen working)
-        await interaction.response.send_modal(DaysForm(self.campaign_id, self.thread_id, self.part))
+        # (not stopped: a form closed unsent leaves this screen working; sending stops it)
+        await _open_form(interaction, self, DaysForm(self.campaign_id, self.thread_id, self.part))
 
     async def _clear(self, interaction: discord.Interaction) -> None:
         self.stop()
@@ -797,7 +824,7 @@ class DateMenu(_Menu):
         await open_parts(interaction, self.campaign_id, self.thread_id)
 
 
-class DaysForm(discord.ui.Modal, title="When is it due?"):
+class DaysForm(_Form, title="When is it due?"):
     def __init__(self, campaign_id: str, thread_id: str, part: tp.Part) -> None:
         super().__init__(timeout=VIEW_TIMEOUT_S)
         self.campaign_id, self.thread_id, self.part = campaign_id, thread_id, part
@@ -811,7 +838,7 @@ class DaysForm(discord.ui.Modal, title="When is it due?"):
     ) -> None:
         await _failed(interaction, error)
 
-    async def on_submit(self, interaction: discord.Interaction) -> None:
+    async def _submit(self, interaction: discord.Interaction) -> None:
         text = self.days.value.strip()
         days = int(text) if text.isascii() and text.isdigit() else 0
         if not 1 <= days <= time_limits.MOST_DAYS:
@@ -889,9 +916,13 @@ class TowardMenu(_Menu):
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         under = None if self.pick.values[0] == NONE else self.pick.values[0]
-        if self.part_id is None:  # (not stopped first: a form closed unsent leaves this working)
-            await interaction.response.send_modal(
-                AddForm(self.campaign_id, self.thread_id, tp.REWARD_GIVEN, under_id=under)
+        if (
+            self.part_id is None
+        ):  # (not stopped first: a form closed unsent leaves this working; sending stops it)
+            await _open_form(
+                interaction,
+                self,
+                AddForm(self.campaign_id, self.thread_id, tp.REWARD_GIVEN, under_id=under),
             )
             return
         await _answer_first(interaction, in_place=True)
@@ -918,7 +949,7 @@ class TowardMenu(_Menu):
         await open_parts(interaction, self.campaign_id, self.thread_id)
 
 
-class WordsForm(discord.ui.Modal, title="Change the words"):
+class WordsForm(_Form, title="Change the words"):
     def __init__(self, campaign_id: str, thread_id: str, part: tp.Part) -> None:
         super().__init__(timeout=VIEW_TIMEOUT_S)
         self.campaign_id, self.thread_id, self.part = campaign_id, thread_id, part
@@ -932,7 +963,7 @@ class WordsForm(discord.ui.Modal, title="Change the words"):
     ) -> None:
         await _failed(interaction, error)
 
-    async def on_submit(self, interaction: discord.Interaction) -> None:
+    async def _submit(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
         new = " ".join(self.words.value.split())
         if not new:
