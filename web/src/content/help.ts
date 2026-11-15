@@ -951,7 +951,7 @@ export const quickAnswers: Step[] = [
     ],
   },
   {
-    text: "Your question, and DMbot's answer when it is about the game, are saved in the game's full written record. Everyone in your Discord server can read that record.",
+    text: "Your question, and DMbot's answer when it is about the game, are saved in the game's full written record. This campaign's people can read that record (everyone in the server, if the DM chose that).",
   },
   ...(SIDEBAR_SOURCES_LIVE ? sidebarSourceSteps : []),
 ];
@@ -993,7 +993,7 @@ export const stopStep: Step = {
 };
 
 export const transcriptStep: Step = {
-  text: "Everyone in the server can read a game's transcript. To read or download one, type /transcript.",
+  text: "This campaign's people can read a game's transcript (everyone in the server, if the DM chose that). To read or download one, type /transcript.",
   names: [{ name: "/transcript", file: "ui/transcripts.py" }],
 };
 

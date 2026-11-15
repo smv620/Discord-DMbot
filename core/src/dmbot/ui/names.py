@@ -1343,12 +1343,23 @@ async def _offer_add_all(
         if looks_alike
         else ""
     )
-    await _send(
-        interaction,
+    first = (
         progress(walk, 0, 0)  # (inside "Check everything": which part this is, #4192)
         + f"📝 **{_plural(len(waiting), 'new name')} to check.** DMbot guessed what {count} of "
-        f"them are. Nothing is added until you press a button.{left}",
-        BulkConfirm(campaign.id, by_kind, walk=walk),
+        f"them are. Nothing is added until you press a button.{left}"
+    )
+    await _send(
+        interaction,
+        first,
+        BulkConfirm(
+            campaign.id,
+            by_kind,
+            walk=walk,
+            first_words=first,
+            total=len(waiting),
+            extra_left=len(waiting) - count,  # (not guessed, or sounding like a known name)
+            look_alike=looks_alike,
+        ),
     )
     return True
 

@@ -52,6 +52,7 @@ async def answer(
         db.as_person(session.user_id, session.id_hash),
         clock=lambda: now,
         has_free_slot=campaign_cap.has_room_for_one_more if enforce_plans else plan_works,
+        logins_are_accounts=True,
     )
     # announce: the bot tells the other person in Discord (#737).
     if what == "accept":
