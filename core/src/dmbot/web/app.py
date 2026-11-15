@@ -4738,7 +4738,7 @@ def create_app(
                     await discord.revoke(token)
                 except DiscordError as exc:
                     log.warning("Couldn't revoke a Discord token: %s", exc)
-        log.info("A Discord account was added to account %s: %s", session.user_id, result)
+        log.info("A Discord account was added: %s", result)
         return back(result)
 
     @app.get("/install")
