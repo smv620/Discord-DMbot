@@ -1419,8 +1419,9 @@ class MemoryStore:
                 # (the DM taking away DMbot's guess is a no to it: never guessed again)
                 gone_from = "declined" if r.get("setting_from") == place_levels.READ else None
                 change: dict[str, Any] = {"setting": False, "setting_from": gone_from}
-                if r.get("setting_from") == place_levels.READ:  # (its place too, as ✖ and
-                    change |= await _guess_place_goes(w, r)  # `set_setting`: one rule, #4291)
+                # (its place too, as ✖ and `set_setting` do: one rule, #4291)
+                if r.get("setting_from") == place_levels.READ:
+                    change |= await _guess_place_goes(w, r)
                 await w.update(ENTITIES, r["id"], change)
             if found:
                 place = found[0]
