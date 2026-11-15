@@ -27,7 +27,7 @@ export const campaignPage = {
   names: "📇 Names",
   namesNote: "Every name DMbot remembers here, to search and fix.",
   transcripts: "🗂️ Transcripts",
-  transcriptsNote: "Read and download what was said. Everyone in the server can read these.",
+  transcriptsNote: "Read and download what was said. Only this campaign's people can, unless the DM opened it to the whole server.",
   importSessions: "📥 Import a past session",
   importNote: "Add a session you played before using DMbot.",
   // The recap list, showing one campaign's recaps (and a way to all of them).
@@ -69,7 +69,7 @@ export const campaignPage = {
     pictures: "The pictures people posted in the table's chat, and their links.",
     graph: "How the names in this campaign are connected.",
     names: "Every name DMbot remembers. Search them and fix any that are wrong.",
-    transcripts: "Read and download what was said. Everyone in the server can read these.",
+    transcripts: "Read and download what was said. Only this campaign's people can, unless the DM opened it to the whole server.",
     lore: "Give DMbot a backstory or notes about your world.",
     recapStyle: "Show DMbot how your recaps should sound.",
     import: "Add a session you played before using DMbot.",
