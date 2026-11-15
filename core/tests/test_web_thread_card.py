@@ -13,7 +13,7 @@ from dmbot.memory.thread_read import STATE
 from dmbot.web import thread_card
 from dmbot.web.recaps import RecapError, _scoped
 from tests.test_recap_web import BOB
-from tests.test_web_api import THURSDAY
+from tests.test_web_api import GORRAK, THURSDAY
 from tests.test_web_name_actions import Acting
 
 
@@ -37,7 +37,7 @@ class Card(Acting):
             found = await cur.fetchone()
         return found["r"] if found else None
 
-    async def add(self, kind: str, words: str, **more: Any) -> Any:
+    async def add_part(self, kind: str, words: str, **more: Any) -> Any:
         return await self.memory.add_thread_part(
             self.g, self.one.id, self.thread, kind, words, source=DM, **more
         )
@@ -52,6 +52,7 @@ class TheDoor(Card):
 
     async def test_a_player_or_a_stranger_gets_nothing(self) -> None:
         self.assertIsNone(await self.door(await self.signed(BOB, THURSDAY)))  # (a player here)
+        self.assertIsNone(await self.door(await self.signed(BOB, GORRAK)))  # (not in this server)
 
     async def test_a_thread_that_is_not_a_kept_entry_is_gone(self) -> None:
         self.assertEqual((await self.door(thread="a" * 32))["status"], "gone")
@@ -69,19 +70,21 @@ class TheDoor(Card):
             await thread_card.read(self.web, self.session, self.cref, "not an id")
 
     async def test_a_part_shows_its_words_state_and_the_person_it_is_for(self) -> None:
-        await self.add("objective", "Find the heir", who_id=self.mira)
+        await self.add_part("objective", "Find the heir", about_id=self.mira)
+        await self.add_part("reward", "A seat at the table", who_id=self.mira)
         card = await thread_card.read(self.web, self.session, self.cref, self.thread)
-        (part,) = card["parts"]
+        step, reward = sorted(card["parts"], key=lambda p: p["kind"])
         self.assertEqual(
-            (part["kind"], part["words"], part["state"]), ("objective", "Find the heir", "to_do")
+            (step["kind"], step["words"], step["state"]), ("objective", "Find the heir", "to_do")
         )
-        self.assertEqual(part["who"]["name"], "Mira Voss")
-        self.assertNotIn("dueMinute", part)  # (a game date is never a raw minute on the page)
+        self.assertEqual(step["about"]["name"], "Mira Voss")
+        self.assertEqual(reward["who"]["name"], "Mira Voss")
+        self.assertNotIn("dueMinute", step)  # (a game date is never a raw minute on the page)
         self.assertEqual((card["done"], card["of"]), (0, 1))
 
     async def test_what_is_owed_is_worked_out_with_the_bots_own_rules(self) -> None:
-        promise = await self.add("reward", "100 gold")
-        await self.add("reward_given", "40 gold", under_id=promise.value.id)
+        promise = await self.add_part("reward", "100 gold")
+        await self.add_part("reward_given", "40 gold", under_id=promise.value.id)
         card = await thread_card.read(self.web, self.session, self.cref, self.thread)
         owed = [p["owed"] for p in card["parts"] if p["kind"] == "reward"]
         self.assertEqual(owed, [60.0])
