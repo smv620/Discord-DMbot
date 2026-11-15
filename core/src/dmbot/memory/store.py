@@ -2116,9 +2116,11 @@ class MemoryStore:
                     ENTITIES, " AND id = ANY(%s) AND status = 'confirmed'", [sorted(ids)]
                 )
             }
-        bigger = next((str(r["object_id"]) for r in links if r["subject_id"] == thread_id), None)
+        bigger = next(
+            (str(r["object_id"]) for r in links if str(r["subject_id"]) == thread_id), None
+        )
         branches = sorted(
-            (str(r["subject_id"]) for r in links if r["object_id"] == thread_id),
+            (str(r["subject_id"]) for r in links if str(r["object_id"]) == thread_id),
             key=lambda i: names.get(i, "").lower(),
         )
         return (

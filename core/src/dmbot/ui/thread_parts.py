@@ -32,7 +32,6 @@ from dmbot.ui.dmbot_commands import (
     _Menu,
     _replace,
     _Select,
-    _tell,
 )
 from dmbot.ui.names import PLAYERS_DONT_KNOW, PLAYERS_KNOW, _md, changed
 
@@ -44,7 +43,7 @@ ADD_PLACEHOLDER = "➕ Add…"
 PICK_PLACEHOLDER = "Pick one to change…"
 CHANGE_WORDS = "✏️ Change words"
 TAKE_OFF = "🗑️ Take off (it was wrong)"
-BACK = "↩ Back"
+BACK = "◀ Back"  # (not ↩: it sits beside ↩ Undo, an easy mis-tap mid-game)
 UNDO = "↩ Undo"
 SUB_STEP = "➕ Add a step under it"
 TOWARD = "🔗 Toward a promise…"
@@ -53,6 +52,7 @@ JUST_FIX = "✏️ Just fixing a mistake"
 MOVE_IT, LEAVE_IT = "🌿 Move it", "Leave it"
 NOT_A_BRANCH = "Not a branch of anything"
 NOT_PROMISED = "No, it wasn't promised"
+NONE = "none"  # a menu choice's value for "none of them" (Discord refuses an empty value)
 
 # The Add menu: (kind, label, description)
 ADD_CHOICES = (
@@ -66,7 +66,7 @@ ADD_CHOICES = (
 )  # fmt: skip
 KIND_WORDS = {
     tp.OBJECTIVE: "Step", tp.COMPLICATION: "In the way", tp.REWARD: "Reward",
-    tp.REWARD_GIVEN: "Given", tp.HELP: "Help", tp.TIME_LIMIT: "Time limit",
+    tp.REWARD_GIVEN: "Reward given", tp.HELP: "Help", tp.TIME_LIMIT: "Time limit",
 }  # fmt: skip
 # Each stored state's button words (the ux-critic's list; ⏰ for a time limit, Supervisor's ruling)
 STATE_BUTTONS: Mapping[str, Mapping[str, str]] = {
@@ -91,12 +91,12 @@ STATE_BUTTONS: Mapping[str, Mapping[str, str]] = {
 }  # fmt: skip
 # How a state reads in a card line's brackets ("(all given)") or a confirmation ("✅ Overcome")
 STATE_SAID: Mapping[str, str] = {
-    "to_do": "to do", "done": "done", "failed": "failed", "not_needed": "no longer needed",
+    "to_do": "to do", "done": "done", "failed": "failed", "not_needed": "not needed now",
     "in_the_way": "still in the way", "overcome": "overcome",
     "no_longer_matters": "no longer matters", "owed": "still owed", "settled": "all given",
     "wont_be_given": "won't be given", "turned_down": "the party turned it down",
     "given": "given", "to_keep": "theirs to keep", "lent": "lent", "returned": "returned",
-    "not_returned": "not returned", "running": "still running", "met": "met",
+    "not_returned": "not returned", "running": "still running", "met": "met in time",
     "lifted": "lifted",
 }  # fmt: skip
 DUE_CHOICES = (("Up front", tp.UP_FRONT), ("When the job's done", tp.AFTERWARDS), ("Not said", ""))
@@ -109,22 +109,34 @@ FOLDED = {
     tp.HELP: ("returned", "not_returned"),
     tp.TIME_LIMIT: ("met", "lifted"),
 }
+# what the "Also:" line calls each folded state, so it says what was overcome or returned
+FOLDED_SAID = {
+    "overcome": "overcome", "no_longer_matters": "no longer in the way",
+    "returned": "lent item(s) returned", "not_returned": "never given back",
+    "met": "time limit(s) met", "lifted": "time limit(s) lifted",
+}  # fmt: skip
 SEEN = " 👁️"
 SEEN_NOTE = "👁️ Players can see it (once you show them the thread)."
 ONLY_DM = "Only the DM can change a story thread."
-TOO_LATE = "⚠️ Can't undo: it was changed since. Change it in 🧵 Threads."
+TOO_LATE = "⚠️ Can't undo: it was changed since. Change it here instead."
 NO_WORDS = "⚠️ Type a few words, then try again."
 # the store's refusals, in the ux-critic's words
 SAID_FOR = {
     tp.SAME_PART: "⚠️ This thread already has that. Pick it from the list to change it.",
-    tp.WRONG_UNDER: "⚠️ A smaller step can't have steps of its own. Add it under the main step.",
+    tp.WRONG_UNDER: "⚠️ A smaller step can only go under a main step of this thread.",
     tp.NO_WORDS: NO_WORDS,
     tp.GONE: "⚠️ That was changed since. Here's how it is now.",
+    tp.NOT_A_THREAD: "⚠️ Keep this as a story thread first, then add steps to it.",
+    tp.WRONG_PROMISE: "⚠️ That can only count toward a reward promised in this thread.",
+    tp.NOT_WHO: "⚠️ Pick a character or a group, then try again.",
+    tp.NOT_A_STATE: "⚠️ That choice isn't there any more. Here's how it is now.",
 }
+DIDNT_SAVE = "⚠️ That didn't save. Try again."
 
 
 def _said(exc: MemoryRuleError) -> str:
-    return SAID_FOR.get(str(exc), f"⚠️ {exc}")
+    """The store's refusal in the card's words; never its own wording (it can say "part")."""
+    return SAID_FOR.get(str(exc), DIDNT_SAVE)
 
 
 def _name(names: Mapping[str, str], entry: str | None) -> str:
@@ -158,6 +170,8 @@ def card_lines(
     names: Mapping[str, str],
     bigger: str | None,
     branches: Sequence[str],
+    *,
+    most: int | None = None,
 ) -> list[str]:
     """What a thread's card shows of its steps, rewards and more, and its branches (§10.1; the
     ux-critic's layout). Standing parts only; finished obstacles, help and time limits fold into one
@@ -200,7 +214,10 @@ def card_lines(
         who = _name(names, p.who_id)
         lent = p.state == "lent"
         head = ("🤲 **Lent by " if lent else "🤲 **Help from ") + (who or "someone") + ":**"
-        tail = f"to return: {_md(p.terms)}" if lent and p.terms else STATE_SAID[p.state]
+        if lent:
+            tail = f"to return: {_md(p.terms)}" if p.terms else "to give back"
+        else:
+            tail = STATE_SAID[p.state]
         lines.append(f"{head} {_md(p.words)} ({tail})" + mark(p))
     for p in by_kind[tp.TIME_LIMIT]:
         if p.state in FOLDED[tp.TIME_LIMIT]:
@@ -209,14 +226,16 @@ def card_lines(
         kind = f" ({'hard' if p.limit_kind == tp.HARD else 'soft'})" if p.limit_kind else ""
         lines.append(f"⏰ **Time limit:** {_md(p.words)}{kind}" + mark(p))
     if folded:
-        said = ", ".join(f"{n} {STATE_SAID[s]}" for s, n in folded.items())
-        lines.append(f"Also: {said}. See 📋.")
+        said = ", ".join(f"{n} {FOLDED_SAID[s]}" for s, n in folded.items())
+        lines.append(f"Also: {said}. Tap 📋 to see them.")
     if branches:
         lines.append("🌿 **Branches:** " + ", ".join(_name(names, b) for b in branches))
     if bigger is not None:
         lines.append(f"🌿 **Branch of:** {_name(names, bigger)}")
     if seen:
         lines.append(SEEN_NOTE)
+    if most is not None and len(lines) > most:  # (the name card has room for so much)
+        lines = [*lines[: most - 1], f"…and {len(lines) - most + 1} more. Tap 📋 to see them."]
     return lines
 
 
@@ -231,7 +250,8 @@ def option_for(p: tp.Part, names: Mapping[str, str]) -> tuple[str, str]:
     who = names.get(p.who_id or "", "")
     kind = KIND_WORDS[p.kind] + (f" from {who}" if who and p.kind == tp.REWARD else "")
     shown = "players see it" if p.table_knows else "hidden"
-    desc = f"{kind} · {STATE_SAID[p.state]} · {shown}"
+    state = f" · {STATE_SAID[p.state]}" if len(tp.STATES[p.kind]) > 1 else ""
+    desc = f"{kind}{state} · {shown}"
     if p.under_id is not None and p.kind == tp.OBJECTIVE:
         desc = "Smaller step · " + desc.split(" · ", 1)[1]
     return (
@@ -267,9 +287,9 @@ async def open_parts(
     )
     thread = await memory.entity(campaign.guild_id, campaign.id, thread_id)
     if thread is None:
-        await _tell(interaction, SAID_FOR[tp.GONE])
+        await _replace(interaction, SAID_FOR[tp.GONE], None)
         return
-    lines = card_lines(parts, names, bigger, branches) or ["Nothing yet. Add a step to start."]
+    lines = card_lines(parts, names, bigger, branches) or ["Nothing yet. Pick ➕ Add… to start."]
     head = f"📋 **{_md(thread.name)}**"
     text = "\n".join(([note, ""] if note else []) + [head, *lines])
     await _replace(
@@ -313,6 +333,7 @@ class PartsScreen(_Menu):
             self.add_item(self.pick)
         if undo is not None:
             self.add_item(_Button(partial(self._undo, undo), label=UNDO, row=2))
+        self.add_item(_Button(self._branch, label=BRANCH_BUTTON, row=2))
         self.add_item(_Button(self._back, label=BACK, row=2))
 
     async def _add(self, interaction: discord.Interaction) -> None:
@@ -367,6 +388,11 @@ class PartsScreen(_Menu):
         changed(interaction, campaign)
         await open_parts(interaction, self.campaign_id, self.thread_id, note="↩ Undone.")
 
+    async def _branch(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        self.stop()
+        await open_branch(interaction, self.campaign_id, self.thread_id)
+
     async def _back(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.threads import show_thread
 
@@ -418,7 +444,7 @@ class Choose(_Menu):
         self.add_item(_Button(self._back, label=BACK, row=1))
 
     async def _picked(self, value: str, interaction: discord.Interaction) -> None:
-        self.stop()
+        # (not stopped: a form closed unsent leaves this screen working; sending redraws it)
         await interaction.response.send_modal(
             AddForm(self.campaign_id, self.thread_id, self.kind, **{self.field: value})
         )
@@ -596,6 +622,11 @@ class PartMenu(_Menu):
         )
 
     async def _state(self, state: str, interaction: discord.Interaction) -> None:
+        if state == self.part.state:  # (the one it is already: nothing to write or undo)
+            await _answer_first(interaction, in_place=True)
+            self.stop()
+            await open_parts(interaction, self.campaign_id, self.thread_id)
+            return
         words = _md(self.part.words)
         await self._run(
             interaction,
@@ -629,13 +660,11 @@ class PartMenu(_Menu):
         )
 
     async def _words(self, interaction: discord.Interaction) -> None:
-        self.stop()
         await interaction.response.send_modal(
             WordsForm(self.campaign_id, self.thread_id, self.part)
         )
 
     async def _sub_step(self, interaction: discord.Interaction) -> None:
-        self.stop()
         await interaction.response.send_modal(
             AddForm(self.campaign_id, self.thread_id, tp.OBJECTIVE, under_id=self.part.id)
         )
@@ -669,7 +698,7 @@ class TowardMenu(_Menu):
     ) -> None:
         super().__init__()
         self.campaign_id, self.thread_id, self.part_id = campaign_id, thread_id, part_id
-        options = [discord.SelectOption(label=NOT_PROMISED, value="")]
+        options = [discord.SelectOption(label=NOT_PROMISED, value=NONE)]
         for p in list(owed)[:24]:
             who = names.get(p.who_id or "", "")
             label = p.words + (f" from {who}" if who else "")
@@ -683,14 +712,14 @@ class TowardMenu(_Menu):
         self.add_item(_Button(self._back, label=BACK, row=1))
 
     async def _picked(self, interaction: discord.Interaction) -> None:
-        under = self.pick.values[0] or None
-        self.stop()
-        if self.part_id is None:
+        under = None if self.pick.values[0] == NONE else self.pick.values[0]
+        if self.part_id is None:  # (not stopped first: a form closed unsent leaves this working)
             await interaction.response.send_modal(
                 AddForm(self.campaign_id, self.thread_id, tp.REWARD_GIVEN, under_id=under)
             )
             return
         await _answer_first(interaction, in_place=True)
+        self.stop()
         got = await _dm(interaction, self.campaign_id)
         if got is None:
             return
@@ -732,6 +761,18 @@ class WordsForm(discord.ui.Modal, title="Change the words"):
         new = " ".join(self.words.value.split())
         if not new:
             await open_parts(interaction, self.campaign_id, self.thread_id, note=NO_WORDS)
+            return
+        if new == self.part.words:
+            await open_parts(interaction, self.campaign_id, self.thread_id)
+            return
+        if self.part.kind in (tp.REWARD, tp.REWARD_GIVEN) and tp.read_amount(new) != (
+            self.part.amount,
+            self.part.unit,
+        ):
+            # a new amount is always a change in the story (Supervisor's ruling), so no question
+            await HowChanged(self.campaign_id, self.thread_id, self.part, new)._save(
+                True, interaction
+            )
             return
         await _replace(
             interaction,
@@ -799,7 +840,10 @@ async def open_branch(interaction: discord.Interaction, campaign_id: str, thread
     ]
     bigger = await memory.bigger_thread(campaign.guild_id, campaign.id, thread_id)
     if not threads and bigger is None:
-        await _tell(interaction, "There are no other threads yet. Add the bigger one first.")
+        await open_parts(
+            interaction, campaign_id, thread_id,
+            note="There are no other threads yet. Add the bigger one first.",
+        )  # fmt: skip
         return
     await _replace(
         interaction,
@@ -821,7 +865,7 @@ class BranchMenu(_Menu):
         self.names = {i: n for i, n, _ in threads}
         options = []
         if bigger is not None:
-            options.append(discord.SelectOption(label=NOT_A_BRANCH, value=""))
+            options.append(discord.SelectOption(label=NOT_A_BRANCH, value=NONE))
         for i, name, kind in sorted(threads, key=lambda t: t[1].lower())[: 25 - len(options)]:
             options.append(
                 discord.SelectOption(
@@ -837,8 +881,13 @@ class BranchMenu(_Menu):
 
     async def _picked(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
-        chosen = self.pick.values[0]
+        chosen = "" if self.pick.values[0] == NONE else self.pick.values[0]
         self.stop()
+        if chosen == self.bigger or (not chosen and self.bigger is None):
+            from dmbot.ui.threads import show_thread
+
+            await show_thread(interaction, self.campaign_id, self.thread_id)  # (nothing new)
+            return
         if chosen and self.bigger is not None and chosen != self.bigger:
             await _replace(
                 interaction,
@@ -913,14 +962,16 @@ async def _save_branch(
             await memory.not_a_branch(campaign.guild_id, campaign.id, thread_id, source=DM)
             note = "✅ It is no longer a branch."
     except MemoryRuleError as exc:
+        from dmbot.memory.store import BRANCH_LOOP
+
         text = str(exc)
-        if "loop" in text:
+        if text == BRANCH_LOOP:
             text = (
                 f"⚠️ **{_md(name)}** is already a branch of this thread, so this one can't be "
                 "a branch of it."
             )
         else:
-            text = f"⚠️ {text}"
+            text = SAID_FOR.get(text, DIDNT_SAVE)
         await show_thread(interaction, campaign_id, thread_id, note=text)
         return
     changed(interaction, campaign)

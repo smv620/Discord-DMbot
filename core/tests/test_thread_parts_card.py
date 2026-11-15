@@ -78,7 +78,7 @@ class Lines(unittest.TestCase):
                 "**In the way:** the road north is cut",
                 "🤲 **Lent by Jebidiah:** two sleds and eight dogs (to return: unharmed) 👁️",
                 "⏰ **Time limit:** before the new moon (hard)",
-                "Also: 1 overcome. See 📋.",
+                "Also: 1 overcome. Tap 📋 to see them.",
                 "🌿 **Branches:** Who killed Wit?",
                 "🌿 **Branch of:** Cerric's search",
                 ui.SEEN_NOTE,
@@ -115,6 +115,22 @@ class Lines(unittest.TestCase):
         for title, label, _ in (*ui.FORMS.values(), ui.SUB_FORM):
             self.assertLessEqual(len(title), 45, title)
             self.assertLessEqual(len(label), 45, label)
+
+
+class Menus(unittest.IsolatedAsyncioTestCase):
+    """Discord refuses a menu choice with an empty value (the reviewer's finding on #4471)."""
+
+    async def test_no_choice_has_an_empty_value(self) -> None:
+        owed = [part(tp.REWARD, id="r" * 32, words="100 gold", who_id="hlin")]
+        menus = [
+            ui.TowardMenu("c" * 32, "t" * 32, owed, Lines.names, part_id=None),
+            ui.BranchMenu("c" * 32, "t" * 32, [("w" * 32, "Who killed Wit?", "mystery")], "s" * 32),
+            ui.PartsScreen("c" * 32, "t" * 32, owed, Lines.names, undo=5),
+        ]
+        for menu in menus:
+            for item in menu.children:
+                for option in getattr(item, "options", []):
+                    self.assertTrue(option.value, (type(menu).__name__, option.label))
 
 
 class TheCardsRead(MemoryTest):
