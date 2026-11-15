@@ -42,7 +42,7 @@ class Result:
 
 
 def note_text(sessions: int, days: int) -> str:
-    """What the DM screen says once: "🗑 Deleted 3 transcripts older than 90 days. …"."""
+    """What the DM Bot channel says once, counts only: "🗑 Deleted 3 transcripts older than …"."""
     things = "1 transcript" if sessions == 1 else f"{sessions} transcripts"
     age = KEEP_LABELS.get(days, f"{days} days")
     return (
@@ -61,8 +61,8 @@ class KeepJob:
         post_screen: PostScreen,
     ) -> None:
         """`campaigns`: the CampaignStore; `transcripts`: the TranscriptStore; `guild_ids()`:
-        every server that holds campaigns; `post_screen(campaign, text)`: say it on the DM screen
-        (False if it could not be posted)."""
+        every server that holds campaigns; `post_screen(campaign, text)`: say it in the DM Bot
+        channel (the DM screen if there is none); False if it could not be posted."""
         self._campaigns = campaigns
         self._transcripts = transcripts
         self._guild_ids = guild_ids
@@ -116,4 +116,4 @@ class KeepJob:
         if await self._post_screen(campaign, note_text(deleted, days)):
             await self._campaigns.mark_transcript_deletion_noted(campaign.guild_id, campaign.id)
         else:
-            log.warning("Keep transcripts: couldn't post the DM-screen note")
+            log.warning("Keep transcripts: couldn't post the upkeep note")
