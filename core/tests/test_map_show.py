@@ -157,3 +157,30 @@ class Showing(DatabaseTest):
         self.assertIn(words.NO_MAPS, self.said(it))
         self.assertNotIn("@everyone", map_show._title("**hi** @everyone"))
         self.assertEqual(map_show._title("   "), words.UNTITLED)
+
+    async def test_a_long_title_keeps_the_mark_that_says_whether_the_table_sees_it(self) -> None:
+        mine = await self.make("The Keep of the Many Winds, " * 6)
+        await self.maps.set_audience(GUILD, self.campaign.id, mine, TABLE)
+        it = self.press(DM)
+        with patch("dmbot.ui.map_show._dm_campaign", new=self.dm_only):
+            await map_show._list(it, self.campaign.id)
+        view = it.edit_original_response.await_args.kwargs["view"]
+        (menu,) = [cast(Any, c).item for c in view.children]
+        label = menu.options[0].label
+        self.assertLessEqual(len(label), 100)
+        self.assertTrue(label.endswith("(shown)"))
+
+    async def test_a_title_with_markdown_is_not_backslashed_in_a_menu_option(self) -> None:
+        self.assertEqual(map_show._plain("The *Keep* _of_ Winds"), "The *Keep* _of_ Winds")
+
+    async def test_a_stale_button_cannot_show_a_map_dmbot_may_not_use(self) -> None:
+        waiting = await self.make("Not yet answered", usable=False)
+        done = await self.act(DM, "y", waiting)
+        self.assertEqual(self.said(done), GONE)
+        self.assertEqual(await self.audience(waiting), DM_ONLY)
+
+    async def test_without_the_map_store_the_press_says_it_failed(self) -> None:
+        map_id = await self.make("The Keep")
+        self.bot.map_store = None
+        done = await self.act(DM, "y", map_id)
+        self.assertEqual(self.said(done), words.FAILED)

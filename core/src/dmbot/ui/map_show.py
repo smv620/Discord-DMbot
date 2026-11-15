@@ -19,7 +19,7 @@ import discord
 from discord import app_commands
 
 from dmbot.maps import words
-from dmbot.maps.store import DM_ONLY, GONE, TABLE, MapError, Viewer
+from dmbot.maps.store import DM_ONLY, GONE, TABLE, MapError, Viewer, may_use_map
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _tell, dmbot_group
 from dmbot.ui.family_ties import _dm_campaign
@@ -40,6 +40,31 @@ def _title(title: str) -> str:
     """A map's name for a line of text or an option: markdown and pings made harmless."""
     clean = discord.utils.escape_markdown(discord.utils.escape_mentions(title.strip()))
     return clean[:SHORT] or words.UNTITLED
+
+
+def _plain(title: str) -> str:
+    """A map's name for a menu option: options do not render markdown, so it is only trimmed."""
+    return " ".join(title.split())[:80] or words.UNTITLED
+
+
+def _option(m: Any) -> tuple[str, str]:
+    """A menu line: the name (cut first, so the mark is never the part that is lost), then whether
+    the table sees it."""
+    return m.id, f"{_plain(m.title)} ({'shown' if m.audience == TABLE else 'DMs only'})"
+
+
+async def _menu(bot: Any, campaign: Any, *, note: str = "") -> tuple[str, discord.ui.View | None]:
+    """The campaign's usable maps as a menu with a heading, or why there are none."""
+    found = await bot.map_store.maps(
+        campaign.guild_id, campaign.id, Viewer(dm=True), usable_only=True
+    )
+    lead = f"{note}\n\n" if note else ""
+    if not found:
+        return f"{lead}{words.NO_MAPS}", None
+    out = discord.ui.View(timeout=None)
+    out.add_item(MapSelect(campaign.id, [_option(m) for m in found[:MAX_OPTIONS]]))
+    more = f"\n{words.FIRST_25}" if len(found) > MAX_OPTIONS else ""
+    return f"{lead}🗺️ **{_title(campaign.name)}**{more}", out
 
 
 def _seen(audience: str) -> str:
@@ -82,7 +107,7 @@ class CampaignSelect(
         data: Any = interaction.data
         values = (data or {}).get("values") or []
         if not values or not re.fullmatch(r"[0-9a-f]{32}", str(values[0])):
-            await _edit(interaction, words.GONE)
+            await _edit(interaction, words.OUT_OF_DATE)
             return
         await _list(interaction, str(values[0]))
 
@@ -112,7 +137,7 @@ class MapSelect(discord.ui.DynamicItem[discord.ui.Select[discord.ui.View]], temp
         data: Any = interaction.data
         values = (data or {}).get("values") or []
         if not values or not re.fullmatch(r"[0-9a-f]{32}", str(values[0])):
-            await _edit(interaction, words.GONE)
+            await _edit(interaction, words.OUT_OF_DATE)
             return
         await _card(interaction, self.campaign_id, str(values[0]))
 
@@ -196,7 +221,10 @@ class UndoButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], tem
         await _answer_first(interaction, in_place=True)
         campaign = await _dm_campaign(interaction, self.campaign_id)
         memory = _bot(interaction).memory
-        if campaign is None or memory is None:
+        if campaign is None:
+            return
+        if memory is None:
+            await _edit(interaction, words.FAILED)
             return
         try:
             await memory.undo(campaign.guild_id, campaign.id, self.batch)
@@ -218,24 +246,13 @@ async def _list(interaction: discord.Interaction, campaign_id: str, *, note: str
     """The campaign's usable maps as a menu, with whether each is shown; or why there are none."""
     bot = _bot(interaction)
     campaign = await _dm_campaign(interaction, campaign_id)
-    if campaign is None or bot.map_store is None:
+    if campaign is None:
         return
-    found = await bot.map_store.maps(
-        campaign.guild_id, campaign.id, Viewer(dm=True), usable_only=True
-    )
-    lead = f"{note}\n\n" if note else ""
-    if not found:
-        await _edit(interaction, f"{lead}{words.NO_MAPS}")
+    if bot.map_store is None:
+        await _edit(interaction, words.FAILED)
         return
-    shown = found[:MAX_OPTIONS]
-    options = [
-        (m.id, f"{_title(m.title)} ({'shown' if m.audience == TABLE else 'DMs only'})")
-        for m in shown
-    ]
-    out = discord.ui.View(timeout=None)
-    out.add_item(MapSelect(campaign.id, options))
-    more = f"\n{words.FIRST_25}" if len(found) > MAX_OPTIONS else ""
-    await _edit(interaction, f"{lead}🗺️ **{_title(campaign.name)}**{more}", out)
+    text, view = await _menu(bot, campaign, note=note)
+    await _edit(interaction, text, view)
 
 
 async def _card(interaction: discord.Interaction, campaign_id: str, map_id: str, *, note: str = "",
@@ -243,10 +260,13 @@ async def _card(interaction: discord.Interaction, campaign_id: str, map_id: str,
     """One map: who can see it now, and the one button that fits."""
     bot = _bot(interaction)
     campaign = await _dm_campaign(interaction, campaign_id)
-    if campaign is None or bot.map_store is None:
+    if campaign is None:
+        return
+    if bot.map_store is None:
+        await _edit(interaction, words.FAILED)
         return
     found = await bot.map_store.get(campaign.guild_id, campaign.id, map_id, Viewer(dm=True))
-    if found is None:
+    if found is None or not may_use_map(found):  # (the list holds only maps DMbot may use)
         await _edit(interaction, GONE)  # (the store's own words for a map that is gone)
         return
     out = discord.ui.View(timeout=None)
@@ -277,9 +297,15 @@ async def _change(
 ) -> None:
     bot = _bot(interaction)
     campaign = await _dm_campaign(interaction, campaign_id)
-    if campaign is None or bot.map_store is None:
+    if campaign is None:
+        return
+    if bot.map_store is None:
+        await _edit(interaction, words.FAILED)
         return
     try:
+        current = await bot.map_store.get(campaign.guild_id, campaign.id, map_id, Viewer(dm=True))
+        if current is None or not may_use_map(current):  # (a stale button never reaches a map
+            raise MapError(GONE)  # DMbot may not use)
         written = await bot.map_store.set_audience(
             campaign.guild_id, campaign.id, map_id, TABLE if show else DM_ONLY
         )
@@ -317,19 +343,10 @@ async def dmbot_maps(interaction: discord.Interaction) -> None:
         await _tell(interaction, words.NOT_A_DM)
         return
     if len(mine) == 1:
-        found = await bot.map_store.maps(guild.id, mine[0].id, Viewer(dm=True), usable_only=True)
-        if not found:
-            await _tell(interaction, words.NO_MAPS)
-            return
-        options = [
-            (m.id, f"{_title(m.title)} ({'shown' if m.audience == TABLE else 'DMs only'})")
-            for m in found[:MAX_OPTIONS]
-        ]
-        menu = discord.ui.View(timeout=None)
-        menu.add_item(MapSelect(mine[0].id, options))
-        more = f"\n{words.FIRST_25}" if len(found) > MAX_OPTIONS else ""
-        await _tell(interaction, f"🗺️ **{_title(mine[0].name)}**{more}", view=menu)
+        text, menu = await _menu(bot, mine[0])
+        await _tell(interaction, text, view=menu)
         return
-    menu = discord.ui.View(timeout=None)
-    menu.add_item(CampaignSelect([(c.id, c.name) for c in mine[:MAX_OPTIONS]]))
-    await _tell(interaction, words.PICK_CAMPAIGN, view=menu)
+    pick = discord.ui.View(timeout=None)
+    pick.add_item(CampaignSelect([(c.id, c.name) for c in mine[:MAX_OPTIONS]]))
+    more = f"\n{words.FIRST_25}" if len(mine) > MAX_OPTIONS else ""
+    await _tell(interaction, f"{words.PICK_CAMPAIGN}{more}", view=pick)
