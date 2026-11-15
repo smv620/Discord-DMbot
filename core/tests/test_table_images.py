@@ -715,7 +715,7 @@ class TableImages(chat.AtTheTableTyped):
     async def test_the_dms_hear_once_that_old_pictures_were_removed(self) -> None:
         self.say_into()
         self.keeper(Result(cast(Any, SimpleNamespace(code="CODE", id=77)), True, removed=2))
-        with patch("dmbot.bot.private_note.send", new=AsyncMock(return_value=True)) as told:
+        with patch.object(self.bot, "ask_privately", new=AsyncMock(return_value=True)) as told:
             await self.hear(picture())
             await self.hear(picture())
         told.assert_awaited_once()
