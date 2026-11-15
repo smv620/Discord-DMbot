@@ -624,6 +624,11 @@ class CampaignStore:
         check_dm_screen_level(dm_screen_level)
         try:
             async with self._db.guild(guild_id) as conn:
+                # The tables hold the account's number, never a second Discord ID (#2533): a
+                # campaign made by an added Discord login belongs to its account and its plan.
+                account = await self._account_of(conn, dm_user_id)
+                if account is None:
+                    raise CampaignError(NOT_A_LOGIN)
                 campaign_id = await self._insert(
                     conn,
                     guild_id,
@@ -635,11 +640,11 @@ class CampaignStore:
                     None,
                     dm_screen_visibility,
                     dm_screen_level,
-                    dm_user_id,
+                    account,
                 )
                 await conn.execute(
                     "INSERT INTO campaign_dms (campaign_id, guild_id, user_id) VALUES (%s, %s, %s)",
-                    (campaign_id, guild_id, dm_user_id),
+                    (campaign_id, guild_id, account),
                 )
                 if invite is not None:
                     await conn.execute(
