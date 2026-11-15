@@ -11,12 +11,14 @@ from urllib.parse import parse_qs, urlsplit
 import httpx
 
 from dmbot.campaigns.store import CampaignStore
+from dmbot.db import Database
 from dmbot.web import tokens
 from dmbot.web.app import create_app
 from dmbot.web.discord import DiscordUser
 from dmbot.web.discord_accounts import key_of
-from tests.pg import DatabaseTest
+from tests.pg import REQUIRE_DB, SUPERUSER_URL, DatabaseTest
 from tests.test_web_api import ALICE, SECRET, SITE, FakeDiscord, settings
+from tests.test_web_role import ensure_web_role, web_url
 
 ADDED = 424_242_001
 OWNS_CAMPAIGNS = 424_242_002
@@ -25,10 +27,19 @@ HOST = "web-api.internal.test"
 
 class DiscordAccounts(DatabaseTest):
     async def asyncSetUp(self) -> None:
-        await super().asyncSetUp()
+        if not SUPERUSER_URL:
+            if REQUIRE_DB:
+                self.fail("DMBOT_TEST_SUPERUSER_URL is needed to test the website's role")
+            self.skipTest("set DMBOT_TEST_SUPERUSER_URL to test the website's role")
+        await ensure_web_role()
+        await super().asyncSetUp()  # the bot's role migrates, then grants to dmbot_web
         self.now = 1_800_000_000
         self.discord = FakeDiscord()
-        app = create_app(settings(), self.db, self.discord, clock=lambda: self.now)
+        # The app runs as the website's own role, as in production: no right on the account tables,
+        # only the doors of migration 0506.
+        self.web = await Database.open(web_url(), schema=self.schema, max_size=2, migrate=False)
+        self.addAsyncCleanup(self.web.close)
+        app = create_app(settings(), self.web, self.discord, clock=lambda: self.now)
         self.client = httpx.AsyncClient(
             transport=httpx.ASGITransport(app=app),
             base_url=f"https://{HOST}",
@@ -188,3 +199,18 @@ class Removing(DiscordAccounts):
     async def test_keys_are_not_the_number_and_differ_by_account(self) -> None:
         self.assertNotIn(str(ADDED), key_of(SECRET, ALICE.id, ADDED))
         self.assertNotEqual(key_of(SECRET, 1, ADDED), key_of(SECRET, 2, ADDED))
+
+
+class TheDoors(DiscordAccounts):
+    async def test_the_website_role_has_no_right_on_the_account_tables(self) -> None:
+        """Why the doors exist (0506): the role asks them, never the tables."""
+        async with self.web.user(ALICE.id) as conn:
+            with self.assertRaises(Exception) as caught:
+                await conn.execute("SELECT * FROM account_discord_ids")
+            self.assertIn("permission denied", str(caught.exception))
+
+    async def test_a_door_answers_only_for_the_signed_in_persons_own_account(self) -> None:
+        async with self.web.user(ALICE.id) as conn:
+            cur = await conn.execute("SELECT dmbot_account_logins(%s) AS r", (ALICE.id + 1,))
+            row = await cur.fetchone()
+        self.assertIsNone(row and row["r"])

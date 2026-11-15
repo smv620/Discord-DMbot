@@ -18,10 +18,39 @@ from datetime import UTC, datetime
 from typing import Any
 
 from dmbot.db import Database
-from dmbot.web.accounts import LinkResult, Login, link_discord_id, logins_of, unlink_discord_id
+from dmbot.web.accounts import LINK_WORDS, UNLINK_WORDS, LinkResult, Login
 from dmbot.web.sessions import Session
 
 NOT_FOUND = "not_found"  # no account here has that key (also for another DMbot account's)
+
+
+async def logins_of(db: Database, session: Session) -> list[Login]:
+    """The Discord accounts of the signed-in account that still sign in, first first. The website's
+    role has no right on the tables behind this, so it asks the door `dmbot_account_logins`
+    (migration 0506): the same list `dmbot.accounts.logins_of` gives the bot."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        cur = await conn.execute("SELECT dmbot_account_logins(%s) AS r", (session.user_id,))
+        row = await cur.fetchone()
+    got = row["r"] if row else None
+    if got is None:
+        return []
+    added = [Login(int(a["id"]), False, int(a["at"])) for a in got.get("added", [])]
+    return added if got.get("firstOff") else [Login(session.user_id, True, None), *added]
+
+
+async def _door(
+    db: Database, session: Session, door: str, discord_id: int, now: int, words: dict[str, str]
+) -> LinkResult:
+    """One of the two doors that put a Discord account on or take it off the signed-in account,
+    answered in `dmbot.accounts`' own words (an unknown code gets the sign-in words, never a raw
+    code)."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        cur = await conn.execute(f"SELECT {door}(%s, %s) AS r", (int(discord_id), int(now)))
+        row = await cur.fetchone()
+    code = "not_yours" if row is None else str(row["r"])
+    if code == "ok":
+        return LinkResult(True, code, "")
+    return LinkResult(False, code, words.get(code, words["not_yours"]))
 
 
 def key_of(secret: bytes, account: int, discord_id: int) -> str:
@@ -40,7 +69,7 @@ def _name(login: Login, session: Session) -> str:
 async def listing(db: Database, session: Session, secret: bytes) -> list[dict[str, Any]]:
     """The account's Discord accounts for `GET /me`: a key, a name, whether it is the one in use,
     and whether it can be taken off (never the one in use, never the last)."""
-    logins = await logins_of(db, session.user_id)
+    logins = await logins_of(db, session)
     return [
         {
             "key": key_of(secret, session.user_id, login.discord_id),
@@ -55,9 +84,9 @@ async def listing(db: Database, session: Session, secret: bytes) -> list[dict[st
 async def add(db: Database, session: Session, discord_id: int, *, now: int) -> str:
     """The result code the page is sent back with after the person signed in as the Discord account
     to add: `added`, `already`, or the refusal's code (`has_campaigns`, `has_plan`, `taken`)."""
-    if any(login.discord_id == discord_id for login in await logins_of(db, session.user_id)):
+    if any(login.discord_id == discord_id for login in await logins_of(db, session)):
         return "already"
-    result: LinkResult = await link_discord_id(db, session.user_id, discord_id, now=now)
+    result = await _door(db, session, "dmbot_web_account_link", discord_id, now, LINK_WORDS)
     if result.ok:
         return "added"
     # `has_account` and `taken` have the same words for the person: it is on another account
@@ -75,7 +104,7 @@ async def remove(
     found = next(
         (
             login
-            for login in await logins_of(db, session.user_id)
+            for login in await logins_of(db, session)
             if hmac.compare_digest(key_of(secret, session.user_id, login.discord_id), key)
         ),
         None,
@@ -84,4 +113,4 @@ async def remove(
         return LinkResult(False, NOT_FOUND, "")
     if found.discord_id == session.user_id:
         return LinkResult(False, "in_use", "")
-    return await unlink_discord_id(db, session.user_id, found.discord_id, now=now)
+    return await _door(db, session, "dmbot_web_account_unlink", found.discord_id, now, UNLINK_WORDS)
