@@ -8,8 +8,8 @@ the file, puts the two files in the bucket under random keys (`p/<token>.<ext>` 
 files if it refuses; a file nobody picked up is swept by the picture sweep (about an hour).
 Nothing is stored for anyone outside the campaign's people, for a picture the person did not
 say they may use, or for a file that is not a PNG, JPEG or WebP picture by its own bytes (an
-SVG is never one). The picture is re-encoded first, so no location data or hidden text rides along. Words, ids and sizes only
-are queued, never a word of the picture.
+SVG is never one). The picture is re-encoded first, so no location data or hidden text rides
+along. Words, ids and sizes only are queued, never a word of the picture.
 """
 
 from __future__ import annotations
