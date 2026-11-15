@@ -7,6 +7,20 @@
 // confirmed and one "Which Mara?" answered from the site.
 export const WEB_WAITING_LIVE = false;
 
+/** Where "Proposed" differs from "Now" (#4429, the owner, 2026-11-15): the connection phrases are compared word by word, from the front and
+ * from the back; what is left in the middle of the proposed one is bold. A wholly new phrase ("ally of" for "knows") is bold whole. The names
+ * never differ on this card, so they are not compared. */
+export function differs(now: string, proposed: string): { before: string; bold: string; after: string } {
+  const a = now.split(" ").filter(Boolean);
+  const b = proposed.split(" ").filter(Boolean);
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+  const join = (words: string[]): string => words.join(" ");
+  return { before: join(b.slice(0, head)), bold: join(b.slice(head, b.length - tail)), after: join(b.slice(b.length - tail)) };
+}
+
 export const waitingWords = {
   // The line under a yes: the bot showed it to the players, or kept it hidden beside another hidden connection (#3974, #3986).
   shownOne: "👁️ Your players can see this now: it was said at the table.",
@@ -34,6 +48,8 @@ export const waitingWords = {
   // The connection card asks two questions apart (#4430, words from #4429): Q1 update or add it, Q2 can players see it.
   nowLine: (subject: string, how: string, object: string): string => `Now: ${subject} ${how} ${object}`,
   proposedLine: (subject: string, how: string, object: string, hand: string): string => `Proposed: ${subject} ${how} ${object}${hand}`,
+  proposedLabel: "Proposed: ",
+  nowLabel: "Now: ",
   guessLine: (guess: string): string => `🤔 DMbot's guess (your text doesn't say it outright): ${guess}.`,
   fromText: (quote: string): string => `From your text: “${quote}”`,
   // The Players line: how it is now and how it will be after (an update), or how it will be (a new one).

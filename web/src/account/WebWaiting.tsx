@@ -9,8 +9,8 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { handBracket, handKeeps } from "../content/hand-over-words";
-import { waitingWords as w } from "../content/web-waiting";
-import { ApiError, type AccountApi, type Waiting, type WaitingAnswer, type WaitingLook } from "./api";
+import { differs, waitingWords as w } from "../content/web-waiting";
+import { ApiError, type AccountApi, type Waiting, type WaitingAnswer, type WaitingBackstory, type WaitingLook } from "./api";
 import { currentItem, itemDomId, openItem, pairFromItem } from "./itemLink";
 import WaitingBulk from "./WaitingBulk";
 import { itemWords } from "../content/item-words";
@@ -45,6 +45,33 @@ const startCap = (line: string): string => line.charAt(0).toUpperCase() + line.s
 
 /** The bracket for an item that changed hands, "Claude sold it", or "" for a plain connection or a previous holder the page cannot name. */
 const bracketOf = (b: Waiting["backstory"][number]): string => (b.handOver && b.handOverName ? handBracket(b.handOver, b.handOverName) : "");
+/** The "Proposed:" line (#4429): on an update only the words that differ from "Now" are bold and the names are plain; on a new card the names are
+ * bold and the connection plain, as nothing is compared. */
+function proposedOf(b: WaitingBackstory, hand: string) {
+  if (!b.now) {
+    return (
+      <>
+        {w.proposedLabel}
+        <strong>{b.subject}</strong> {b.how} <strong>{b.object}</strong>
+        {hand}
+      </>
+    );
+  }
+  const d = differs(b.now.how, b.how);
+  return (
+    <>
+      {w.proposedLabel}
+      {b.subject} {d.before && `${d.before} `}
+      {d.bold && <strong>{d.bold}</strong>}
+      {d.bold && d.after && " "}
+      {d.after && (d.bold ? d.after : `${d.after} `)}
+      {d.bold && " "}
+      {b.object}
+      {hand}
+    </>
+  );
+}
+
 const handOf = bracketOf; // (no switch: the fields only arrive with the door that sends them, 0436)
 const KEEP_ALL_MAX = 50; // the API keeps at most this many named in one Keep all
 
@@ -506,7 +533,7 @@ export default function WebWaiting({
                   return (
                   <div key={b.id} class="panel" id={itemDomId(b.id)} tabIndex={-1}>
                     {b.now && <p class="small">{w.nowLine(b.subject, b.now.how, b.object)}</p>}
-                    <p id={`wb-${b.id}`}>{w.proposedLine(b.subject, b.how, b.object, handOf(b) ? ` (${handOf(b)})` : "")}</p>
+                    <p id={`wb-${b.id}`}>{proposedOf(b, handOf(b) ? ` (${handOf(b)})` : "")}</p>
                     {b.check && <p class="small muted">{w.checkLine(b.check)}</p>}
                     {b.guess && <p class="small">{w.guessLine(b.guess)}</p>}
                     {b.quote && <p class="muted small">{w.fromText(b.quote)}</p>}

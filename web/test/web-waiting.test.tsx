@@ -30,6 +30,9 @@ afterEach(() => {
   live.on = false;
 });
 
+/** A paragraph by all of its text: the Proposed line has bold parts, so it is not one text node. */
+const whole = (text: string) => (_: string, el: Element | null): boolean => el?.tagName === "P" && el.textContent === text;
+
 const REF = "100.cmp1";
 const press = (name: string | RegExp, within_?: HTMLElement) =>
   fireEvent.click((within_ ? within(within_) : screen).getByRole("button", { name }));
@@ -145,7 +148,7 @@ describe("connections from a backstory", () => {
     expect(await screen.findByText(w.kept(2))).toBeTruthy();
     expect(api.calls).toContain(`answerWaiting:${REF}:backstory:keep_all:b1,b2`);
     // the one waiting on a name is still there, with the reason, and no Keep for it
-    const waiting = screen.getByText("Proposed: Rook knows Newcomer").closest(".panel") as HTMLElement;
+    const waiting = screen.getByText(whole("Proposed: Rook knows Newcomer")).closest(".panel") as HTMLElement;
     expect(within(waiting).getByText(w.waitingOn(["Newcomer"]))).toBeTruthy();
     expect(within(waiting).queryByRole("button", { name: w.addIt })).toBeNull();
     expect(within(waiting).getByRole("button", { name: w.skip })).toBeTruthy();
@@ -173,7 +176,7 @@ describe("connections from a backstory", () => {
 
   it("Add it, Add it hidden and Leave it out each send their own answer", async () => {
     const api = await open();
-    const far = screen.getByText("Proposed: Rook knows Far Hall").closest(".panel") as HTMLElement;
+    const far = screen.getByText(whole("Proposed: Rook knows Far Hall")).closest(".panel") as HTMLElement;
     press(w.hideFromPlayers, far);
     expect(within(far).getByText(w.playersNew(true))).toBeTruthy(); // (the toggle only changes the line)
     expect(api.calls.some((c) => c.startsWith("answerWaiting:"))).toBe(false);
@@ -181,18 +184,18 @@ describe("connections from a backstory", () => {
     expect(await screen.findByText(w.done.keepSecret)).toBeTruthy();
     await settled();
     expect(api.calls).toContain(`answerWaiting:${REF}:backstory:keep:b1:secret`);
-    press(w.addIt, screen.getByText("Proposed: Mira Voss grew up in Harrow's Keep").closest(".panel") as HTMLElement);
+    press(w.addIt, screen.getByText(whole("Proposed: Mira Voss grew up in Harrow's Keep")).closest(".panel") as HTMLElement);
     expect(await screen.findByText(w.done.keep)).toBeTruthy();
     await settled();
     expect(api.calls).toContain(`answerWaiting:${REF}:backstory:keep:b4`);
-    press(w.skip, screen.getByText("Proposed: Rook knows Newcomer").closest(".panel") as HTMLElement);
+    press(w.skip, screen.getByText(whole("Proposed: Rook knows Newcomer")).closest(".panel") as HTMLElement);
     expect(await screen.findByText(w.done.skip)).toBeTruthy();
     expect(api.calls).toContain(`answerWaiting:${REF}:backstory:skip:b3`);
   });
 
   it("a secret name says so, has no toggle, and is added hidden", async () => {
     await open();
-    const secret = screen.getByText("Proposed: Rook grew up with Mira Voss").closest(".panel") as HTMLElement;
+    const secret = screen.getByText(whole("Proposed: Rook grew up with Mira Voss")).closest(".panel") as HTMLElement;
     expect(within(secret).getByText(w.playersSecretName)).toBeTruthy();
     expect(within(secret).queryByRole("button", { name: w.hideFromPlayers })).toBeNull();
     expect(within(secret).queryByRole("button", { name: w.letPlayersSee })).toBeNull();
@@ -434,9 +437,9 @@ describe("after an answer", () => {
 describe("skipping a connection that waits on a name", () => {
   it("dismisses it: skipping writes no fact", async () => {
     const api = await open();
-    press(w.skip, screen.getByText("Proposed: Rook knows Newcomer").closest(".panel") as HTMLElement);
+    press(w.skip, screen.getByText(whole("Proposed: Rook knows Newcomer")).closest(".panel") as HTMLElement);
     expect(await screen.findByText(w.done.skip)).toBeTruthy();
-    await waitFor(() => expect(screen.queryByText("Proposed: Rook knows Newcomer")).toBeNull());
+    await waitFor(() => expect(screen.queryByText(whole("Proposed: Rook knows Newcomer"))).toBeNull());
     expect(api.calls).toContain(`answerWaiting:${REF}:backstory:skip:b3`);
   });
 

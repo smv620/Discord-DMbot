@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import type { WaitingBackstory } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import WebWaiting from "../src/account/WebWaiting";
-import { waitingWords as w } from "../src/content/web-waiting";
+import { differs, waitingWords as w } from "../src/content/web-waiting";
 
 vi.mock("../src/content/web-waiting", async (original) => {
   const real = await original<typeof import("../src/content/web-waiting")>();
@@ -26,7 +26,7 @@ async function open(item: Partial<WaitingBackstory>) {
   api.webWaiting = async (ref) => ({ ...(await real(ref)), backstory: [{ ...base, ...item }] });
   render(<WebWaiting api={api} campaignRef={REF} />);
   await screen.findByRole("heading", { name: w.heading });
-  const card = (await screen.findByText(/^Proposed: Belleros/)).closest(".panel") as HTMLElement;
+  const card = (await screen.findByText((_, el) => el?.tagName === "P" && (el.textContent ?? "").startsWith("Proposed: Belleros"))).closest(".panel") as HTMLElement;
   return { api, card };
 }
 const lines = (card: HTMLElement): string[] => Array.from(card.querySelectorAll("p")).map((p) => p.textContent ?? "");
@@ -94,5 +94,31 @@ describe("the connection card", () => {
     render(<WebWaiting api={api} campaignRef={REF} />);
     await screen.findByRole("heading", { name: w.heading });
     expect(screen.getAllByText(w.keepAllPlayers).length).toBeGreaterThan(0);
+  });
+});
+
+describe("bolding only what differs (#4429, the owner)", () => {
+  const bolds = (card: HTMLElement): string[] => Array.from(card.querySelector("p#wb-c1")!.querySelectorAll("strong")).map((e) => e.textContent ?? "");
+
+  it("knows to knows (friendly) bolds only (friendly), and the names are plain", async () => {
+    const { card } = await open({ now: { how: "knows", hidden: false }, how: "knows (friendly)" });
+    expect(bolds(card)).toEqual(["(friendly)"]);
+  });
+
+  it("knows to ally of bolds ally of, whole", async () => {
+    const { card } = await open({ now: { how: "knows", hidden: false }, how: "ally of" });
+    expect(bolds(card)).toEqual(["ally of"]);
+    expect(card.querySelector("p#wb-c1")?.textContent).toBe("Proposed: Belleros ally of Cerric");
+  });
+
+  it("a new card bolds the names and no connection words", async () => {
+    const { card } = await open({ how: "knows (friendly)" });
+    expect(bolds(card)).toEqual(["Belleros", "Cerric"]);
+  });
+
+  it("differs compares word by word", () => {
+    expect(differs("knows", "knows (friendly)")).toEqual({ before: "knows", bold: "(friendly)", after: "" });
+    expect(differs("ally of", "enemy of")).toEqual({ before: "", bold: "enemy", after: "of" });
+    expect(differs("knows", "ally of")).toEqual({ before: "", bold: "ally of", after: "" });
   });
 });
