@@ -2463,6 +2463,11 @@ export interface WaitingBackstory {
   waitingOn: string[];
   /** DMbot's check of a pronoun, in plain words, for a DM only (#2859). */
   check?: string;
+  /** When the campaign already has a connection between the two (#4430): how it reads now ("knows") and whether players cannot
+   * see it now. Missing for a new connection. Filled by the core half of #4429; until then every card reads as new. */
+  now?: { how: string; hidden: boolean };
+  /** DMbot's guess at why the text says this, when it is not stated outright (#4430). */
+  guess?: string;
   /** An item that changed hands (#4122): how it moved (sold, gave, traded, stolen, lost), who had it before, or "" for none. */
   handOver?: "" | "sold" | "gave" | "traded" | "stolen" | "lost";
   handOverFrom?: string;

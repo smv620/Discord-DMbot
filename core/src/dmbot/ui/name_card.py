@@ -1255,6 +1255,15 @@ class NameCard(_Menu):
                         _Button(self._place_world, label=place_world.BUTTON, style=grey, row=row)
                     )
                     break
+            for row in (3, 2, 1):  # its culture and who lives there (#4257), the same way
+                if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                    self.add_item(
+                        _Button(
+                            self._place_peoples, label=place_world.PEOPLES_BUTTON, style=grey,
+                            row=row,
+                        )
+                    )  # fmt: skip
+                    break
         # a route place's stated length (#4255): its words, and ✅ for DMbot's read
         self.length_words = route_length[0] if route_length is not None else ""
         if route_length is not None:
@@ -1446,6 +1455,12 @@ class NameCard(_Menu):
     async def _place_world(self, interaction: discord.Interaction) -> None:
         self.stop()
         await place_world.show_world(interaction, self.campaign_id, self.entity_id)
+
+    async def _place_peoples(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.place_peoples import show_peoples
+
+        self.stop()
+        await show_peoples(interaction, self.campaign_id, self.entity_id)
 
     async def _languages(self, interaction: discord.Interaction) -> None:
         self.stop()

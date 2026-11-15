@@ -31,7 +31,7 @@ from dmbot.ui.dmbot_commands import (
     _tell,
 )
 from dmbot.ui.names import _campaign_for, _md, _memory, changed, sees_secrets
-from dmbot.ui.place_world import RULED, climate_words, land_words
+from dmbot.ui.place_world import RULED, climate_words, culture_words, land_words, people_words
 
 log = logging.getLogger(__name__)
 
@@ -52,7 +52,10 @@ NOT_UNDONE = "Not undone, because something changed since. Open the place or the
 NEVER_AGAIN = "DMbot won't guess this again."  # (a place and a language alike since #4362)
 MENU_MAX = SELECT_OPTIONS_MAX  # (Discord's limit for a menu's choices)
 LIST_MAX = MESSAGE_MAX - 300  # the list, so the reply with a line above it stays inside one message
-LAYER = {mf.TERRAIN: "Land", mf.CLIMATE: "Climate", mf.CONTROL: "Ruler"}
+LAYER = {
+    mf.TERRAIN: "Land", mf.CLIMATE: "Climate", mf.CONTROL: "Ruler",
+    mf.CULTURE: "Culture", mf.POPULATION: "Who lives here",  # (#4257: never "people")
+}  # fmt: skip
 GROUP = {wn.PLACE: "Places", wn.LANGUAGE: "Languages"}
 ONE = {wn.PLACE: "place", wn.LANGUAGE: "language"}
 
@@ -75,6 +78,10 @@ def guess(note: wn.Note) -> str:
         return f"{RULED.get(note.how or 'rules', 'Ruled by').lower()} {note.ruler}"
     if f is None:
         return note.value
+    if note.layer == mf.CULTURE:
+        return culture_words(f)
+    if note.layer == mf.POPULATION:
+        return people_words(f)
     return land_words(f) if note.layer == mf.TERRAIN else climate_words(f)
 
 
