@@ -208,7 +208,7 @@ class Picking(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_typed_name_is_chosen_and_a_refusal_is_said(self) -> None:
         form = OwnWorldForm(CAMPAIGN)
-        form.name._value = "Golarion"  # type: ignore[attr-defined]
+        form.name._value = "Golarion"
         it = press(DM, found=campaign())
         it.client.memory = MagicMock()
         it.client.memory.choose_setting = AsyncMock(side_effect=MemoryRuleError("Too small."))
