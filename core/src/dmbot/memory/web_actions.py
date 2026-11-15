@@ -112,6 +112,10 @@ WAITING = (
     "claim-unpick",
     "claim-undo",  # takes back one fact of an "All true" / "All secret" press (#3645)
     "backstory-keep",
+    # "Let players see it" (#4432): until CloudDev-lead's applier reveals a hidden connection it
+    # replaces (`keep_all(players="show")`, #4438), it is kept exactly as a plain keep is, which
+    # never changes what the players were or were not shown.
+    "backstory-keep-show",
     "backstory-skip",
     "backstory-keep-all",
     "backstory-which-pick",
