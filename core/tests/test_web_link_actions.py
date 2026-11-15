@@ -759,6 +759,41 @@ class TheEdits(Editing):
                         self.g, self.one.id, rel.id, source=DM_SOURCE, status="rejected"
                     )
 
+    async def keep_over_a_hidden_one(self, action: str) -> list[tuple[str, bool]]:
+        """A waiting "hostile" over a hidden "friendly", answered with `action` as the applier
+        gets it; what is live afterwards, as (words, hidden from players)."""
+        await self.memory.add_relation(
+            self.g, self.one.id, self.mira, "knows", self.hall, source=DM_SOURCE,
+            confidence=1.0, status="confirmed", secret=True, detail="friendly",
+        )  # fmt: skip
+        await self.backstory.add(
+            self.g, self.one.id, [NewLink(self.mira, "knows", self.hall, "quote", detail="hostile")]
+        )  # fmt: skip
+        (link,) = [
+            w for w in await self.backstory.waiting(self.g, self.one.id)
+            if w.subject_id == self.mira and w.object_id == self.hall
+        ]  # fmt: skip
+        press = wa.Action(
+            id="c" * 32, campaign_id=self.one.id, entity_id="", user_id=ALICE.id,
+            action=action, target_id=link.id,
+        )  # fmt: skip
+        done = await wa.apply(self.memory, self.g, {ALICE.id}, press, self.waiting_deps())
+        self.assertEqual(done.error, "")
+        return [
+            (r.detail, r.secret or r.unrevealed)
+            for r in await self.knows_hall()
+            if r.to_session_at is None and r.subject_id == self.mira
+        ]
+
+    async def test_keep_show_lets_players_see_a_replaced_hidden_connection(self) -> None:
+        # (#4432) what the website's "players see it" queues
+        self.assertEqual(
+            await self.keep_over_a_hidden_one("backstory-keep-show"), [("hostile", False)]
+        )
+
+    async def test_a_plain_keep_leaves_a_replaced_hidden_connection_hidden(self) -> None:
+        self.assertEqual(await self.keep_over_a_hidden_one("backstory-keep"), [("hostile", True)])
+
     async def test_keep_all_writes_every_ready_one_and_the_discord_undo_takes_them_back(
         self,
     ) -> None:
