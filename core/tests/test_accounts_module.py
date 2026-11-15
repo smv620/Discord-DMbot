@@ -14,17 +14,24 @@ from dmbot import accounts
 from dmbot.web import accounts as web_accounts
 
 PUBLIC_NAMES = (
+    "LINK_WORDS",
     "NAME_MAX",
+    "UNLINK_WORDS",
+    "LinkResult",
+    "Login",
     "account_email",
     "account_of",
     "active_subscription",
     "customer_id",
     "delete_person",
     "dmbot_id",
+    "link_discord_id",
     "link_install",
+    "logins_of",
     "payment_email",
     "record_install",
     "remember_display_name",
+    "unlink_discord_id",
     "user_of_dmbot_id",
 )
 
