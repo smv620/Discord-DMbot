@@ -24,6 +24,7 @@ ALLOWED = {
     "migrations/0457_map_facts.py": "creates the table",
     "migrations/0492_culture_population.py": "adds the culture and who-lives-here layers (#4257)",
     "migrations/0496_named_cultures.py": "adds `culture_id`; typed cultures become named (#4257)",
+    "migrations/0500_route_condition.py": "adds the condition layer and a road's `relation_id`",
     "maps/store.py": "`remove_map` clears a fact's `map_id` through the log before the map goes",
     "migrations/0472_campaign_maps.py": "adds the `map_id` column; nothing reads it (#4344)",
     "migrations/0466_place_world_table_door.py": "confirmed, shown rows; gate and for_players",
@@ -51,12 +52,19 @@ class OneReader(unittest.TestCase):
     def test_the_one_reader_filters_for_players(self) -> None:
         text = (SRC / "memory" / "map_fact_store.py").read_text(encoding="utf-8")
         # (writes read inside their own change with `w.select`; any other `.select(MAP_FACTS` is a
-        # reader: `facts_for`, the one a player is ever given, and `dm_read_notes`, the DM's World
-        # notes (#4285), which refuses anyone else)
+        # reader: `facts_for`, the one a player is ever given, `conditions_for`, a route's condition
+        # with what it ended (#4258), which applies the same rule, and `dm_read_notes`, the DM's
+        # World notes (#4285), which refuses anyone else)
         readers = re.findall(
             r"async def (\w+)\((?:(?!\nasync def ).)*?(?<!\bw)\.select\(\s*MAP_FACTS", text, re.S
         )
-        self.assertEqual(sorted(readers), ["dm_read_notes", "facts_for"], "the two readers")
+        self.assertEqual(
+            sorted(readers), ["conditions_for", "dm_read_notes", "facts_for"], "the three readers"
+        )
+        self.assertIn(
+            "mf.for_players([f for f, _ in facts], known)",
+            text.split("async def conditions_for", 1)[1],
+        )
         self.assertIn("if not viewer.dm:", text.split("async def dm_read_notes", 1)[1][:900])
         # the players' rule is written once, in `map_facts.for_players` (#4287: the website's
         # player view calls it too), and the one reader uses it
@@ -68,6 +76,7 @@ class OneReader(unittest.TestCase):
             "f.table_knows",  # the DM showed it
             "f.status == CONFIRMED",  # the DM kept it (a value DMbot read is the DM's)
             "f.place_id in known",  # the place is shown to them
+            "f.relation_id in known",  # or, for a road's condition, the road is (#4258)
             "f.value in known",  # and so is the group that rules it
         ):
             self.assertIn(part, text, part)

@@ -266,7 +266,7 @@ def meet(layer: str, old_source: str, old_status: str, new_source: str, changed:
         return NOTE  # (the DM's own row stands against everything but the DM)
     if layer in CORRECTED:
         return CORRECT if RANK[new_source] > RANK[old_source] or new_source == FROM_DM else NOTE
-    if changed and layer in HISTORY:  # (words of change: "reopened", "was cleared", #4258)
+    if changed:  # (words of change: only a condition's reader says them yet, #4258)
         return CLOSE
     return CORRECT if RANK[new_source] > RANK[old_source] or new_source == FROM_DM else NOTE
 

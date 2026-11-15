@@ -98,6 +98,7 @@ from dmbot.ui import (
     told_name,
 )
 from dmbot.ui import companion as companion_ui
+from dmbot.ui import route_condition as route_condition_ui
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
     _answer_first,
@@ -896,6 +897,22 @@ async def show_card(
     length = place_size.length_line(entity.length_words, read_length) if shown else ""
     if length and len(text) + len(length) <= CARD_MAX:
         text += length
+    if route:  # a road's, pass's or bridge's condition (#4258): players see only a kept one
+        from dmbot.ui import route_condition
+        from dmbot.ui.continuity import _session_numbers
+
+        conditions = await memory.route_conditions(
+            campaign.guild_id, campaign.id, place_world.viewer_for(secrets), place_ids=[entity_id],
+            shown=None if secrets else {e.id for e in names.entities.values()},
+        )  # fmt: skip
+        cond = conditions.get(entity_id)
+        line = route_condition.condition_line(
+            cond,
+            await _session_numbers(interaction, campaign.id) if cond and cond.before else {},
+            dm=secrets,
+        )
+        if line and len(text) + len(line) <= CARD_MAX:
+            text += line
     if entity is not None and entity.type == "place":  # land, climate, ruler (#4256)
         seen_names = {e.id: e.name for e in names.entities.values()}  # (this viewer's names)
         held = await memory.map_facts_up(
@@ -1268,6 +1285,7 @@ class NameCard(_Menu):
         self.length_words = route_length[0] if route_length is not None else ""
         if route_length is not None:
             presses = [(self._route_length, place_size.LENGTH_BUTTON)]
+            presses.append((self._route_condition, route_condition_ui.BUTTON))  # (#4258)
             if route_length[0] and route_length[1]:
                 presses.append((self._keep_route_length, place_size.KEEP_LENGTH_BUTTON))
             for press, label in presses:
@@ -1447,6 +1465,10 @@ class NameCard(_Menu):
         await place_size.ask_length(
             interaction, self.campaign_id, self.entity_id, self.length_words
         )
+
+    async def _route_condition(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await route_condition_ui.show(interaction, self.campaign_id, entity_id=self.entity_id)
 
     async def _keep_route_length(self, interaction: discord.Interaction) -> None:
         self.stop()
