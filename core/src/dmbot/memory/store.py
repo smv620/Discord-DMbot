@@ -246,6 +246,10 @@ ONLY_PLACES = "Only a place has a size, and this isn't a place now."
 SETTING_LEVELS = place_levels.SETTING_LEVELS
 SETTING_PLACE = "Confirm this place first, then make it the setting."
 SETTING_SIZE = "Tap 📏 Size and kind first and pick Region or bigger."
+SETTING_TWO = (
+    "Two places have that name. Open the one you mean under Names and make it the setting."
+)
+SETTING_NO_NAME = "Type the world's name, then try again."
 # How two people know each other is a `knows` thing only (#3881).
 # A connection's direction set by the DM (#4154), refused in plain words
 ROLE_ONE_WAY = "That family role only reads one way (like niece). Pick one of the arrows instead."
@@ -1330,17 +1334,13 @@ class MemoryStore:
                 return Written(None, None)
             onto = await _load_ontology(w)
 
-            def bare(name: str) -> str:  # ("the Flanaess" and "Flanaess" are one world)
-                key = name_key(name)
-                return key[4:] if key.startswith("the ") else key
-
-            key = bare(world)
+            key = _bare_world(world)
             found = [
                 r
                 for r in await w.select(
                     ENTITIES, " AND status = %s AND merged_into IS NULL", [CONFIRMED]
                 )
-                if bare(str(r["name"])) == key and onto.is_a(str(r["type"]), "place")
+                if _bare_world(str(r["name"])) == key and onto.is_a(str(r["type"]), "place")
             ]
             if len(found) > 1:
                 return Written(None, None)  # (two places of that name: DMbot can't tell which)
@@ -1367,6 +1367,64 @@ class MemoryStore:
                 },
             )  # fmt: skip
             await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", CONFIRMED, False, None))
+            return Written(_entity(row), w.batch)
+
+    async def choose_setting(
+        self, guild_id: int, campaign_id: str, name: str, *, source: str
+    ) -> Written[Entity]:
+        """The DM's own pick of the campaign's world by name (#4291, the setting field's "Pick
+        another" and "Somewhere of my own"): the confirmed place of that name (as `guess_setting`
+        finds one), or a new one at world size, shown to the players as anything the DM types is,
+        marked as the DM's word. Any other setting is taken away in the same change (a guess of
+        DMbot's so taken away is a no to it, as in `set_setting`), so one Undo takes it all back.
+        The same place, already the DM's setting, writes nothing. A place of that name smaller than
+        a region, or two of that name, is refused with what to do instead: never a second place."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        if not name.split():  # (before `clean_text`, which refuses an empty name in its own words)
+            raise MemoryRuleError(SETTING_NO_NAME)
+        typed = clean_text(name)
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            key = _bare_world(typed)
+            found = [
+                r
+                for r in await w.select(
+                    ENTITIES, " AND status = %s AND merged_into IS NULL", [CONFIRMED]
+                )
+                if _bare_world(str(r["name"])) == key and onto.is_a(str(r["type"]), "place")
+            ]
+            if len(found) > 1:
+                raise MemoryRuleError(SETTING_TWO)
+            if found and found[0].get("place_level") not in SETTING_LEVELS:
+                raise MemoryRuleError(SETTING_SIZE)
+            now = await w.select(ENTITIES, " AND setting", [])
+            place_id = str(found[0]["id"]) if found else None
+            if (
+                place_id is not None
+                and [r["id"] for r in now] == [place_id]
+                and all(r.get("setting_from") == DM for r in now)
+            ):  # (the same place again, already the DM's word: nothing to write)
+                return Written(_entity(found[0]), None)
+            for r in now:  # (one setting at most; a guess taken away is a no to it)
+                if r["id"] != place_id:
+                    gone_from = "declined" if r.get("setting_from") == place_levels.READ else None
+                    await w.update(ENTITIES, r["id"], {"setting": False, "setting_from": gone_from})
+            if place_id is not None:
+                row = await w.update(ENTITIES, place_id, {"setting": True, "setting_from": DM})
+                return Written(_entity(row), w.batch)
+            row = await w.insert(
+                ENTITIES,
+                {
+                    "id": new_id(), "type": "place", "name": typed, "description": "",
+                    "status": CONFIRMED, "merged_into": None, "source": DM,
+                    "created_at": w.now, "played_by": None, "role": None, "needs_look": False,
+                    "unique_item": None, "hidden_from_players": False,
+                    "place_level": "world", "place_level_from": DM,
+                    "setting": True, "setting_from": DM,
+                },
+            )  # fmt: skip
+            await w.insert(ALIASES, _new_alias(w, row["id"], typed, "full", CONFIRMED, False, None))
             return Written(_entity(row), w.batch)
 
     async def keep_setting(
@@ -9651,6 +9709,12 @@ async def _move_aliases(
             [confirming],
         )
     await w.update_where(ALIASES, {"used_by": keep_id}, " AND used_by = %s", [gone_id])
+
+
+def _bare_world(name: str) -> str:
+    """A world's name for matching: "the Flanaess" and "Flanaess" are one world (#4173)."""
+    key = name_key(name)
+    return key[4:] if key.startswith("the ") else key
 
 
 async def _live_led_to(

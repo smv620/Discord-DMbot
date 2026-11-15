@@ -161,6 +161,59 @@ class TheGuess(MemoryTest):
         self.assertEqual([r["setting_from"] for r in copy["memory_entities"]], ["dm"])
 
 
+class TheDMsPick(MemoryTest):
+    """`choose_setting` (#4291): the DM picks the world by name, found or made at world size, the
+    DM's word, any other setting taken away, all in one change and one Undo."""
+
+    async def test_a_new_world_is_made_shown_and_the_dms(self) -> None:
+        guessed = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        assert guessed.value is not None
+        picked = await self.memory.choose_setting(GUILD_A, self.c, "  Eberron ", source=BY_DM)
+        world = picked.value
+        self.assertEqual(
+            (world.name, world.place_level, world.setting_from), ("Eberron", "world", BY_DM)
+        )
+        self.assertFalse(world.hidden_from_players)
+        setting = await self.memory.setting(GUILD_A, self.c)
+        assert setting is not None
+        self.assertEqual(setting.id, world.id)
+        # (the guess taken away is a no to it: never guessed again)
+        self.assertIsNone(
+            (
+                await self.memory.guess_setting(GUILD_A, self.c, "Khorvaire", source="background")
+            ).value
+        )
+        assert picked.batch is not None
+        await self.memory.undo(GUILD_A, self.c, picked.batch, source=BY_DM)
+        back = await self.memory.setting(GUILD_A, self.c)
+        assert back is not None
+        self.assertEqual(back.id, guessed.value.id)  # (one Undo puts the guess back)
+        self.assertIsNone(await self.memory.entity(GUILD_A, self.c, world.id))
+
+    async def test_an_existing_place_of_that_name_is_used(self) -> None:
+        own = await self.add("The Flanaess", type="place", status=CONFIRMED)
+        await self.memory.set_place_level(GUILD_A, self.c, own, "world", source=BY_DM)
+        picked = await self.memory.choose_setting(GUILD_A, self.c, "Flanaess", source=BY_DM)
+        self.assertEqual(picked.value.id, own)
+        again = await self.memory.choose_setting(GUILD_A, self.c, "flanaess", source=BY_DM)
+        self.assertIsNone(again.batch)  # (the same world again: nothing written)
+
+    async def test_refused_too_small_two_of_a_name_no_name_and_not_the_dm(self) -> None:
+        town = await self.add("Bryn Shander", type="place", status=CONFIRMED)
+        await self.memory.set_place_level(GUILD_A, self.c, town, "settlement", source=BY_DM)
+        with self.assertRaisesRegex(MemoryRuleError, "Region or bigger"):
+            await self.memory.choose_setting(GUILD_A, self.c, "Bryn Shander", source=BY_DM)
+        for name in ("Oerth", "The Oerth"):  # (one world's name, to the match)
+            await self.add(name, type="place", status=CONFIRMED)
+        with self.assertRaisesRegex(MemoryRuleError, "Two places have that name"):
+            await self.memory.choose_setting(GUILD_A, self.c, "Oerth", source=BY_DM)
+        with self.assertRaisesRegex(MemoryRuleError, "Type the world's name"):
+            await self.memory.choose_setting(GUILD_A, self.c, "   ", source=BY_DM)
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.choose_setting(GUILD_A, self.c, "Eberron", source="background")
+        self.assertIsNone(await self.memory.setting(GUILD_A, self.c))
+
+
 class TheMigration(unittest.IsolatedAsyncioTestCase):
     """0459 run over a campaign that already has a setting: it becomes the DM's (CLAUDE.md, #704:
     a migration that changes rows opens row-level security for itself, proven on real rows)."""
