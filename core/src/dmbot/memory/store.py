@@ -1584,14 +1584,21 @@ class MemoryStore:
     ) -> Written[None]:
         """The DM's word for a place's land, climate, ruler, culture or who lives there (the edit
         screens): one change, so one Undo. None is "Not sure" and clears the layer (for culture and
-        who lives there, every lineage). For control, `value` is the group's id; `words` are the
-        DM's own for "other" ("duergar", #4257)."""
+        who lives there, every lineage). For control, `value` is the group's id; for a named
+        culture, the culture's id. `words` are the DM's own for "other" ("duergar", #4257): on a
+        culture they make (or find) a named culture, the DM's (#4257 slice 3b)."""
         if source != DM:
             raise MemoryRuleError("Only the DM can say that.")
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
             await map_fact_store.set_by_dm(w, onto, place_id, layer, value, how=how, words=words)
             return Written(None, w.batch)
+
+    async def map_cultures(self, guild_id: int, campaign_id: str) -> list[tuple[str, str, str]]:
+        """The campaign's named cultures the DM hasn't turned down, (id, name, status), kept ones
+        first: the DM's culture picker (#4257 slice 3b). The caller checks a DM is asking."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await map_fact_store.cultures(scope)
 
     async def show_map_facts(
         self, guild_id: int, campaign_id: str, place_id: str, shown: bool, *, source: str
@@ -1644,13 +1651,14 @@ class MemoryStore:
 
     async def turn_down_world_note(
         self, guild_id: int, campaign_id: str, line_id: str, *, source: str
-    ) -> Written[None]:
-        """The DM's 🚫 Not right on one line: one change, so one Undo."""
+    ) -> Written[bool]:
+        """The DM's 🚫 Not right on one line: one change, so one Undo. True when a named culture
+        DMbot read went with it, at every place (#4257 slice 3b)."""
         if source != DM:
             raise MemoryRuleError("Only the DM can say that.")
         async with self._write(guild_id, campaign_id, source) as w:
-            await world_notes.turn_down(w, line_id)
-            return Written(None, w.batch)
+            everywhere = await world_notes.turn_down(w, line_id)
+            return Written(everywhere, w.batch)
 
     async def add_read_map_facts(
         self, guild_id: int, campaign_id: str, found: Sequence[map_fact_store.Read], *, source: str

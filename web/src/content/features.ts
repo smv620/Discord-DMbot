@@ -25,7 +25,7 @@ const cards: (Feature & { live?: boolean })[] = [
   },
   {
     title: "Transcripts anyone can read",
-    what: "Everyone in your Discord server can read and download the written record of each game.",
+    what: "This campaign's people can read and download the written record of each game: its DMs, its players and anyone recorded at its table, or everyone in the server if the DM chose that.",
     example: "Missed last week? Read what was said before the game starts.",
   },
   {

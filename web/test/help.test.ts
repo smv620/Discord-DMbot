@@ -57,7 +57,7 @@ describe("Help", () => {
     expect(all).toContain("names you marked secret");
     expect(all).toContain("I don't have that. Your call.");
     expect(all).toContain("chat for everyone");
-    expect(all).toContain("Everyone in your Discord server can read that record");
+    expect(all).toContain("This campaign's people can read that record");
     expect(all).not.toMatch(/knowledge graph|recall|prompt|transcript|AI model/i); // plain words
   });
 

@@ -160,8 +160,8 @@ class TheCard(NamesTest):
         await self.read(handed("owns", "sold"))
         view = await self.card()
         self.assertIn("**Belleros** owns **Frost Brand** (Claude sold it)", view.text())
-        self.assertIn("✅ Keep also means **Claude** no longer has it.", view.text())
-        await self.press(view, "✅ Keep")
+        self.assertIn("Keeping it also means **Claude** no longer has it.", view.text())
+        await self.press(view, "✅ Add it")
         got = await self.row(owns)
         self.assertIsNotNone(got.to_session_at)
         self.assertEqual(got.end_reason, "sold")
@@ -178,7 +178,7 @@ class TheCard(NamesTest):
         view = await self.card()
         self.assertIn("**Belleros** carries **Frost Brand** (taken from Claude)", view.text())
         self.assertIn("no longer has it with them. Who owns it doesn't change.", view.text())
-        await self.press(view, "✅ Keep")
+        await self.press(view, "✅ Add it")
         self.assertIsNone((await self.row(owns)).to_session_at)
         got = await self.row(carries)
         self.assertEqual((got.to_session_at is not None, got.end_reason), (True, "stolen"))
@@ -186,7 +186,7 @@ class TheCard(NamesTest):
     async def test_turning_it_down_changes_nothing(self) -> None:
         owns = await self.tie(self.claude, "owns")
         await self.read(handed("owns", "sold"))
-        await self.press(await self.card(), "❌ No")
+        await self.press(await self.card(), "❌ Leave it out")
         self.assertIsNone((await self.row(owns)).to_session_at)
 
     async def test_a_hidden_keep_never_ends_what_the_players_see(self) -> None:
@@ -194,7 +194,7 @@ class TheCard(NamesTest):
         await self.read(handed("owns", "sold"))
         view = await self.card()
         self.assertIn("so to them **Claude** still has it", view.text())
-        await self.press(view, "✅ Keep")
+        await self.press(view, "✅ Add it")
         self.assertIsNone((await self.row(owns)).to_session_at)
 
     async def keep_on_the_website(self, *, secret: bool = False) -> str:

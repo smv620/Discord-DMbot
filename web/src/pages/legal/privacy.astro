@@ -25,7 +25,7 @@ import {
     "DMbot only records people who said yes.",
     "We don't keep the sound of your voice: it is turned into text and the sound is thrown away (unless you give a separate yes in a test server).",
     "DMbot uses what is said and typed to get better. You can turn that off in My Account. It does not stop recording.",
-    "Everyone in your Discord server can read what was written down.",
+    "This campaign's people (its DMs, its players and anyone recorded at its table) can read what was written down, or everyone in the server if the DM chose that.",
     "We keep your Discord account number, your name, your email and a list of your servers while you are signed in, so you can sign in and use your plan.",
     "We don't sell anything about you, and there are no ads.",
     "You can stop being recorded at any time, and you can delete your account from My Account.",
@@ -139,6 +139,9 @@ import {
         </li>
       )
     }
+    <li>
+      <strong>Pictures posted in the table's chat.</strong> If someone who said yes posts a picture there, DMbot sends it to the AI to be described and keeps it with that campaign. Anyone who has its link can open it, until the person who posted it or the game master makes it private or deletes it. It goes when the campaign is deleted.
+    </li>
     {
       pcIconsLine.live && (
         <li>
@@ -216,9 +219,10 @@ import {
   <h2>Who can see it</h2>
   <ul>
     <li>
-      <strong>What was said</strong> can be read and downloaded by everyone in the Discord server
-      where the game is played (downloads come with paid plans). The question you say yes to
-      tells you this.
+      <strong>What was said</strong> can be read and downloaded by this campaign's people: its DMs,
+      its players and anyone recorded at its table. If the game master chose to, everyone in the
+      Discord server can (downloads come with paid plans). The question you say yes to tells you
+      this.
     </li>
     <li>
       <strong>The game masters' (DMs') notes</strong>: each campaign picks who sees them. Only the

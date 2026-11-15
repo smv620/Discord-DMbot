@@ -315,7 +315,7 @@ export const whoSees = {
     {
       what: "The transcript",
       dm: "✅ Yes",
-      players: "✅ Yes. Everyone in the server can read it. Only people who said yes are in it.",
+      players: "✅ Yes, if they are in the campaign (or everyone in the server, if the DM chose that). Only people who said yes are in it.",
     },
     {
       what: "Tips, secret names, plot notes (the DM screen)",

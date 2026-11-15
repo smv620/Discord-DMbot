@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import patch
 
+from dmbot import consent_dm
 from dmbot.consent import TERMS_VERSION, ConsentStore
 from dmbot.transcript import uploader_words as uw
 from dmbot.web import imports
@@ -163,7 +164,7 @@ class Confirming(WithImports):
     async def test_the_consent_words_come_with_their_version(self) -> None:
         got = imports.consent_words(cloud=True, company="Deepgram")
         self.assertEqual(got["version"], TERMS_VERSION)
-        self.assertIn("Anyone in this server can read and download that text", got["text"])
+        self.assertIn(consent_dm.WHO_CAN_READ, got["text"])
         self.assertIn("Deepgram", got["text"])  # (and what the server sends out, as in Discord)
 
     async def test_the_speakers_list_has_names_and_line_counts_for_a_dm_only(self) -> None:
