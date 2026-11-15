@@ -166,7 +166,7 @@ same thing become one.
 |---|---|---|
 | **Objective** | to do · done · failed · no longer needed | Order and one level of sub-steps. Meeting every objective does **not** finish the thread: only the DM changes a thread's state |
 | **Complication** | in the way · overcome · no longer matters | A setback, a twist, a new obstacle. It may point at the event that brought it |
-| **Reward** | offered · paid · not paid · turned down | Words ("100 gold"), who offers it, and the item entry when the reward is a named thing |
+| **Reward** | offered · paid · not paid · turned down | Words, who offers it, and the item entry when the reward is a named thing. Any kind counts: gold, goods, a favour, a privilege, standing ("100 gold", "a room whenever you pass", "the town's goodwill") |
 | **Time limit** | running · met · passed · lifted | Section 8. "Passed" is worked out from the clock, never stored |
 
 - **A reward is not a promise thread.** It is what a quest's giver offers for the job, and it
@@ -298,17 +298,50 @@ switched off:
 - what led to it (the event or clue);
 - the lines or passage it was read from.
 
-### 9.2 The lore reader
-- It suggests a thread only when the text states **a job, a goal or a question, and at least one
-  of** who wants it, who it is aimed at, or what is offered for it. A plan, a rumour with no ask,
+### 9.2 What counts as a quest (owner, 2026-11-15)
+**A quest is recognised by its shape, never by the word.** Nobody has to say "quest", "job" or
+"mission". The shape is **an ask and a taker**, usually with something in exchange:
+
+- **The ask:** someone wants something done, found, brought, protected or found out. "My brother
+  went up to the cairn two nights ago and hasn't come back."
+- **The taker:** someone agrees, or sets out to do it. "We'll look for him."
+- **The exchange,** when there is one, of any kind:
+  - **gold or goods** ("there's 50 gold in it", "take a horse from my stable");
+  - **a favour or a privilege** ("you'll have a room here whenever you pass", "I'll get you in to
+    see the Speaker");
+  - **standing** ("the town won't forget this").
+
+So a short exchange at the table, agreeing to search for a lost person in return for a meal and
+the innkeeper's good word, is a quest suggestion with a giver (the innkeeper), a target (the lost
+person), one objective ("find him") and a reward ("a meal and her good word").
+
+**How sure DMbot must be:**
+
+- **An ask and a taker make a quest suggestion,** started as "Happening now".
+- **An ask with no taker yet makes a hook suggestion** ("a lead that could become a quest"),
+  started as "Not started". If the table takes it up later, the session reader suggests the
+  change, not a second thread.
+- **A reward is never required.** Many quests are taken for nothing.
+- **A reward of standing is only words on the reward part.** It never changes a reputation or an
+  attitude by itself: those stay the DM's to set (STORY_MEMORY section 5).
+- **Not a quest:** a plan the party makes with nobody asking ("let's head north tomorrow"), an
+  errand done within the same scene ("pass me that rope"), a threat, or a wish nobody acts on. A
+  party's own aim that lasts ("we want to clear our names") is a `goal` suggestion.
+- **When DMbot can't tell,** it suggests nothing. A missed quest costs the DM one tap to add; a
+  flood of false ones costs the DM's trust in the list.
+
+### 9.3 The lore reader
+- It suggests a thread only when the text has the shape in section 9.2: **an ask, and at least
+  one of** who wants it, who it is aimed at, or what is offered for it. A plan, a rumour with no ask,
   or a motive DMbot would have to guess makes nothing.
 - A published adventure the DM shared states its quests, clues and time limits outright. Those are
   read the same way, under the DM's existing right-to-use confirmation, and start DM-only.
 
-### 9.3 The session reader
+### 9.4 The session reader
 After a session, never during play, it suggests:
 
-- **a new thread,** when a job is offered or a question is raised at the table;
+- **a new thread,** when the table's talk has the shape in section 9.2, or raises a question the
+  party sets out to answer (a mystery);
 - **progress on a thread the campaign has:** an objective met or failed, a complication, a reward
   paid or refused, a state change, a clue found (who now knows it), a time limit stated or moved.
 
@@ -316,7 +349,7 @@ It is given the campaign's open threads and their open parts, so progress is att
 it belongs to. Code, not the AI, decides whether a suggestion is a new thread or the one already
 there (same giver and target, or the same name).
 
-### 9.4 Rules for both
+### 9.5 Rules for both
 - **A reader writes `read`, never `confirmed`.** `MemoryStore.new_thread` and the thread writers
   learn one new source for suggestions; the DM's keep is still the only way to a confirmed row.
 - **Nothing a reader suggests is added by itself,** including what lore uploads otherwise add as
@@ -328,12 +361,15 @@ there (same giver and target, or the same name).
 - **Lengths are targets, never checks,** and the generous output limits apply.
 - **Reading is metered AI use,** and every wait shows progress.
 
-### 9.5 Scoring
+### 9.6 Scoring
 Each reader slice is scored on the sample, lore first and then the session, before and after:
 
 - **The keys gain rows for:** threads (kind, giver, target), objectives, rewards, time limits (the
   words, and the game date where the key has one), clues with the thread they are a clue to, and
   progress in the session key.
+- **The keys include quests nobody calls a quest:** at least one taken in a few lines of talk, one
+  with a reward that isn't gold, one with no reward, and one ask that nobody takes up (a hook). They
+  also include talk that must make nothing: a plan, an errand and a threat.
 - **Counted:** found, missed, wrong (a thread that isn't one, a part on the wrong thread), and
   doubles (one thread suggested twice).
 - **The existing counts must not get worse:** names, connections and false flags.
@@ -426,7 +462,7 @@ which has none today.
 9. **Discord and the website stay level,** and `docs/discord-web-parity.md` is updated each slice.
 10. **Plain words.** The DM never sees "part", "bundle", `thread_parts` or a status word. The
     ux-critic checks each slice's words before code.
-11. **Each reader slice is scored** as in section 9.5, with its numbers in the PR.
+11. **Each reader slice is scored** as in section 9.6, with its numbers in the PR.
 12. **The ontology change** (`clue_to`, "takes it on") is one reviewed code release, with its
     definitions, "not this" lines and examples.
 
