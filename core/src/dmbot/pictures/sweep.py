@@ -107,16 +107,17 @@ async def sweep_staging(bucket: SweepBucket, now: dt.datetime | None = None) -> 
         log.warning("Staging sweep: couldn't list the bucket (%s)", exc)
         return Swept(0, 0, 0, "listing failed")
     cutoff = now - dt.timedelta(seconds=STAGING_GRACE_S)
-    stale = [key for key, written in found if written < cutoff]
-    if len(stale) > MAX_DELETES:
-        log.warning("Staging sweep: %d stale files is too many to delete at once", len(stale))
-        return Swept(len(found), 0, 0, "too many")
+    # the oldest first, at most `MAX_DELETES` a run: what is left goes at the next one, so a big
+    # backlog is cleared over a few days instead of never
+    stale = sorted((w, k) for k, w in found if w < cutoff)
+    left = max(0, len(stale) - MAX_DELETES)
+    stale_keys = [key for _, key in stale[:MAX_DELETES]]
     deleted = 0
-    for key in stale:
+    for key in stale_keys:
         try:
             await bucket.delete(key)
             deleted += 1
         except BucketError as exc:
             log.warning("Staging sweep: couldn't delete a file (%s)", exc)
-    log.info("Staging sweep: %d files, %d stale deleted", len(found), deleted)
+    log.info("Staging sweep: %d files, %d stale deleted, %d left", len(found), deleted, left)
     return Swept(len(found), 0, deleted)

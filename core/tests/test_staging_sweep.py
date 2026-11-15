@@ -64,8 +64,17 @@ class TheStagingSweep(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(got.deleted, 1)
         self.assertEqual(bucket.deleted, ["p/b.png"])
 
-    async def test_too_many_stale_files_at_once_is_left_alone(self) -> None:
-        old = NOW - dt.timedelta(days=2)
-        bucket = Bucket({f"p/{n}.png": old for n in range(MAX_DELETES + 1)})
-        got = await sweep_staging(bucket, NOW)
-        self.assertEqual((got.deleted, got.skipped), (0, "too many"))
+    async def test_a_big_backlog_is_cleared_over_two_runs_oldest_first(self) -> None:
+        total = MAX_DELETES + 5
+        bucket = Bucket(
+            {f"p/{n:04}.png": NOW - dt.timedelta(days=2, minutes=total - n) for n in range(total)}
+        )
+        first = await sweep_staging(bucket, NOW)
+        self.assertEqual(first.deleted, MAX_DELETES)
+        self.assertEqual(len(bucket.written), 5)
+        self.assertEqual(
+            sorted(bucket.written), [f"p/{n:04}.png" for n in range(MAX_DELETES, total)]
+        )
+        second = await sweep_staging(bucket, NOW)
+        self.assertEqual(second.deleted, 5)
+        self.assertEqual(bucket.written, {})
