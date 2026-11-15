@@ -13,7 +13,7 @@ from unittest import mock
 from PIL import Image
 
 from dmbot.pictures.bucket import BucketError
-from dmbot.web import maps_upload
+from dmbot.web import maps_upload, relationships
 from dmbot.web.recaps import RecapError, _scoped
 from tests.test_web_maps import MapsDoor
 
@@ -125,7 +125,7 @@ class TheUpload(MapsDoor):
         answer = await self.send(bucket)
         self.assertTrue(answer)
         self.assertEqual(len(bucket.kept), 2)  # the picture and its preview
-        keys = sorted(bucket.kept)
+        keys = sorted(bucket.kept, key=lambda k: k.endswith("-preview.webp"))  # (the picture first)
         self.assertTrue(keys[0].startswith("p/") and keys[0].endswith(".png"))
         self.assertTrue(keys[1].endswith("-preview.webp"))
         action = await self.actions.claim_next(self.g)
@@ -183,7 +183,7 @@ class TheUpload(MapsDoor):
         bucket = FakeBucket()
         refuse = mock.AsyncMock(side_effect=RecapError("too_soon"))
         with (
-            mock.patch.object(maps_upload.relationships, "_queue", refuse),
+            mock.patch.object(relationships, "_queue", refuse),
             self.assertRaises(RecapError),
         ):
             await self.send(bucket)
