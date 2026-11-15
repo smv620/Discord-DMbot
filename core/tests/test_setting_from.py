@@ -177,18 +177,33 @@ class TheDMsPick(MemoryTest):
         setting = await self.memory.setting(GUILD_A, self.c)
         assert setting is not None
         self.assertEqual(setting.id, world.id)
-        # (the guess taken away is a no to it: never guessed again)
-        self.assertIsNone(
-            (
-                await self.memory.guess_setting(GUILD_A, self.c, "Khorvaire", source="background")
-            ).value
-        )
+        # (the guess taken away is a no to it: marked, so never guessed again)
+        gone = await self.memory.entity(GUILD_A, self.c, guessed.value.id)
+        assert gone is not None
+        self.assertEqual(gone.setting_from, "declined")
         assert picked.batch is not None
         await self.memory.undo(GUILD_A, self.c, picked.batch, source=BY_DM)
         back = await self.memory.setting(GUILD_A, self.c)
         assert back is not None
         self.assertEqual(back.id, guessed.value.id)  # (one Undo puts the guess back)
         self.assertIsNone(await self.memory.entity(GUILD_A, self.c, world.id))
+        names = await self.memory.entities(GUILD_A, self.c)
+        self.assertNotIn("Eberron", [e.name for e in names])  # (its name went with it)
+
+    async def test_picking_dmbots_own_guess_by_name_shows_it(self) -> None:
+        guessed = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        assert guessed.value is not None
+        picked = await self.memory.choose_setting(GUILD_A, self.c, "Faerûn", source=BY_DM)
+        self.assertEqual(picked.value.id, guessed.value.id)
+        self.assertEqual(picked.value.setting_from, BY_DM)
+        self.assertFalse(picked.value.hidden_from_players)
+
+    async def test_an_earlier_setting_of_the_dms_is_simply_replaced(self) -> None:
+        first = await self.memory.choose_setting(GUILD_A, self.c, "Eberron", source=BY_DM)
+        await self.memory.choose_setting(GUILD_A, self.c, "Golarion", source=BY_DM)
+        old = await self.memory.entity(GUILD_A, self.c, first.value.id)
+        assert old is not None
+        self.assertIsNone(old.setting_from)  # (not a "no": only a guess taken away is one)
 
     async def test_an_existing_place_of_that_name_is_used(self) -> None:
         own = await self.add("The Flanaess", type="place", status=CONFIRMED)
@@ -201,7 +216,7 @@ class TheDMsPick(MemoryTest):
     async def test_refused_too_small_two_of_a_name_no_name_and_not_the_dm(self) -> None:
         town = await self.add("Bryn Shander", type="place", status=CONFIRMED)
         await self.memory.set_place_level(GUILD_A, self.c, town, "settlement", source=BY_DM)
-        with self.assertRaisesRegex(MemoryRuleError, "Region or bigger"):
+        with self.assertRaisesRegex(MemoryRuleError, "smaller than a region"):
             await self.memory.choose_setting(GUILD_A, self.c, "Bryn Shander", source=BY_DM)
         for name in ("Oerth", "The Oerth"):  # (one world's name, to the match)
             await self.add(name, type="place", status=CONFIRMED)
@@ -209,7 +224,7 @@ class TheDMsPick(MemoryTest):
             await self.memory.choose_setting(GUILD_A, self.c, "Oerth", source=BY_DM)
         with self.assertRaisesRegex(MemoryRuleError, "Type the world's name"):
             await self.memory.choose_setting(GUILD_A, self.c, "   ", source=BY_DM)
-        with self.assertRaises(MemoryRuleError):
+        with self.assertRaisesRegex(MemoryRuleError, "Only the DM"):
             await self.memory.choose_setting(GUILD_A, self.c, "Eberron", source="background")
         self.assertIsNone(await self.memory.setting(GUILD_A, self.c))
 

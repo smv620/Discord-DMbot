@@ -246,8 +246,13 @@ ONLY_PLACES = "Only a place has a size, and this isn't a place now."
 SETTING_LEVELS = place_levels.SETTING_LEVELS
 SETTING_PLACE = "Confirm this place first, then make it the setting."
 SETTING_SIZE = "Tap 📏 Size and kind first and pick Region or bigger."
+# (typed words only, so the refusals say what to do without a card open: the reviewer on #4291)
 SETTING_TWO = (
-    "Two places have that name. Open the one you mean under Names and make it the setting."
+    "Two places have that name. Open the one you mean under Names and make it the setting there."
+)
+SETTING_SMALL = (
+    "That place is smaller than a region. Open it under Names, tap 📏 Size and kind and pick "
+    "Region or bigger, or type another name."
 )
 SETTING_NO_NAME = "Type the world's name, then try again."
 # How two people know each other is a `knows` thing only (#3881).
@@ -1384,6 +1389,7 @@ class MemoryStore:
         if not name.split():  # (before `clean_text`, which refuses an empty name in its own words)
             raise MemoryRuleError(SETTING_NO_NAME)
         typed = clean_text(name)
+        check_named("place", typed)  # (as any name the DM types: `add_entity`)
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
             key = _bare_world(typed)
@@ -1397,7 +1403,7 @@ class MemoryStore:
             if len(found) > 1:
                 raise MemoryRuleError(SETTING_TWO)
             if found and found[0].get("place_level") not in SETTING_LEVELS:
-                raise MemoryRuleError(SETTING_SIZE)
+                raise MemoryRuleError(SETTING_SMALL)
             now = await w.select(ENTITIES, " AND setting", [])
             place_id = str(found[0]["id"]) if found else None
             if (
@@ -1411,7 +1417,13 @@ class MemoryStore:
                     gone_from = "declined" if r.get("setting_from") == place_levels.READ else None
                     await w.update(ENTITIES, r["id"], {"setting": False, "setting_from": gone_from})
             if place_id is not None:
-                row = await w.update(ENTITIES, place_id, {"setting": True, "setting_from": DM})
+                change: dict[str, Any] = {"setting": True, "setting_from": DM}
+                place = found[0]
+                # (DMbot's own guessed place, hidden only while it was a guess, is shown now, as
+                # `keep_setting` does; never a place the DM or the scene gate hid)
+                if place.get("hidden_from_players") and place.get("source") == SETTING_GUESS_SOURCE:
+                    change["hidden_from_players"] = False
+                row = await w.update(ENTITIES, place_id, change)
                 return Written(_entity(row), w.batch)
             row = await w.insert(
                 ENTITIES,
@@ -1420,7 +1432,7 @@ class MemoryStore:
                     "status": CONFIRMED, "merged_into": None, "source": DM,
                     "created_at": w.now, "played_by": None, "role": None, "needs_look": False,
                     "unique_item": None, "hidden_from_players": False,
-                    "place_level": "world", "place_level_from": DM,
+                    "place_level": "world", "place_level_from": place_levels.BY_DM,
                     "setting": True, "setting_from": DM,
                 },
             )  # fmt: skip
