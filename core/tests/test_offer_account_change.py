@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 from dmbot.campaigns import CampaignStore
 from dmbot.dm_screen import handover, site_offers
+from dmbot.mentions import NO_PINGS
 from tests.pg import DatabaseTest
 from tests.test_account_discord_ids import add_user, link, unlink
 
@@ -168,6 +169,12 @@ class Telling(DatabaseTest):
     ) -> None:
         # With the offer's own message on record, the person's message is edited in place.
         partial = SimpleNamespace(edit=AsyncMock())
+        asked: list[int] = []
+
+        def record(mid: int) -> Any:
+            asked.append(mid)
+            return partial
+
         people: dict[int, Any] = {}
         guild: Any = SimpleNamespace()
         campaign: Any = SimpleNamespace(name="Frostmaiden")
@@ -175,7 +182,7 @@ class Telling(DatabaseTest):
         async def get(_guild: Any, user_id: int) -> Any:
             people[user_id] = SimpleNamespace(
                 send=AsyncMock(),
-                dm_channel=SimpleNamespace(get_partial_message=lambda _mid: partial)
+                dm_channel=SimpleNamespace(get_partial_message=lambda mid: record(mid))
                 if user_id == PERSON
                 else None,
                 create_dm=AsyncMock(side_effect=OSError),
@@ -192,8 +199,10 @@ class Telling(DatabaseTest):
         )
         with patch.object(site_offers, "_member", get):
             await site_offers._tell_closed(guild, offer, campaign)  # type: ignore[arg-type]
+        self.assertEqual(asked, [555])  # the offer's own message, not another one
         partial.edit.assert_awaited_once()
         kwargs = partial.edit.await_args.kwargs
+        self.assertIs(kwargs["allowed_mentions"], NO_PINGS)
         self.assertEqual(
             kwargs["content"], handover.CLOSED_RECEIVER_TO_RECEIVER.format(campaign="Frostmaiden")
         )
