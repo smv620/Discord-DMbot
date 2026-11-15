@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING
 
 from dmbot.db import Database
 from dmbot.memory import backstory_keep as keep
-from dmbot.memory import beliefs, evidence, link_edits, name_edits, placing, told
+from dmbot.memory import beliefs, evidence, link_edits, map_uploads, name_edits, placing, told
 from dmbot.memory import claims as claims_mod
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import ALREADY_UNDONE, CLAIMS, Changes
@@ -57,6 +57,7 @@ from dmbot.memory.store import NAMES_NOT_SHOWN as NAMES_NOT_SHOWN_WORDS
 
 if TYPE_CHECKING:
     from dmbot.maps.store import MapStore
+    from dmbot.memory.map_uploads import MapUploads
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
 
 log = logging.getLogger(__name__)
@@ -143,13 +144,21 @@ MAP_ACTIONS = ("map-terrain", "map-climate", "map-control", "map-show")
 # World notes (#4285, slice 1c): ✅ on the lines the page showed (their ids, space-separated), 🚫 on
 # one line, or ↩ Undo of one of those (the text is its change number). Filed under no name.
 WORLD_ACTIONS = ("world-keep", "world-not", "world-undo")
+# The story threads DMbot found in an upload (#4457, quests slice 1): the same store calls as
+# Discord's 📜 card, so each keep is one change and one Undo.
+THREAD_ACTIONS = ("thread-keep", "thread-not", "thread-undo")
 # The Maps page's presses (#4347): a DM's yes or no to using a map (`<map id> yes|no`), Show to
 # the table or Hide (`<map id> shown|hidden`), Remove (`<map id>`), a poster's Take it back
 # (`<map id>`), and ↩ Undo of one of those (the text is its change number). Filed under no name.
 # Only a DM may use, show or remove; the poster alone may take their own map back, so these run
 # before the "sender is a DM" check, which a player is never meant to pass. (`MAP_ACTIONS` above
 # is the place's land, climate and ruler.)
-MAPS_PAGE_ACTIONS = ("maps-use", "maps-show", "maps-remove", "maps-takeback", "maps-undo")
+MAPS_PAGE_ACTIONS = (
+    "maps-use", "maps-show", "maps-remove", "maps-takeback", "maps-undo", "maps-add",
+)  # fmt: skip
+# What a campaign's player (not a DM) may do on the Maps page: send a map, take back their own, and
+# Undo one of those two; the map store checks it is their own map (#4347)
+PLAYER_MAPS_ACTIONS = ("maps-add", "maps-takeback", "maps-undo")
 
 
 async def _map_fact(
@@ -414,8 +423,22 @@ class ActionStore:
             )
             return await cur.fetchone() is not None
 
-    async def map_batch_made(
+    async def thread_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, batch: int
+    ) -> bool:
+        """Whether `batch` is the change this DM's own done story-thread ✅ made from the website
+        (#4457), so the page's Undo can only take back what they did themselves."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action = 'thread-keep'"
+                " AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
+                (guild_id, campaign_id, user_id, batch),
+            )
+            return await cur.fetchone() is not None
+
+    async def map_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int, *, own_only: bool = False
     ) -> bool:
         """Whether `batch` is the change this person's own done Maps press made from the website
         (#4347: a DM's use, show or remove, or a poster's take-back), so the page's Undo can only
@@ -423,9 +446,18 @@ class ActionStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
-                " AND user_id = %s AND action IN ('maps-use', 'maps-show', 'maps-remove',"
-                " 'maps-takeback') AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
-                (guild_id, campaign_id, user_id, batch),
+                " AND user_id = %s AND action = ANY(%s) AND state = 'done'"
+                " AND %s = ANY (result_batches) LIMIT 1",
+                (
+                    guild_id,
+                    campaign_id,
+                    user_id,
+                    # `own_only`: a person who is not a DM may Undo only what a player may do
+                    ["maps-add", "maps-takeback"]
+                    if own_only
+                    else ["maps-use", "maps-show", "maps-remove", "maps-takeback", "maps-add"],
+                    batch,
+                ),
             )
             return await cur.fetchone() is not None
 
@@ -528,10 +560,12 @@ async def apply(
     actions: ActionStore | None = None,
     clock: ClockChoiceFn | None = None,
     maps: MapStore | None = None,
+    uploads: MapUploads | None = None,
+    reads: Callable[[int], Awaitable[bool]] | None = None,
 ) -> Outcome:
     """Do one action the way Discord's name card does. Nothing here logs the DM's words."""
     if action.action in MAPS_PAGE_ACTIONS:
-        return await _maps(memory, maps, actions, guild_id, dm_user_ids, action)
+        return await _maps(memory, maps, actions, guild_id, dm_user_ids, action, uploads, reads)
     if action.user_id not in dm_user_ids:
         return _failed(NOT_ALLOWED)
     cid = action.campaign_id
@@ -557,6 +591,10 @@ async def apply(
         if actions is None and action.action == "world-undo":
             return _failed(FAILED)
         return await _world(memory, actions, guild_id, cid, action)
+    if action.action in THREAD_ACTIONS:
+        if actions is None and action.action == "thread-undo":
+            return _failed(FAILED)
+        return await _thread(memory, actions, guild_id, cid, action)
     if action.action == LINK_UNDO:
         if actions is None:
             return _failed(FAILED)
@@ -936,6 +974,61 @@ async def _world(
     return Outcome(batches=(done.batch,) if done.batch is not None else ())
 
 
+async def _thread(
+    memory: MemoryStore, actions: ActionStore | None, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """A story thread DMbot found, from the page (#4457), the same store calls as Discord's 📜
+    card (`ui/thread_questions`): ✅ keeps it with the people the DM left on (by their place in the
+    suggestion's own list, so no name or id is ever typed) and, if the DM renamed it, that name;
+    🚫 turns it down for good. The suggestion is read again here, so one answered meanwhile (in
+    Discord, or a second press) is `gone`. ↩ Undo takes back only a keep this DM's own done action
+    made; putting a turned-down suggestion back to waiting is open to any DM of the campaign, as
+    Discord's ↩ is (it only makes the suggestion wait again). Words and counts only."""
+    from dmbot.memory.thread_suggestions import GONE as SUGGESTION_GONE
+    from dmbot.memory.thread_suggestions import ThreadSuggestionStore, unkeep_in
+
+    store = ThreadSuggestionStore(memory._db)
+    try:
+        if a.action == "thread-undo":
+            assert actions is not None  # (checked by the caller)
+            how, _, ref = a.text.partition(" ")
+            if how == "keep":
+                if not (ref.isascii() and ref.isdigit()) or len(ref) > 15:
+                    return _failed(GONE)
+                batch = int(ref)
+                if not await actions.thread_batch_made(guild_id, cid, a.user_id, batch):
+                    return _failed(GONE)
+                await memory.undo(guild_id, cid, batch, after=unkeep_in(batch))
+                return Outcome()
+            return Outcome() if await store.unturn(guild_id, cid, ref) else _failed(GONE)
+        suggestion_id, _, rest = a.text.partition(" ")
+        if a.action == "thread-not":
+            return (
+                Outcome() if await store.turn_down(guild_id, cid, suggestion_id) else _failed(GONE)
+            )
+        shown = next((s for s in await store.waiting(guild_id, cid) if s.id == suggestion_id), None)
+        if shown is None:
+            return _failed(GONE)
+        on_text, _, renamed = rest.partition(" ")
+        on = set() if on_text == "-" else {int(i) for i in on_text.split(",")}
+        done = await memory.keep_thread(
+            guild_id, cid, " ".join(renamed.split()) or shown.name, shown.kind, shown.state,
+            aim=shown.aim, parts=[p for i, p in enumerate(shown.parts) if i in on],
+            source=DM, suggestion_id=shown.id,
+        )  # fmt: skip
+    except MemoryRuleError as exc:  # (TooLateToUndo is one: a name was changed since)
+        if str(exc) == ALREADY_UNDONE:
+            return Outcome()  # (a second Undo of the same keep: done, as a retry is)
+        if a.action == "thread-undo":
+            return _failed(CHANGED)  # (something done since is in the way)
+        # A keep the store refuses for the DM's own name is not "answered meanwhile".
+        return _failed(GONE if str(exc) == SUGGESTION_GONE else BAD_TARGET)
+    return Outcome(
+        result_id=str(done.value.id),
+        batches=(done.batch,) if done.batch is not None else (),
+    )
+
+
 async def _maps(
     memory: MemoryStore,
     maps: MapStore | None,
@@ -943,6 +1036,8 @@ async def _maps(
     guild_id: int,
     dm_user_ids: Collection[int],
     a: Action,
+    uploads: MapUploads | None = None,
+    reads: Callable[[int], Awaitable[bool]] | None = None,
 ) -> Outcome:
     """One press on the Maps page (#4347), through the map store's own calls (as Discord's buttons,
     #4373 and #4390), so each is one change and one Undo. A DM may answer a map's use, show or hide
@@ -960,11 +1055,23 @@ async def _maps(
         return _failed(FAILED)
     cid = a.campaign_id
     is_dm = a.user_id in dm_user_ids
+    # The door lets anyone who passes the campaign's people rule queue the player actions; the bot
+    # asks the very same rule (`reads`: `channel_sync.reads_campaign`, with "still in the server")
+    # and the store checks the map is theirs. Without the rule at hand, nobody but a DM is let in.
+    if (
+        a.action in PLAYER_MAPS_ACTIONS
+        and not is_dm
+        and (reads is None or not await reads(a.user_id))
+    ):
+        return _failed(NOT_ALLOWED)
+    if a.action == "maps-add":
+        return await map_uploads.add(uploads, guild_id, cid, is_dm=is_dm, a=a)
     if a.action == "maps-undo":
         if not (a.text.isascii() and a.text.isdigit()) or len(a.text) > 15:
             return _failed(GONE)  # ("²" is a digit to Python and int() refuses it)
         batch = int(a.text)
-        if not await actions.map_batch_made(guild_id, cid, a.user_id, batch):
+        # A DM may Undo their own presses; anyone else only their own add or take-back
+        if not await actions.map_batch_made(guild_id, cid, a.user_id, batch, own_only=not is_dm):
             return _failed(GONE)
         try:
             await memory.undo(guild_id, cid, batch)
@@ -975,7 +1082,7 @@ async def _maps(
                 return Outcome()  # (taken back already: a retried Undo)
             return _failed(GONE if str(exc) == STORE_NOT_FOUND else CHANGED)
         return Outcome()
-    if a.action != "maps-takeback" and not is_dm:
+    if a.action not in PLAYER_MAPS_ACTIONS and not is_dm:
         return _failed(NOT_ALLOWED)
     map_id, _, word = a.text.partition(" ")
     made: int | None  # the change the press made, for the page's Undo (none when nothing changed)

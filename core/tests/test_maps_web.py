@@ -58,4 +58,5 @@ class WhatThePageMaySend(unittest.IsolatedAsyncioTestCase):
         import importlib
 
         door = importlib.import_module("dmbot.migrations.0487_maps_doors")
-        self.assertEqual(set(door.ACTIONS), set(MAPS_PAGE_ACTIONS))
+        # 0487 named five; migration 0498 added `maps-add` (a person sends a map from the page)
+        self.assertEqual(set(door.ACTIONS) | {"maps-add"}, set(MAPS_PAGE_ACTIONS))

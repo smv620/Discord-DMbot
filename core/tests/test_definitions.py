@@ -47,6 +47,7 @@ RELEASED = {
     ("promised_by", 1): "614c63ec0cd9acef",  # who made a promise (#1674)
     ("promised_to", 1): "e1cb64b67f87e7be",  # who it was made to (#1674)
     ("in_thread", 1): "cbc940251441c3b4",  # who is in a story thread (#1662)
+    ("branch_of", 1): "8ea28c4a2882b241",  # a branch of a bigger thread (#4471)
     ("advances", 1): "fa3b7b2b0aae2deb",  # an event moved a thread (#1662)
     ("resolves", 1): "aa8c8c7d656fce4e",  # an event ended a thread (#1662)
     ("associated_with", 1): "9b1afee4b882cde9",  # the catch-all for a refused term (#1303)

@@ -22,6 +22,7 @@ from typing import Any
 from dmbot.campaigns.models import Campaign, CampaignError
 from dmbot.campaigns.store import CampaignStore
 from dmbot.db import Database
+from dmbot.devtools.sample_run.costs import CostLine, recap_line
 from dmbot.devtools.sample_run.plan import (
     NAME,
     STEPS,
@@ -114,6 +115,12 @@ async def check_existing(
     return found
 
 
+DM_BOT_CHANNEL_NEEDED = (
+    "DM Bot channel: needed (press ⚙️ Manage DMbot on the new sample campaign; delete the "
+    "earlier campaign's channel by hand)"
+)
+
+
 async def fresh_campaign(
     db: Database,
     campaigns: CampaignStore,
@@ -136,11 +143,18 @@ async def fresh_campaign(
             await campaigns.delete(guild, old.campaign_id, only_if_owner=dm)
     say(f"{len(found)} earlier sample campaign(s) {'kept' if keep_old else 'deleted'}")
     try:
-        return await campaigns.create(guild, NAME, dm)
+        made = await campaigns.create(guild, NAME, dm)
     except CampaignError as exc:  # e.g. a campaign whose name differs only in capitals
         raise SampleError(
             "the sample campaign could not be made (a campaign with a look-alike name exists)"
         ) from exc
+    # This tool has no Discord client, so it cannot make or delete a channel (#4112). The new
+    # campaign has no DM Bot channel yet: the bot makes it the way it does for any campaign made
+    # before the channel existed, when the DM presses ⚙️ Manage DMbot. An earlier sample campaign's
+    # channel stays in the server and is deleted by hand; its buttons say it cannot find the
+    # campaign. Said as one counts-only line, so dev1 does it before checking the main menu.
+    say(DM_BOT_CHANNEL_NEEDED)
+    return made
 
 
 async def _keep(campaigns: CampaignStore, guild: int, campaign_id: str, today: str) -> None:
@@ -516,9 +530,12 @@ async def write_recap(
     session_at: int,
     *,
     run: Callable[[list[str]], Awaitable[int]] | None = None,
+    spent: list[CostLine] | None = None,
 ) -> int:
     """The recap, with no audio, by the same code as `recap_run --session ... --yes`. Its report
-    holds the recap's words, so it is swallowed: only the exit code comes back (0: made)."""
+    holds the recap's words, so it is swallowed: only the exit code comes back (0: made). `spent`
+    (#4087) gets the recap's tokens and dollars, read from its one "tokens in N, out N; spend $X"
+    line and nothing else of the report."""
     if run is None:
         from dmbot.devtools.recap_run import __main__ as rr
 
@@ -526,8 +543,12 @@ async def write_recap(
             return await rr.main_async(rr.parse_args(argv))
 
     argv = ["--session", str(guild), campaign_id, str(session_at), "--yes"]
-    with contextlib.redirect_stdout(io.StringIO()):
-        return await run(argv)
+    swallowed = io.StringIO()
+    with contextlib.redirect_stdout(swallowed):
+        code = await run(argv)
+    if spent is not None and (line := recap_line(swallowed.getvalue())) is not None:
+        spent.append(line)
+    return code
 
 
 def estimate_cost(

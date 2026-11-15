@@ -150,6 +150,17 @@ class Steps(DatabaseTest):
         self.assertEqual(new.name, NAME)
         self.assertIsNone(await self.campaigns.get(GUILD, old.id))
         self.assertEqual(new.owner_user_id, DM)
+        self.assertIsNone(new.dm_bot_channel_id)  # (the tool has no Discord: it says so, below)
+        self.assertIn(steps.DM_BOT_CHANNEL_NEEDED, self.said)
+
+    async def test_it_says_the_dm_bot_channel_is_needed_without_an_id_or_a_name(self) -> None:
+        await steps.fresh_campaign(
+            self.db, self.campaigns, GUILD, DM, keep_old=False, today="d", say=self.say
+        )
+        line = next(x for x in self.said if x.startswith("DM Bot channel"))
+        self.assertTrue(line.startswith("DM Bot channel: needed"))
+        self.assertNotIn(NAME, line)
+        self.assertFalse(any(ch.isdigit() for ch in line))
 
     async def test_keep_old_renames_it_out_of_the_samples_name_and_never_deletes_it(self) -> None:
         old = await self.made()
