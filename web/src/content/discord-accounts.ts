@@ -32,8 +32,9 @@ export const discordAccountsWords = {
     has_account:
       "That Discord account is already on another DMbot account. Remove it there first, then add it here.",
     has_campaigns:
-      "That Discord account already runs its own campaigns. Hand those campaigns over or remove them first, then add the account.",
-    has_plan: "That Discord account has its own DMbot plan. End that plan first, then add the account.",
+      "That Discord account is already the DM of its own campaigns. Hand those campaigns over or delete them first, then add the account.",
+    has_plan:
+      "That Discord account pays for its own DMbot plan. Sign in as that account and cancel its plan first, then add it here.",
     already: "That Discord account is already on your account.",
     cancelled: "Not added. You stopped before finishing on Discord.",
     failed: "Not added. Something went wrong. Press Add a Discord account to try again.",
