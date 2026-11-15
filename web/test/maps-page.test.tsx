@@ -151,4 +151,108 @@ describe("the Maps page", () => {
     await screen.findByText(w.failed);
     expect(screen.getByRole("button", { name: w.tryAgain })).toBeTruthy();
   });
+
+  it("shows the working stage while a press waits, and nothing once it is done", async () => {
+    const api = mockApi("table");
+    const real = api.changeMaps!.bind(api);
+    let release!: () => void;
+    api.changeMaps = async (ref, change) => {
+      await new Promise<void>((r) => (release = r));
+      return real(ref, change);
+    };
+    render(<Maps api={api} refId={DM} />);
+    await screen.findByText("Cave");
+    fireEvent.click(within(rowFor("Cave")).getByRole("button", { name: w.useYes }));
+    await screen.findByText(w.workingStage);
+    expect((within(rowFor("Cave")).getByRole("button", { name: w.useYes }) as HTMLButtonElement).disabled).toBe(true);
+    release();
+    await screen.findByText(w.doneYes);
+    expect(screen.queryByText(w.workingStage)).toBeNull();
+  });
+
+  it("says it is taking longer after 120 seconds", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      const api = mockApi("table");
+      const real = api.changeMaps!.bind(api);
+      let release!: () => void;
+      api.changeMaps = async (ref, change) => {
+        await new Promise<void>((r) => (release = r));
+        return real(ref, change);
+      };
+      render(<Maps api={api} refId={DM} />);
+      await screen.findByText("Cave");
+      fireEvent.click(within(rowFor("Cave")).getByRole("button", { name: w.useYes }));
+      await screen.findByText(w.workingStage);
+      await vi.advanceTimersByTimeAsync(121_000);
+      expect(await screen.findByText(w.stuck)).toBeTruthy();
+      release();
+      await screen.findByText(w.doneYes);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("a refusal \"gone\" says the picture is not kept any more", async () => {
+    const api = mockApi("table");
+    api.changeMaps = async () => {
+      throw new ApiError("gone");
+    };
+    render(<Maps api={api} refId={DM} />);
+    await screen.findByText("Cave");
+    fireEvent.click(within(rowFor("Cave")).getByRole("button", { name: w.useYes }));
+    await screen.findByText(w.gone);
+  });
+
+  it("a refusal \"not-allowed\" says only DMs can answer", async () => {
+    const api = mockApi("table");
+    api.changeMaps = async () => {
+      throw new ApiError("not-allowed");
+    };
+    render(<Maps api={api} refId={DM} />);
+    await screen.findByText("Cave");
+    fireEvent.click(within(rowFor("Cave")).getByRole("button", { name: w.useYes }));
+    await screen.findByText(w.dmOnly);
+  });
+
+  it("any other failure says nothing was changed and to press again", async () => {
+    const api = mockApi("table");
+    api.changeMaps = async () => {
+      throw new ApiError("server");
+    };
+    render(<Maps api={api} refId={DM} />);
+    await screen.findByText("Cave");
+    fireEvent.click(within(rowFor("Cave")).getByRole("button", { name: w.useYes }));
+    await screen.findByText(w.wrong);
+  });
+
+  it("the list is read again after a refusal", async () => {
+    const api = mockApi("table");
+    api.changeMaps = async () => {
+      throw new ApiError("gone");
+    };
+    render(<Maps api={api} refId={DM} />);
+    await screen.findByText("Cave");
+    fireEvent.click(within(rowFor("Cave")).getByRole("button", { name: w.useYes }));
+    await screen.findByText(w.gone);
+    await waitFor(() => expect(api.calls.filter((c) => c === `maps:${DM}`).length).toBe(2));
+  });
+
+  it("a player's DM-only buttons are absent even after a failed load and a retry", async () => {
+    const api = mockApi("table");
+    const real = api.maps!.bind(api);
+    let fail = true;
+    api.maps = async (ref) => {
+      if (fail) {
+        fail = false;
+        throw new Error("down");
+      }
+      return real(ref);
+    };
+    render(<Maps api={api} refId={PLAYER} />);
+    await screen.findByText(w.failed);
+    fireEvent.click(screen.getByRole("button", { name: w.tryAgain }));
+    await screen.findByText("Harbour sketch");
+    for (const name of [w.useYes, w.show, w.removeIt]) expect(screen.queryByRole("button", { name })).toBeNull();
+  });
 });
