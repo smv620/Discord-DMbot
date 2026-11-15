@@ -95,6 +95,7 @@ async def reads_campaign(
         return False
     if campaign.channels_visibility == cp.EVERYONE:
         return True
+    # (bot id 0: DMbot's own id is not left out here, but no website session can carry it)
     return user_id in await campaign_people(campaigns, memory, campaign, 0)
 
 

@@ -316,3 +316,38 @@ class TheSameRuleAsTheDoor(Sending):
         self.assertEqual((await self.send(BOB.id)).error, wa.NOT_ALLOWED)
         await self.campaigns.add_channel_person(self.g, self.one.id, BOB.id, ALICE.id, 1000)
         self.assertEqual((await self.send(BOB.id)).error, "")  # (no character needed)
+
+    async def test_a_proposed_character_is_refused_by_both(self) -> None:
+        await self.make_bob_a_player()
+        await self.sql(
+            "UPDATE memory_entities SET status = 'proposed' WHERE guild_id = %s AND played_by = %s",
+            self.g, BOB.id,
+        )  # fmt: skip
+        await self.both(False)
+
+    async def test_a_typed_line_is_not_a_recorded_speaker_for_either(self) -> None:
+        session = new_id()
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO transcript_sessions (id, guild_id, campaign_id, started_at,"
+                " ended_at, line_count) VALUES (%s, %s, %s, 100, 200, 1)",
+                (session, self.g, self.one.id),
+            )
+            await conn.execute(
+                "INSERT INTO transcript_lines (guild_id, session_id, started_ms, user_id,"
+                " heard, duration_ms, typed) VALUES (%s, %s, 5, %s, 'typed words', 1000, TRUE)",
+                (self.g, session, BOB.id),
+            )
+        await self.both(False)
+
+    async def test_a_negative_id_is_refused_even_with_everyone(self) -> None:
+        await self.campaigns.set_channels_visibility(self.g, self.one.id, "everyone")
+        self.assertFalse(await self.rule()(-5))
+
+    async def test_without_the_rule_only_a_dm_is_let_in(self) -> None:
+        await self.campaigns.add_channel_person(self.g, self.one.id, BOB.id, ALICE.id, 1000)
+        got = await wa.apply(
+            self.memory, self.g, {ALICE.id}, self.action(BOB.id),
+            actions=self.actions, maps=self.maps, uploads=self.uploads,
+        )  # fmt: skip
+        self.assertEqual(got.error, wa.NOT_ALLOWED)
