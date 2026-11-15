@@ -83,6 +83,14 @@ DM, players can peek after a spoiler warning (the default), or everyone.
 
 ## Running it
 
+- **The Discord app:** in the [Discord Developer Portal](https://discord.com/developers/applications),
+  make an application with a bot (leave **Public Bot** on: the install link needs it). Under
+  **Installation**, tick **Guild Install** only and use the **Discord Provided Link**, with scopes
+  **bot** and **applications.commands** and these permissions: **View Channels**, **Send Messages**,
+  **Read Message History**, **Connect**, **Speak**, **Manage Channels**, **Manage Roles** and
+  **Pin Messages** (permission number `2251800085335056`). DMbot writes its install link to the
+  log when it starts. Step by step, with what each permission is for:
+  [`docs/LIVE_TEST.md`](docs/LIVE_TEST.md).
 - **On a server:** [`docs/DEPLOY.md`](docs/DEPLOY.md). One `docker compose up -d --build`
   starts every part. On the test server, only the dev1 session deploys (see
   [`CLAUDE.md`](CLAUDE.md)).
