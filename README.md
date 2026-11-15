@@ -44,8 +44,9 @@ DMbot is in testing on the owner's own server, with a public website at
 
 - **MapBot's measurements:** places marked on each map, so DMbot can say about how far and
   which way, suggest a travel time with its working, and bring the right map back with a link.
-  Keeping maps, the "may I use this map?" question and what DMbot knows about a place's land,
-  climate and ruler are built; marking places on a map and measuring are not yet.
+  Keeping maps, the "may I use this map?" question and what DMbot knows about a place (its
+  land, its climate, who rules it and who lives there) are built; marking places on a map and
+  measuring are not yet.
 - **Quests:** DMbot suggests the campaign's quests from lore and sessions for the DM to keep,
   with their steps, setbacks, rewards promised and given, help lent, clues and time limits.
   Today the DM makes each quest by hand.
