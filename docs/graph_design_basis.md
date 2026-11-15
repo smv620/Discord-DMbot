@@ -823,12 +823,29 @@ We would value guidance on any of these, and on anything we haven't thought to a
 - **Loop checks on `led_to`** run when a link is made, but not on confirming a rejected link, on a merge, or on restoring a backup.
 - **`memory_mentions`** (a mention index) has no writer yet. "Was this name heard?" uses `memory_heard` instead.
 - **Two documentation-versus-schema conflicts** are noted in `docs/MEMORY_TABLES.md` (`memory_entities.role`, `memory_entities.party`).
-- **Places:** the only place hierarchy today is stated `located_in` links. Level-based exclusivity is new (#4186), and assumed parents, routes and MapBot are designed but not built (section 15).
+- **Places:** this bullet is older than the work it describes. Place levels, routes and the first MapBot slices have been built since; the current design and status are in section 15's note and `docs/design/mapbot_layers.md`.
 - **The ontology steward's meaning check** is a stub.
 
 ---
 
 ## 15. Work in progress: places, levels, routes and MapBot
+
+> **Decided since this section was written** (2026-11-12 to 2026-11-15). The binding detail is in
+> `docs/design/` (index: `docs/design/README.md`); where this section and those documents differ,
+> they win.
+> - **MapBot** (`docs/design/mapbot_layers.md`, binding): a map is a kept picture with its own
+>   record, used only after its uploader's right-to-use yes. **Positions are kept per map** (pins,
+>   paths, areas, with that map's scale and north), never on a place entry, and nothing measured is
+>   stored. A place's terrain, climate, control, culture and population are rows in one table beside
+>   the graph (`map_facts`); containment, adjacency and reachability stay in `located_in`,
+>   `next_to` and `route_to`. This answers Q-G8's question on routes: they stay graph links, with a
+>   stated length, and a measured length is worked out from a traced path on one map.
+> - **Quests** (`docs/design/quests.md`, in review as #4450): threads stay entries; objectives,
+>   complications, rewards, help and time limits are rows beside them (`thread_parts`); two new
+>   connections, `clue_to` and `branch_of`; readers only suggest.
+> - **One tagger for a session** (`docs/design/session_tagger.md`, in review as #4455): it bears on
+>   Q-M6 and section 11's pipeline. One small call tags each batch with the kinds present, each
+>   reader reads only its tagged batches, and every tag ends with a recorded outcome.
 
 These are approved designs (issue #4173), being built in slices. Reviewer input here is especially timely.
 

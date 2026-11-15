@@ -52,6 +52,8 @@ export const questionsPage = {
     traits: { label: "Lineage and class", how: "discord" },
     // DMbot's guesses about places and languages (#4285): checked in Discord until the website's page (slice 1c).
     world_notes: { label: "World notes", how: "discord" },
+    // Story threads the lore holds, to keep or turn down (#4453): in Discord until the website's card.
+    threads: { label: "Story threads to check", how: "discord" },
     // A map a player kept, waiting for a DM's yes (#4344): asked in Discord until the Maps page (#4347).
     maps: { label: "Maps waiting for your yes", how: "discord" },
     claims: { label: "Facts to check", how: "here", to: "graph", link: "Open the Story Graph" },
