@@ -1135,11 +1135,15 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
     if str(got["action"]).startswith("maps-"):
         # a Maps page press (#4347): how it ended, and the change it made for the page's Undo
         made = got.get("resultBatches") or []
-        return {
+        done = got["state"] == "done"
+        out: dict[str, Any] = {
             "state": got["state"],
             "error": got["error"],
-            "batch": int(made[0]) if got["state"] == "done" and made else None,
+            "batch": int(made[0]) if done and made else None,
         }
+        if got["action"] == "maps-add":  # (a sent map: the new map's id, for the page's list)
+            out["mapId"] = str(got.get("resultId") or "") if done else None
+        return out
     if str(got["action"]).startswith("world-"):
         # a World notes ✅, 🚫 or ↩ Undo (#4285): how it ended, how many a Keep kept, and the change
         # it made for the page's Undo (none when it changed nothing)
