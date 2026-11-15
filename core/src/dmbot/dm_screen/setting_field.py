@@ -29,6 +29,7 @@ NOT_SET = (
     "🌍 Make it the setting."
 )
 ONLY_DMS = "Only the DM can change the campaign's setting."
+CHANGED = "That guess had already changed. The card now shows the latest."
 FAILED = "Couldn't change the campaign's setting. Try again in a moment."
 
 
@@ -102,26 +103,27 @@ class KeepSettingButton(
         return cls(match["campaign"], match["entity"])
 
     async def callback(self, interaction: discord.Interaction) -> Any:
+        # (imported here: settings.py imports this module for its card)
         from dmbot.dm_screen import settings
         from dmbot.ui.names import changed
 
         set_log_context(guild_id=interaction.guild_id)
-        allowed = await settings._may(interaction, self.campaign_id)  # (DMs only, every press)
+        allowed = await settings._may(interaction, self.campaign_id)
         if allowed is None:
             return
         campaign = allowed[0]
+        if interaction.user.id not in campaign.dm_user_ids:  # (a server manager who isn't a DM)
+            await interaction.response.send_message(ONLY_DMS, ephemeral=True)
+            return
         memory = getattr(interaction.client, "memory", None)
         if memory is None:
             await interaction.response.send_message(FAILED, ephemeral=True)
             return
-        if interaction.user.id not in campaign.dm_user_ids:
-            await interaction.response.send_message(ONLY_DMS, ephemeral=True)
-            return
         await interaction.response.defer()
         try:
             await memory.keep_setting(campaign.guild_id, campaign.id, self.entity_id, source=DM)
-        except MemoryRuleError:  # (the guess is gone or changed: the card is drawn as it is now)
-            pass
+        except MemoryRuleError:  # (the guess is gone or changed: the card shows it as it is now)
+            await interaction.followup.send(CHANGED, ephemeral=True)
         except Exception:
             log.exception("Couldn't keep the campaign's setting")
             await interaction.followup.send(FAILED, ephemeral=True)

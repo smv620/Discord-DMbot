@@ -52,6 +52,10 @@ class Buttons(unittest.TestCase):
     def test_the_card_still_fits(self) -> None:
         view = settings_view(campaign(), None, DM, "", None, SettingField(PLACE, "X", True))
         self.assertLessEqual(len(view.children), 25)
+        rows: dict[int, int] = {}
+        for item in view.children:
+            rows[item.row] = rows.get(item.row, 0) + 1
+        self.assertLessEqual(max(rows.values()), 5)
 
     def test_the_button_names_its_place_and_is_plain(self) -> None:
         button = KeepSettingButton(CAMPAIGN, PLACE)
@@ -88,6 +92,8 @@ class Pressing(unittest.IsolatedAsyncioTestCase):
         await KeepSettingButton(CAMPAIGN, PLACE).callback(it)
         it.client.memory.keep_setting.assert_awaited_once()
         self.assertEqual(it.client.memory.keep_setting.await_args.args[2], PLACE)
+        self.assertEqual(it.client.memory.keep_setting.await_args.kwargs["source"], "dm")
+        it.edit_original_response.assert_awaited_once()  # (the card is drawn again)
 
     async def test_anyone_else_changes_nothing(self) -> None:
         for manager in (False, True):
@@ -96,6 +102,7 @@ class Pressing(unittest.IsolatedAsyncioTestCase):
             it.client.memory.keep_setting = AsyncMock()
             await KeepSettingButton(CAMPAIGN, PLACE).callback(it)
             it.client.memory.keep_setting.assert_not_awaited()
+            it.response.send_message.assert_awaited_once()
 
     async def test_a_guess_that_changed_since_is_not_an_error_for_the_dm(self) -> None:
         it = press(DM, found=campaign())
@@ -103,7 +110,8 @@ class Pressing(unittest.IsolatedAsyncioTestCase):
         it.client.memory.keep_setting = AsyncMock(side_effect=MemoryRuleError("gone"))
         it.client.memory.setting = AsyncMock(return_value=None)
         await KeepSettingButton(CAMPAIGN, PLACE).callback(it)
-        it.followup.send.assert_not_awaited()
+        it.followup.send.assert_awaited_once()  # (told, and the card is drawn as it is now)
+        it.edit_original_response.assert_awaited_once()
 
     async def test_a_store_failure_says_so(self) -> None:
         it = press(DM, found=campaign())
@@ -111,3 +119,13 @@ class Pressing(unittest.IsolatedAsyncioTestCase):
         it.client.memory.keep_setting = AsyncMock(side_effect=RuntimeError("down"))
         await KeepSettingButton(CAMPAIGN, PLACE).callback(it)
         it.followup.send.assert_awaited_once()
+
+
+class Template(unittest.IsolatedAsyncioTestCase):
+    async def test_the_custom_id_round_trips(self) -> None:
+        match = KeepSettingButton.__discord_ui_compiled_template__.fullmatch(
+            f"dmbot:setkeep:{CAMPAIGN}:{PLACE}"
+        )
+        assert match is not None
+        item = await KeepSettingButton.from_custom_id(MagicMock(), MagicMock(), match)
+        self.assertEqual((item.campaign_id, item.entity_id), (CAMPAIGN, PLACE))
