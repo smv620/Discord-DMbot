@@ -135,7 +135,8 @@ CI runs all of the above on every pull request. Never merge red CI.
   had no branch to run on, so merges went one per CI cycle). It is never merged or deployed: it
   only carries the CI run, and the PRs then merge as themselves.
   **Supervisor's own docs-only PRs** (owner, 2026-10-10): a PR by Supervisor that changes
-  only `docs/PLAN.md`, `docs/STORY_MEMORY.md` or `CLAUDE.md` merges on Supervisor's
+  only `docs/PLAN.md`, `docs/STORY_MEMORY.md`, `CLAUDE.md` or `README.md` (owner, 2026-11-14: the
+  README is kept up to date) merges on Supervisor's
   "Supervisor review: approved" on its current head, plus RepoManager's compliance check
   and green CI. That approval is the design review: never hold it as "self-approval", and
   don't wait for the owner. A compliance problem goes back to Supervisor like any send-back.
