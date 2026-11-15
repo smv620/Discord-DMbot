@@ -9,15 +9,15 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { parsePage } from "./dom";
 
-import { entries, formatDate, held, whatsNewHeading } from "../src/content/whats-new";
+import { entries, formatDate, held, monthPages, splitEntries, whatsNewHeading } from "../src/content/whats-new";
 import Help from "../src/pages/help.astro";
 import Home from "../src/pages/index.astro";
-import Older from "../src/pages/whats-new/older.astro";
+import Month from "../src/pages/whats-new/[month].astro";
 import WhatsNew from "../src/pages/whats-new.astro";
 
 const botDir = fileURLToPath(new URL("../../core/src/dmbot/", import.meta.url));
 let page: Document; // (the main page, the newest entries)
-let older: Document; // ("Older changes", the rest, #4200)
+let older: Document; // (the older changes, every month page together, #4200, #4203)
 /** Every entry shown on either page, newest first. */
 const allShown = (): Element[] => [...page.querySelectorAll(".entry"), ...older.querySelectorAll(".entry")];
 let help: Document;
@@ -28,7 +28,15 @@ beforeAll(async () => {
   const render = async (component: Parameters<typeof container.renderToString>[0], path: string): Promise<Document> =>
     parsePage(await container.renderToString(component, { request: new Request(`https://dmbot.example${path}`) }));
   page = await render(WhatsNew, "/whats-new");
-  older = await render(Older, "/whats-new/older");
+  // The older entries are one page for each month (#4203): their entry lists, put together, stand for the old single page.
+  const container2 = container;
+  const merged = parsePage("<html><body><main></main></body></html>");
+  for (const mp of monthPages(splitEntries(entries, new Date()).older)) {
+    const html = await container2.renderToString(Month, { props: { page: mp }, params: { month: mp.slug }, request: new Request(`https://dmbot.example/whats-new/${mp.slug}`) });
+    const doc = parsePage(html);
+    for (const el of doc.querySelectorAll("main .entry")) merged.querySelector("main")?.append(merged.importNode(el, true));
+  }
+  older = merged;
   help = await render(Help, "/help");
   home = await render(Home, "/");
 });
