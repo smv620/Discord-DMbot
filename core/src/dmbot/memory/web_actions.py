@@ -113,6 +113,9 @@ WAITING = (
     "claim-unpick",
     "claim-undo",  # takes back one fact of an "All true" / "All secret" press (#3645)
     "backstory-keep",
+    # "Let players see it" (#4432): a keep that also lets the players see a connection it replaces
+    # that was hidden (`keep_all(players="show")`, #4438). The plain `backstory-keep` never does.
+    "backstory-keep-show",
     "backstory-skip",
     "backstory-keep-all",
     "backstory-which-pick",
@@ -1643,6 +1646,7 @@ async def _answer_waiting(
     # (the DM's own "Keep as secret" press hides an existing public twin; a spelling does not)
     kept = await keep.keep_all(
         memory, w.backstory, guild_id, cid, [one], keep_flags=not a.flag, one_press=True,
+        players="show" if a.action == "backstory-keep-show" else "",
     )  # fmt: skip
     return Outcome(result_id="1") if kept.kept else _failed(BAD_TARGET)
 

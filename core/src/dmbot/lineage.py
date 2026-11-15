@@ -103,6 +103,9 @@ _PLUMBING = "bookkeeping, not something DMbot generated"
 # Campaign tables that are never stamped, each with why. A new campaign table must be stamped or
 # be added here with its reason (the catalog test, `tests/test_lineage_catalog.py`).
 NOT_STAMPED: dict[str, str] = {
+    # (#4453: a wait for the DM, rebuilt by reading the lore again; the thread a keep makes is an
+    # entry and carries the stamp)
+    "thread_suggestions": "a suggestion waiting for the DM; the kept thread is stamped",
     **dict.fromkeys(
         (
             "campaign_dms",

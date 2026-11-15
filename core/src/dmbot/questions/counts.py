@@ -197,6 +197,16 @@ async def _world(src: Sources, g: int, c: str) -> Counted:
     return Counted(len(notes), min((n.made_at for n in notes), default=None))
 
 
+async def _threads(src: Sources, g: int, c: str) -> Counted:
+    """The story threads the lore reader suggested and the DM hasn't answered (#4453): the ones
+    the 📜 card shows (`ThreadSuggestionStore.waiting`)."""
+    from dmbot.memory.thread_suggestions import ThreadSuggestionStore
+
+    if src.memory is None:
+        return Counted(0)
+    return Counted(await ThreadSuggestionStore(src.db).count(g, c))
+
+
 async def _maps(src: Sources, g: int, c: str) -> Counted:
     """Maps a player kept that no DM has answered yet (`MapStore.waiting_for_a_dm`)."""
     if src.maps is None:
@@ -214,6 +224,7 @@ _COUNTERS: dict[str, Callable[[Sources, int, str], Awaitable[Counted]]] = {
     kinds.FAMILY: _family,
     kinds.TRAITS: _traits,
     kinds.WORLD: _world,
+    kinds.THREADS: _threads,
     kinds.MAPS: _maps,
     kinds.CLAIMS: _claims,
     kinds.READINGS: _readings,

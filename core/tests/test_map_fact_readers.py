@@ -23,6 +23,8 @@ ALLOWED = {
     "lineage.py": "only names the table, on the list that carries the build's stamp (#3739)",
     "migrations/0457_map_facts.py": "creates the table",
     "migrations/0492_culture_population.py": "adds the culture and who-lives-here layers (#4257)",
+    "devtools/sample_run/questions.py": "dev1's part 2 (#3545): what the DM did with each read row,"
+    " every status, counts only, nothing reaches a player",
     "migrations/0496_named_cultures.py": "adds `culture_id`; typed cultures become named (#4257)",
     "maps/store.py": "`remove_map` clears a fact's `map_id` through the log before the map goes",
     "migrations/0472_campaign_maps.py": "adds the `map_id` column; nothing reads it (#4344)",

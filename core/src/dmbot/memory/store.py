@@ -1820,6 +1820,59 @@ class MemoryStore:
             made = await states.touch_thread(w, onto, entity, from_session_at=from_session_at)
             return Written(made, w.batch)
 
+    async def keep_thread(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        name: str,
+        subtype: str,
+        state: str,
+        *,
+        aim: str,
+        parts: Sequence[tuple[str, str]],
+        source: str,
+        suggestion_id: str = "",
+    ) -> Written[Entity]:
+        """The DM keeps a story thread DMbot suggested (#4453, quests slice 1): the thread, its
+        state and the people the DM left on, in ONE change, so one Undo takes it all back. A person
+        merged since is followed to the entry it became; one gone since is skipped. The suggestion's
+        row is marked kept in the same transaction, with the change's number for ↩ Undo."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        check_named(subtype, name)
+        name = clean_text(name)
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            if subtype not in onto.types or not onto.is_a(subtype, "thread"):
+                raise MemoryRuleError(THREAD_KINDS_ONLY)
+            onto.active_type(subtype)
+            row = await w.insert(
+                ENTITIES,
+                {
+                    "id": new_id(), "type": subtype, "name": name,
+                    "description": clean_text(aim)[:DESCRIPTION_MAX] if aim else "",
+                    "status": CONFIRMED, "merged_into": None, "source": source,
+                    "created_at": w.now, "played_by": None, "role": None, "needs_look": False,
+                    "unique_item": None, "audience_limited": False, "party": False,
+                },
+            )  # fmt: skip
+            await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", CONFIRMED, False, None))
+            await states.set_condition(w, onto, row, state, from_session_at=None)
+            for role, who in parts:
+                live = await _followed(w, who)
+                if live is None:
+                    continue  # (gone since the suggestion was made)
+                await self.add_relation_in(
+                    w, live, "in_thread", str(row["id"]), confidence=1.0, status=CONFIRMED,
+                    detail=clean_text(role),
+                )  # fmt: skip
+            if suggestion_id:
+                from dmbot.memory import thread_suggestions
+
+                if not await thread_suggestions.mark_kept(w, suggestion_id, w.batch):
+                    raise MemoryRuleError(thread_suggestions.GONE)
+            return Written(_entity(row), w.batch)
+
     async def involve(
         self,
         guild_id: int,
@@ -9220,6 +9273,23 @@ async def flag_kept(w: Changes, relation_id: str) -> list[Flag]:
     fact = _relation(row)
     existing = await _relations_touching(w, fact.subject_id, fact.object_id)
     return await _flag_problems(w, onto, fact, subject["type"], obj["type"], existing)
+
+
+async def _followed(w: Changes, entity_id: str) -> str | None:
+    """The kept entry an id stands for now: itself, or the one it was merged into (a short chain is
+    followed); None when it is gone, turned down, or a name the DM hasn't kept yet. A kept thread
+    never confirms a connection to a waiting name (a connection to one waits on it elsewhere,
+    `auto_accept.ON_A_NAME`; the reviewer's point on #4453): the card says it is left out."""
+    seen: set[str] = set()
+    while entity_id not in seen:
+        seen.add(entity_id)
+        row = await w.get(ENTITIES, entity_id, lock=False)
+        if row is None:
+            return None
+        if not row.get("merged_into"):
+            return entity_id if row["status"] == CONFIRMED else None
+        entity_id = str(row["merged_into"])
+    return None
 
 
 async def _delete_relation(w: Changes, relation_id: str) -> None:

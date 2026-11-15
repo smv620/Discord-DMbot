@@ -499,7 +499,8 @@ export default function WebWaiting({
           <h4>{w.backstoryHeading}</h4>
           <p class="small">{w.backstoryNote}</p>
           {uploads.map((u) => {
-            const ready = u.items.filter((b) => b.ready && !handOf(b));
+            // (Keep all leaves out a hand-over and DMbot's own guess: only the DM's own press keeps those, as on Discord)
+            const ready = u.items.filter((b) => b.ready && !handOf(b) && !b.guess);
             const ids = ready.slice(0, KEEP_ALL_MAX).map((b) => b.id);
             const left = ready.length - ids.length;
             return (
