@@ -212,6 +212,7 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.settings.LevelButton",
             "dm_screen.settings.RulesCardsButton",
             "dm_screen.settings.AskBeforeAddingButton",
+            "dm_screen.setting_field.KeepSettingButton",  # (the setting's guess, #4291)
             "dm_screen.channel_sync_ui.ChannelsMenuButton",
             "dm_screen.channel_sync_ui.ChannelsChoiceButton",
             "dm_screen.channel_sync_ui.PeopleButton",
