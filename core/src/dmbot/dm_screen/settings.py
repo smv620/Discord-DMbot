@@ -44,6 +44,7 @@ from dmbot.dm_screen import (
     handover,
     messages,
     quiet_stop,
+    setting_field,
     story_mode,
     table_chat_panel,
 )
@@ -54,6 +55,7 @@ from dmbot.dm_screen.delete_campaign import DeleteButton
 from dmbot.dm_screen.game_masters import GameMastersButton
 from dmbot.dm_screen.pause import pause_buttons, pause_line
 from dmbot.dm_screen.recap_style import RecapStyleButton
+from dmbot.dm_screen.setting_field import KeepSettingButton, SettingField
 from dmbot.dm_screen.table_chat_panel import TableChatButton
 from dmbot.dm_screen.transcript_keep import TranscriptsButton
 from dmbot.logs import set_log_context
@@ -145,7 +147,10 @@ MANAGE_INTRO = (
 
 
 def settings_text(
-    campaign: Campaign, offer: HandoverOffer | None = None, viewer: int | None = None
+    campaign: Campaign,
+    offer: HandoverOffer | None = None,
+    viewer: int | None = None,
+    setting: SettingField | None = None,
 ) -> str:
     """The ⚙️ Manage DMbot card (only the person who opened it sees it): only what needs Discord
     to be there (#2986), with the rest listed as not on the website yet. `offer`, `viewer`: kept
@@ -163,6 +168,7 @@ def settings_text(
             f"• **Who can see the DM screen:** {who} Change it with 👁️ Who can see the DM screen.",
             *([PAUSED_LINE] if campaign.paused else []),
             _rules_cards_line(campaign, viewer),
+            *(setting_field.line(setting) if viewer in campaign.dm_user_ids else []),
             table_chat_panel.line(campaign),
             *(
                 [quiet_stop.line(campaign.quiet_stop_minutes)]
@@ -242,6 +248,7 @@ def settings_view(
     viewer: int,
     site_url: str = "",
     questions: int | None = None,
+    setting: SettingField | None = None,
 ) -> discord.ui.View:
     """The ⚙️ Manage DMbot card's buttons (#2986). `viewer`: who it's for (it's private).
     Rows 0 and 1 hold only what needs Discord to be there: how much DMbot says, who can see the DM
@@ -278,6 +285,9 @@ def settings_view(
         view.add_item(_row(BackstoryButton(campaign.id), 3))  # upload campaign lore
         # who sees the DM Bot and transcript channels (#3891)
         view.add_item(_row(channel_sync_ui.ChannelsMenuButton(campaign.id), 3))
+        if setting is not None and setting.guessed and setting.entity_id:
+            # DMbot's guess at the campaign's setting waits for the DM's yes (#4291)
+            view.add_item(_row(KeepSettingButton(campaign.id, setting.entity_id), 4))
     return view
 
 
@@ -354,6 +364,7 @@ def _drawn(
     card: str,
     site_url: str = "",
     questions: int | None = None,
+    setting: SettingField | None = None,
 ) -> tuple[str, discord.ui.View]:
     """A card as the campaign is now: "settings", "visibility" or "management"."""
     if card == "visibility":
@@ -362,9 +373,18 @@ def _drawn(
         return channel_sync_ui.channels_text(campaign), channel_sync_ui.channels_view(campaign)
     if card == "management":
         return management_text(campaign, offer, viewer), management_view(campaign, offer, viewer)
-    return settings_text(campaign, offer, viewer), settings_view(
-        campaign, offer, viewer, site_url, questions
+    return settings_text(campaign, offer, viewer, setting), settings_view(
+        campaign, offer, viewer, site_url, questions, setting
     )
+
+
+async def _setting_for(
+    interaction: discord.Interaction, campaign: Campaign, card: str
+) -> SettingField | None:
+    """The campaign's setting for the main card, read only for a DM (nobody else sees the line)."""
+    if card != "settings" or interaction.user.id not in campaign.dm_user_ids:
+        return None
+    return await setting_field.load(interaction, campaign.guild_id, campaign.id)
 
 
 async def _redraw(
@@ -374,7 +394,10 @@ async def _redraw(
     can't be redrawn (it's too old), the change still is saved: say so."""
     offer = await _open_offer(interaction, campaign.id)
     questions = await questions_board.total_for(interaction, campaign.id)
-    text, view = _drawn(campaign, offer, interaction.user.id, card, _site(interaction), questions)
+    setting = await _setting_for(interaction, campaign, card)
+    text, view = _drawn(
+        campaign, offer, interaction.user.id, card, _site(interaction), questions, setting
+    )
     try:
         await interaction.edit_original_response(content=text, view=view, allowed_mentions=NO_PINGS)
     except discord.HTTPException:
@@ -418,9 +441,12 @@ class SettingsButton(
         )
         if campaign is None:
             return
+        setting = await _setting_for(interaction, campaign, "settings")
         await interaction.response.send_message(
-            settings_text(campaign, offer, interaction.user.id),
-            view=settings_view(campaign, offer, interaction.user.id, _site(interaction), questions),
+            settings_text(campaign, offer, interaction.user.id, setting),
+            view=settings_view(
+                campaign, offer, interaction.user.id, _site(interaction), questions, setting
+            ),
             ephemeral=True,
             allowed_mentions=NO_PINGS,
         )
@@ -1056,7 +1082,10 @@ async def _open_card(interaction: discord.Interaction, campaign_id: str, card: s
     campaign = allowed[0]
     offer = await _open_offer(interaction, campaign_id) if card != "visibility" else None
     questions = await questions_board.total_for(interaction, campaign_id)
-    text, view = _drawn(campaign, offer, interaction.user.id, card, _site(interaction), questions)
+    setting = await _setting_for(interaction, campaign, card)
+    text, view = _drawn(
+        campaign, offer, interaction.user.id, card, _site(interaction), questions, setting
+    )
     try:
         await interaction.response.edit_message(content=text, view=view, allowed_mentions=NO_PINGS)
     except discord.HTTPException:  # the card is too old to edit: say so, don't leave "failed"
