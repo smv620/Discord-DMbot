@@ -77,6 +77,27 @@ async def campaign_people(
     )
 
 
+async def reads_campaign(
+    campaigns: CampaignStore,
+    memory: MemoryStore | None,
+    campaign: Campaign,
+    user_id: int,
+    *,
+    in_server: bool,
+) -> bool:
+    """Whether this person may read the campaign's transcripts and see what is shown to its table:
+    the one rule behind Discord's channels, the website's transcript pages and the Maps page's door
+    (`dmbot_web_reads_campaign`, migration 0489, a copy of this test), and the bot's check of a
+    player's Maps actions (#4445). The campaign's people may; under "everyone" any member of the
+    server may; no one who is not in the server may. `in_server` is the caller's own look (Discord's
+    member list): the database cannot see it, so it is passed in rather than guessed."""
+    if not in_server or user_id <= 0:
+        return False
+    if campaign.channels_visibility == cp.EVERYONE:
+        return True
+    return user_id in await campaign_people(campaigns, memory, campaign, 0)
+
+
 def in_step(
     channel: discord.abc.GuildChannel,
     plan: dict[Target, Perms],
