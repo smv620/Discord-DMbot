@@ -12,17 +12,20 @@ backup whose campaign is not the public sample.
 What MapBot keeps today (#4349, its close read) is each map's note: the places the map names, with
 their size and form, and how the places sit (`in`, `next_to`, `route_to`, `apart`). So:
 - **scored now:** the pins by name, the roads (`route_to`), "in" and "on the shore of" (`in` and
-  `next_to`), the layer rows read from the map (`source = 'map'`), and the must-not-find list;
+  `next_to`), and places on the map the key says it doesn't name;
 - **not stored yet,** said as such and never counted as missed: the pins' positions, the compass
-  directions, the straight-line distances, the scale and north. A later slice that keeps them turns
-  these lines into scores with no change to the key.
+  directions, the straight-line distances, the scale and north, and, while no MapBot slice writes
+  them, layer rows read from the map (`source = 'map'`) and entries made from a map. A later slice
+  that keeps them turns these lines into scores with no change to the key.
+
+Names are compared as `name_key` does, with spaces and a leading "the" dropped too, so "Caer
+Konig", "Caer-Konig" and "The Redrun" / "Redrun" meet.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
-import re
 import sys
 from collections import Counter
 from collections.abc import Iterable, Mapping, Sequence
@@ -43,7 +46,6 @@ FOUND, MISSING, NOT_STORED = "found", "missing", "not stored yet"
 REL_KINDS = {"in": "in", "on the shore of": "next_to"}
 # Layer rows a map must never give (the key's must-not list, mapbot_layers 7.2)
 NEVER_FROM_A_MAP = ("culture", "population", "control", "climate")
-_IN_BRACKETS = re.compile(r"\(([^)]*)\)")
 
 
 @dataclass(slots=True)
@@ -61,6 +63,14 @@ class Report:
         tally[status] += 1
         if must and status == MISSING:
             tally["must missed"] += 1
+
+
+def _k(name: str) -> str:
+    """How the key and the map's names are compared (see the module's note)."""
+    key = name_key(name)
+    if key.startswith("the "):
+        key = key[4:]
+    return key.replace(" ", "")
 
 
 def _section(backup: Mapping[str, Any], name: str) -> list[Mapping[str, Any]]:
@@ -81,17 +91,17 @@ def read_maps(
     for note in notes:
         for p in note.get("places") or []:
             if isinstance(p, Mapping) and p.get("name"):
-                names.add(name_key(str(p["name"])))
+                names.add(_k(str(p["name"])))
         close = note.get("close")
         if not isinstance(close, Mapping):
             continue
         closely += 1
         for p in close.get("places") or []:
             if isinstance(p, Mapping) and p.get("name"):
-                names.add(name_key(str(p["name"])))
+                names.add(_k(str(p["name"])))
         for k in close.get("links") or []:
             if isinstance(k, Mapping) and k.get("a") and k.get("b"):
-                links.append((name_key(str(k["a"])), str(k.get("kind", "")), name_key(str(k["b"]))))
+                links.append((_k(str(k["a"])), str(k.get("kind", "")), _k(str(k["b"]))))
     return names, links, len(notes), closely
 
 
@@ -118,12 +128,12 @@ def check(backup: Mapping[str, Any], key: Mapping[str, Any]) -> Report:
     pins = key.get("pins", [])
     for pin in pins:
         must = bool(pin.get("must_find"))
-        found = name_key(str(pin["name"])) in names
+        found = _k(str(pin["name"])) in names
         report.add("pins (by name)", FOUND if found else MISSING, must)
         report.add("pins (position)", NOT_STORED, must)
-    report.extra_places = len(names - {name_key(str(p["name"])) for p in pins})
+    report.extra_places = len(names - {_k(str(p["name"])) for p in pins})
     for road in key.get("routes", []):
-        a, b = name_key(str(road["from"])), name_key(str(road["to"]))
+        a, b = _k(str(road["from"])), _k(str(road["to"]))
         report.add(
             "roads", FOUND if _linked(links, a, "route_to", b) else MISSING, bool(road["must_find"])
         )
@@ -133,7 +143,7 @@ def check(backup: Mapping[str, Any], key: Mapping[str, Any]) -> Report:
         if kind is None:
             report.add("which way (compass)", NOT_STORED, must)
             continue
-        a, b = name_key(str(s["a"])), name_key(str(s["b"]))
+        a, b = _k(str(s["a"])), _k(str(s["b"]))
         report.add("in, on the shore of", FOUND if _linked(links, a, kind, b) else MISSING, must)
     for d in key.get("distances", []):
         report.add("distances", NOT_STORED, bool(d.get("must_find")))
@@ -141,13 +151,15 @@ def check(backup: Mapping[str, Any], key: Mapping[str, Any]) -> Report:
         if part in key.get("map", {}):
             report.add(part, NOT_STORED, bool(key["map"][part].get("must_find")))
     memory = _memory(backup)
-    places = {str(e["id"]): name_key(str(e.get("name", ""))) for e in memory.get("entity", [])}
+    places = {str(e["id"]): _k(str(e.get("name", ""))) for e in memory.get("entity", [])}
     from_map = [
         f for f in memory.get("map_fact", [])
         if f.get("source") == "map" and f.get("status") != "rejected"
     ]  # fmt: skip
-    for row in key.get("layers", []):
-        want = (name_key(str(row["place"])), str(row["layer"]), str(row["value"]))
+    for row in key.get("layers", []) if not from_map else ():  # (nothing writes them yet)
+        report.add("layers from the map", NOT_STORED, bool(row.get("must_find")))
+    for row in key.get("layers", []) if from_map else ():
+        want = (_k(str(row["place"])), str(row["layer"]), str(row["value"]))
         hit = any(
             (places.get(str(f.get("entity_id"))), f.get("layer"), f.get("value")) == want
             for f in from_map
@@ -157,18 +169,11 @@ def check(backup: Mapping[str, Any], key: Mapping[str, Any]) -> Report:
         f"a {f['layer']} row from the map" for f in from_map if f.get("layer") in NEVER_FROM_A_MAP
     )
     for rule in key.get("must_not_find", []):
-        what = str(rule.get("what", ""))
-        if "doesn't name" in what and (m := _IN_BRACKETS.search(what)):
-            unnamed = {name_key(n.strip()) for n in m.group(1).split(",") if n.strip()}
-            report.must_not["a place the map doesn't name"] += len(unnamed & names)
-        elif what.startswith("a second entry for") and (m := re.search(r"for (.+)$", what)):
-            wanted = {name_key(n) for n in re.split(r",\s*|\s+or\s+", m.group(1)) if n.strip()}
-            live = Counter(
-                name_key(str(e.get("name", "")))
-                for e in memory.get("entity", [])
-                if e.get("status") not in ("rejected", "merged")
-            )
-            report.must_not["a second entry"] += sum(1 for n in wanted if live[n] > 1)
+        named = {_k(str(n)) for n in rule.get("names", [])}
+        if "doesn't name" in str(rule.get("what", "")):
+            report.must_not["a place the map doesn't name"] += len(named & names)
+        elif named:  # (a second entry: no MapBot slice makes entries from a map yet)
+            report.add("a second entry from the map", NOT_STORED, False)
     return report
 
 
@@ -187,13 +192,8 @@ def render(report: Report) -> list[str]:
             f" (must-find missed {c['must missed']})"
         )
     out.append(f"places on the maps the key doesn't list: {report.extra_places}")
-    hits = sum(report.must_not.values())
-    out.append(
-        "must-not-find hits: "
-        + (", ".join(f"{k} {v}" for k, v in sorted(report.must_not.items()) if v) or "none")
-        if hits
-        else "must-not-find hits: none"
-    )
+    hits = ", ".join(f"{k} {v}" for k, v in sorted(report.must_not.items()) if v)
+    out.append(f"must-not-find hits: {hits or 'none'}")
     return out
 
 
@@ -214,7 +214,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not isinstance(campaign, dict) or campaign.get("name") != SAMPLE_CAMPAIGN:
             raise ValueError(f'This campaign is not "{SAMPLE_CAMPAIGN}"; the check is only for it.')
         report = check(backup, key)
-    except (ValueError, OSError) as exc:
+    except OSError as exc:  # (the kind only: its message holds the file's path)
+        sys.stderr.write(f"The file could not be read ({type(exc).__name__}).\n")
+        return 2
+    except (KeyError, TypeError):
+        sys.stderr.write("The map key is not readable.\n")
+        return 2
+    except ValueError as exc:
         sys.stderr.write(f"{exc}\n")
         return 2
     lines = render(report)

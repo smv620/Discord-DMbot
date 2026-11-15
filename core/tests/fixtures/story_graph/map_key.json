@@ -527,7 +527,14 @@
   },
   {
    "what": "a place the map doesn't name (Hundelstone, Fireshear, Luskan, Neverwinter, Waterdeep)",
-   "why": "not on this map; a pin for one is invented"
+   "why": "not on this map; a pin for one is invented",
+   "names": [
+    "Hundelstone",
+    "Fireshear",
+    "Luskan",
+    "Neverwinter",
+    "Waterdeep"
+   ]
   },
   {
    "what": "a number of people for any town",
@@ -535,7 +542,20 @@
   },
   {
    "what": "a second entry for Easthaven, Good Mead or Eastway Road",
-   "why": "the map's spelling must match the existing entry (aliases Eashaven, Goodmead, The Eastway)"
+   "why": "the map's spelling must match the existing entry (aliases Eashaven, Goodmead, The Eastway)",
+   "names": [
+    "Easthaven",
+    "Good Mead",
+    "Eastway Road"
+   ],
+   "aliases": {
+    "Good Mead": [
+     "Goodmead"
+    ],
+    "Eastway Road": [
+     "the Eastway"
+    ]
+   }
   }
  ]
 }

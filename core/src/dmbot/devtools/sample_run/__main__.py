@@ -58,6 +58,8 @@ USD_PER_CREDIT = 0.001  # `credits.MICRO_PER_CREDIT`: 1 credit = 1,000 micro-dol
 # Set aside for the kept run's recap before any run starts: the recap writer is not on the bot's
 # credit ledger, so its cost is never measured here; runs 16 and 17 on #3545 cost $0.40 to $0.60
 RECAP_RESERVE_USD = 0.75
+# And for the sample map's one close read (#4423): one careful-model look at one picture
+MAP_RESERVE_USD = 0.10
 _ON = {"1", "true", "on", "yes"}
 
 
@@ -562,7 +564,7 @@ async def run_many(args: argparse.Namespace, **kw: Any) -> int:
     commit = common.commit(args.commit, tool="sample_run")  # (before any money is spent)
     stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%d-%H%M%S")
     snap = folder / f"questions-{stamp}.json"
-    budget = args.max_usd - RECAP_RESERVE_USD
+    budget = args.max_usd - RECAP_RESERVE_USD - (MAP_RESERVE_USD if args.map else 0.0)
     if budget <= 0:
         raise SampleError(f"--max-usd must leave room for the recap (${RECAP_RESERVE_USD:g})")
     runs: list[dict[str, float]] = []

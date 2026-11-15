@@ -12,20 +12,44 @@ from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
+from dmbot import consent as consent_mod
+from dmbot.devtools import accept_all
 from dmbot.devtools.sample_run import __main__ as cli
 from dmbot.devtools.sample_run import map_step
 from dmbot.devtools.sample_run import steps as sample_steps
+from dmbot.devtools.sample_run.plan import SampleError
+
+
+class _Consent:
+    def __init__(self, db: Any) -> None:
+        pass
+
+    async def consenting(self, guild_id: int) -> frozenset[int]:
+        return frozenset({2})
+
+    def has_image_consent(self, guild_id: int, user_id: int) -> bool:
+        return user_id == 2
+
+
+async def _sample(db: Any, guild: int, campaign: str) -> None:
+    return None
 
 
 class Skips(unittest.TestCase):
-    def go(self, ready: bool, path: Path) -> tuple[dict[str, Any], list[str]]:
+    def go(
+        self, ready: bool, path: Path, dm: int = 2, **patches: Any
+    ) -> tuple[dict[str, Any], list[str]]:
         said: list[str] = []
-        got = asyncio.run(
-            map_step.run(
-                None, None, 1, "c", 2, path, path.parent, say=said.append,
-                settings=SimpleNamespace(pictures_ready=ready),
-            )
-        )  # fmt: skip
+        with (
+            mock.patch.object(accept_all, "check_campaign", _sample),
+            mock.patch.object(consent_mod, "ConsentStore", _Consent),
+        ):
+            got = asyncio.run(
+                map_step.run(
+                    None, None, 1, "c", dm, path, path.parent, say=said.append,
+                    settings=SimpleNamespace(pictures_ready=ready), **patches,
+                )
+            )  # fmt: skip
         return dict(got), said
 
     def test_pictures_off_is_said_and_skipped(self) -> None:
@@ -33,11 +57,31 @@ class Skips(unittest.TestCase):
         self.assertEqual(got, {"skipped": 1})
         self.assertEqual(said, ["map: skipped (kept pictures are off on this server)"])
 
+    def test_a_dm_who_hasnt_agreed_to_pictures_is_said_and_skipped(self) -> None:
+        got, said = self.go(True, Path("/nowhere/map.jpg"), dm=3)
+        self.assertEqual(got, {"skipped": 1})
+        self.assertIn("hasn't agreed", said[0])
+
     def test_a_map_file_that_cant_be_read_is_said_without_its_path(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             got, said = self.go(True, Path(d, "missing.jpg"))
         self.assertEqual(got, {"skipped": 1})
         self.assertNotIn("missing.jpg", said[0])
+
+    def test_any_campaign_but_the_sample_is_refused_before_anything_is_written(self) -> None:
+        async def other(db: Any, guild: int, campaign: str) -> None:
+            raise accept_all.WrongCampaign("not the sample")
+
+        with (
+            mock.patch.object(accept_all, "check_campaign", other),
+            self.assertRaises(SampleError),
+        ):
+            asyncio.run(
+                map_step.run(
+                    None, None, 1, "c", 2, Path("/x"), Path("/"), say=lambda _: None,
+                    settings=SimpleNamespace(pictures_ready=True),
+                )
+            )  # fmt: skip
 
 
 class OnTheKeptRun(unittest.TestCase):
