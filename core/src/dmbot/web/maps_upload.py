@@ -5,7 +5,7 @@ as one Undo, so this module only does what the bot should not wait for: it check
 the file, puts the two files in the bucket under random keys (`p/<token>.<ext>` and
 `p/<token>-preview.webp`, as the picture keeper does) and queues one `maps-add` action
 (migration 0498). The bot re-checks the sender and the files, writes the rows, and deletes the
-files if it refuses; a file nobody picked up is swept after 24 hours. Nothing is stored for
+files if it refuses; a file nobody picked up is swept by the picture sweep (about an hour). Nothing is stored for
 anyone outside the campaign's people, for a picture the person did not say they may use, or for a
 file that is not a PNG, JPEG or WebP picture by its own bytes (an SVG is never one). The picture
 is re-encoded first, so no location data or hidden text rides along. Words, ids and sizes only
@@ -14,6 +14,7 @@ are queued, never a word of the picture.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import re
 from typing import Protocol
@@ -33,6 +34,10 @@ log = logging.getLogger(__name__)
 # The most a sent picture may weigh, before it is re-encoded: the page says the same number.
 MAX_BYTES = 10 * 1024 * 1024
 TITLE_MAX = 120
+# The door's text allows five digits for a side; a longer one could pass `prepare` (40 megapixels).
+SIDE_MAX = 99_999
+# Re-encoding a picture is heavy: at most this many at once in this process.
+_BUSY = asyncio.Semaphore(2)
 
 _PNG = b"\x89PNG\r\n\x1a\n"
 _JPEG = b"\xff\xd8\xff"
@@ -63,6 +68,17 @@ def clean_title(raw: object) -> str:
     return title
 
 
+async def ensure_person(db: Database, session: Session, ref: str) -> None:
+    """Refuse a stranger before any of their upload is read (`not_allowed`): only the campaign's
+    people may send a map. The queue door asks again, so a change in between never lets one by."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        if not await reads_campaign(conn, guild_id, campaign_id):
+            raise RecapError("not_allowed")
+
+
 async def add(
     db: Database,
     session: Session,
@@ -83,17 +99,15 @@ async def add(
     name = clean_title(title)
     if bucket is None:
         raise RecapError("uploads_off")
-    async with db.user(session.user_id, session=session.id_hash) as conn:
-        await _scoped(conn, guild_id)
-        if not await reads_campaign(conn, guild_id, campaign_id):
-            raise RecapError("not_allowed")
+    await ensure_person(db, session, ref)
     if not data or len(data) > MAX_BYTES or not sniff(data):
         raise RecapError("bad_file")
     try:
-        ready = await prepare_async(data)
+        async with _BUSY:
+            ready = await prepare_async(data)
     except Refused:
         raise RecapError("bad_file") from None
-    if ready.ext not in ("png", "jpg", "webp"):
+    if ready.ext not in ("png", "jpg", "webp") or max(ready.width, ready.height) > SIDE_MAX:
         raise RecapError("bad_file")
     key, preview_key = new_keys(ready.ext)
     token = key.removeprefix("p/").split(".")[0]
@@ -104,6 +118,9 @@ async def add(
         log.warning("A sent map could not be staged (%s)", exc)
         await _forget(bucket, key, preview_key)
         raise RecapError("failed") from None
+    # `ready.sha256` is the hash of the bytes sent, not of the re-encoded file that is staged, so the
+    # bot must not compare it with the staged object: it only names the picture (the same file sent
+    # twice is one picture). The sizes are of the staged files.
     text = (
         f"{token} {ready.ext} {ready.sha256} {len(ready.data)} {len(ready.preview)} "
         f"{ready.width} {ready.height} {name}"

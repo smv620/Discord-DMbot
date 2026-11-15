@@ -196,6 +196,9 @@ class TheUpload(MapsDoor):
 
 
 class TheChecks(unittest.TestCase):
+    def test_the_side_cap_matches_the_doors_five_digits(self) -> None:
+        self.assertEqual(maps_upload.SIDE_MAX, 99_999)
+
     def test_sniff_takes_png_jpeg_and_webp_by_their_bytes(self) -> None:
         self.assertTrue(maps_upload.sniff(picture("PNG")))
         self.assertTrue(maps_upload.sniff(picture("JPEG")))

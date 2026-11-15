@@ -2540,6 +2540,12 @@ def create_app(
         session, _token = signed
         if map_upload_limit.take(f"user-{session.user_id}") != "ok":
             raise HTTPException(status_code=429, detail="too_soon")
+        try:
+            await maps_upload.ensure_person(db, session, ref)  # (before any of the body is read)
+        except RecapError as err:
+            map_upload_limit.give_back(f"user-{session.user_id}")
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
         data = bytearray()
         too_big = HTTPException(status_code=413, detail="bad_file")
         try:
@@ -2564,7 +2570,9 @@ def create_app(
                 )
             }
         except RecapError as err:
-            map_upload_limit.give_back(f"user-{session.user_id}")  # (a refused one costs no turn)
+            if err.code in ("needs_rights", "bad_name", "uploads_off"):
+                # (refused before any work: no turn spent. A bad file already cost a decode.)
+                map_upload_limit.give_back(f"user-{session.user_id}")
             status, detail = map_upload_refusals.get(
                 err.code, relationship_refusals.get(err.code, (404, "not_found"))
             )
