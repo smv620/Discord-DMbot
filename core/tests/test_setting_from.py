@@ -17,8 +17,10 @@ from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.db import Database, drop_schema
 from dmbot.dm_screen import adventure_card
+from dmbot.memory import map_facts as mf
 from dmbot.memory import setting_worlds as sw
 from dmbot.memory.lookup import LookupCache
+from dmbot.memory.map_fact_store import Read
 from dmbot.memory.models import CONFIRMED, REJECTED, MemoryRuleError
 from dmbot.memory.models import DM as BY_DM
 from dmbot.memory.search import find
@@ -417,6 +419,66 @@ class TheNo(MemoryTest):
         kept = await self.memory.entity(GUILD_A, self.c, made.value.id)
         assert kept is not None
         self.assertEqual((kept.status, kept.setting_from), (CONFIRMED, "declined"))
+
+
+class MapFactsTie(MemoryTest):
+    """#4495: a map fact on the made place (the DM's, or one of DMbot's World notes) ties it, as a
+    connection does, so a no to the guess never drops the DM's land or ruler with it."""
+
+    async def _made(self) -> str:
+        made = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        assert made.value is not None
+        return made.value.id
+
+    async def _status(self, place: str) -> str:
+        row = await self.memory.entity(GUILD_A, self.c, place)
+        assert row is not None
+        return row.status
+
+    async def _dms_land_then(self, *, decline: bool) -> None:
+        place = await self._made()
+        await self.memory.set_map_fact(GUILD_A, self.c, place, mf.TERRAIN, "hill", source=BY_DM)
+        if decline:
+            await self.memory.decline_setting(GUILD_A, self.c, place, source=BY_DM)
+        else:
+            await self.memory.set_setting(GUILD_A, self.c, None, source=BY_DM)
+        self.assertEqual(await self._status(place), CONFIRMED)
+
+    async def test_the_dms_land_keeps_it_on_a_no(self) -> None:
+        await self._dms_land_then(decline=True)
+
+    async def test_the_dms_land_keeps_it_when_the_dm_picks_no_setting(self) -> None:
+        await self._dms_land_then(decline=False)
+
+    async def test_a_closed_fact_keeps_it_and_undo_gives_the_guess_back(self) -> None:
+        place = await self._made()
+        await self.memory.set_map_fact(GUILD_A, self.c, place, mf.TERRAIN, "hill", source=BY_DM)
+        async with self.db.guild(GUILD_A) as conn:  # (history: "it was hills, once")
+            await conn.execute(
+                "UPDATE memory_map_facts SET to_session_at = 1 WHERE entity_id = %s", [place]
+            )
+        no = await self.memory.decline_setting(GUILD_A, self.c, place, source=BY_DM)
+        self.assertEqual(await self._status(place), CONFIRMED)
+        assert no.batch is not None
+        await self.memory.undo(GUILD_A, self.c, no.batch)
+        back = await self.memory.entity(GUILD_A, self.c, place)
+        assert back is not None
+        self.assertEqual((back.setting, back.setting_guessed), (True, True))
+
+    async def test_a_world_note_keeps_it(self) -> None:
+        place = await self._made()
+        await self.memory.add_read_map_facts(
+            GUILD_A, self.c, [Read(place, mf.TERRAIN, "hill")], source="background"
+        )
+        await self.memory.decline_setting(GUILD_A, self.c, place, source=BY_DM)
+        self.assertEqual(await self._status(place), CONFIRMED)
+
+    async def test_a_cleared_fact_ties_nothing(self) -> None:
+        place = await self._made()
+        await self.memory.set_map_fact(GUILD_A, self.c, place, mf.TERRAIN, "hill", source=BY_DM)
+        await self.memory.set_map_fact(GUILD_A, self.c, place, mf.TERRAIN, None, source=BY_DM)
+        await self.memory.set_setting(GUILD_A, self.c, None, source=BY_DM)
+        self.assertEqual(await self._status(place), REJECTED)
 
 
 class TheFormsReply(unittest.TestCase):

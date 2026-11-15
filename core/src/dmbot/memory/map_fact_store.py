@@ -481,6 +481,14 @@ async def drop_on_kind_change(
             await w.delete(MAP_FACTS, str(r["id"]))
 
 
+async def ties_place(w: Changes, place_id: str) -> bool:
+    """Whether any row here, open or closed, the DM's or a World note, says something about this
+    place: then a place DMbot made for its setting guess is kept when the guess goes (#4495)."""
+    return bool(
+        await w.select(MAP_FACTS, " AND status <> 'rejected' AND entity_id = %s", [place_id])
+    )
+
+
 async def dm_read_notes(scope: Scope, viewer: gate.Viewer) -> list[tuple[mf.Fact, int | None, int]]:
     """Every open row DMbot read and the DM hasn't checked, for the DM's World notes (#4285):
     (the fact, the session it was read from, when DMbot read it), oldest first. The second reader
