@@ -18,6 +18,7 @@ from dmbot.memory import map_fact_store
 from dmbot.memory._changes import (
     ENTITIES,
     FLAGS,
+    RELATIONS,
     RULE_LINKS,
     STATES,
     STORY_LANGUAGES,
@@ -312,6 +313,18 @@ async def settle_kind(
     await map_fact_store.drop_on_kind_change(
         w, list(ids), onto.is_a(type_key, "place"), onto.is_a(type_key, "faction")
     )
+    # only a thread has parts (#4471)
+    from dmbot.memory import thread_parts
+
+    await thread_parts.drop_on_kind_change(w, list(ids), onto.is_a(type_key, "thread"))
+    if not onto.is_a(type_key, "thread"):  # (and is a branch of nothing, nor has branches)
+        live = await w.select(
+            RELATIONS,
+            " AND predicate = 'branch_of' AND status = 'confirmed' AND to_session_at IS NULL"
+            " AND (subject_id = ANY(%s) OR object_id = ANY(%s))",
+            [list(ids), list(ids)],
+        )
+        await w.update_rows(RELATIONS, {str(r["id"]): {"status": "rejected"} for r in live})
 
 
 async def move_states(

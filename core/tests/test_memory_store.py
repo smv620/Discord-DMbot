@@ -334,6 +334,11 @@ class Isolation(MemoryTest):
         await self.memory.set_map_fact(
             GUILD_A, self.c, dale, "culture", "other", how="strong", words="Reghed", source="dm"
         )
+        # and a story thread's part (#4471)
+        quest = await self.add("The Missing Heir", type="quest", status="confirmed")
+        await self.memory.add_thread_part(
+            GUILD_A, self.c, quest, "objective", "find the heir", source="dm"
+        )
         # and where the story is (#4173 slice 4): ids only
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
@@ -1170,8 +1175,9 @@ class Undo(MemoryTest):
         # before the people who hang off a merged entry were moved with it, #2790: one statement;
         # 60 before who-knows moved with it, #2995: one read for the whole list.)
         # (62 before a merged entry's languages from the story moved with it, #4229: one read;
-        # 63 before a place's land, climate and ruler moved with it, #4256: one read)
-        self.assertLess(merge_statements, 64)
+        # 63 before a place's land, climate and ruler moved with it, #4256: one read; 64 before a
+        # thread's parts moved with it, #4471: one read)
+        self.assertLess(merge_statements, 65)
         self.assertLess(undo_statements, 60)
         self.assertEqual(await self.snapshot(), before)  # undo split them again exactly
         # Still one log row per changed row, so undo and redo work as before.
@@ -1795,8 +1801,9 @@ class Lists(MemoryTest):
         # entry before it deletes one (DEPENDENTS), so a new linked table adds a few to this (it
         # was 30 before beliefs, #2409: the perspectives and the manipulated-by link).
         # (35 with #4229's story languages; 37 with #4256's places: one read per kind written;
-        # 38 with #4346's maps, which name the place they cover)
-        self.assertLess(statements, 39)
+        # 38 with #4346's maps, which name the place they cover; 41 with #4471's thread parts,
+        # which name their thread, who gave them and what they point at)
+        self.assertLess(statements, 42)
         self.assertEqual(await self.snapshot(), before)
 
     async def test_a_2000_line_list_saves_faster_than_row_by_row(self) -> None:

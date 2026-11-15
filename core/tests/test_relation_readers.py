@@ -107,6 +107,8 @@ STORE = {
     + ": the words of live catch-all connections, for the DM's offer",
     "_audience": CONFIRMED_ONLY + ": who may be told",
     "_live_led_to": CONFIRMED_ONLY + ': only live, confirmed "led to" links, for the loop check',
+    "_take_off_branch": CONFIRMED_ONLY + ': a thread\'s live "branch of" link, taken off (#4471)',
+    "bigger_thread": CONFIRMED_ONLY + ": the bigger thread one is a branch of, for the DM (#4471)",
     "_recheck_led_to_after_undo": CONFIRMED_ONLY
     + ': re-checks a "led to" link an Undo made live again',
     "_relations_touching": DM_ONLY + ": the checks, which skip guess connections themselves",

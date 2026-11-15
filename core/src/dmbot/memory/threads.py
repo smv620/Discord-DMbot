@@ -96,6 +96,7 @@ def in_play_first(infos: Iterable[ThreadInfo]) -> list[ThreadInfo]:
 
 
 LED_TO = "led_to"
+BRANCH_OF = "branch_of"  # a side quest or a mystery inside a bigger thread (#4471, §6a)
 CHAIN_DEPTH = 10  # how far the loop check follows "led to" before it gives up (and refuses)
 
 
