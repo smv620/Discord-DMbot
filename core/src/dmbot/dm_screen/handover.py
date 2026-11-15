@@ -659,17 +659,25 @@ async def _tell_person(guild: discord.Guild, user_id: int, text: str) -> None:
         await member.send(text, allowed_mentions=NO_PINGS)
 
 
+# What the DM Bot channel hears of a hand-over's answer (#3874): the fact, never who or which.
+HANDOVER_POINTER = "🔁 A campaign hand-over was answered. The details are in your private message."
+
+
 async def _tell_screen(interaction: discord.Interaction, campaign: Campaign, text: str) -> None:
     """The outcome in the campaign's #dm-screen as well (best effort: the answer stands
     either way). Only from a process that serves the server: another one has no copy of
     the channel, and the private message to the owner still says it."""
     post = getattr(interaction.client, "post", None)
-    if campaign.dm_screen_channel_id is None or post is None:
+    note = getattr(interaction.client, "tell_dms_with_pointer", None)
+    if (campaign.dm_screen_channel_id is None or post is None) and note is None:
         return
     if interaction.client.get_guild(campaign.guild_id) is None:  # served elsewhere
         return
     try:
-        await post(campaign.dm_screen_channel_id, text)  # logs a Discord failure itself
+        if note is not None:  # names in it: the DMs privately, a pointer in the DM Bot channel
+            await note(campaign, text, HANDOVER_POINTER)
+        elif post is not None and campaign.dm_screen_channel_id is not None:
+            await post(campaign.dm_screen_channel_id, text)  # logs a Discord failure itself
     except Exception:
         with log_context(guild_id=campaign.guild_id, campaign_id=campaign.id):
             log.warning("Couldn't note a hand-over answer on the DM screen", exc_info=True)
