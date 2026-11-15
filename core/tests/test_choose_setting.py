@@ -75,4 +75,5 @@ class Choosing(MemoryTest):
 
     async def test_another_server_never_sees_it(self) -> None:
         await self.memory.choose_setting(GUILD_A, self.c, "Golarion", source=BY_DM)
-        self.assertIsNone(await self.memory.setting(GUILD_B, self.c))
+        with self.assertRaises(MemoryRuleError):  # (the campaign isn't in that server)
+            await self.memory.setting(GUILD_B, self.c)
