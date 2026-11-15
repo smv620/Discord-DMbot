@@ -70,7 +70,10 @@ READERS = {
     "memory/lineage.py": DM_ONLY
     + ": which beliefs rest on an entry (ids and numbers, no words); live connections, proposed or"
     " confirmed, because the DM chooses what to change",
+    "memory/map_fact_store.py": "a road's condition: the DM's screens check the road (any but"
+    " rejected); a player is told a condition only on a confirmed road (`conditions_for`)",
     "memory/notify.py": DM_ONLY + ": what the DM is told",
+    "memory/world_notes.py": DM_ONLY + ": the road a condition note is on, in the DM's World notes",
     "memory/graph_review_run.py": DM_ONLY
     + ": the DM's own fixed connections and their lore quotes, read for the careful check (#3741); "
     "the report is DM-only and never shown to players",
@@ -203,6 +206,13 @@ class WhoReadsConnections(unittest.TestCase):
         self.assertEqual(sorted(_store_functions()), sorted(STORE))
 
 
+# Database functions that name the table but show nothing: a trigger that only refuses a bad row.
+CHECKS_ONLY = {
+    "dmbot_map_fact_known_route": "0500's trigger: a condition names a known road (#4258); it "
+    "returns no connection, so it has no confirmed filter to keep",
+}
+
+
 class TheDoors(DatabaseTest):
     async def test_every_door_that_reads_connections_filters_confirmed(self) -> None:
         """The doors as the database has them (the last definition of each, not a string in the
@@ -219,6 +229,8 @@ class TheDoors(DatabaseTest):
         keywords = {"where", "on", "join", "left", "inner", "set", "using", "as", "cross", "for"}
         loose: list[str] = []
         for name, src in doors.items():
+            if name in CHECKS_ONLY:
+                continue
             for found in re.finditer(r"memory_relations(?:\s+(?:AS\s+)?([A-Za-z_]\w*))?", src):
                 alias = found.group(1)
                 alias = None if alias is None or alias.lower() in keywords else alias

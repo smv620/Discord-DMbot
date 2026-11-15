@@ -731,11 +731,14 @@ async def conditions_for(
     )
     facts = [(_fact(r), r) for r in rows]
     if relation_ids:  # (a road taken away, or ended, keeps its rows for Undo but shows nothing)
+        # A player is told only of a confirmed road: one DMbot read and the DM hasn't kept is
+        # secret and unproved (test_relation_readers), whatever the gate says of its knowers.
         live = {
             str(r["id"])
             for r in await scope.select(
                 RELATIONS,
-                " AND id = ANY(%s) AND status <> 'rejected' AND to_session_at IS NULL",
+                " AND id = ANY(%s) AND to_session_at IS NULL"
+                + (" AND status <> 'rejected'" if viewer.dm else " AND status = 'confirmed'"),
                 [list(relation_ids)],
             )
         }

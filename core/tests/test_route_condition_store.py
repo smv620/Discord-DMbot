@@ -206,6 +206,24 @@ class RouteCondition(_Road):
         assert road is not None
         self.assertEqual((road.now.value, road.now.status), ("hard", mf.CONFIRMED))
 
+    async def test_a_road_the_dm_hasnt_kept_tells_players_nothing(self) -> None:
+        """(a proposed connection is secret and unproved, whatever its knowers:
+        test_relation_readers)"""
+        pc = await self.add("Testa", type="player_character", played_by=9, status="confirmed")
+        made = await self.relate(
+            self.targos, "route_to", self.pass_, detail="track", status="proposed"
+        )
+        track = made.value[0].id
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, gate.CONNECTION, track, [pc], source=DM
+        )
+        await self.set("closed", place_id="", relation_id=track)
+        await self.memory.show_road_condition(GUILD_A, self.c, track, True, source=DM)
+        self.assertIsNone(await self.cond(track, viewer=gate.Viewer.player([pc])))
+        got = await self.cond(track)  # (the DM sees it)
+        assert got is not None
+        self.assertEqual(got.now.value, "closed")
+
     async def test_a_backup_carries_a_place_and_a_road_with_their_history(self) -> None:
         await self.set("open")
         await self.session(SESSION_5)
