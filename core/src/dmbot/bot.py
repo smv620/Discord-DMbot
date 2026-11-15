@@ -14718,13 +14718,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def _orphan_channels_in(
         self, guild: discord.Guild, sightings: orphan_channels.Sightings
     ) -> None:
-        live = orphan_channels.live_channel_ids(await self.campaigns.list_campaigns(guild.id))
+        # every channel any live campaign of this server points to (read in one go)
+        live = await self.campaigns.special_channel_ids(guild.id)
         me = guild.me
         found = await orphan_channels.sweep(
+            guild.id,
             guild.text_channels,
             live,
             sightings,
-            can_manage=me is not None and guild.me.guild_permissions.manage_channels,
+            can_manage=me is not None and me.guild_permissions.manage_channels,
         )
         if found.seen or found.deleted or found.failed:
             log.info(

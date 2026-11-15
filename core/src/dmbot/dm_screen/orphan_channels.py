@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 from typing import Protocol
 
@@ -88,18 +88,22 @@ class Result:
 
 
 class Sightings:
-    """When each orphan was first seen, in memory (one per bot process)."""
+    """When each orphan was first seen, in memory (one per bot process, kept per server: a look at
+    one server must never forget what another's showed)."""
 
     def __init__(self) -> None:
-        self._first: dict[int, float] = {}
+        self._first: dict[int, dict[int, float]] = {}
 
-    def note(self, orphans: Collection[int], now: float) -> dict[int, float]:
-        """Keep the first sighting of each orphan, forget a channel no longer one."""
-        self._first = {cid: self._first.get(cid, now) for cid in orphans}
-        return dict(self._first)
+    def note(self, guild_id: int, orphans: Collection[int], now: float) -> dict[int, float]:
+        """Keep the first sighting of each of this server's orphans, forget a channel of this
+        server that is no longer one."""
+        before = self._first.get(guild_id, {})
+        self._first[guild_id] = {cid: before.get(cid, now) for cid in orphans}
+        return dict(self._first[guild_id])
 
 
 async def sweep(
+    guild_id: int,
     channels: Iterable[Candidate],
     live_ids: Collection[int],
     sightings: Sightings,
@@ -107,12 +111,12 @@ async def sweep(
     can_manage: bool,
     now: float | None = None,
 ) -> Result:
-    """One server's look. `channels`: its text channels; `live_ids`: the DM Bot, transcript and
-    DM screen channel ids of its live campaigns (this server's only). Never raises for one
-    channel's trouble: it is counted and the rest go on."""
+    """One server's look. `channels`: its text channels; `live_ids`: every special channel id its
+    live campaigns point to (`CampaignStore.special_channel_ids`: this server's only). Never
+    raises for one channel's trouble: it is counted and the rest go on."""
     when = time.time() if now is None else now
     orphans = [c for c in channels if c.id not in live_ids and kind_of(c.name, c.topic) is not None]
-    first = sightings.note([c.id for c in orphans], when)
+    first = sightings.note(guild_id, [c.id for c in orphans], when)
     if not can_manage:
         return Result(len(orphans), 0, skipped="no permission")
     due = [c for c in orphans if when - first[c.id] >= GRACE_S and age_s(c.id, when) >= GRACE_S]
@@ -132,14 +136,3 @@ def told_words(deleted: int) -> str:
     """What the server's owner is told once a sweep that deleted something: counts only, no
     campaign or channel name."""
     return f"DMbot removed {deleted} leftover channel(s) of campaigns that no longer exist."
-
-
-def live_channel_ids(campaigns: Iterable[Mapping[str, object] | object]) -> set[int]:
-    """The channel ids a server's live campaigns point to."""
-    live: set[int] = set()
-    for campaign in campaigns:
-        for field in ("dm_bot_channel_id", "transcript_channel_id", "dm_screen_channel_id"):
-            value = getattr(campaign, field, None)
-            if isinstance(value, int) and value:
-                live.add(value)
-    return live

@@ -102,8 +102,9 @@ class TheSweep(unittest.IsolatedAsyncioTestCase):
         at: float,
         *,
         can: bool = True,
+        guild_id: int = 1,
     ) -> orphan_channels.Result:
-        return await sweep(channels, live, seen, can_manage=can, now=at)
+        return await sweep(guild_id, channels, live, seen, can_manage=can, now=at)
 
     async def test_an_orphan_goes_only_at_the_second_sweep_a_day_after_the_first(self) -> None:
         gone = dm_bot()
@@ -197,6 +198,18 @@ class TheSweep(unittest.IsolatedAsyncioTestCase):
         await self.look([in_b], {in_b.id}, seen_b, NOW + 3 * DAY)
         self.assertFalse(in_b.deleted)
 
+    async def test_one_servers_look_never_forgets_anothers(self) -> None:
+        # the bot shares one `Sightings` between servers: A, then B, then A again
+        a_gone, b_gone = dm_bot(serial=1, name="Alpha"), dm_bot(serial=2, name="Beta")
+        seen = Sightings()
+        await self.look([a_gone], set(), seen, NOW, guild_id=1)
+        await self.look([b_gone], set(), seen, NOW + 3600, guild_id=2)
+        await self.look([], set(), seen, NOW + 7200, guild_id=3)  # (a server with none)
+        done = await self.look([a_gone], set(), seen, NOW + DAY, guild_id=1)
+        self.assertEqual((done.deleted, a_gone.deleted), (1, True))  # A's first sighting survived
+        later = await self.look([b_gone], set(), seen, NOW + 3600 + DAY, guild_id=2)
+        self.assertEqual((later.deleted, b_gone.deleted), (1, True))
+
 
 class TheWords(unittest.TestCase):
     def test_the_owner_hears_a_count_and_nothing_else(self) -> None:
@@ -204,13 +217,3 @@ class TheWords(unittest.TestCase):
             orphan_channels.told_words(2),
             "DMbot removed 2 leftover channel(s) of campaigns that no longer exist.",
         )
-
-    def test_the_live_ids_are_the_three_a_campaign_points_to(self) -> None:
-        @dataclass
-        class C:
-            dm_bot_channel_id: int | None
-            transcript_channel_id: int | None
-            dm_screen_channel_id: int | None
-
-        live = orphan_channels.live_channel_ids([C(1, 2, 3), C(None, 4, 0)])
-        self.assertEqual(live, {1, 2, 3, 4})
