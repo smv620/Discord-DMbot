@@ -167,8 +167,9 @@ async def _choose(interaction: discord.Interaction, campaign_id: str, name: str)
     await interaction.response.defer()
     try:
         await memory.choose_setting(campaign.guild_id, campaign.id, name, source=DM)
-    except MemoryRuleError as exc:  # (its words say what to do)
+    except MemoryRuleError as exc:  # (its words say what to do; the card stays as it is)
         await interaction.followup.send(str(exc), ephemeral=True)
+        return
     except Exception:
         log.exception("Couldn't choose the campaign's setting")
         await interaction.followup.send(FAILED, ephemeral=True)
@@ -254,14 +255,15 @@ class WorldMenu(
     async def callback(self, interaction: discord.Interaction) -> Any:
         from dmbot.dm_screen import settings
 
+        allowed = await settings._may(interaction, self.campaign_id)
+        if allowed is None:
+            return
+        if interaction.user.id not in allowed[0].dm_user_ids:
+            await interaction.response.send_message(ONLY_DMS, ephemeral=True)
+            return
         value = self.item.values[0]
         if value == OWN:
-            allowed = await settings._may(interaction, self.campaign_id)
-            if allowed is None:
-                return
-            if interaction.user.id not in allowed[0].dm_user_ids:
-                await interaction.response.send_message(ONLY_DMS, ephemeral=True)
-                return
+            # (a form isn't registered anywhere: one open across a restart fails, as all forms do)
             await interaction.response.send_modal(OwnWorldForm(self.campaign_id))
             return
         world = next((w for w in WORLDS if w.key == value), None)

@@ -216,3 +216,34 @@ class Picking(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(it.client.memory.choose_setting.await_args.args[2], "Golarion")
         it.followup.send.assert_awaited_once()
         self.assertIn("Too small.", it.followup.send.await_args.args[0])
+
+
+class Templates(unittest.IsolatedAsyncioTestCase):
+    async def test_pick_button_and_menu_round_trip(self) -> None:
+        for cls, custom in (
+            (PickButton, f"dmbot:setpick:{CAMPAIGN}"),
+            (WorldMenu, f"dmbot:setworld:{CAMPAIGN}"),
+        ):
+            match = cls.__discord_ui_compiled_template__.fullmatch(custom)
+            assert match is not None
+            item = await cls.from_custom_id(MagicMock(), MagicMock(), match)
+            self.assertEqual(item.campaign_id, CAMPAIGN)
+
+    async def test_a_non_dm_on_the_own_world_choice_gets_no_form(self) -> None:
+        it = press(PLAYER, found=campaign())
+        it.response.send_modal = AsyncMock()
+        menu = WorldMenu(CAMPAIGN)
+        object.__setattr__(menu.item, "_values", [OWN])
+        await menu.callback(it)
+        it.response.send_modal.assert_not_awaited()
+        self.assertIn("DM", it.response.send_message.await_args.args[0])
+
+    async def test_a_refusal_leaves_the_card_and_says_why(self) -> None:
+        it = press(DM, found=campaign())
+        it.client.memory = MagicMock()
+        it.client.memory.choose_setting = AsyncMock(side_effect=MemoryRuleError("Too small."))
+        menu = WorldMenu(CAMPAIGN)
+        object.__setattr__(menu.item, "_values", ["eberron"])
+        await menu.callback(it)
+        it.edit_original_response.assert_not_awaited()
+        self.assertIn("Too small.", it.followup.send.await_args.args[0])
