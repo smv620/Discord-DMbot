@@ -127,6 +127,7 @@ What the graph should hold after the sample lore document is read: [Icewind Dale
 | l050 | Caer-Dineval | in | Ten-Towns | stated | yes | yes | 96 | listed with its sacrifice (also line 7) |
 | l051 | Caer-Konig | in | Ten-Towns | stated | yes | yes | 96 | listed with its sacrifice (also line 7) |
 | l052 | Lonelywood | in | Ten-Towns | stated | yes | yes | 96 | listed with its sacrifice (also line 7) |
+| l127 | Dougan's Hole | in | Ten-Towns | stated | yes | yes | 96 | listed with its sacrifice (added to the lore on 2026-11-15; not on line 7) |
 | l053 | Ten-Towns | in | Icewind Dale | stated | yes | yes | 63 |  |
 | l054 | Sacrifice of souls | in | Targos | stated | yes | yes | 7 | held there every ten-day (line 96) |
 | l055 | Sacrifice of souls | in | Bryn Shander | stated | yes | yes | 7 | held there every ten-day (line 96) |
@@ -345,7 +346,6 @@ No other character's language is stated, so any other language row is extra.
 - 'The Brotherhood' in the note is named once and nothing is said about it: no members, no leader, and it is not the Explorer's League
 - the unnamed boy who shouts the news, the unnamed beggar woman's prophecy and the unnamed ghost's own name: do not invent names for them
 - 'Eashaven' is Easthaven spelled wrongly (one place, not two)
-- the Ten-Towns settlement 'Dougan's Hole' is not in this document, so it must not appear
 - the Sylvan runes on Claude's wolf figurine (line 48) are writing on an item, not a language Claude speaks: no language row for him
 
 ## Waits for a later slice
