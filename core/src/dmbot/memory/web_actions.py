@@ -965,8 +965,8 @@ async def _thread(
     suggestion's own list, so no name or id is ever typed) and, if the DM renamed it, that name;
     🚫 turns it down for good. The suggestion is read again here, so one answered meanwhile (in
     Discord, or a second press) is `gone`. ↩ Undo takes back only a keep this DM's own done action
-    made, or a turn-down of a suggestion (which only puts it back to waiting). Words and counts
-    only."""
+    made; putting a turned-down suggestion back to waiting is open to any DM of the campaign, as
+    Discord's ↩ is (it only makes the suggestion wait again). Words and counts only."""
     from dmbot.memory.thread_suggestions import GONE as SUGGESTION_GONE
     from dmbot.memory.thread_suggestions import ThreadSuggestionStore, unkeep_in
 
@@ -1000,9 +1000,12 @@ async def _thread(
             source=DM, suggestion_id=shown.id,
         )  # fmt: skip
     except MemoryRuleError as exc:  # (TooLateToUndo is one: a name was changed since)
-        # (a refused keep or turn-down is a suggestion that is not there any more)
-        undo = a.action == "thread-undo" and str(exc) != SUGGESTION_GONE
-        return _failed(CHANGED if undo else GONE)
+        if str(exc) == ALREADY_UNDONE:
+            return Outcome()  # (a second Undo of the same keep: done, as a retry is)
+        if a.action == "thread-undo":
+            return _failed(CHANGED)  # (something done since is in the way)
+        # A keep the store refuses for the DM's own name is not "answered meanwhile".
+        return _failed(GONE if str(exc) == SUGGESTION_GONE else BAD_TARGET)
     return Outcome(
         result_id=str(done.value.id),
         batches=(done.batch,) if done.batch is not None else (),

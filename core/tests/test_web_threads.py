@@ -128,6 +128,31 @@ class TheActions(Threads):
         (back,) = await self.waiting()
         self.assertEqual(back["id"], one["id"])
 
+    async def test_a_keep_whose_name_the_store_refuses_is_not_called_gone(self) -> None:
+        (one,) = await self.waiting()
+        got = await self.act("thread-keep", f"{one['id']} 0 @@@")
+        self.assertIn(got.error, (wa.BAD_TARGET, ""))  # (refused as a name, or kept as typed)
+        if got.error:
+            self.assertEqual(len(await self.waiting()), 1)  # (still waiting: nothing was kept)
+
+    async def test_a_second_undo_of_a_keep_is_done_not_changed(self) -> None:
+        (one,) = await self.waiting()
+        (batch,) = (await self.act("thread-keep", f"{one['id']} 0")).batches
+        self.assertEqual((await self.act("thread-undo", f"keep {batch}")).error, "")
+        self.assertEqual((await self.act("thread-undo", f"keep {batch}")).error, "")
+
+    async def test_a_player_cannot_queue_a_thread_action(self) -> None:
+        (one,) = await self.waiting()
+        bob = await self.signed(BOB, THURSDAY)
+        async with self.web.user(bob.user_id, session=bob.id_hash) as conn:
+            await _scoped(conn, self.g)
+            cur = await conn.execute(
+                "SELECT dmbot_web_name_action_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
+                (self.g, self.one.id, None, "thread-not", "", "", one["id"], False),
+            )
+            found = await cur.fetchone()
+        self.assertNotEqual((found or {"r": {}})["r"].get("status"), "ok")
+
     async def test_keep_with_nobody_left_on_still_keeps_the_thread(self) -> None:
         (one,) = await self.waiting()
         self.assertEqual((await self.act("thread-keep", f"{one['id']} -")).error, "")
