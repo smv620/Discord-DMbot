@@ -101,6 +101,12 @@ STATE_SAID: Mapping[str, str] = {
 }  # fmt: skip
 DUE_CHOICES = (("Up front", tp.UP_FRONT), ("When the job's done", tp.AFTERWARDS), ("Not said", ""))
 DUE_SAID = {tp.UP_FRONT: "up front", tp.AFTERWARDS: "when the job's done"}
+# What a time limit's kind means, in words, on both cards (the ux-critic on #4500: "hard" alone
+# can read as "difficult")
+LIMIT_SAID = {
+    tp.HARD: "hard: miss it and something's lost",
+    tp.SOFT: "soft: miss it and things get worse",
+}
 HELP_CHOICES = (("Theirs to keep", "to_keep"), ("Lent: give it back", "lent"))
 LIMIT_CHOICES = (("Hard: something's lost", tp.HARD), ("Soft: things get worse", tp.SOFT))
 # what the card folds into "Also: …" instead of a line each, so it stays one phone screen
@@ -223,7 +229,7 @@ def card_lines(
         if p.state in FOLDED[tp.TIME_LIMIT]:
             folded[p.state] = folded.get(p.state, 0) + 1
             continue
-        kind = f" ({'hard' if p.limit_kind == tp.HARD else 'soft'})" if p.limit_kind else ""
+        kind = f" ({LIMIT_SAID[p.limit_kind]})" if p.limit_kind else ""
         lines.append(f"⏰ **Time limit:** {_md(p.words)}{kind}" + mark(p))
     if folded:
         said = ", ".join(f"{n} {FOLDED_SAID[s]}" for s, n in folded.items())

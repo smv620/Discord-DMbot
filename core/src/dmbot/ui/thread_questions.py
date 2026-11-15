@@ -56,10 +56,10 @@ WHO_HOLDER = "Who's involved"
 # Slice 3 (#4500): the thread's steps, rewards, help, time limit and branches, in the 📋 screen's
 # own words (`ui/thread_parts`), each one the DM can untick before keeping
 PARTS_HEADING = "**What's in it:**"
-PARTS_UNTICK = "Untick anything that's wrong. The rest is kept with it."
+PARTS_UNTICK = "Untick anything that doesn't belong in it. The rest is kept with it."
 PARTS_HOLDER = "What's in it"
 BRANCH_WORD = "🌿 Branch"
-HINT_SAID = "just a hint: a question your lore leaves open"
+HINT_SAID = "just a hint: your lore leaves it open"
 AFTER = (
     "Keep it, and it goes on your 🧵 Threads list and the website's Story Graph. Players see it "
     "only if your DM screen lets them."
@@ -92,22 +92,24 @@ def undone_text(name: str) -> str:
 def line_for(line: ReadPart | ReadBranch, names: Mapping[str, str]) -> tuple[str, str]:
     """One line of what's in a suggestion, as (its words, what it is): "100 gold" / "Reward from
     Hlin Trollbane, when the job's done". The kinds and states are the 📋 screen's words."""
-    from dmbot.ui.thread_parts import DUE_SAID, KIND_WORDS, STATE_SAID
+    from dmbot.ui.thread_parts import DUE_SAID, KIND_WORDS, LIMIT_SAID, STATE_SAID
 
     if isinstance(line, ReadBranch):
         return line.name, f"{BRANCH_WORD}, {HINT_SAID}" if line.state == HINTED else BRANCH_WORD
-    what = KIND_WORDS[line.kind]
     who = names.get(line.who_id or "", "")
-    if who:
-        what += f" from {who}"
+    # (lent help and a gift say it the 🧵 card's way: "Lent by …", "Given by …", the ux-critic)
+    if line.kind == tp.HELP and line.state == "lent":
+        what = f"Lent by {who}" if who else "Lent"
+        return line.words, what + (f", to return: {line.terms}" if line.terms else ", to give back")
+    if line.kind == tp.REWARD_GIVEN:
+        return line.words, (f"Given by {who}" if who else "Given") + ", not promised"
+    what = KIND_WORDS[line.kind] + (f" from {who}" if who else "")
     if line.due:
         what += f", {DUE_SAID[line.due]}"
     if line.kind == tp.HELP:
         what += f", {STATE_SAID[line.state]}"
-        if line.terms:
-            what += f" ({line.terms})"
     if line.limit_kind:
-        what += f", {'hard' if line.limit_kind == tp.HARD else 'soft'}"
+        what += f", {LIMIT_SAID[line.limit_kind]}"
     return line.words, what
 
 

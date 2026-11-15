@@ -191,6 +191,7 @@ class TheCard(unittest.TestCase):
         tr.ReadPart(tp.HELP, "his mule", "lent", "q", "pell", terms="bring her back fed"),
         tr.ReadPart(tp.HELP, "a map", "to_keep", "q"),
         tr.ReadPart(tp.TIME_LIMIT, "before the thaw", "running", "q", limit_kind=tp.HARD),
+        tr.ReadPart(tp.REWARD_GIVEN, "a warm meal", "given", "q", "pell"),
     )
     branch = tr.ReadBranch("mystery", "What happened to Ander?", "x", "q", HINTED)
 
@@ -207,9 +208,10 @@ class TheCard(unittest.TestCase):
             [
                 ("drive Gnashwater off", "Step"),
                 ("thirty gold", "Reward from Old Pell, when the job's done"),
-                ("his mule", "Help from Old Pell, lent (bring her back fed)"),
+                ("his mule", "Lent by Old Pell, to return: bring her back fed"),
                 ("a map", "Help, theirs to keep"),
-                ("before the thaw", "Time limit, hard"),
+                ("before the thaw", "Time limit, hard: miss it and something's lost"),
+                ("a warm meal", "Given by Old Pell, not promised"),
                 ("What happened to Ander?", f"{ui.BRANCH_WORD}, {ui.HINT_SAID}"),
             ],
         )
@@ -220,7 +222,7 @@ class TheCard(unittest.TestCase):
 
     def test_the_card_lists_them_and_strikes_one_left_out(self) -> None:
         text = ui.card_text(
-            self.waiting(), NAMES, 1, 1, on=frozenset({0}), lines_on=frozenset({0, 1, 2, 3, 4})
+            self.waiting(), NAMES, 1, 1, on=frozenset({0}), lines_on=frozenset({0, 1, 2, 3, 4, 5})
         )
         self.assertIn(ui.PARTS_HEADING, text)
         self.assertIn("• thirty gold (Reward from Old Pell, when the job's done)", text)

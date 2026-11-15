@@ -77,7 +77,7 @@ class Lines(unittest.TestCase):
             [
                 "**In the way:** the road north is cut",
                 "🤲 **Lent by Jebidiah:** two sleds and eight dogs (to return: unharmed) 👁️",
-                "⏰ **Time limit:** before the new moon (hard)",
+                "⏰ **Time limit:** before the new moon (hard: miss it and something's lost)",
                 "Also: 1 overcome. Tap 📋 to see them.",
                 "🌿 **Branches:** Who killed Wit?",
                 "🌿 **Branch of:** Cerric's search",
