@@ -130,7 +130,6 @@ _TAGS: dict[str, Table] = {
     "rule_link": RULE_LINKS,
     "story_language": STORY_LANGUAGES,  # a character's languages from the story (#4229)
     "culture": CULTURES,  # the campaign's named cultures (#4257 slice 3b), before their rows
-    "map_fact": MAP_FACTS,  # a place's land, climate and who rules it (#4256)
     "thread_part": THREAD_PARTS,  # a story thread's parts (#4471), after its entries
     "state": STATES,
     "claim": CLAIMS,
