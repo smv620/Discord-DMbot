@@ -88,3 +88,31 @@ class TheDoor(Card):
         card = await thread_card.read(self.web, self.session, self.cref, self.thread)
         owed = [p["owed"] for p in card["parts"] if p["kind"] == "reward"]
         self.assertEqual(owed, [60.0])
+
+
+class TheSheet(Card):
+    """The Story Graph's quest sheet (#4540): description, state, who is in it, what waits."""
+
+    async def test_the_sheet_has_the_description_state_and_people(
+        self,
+    ) -> None:
+        made = await self.memory.keep_thread(
+            self.g, self.one.id, "Keegan's job", "quest", STATE["quest"],
+            aim="Bring the heir home.", parts=[], source=DM,
+        )  # fmt: skip
+        quest = made.value.id
+        await self.memory.involve(self.g, self.one.id, quest, self.mira, "quest giver", source=DM)
+        await self.memory.involve(self.g, self.one.id, quest, self.keep, "target", source=DM)
+        card = await thread_card.read(self.web, self.session, self.cref, quest)
+        self.assertEqual(
+            (card["thread"]["description"], card["thread"]["kind"], card["thread"]["stateWords"]),
+            ("Bring the heir home.", "Quest", "Happening now"),
+        )
+        self.assertEqual(
+            [p["role"] for p in card["people"]], ["quest giver", "target"]
+        )  # giver first
+        self.assertEqual(card["waiting"], 0)
+
+    async def test_a_thread_with_no_description_gives_an_empty_one_and_no_people(self) -> None:
+        card = await thread_card.read(self.web, self.session, self.cref, self.thread)
+        self.assertEqual((card["thread"]["description"], card["people"]), ("", []))
