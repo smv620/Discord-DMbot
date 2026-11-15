@@ -95,7 +95,7 @@ describe("the real addMap", () => {
 
   it("a failed send is a network failure, and a failed save is the bot's word", async () => {
     class Broken extends FakeXhr {
-      send(): void {
+      override send(): void {
         queueMicrotask(() => this.onerror?.());
       }
     }
