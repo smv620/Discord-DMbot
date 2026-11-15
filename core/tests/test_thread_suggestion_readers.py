@@ -14,6 +14,7 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "dmbot"
 ALLOWED = {
     "memory/thread_suggestions.py": "the one reader and writer (the DM's card and the upload)",
     "migrations/0502_thread_suggestions.py": "creates the table",
+    "migrations/0505_thread_suggestions_door.py": "the DM-only read door for the website's card",
     "campaigns/tables.py": "only names the table: a wait, left out of backups",
     "lineage.py": "only names the table, on the list of what is never stamped",
 }
