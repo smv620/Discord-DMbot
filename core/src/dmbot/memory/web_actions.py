@@ -1606,8 +1606,9 @@ async def _answer_waiting(
     one = replace(link, secret=link.secret or a.flag)  # "keep as secret" only ever hides more
     # (the DM's own "Keep as secret" press hides an existing public twin; a spelling does not)
     kept = await keep.keep_all(
-        memory, w.backstory, guild_id, cid, [one], keep_flags=not a.flag, one_press=True
-    )
+        memory, w.backstory, guild_id, cid, [one], keep_flags=not a.flag, one_press=True,
+        players="show" if a.text == "show" else "",
+    )  # fmt: skip
     return Outcome(result_id="1") if kept.kept else _failed(BAD_TARGET)
 
 

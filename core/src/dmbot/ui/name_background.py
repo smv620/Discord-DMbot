@@ -17,6 +17,7 @@ import time
 from collections import Counter
 from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, replace
+from difflib import SequenceMatcher
 from functools import partial
 from typing import Any, cast
 
@@ -3128,16 +3129,83 @@ HAND_OVER_SAID = {
     "lost": " ({a} lost it)",
 }
 HAND_OVER_KEEP = {
-    "sale": "✅ Keep also means **{a}** no longer has it.\n",
+    "sale": "Keeping it also means **{a}** no longer has it.\n",
     # (a theft or a loss never changes who owns it, whoever that is)
-    "taken": "✅ Keep also means **{a}** no longer has it with them. Who owns it doesn't change.\n",
+    "taken": "Keeping it also means **{a}** no longer has it with them. Who owns it doesn't "
+    "change.\n",
     # (kept unseen, it never changes what the players see of the one before)
     "waits": "Players don't know this yet, so to them **{a}** still has it. Once they do, you can "
     "change that on the item's name card.\n",
 }
-SECRET_NOTE = "🤫 Keep as secret hides it from players."
-# (🤫 keeps it hidden, and a hidden keep leaves what the players see of the one before as it is)
-HAND_OVER_SECRET = "🤫 Keep as secret hides it from players. **{a}** stays as they know them."
+# (a hidden keep leaves what the players see of the one before as it is, #4115)
+HAND_OVER_SECRET = "**{a}** stays as they know them."
+SHOW_PLAYERS = "👁️ Let players see it"
+HIDE_PLAYERS = "🤫 Hide from players"
+SECRET_NAME_LINE = "🤫 Hidden from players: it uses a secret name."
+
+
+@dataclass(frozen=True, slots=True)
+class PlayersView:
+    """What a connection card says about the players, and what pressing the main button does
+    about it (#4429): one place, so the line, the toggle's label and the saved flags agree."""
+
+    line: str
+    label: str  # the toggle button's words ("" = no toggle: a secret name stays hidden)
+    secret: bool  # saved as the DM's own hidden connection
+    unrevealed: bool | None  # saved as waiting to be said at the table (None = the upload's say)
+    reveal: bool  # players are to see it even if the old one was hidden
+    hidden_after: bool
+
+
+def players_view(
+    *,
+    change: bool,
+    now_hidden: bool,
+    now_secret: bool,
+    waits: bool,
+    name_secret: bool,
+    choice: bool | None,
+) -> PlayersView:
+    """The Players line of a connection card. `change` = it replaces one the campaign has;
+    `now_hidden`/`now_secret` describe that old one; `waits` = a new one would wait to be said at
+    the table; `choice` = the DM's toggle (True hides, False shows, None = the default). Pure."""
+    if name_secret:  # the text used a secret name: never a public connection naming it
+        return PlayersView(SECRET_NAME_LINE, "", True, None, False, True)
+    if change:
+        after = now_hidden if choice is None else choice
+        if not now_hidden and not after:
+            line = "👁️ Players can see it now, and still will after the update."
+            return PlayersView(line, HIDE_PLAYERS, False, False, False, False)
+        if now_hidden and after:
+            line = "🤫 Hidden from players now, and still will be after the update."
+            return PlayersView(line, SHOW_PLAYERS, now_secret, not now_secret, False, True)
+        if after:
+            line = "🤫 Players can see it now. After the update it will be hidden."
+            return PlayersView(line, SHOW_PLAYERS, True, None, False, True)
+        line = "👁️ Hidden from players now. After the update they will see it."
+        return PlayersView(line, HIDE_PLAYERS, False, False, True, False)
+    if choice is True:
+        return PlayersView("🤫 Hidden from players.", SHOW_PLAYERS, True, None, False, True)
+    if choice is None and waits:
+        line = "👁️ Players will see it once it comes up at the table."
+        return PlayersView(line, HIDE_PLAYERS, False, None, False, True)
+    return PlayersView(
+        "👁️ Players will see it.", HIDE_PLAYERS, False, False if choice is False else None,
+        choice is False, False,
+    )  # fmt: skip
+
+
+def bold_what_changed(now: str, proposed: str) -> str:
+    """`proposed` with only the words that differ from `now` in bold, so the DM sees at a glance
+    what the update changes (#4429). A whole new connection word is bold whole. Pure."""
+    a, b = now.split(), proposed.split()
+    out: list[str] = []
+    for op, _i1, _i2, j1, j2 in SequenceMatcher(None, a, b, autojunk=False).get_opcodes():
+        words = b[j1:j2]
+        if not words:
+            continue
+        out.append(f"**{' '.join(words)}**" if op != "equal" else " ".join(words))
+    return " ".join(out)
 
 
 def hand_over_lines(c: Waiting, waits: bool = False, ends: bool = True) -> tuple[str, str]:
@@ -3177,18 +3245,20 @@ class ConnectionOffer(_Menu):
         self.shown_ids: set[str] = set()  # entries the players see, read for a hand-over (#4115)
         self.busy = asyncio.Lock()  # a second press waits for the first, so none is counted twice
         grey = discord.ButtonStyle.secondary
-        self.keep = _Button(
-            partial(self._answer, False), label="✅ Keep", style=discord.ButtonStyle.success
-        )
+        self.choice: bool | None = None  # the DM's Players toggle on this card (True = hidden)
+        self._card_key: tuple[str, str, str] | None = None
+        self.keep = _Button(self._answer, label="✅ Add it", style=discord.ButtonStyle.success)
         self.add_item(self.keep)
-        self.add_item(_Button(partial(self._answer, True), label="🤫 Keep as secret", style=grey))
-        self.add_item(_Button(self._no, label="❌ No", style=grey))
-        self.add_item(_Button(self._skip, label="⏭️ Skip the rest", style=grey, row=1))
-        self.all_button = _Button(self._keep_all, label="✅ Keep all", style=grey, row=1)
+        self.no_button = _Button(self._no, label="❌ Leave it out", style=grey)
+        self.add_item(self.no_button)
+        self.toggle = _Button(self._toggle, label=HIDE_PLAYERS, style=grey, row=1)
+        self.add_item(self.toggle)
+        self.add_item(_Button(self._skip, label="⏭️ Skip the rest", style=grey, row=2))
+        self.all_button = _Button(self._keep_all, label="✅ Keep all", style=grey, row=2)
         self.add_item(self.all_button)
         self.all_done: keep.KeptAll | None = None  # what Keep all kept, for Undo
-        self.undo_button = _Button(self._undo_all, label="↩️ Undo", style=grey, row=1)
-        add_stop(self, walk, row=1)
+        self.undo_button = _Button(self._undo_all, label="↩️ Undo", style=grey, row=2)
+        add_stop(self, walk, row=2)
 
     async def _ready(self, interaction: discord.Interaction, campaign: Campaign) -> list[Waiting]:
         """The connections to ask now, oldest first (the queue read and cleaned again)."""
@@ -3221,6 +3291,15 @@ class ConnectionOffer(_Menu):
         ]
 
     def _set(self, ready: list[Waiting]) -> None:
+        # The card on screen stays first while it is still waiting: a re-read must not swap it
+        # for another one under the DM's hand (the Players toggle belongs to this card, #4429).
+        shown = self.current
+        if shown is not None:
+            at = (shown.subject_id, shown.predicate, shown.object_id)
+            for i, w in enumerate(ready):
+                if (w.subject_id, w.predicate, w.object_id) == at:
+                    ready = [w, *ready[:i], *ready[i + 1 :]]
+                    break
         mine = self._this_upload(ready)
         self.all_button.label = f"✅ Keep all {len(mine)}" if len(mine) > 1 else "✅ Keep all"
         self.all_button.disabled = len(mine) < 2
@@ -3228,10 +3307,18 @@ class ConnectionOffer(_Menu):
         self.left = len(ready)
         self.total = max(self.total, self.kept + self.left_out + self.left)
         self.current = ready[0] if ready else None
-        self.keep.disabled = bool(self.current and self.current.secret)
-        self.keep.label = (
-            "✅ Change it" if self.current and self._pair_old(self.current) else "✅ Keep"
-        )
+        c = self.current
+        key = (c.subject_id, c.predicate, c.object_id) if c else None
+        if key != self._card_key:  # a new card starts from its own default, never the last one's
+            self._card_key = key
+            self.choice = None
+        changes = bool(c and self._pair_old(c))
+        self.keep.label = "✅ Update it" if changes else "✅ Add it"
+        self.no_button.label = "❌ Leave it as it is" if changes else "❌ Leave it out"
+        if c is not None:
+            view = self._players(c)
+            self.toggle.label = view.label or HIDE_PLAYERS
+            self.toggle.disabled = not view.label
 
     async def load(self, interaction: discord.Interaction) -> bool:
         campaign = await _campaign_for(interaction, self.campaign_id)
@@ -3243,12 +3330,23 @@ class ConnectionOffer(_Menu):
     def _old(self, c: Waiting) -> list[Relation]:
         return self.changes.get((c.subject_id, c.predicate, c.object_id), [])
 
+    def _players(self, c: Waiting) -> PlayersView:
+        """What the card says about the players for `c`, and what ✅ saves (#4429)."""
+        old = self._pair_old(c)
+        return players_view(
+            change=bool(old),
+            now_hidden=bool(old) and all(r.secret or r.unrevealed for r in old),
+            now_secret=any(r.secret for r in old),
+            waits=keep.kept_unrevealed(c, False, self.shown_ids),
+            name_secret=c.secret,
+            choice=self.choice,
+        )
+
     def _hand_over_waits(self, c: Waiting) -> bool:
         """Whether keeping this hand-over leaves the one before's part as it is for now: what is
-        kept waits to be said at the table (or is secret) and their part is one the players see,
-        which a hidden tie never ends (#4115, `keep.end_replaced`)."""
-        hidden = c.secret or keep.kept_unrevealed(c, c.secret, self.shown_ids)
-        return hidden and self._hand_over_seen(c)
+        kept is hidden from the players and their part is one they see, which a hidden tie never
+        ends (#4115, `keep.end_replaced`)."""
+        return self._players(c).hidden_after and self._hand_over_seen(c)
 
     def _hand_over_seen(self, c: Waiting) -> bool:
         """Whether a tie the hand-over would end is one the players can see."""
@@ -3268,16 +3366,6 @@ class ConnectionOffer(_Menu):
             return plain
         return link_words(r.predicate, r.detail, r.directional, feeling=True, knows_how=r.knows_how)
 
-    def _change_line(self, c: Waiting, how: str, bracket: str = "") -> str:
-        """What is there now, then what the text says. Nothing changes until the DM says yes, and
-        the old connection is ended, not deleted (#3021)."""
-        old = ", ".join(self._reads(r) for r in self._pair_old(c))
-        return (
-            f"🔁 Now: **{_md(c.subject)}** {_md(old)} **{_md(c.object)}**\n"
-            f"Your text: **{_md(c.subject)}** {how} **{_md(c.object)}**{bracket}\n"
-            "✅ Change it swaps the old one for this. Nothing changes until you press it.\n"
-        )
-
     def text(self) -> str:
         """The card, with the walk's part line above it when this is inside "Check everything"."""
         if self.walk is None or self.current is None:
@@ -3292,51 +3380,61 @@ class ConnectionOffer(_Menu):
             return f"📜 Done. Kept {self.kept} connection{'' if self.kept == 1 else 's'}.{left}"
         how = link_words(
             c.predicate, c.detail, kin.directional(c.detail), feeling=True,
-            # (as it will read once kept, so "Now" and "Your text" compare like with like, #3881)
+            # (as it will read once kept, so "Now" and "Proposed" compare like with like, #3881)
             knows_how=keep.kept_how(c, self._old(c)) if c.predicate == "knows" else None,
         )  # fmt: skip
         if how == c.predicate.replace("_", " "):
             how = self.words.get(c.predicate, how)
-        note = (
-            "It uses a secret name, so players won't see it. Only 🤫 Keep as secret works."
-            if c.secret
-            else SECRET_NOTE
-        )
+        view = self._players(c)
         who = self.characters.get(c.known_by)
+        mine = ""
         if who is not None:
-            mine = _md(who[:40])
-            note += (
-                f"\n👥 ✅ Keep: you and **{mine}**'s character know it."
-                if not c.secret
-                else f"\n👥 **{mine}**'s character won't know it: it uses a secret name."
+            name = _md(who[:40])
+            mine = (
+                f"👥 **{name}**'s character will know it.\n"
+                if not view.hidden_after
+                else f"👥 **{name}**'s character won't know it while it is hidden.\n"
             )
         waits = self._hand_over_waits(c)
         ends = bool(keep.hand_over_ties(c, self._old(c))) if c.hand_over else False
         handed = hand_over_lines(c, waits, ends) if c.hand_over else ("", "")
-        if c.hand_over and not waits and not c.secret and self._hand_over_seen(c):
-            note = HAND_OVER_SECRET.format(a=_md(c.hand_over_name[:40])) + note.removeprefix(
-                SECRET_NOTE
-            )
-        note = handed[1] + note
+        extra = handed[1]
+        if c.hand_over and view.hidden_after and self._hand_over_seen(c):
+            extra += HAND_OVER_SECRET.format(a=_md(c.hand_over_name[:40])) + "\n"
+        source = (
+            f"\U0001f914 DMbot's guess (your text doesn't say it outright): "
+            f"{_md(c.inferred.rstrip('.'))}.\n"
+            if c.inferred
+            else f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
+        )
+        checked = who_resolve.checked_line(c.decided)
+        n = self.kept + self.left_out + 1
         if self._pair_old(c):
+            old = ", ".join(self._reads(r) for r in self._pair_old(c))
+            now = f"{_md(c.subject)} {_md(old)} {_md(c.object)}"
+            proposed = bold_what_changed(now, f"{_md(c.subject)} {how} {_md(c.object)}")
             return (
-                f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** "
-                "Change this?\n"
+                f"📜 **Connection {n} of {self.total}:** update it?\n"
                 + self._scope(c)
-                + self._change_line(c, how, handed[0])
-                + f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
-                + who_resolve.checked_line(c.decided)
-                + inferred_line(c.inferred)
-                + f"{note}"
+                + f"Now: {now}\n"
+                + f"Proposed: {proposed}{handed[0]}\n"
+                + mine
+                + source
+                + checked
+                + extra
+                + f"{view.line}\n"
+                + "Nothing changes until you press ✅ Update it."
             )
         return (
-            f"📜 **Connection {self.kept + self.left_out + 1} of {self.total}.** Keep this?\n"
+            f"📜 **Connection {n} of {self.total}:** add it?\n"
             + self._scope(c)
-            + f"**{_md(c.subject)}** {how} **{_md(c.object)}**{handed[0]}\n"
-            f"From your text: \u201c{_md(in_the_middle(c.quote, QUOTE_SHOWN))}\u201d\n"
-            + who_resolve.checked_line(c.decided)
-            + inferred_line(c.inferred)
-            + f"{note}"
+            + f"Proposed: **{_md(c.subject)}** {how} **{_md(c.object)}**{handed[0]}\n"
+            + mine
+            + source
+            + checked
+            + extra
+            + f"{view.line}\n"
+            + "Nothing is added until you press ✅ Add it."
         )
 
     def _scope(self, c: Waiting) -> str:
@@ -3364,7 +3462,10 @@ class ConnectionOffer(_Menu):
         if moved:  # (#4115: keeping one changes who has an item, so each is seen first)
             left.append(f"{moved} where an item changes hands")
         if not left:
-            return f"✅ Keep all keeps these {len(mine)} from {_md(c.upload)}.\n"
+            return (
+                f"✅ Keep all keeps these {len(mine)} from {_md(c.upload)}. "
+                "Keep all uses what each card says about players.\n"
+            )
         decide = left[0] if len(left) == 1 else ", ".join(left[:-1]) + " and " + left[-1]
         # (the counter above counts every one waiting; this says which the button covers and
         # which the DM checks, so the two numbers are never read as one, #4320)
@@ -3376,7 +3477,7 @@ class ConnectionOffer(_Menu):
         )
         return (
             f"✅ Keep all {len(mine)} keeps just the {len(mine)} from {_md(c.upload)}. "
-            f"{others}: {decide}.\n"
+            f"{others}: {decide}. Keep all uses what each card says about players.\n"
         )
 
     async def _show(self, interaction: discord.Interaction, ready: list[Waiting]) -> None:
@@ -3421,7 +3522,25 @@ class ConnectionOffer(_Menu):
         self._set(ready)
         return now
 
-    async def _answer(self, secret: bool, interaction: discord.Interaction) -> None:
+    async def _toggle(self, interaction: discord.Interaction) -> None:
+        """Flip the Players line of this card only; nothing is saved until ✅ (#4429)."""
+        await interaction.response.defer()
+        async with self.busy:
+            campaign = await self._dm(interaction)
+            if campaign is None or self.current is None:
+                return
+            c = await self._same(interaction, campaign)
+            if c is None:
+                return
+            # (the button says what it does: Hide sets True, Let players see it sets False)
+            self.choice = self._players(c).label == HIDE_PLAYERS
+            self._set(await self._ready(interaction, campaign))
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(
+                    content=self.text(), view=self, allowed_mentions=NO_PINGS
+                )
+
+    async def _answer(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
         async with self.busy:
             campaign = await self._dm(interaction)
@@ -3436,6 +3555,8 @@ class ConnectionOffer(_Menu):
             # don't know) is kept as secret whichever button was pressed: never a public
             # connection naming a hidden end.
             old = self._old(c)
+            view = self._players(c)
+            secret = view.secret
             now = int(time.time())
             start = keep.change_start(old, now)
             ended: list[int | None] = []
@@ -3444,7 +3565,12 @@ class ConnectionOffer(_Menu):
                 await keep.end_replaced(
                     memory, campaign.guild_id, campaign.id, old, start, ended, link=c,
                     hidden=secret or c.secret
-                    or keep.kept_unrevealed(c, secret or c.secret, shown),
+                    or ((
+                        view.unrevealed
+                        if view.unrevealed is not None
+                        else keep.kept_unrevealed(c, secret or c.secret, shown)
+                    )
+                    and not view.reveal),
                 )  # fmt: skip
                 kept = await memory.add_relation(
                     campaign.guild_id, campaign.id, c.subject_id, c.predicate, c.object_id,
@@ -3453,14 +3579,18 @@ class ConnectionOffer(_Menu):
                     directional=kin.directional(c.detail),  # "a is the parent of b" keeps its order
                     # a backstory connection waits to be said at the table (#2404), unless the
                     # upload said the players know it and both its ends are shown (#2959)
-                    unrevealed=keep.kept_unrevealed(c, secret or c.secret, shown),
+                    unrevealed=(
+                        view.unrevealed
+                        if view.unrevealed is not None
+                        else keep.kept_unrevealed(c, secret or c.secret, shown)
+                    ),
                     # ✅ Keep: the uploader's character knows it from the start; 🤫 Keep as secret
                     # is the DM's alone (#2935)
                     known_by=[c.known_by] if c.known_by and not (secret or c.secret) else (),
                     from_session_at=start if old else None,  # (starts as the old one ends)
                     # a secret SPELLING in the text never hides what the players were shown (#3025);
                     # the DM's own 🤫 button is their word and does
-                    keep_flags=not secret,
+                    keep_flags=not secret and not view.reveal,
                     # whether they've met, from the quote's own words (#3881)
                     knows_how=keep.kept_how(c, old),
                 )  # fmt: skip
@@ -3479,7 +3609,7 @@ class ConnectionOffer(_Menu):
                 # (the card says what to do, not the rule's own words: those are for the log)
                 await _tell(
                     interaction,
-                    "DMbot couldn't keep that one. Press ❌ No to move on, or try again.",
+                    "DMbot couldn't keep that one. Press the ❌ button to move on, or try again.",
                 )
                 return
             made = kept.value[0]

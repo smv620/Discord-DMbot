@@ -281,6 +281,7 @@ async def keep_all(
     *,
     keep_flags: bool = True,
     one_press: bool = False,
+    players: str = "",
 ) -> KeptAll:
     """Keep each of these ready connections. A refused one stays in the list. A connection DMbot
     inferred (#2959 item 5) is never kept by Keep all or the sure step: only by the DM's press on
@@ -289,6 +290,9 @@ async def keep_all(
     for the website's "12 of 50" (#2924); counts only. `keep_flags`: keeping a connection that
     already exists never makes it secret, so a secret spelling in the text never hides what the
     players were shown (#3025); False only when the DM pressed 🤫 Keep as secret, their own word.
+    `players` (one press only, #4432): what the DM chose about the players on the card: "hide",
+    "show", or "" for how it is now (a connection it replaces that is hidden stays hidden, one the
+    players see stays seen); a secret name always stays hidden, whatever was chosen.
     """
     done = KeptAll()
     if one_press and len(links) != 1:
@@ -296,6 +300,8 @@ async def keep_all(
     if not one_press:
         # (nor a hand-over, #4115: it ends what someone else holds, so it is seen before it is kept)
         links = [c for c in links if not c.inferred and not c.hand_over]
+    elif players not in ("", "hide", "show"):
+        raise ValueError("players is hide, show or empty.")
     total = len(links)
     if progress is not None:
         await progress(0, total)
@@ -311,25 +317,37 @@ async def keep_all(
         ended: list[int | None] = []
         on_top: list[int | None] = []
         start = change_start(old, now)
+        secret, unrevealed, flags = c.secret, kept_unrevealed(c, c.secret, shown), keep_flags
+        pair = [r for r in old if {r.subject_id, r.object_id} == {c.subject_id, c.object_id}]
+        if one_press and not c.secret and (players or pair):
+            # the card's Players line (#4432): the choice, else how the connection it replaces is
+            now_hidden = bool(pair) and all(r.secret or r.unrevealed for r in pair)
+            hide = players == "hide" or (not players and now_hidden)
+            if hide:
+                keeps_secret = players == "hide" or any(r.secret for r in pair)
+                secret, unrevealed = keeps_secret, not keeps_secret
+            else:
+                secret, unrevealed = False, False
+                flags = flags and not now_hidden  # a shown one is not hidden by an old flag
         try:
             await end_replaced(
                 memory, guild_id, campaign_id, old, start, ended, link=c,
-                hidden=c.secret or kept_unrevealed(c, c.secret, shown),
+                hidden=secret or unrevealed,
             )  # fmt: skip
             written = await memory.add_relation(
                 guild_id, campaign_id, c.subject_id, c.predicate, c.object_id,
-                source=DM, confidence=1.0, status=CONFIRMED, secret=c.secret, detail=c.detail,
+                source=DM, confidence=1.0, status=CONFIRMED, secret=secret, detail=c.detail,
                 directional=kin.directional(c.detail),  # a family role keeps who holds it
-                unrevealed=kept_unrevealed(c, c.secret, shown), decided=c.decided or None,
+                unrevealed=unrevealed, decided=c.decided or None,
                 # the uploader's character knows it, unless it uses a secret name (#2935)
                 # (a disguise is secret by nature, yet its character knows it, #3091)
                 known_by=(
                     [c.known_by]
-                    if c.known_by and (not c.secret or c.predicate == DISGUISED_AS)
+                    if c.known_by and (not secret or c.predicate == DISGUISED_AS)
                     else ()
                 ),
                 from_session_at=start if old else None,  # (starts as the old one ends)
-                keep_flags=keep_flags,
+                keep_flags=flags,
                 # whether they've met, from the quote's own words (#3881)
                 knows_how=kept_how(c, old),
             )  # fmt: skip
