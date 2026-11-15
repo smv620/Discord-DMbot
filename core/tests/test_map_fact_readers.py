@@ -23,6 +23,7 @@ ALLOWED = {
     "lineage.py": "only names the table, on the list that carries the build's stamp (#3739)",
     "migrations/0457_map_facts.py": "creates the table",
     "migrations/0492_culture_population.py": "adds the culture and who-lives-here layers (#4257)",
+    "migrations/0496_named_cultures.py": "adds `culture_id`; typed cultures become named (#4257)",
     "maps/store.py": "`remove_map` clears a fact's `map_id` through the log before the map goes",
     "migrations/0472_campaign_maps.py": "adds the `map_id` column; nothing reads it (#4344)",
     "migrations/0466_place_world_table_door.py": "confirmed, shown rows; gate and for_players",
