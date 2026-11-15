@@ -144,7 +144,9 @@ _OPEN = " AND status <> 'rejected' AND to_session_at IS NULL"
 
 async def story_now(w: Changes) -> int:
     """The story's time for a change said now: the campaign's latest session's start, or, before
-    any session, the campaign's own start (the rule ruled for route condition on #4258)."""
+    any session, the campaign's own start (the rule ruled for route condition on #4258). The same
+    rule as `map_fact_store.story_now` in #4452, not merged when this was written: once both are
+    in, one calls the other."""
     cur = await w.conn.execute(
         "SELECT COALESCE((SELECT max(started_at) FROM transcript_sessions"
         " WHERE guild_id = %(g)s AND campaign_id = %(c)s),"
@@ -289,12 +291,16 @@ async def add(
 _EDITABLE = ("words", "who_id", "about_id", "due", "terms", "limit_kind", "under_id")
 
 
-async def correct(w: Changes, onto: Ontology, part_id: str, **changes: Any) -> dict[str, Any]:
+async def correct(
+    w: Changes, onto: Ontology, part_id: str, *, in_story: bool = False, **changes: Any
+) -> dict[str, Any]:
     """The DM changes a standing part from its card. Supervisor's boundary on #4471: rewording that
     doesn't change what is true, who or what it names, and where it sits are corrected in place
     (never history); a change to what is true (a reward's amount through its new words, when it is
     due, a loan's terms, a soft limit made hard) is a change in the story, so the old row closes and
-    a new one opens, as a tick does (`_story_change`). When in doubt, a change in the story."""
+    a new one opens, as a tick does (`_story_change`). When in doubt, a change in the story.
+    `in_story`: the DM said "it changed in the story" for new words too (the card asks), so the
+    old words stay as history."""
     unknown = set(changes) - set(_EDITABLE)
     if unknown:
         raise ValueError(f"Not a correction: {sorted(unknown)}")
@@ -338,7 +344,7 @@ async def correct(w: Changes, onto: Ontology, part_id: str, **changes: Any) -> d
         await _check_names(w, onto, kind, who, about)
         new["who_id"], new["about_id"] = who, about
     new = {k: v for k, v in new.items() if row[k] != v}
-    if new.keys() & _STORY_FIELDS:
+    if new and (in_story or new.keys() & _STORY_FIELDS):
         return await _story_change(w, row, new)
     return await w.update(THREAD_PARTS, part_id, new) if new else row
 

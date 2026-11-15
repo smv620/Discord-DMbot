@@ -1638,14 +1638,22 @@ class MemoryStore:
             return Written(thread_parts.from_row(row), w.batch)
 
     async def correct_thread_part(
-        self, guild_id: int, campaign_id: str, part_id: str, *, source: str, **changes: Any
+        self,
+        guild_id: int,
+        campaign_id: str,
+        part_id: str,
+        *,
+        source: str,
+        in_story: bool = False,
+        **changes: Any,
     ) -> Written[thread_parts.Part]:
-        """The DM corrects a part in place (#4471; `thread_parts.correct`): never history."""
+        """The DM changes a part (#4471; `thread_parts.correct`): a fix in place, or a change in the
+        story that keeps the old one as history (`in_story`, or what changing always is)."""
         if source != DM:
             raise MemoryRuleError(thread_parts.ONLY_DM)
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
-            row = await thread_parts.correct(w, onto, part_id, **changes)
+            row = await thread_parts.correct(w, onto, part_id, in_story=in_story, **changes)
             return Written(thread_parts.from_row(row), w.batch)
 
     async def set_thread_part_state(
@@ -2067,6 +2075,7 @@ class MemoryStore:
         bigger_id: str,
         *,
         source: str,
+        move: bool = False,
         from_session_at: int | None = None,
     ) -> Written[Relation]:
         """The DM says one kept thread is a branch of a bigger one (#4471, quests design §6a): a
@@ -2076,11 +2085,35 @@ class MemoryStore:
         if source != DM:
             raise MemoryRuleError("Only the DM can do that.")
         async with self._write(guild_id, campaign_id, source) as w:
+            if move:  # ("Move it": the old link is taken off in the same change, one Undo)
+                await _take_off_branch(w, branch_id)
             fact, _flags = await self.add_relation_in(
                 w, branch_id, threads_mod.BRANCH_OF, bigger_id, confidence=1.0,
                 status=CONFIRMED, from_session_at=from_session_at,
             )  # fmt: skip
             return Written(fact, w.batch)
+
+    async def bigger_thread(self, guild_id: int, campaign_id: str, thread_id: str) -> str | None:
+        """The bigger thread this one is a branch of, if any (#4471): the card's "already a branch
+        of …" question. The DM's read."""
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(
+                RELATIONS,
+                " AND predicate = 'branch_of' AND status = 'confirmed' AND to_session_at IS NULL"
+                " AND subject_id = %s",
+                [thread_id],
+            )
+        return str(rows[0]["object_id"]) if rows else None
+
+    async def not_a_branch(
+        self, guild_id: int, campaign_id: str, thread_id: str, *, source: str
+    ) -> Written[bool]:
+        """ "Not a branch of anything" (#4471): its branch link is taken off. False when it had
+        none."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            return Written(await _take_off_branch(w, thread_id), w.batch)
 
     async def health_counts(
         self, guild_id: int, campaign_id: str, *, since: int, recent: int
@@ -9661,6 +9694,20 @@ async def _check_led_to_live(w: Changes, relation_id: str | None, start: str, en
             raise MemoryRuleError(LED_TO_CONFIRM)
     if threads_mod.would_loop(await _live_led_to(w, skip=relation_id), start, end):
         raise MemoryRuleError(LED_TO_LOOP)
+
+
+async def _take_off_branch(w: Changes, thread_id: str) -> bool:
+    """A thread's live "branch of" link is taken off (rejected, logged), for a move or "not a
+    branch of anything" (#4471). True when there was one."""
+    rows = await w.select(
+        RELATIONS,
+        " AND predicate = 'branch_of' AND status = 'confirmed' AND to_session_at IS NULL"
+        " AND subject_id = %s",
+        [thread_id],
+    )
+    for r in rows:
+        await w.update(RELATIONS, str(r["id"]), {"status": "rejected"})
+    return bool(rows)
 
 
 async def _check_branch_live(w: Changes, relation_id: str | None, branch: str, bigger: str) -> None:

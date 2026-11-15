@@ -169,10 +169,17 @@ class CorrectOrHistory(_Thread):
             GUILD_A, self.c, more.value.id, due=tp.AFTERWARDS, source=DM
         )
         self.assertNotEqual(later.value.id, more.value.id)
+        # the DM says new words changed in the story: the old ones stay as history
+        told = await self.memory.correct_thread_part(
+            GUILD_A, self.c, later.value.id, words="150 gold and a horse", in_story=True,
+            source=DM,
+        )  # fmt: skip
+        self.assertNotEqual(told.value.id, later.value.id)
+        later = told
         history = await self.memory.parts_of_threads(
             GUILD_A, self.c, [self.quest], gate.Viewer.the_dm(), history=True
         )
-        self.assertEqual(len(history), 3)  # (two closed rows and the one standing)
+        self.assertEqual(len(history), 4)  # (three closed rows and the one standing)
         self.assertEqual([p.id for p in await self.standing()], [later.value.id])
 
 
@@ -269,6 +276,19 @@ class BranchOf(_Thread):
             await self.memory.branch_of(GUILD_A, self.c, self.hlin, search, source=DM)
         with self.assertRaisesRegex(MemoryRuleError, "Only the DM"):
             await self.memory.branch_of(GUILD_A, self.c, self.quest, search, source="background")
+
+    async def test_move_it_and_not_a_branch_each_one_undo(self) -> None:
+        wit = await self.add("Who killed Wit?", type="quest", status="confirmed")
+        search = await self.add("Cerric's search", type="quest", status="confirmed")
+        await self.memory.branch_of(GUILD_A, self.c, wit, search, source=DM)
+        moved = await self.memory.branch_of(GUILD_A, self.c, wit, self.quest, source=DM, move=True)
+        self.assertEqual(await self.memory.bigger_thread(GUILD_A, self.c, wit), self.quest)
+        assert moved.batch is not None
+        await self.memory.undo(GUILD_A, self.c, moved.batch, source=DM)
+        self.assertEqual(await self.memory.bigger_thread(GUILD_A, self.c, wit), search)
+        off = await self.memory.not_a_branch(GUILD_A, self.c, wit, source=DM)
+        self.assertTrue(off.value)
+        self.assertIsNone(await self.memory.bigger_thread(GUILD_A, self.c, wit))
 
     async def test_a_merge_giving_a_thread_two_bigger_ones_is_refused(self) -> None:
         a = await self.add("Side errand", type="quest", status="confirmed")
