@@ -18,7 +18,6 @@ from typing import Any
 
 import discord
 
-from dmbot.memory import thread_read as tr
 from dmbot.memory.models import DM, MemoryRuleError, TooLateToUndo
 from dmbot.memory.thread_suggestions import ThreadSuggestionStore, Waiting
 from dmbot.ui import logic
@@ -40,57 +39,74 @@ log = logging.getLogger(__name__)
 
 LABEL = "📜 Story threads"
 HEADING = "📜 **A story thread DMbot found in your lore**"
+# (the ux-critic's words on #4453)
 KEEP, RENAME, NOT_ONE, SKIP, UNDO = (
-    "✅ Keep it", "✏️ Rename…", "🚫 Not a story thread", "Skip ›", "↩ Undo",
+    "✅ Keep it", "✏️ Rename", "🚫 Not a story thread", "Skip ›", "↩ Undo",
 )  # fmt: skip
-KIND_WORDS = {"quest": "a quest, happening now", "hook": "a lead nobody has taken up yet"}
-PART_WORDS = {
-    tr.GIVER: "gave it", tr.TARGET: "who it's aimed at", tr.TAKER: "takes it on (their own)",
-    tr.MISSING: "the one missing", tr.DANGER: "in danger",
-}  # fmt: skip
-WHO_HOLDER = "Who to keep with it (all are on)"
+# The kind, then the state it is kept with in the 🧵 Threads list's own words (`STATE_WORDS`), so
+# the card never says one thing and the list another
+KIND_WORDS = {"quest": "a quest", "hook": "a hook: a lead nobody has taken up yet"}
+WHO_HEADING = "**Who's involved:**"
+UNTICK = "Untick anyone who doesn't belong in it."
+WHO_HOLDER = "Who's involved"
 AFTER = (
-    "Keep it, and it goes on your 🧵 Threads list and the Story Graph. Players don't see it unless "
-    "you show it."
+    "Keep it, and it goes on your 🧵 Threads list and the website's Story Graph. Players see it "
+    "only if your DM screen lets them."
 )
-NOTHING_LEFT = "📜 No story threads waiting. 🎉"
+NOTHING_LEFT = (
+    "📜 **Story threads**: nothing to check. 🎉 If a lore upload finds more, it shows in "
+    "❓ Questions for you."
+)
 GONE_NOW = "That one was already answered. Here are the ones still waiting."
+TOO_LATE = "⚠️ Can't undo: it was changed since. Change it in 🧵 Threads."
 NOT_AVAILABLE = (
     "Remembering names isn't switched on for this DMbot yet. Ask whoever runs DMbot to turn it on."
 )
 QUOTE_SHOWN = 200
-NAME_MAX = 80
+NAME_MAX = 100  # (as the 🧵 list's own form, `ui/threads.NewThreadForm`)
 
 
 def kept_text(name: str) -> str:
     return f"✅ Kept: **{_md(name)}** is on your 🧵 Threads list."
 
 
-TURNED_DOWN = "🚫 Noted: DMbot won't suggest it again."
-UNDONE = "↩ Undone: it's waiting again."
+def turned_down_text(name: str) -> str:
+    return f"🚫 Turned down: **{_md(name)}**. DMbot won't suggest it again."
+
+
+def undone_text(name: str) -> str:
+    return f"↩ Undone: **{_md(name)}** is waiting again."
 
 
 def card_text(
     s: Waiting, names: Mapping[str, str], at: int, of: int, *, name: str = "", on: frozenset[int]
 ) -> str:
-    """The card: the thread's name and kind, its aim, who is in it (the lines switched on), and
-    the lore it came from with the quote DMbot checked. `on`: which people lines are kept."""
+    """The card: the thread's name, kind and the state it is kept with, its aim, who is involved
+    (the lines switched on), and the lore it came from with the quote DMbot checked. `on`: which
+    people lines are kept."""
+    from dmbot.memory.threads import STATE_WORDS
+
     count = f" ({at} of {of})" if of > 1 else ""
-    lines = [f"{HEADING}{count}", f"**{_md(name or s.name)}** · {KIND_WORDS.get(s.kind, s.kind)}"]
+    state = STATE_WORDS.get(s.state, "").lower()
+    kind = KIND_WORDS.get(s.kind, s.kind)
+    lines = [
+        f"{HEADING}{count}",
+        f"**{_md(name or s.name)}** · {kind}, {state} (you can change that after keeping it)",
+    ]
     if s.aim:
         lines.append(f"What it's about: {_md(s.aim)}")
+    # (the part words are the ones the thread's own card shows once kept: `threads.ROLES`)
     people = [(i, names[who], part) for i, (part, who) in enumerate(s.parts) if who in names]
     if people:
-        lines.append("Who's in it:")
+        lines.append(WHO_HEADING)
         for i, who, part in people:
-            word = PART_WORDS.get(part, part)
             lines.append(
-                f"• {_md(who)}: {word}" if i in on else f"• ~~{_md(who)}: {word}~~ (left out)"
+                f"• {_md(who)} ({part})" if i in on else f"• ~~{_md(who)} ({part})~~ (left out)"
             )
+        lines.append(UNTICK)
     if s.quote:
-        lore = f' "{_md(s.upload)}"' if s.upload else ""
-        quote = logic.shorten(s.quote, QUOTE_SHOWN)
-        lines.append(f"From your lore{lore}: “{_md(quote)}”")
+        lines.append(f"From **{_md(s.upload)}**:" if s.upload else "From your lore:")
+        lines.append(f"> {_md(logic.shorten(s.quote, QUOTE_SHOWN))}")
     lines.append(AFTER)
     return "\n".join(lines)
 
@@ -106,7 +122,8 @@ class ThreadQuestions(_Menu):
         self.name = ""  # the DM's own name for the current one, from ✏️ Rename
         self.on: frozenset[int] = frozenset()
         self.names: dict[str, str] = {}
-        self.undo: tuple[str, int | str] | None = None  # ("keep", batch) or ("no", suggestion)
+        # ("keep", batch, name) or ("no", suggestion, name), for ↩ Undo
+        self.undo: tuple[str, int | str, str] | None = None
 
     async def _load(self, interaction: discord.Interaction) -> str | None:
         """The next card's words (its controls drawn), or None when none is left."""
@@ -146,10 +163,8 @@ class ThreadQuestions(_Menu):
                 max_values=len(people),
                 options=[
                     discord.SelectOption(
-                        label=logic.shorten(
-                            f"{self.names[who]}: {PART_WORDS.get(s.parts[i][0], s.parts[i][0])}",
-                            logic.OPTION_LABEL_MAX,
-                        ),
+                        label=logic.shorten(self.names[who], logic.OPTION_LABEL_MAX),
+                        description=logic.shorten(s.parts[i][0], logic.OPTION_LABEL_MAX),
                         value=str(i),
                         default=i in self.on,
                     )
@@ -205,13 +220,13 @@ class ThreadQuestions(_Menu):
         s, said = self.current, GONE_NOW
         try:
             if what == "undo" and self.undo is not None:
-                how, ref = self.undo
+                how, ref, was = self.undo
                 if how == "keep":
                     await memory.undo(g, c, int(ref))
                     await store.unkeep(g, c, int(ref))
                 else:
                     await store.unturn(g, c, str(ref))
-                self.undo, said = None, UNDONE
+                self.undo, said = None, undone_text(was)
             elif what == "keep" and s is not None:
                 name = self.name or s.name
                 kept = await memory.keep_thread(
@@ -219,17 +234,17 @@ class ThreadQuestions(_Menu):
                     parts=[p for i, p in enumerate(s.parts) if i in self.on],
                     source=DM, suggestion_id=s.id,
                 )  # fmt: skip
-                self.undo = ("keep", kept.batch) if kept.batch is not None else None
+                self.undo = ("keep", kept.batch, name) if kept.batch is not None else None
                 said = kept_text(name)
             elif what == "no" and s is not None:
                 self.undo = None
                 if await store.turn_down(g, c, s.id):
-                    self.undo, said = ("no", s.id), TURNED_DOWN
+                    self.undo, said = ("no", s.id, s.name), turned_down_text(s.name)
         except TooLateToUndo:
-            self.undo = None
+            self.undo, said = None, TOO_LATE
         except MemoryRuleError as exc:
             self.undo = None
-            said = f"DMbot couldn't do that. {exc}"
+            said = f"⚠️ {exc}"
         await self._show(interaction, said)
 
 
