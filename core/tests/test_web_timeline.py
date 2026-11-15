@@ -44,6 +44,14 @@ class TimelineBase(Base):
         await store.end_session(self.g, other, START + 60)
         self.bob = await self.signed(BOB)
         self.carol = await self.signed(CAROL)
+        # These tests read as a plain member of the server (Carol). Since #3891 a campaign's
+        # transcripts are its people's unless its channels are open to everyone, so they say so;
+        # `test_web_transcript_people.py` tests the rule itself.
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET channels_visibility = 'everyone' WHERE guild_id = %s",
+                (self.g,),
+            )
 
     async def signed(self, user: Any, guilds: Any = None) -> Any:
         token = await sessions.sign_in(
@@ -122,7 +130,9 @@ class TheSessions(TimelineBase):
         got = await self.read(self.bob, f"{self.g}.{self.two.id}")
         self.assertEqual([s["number"] for s in got["sessions"]], [1])
 
-    async def test_anyone_in_the_server_reads_it_and_nobody_outside_does(self) -> None:
+    async def test_with_everyone_any_member_reads_it_and_nobody_outside_the_server_does(
+        self,
+    ) -> None:
         for who in (self.session, self.bob, self.carol):
             self.assertEqual(len((await self.read(who))["sessions"]), 2)
         elsewhere = await self.signed(CAROL, [QUILLON])
@@ -135,6 +145,17 @@ class TheSessions(TimelineBase):
             with self.subTest(ref=ref), self.assertRaises(RecapError) as caught:
                 await self.read(who, ref)
             self.assertEqual(caught.exception.code, "not_found")
+
+    async def test_otherwise_only_the_campaigns_people_read_it(self) -> None:
+        # (#3891: the timeline's sessions are the transcripts' own list, so the same rule)
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET channels_visibility = 'people' WHERE guild_id = %s", (self.g,)
+            )
+        self.assertEqual(len((await self.read(self.session))["sessions"]), 2)  # (the DM)
+        with self.assertRaises(RecapError) as caught:
+            await self.read(self.carol)  # (in the server, not one of the people)
+        self.assertEqual(caught.exception.code, "not_found")
 
 
 class TheAttribution(TimelineBase):
