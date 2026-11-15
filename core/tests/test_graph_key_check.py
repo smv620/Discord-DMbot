@@ -683,6 +683,23 @@ class PlaceFacts(unittest.TestCase):
         self.assertEqual(report.map_facts["control"]["missed"], 1)
         self.assertIn("Place climate: found 1, wrong 0, missed 0, extra 0", gkc.render(report))
 
+    def test_culture_and_population_rows_the_key_lacks_are_false_notes(self) -> None:
+        """The sample keys list no culture or people (#4257 3a): any such row is an extra."""
+        key = {
+            "nodes": [{"name": "Dale", "kind": "place", "aliases": [], "note": ""}],
+            "pairs": [],
+            "map_facts": [],
+        }
+        rows = [
+            {"table": "map_fact", "id": "f1", "entity_id": "d", "layer": "culture",
+             "value": "dwarf", "faction_id": None, "status": "read", "to_session_at": None},
+            {"table": "map_fact", "id": "f2", "entity_id": "d", "layer": "population",
+             "value": "human", "faction_id": None, "status": "read", "to_session_at": None},
+        ]  # fmt: skip
+        report = gkc.check(backup([("d", "Dale", "place")], rows), key)
+        self.assertEqual(report.map_facts["culture"]["extra"], 1)
+        self.assertEqual(report.map_facts["population"]["extra"], 1)
+
 
 class Languages(unittest.TestCase):
     """A character's languages, a property of the character and never a tie (#4229; owner,

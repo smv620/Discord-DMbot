@@ -129,8 +129,8 @@ async def list_campaigns(
 async def reads_campaign(conn: Any, guild_id: int, campaign_id: str) -> bool:
     """Whether the signed-in person may read this campaign's transcripts (#4401, #3891): the
     campaign's people, or anyone in the server when its channels are open to everyone. One shared
-    test in the database (`dmbot_web_reads_campaign`, the one Discord's channels follow), so
-    the pages and the Maps page's door never differ."""
+    test in the database (`dmbot_web_reads_campaign`, the one Discord's channels follow, counting
+    every Discord id of the account), so the pages and the Maps page's door never differ."""
     cur = await conn.execute(
         "SELECT dmbot_web_reads_campaign(%s, %s) AS r", (guild_id, campaign_id)
     )

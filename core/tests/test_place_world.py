@@ -41,7 +41,7 @@ class TheLines(unittest.TestCase):
         held = {mf.TERRAIN: mf.Held((fact(mf.TERRAIN, "forest", "partly", mf.READ),))}
         dm = pw.card_lines(held, {}, dm=True)
         self.assertIn("**Land:** partly forest (DMbot read this)", dm)
-        self.assertIn(f"Tap {pw.BUTTON} to check.", dm)
+        self.assertIn(f"Tap **{pw.BUTTON}** to check.", dm)
         self.assertNotIn("DMbot read", pw.card_lines(held, {}, dm=False))
 
     def test_a_ruler_this_viewer_cant_see_is_left_out(self) -> None:
