@@ -96,3 +96,35 @@ class _NoLock:
 
     async def __aexit__(self, *exc: object) -> None:
         return None
+
+
+class PicturesRemoved(unittest.IsolatedAsyncioTestCase):
+    """The "pictures removed" count goes privately first; the DM Bot channel is the fallback, not
+    the DM screen (#3874)."""
+
+    def bot(self, campaign: SimpleNamespace, private: bool) -> SimpleNamespace:
+        return SimpleNamespace(
+            _pictures_told=set(),
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
+            ask_privately=AsyncMock(return_value=private),
+            post=AsyncMock(return_value=True),
+        )
+
+    async def test_a_dm_who_can_be_reached_gets_it_privately_only(self) -> None:
+        bot = self.bot(_campaign(11, 22), True)
+        await DMBot._tell_pictures_removed(bot, 1, "c" * 32, 3)  # type: ignore[arg-type]
+        bot.post.assert_not_awaited()
+        self.assertIn("3 old pictures", bot.ask_privately.await_args.args[2])
+
+    async def test_no_reachable_dm_falls_back_to_the_dm_bot_channel_then_the_screen(self) -> None:
+        for bot_channel, want in ((11, 11), (None, 22)):
+            bot = self.bot(_campaign(bot_channel, 22), False)
+            await DMBot._tell_pictures_removed(bot, 1, "c" * 32, 1)  # type: ignore[arg-type]
+            self.assertEqual(bot.post.await_args.args[0], want)
+            self.assertIn("1 old picture ", bot.post.await_args.args[1])
+
+    async def test_told_once_for_each_run(self) -> None:
+        bot = self.bot(_campaign(11, 22), False)
+        await DMBot._tell_pictures_removed(bot, 1, "c" * 32, 1)  # type: ignore[arg-type]
+        await DMBot._tell_pictures_removed(bot, 1, "c" * 32, 2)  # type: ignore[arg-type]
+        bot.post.assert_awaited_once()
