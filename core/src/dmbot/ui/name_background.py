@@ -3749,6 +3749,8 @@ class BulkConfirm(_Menu):
         left = self.left_to_check()
         if not left:
             return f"✅ Added {self.added}. Nothing else to check."
+        if self._addable():  # another "Add all" button is still on the card: nothing is "left"
+            return f"✅ Added {self.added} of {self.total}. {left} still waiting."
         text = (
             f"✅ Added {self.added} of {self.total}. {left} "
             f"{'is' if left == 1 else 'are'} left for you to check one by one."
@@ -3853,8 +3855,9 @@ class BulkConfirm(_Menu):
             await interaction.followup.send(text, ephemeral=True, allowed_mentions=NO_PINGS)
         if self.walk is not None:  # the names left to look at one by one, then the next part
             await start_review(interaction, self.campaign_id, bulk=False, walk=self.walk)
-        elif self.total and not self.shared and self.left_to_check():
-            # (#4427) the names left are offered at once, the same cards the walk uses
+        elif self.total and not self.shared and self.left_to_check() and not self._addable():
+            # (#4427) the names left are offered at once, the same cards the walk uses, once no
+            # "Add all" button remains (a press of one kind must not hide the others)
             await start_review(interaction, self.campaign_id, bulk=False, walk=None)
         elif total and self.queued:  # their names may be answered now
             await offer_ready(interaction, self.campaign_id)

@@ -899,6 +899,27 @@ class ThePath(NamesTest):
         self.assertEqual(view._card_words(), first)
         self.assertEqual(view.added + view.left_to_check(), view.total)  # still adds up
 
+    async def test_while_another_add_all_button_remains_nothing_is_left_to_check(self) -> None:
+        # (#4427, two kinds) a press of one kind says what is still waiting and opens nothing
+        first = "📝 **7 new names to check.** DMbot guessed what 5 of them are."
+        view = ui_bg.BulkConfirm(
+            self.campaign.id,
+            {"place": ["a", "b", "c"], "npc": ["d", "e"]},
+            first_words=first,
+            total=7,
+            extra_left=2,
+        )
+        view.ids = {"npc": ["d", "e"]}  # the places were added by their button
+        view.added = 3
+        self.assertEqual(view._card_words(), "✅ Added 3 of 7. 4 still waiting.")
+        self.assertTrue(view._addable())  # (the people's button is still there)
+        view.ids = {}  # then the people's button too
+        view.added = 5
+        self.assertEqual(
+            view._card_words(), "✅ Added 5 of 7. 2 are left for you to check one by one."
+        )
+        self.assertFalse(view._addable())
+
     async def test_with_nothing_left_the_card_says_so(self) -> None:
         view = ui_bg.BulkConfirm(
             self.campaign.id, {}, first_words="first", total=5, extra_left=0, look_alike=0
@@ -910,26 +931,45 @@ class ThePath(NamesTest):
         view = ui_bg.BulkConfirm(self.campaign.id, {"place": ["a"]})
         self.assertIs(view._ending(), discord.utils.MISSING)
 
-    async def test_after_add_the_real_card_changes_its_words_and_offers_the_rest(self) -> None:
+    async def test_after_add_the_real_card_changes_its_words_and_offers_the_rest_last(self) -> None:
         press = await self.read()
         view = press.edit_original_response.await_args.kwargs["view"]
         (button,) = [b for b in view.children if getattr(b, "label", "") == "✅ Add all 2 places"]
         it = self.it()
         await button.callback(it)
         words = str(it.edit_original_response.await_args.kwargs["content"])
-        self.assertTrue(words.startswith("✅ Added 2 of "), words)
+        # (#4427) other kinds still have their own "Add all": nothing is "left" yet, nothing opens
+        self.assertTrue(words.startswith("✅ Added 2 of 5. "), words)
+        self.assertTrue(words.endswith(" still waiting."), words)
+        self.assertNotIn("one by one", words)
         self.assertNotIn("Nothing is added until you", words)
-        self.assertIn("left for you to check one by one", words)
+        self.assertFalse([x for x in it.response.sent if "view" in x[1]])  # (no cards opened)
         self.assertEqual(view.added + view.left_to_check(), view.total)
-        self.assertTrue(it.response.sent or it.followup.send.await_count)  # the rest is offered
+        # pressing the others until none remain: then the words say what is left, and it is offered
+        last = it
+        while True:
+            more = [
+                b for b in view.children if str(getattr(b, "label", "")).startswith("✅ Add all")
+            ]
+            if not more:
+                break
+            last = self.it()
+            await more[0].callback(last)
+        said = str(last.edit_original_response.await_args.kwargs["content"])
+        self.assertTrue(
+            said.startswith("✅ Added 5")
+            and ("Nothing else to check" in said or "one by one" in said),
+            said,
+        )
+        self.assertEqual(view.added + view.left_to_check(), view.total)
         undo = [b for b in view.children if str(getattr(b, "label", "")).startswith("↩️ Undo")]
         (undo_button,) = undo
         back = self.it()
         await undo_button.callback(back)
-        self.assertIn(
-            "Nothing is added until you",
-            str(back.edit_original_response.await_args.kwargs["content"]),
-        )
+        said = str(back.edit_original_response.await_args.kwargs["content"])
+        self.assertTrue(
+            said.startswith("✅ Added ") or "Nothing is added until you" in said, said
+        )  # (the last press only: the earlier ones stay added)
 
     async def test_ideas_are_not_in_the_overall_count(self) -> None:
         view = ui_bg.BulkConfirm(self.campaign.id, {"concept": ["a", "b"], "place": ["c"]})
