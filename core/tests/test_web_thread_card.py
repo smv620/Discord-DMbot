@@ -101,8 +101,9 @@ class TheSheet(Card):
             aim="Bring the heir home.", parts=[], source=DM,
         )  # fmt: skip
         quest = made.value.id
-        await self.memory.involve(self.g, self.one.id, quest, self.mira, "quest giver", source=DM)
+        # (the target first, so the order the page shows is the role order, not the order written)
         await self.memory.involve(self.g, self.one.id, quest, self.keep, "target", source=DM)
+        await self.memory.involve(self.g, self.one.id, quest, self.mira, "quest giver", source=DM)
         card = await thread_card.read(self.web, self.session, self.cref, quest)
         self.assertEqual(
             (card["thread"]["description"], card["thread"]["kind"], card["thread"]["stateWords"]),

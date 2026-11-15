@@ -88,10 +88,16 @@ async def read(db: Database, session: Session, ref: str, thread_id: str) -> dict
     state = str(thread.get("state") or "")
     # The giver first, then the other parts in the order Discord's list knows them, then the rest.
     order = {role: i for i, role in enumerate(threads.ROLES)}
-    people = sorted(
-        got.get("people") or [],
-        key=lambda p: (order.get(str(p.get("role") or ""), len(order)), str(p["name"]).lower()),
-    )
+    # (The door already lists them by name; the sort is stable, so within a role they stay A to Z.
+    # A person and the entry it was merged into both on the thread show once, as one.)
+    seen: set[tuple[str, str]] = set()
+    unique = []
+    for p in got.get("people") or []:
+        key = (str(p["id"]), str(p.get("role") or ""))
+        if key not in seen:
+            seen.add(key)
+            unique.append(p)
+    people = sorted(unique, key=lambda p: order.get(str(p.get("role") or ""), len(order)))
     return {
         "thread": {
             "id": str(thread["id"]),
