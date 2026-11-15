@@ -16,7 +16,12 @@ import unittest
 from dmbot.memory import thread_parts as tp
 from dmbot.memory import thread_read as tr
 from dmbot.memory.models import DM, HINTED, name_key
-from dmbot.memory.thread_suggestions import ThreadSuggestionStore, Waiting, unkeep_in
+from dmbot.memory.thread_suggestions import (
+    ThreadSuggestionStore,
+    Waiting,
+    from_extra,
+    unkeep_in,
+)
 from dmbot.ui import logic
 from dmbot.ui import thread_questions as ui
 from tests.test_memory_store import GUILD_A, MemoryTest
@@ -229,6 +234,42 @@ class TheCard(unittest.TestCase):
         self.assertIn("~~What happened to Ander?", text)
         self.assertIn(ui.PARTS_UNTICK, text)
 
+    def test_a_branch_names_its_people_and_one_not_kept_yet(self) -> None:
+        branch = tr.ReadBranch(
+            "mystery", "Who killed Wit?", "x", "q", HINTED,
+            ((tr.MISSING, "ander"), (tr.DANGER, "ilsa")),
+        )  # fmt: skip
+        _, what = ui.line_for(branch, NAMES, frozenset({"ilsa"}))
+        self.assertEqual(
+            what,
+            f"{ui.BRANCH_WORD}, {ui.HINT_SAID} · Ander (the one missing), "
+            f"Ilsa ({ui.NOT_KEPT_SHORT}) (in danger)",
+        )
+
+    def test_the_card_stays_inside_discords_limit(self) -> None:
+        long = "a long winding phrase " * 20
+        many = tuple(
+            tr.ReadPart(tp.HELP, f"{n} {long}", "lent", "q", "pell", terms=long)
+            for n in range(tr.PARTS_MAX)
+        )
+        branches = tuple(
+            tr.ReadBranch("quest", f"{n} {long}"[:80], long, "q", "active",
+                          tuple((tr.TARGET, w) for w in NAMES))
+            for n in range(tr.BRANCHES_MAX)
+        )  # fmt: skip
+        big = Waiting(
+            "s", "quest", long[:100], long, long, tuple((tr.TARGET, w) for w in NAMES), long, 5,
+            many, branches,
+        )  # fmt: skip
+        text = ui.card_text(big, NAMES, 9, 9, on=frozenset(range(4)))
+        self.assertLessEqual(len(text), 2000)
+        self.assertIn("more: see the menu below", text)
+        self.assertTrue(text.endswith(ui.AFTER))
+
+    def test_stored_junk_reads_as_nothing(self) -> None:
+        for raw in ("not json", '{"reads": null, "branches": 3}', "[]", None, {"reads": [7]}):
+            self.assertEqual(from_extra(raw), ((), ()), raw)
+
     def test_a_card_from_before_shows_no_parts(self) -> None:
         old = Waiting("s", "quest", "x", "", "", (), "", 5)
         self.assertNotIn(ui.PARTS_HEADING, ui.card_text(old, {}, 1, 1, on=frozenset()))
@@ -315,14 +356,33 @@ class TheKeep(MemoryTest):
         self.assertEqual(len(await self.memory.threads(GUILD_A, self.c)), 1)
 
     async def test_a_suggestion_from_before_keeps_as_it_did(self) -> None:
-        s = tr.Suggestion(
-            "quest", "Old Pell's job", "drive the troll off", "Old Pell offers thirty gold",
-            ((tr.GIVER, self.pell),), tr.STATE["quest"],
-        )  # fmt: skip
-        await self.store.offer(GUILD_A, self.c, [s], "Notes", 5)
+        await self.offer()
+        async with self.db.guild(GUILD_A) as conn:  # (a row as 0507 left it: the default)
+            await conn.execute("UPDATE thread_suggestions SET extra = '{}'::jsonb")
+        (s,) = await self.store.waiting(GUILD_A, self.c)
+        self.assertEqual(s.lines, ())
         thread, _ = await self.keep()
         parts, _, _, branches = await self.memory.thread_card(GUILD_A, self.c, thread)
         self.assertEqual((parts, branches), ([], []))
+
+    async def test_a_waiting_branch_counts_as_suggested(self) -> None:
+        await self.offer()
+        known = {key for key, _ in await self.store.known(GUILD_A, self.c)}
+        self.assertIn(name_key("What happened to Ander?"), known)
+
+    async def test_a_giver_that_no_longer_fits_leaves_the_part_without_one(self) -> None:
+        place = await self.add("Mossford", type="place", status="confirmed")
+        s = tr.Suggestion(
+            "quest", "Pell's job", "x", "q", ((tr.GIVER, self.pell),), tr.STATE["quest"],
+            reads=(tr.ReadPart(tp.REWARD, "a room", "owed", "q", place),
+                   tr.ReadPart(tp.HELP, "a cart", "to_keep", "q", "f" * 32)),  # (gone)
+        )  # fmt: skip
+        await self.store.offer(GUILD_A, self.c, [s], "Notes", 5)
+        thread, _ = await self.keep()
+        parts, _, _, _ = await self.memory.thread_card(GUILD_A, self.c, thread)
+        self.assertEqual(
+            sorted((p.words, p.who_id) for p in parts), [("a cart", None), ("a room", None)]
+        )
 
 
 if __name__ == "__main__":

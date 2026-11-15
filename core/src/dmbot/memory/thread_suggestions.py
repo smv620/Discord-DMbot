@@ -20,6 +20,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from dmbot.memory._changes import Changes
 from dmbot.memory.models import name_key, new_id
 from dmbot.memory.thread_read import ReadBranch, ReadPart, Suggestion
 
@@ -94,30 +95,38 @@ def _text(row: dict[str, Any], key: str) -> str:
 
 def from_extra(raw: Any) -> tuple[tuple[ReadPart, ...], tuple[ReadBranch, ...]]:
     """The stored parts and branches; a row from before 0507 (or anything unreadable) has none,
-    and keeps as it did."""
-    data = raw if isinstance(raw, dict) else json.loads(raw or "{}")
+    and keeps as it did. Never raises: one bad row must not hide the whole 📜 list."""
+    try:
+        data = raw if isinstance(raw, dict) else json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return (), ()
     if not isinstance(data, dict):
         return (), ()
+    raw_reads, raw_branches = data.get("reads"), data.get("branches")
+    if not isinstance(raw_reads, list):
+        raw_reads = []
+    if not isinstance(raw_branches, list):
+        raw_branches = []
     reads = tuple(
         ReadPart(
             _text(r, "kind"), _text(r, "words"), _text(r, "state"), _text(r, "quote"),
             r["who"] if isinstance(r.get("who"), str) else None, _text(r, "due"),
             _text(r, "terms"), _text(r, "limit_kind"),
         )
-        for r in data.get("reads", []) if isinstance(r, dict)
+        for r in raw_reads if isinstance(r, dict)
     )  # fmt: skip
     branches = tuple(
         ReadBranch(
             _text(b, "kind"), _text(b, "name"), _text(b, "aim"), _text(b, "quote"),
             _text(b, "state"), _parts(b.get("parts", [])),
         )
-        for b in data.get("branches", []) if isinstance(b, dict)
+        for b in raw_branches if isinstance(b, dict)
     )  # fmt: skip
     return reads, branches
 
 
 async def lines_in(
-    w: Any, suggestion_id: str
+    w: Changes, suggestion_id: str
 ) -> tuple[tuple[ReadPart, ...], tuple[ReadBranch, ...]]:
     """Inside the keep's own write (`MemoryStore.keep_thread`): the waiting suggestion's parts and
     branches, so what is kept is what was suggested, never what a screen sent."""
@@ -165,12 +174,18 @@ class ThreadSuggestionStore:
         suggests one again (`thread_read.check`'s `have`)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT name_key, parts FROM thread_suggestions"
+                "SELECT name_key, parts, extra FROM thread_suggestions"
                 " WHERE guild_id = %s AND campaign_id = %s",
                 (guild_id, campaign_id),
             )
             rows = await cur.fetchall()
-        return [(str(r["name_key"]), frozenset(e for _, e in _parts(r["parts"]))) for r in rows]
+        known = [(str(r["name_key"]), frozenset(e for _, e in _parts(r["parts"]))) for r in rows]
+        # (a branch waiting inside another suggestion counts too, so a later upload never suggests
+        # "Who killed Wit?" again as a thread of its own: the reviewer on #4500)
+        for r in rows:
+            for b in from_extra(r["extra"])[1]:
+                known.append((name_key(b.name), frozenset()))
+        return known
 
     async def offer(
         self, guild_id: int, campaign_id: str, found: Sequence[Suggestion], upload: str, now: int

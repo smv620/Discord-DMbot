@@ -62,6 +62,7 @@ from dmbot.memory import (
     standing,
     states,
     thread_parts,
+    thread_read,
     told,
     whereabouts,
     world_notes,
@@ -9694,11 +9695,15 @@ async def _move_aliases(
     await w.update_where(ALIASES, {"used_by": keep_id}, " AND used_by = %s", [gone_id])
 
 
-async def _keep_read_part(w: Changes, onto: Ontology, thread_id: str, part: Any) -> None:
-    """One of a kept suggestion's parts (`thread_read.ReadPart`, #4500), written as the DM's keep
-    with its source 'lore'. Its giver is followed through a merge, and dropped when gone or no
-    longer a person or group; a part the thread already has is left out. The words were checked
-    against the text when read."""
+async def _keep_read_part(
+    w: Changes, onto: Ontology, thread_id: str, part: thread_read.ReadPart
+) -> None:
+    """One of a kept suggestion's parts (#4500), written as the DM's keep with its source 'lore'.
+    Its giver is followed through a merge, and dropped when gone, not kept yet, or no longer a
+    person or group; a part the thread already has, or one that no longer fits a part's rules, is
+    left out (counted in the log), so one stale line never fails the DM's keep. Catching here is
+    safe inside the write: `thread_parts.add` checks everything before its one insert, so a refusal
+    leaves nothing half written (keep it that way)."""
     who = await _followed(w, part.who_id) if part.who_id else None
     for attempt in (who, None) if who else (None,):
         try:
@@ -9708,11 +9713,14 @@ async def _keep_read_part(w: Changes, onto: Ontology, thread_id: str, part: Any)
                 source=thread_parts.LORE,
             )  # fmt: skip
             return
-        except MemoryRuleError as exc:
+        except (MemoryRuleError, ValueError) as exc:
             if str(exc) == thread_parts.SAME_PART:
                 return  # (the thread has it already)
             if attempt is None:
-                raise
+                log.info(
+                    "A read story-thread part was left out on keeping (%s)", type(exc).__name__
+                )
+                return
 
 
 async def _live_led_to(

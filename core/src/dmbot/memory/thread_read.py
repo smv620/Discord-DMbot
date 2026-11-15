@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Collection, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -467,7 +467,7 @@ def _quoted(quote: str, flat: str) -> str:
 
 
 def _check_parts(
-    s: Said, flat: str, entries: Mapping[str, Collection[str]], drop: Any
+    s: Said, flat: str, entries: Mapping[str, Collection[str]], drop: Callable[[str], None]
 ) -> tuple[ReadPart, ...]:
     """A thread's parts, checked by code (#4500; design §5, §5a, §5b, §8): each part's own quote
     must stand in the text (else `part_no_quote`); the same kind and words twice is one; help is
@@ -524,7 +524,7 @@ def _check_branches(
     entries: Mapping[str, Collection[str]],
     names: Mapping[str, str],
     seen: list[tuple[str, frozenset[str]]],
-    drop: Any,
+    drop: Callable[[str], None],
 ) -> tuple[ReadBranch, ...]:
     """A thread's branches, checked by code (#4500; design §6a): each needs its own quote in the
     text and an aim; a question is a mystery, a job a quest; one the text raises but nobody

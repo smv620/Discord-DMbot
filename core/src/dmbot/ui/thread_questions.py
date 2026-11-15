@@ -60,6 +60,12 @@ PARTS_UNTICK = "Untick anything that doesn't belong in it. The rest is kept with
 PARTS_HOLDER = "What's in it"
 BRANCH_WORD = "🌿 Branch"
 HINT_SAID = "just a hint: your lore leaves it open"
+NOT_KEPT_SHORT = "name not kept yet, left out"
+# Discord's limit on one message is 2,000 characters; a card over it can't be shown, and the queue
+# would stick on it (the reviewer on #4500). Each line is cut short, and past this budget the list's
+# last lines fold into "…and N more" (all of them stay in the menu below).
+CARD_MAX = 1900
+LINE_WORDS_MAX, TERMS_SHOWN = 80, 60
 AFTER = (
     "Keep it, and it goes on your 🧵 Threads list and the website's Story Graph. Players see it "
     "only if your DM screen lets them."
@@ -89,20 +95,34 @@ def undone_text(name: str) -> str:
     return f"↩ Undone: **{_md(name)}** is waiting again."
 
 
-def line_for(line: ReadPart | ReadBranch, names: Mapping[str, str]) -> tuple[str, str]:
+def line_for(
+    line: ReadPart | ReadBranch,
+    names: Mapping[str, str],
+    waiting: frozenset[str] = frozenset(),
+) -> tuple[str, str]:
     """One line of what's in a suggestion, as (its words, what it is): "100 gold" / "Reward from
-    Hlin Trollbane, when the job's done". The kinds and states are the 📋 screen's words."""
+    Hlin Trollbane, when the job's done". The kinds and states are the 📋 screen's words. A branch
+    names its people, as the thread's own are named above it; a name the DM hasn't kept is said to
+    be left out, as the keep leaves it out (`waiting`)."""
     from dmbot.ui.thread_parts import DUE_SAID, KIND_WORDS, LIMIT_SAID, STATE_SAID
 
+    def named(entity_id: str | None) -> str:
+        name = names.get(entity_id or "", "")
+        return f"{name} ({NOT_KEPT_SHORT})" if name and entity_id in waiting else name
+
+    words = logic.shorten(line.name if isinstance(line, ReadBranch) else line.words, LINE_WORDS_MAX)
     if isinstance(line, ReadBranch):
-        return line.name, f"{BRANCH_WORD}, {HINT_SAID}" if line.state == HINTED else BRANCH_WORD
-    who = names.get(line.who_id or "", "")
+        what = f"{BRANCH_WORD}, {HINT_SAID}" if line.state == HINTED else BRANCH_WORD
+        people = [f"{named(e)} ({part})" for part, e in line.parts if e in names]
+        return words, what + (f" · {', '.join(people)}" if people else "")
+    who = named(line.who_id)
     # (lent help and a gift say it the 🧵 card's way: "Lent by …", "Given by …", the ux-critic)
     if line.kind == tp.HELP and line.state == "lent":
         what = f"Lent by {who}" if who else "Lent"
-        return line.words, what + (f", to return: {line.terms}" if line.terms else ", to give back")
+        terms = logic.shorten(line.terms, TERMS_SHOWN)
+        return words, what + (f", to return: {terms}" if terms else ", to give back")
     if line.kind == tp.REWARD_GIVEN:
-        return line.words, (f"Given by {who}" if who else "Given") + ", not promised"
+        return words, (f"Given by {who}" if who else "Given") + ", not promised"
     what = KIND_WORDS[line.kind] + (f" from {who}" if who else "")
     if line.due:
         what += f", {DUE_SAID[line.due]}"
@@ -110,7 +130,7 @@ def line_for(line: ReadPart | ReadBranch, names: Mapping[str, str]) -> tuple[str
         what += f", {STATE_SAID[line.state]}"
     if line.limit_kind:
         what += f", {LIMIT_SAID[line.limit_kind]}"
-    return line.words, what
+    return words, what
 
 
 def card_text(
@@ -150,19 +170,28 @@ def card_text(
                     f"• {_md(who)} ({part})" if i in on else f"• ~~{_md(who)} ({part})~~ (left out)"
                 )
         lines.append(UNTICK)
-    if s.lines:
-        lines.append(PARTS_HEADING)
-        for i, line in enumerate(s.lines):
-            words, what = line_for(line, names)
-            said = f"{_md(words)} ({_md(what)})"
-            kept = lines_on is None or i in lines_on
-            lines.append(f"• {said}" if kept else f"• ~~{said}~~ (left out)")
-        lines.append(PARTS_UNTICK)
+    parts: list[str] = []
+    for i, line in enumerate(s.lines):
+        words, what = line_for(line, names, waiting)
+        said = f"{_md(words)} ({_md(what)})"
+        kept = lines_on is None or i in lines_on
+        parts.append(f"• {said}" if kept else f"• ~~{said}~~ (left out)")
+    tail = []
     if s.quote:
-        lines.append(f"From **{_md(s.upload)}**:" if s.upload else "From your lore:")
-        lines.append(f"> {_md(logic.shorten(s.quote, QUOTE_SHOWN))}")
-    lines.append(AFTER)
-    return "\n".join(lines)
+        tail.append(f"From **{_md(s.upload)}**:" if s.upload else "From your lore:")
+        tail.append(f"> {_md(logic.shorten(s.quote, QUOTE_SHOWN))}")
+    tail.append(AFTER)
+
+    def joined(shown: list[str]) -> str:
+        middle = [PARTS_HEADING, *shown, PARTS_UNTICK] if shown else []
+        return "\n".join([*lines, *middle, *tail])
+
+    text, shown = joined(parts), list(parts)
+    while len(text) > CARD_MAX and shown:  # (past Discord's limit: the last lines fold)
+        shown = shown[:-1]
+        more = f"• …and {len(parts) - len(shown)} more: see the menu below."
+        text = joined([*shown, more])
+    return text[:2000]
 
 
 class ThreadQuestions(_Menu):
@@ -200,6 +229,7 @@ class ThreadQuestions(_Menu):
         self.current = s
         self.names, self.waiting = {}, frozenset[str]()
         givers = [p.who_id for p in s.reads if p.who_id]
+        givers += [e for b in s.branches for _, e in b.parts]
         for who in [*(w for _, w in s.parts), *givers]:
             e = await memory.entity(self.guild_id, self.campaign_id, who)
             if e is not None:
@@ -249,7 +279,9 @@ class ThreadQuestions(_Menu):
                         value=str(i),
                         default=i in self.lines_on,
                     )
-                    for i, (words, what) in enumerate(line_for(x, self.names) for x in s.lines)
+                    for i, (words, what) in enumerate(
+                        line_for(x, self.names, self.waiting) for x in s.lines
+                    )
                 ],
                 row=2,
             )
