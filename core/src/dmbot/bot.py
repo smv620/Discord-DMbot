@@ -13716,6 +13716,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         self._picture_swept = time.time()
         await picture_sweep.sweep(db, bucket)
+        if self.maps_staging is not None:  # (sent maps nobody picked up, #4347)
+            await picture_sweep.sweep_staging(self.maps_staging)
 
     async def run_web_report_requests(self) -> None:
         """The reports DMs asked for again on the website (#2805): each asker must still be a DM of
