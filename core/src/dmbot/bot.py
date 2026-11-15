@@ -3712,8 +3712,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 campaign = await self.campaigns.get(guild_id, campaign.id) or campaign
             except Exception:
                 log.exception("Couldn't reload the campaign after settling the cap")
+        starter_is_owner = campaign.is_owner(starter_id)  # (any Discord login of the owner)
         if campaign.paused:  # the owner's choice, or the plan's: not a plan check, so always
-            return hours.PAUSED_OWNER if starter_id == owner else hours.PAUSED_OTHER
+            return hours.PAUSED_OWNER if starter_is_owner else hours.PAUSED_OTHER
         if not self.settings.enforce_plans or self.meter is None:
             return None
         if owner is None:
@@ -3727,7 +3728,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return None
         refused = hours.refusal(
             check.verdict,
-            is_owner=starter_id == owner,
+            is_owner=starter_is_owner,
             site_url=self.settings.site_url,
             can_change_plan=check.can_change_plan,
             renews=check.renews,
@@ -3748,10 +3749,22 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         return hours.campaigns_refusal(
             room.cap,
             room.owned,
-            is_owner=starter_id == owner,
+            is_owner=starter_is_owner,
             site_url=self.settings.site_url,
             can_change_plan=room.can_change_plan,
         )
+
+    async def _account_number(self, user_id: int) -> int:
+        """The DMbot account a Discord user belongs to, as its number: a plan, its hours and its
+        campaign count are the account's, so a Discord login added to an account is on the
+        account's plan (#2533, slice 2b). Someone who never signed in to the website is their own
+        account, and a failed lookup falls back to the Discord ID, as the plan checks fail open."""
+        try:
+            found = await accounts.account_of(self.campaigns.db, user_id)
+        except Exception:
+            log.warning("Couldn't resolve a Discord ID to its account; using the ID")
+            return user_id
+        return user_id if found is None else found
 
     async def create_refusal(self, guild_id: int, user_id: int) -> str | None:
         """Why this person may not make one more campaign, or None (#437 part 2c). Only when
@@ -3762,6 +3775,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         check still refuses them until one is paused.)"""
         if not self.settings.enforce_plans or self.meter is None:
             return None
+        user_id = await self._account_number(user_id)  # (the plan is the account's, #2533)
         await self._settle_cap(guild_id, user_id, 1.0)  # shrunk plan: pause extras (3 s deadline)
         try:
             async with asyncio.timeout(GATE_TIMEOUT_S):
@@ -3786,6 +3800,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         fail-open as `create_refusal`; the store checks again as the backstop."""
         if not self.settings.enforce_plans or self.meter is None:
             return None
+        user_id = await self._account_number(user_id)  # (the plan is the account's, #2533)
         await self._settle_cap(guild_id, user_id, GATE_TIMEOUT_S)
         try:
             async with asyncio.timeout(GATE_TIMEOUT_S):
