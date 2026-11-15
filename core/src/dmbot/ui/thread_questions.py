@@ -19,6 +19,7 @@ from typing import Any
 
 import discord
 
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory import thread_parts as tp
 from dmbot.memory.models import DM, HINTED, MemoryRuleError, TooLateToUndo
 from dmbot.memory.thread_read import ReadBranch, ReadPart
@@ -61,10 +62,10 @@ PARTS_HOLDER = "What's in it"
 BRANCH_WORD = "🌿 Branch"
 HINT_SAID = "just a hint: your lore leaves it open"
 NOT_KEPT_SHORT = "name not kept yet, left out"
-# Discord's limit on one message is 2,000 characters; a card over it can't be shown, and the queue
+# Discord's limit on one message (`MESSAGE_MAX`); a card over it can't be shown, and the queue
 # would stick on it (the reviewer on #4500). Each line is cut short, and past this budget the list's
 # last lines fold into "…and N more" (all of them stay in the menu below).
-CARD_MAX = 1900
+CARD_MAX = MESSAGE_MAX - 100  # (room for Discord's own trimming of what we can't count)
 LINE_WORDS_MAX, TERMS_SHOWN = 80, 60
 AFTER = (
     "Keep it, and it goes on your 🧵 Threads list and the website's Story Graph. Players see it "
@@ -191,7 +192,7 @@ def card_text(
         shown = shown[:-1]
         more = f"• …and {len(parts) - len(shown)} more: see the menu below."
         text = joined([*shown, more])
-    return text[:2000]
+    return fit_message(text)
 
 
 class ThreadQuestions(_Menu):
