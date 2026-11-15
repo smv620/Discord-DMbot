@@ -53,13 +53,14 @@ every helper follows the rules below.
 | 📚 **The Librarian** (EntityBot) | The **only** helper allowed to write in the Story Memory. Others bring it ideas. It writes a fact down only when the DM says yes. |
 | 🧠 **The Story Memory** | Everything the campaign remembers: people, places, things, and how they connect. On the website it is the **Story graph**. It keeps two views: **The truth** (what the DM knows) and **The party** (what the players know). |
 | 👥 **The NPC tracker** | Remembers the people you meet, who they work for, and who they love or hate. |
-| 🧭 **PlotBot** | The story's best friend. Keeps track of plot threads, promises and clues, notices when something doesn't fit, and checks every recap. |
-| 🗺️ **MapBot** | Will draw simple maps from facts the DM has confirmed. *(Coming later.)* |
+| 🧭 **PlotBot** | The story's best friend. Keeps track of plot threads, promises and clues, notices when something doesn't fit, and checks every recap. *(Coming: it will spot quests in your lore and sessions and offer them to the DM, with their steps, setbacks, rewards, things lent, clues and time limits. Today the DM adds each quest by hand.)* |
+| 🗺️ **MapBot** | Keeps the campaign's maps, once the person who shared one says they're allowed to, and remembers what a place is like: its land, its climate and who rules it. *(Coming: it will mark places on each map, so it can tell the DM about how far and which way, suggest how long a trip takes, and bring back the right map with a link. It keeps and reads maps. It never draws or invents one.)* |
 
 **After the game**
 
 | Helper | Its job, in one line |
 |---|---|
+| 🔎 **The nothing-missed check** | Marks which parts of the session hold something worth a look (a quest, a move to a new place, something changing hands, a clue), sends each part to the right helper, and tells the DM what was checked and what wasn't. It only points; it never writes a fact. *(Coming.)* |
 | 🗂️ **The story check** | Tells the DM what to look at: secrets someone said out loud (with **↩️ Recant**), new names, and things to check. |
 | ✂️ **The splitter** | Finds where table talk, catch-up and "last time…" end and the real game begins. |
 | ✍️ **RecapBot** (the Writer) | Writes the story of the session, using only what really happened. |
@@ -199,11 +200,13 @@ private details there).
 | TimeBot | `dmbot.timebot` | Game time, not real time. |
 | FightBot | one per player character, only in combat | FAST tier, at most one message per player per 2 minutes. It reads that player's sheet plus what the table already knows. |
 | "Hey DMbot" | DM sidebar and table questions | The DM gets a private answer, logged `[DM Sidebar]` in the raw transcript only. Table questions are answered in `dmb-chat` and logged `[Table Q]`. |
-| Picture reader | `dmbot.images`, `image_desk`, `map_notes` | Off unless `DMBOT_TABLE_IMAGES` is on, and reads only consent at terms version 7 or later (the go-live PR raises the version). Map notes are kept only with the Shared-story right-to-use confirmation. |
+| Picture reader | `dmbot.images`, `image_desk`, `map_notes` | Off unless `DMBOT_TABLE_IMAGES` is on, and reads only consent at terms version 7 or later (the go-live PR raises the version). A map has its own right-to-use question for whoever shared it, and a player's map also waits for a DM's yes before DMbot reads it (`docs/design/mapbot_layers.md`, section 3.3). |
 | Librarian (EntityBot) | `dmbot.memory` | The **only** writer of campaign memory. Split into small roles (extractor, continuity checker, ontology steward, graph curator, summarizer) behind deterministic checks. Other helpers send it proposals, and the DM's confirmation makes a fact confirmed. |
 | Story Memory | Postgres property graph, row-level security per server and campaign | Beliefs live in two layers: The truth and The party. "Revealed" is a party belief, not a flag. Importance (#2411) comes from connections, hidden ones included, and is used for ranking only. See `docs/STORY_MEMORY.md`. |
 | NPC tracker / PlotBot | phase 5 | They read **confirmed** memory only. PlotBot is DM-only, so it may read DM-only connections; the recap writer never gets them. DEEP tier, run in batches. |
-| MapBot | not built | It will draw from asserted facts only, never from the AI's map readings. |
+| MapBot | `campaign_maps`, `map_facts`, `map_notes`, the Maps page (behind `MAPS_LIVE`) | Design: `docs/design/mapbot_layers.md` (binding). **Built:** maps kept as maps in the pictures store, the right-to-use question, the close read of a map DMbot may use, a place's terrain, climate and control (`map_facts`), a route's stated length. **Not built:** positions on a map (`map_features`), distances, directions and the travel-time suggestion, culture and population, imports from map tools. Positions are per map, never on a place entry; nothing measured is stored. It keeps, reads and marks up maps and never makes a map picture. |
+| Quests (PlotBot's threads) | `dmbot.memory.threads`, `ui/threads.py` | **Built:** thread entries (quest, mystery, hook, goal, promise), their states, "stalled", the 🧵 Threads list, all DM-entered. **Designed, not built** (`docs/design/quests.md`, in review as #4450): readers that suggest threads from lore and sessions, `thread_parts` (objectives, complications, rewards promised and given, help given or lent, time limits), branches, `clue_to`, and time limits counted on the game clock. A reader only suggests; the DM keeps. |
+| Nothing-missed check | not built | Design: `docs/design/session_tagger.md` (in review as #4455). One FAST-tier call tags each 10-line batch with the kinds present; each reader reads only its tagged batches; every tag ends with an outcome. Its first slice only measures. |
 | Story check | knowledge map review (#2410) | Exposures are recorded, then the after-session summary applies them with ↩️ Recant. Nothing is revealed before the DM is told. |
 | Recap team | `dmbot.recaps` | Split → beats → PlotBot's significance notes → writer (creative tier) → critic loop (PlotBot, grounding, motive, style; at most 4 rounds) → the DM approves (text, audio, or keep). The day's spend is capped (#2308). |
 | Narrator | recap audio | Narration and music are made only when the DM chooses audio, inside the plan's monthly allowance. |

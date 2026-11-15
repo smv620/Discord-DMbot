@@ -39,6 +39,20 @@ DMbot is in testing on the owner's own server, with a public website at
   are in both Discord and the website ([`docs/discord-web-parity.md`](docs/discord-web-parity.md)).
 - **Backups:** a complete copy of a campaign to download and restore.
 
+**Designed, and being built or waiting to be** (each has a design document in
+[`docs/design/`](docs/design/README.md)):
+
+- **MapBot's measurements:** places marked on each map, so DMbot can say about how far and
+  which way, suggest a travel time with its working, and bring the right map back with a link.
+  Keeping maps, the "may I use this map?" question and what DMbot knows about a place's land,
+  climate and ruler are built; marking places on a map and measuring are not yet.
+- **Quests:** DMbot suggests the campaign's quests from lore and sessions for the DM to keep,
+  with their steps, setbacks, rewards promised and given, help lent, clues and time limits.
+  Today the DM makes each quest by hand.
+- **A check that nothing in a session was missed:** one small helper marks which parts of a
+  session hold a quest, a place change, something changing hands and so on, each specialist
+  reads its own parts, and the DM is told what was checked and what wasn't.
+
 Some features are built but switched off until they've been tested live. The current
 picture is in [`docs/testing-status.log`](docs/testing-status.log) and
 [`docs/discord-web-parity.md`](docs/discord-web-parity.md).
@@ -132,6 +146,7 @@ Postgres is (CI has it).
 | [`docs/how-it-works.md`](docs/how-it-works.md) | A plain-words tour of DMbot's helpers. |
 | [`docs/PLAN.md`](docs/PLAN.md) | Scope, architecture, phases and every decision. |
 | [`docs/STORY_MEMORY.md`](docs/STORY_MEMORY.md), [`docs/STORY_GRAPH_DESIGN.md`](docs/STORY_GRAPH_DESIGN.md) | How story memory works. |
+| [`docs/design/`](docs/design/README.md) | The design documents developers build from: MapBot, quests, and the session check. |
 | [`docs/RECAP_STANDARD.md`](docs/RECAP_STANDARD.md) | What a good recap is, and how recaps are scored. |
 | [`docs/WIZARD_DESIGN.md`](docs/WIZARD_DESIGN.md) | The website's start-up wizard. |
 | [`docs/discord-web-parity.md`](docs/discord-web-parity.md) | What is in Discord, what is on the website. |
