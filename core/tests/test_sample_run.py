@@ -634,7 +634,8 @@ class TheCommand(unittest.IsolatedAsyncioTestCase):
             lore.write_text("Mira was raised by the Ashen Crown.")
             session.write_text(SESSION)
             args = cli.parse_args(
-                ["--guild", "1", "--dm", "2", "--players", "ist=3,jac=4,eri=5,owe=6",
+                ["--guild", "1", "--dm", "2", "--deploy", "31",
+                 "--players", "ist=3,jac=4,eri=5,owe=6",
                  "--lore", str(lore), "--session", str(session)]
             )  # fmt: skip
             said: list[str] = []
@@ -649,7 +650,7 @@ class TheCommand(unittest.IsolatedAsyncioTestCase):
             lore, session = Path(tmp) / "lore.txt", Path(tmp) / "session.txt"
             lore.write_text("Mira was raised by the Ashen Crown.")
             session.write_text(SESSION)
-            base = ["--guild", "1", "--dm", "2", "--players", "ist=3,jac=4,eri=5,owe=6",
+            base = ["--guild", "1", "--dm", "2", "--deploy", "31", "--players", "ist=3,jac=4,eri=5,owe=6",
                     "--lore", str(lore), "--session", str(session)]  # fmt: skip
             said: list[str] = []
             for extra in (["--lore-choice", "nope"], ["--date", "2999-01-01"]):
@@ -659,7 +660,7 @@ class TheCommand(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_bad_player_list_or_file_is_a_plain_refusal(self) -> None:
         args = cli.parse_args(
-            ["--guild", "1", "--dm", "2", "--players", "oops", "--lore", "/nonexistent",
+            ["--guild", "1", "--dm", "2", "--deploy", "31", "--players", "oops", "--lore", "/nonexistent",
              "--session", "/nonexistent"]
         )  # fmt: skip
         with self.assertRaises(SampleError):

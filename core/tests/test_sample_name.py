@@ -26,7 +26,7 @@ class Names(unittest.TestCase):
     def test_only_a_whole_number_from_1_to_9999_is_a_deploy(self) -> None:
         for bad in (0, -1, 10000, True):
             with self.subTest(bad=bad), self.assertRaises(ValueError):
-                N(bad)  # type: ignore[arg-type]
+                N(bad)
 
     def test_the_guard_takes_exactly_the_sample_names_and_nothing_like_them(self) -> None:
         for good in (N(1), N(31), N(9999), sample_name.OLD_NAME):

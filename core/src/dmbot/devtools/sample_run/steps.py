@@ -158,12 +158,9 @@ async def fresh_campaign(
     # before the channel existed, when the DM presses ⚙️ Manage DMbot. A deleted campaign's channel
     # stays in the server and is deleted by hand; its buttons say it cannot find the campaign.
     # Said as one counts-only line, so dev1 does it before checking the main menu.
-    n_old = len(kept.delete)
-    say(
-        f"{DM_BOT_CHANNEL_NEEDED}"
-        if not n_old
-        else f"{DM_BOT_CHANNEL_NEEDED}; {n_old} old campaign channel(s) to delete by hand"
-    )
+    say(DM_BOT_CHANNEL_NEEDED)
+    if kept.delete:
+        say(f"{len(kept.delete)} old campaign channel(s) to delete by hand")
     return made
 
 
