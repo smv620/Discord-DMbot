@@ -61,6 +61,7 @@ from dmbot.memory import (
     route_words,
     standing,
     states,
+    thread_parts,
     told,
     whereabouts,
     world_notes,
@@ -362,6 +363,18 @@ COMPANION_TARGET = "A companion travels with a player character or with the part
 LED_TO_KINDS = "A clue, an event or a thread can lead to a thread or an event."
 LED_TO_CONFIRM = "One of them isn't confirmed yet. Confirm it, then try again."
 LED_TO_LOOP = "That would make a loop: the other one already led here."
+# A branch of a bigger thread (#4471, quests design §6a): one bigger thread at most, never a loop.
+BRANCH_KINDS = "Only a story thread can be a branch of another story thread."
+BRANCH_LOOP = "That would make a loop: that thread is already a branch of this one."
+BRANCH_ONE = "It is already a branch of another thread. Take that off first."
+UNDO_BRANCH = (
+    "Undoing this would make a loop of branches, or give a thread two bigger ones. Take one of "
+    "them away first."
+)
+MERGE_BRANCH = (
+    "These two can't be joined yet: it would make a loop of branches, or give one thread two "
+    "bigger ones. Take away one of those branch links first."
+)
 UNDO_LED_TO_LOOP = "Undoing this would make a loop of 'led to' links. Take one of them away first."
 MERGE_LED_TO_LOOP = (
     "These two can't be joined yet: one led to something that led to the other, and joining them "
@@ -1594,6 +1607,99 @@ class MemoryStore:
             await map_fact_store.set_by_dm(w, onto, place_id, layer, value, how=how, words=words)
             return Written(None, w.batch)
 
+    async def add_thread_part(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        thread_id: str,
+        kind: str,
+        words: str,
+        *,
+        source: str,
+        state: str | None = None,
+        under_id: str | None = None,
+        who_id: str | None = None,
+        about_id: str | None = None,
+        due: str = "",
+        terms: str = "",
+        limit_kind: str = "",
+    ) -> Written[thread_parts.Part]:
+        """The DM adds an objective, complication, reward promised or given, help or time limit to
+        a kept thread (#4471; `thread_parts.add`): one change, one Undo, hidden from players until
+        the DM shows it."""
+        if source != DM:
+            raise MemoryRuleError(thread_parts.ONLY_DM)
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            row = await thread_parts.add(
+                w, onto, thread_id, kind, words, state=state, under_id=under_id, who_id=who_id,
+                about_id=about_id, due=due, terms=terms, limit_kind=limit_kind,
+            )  # fmt: skip
+            return Written(thread_parts.from_row(row), w.batch)
+
+    async def correct_thread_part(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        part_id: str,
+        *,
+        source: str,
+        in_story: bool = False,
+        **changes: Any,
+    ) -> Written[thread_parts.Part]:
+        """The DM changes a part (#4471; `thread_parts.correct`): a fix in place, or a change in the
+        story that keeps the old one as history (`in_story`, or what changing always is)."""
+        if source != DM:
+            raise MemoryRuleError(thread_parts.ONLY_DM)
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            row = await thread_parts.correct(w, onto, part_id, in_story=in_story, **changes)
+            return Written(thread_parts.from_row(row), w.batch)
+
+    async def set_thread_part_state(
+        self, guild_id: int, campaign_id: str, part_id: str, state: str, *, source: str
+    ) -> Written[thread_parts.Part]:
+        """A part's state changes in the story (#4471; `thread_parts.set_state`): the old row is
+        history, the new one stands. One change, one Undo."""
+        if source != DM:
+            raise MemoryRuleError(thread_parts.ONLY_DM)
+        async with self._write(guild_id, campaign_id, source) as w:
+            row = await thread_parts.set_state(w, part_id, state)
+            return Written(thread_parts.from_row(row), w.batch)
+
+    async def remove_thread_part(
+        self, guild_id: int, campaign_id: str, part_id: str, *, source: str
+    ) -> Written[None]:
+        """The DM says a part was wrong (#4471; `thread_parts.remove`): taken off, never history."""
+        if source != DM:
+            raise MemoryRuleError(thread_parts.ONLY_DM)
+        async with self._write(guild_id, campaign_id, source) as w:
+            await thread_parts.remove(w, part_id)
+            return Written(None, w.batch)
+
+    async def show_thread_part(
+        self, guild_id: int, campaign_id: str, part_id: str, shown: bool, *, source: str
+    ) -> Written[bool]:
+        """The DM's 👁️ / 🙈 for one part (#4471, design §10.2). True when anything changed."""
+        if source != DM:
+            raise MemoryRuleError(thread_parts.ONLY_DM)
+        async with self._write(guild_id, campaign_id, source) as w:
+            return Written(await thread_parts.show(w, part_id, shown), w.batch)
+
+    async def parts_of_threads(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        thread_ids: Sequence[str],
+        viewer: gate.Viewer,
+        *,
+        history: bool = False,
+    ) -> list[thread_parts.Part]:
+        """The parts of these threads as `viewer` may see them (#4471; `thread_parts.parts_for`,
+        the one reader, design §10.2)."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await thread_parts.parts_for(scope, thread_ids, viewer, history=history)
+
     async def map_cultures(self, guild_id: int, campaign_id: str) -> list[tuple[str, str, str]]:
         """The campaign's named cultures the DM hasn't turned down, (id, name, status), kept ones
         first: the DM's culture picker (#4257 slice 3b). The caller checks a DM is asking."""
@@ -1820,6 +1926,59 @@ class MemoryStore:
             made = await states.touch_thread(w, onto, entity, from_session_at=from_session_at)
             return Written(made, w.batch)
 
+    async def keep_thread(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        name: str,
+        subtype: str,
+        state: str,
+        *,
+        aim: str,
+        parts: Sequence[tuple[str, str]],
+        source: str,
+        suggestion_id: str = "",
+    ) -> Written[Entity]:
+        """The DM keeps a story thread DMbot suggested (#4453, quests slice 1): the thread, its
+        state and the people the DM left on, in ONE change, so one Undo takes it all back. A person
+        merged since is followed to the entry it became; one gone since is skipped. The suggestion's
+        row is marked kept in the same transaction, with the change's number for ↩ Undo."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        check_named(subtype, name)
+        name = clean_text(name)
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            if subtype not in onto.types or not onto.is_a(subtype, "thread"):
+                raise MemoryRuleError(THREAD_KINDS_ONLY)
+            onto.active_type(subtype)
+            row = await w.insert(
+                ENTITIES,
+                {
+                    "id": new_id(), "type": subtype, "name": name,
+                    "description": clean_text(aim)[:DESCRIPTION_MAX] if aim else "",
+                    "status": CONFIRMED, "merged_into": None, "source": source,
+                    "created_at": w.now, "played_by": None, "role": None, "needs_look": False,
+                    "unique_item": None, "audience_limited": False, "party": False,
+                },
+            )  # fmt: skip
+            await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", CONFIRMED, False, None))
+            await states.set_condition(w, onto, row, state, from_session_at=None)
+            for role, who in parts:
+                live = await _followed(w, who)
+                if live is None:
+                    continue  # (gone since the suggestion was made)
+                await self.add_relation_in(
+                    w, live, "in_thread", str(row["id"]), confidence=1.0, status=CONFIRMED,
+                    detail=clean_text(role),
+                )  # fmt: skip
+            if suggestion_id:
+                from dmbot.memory import thread_suggestions
+
+                if not await thread_suggestions.mark_kept(w, suggestion_id, w.batch):
+                    raise MemoryRuleError(thread_suggestions.GONE)
+            return Written(_entity(row), w.batch)
+
     async def involve(
         self,
         guild_id: int,
@@ -1907,6 +2066,91 @@ class MemoryStore:
                 from_session_at=from_session_at,
             )  # fmt: skip
             return Written(fact, w.batch)
+
+    async def branch_of(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        branch_id: str,
+        bigger_id: str,
+        *,
+        source: str,
+        move: bool = False,
+        from_session_at: int | None = None,
+    ) -> Written[Relation]:
+        """The DM says one kept thread is a branch of a bigger one (#4471, quests design §6a): a
+        side quest, or a mystery inside a quest. One bigger thread at most and no loop
+        (`_check_branch_live`). Players see it only when both threads are shown to them, as any
+        connection (Supervisor's ruling on #4471)."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            if move:  # ("Move it": the old link is taken off in the same change, one Undo)
+                await _take_off_branch(w, branch_id)
+            fact, _flags = await self.add_relation_in(
+                w, branch_id, threads_mod.BRANCH_OF, bigger_id, confidence=1.0,
+                status=CONFIRMED, from_session_at=from_session_at,
+            )  # fmt: skip
+            return Written(fact, w.batch)
+
+    async def thread_card(
+        self, guild_id: int, campaign_id: str, thread_id: str
+    ) -> tuple[list[thread_parts.Part], dict[str, str], str | None, list[str]]:
+        """What a thread's card shows of its parts and branches (#4471), the DM's in one read:
+        its standing parts (`thread_parts.parts_for`, the DM's view), the names of everyone and
+        everything they and its branch links name, the bigger thread it is a branch of, and its
+        branches (kept threads), A to Z."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            parts = await thread_parts.parts_for(scope, [thread_id], gate.Viewer.the_dm())
+            links = await scope.select(
+                RELATIONS,
+                " AND predicate = 'branch_of' AND status = 'confirmed' AND to_session_at IS NULL"
+                " AND (subject_id = %s OR object_id = %s)",
+                [thread_id, thread_id],
+            )
+            ids = {i for p in parts for i in (p.who_id, p.about_id) if i is not None}
+            ids |= {str(r["subject_id"]) for r in links} | {str(r["object_id"]) for r in links}
+            names = {
+                str(r["id"]): str(r["name"])
+                for r in await scope.select(
+                    ENTITIES, " AND id = ANY(%s) AND status = 'confirmed'", [sorted(ids)]
+                )
+            }
+        bigger = next(
+            (str(r["object_id"]) for r in links if str(r["subject_id"]) == thread_id), None
+        )
+        branches = sorted(
+            (str(r["subject_id"]) for r in links if str(r["object_id"]) == thread_id),
+            key=lambda i: names.get(i, "").lower(),
+        )
+        return (
+            parts,
+            names,
+            bigger if bigger in names else None,
+            [b for b in branches if b in names],
+        )
+
+    async def bigger_thread(self, guild_id: int, campaign_id: str, thread_id: str) -> str | None:
+        """The bigger thread this one is a branch of, if any (#4471): the card's "already a branch
+        of …" question. The DM's read."""
+        async with self._read(guild_id, campaign_id) as scope:
+            rows = await scope.select(
+                RELATIONS,
+                " AND predicate = 'branch_of' AND status = 'confirmed' AND to_session_at IS NULL"
+                " AND subject_id = %s",
+                [thread_id],
+            )
+        return str(rows[0]["object_id"]) if rows else None
+
+    async def not_a_branch(
+        self, guild_id: int, campaign_id: str, thread_id: str, *, source: str
+    ) -> Written[bool]:
+        """ "Not a branch of anything" (#4471): its branch link is taken off. False when it had
+        none."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            return Written(await _take_off_branch(w, thread_id), w.batch)
 
     async def health_counts(
         self, guild_id: int, campaign_id: str, *, since: int, recent: int
@@ -5363,6 +5607,9 @@ class MemoryStore:
         await map_fact_store.move_on_merge(  # land, climate, ruler (#4256)
             w, onto, str(kept["type"]), keep_id, gone_id
         )
+        await thread_parts.move_on_merge(  # a thread's parts (#4471)
+            w, keep_id, gone_id, onto.is_a(str(kept["type"]), "thread")
+        )
         await _move_plan_links(w, keep_id, gone_id)
         await states.move_states(w, onto, keep_id, kept["type"], gone_id)
         if confirm_keys and source != DM:
@@ -6338,6 +6585,11 @@ class MemoryStore:
             # and may not close a loop (#1679).
             secret = True
             await _check_led_to_live(w, None, subject_id, object_id)
+        if pred.key == threads_mod.BRANCH_OF:
+            # (#4471) whatever the path, one bigger thread at most and never a loop. Not secret
+            # (Supervisor's ruling): players see it as any connection, only when both threads are
+            # shown to them.
+            await _check_branch_live(w, None, subject_id, object_id)
         types = {
             subject_id: (await _entity_row(w, subject_id))["type"],
             object_id: (await _entity_row(w, object_id))["type"],
@@ -6628,6 +6880,15 @@ class MemoryStore:
                 # Confirming a "led to" link makes it live, so it gets the checks a new one gets
                 # (#2673): both ends confirmed, and no loop with the links already live.
                 await _check_led_to_live(
+                    w, relation_id, current["subject_id"], current["object_id"]
+                )
+            if (
+                current["predicate"] == threads_mod.BRANCH_OF
+                and changes.get("status") == CONFIRMED
+                and current["status"] != CONFIRMED
+                and changes.get("to_session_at", current["to_session_at"]) is None
+            ):  # (#4471: confirming a "branch of" makes it live, with a new one's checks)
+                await _check_branch_live(
                     w, relation_id, current["subject_id"], current["object_id"]
                 )
             row = await w.update(RELATIONS, relation_id, changes)
@@ -9222,6 +9483,23 @@ async def flag_kept(w: Changes, relation_id: str) -> list[Flag]:
     return await _flag_problems(w, onto, fact, subject["type"], obj["type"], existing)
 
 
+async def _followed(w: Changes, entity_id: str) -> str | None:
+    """The kept entry an id stands for now: itself, or the one it was merged into (a short chain is
+    followed); None when it is gone, turned down, or a name the DM hasn't kept yet. A kept thread
+    never confirms a connection to a waiting name (a connection to one waits on it elsewhere,
+    `auto_accept.ON_A_NAME`; the reviewer's point on #4453): the card says it is left out."""
+    seen: set[str] = set()
+    while entity_id not in seen:
+        seen.add(entity_id)
+        row = await w.get(ENTITIES, entity_id, lock=False)
+        if row is None:
+            return None
+        if not row.get("merged_into"):
+            return entity_id if row["status"] == CONFIRMED else None
+        entity_id = str(row["merged_into"])
+    return None
+
+
 async def _delete_relation(w: Changes, relation_id: str) -> None:
     for flag in await w.select(
         FLAGS, " AND (relation_id = %s OR other_id = %s)", [relation_id, relation_id]
@@ -9375,12 +9653,15 @@ async def _move_aliases(
     await w.update_where(ALIASES, {"used_by": keep_id}, " AND used_by = %s", [gone_id])
 
 
-async def _live_led_to(w: Changes, *, skip: str | None = None) -> list[tuple[str, str]]:
-    """The (from, to) pairs of the campaign's live "led to" links (confirmed, not ended)."""
+async def _live_led_to(
+    w: Changes, *, skip: str | None = None, predicate: str = threads_mod.LED_TO
+) -> list[tuple[str, str]]:
+    """The (from, to) pairs of the campaign's live "led to" links (confirmed, not ended), or of
+    another chain kind's (`branch_of`, #4471)."""
     live = await w.select(
         RELATIONS,
-        " AND predicate = 'led_to' AND status = 'confirmed' AND to_session_at IS NULL",
-        [],
+        " AND predicate = %s AND status = 'confirmed' AND to_session_at IS NULL",
+        [predicate],
     )
     return [(r["subject_id"], r["object_id"]) for r in live if r["id"] != skip]
 
@@ -9415,8 +9696,9 @@ async def _recheck_led_to_after_undo(w: Changes, batch: int) -> None:
     whole undo (nothing is written, as for any other change since)."""
     cur = await w.conn.execute(
         "SELECT DISTINCT row_id FROM memory_changes WHERE guild_id = %s AND campaign_id = %s"
-        " AND batch = %s AND table_name = %s AND (after->>'predicate' = 'led_to'"
-        " OR before->>'predicate' = 'led_to')",
+        " AND batch = %s AND table_name = %s"
+        " AND (after->>'predicate' IN ('led_to', 'branch_of')"
+        " OR before->>'predicate' IN ('led_to', 'branch_of'))",
         (*w.ids, batch, RELATIONS.name),
     )
     ids = [r["row_id"] for r in await cur.fetchall()]
@@ -9424,6 +9706,13 @@ async def _recheck_led_to_after_undo(w: Changes, batch: int) -> None:
         return
     for row in await w.select(RELATIONS, " AND id = ANY(%s)", [ids]):
         link = _relation(row)
+        if _live_branch_link(link):  # (#4471: a branch link brought back gets its checks too)
+            try:
+                await _check_branch_live(w, link.id, link.subject_id, link.object_id)
+            except MemoryRuleError as refused:
+                raise MemoryRuleError(
+                    UNDO_BRANCH if str(refused) in (BRANCH_LOOP, BRANCH_ONE) else CHANGED_SINCE
+                ) from None
         if _live_led_to_link(link):
             try:
                 await _check_led_to_live(w, link.id, link.subject_id, link.object_id)
@@ -9446,12 +9735,81 @@ async def _check_led_to_live(w: Changes, relation_id: str | None, start: str, en
         raise MemoryRuleError(LED_TO_LOOP)
 
 
+async def _take_off_branch(w: Changes, thread_id: str) -> bool:
+    """A thread's live "branch of" link is taken off (rejected, logged), for a move or "not a
+    branch of anything" (#4471). True when there was one."""
+    rows = await w.select(
+        RELATIONS,
+        " AND predicate = 'branch_of' AND status = 'confirmed' AND to_session_at IS NULL"
+        " AND subject_id = %s",
+        [thread_id],
+    )
+    for r in rows:
+        await w.update(RELATIONS, str(r["id"]), {"status": "rejected"})
+    return bool(rows)
+
+
+async def _check_branch_live(w: Changes, relation_id: str | None, branch: str, bigger: str) -> None:
+    """A "branch of" link about to become live (#4471, quests design §6a; `relation_id`: itself,
+    left out; None for one not made yet): both ends kept threads, the branch a branch of nothing
+    else, and no loop. The one place these rules live, as `_check_led_to_live` is for "led to"."""
+    onto = await _load_ontology(w)
+    for name in (branch, bigger):
+        row = await _entity_row(w, name)
+        if row["status"] != CONFIRMED:
+            raise MemoryRuleError(LED_TO_CONFIRM)
+        if not onto.is_a(row["type"], "thread"):
+            raise MemoryRuleError(BRANCH_KINDS)
+    live = await _live_led_to(w, skip=relation_id, predicate=threads_mod.BRANCH_OF)
+    if (branch, bigger) in live:
+        return  # (the same link again: nothing new, as for "led to"; the reviewer on #4471)
+    if any(a == branch for a, _ in live):
+        raise MemoryRuleError(BRANCH_ONE)
+    if threads_mod.would_loop(live, branch, bigger):
+        raise MemoryRuleError(BRANCH_LOOP)
+
+
+def _live_branch_link(link: Relation) -> bool:
+    return (
+        link.predicate == threads_mod.BRANCH_OF
+        and link.status == CONFIRMED
+        and link.to_session_at is None
+    )
+
+
 def _live_led_to_link(link: Relation) -> bool:
     return (
         link.predicate == threads_mod.LED_TO
         and link.status == CONFIRMED
         and link.to_session_at is None
     )
+
+
+async def _refuse_branch_merge(
+    w: Changes,
+    keep_id: str,
+    gone_id: str,
+    gone_rows: Sequence[Mapping[str, Any]],
+    state: Mapping[str, Relation],
+) -> None:
+    """(#4471, quests design §6a) Moving the other thread's "branch of" links onto the kept one
+    must not give it two bigger threads or make a loop of branches. Refused before anything is
+    written, and the DM decides which link goes; what was so before this merge doesn't block it.
+    Reads nothing more when neither has a branch link."""
+    if not any(r["predicate"] == threads_mod.BRANCH_OF for r in gone_rows) and not any(
+        _live_branch_link(f) and keep_id in (f.subject_id, f.object_id) for f in state.values()
+    ):
+        return
+    pairs = await _live_led_to(w, predicate=threads_mod.BRANCH_OF)
+    moved = [(keep_id if a == gone_id else a, keep_id if b == gone_id else b) for a, b in pairs]
+    moved = [(a, b) for a, b in moved if a != b]
+    bigger = {b for a, b in moved if a == keep_id}
+    already = any(len({b for a, b in pairs if a == n}) > 1 for n in (keep_id, gone_id))
+    looped = threads_mod.loops_through(moved, keep_id) and not (
+        threads_mod.loops_through(pairs, keep_id) or threads_mod.loops_through(pairs, gone_id)
+    )
+    if (len(bigger) > 1 and not already) or looped:
+        raise MemoryRuleError(MERGE_BRANCH)
 
 
 async def _refuse_led_to_loop(
@@ -9506,6 +9864,7 @@ async def _move_relations(
     ends = {keep_id, gone_id} | {r["subject_id"] for r in rows} | {r["object_id"] for r in rows}
     state = {r.id: r for r in await _relations_touching(w, *ends)}  # as the walk sees them
     await _refuse_led_to_loop(w, keep_id, gone_id, rows, state)
+    await _refuse_branch_merge(w, keep_id, gone_id, rows, state)  # (#4471)
     # Which facts touch each entry, kept up to date as facts move or go, so each fact
     # is checked against its neighbours only (not every fact in `state`), in `state`'s
     # order so the same twin is found as before (#342 review).

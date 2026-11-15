@@ -82,6 +82,9 @@ READERS = {
     "devtools/sample_run/counts.py": CONFIRMED_ONLY
     + ": dev1's sample report (#3545); counts confirmed secret connections by source, prints "
     "numbers only (no name, id or word), nothing reaches a player",
+    "devtools/sample_run/questions.py": "dev1's part 2 of 2 (#3545): reads every status to see "
+    "what "
+    "the DM did with each waiting connection, prints counts only, nothing reaches a player",
     "devtools/movers_check.py": CONFIRMED_ONLY
     + ": dev1's read-only command (#3363); one SELECT of confirmed, current place ties, prints "
     "counts only (no name, id or word), nothing reaches a player",
@@ -104,6 +107,9 @@ STORE = {
     + ": the words of live catch-all connections, for the DM's offer",
     "_audience": CONFIRMED_ONLY + ": who may be told",
     "_live_led_to": CONFIRMED_ONLY + ': only live, confirmed "led to" links, for the loop check',
+    "_take_off_branch": CONFIRMED_ONLY + ': a thread\'s live "branch of" link, taken off (#4471)',
+    "bigger_thread": CONFIRMED_ONLY + ": the bigger thread one is a branch of, for the DM (#4471)",
+    "thread_card": CONFIRMED_ONLY + ": a thread's live branch links, on the DM's card (#4471)",
     "_recheck_led_to_after_undo": CONFIRMED_ONLY
     + ': re-checks a "led to" link an Undo made live again',
     "_relations_touching": DM_ONLY + ": the checks, which skip guess connections themselves",

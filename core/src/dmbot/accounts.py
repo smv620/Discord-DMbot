@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
 
 from psycopg import errors as pg_errors
 
@@ -64,6 +65,115 @@ async def account_of(db: Database, discord_id: int) -> int | None:
         cur = await conn.execute("SELECT dmbot_account_of(%s) AS a", (int(discord_id),))
         row = await cur.fetchone()
     return None if row is None or row["a"] is None else int(row["a"])
+
+
+# The words for adding or taking off a Discord account (#2533, slice 4). The three refusals of an
+# add are Supervisor's ruling on #2533 (2026-11-15): each says only what is wrong with the Discord
+# account being added and what to do next, never which other DMbot account it is on, whose
+# campaigns or which plan (isolation). The rest are plain words of the same kind.
+LINK_WORDS = {
+    "has_campaigns": (
+        "That Discord account is already the DM of its own campaigns. Hand those campaigns over "
+        "or delete them first, then add the account."
+    ),
+    "has_plan": (
+        "That Discord account pays for its own DMbot plan. Sign in as that account and cancel "
+        "its plan first, then add it here."
+    ),
+    "has_account": (
+        "That Discord account is already on another DMbot account. Remove it there first, then "
+        "add it here."
+    ),
+    "taken": (  # (another account's, or one taken off an account for good: the same words)
+        "That Discord account is already on another DMbot account. Remove it there first, then "
+        "add it here."
+    ),
+    "not_yours": (
+        "DMbot couldn't confirm you own that Discord account. Sign in as that account, then try "
+        "again."
+    ),
+}
+UNLINK_WORDS = {
+    "last": ("That is your only Discord account. Add another one first, then take this one off."),
+    "not_linked": (
+        "That Discord account isn't on your DMbot account any more. Refresh the page to see your "
+        "current accounts."
+    ),
+    "not_yours": (
+        "DMbot couldn't confirm you own that Discord account. Sign in as that account, then try "
+        "again."
+    ),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class LinkResult:
+    """`ok` when it was done; else `code` is the door's word and `words` what to tell the person."""
+
+    ok: bool
+    code: str
+    words: str
+
+
+async def link_discord_id(
+    db: Database, account: int, discord_id: int, *, now: int | None = None
+) -> LinkResult:
+    """Add a Discord account to the signed-in DMbot account (the door `dmbot_account_link`, which
+    refuses one that runs campaigns, has its own plan or belongs to another account). Open hand-over
+    offers to or from the changed accounts are closed by the bot's next sweep (slice 3)."""
+    async with db.user(account) as conn:
+        cur = await conn.execute(
+            "SELECT dmbot_account_link(%s, %s, %s) AS r",
+            (account, int(discord_id), int(now if now is not None else time.time())),
+        )
+        row = await cur.fetchone()
+    code = "not_yours" if row is None else str(row["r"])
+    if code == "ok":
+        return LinkResult(True, code, "")
+    return LinkResult(False, code, LINK_WORDS.get(code, LINK_WORDS["not_yours"]))
+
+
+async def unlink_discord_id(
+    db: Database, account: int, discord_id: int, *, now: int | None = None
+) -> LinkResult:
+    """Take a Discord account off the signed-in DMbot account, never the last one. The account's
+    campaigns stay with it (the door `dmbot_account_unlink`)."""
+    async with db.user(account) as conn:
+        cur = await conn.execute(
+            "SELECT dmbot_account_unlink(%s, %s, %s) AS r",
+            (account, int(discord_id), int(now if now is not None else time.time())),
+        )
+        row = await cur.fetchone()
+    code = "not_yours" if row is None else str(row["r"])
+    if code == "ok":
+        return LinkResult(True, code, "")
+    return LinkResult(False, code, UNLINK_WORDS.get(code, UNLINK_WORDS["not_yours"]))
+
+
+@dataclass(frozen=True, slots=True)
+class Login:
+    """One Discord account of a DMbot account, for the website's list."""
+
+    discord_id: int
+    first: bool  # the one the account began with (its number)
+    added_at: int | None  # None for the first one
+
+
+async def logins_of(db: Database, account: int) -> list[Login]:
+    """The Discord accounts of this DMbot account that still sign in: its first one (unless it was
+    taken off) and every added one, first first. Only the signed-in account's own list."""
+    async with db.user(account) as conn:
+        cur = await conn.execute(
+            "SELECT discord_id, added_at FROM account_discord_ids WHERE account_id = %s"
+            " ORDER BY added_at, discord_id",
+            (account,),
+        )
+        added = [
+            Login(int(r["discord_id"]), False, int(r["added_at"])) for r in await cur.fetchall()
+        ]
+        cur = await conn.execute("SELECT 1 FROM account_reserved WHERE discord_id = %s", (account,))
+        first_off = await cur.fetchone() is not None
+    return added if first_off else [Login(account, True, None), *added]
 
 
 async def user_of_dmbot_id(db: Database, dmbot_id: str) -> int | None:

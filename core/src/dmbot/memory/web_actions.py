@@ -113,6 +113,9 @@ WAITING = (
     "claim-unpick",
     "claim-undo",  # takes back one fact of an "All true" / "All secret" press (#3645)
     "backstory-keep",
+    # "Let players see it" (#4432): a keep that also lets the players see a connection it replaces
+    # that was hidden (`keep_all(players="show")`, #4438). The plain `backstory-keep` never does.
+    "backstory-keep-show",
     "backstory-skip",
     "backstory-keep-all",
     "backstory-which-pick",
@@ -141,6 +144,9 @@ MAP_ACTIONS = ("map-terrain", "map-climate", "map-control", "map-show")
 # World notes (#4285, slice 1c): ✅ on the lines the page showed (their ids, space-separated), 🚫 on
 # one line, or ↩ Undo of one of those (the text is its change number). Filed under no name.
 WORLD_ACTIONS = ("world-keep", "world-not", "world-undo")
+# The story threads DMbot found in an upload (#4457, quests slice 1): the same store calls as
+# Discord's 📜 card, so each keep is one change and one Undo.
+THREAD_ACTIONS = ("thread-keep", "thread-not", "thread-undo")
 # The Maps page's presses (#4347): a DM's yes or no to using a map (`<map id> yes|no`), Show to
 # the table or Hide (`<map id> shown|hidden`), Remove (`<map id>`), a poster's Take it back
 # (`<map id>`), and ↩ Undo of one of those (the text is its change number). Filed under no name.
@@ -417,6 +423,20 @@ class ActionStore:
             )
             return await cur.fetchone() is not None
 
+    async def thread_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int
+    ) -> bool:
+        """Whether `batch` is the change this DM's own done story-thread ✅ made from the website
+        (#4457), so the page's Undo can only take back what they did themselves."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action = 'thread-keep'"
+                " AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
+                (guild_id, campaign_id, user_id, batch),
+            )
+            return await cur.fetchone() is not None
+
     async def map_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, batch: int, *, own_only: bool = False
     ) -> bool:
@@ -571,6 +591,10 @@ async def apply(
         if actions is None and action.action == "world-undo":
             return _failed(FAILED)
         return await _world(memory, actions, guild_id, cid, action)
+    if action.action in THREAD_ACTIONS:
+        if actions is None and action.action == "thread-undo":
+            return _failed(FAILED)
+        return await _thread(memory, actions, guild_id, cid, action)
     if action.action == LINK_UNDO:
         if actions is None:
             return _failed(FAILED)
@@ -948,6 +972,61 @@ async def _world(
     except MemoryRuleError:
         return _failed(GONE)
     return Outcome(batches=(done.batch,) if done.batch is not None else ())
+
+
+async def _thread(
+    memory: MemoryStore, actions: ActionStore | None, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """A story thread DMbot found, from the page (#4457), the same store calls as Discord's 📜
+    card (`ui/thread_questions`): ✅ keeps it with the people the DM left on (by their place in the
+    suggestion's own list, so no name or id is ever typed) and, if the DM renamed it, that name;
+    🚫 turns it down for good. The suggestion is read again here, so one answered meanwhile (in
+    Discord, or a second press) is `gone`. ↩ Undo takes back only a keep this DM's own done action
+    made; putting a turned-down suggestion back to waiting is open to any DM of the campaign, as
+    Discord's ↩ is (it only makes the suggestion wait again). Words and counts only."""
+    from dmbot.memory.thread_suggestions import GONE as SUGGESTION_GONE
+    from dmbot.memory.thread_suggestions import ThreadSuggestionStore, unkeep_in
+
+    store = ThreadSuggestionStore(memory._db)
+    try:
+        if a.action == "thread-undo":
+            assert actions is not None  # (checked by the caller)
+            how, _, ref = a.text.partition(" ")
+            if how == "keep":
+                if not (ref.isascii() and ref.isdigit()) or len(ref) > 15:
+                    return _failed(GONE)
+                batch = int(ref)
+                if not await actions.thread_batch_made(guild_id, cid, a.user_id, batch):
+                    return _failed(GONE)
+                await memory.undo(guild_id, cid, batch, after=unkeep_in(batch))
+                return Outcome()
+            return Outcome() if await store.unturn(guild_id, cid, ref) else _failed(GONE)
+        suggestion_id, _, rest = a.text.partition(" ")
+        if a.action == "thread-not":
+            return (
+                Outcome() if await store.turn_down(guild_id, cid, suggestion_id) else _failed(GONE)
+            )
+        shown = next((s for s in await store.waiting(guild_id, cid) if s.id == suggestion_id), None)
+        if shown is None:
+            return _failed(GONE)
+        on_text, _, renamed = rest.partition(" ")
+        on = set() if on_text == "-" else {int(i) for i in on_text.split(",")}
+        done = await memory.keep_thread(
+            guild_id, cid, " ".join(renamed.split()) or shown.name, shown.kind, shown.state,
+            aim=shown.aim, parts=[p for i, p in enumerate(shown.parts) if i in on],
+            source=DM, suggestion_id=shown.id,
+        )  # fmt: skip
+    except MemoryRuleError as exc:  # (TooLateToUndo is one: a name was changed since)
+        if str(exc) == ALREADY_UNDONE:
+            return Outcome()  # (a second Undo of the same keep: done, as a retry is)
+        if a.action == "thread-undo":
+            return _failed(CHANGED)  # (something done since is in the way)
+        # A keep the store refuses for the DM's own name is not "answered meanwhile".
+        return _failed(GONE if str(exc) == SUGGESTION_GONE else BAD_TARGET)
+    return Outcome(
+        result_id=str(done.value.id),
+        batches=(done.batch,) if done.batch is not None else (),
+    )
 
 
 async def _maps(
@@ -1638,6 +1717,7 @@ async def _answer_waiting(
     # (the DM's own "Keep as secret" press hides an existing public twin; a spelling does not)
     kept = await keep.keep_all(
         memory, w.backstory, guild_id, cid, [one], keep_flags=not a.flag, one_press=True,
+        players="show" if a.action == "backstory-keep-show" else "",
     )  # fmt: skip
     return Outcome(result_id="1") if kept.kept else _failed(BAD_TARGET)
 

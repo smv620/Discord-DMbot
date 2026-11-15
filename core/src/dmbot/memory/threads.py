@@ -34,7 +34,12 @@ PROMISE_WORDS = {
     ABANDONED: "Broken or let go",
 }
 PROMISE = "promise"
-ROLES = ("quest giver", "target", "villain", "victim", "reward")
+# (#4453, quests slice 1, Supervisor's answer 1: "takes it on" makes a quest one character's own
+# pursuit, the party's otherwise; "the one missing" and "in danger" are who a quest is about)
+ROLES = (
+    "quest giver", "target", "villain", "victim", "reward", "takes it on", "the one missing",
+    "in danger",
+)  # fmt: skip
 ALL_STATES = (HINTED, OPEN, GOING, RESOLVED, ABANDONED)
 LIVE_STATES = (HINTED, OPEN, GOING)  # a thread in one of these can stall
 STALLED_AFTER = 3  # sessions, unless DMBOT_THREAD_STALLED_SESSIONS says otherwise
@@ -91,6 +96,7 @@ def in_play_first(infos: Iterable[ThreadInfo]) -> list[ThreadInfo]:
 
 
 LED_TO = "led_to"
+BRANCH_OF = "branch_of"  # a side quest or a mystery inside a bigger thread (#4471, §6a)
 CHAIN_DEPTH = 10  # how far the loop check follows "led to" before it gives up (and refuses)
 
 
