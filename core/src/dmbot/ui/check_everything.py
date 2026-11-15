@@ -136,14 +136,21 @@ async def begin(interaction: discord.Interaction, guild_id: int, campaign_id: st
 
     # Counting what waits takes several reads: answer Discord first (it gives up after 3 seconds).
     await _answer_first(interaction)
+    before: int | None = None
     if interaction.guild is None:
         # In the DM's private chat a press has no server, and every card the walk opens looks the
         # campaign up again: the button's own server is the one to use, never a database guess
         # (#4528). `_campaign_for` still checks the campaign is in that server and who may run it.
+        before = names._PRIVATE_SERVERS.get(campaign_id)
         names._PRIVATE_SERVERS[campaign_id] = guild_id
     campaign = await names._campaign_for(interaction, campaign_id)  # only whoever runs the campaign
     if campaign is None:
-        names._PRIVATE_SERVERS.pop(campaign_id, None)  # (not a campaign of that server: forget it)
+        # (not a campaign of that server, or not this person's: put back what was known before, so
+        # a wrong press can't wipe a good entry)
+        if before is None:
+            names._PRIVATE_SERVERS.pop(campaign_id, None)
+        else:
+            names._PRIVATE_SERVERS[campaign_id] = before
         return
     counts = await waiting_counts(interaction, campaign.guild_id, campaign.id)
     parts = walks.parts_for(counts)

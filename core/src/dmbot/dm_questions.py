@@ -59,7 +59,8 @@ def ordered(asks: list[Ask]) -> list[Ask]:
 
 
 # The kinds "✅ Check everything" walks through (#4192), in ORDER. The other kinds keep their own
-# buttons until they join the walk.
+# buttons until they join the walk. A kind that joins must first work from a private chat (no
+# `interaction.guild`): `heard_review` and `said_as_review` do not yet (#4528).
 WALKED = (NAMES, PEOPLE, CLAIMS, CONNECTIONS, KINDS, DEEDS, REVEALS)
 WALK_PRESS = "Press **✅ Check everything** to go through them."
 
@@ -94,7 +95,8 @@ def combine(
     head = f"**{len(asks)} questions** about {about}:"
     if use_walk and all(a.count for a in walked):
         # The same number as the walk's button: "3 questions" above "Check everything (59)" read
-        # as three questions to the DM (#4528). Counts only; no name.
+        # as three questions to the DM (#4528). Counts only; no name. When a count is unknown
+        # (0) the heading keeps counting the questions, as the button then shows no number.
         head = f"**{sum(a.count for a in walked)} things to check** from {about}:"
     press = WALK_PRESS if use_walk else "Press a button to answer."
     text = f"{head}\n{lines}\n{press}"

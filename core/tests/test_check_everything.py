@@ -516,6 +516,32 @@ class FromThePrivateChat(unittest.IsolatedAsyncioTestCase):
         self.assertIn(logic.NO_CAMPAIGN_ACCESS, told.await_args.args)
         self.assertNotIn(CID, names._PRIVATE_SERVERS)
 
+    async def test_a_wrong_press_puts_back_what_was_known(self) -> None:
+        from dmbot.ui import names
+
+        names._PRIVATE_SERVERS[CID] = GUILD
+        it = self.press(99)
+        with (
+            patch.object(ce, "run_part", AsyncMock()),
+            patch.object(names, "_is_manager", return_value=False),
+            patch.object(names, "_tell", AsyncMock()),
+        ):
+            await ce.begin(cast(Any, it), GUILD, CID)
+        self.assertEqual(names._PRIVATE_SERVERS[CID], GUILD)
+        names._PRIVATE_SERVERS.pop(CID, None)
+
+    async def test_a_remembered_server_that_is_out_of_date_asks_the_database(self) -> None:
+        from dmbot.ui import names
+
+        names._PRIVATE_SERVERS[CID] = GUILD + 1  # (the campaign moved: #2550)
+        it = self.press(7, guild_of=GUILD)
+        with patch.object(names, "_is_manager", return_value=False):
+            campaign = await names._campaign_for(cast(Any, it), CID)
+        assert campaign is not None
+        self.assertEqual(campaign.guild_id, GUILD)
+        self.assertEqual(names._PRIVATE_SERVERS[CID], GUILD)
+        names._PRIVATE_SERVERS.pop(CID, None)
+
     async def test_another_servers_id_in_the_button_finds_nothing(self) -> None:
         from dmbot.ui import names
 
@@ -532,6 +558,12 @@ class FromThePrivateChat(unittest.IsolatedAsyncioTestCase):
 
 
 class TheHeadingTotal(unittest.TestCase):
+    def test_an_unknown_count_keeps_the_question_count(self) -> None:
+        asks = [ask(NAMES, 0), ask(CLAIMS, 4)]
+        combined = combine(asks, "your import", walk=lambda total: discord.ui.Button(label="x"))
+        assert combined is not None
+        self.assertTrue(combined[0].startswith("**2 questions** about your import:"))
+
     def test_the_heading_says_the_total_the_button_says(self) -> None:
         asks = [ask(NAMES, 12), ask(CLAIMS, 14), ask(CONNECTIONS, 33)]
         combined = combine(
