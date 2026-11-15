@@ -81,7 +81,7 @@ HANDOVER_DAYS = 7
 HANDOVER_SECONDS = HANDOVER_DAYS * 24 * 3600
 
 
-HandoverStatus = Literal["open", "accepted", "declined", "withdrawn", "expired"]
+HandoverStatus = Literal["open", "accepted", "declined", "withdrawn", "expired", "closed"]
 NAME_ON_OFFER_MAX = 100  # a display name kept on an offer (Discord's are 32 at most)
 
 
@@ -119,6 +119,11 @@ class HandoverOffer:
     move_asked_at: int | None = None
     move_failed_for: int | None = None  # who had accepted when a move did not happen,
     move_failed_reason: str | None = None  # and the plain reason, for that person only
+    # The accounts the two people were when the offer was made (#2533, slice 3), and which side
+    # changed when the bot closed it: "offerer", "receiver" or "same" (one account now).
+    from_account: int | None = None
+    to_account: int | None = None
+    closed_side: str | None = None
 
     @property
     def expires_at(self) -> int:
