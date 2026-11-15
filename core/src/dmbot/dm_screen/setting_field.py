@@ -32,6 +32,7 @@ NOT_SET = (
 )
 ONLY_DMS = "Only the DM can change the campaign's setting."
 CHANGED = "That guess had already changed. The card now shows the latest."
+STALE_LIST = "That list was out of date. Pick again from the card."
 FAILED = "Couldn't change the campaign's setting. Try again in a moment."
 
 
@@ -130,7 +131,8 @@ class KeepSettingButton(
             log.exception("Couldn't keep the campaign's setting")
             await interaction.followup.send(FAILED, ephemeral=True)
             return
-        changed(interaction, campaign)
+        else:
+            changed(interaction, campaign)
         await settings._redraw(interaction, campaign)
 
 
@@ -264,7 +266,7 @@ class WorldMenu(
             return
         world = next((w for w in WORLDS if w.key == value), None)
         if world is None:  # (a stale menu)
-            await interaction.response.send_message(CHANGED, ephemeral=True)
+            await interaction.response.send_message(STALE_LIST, ephemeral=True)
             return
         await _choose(interaction, self.campaign_id, world.place)
 
