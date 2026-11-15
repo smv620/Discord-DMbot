@@ -38,6 +38,14 @@ def campaign(dms: frozenset[int] = frozenset({DM})) -> Campaign:
     return Campaign(C1, GUILD, "Frostmaiden", 1, 1, "2024", "2014", True, dms, None, 50, "peek")
 
 
+def on_screen() -> Campaign:
+    """The campaign with its DM screen set: a house-file note goes to the DMs privately and falls
+    back to the screen when none can be reached (#3874)."""
+    from dataclasses import replace
+
+    return replace(campaign(), dm_screen_channel_id=SCREEN)
+
+
 class FileLinkRepr(unittest.TestCase):
     def test_the_private_link_is_not_in_its_repr_or_str(self) -> None:
         link = FileLink(DOC, None, DM, 1)
@@ -809,6 +817,7 @@ class SessionStart(SyncTest):
             return object()
 
         self.real.post_message = post_message  # type: ignore[method-assign,assignment]
+        self.real.ask_privately = AsyncMock(return_value=False)  # type: ignore[method-assign]
 
     async def settle(self) -> None:
         for task in list(asyncio.all_tasks() - {asyncio.current_task()}):
@@ -819,7 +828,7 @@ class SessionStart(SyncTest):
         self.links.link = DOC
         got = fetch.Fetched(FILE.encode(), "link.txt")
         with patch.object(fetch, "fetch", AsyncMock(return_value=got)):
-            self.real._check_house_file(campaign(), SCREEN)
+            self.real._check_house_file(on_screen(), SCREEN)
             await self.settle()
         ((channel, text, view),) = self.posts
         self.assertEqual(channel, SCREEN)
@@ -828,18 +837,18 @@ class SessionStart(SyncTest):
         self.assertEqual(len(self.store.rules), 3)  # nothing changed by itself
 
     async def test_no_link_and_no_difference_post_nothing(self) -> None:
-        self.real._check_house_file(campaign(), SCREEN)
+        self.real._check_house_file(on_screen(), SCREEN)
         await self.settle()
         self.links.link = DOC
         same = fetch.Fetched(b"1. Keep\n2. Old\n3. Gone\n", "link.txt")
         with patch.object(fetch, "fetch", AsyncMock(return_value=same)):
-            self.real._check_house_file(campaign(), SCREEN)
+            self.real._check_house_file(on_screen(), SCREEN)
             await self.settle()
         self.assertEqual(self.posts, [])
 
     async def test_without_the_store_nothing_happens(self) -> None:
         self.real.house_file_links = None
-        self.real._check_house_file(campaign(), SCREEN)
+        self.real._check_house_file(on_screen(), SCREEN)
         await self.settle()
         self.assertEqual(self.posts, [])
 
@@ -847,12 +856,14 @@ class SessionStart(SyncTest):
         self.links.link = DOC
         error = fetch.LinkError("It isn't shared.")
         with patch.object(fetch, "fetch", AsyncMock(side_effect=error)):
-            self.real._check_house_file(campaign(), SCREEN)
+            self.real._check_house_file(on_screen(), SCREEN)
             await self.settle()
         ((_, text, view),) = self.posts
         self.assertIn("I couldn't read your house-rules file", text)
         self.assertNotIn(DOC, text)
-        self.assertIsNone(view)
+        self.assertEqual(
+            len(view.children), 0
+        )  # (no buttons: an empty view, as private_note sends)
 
 
 class Wiring(unittest.TestCase):
@@ -880,3 +891,30 @@ class Wiring(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SessionStartPointer(SessionStart):
+    """With a DM Bot channel: the differences go privately, the channel gets a pointer only."""
+
+    async def test_the_channel_gets_a_pointer_and_the_dm_the_differences(self) -> None:
+        from dataclasses import replace
+
+        from dmbot.dm_screen.house_sync import HOUSE_FILE_POINTER
+
+        self.real.ask_privately = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        told: list[tuple[int, str]] = []
+
+        async def post(channel_id: int, text: str, **_: Any) -> bool:
+            told.append((channel_id, text))
+            return True
+
+        self.real.post = post  # type: ignore[method-assign,assignment]
+        self.links.link = DOC
+        got = fetch.Fetched(FILE.encode(), "link.txt")
+        mine = replace(campaign(), dm_screen_channel_id=SCREEN, dm_bot_channel_id=77)
+        with patch.object(fetch, "fetch", AsyncMock(return_value=got)):
+            self.real._check_house_file(mine, SCREEN)
+            await self.settle()
+        self.assertEqual(self.posts, [])  # (nothing on the screen)
+        self.assertIn("1 to add", self.real.ask_privately.await_args.args[2])
+        self.assertEqual(told, [(77, HOUSE_FILE_POINTER)])

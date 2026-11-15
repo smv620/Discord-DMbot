@@ -164,6 +164,7 @@ from dmbot.dm_screen import (
     pack_suggestion,
     pack_update,
     peek_view,
+    pointer_note,
     rules_cards,
     said_as_hears,
     said_as_listens,
@@ -208,6 +209,7 @@ from dmbot.dm_screen.handover import (
     TakeOnButton,
     WithdrawOfferButton,
 )
+from dmbot.dm_screen.house_sync import HOUSE_FILE_POINTER
 from dmbot.dm_screen.import_button import ImportButton
 from dmbot.dm_screen.left_out import PutBackButton, left_out_view
 from dmbot.dm_screen.name_questions import (
@@ -6481,8 +6483,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
 
         async def send(text: str, view: discord.ui.View) -> bool:
-            posted = await self.post_message(screen_id, text, view if view.children else None)
-            return posted is not None
+            # The file's differences are house-rule text: private to the DMs, a pointer in the DM
+            # Bot channel, the screen only if no DM can be reached (#3874).
+            return await pointer_note.send(self, campaign, text, lambda: view, HOUSE_FILE_POINTER)
 
         self._track(
             house_sync.check_linked(self, campaign, send, quiet_if_same=True), "house-file-check"

@@ -10,7 +10,6 @@ spare, so a fifth update or more is named in a line and handled from Settings.""
 
 from __future__ import annotations
 
-import contextlib
 import logging
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -20,7 +19,7 @@ import discord
 
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
-from dmbot.dm_screen import private_note
+from dmbot.dm_screen import pointer_note
 
 log = logging.getLogger(__name__)
 
@@ -128,10 +127,8 @@ async def _tell(
     make: Callable[[], discord.ui.View] | None,
     count: int,
 ) -> bool:
-    """The words privately (the screen as the fallback) and, when the campaign has a DM Bot
-    channel, one counts-only pointer there. True when the words reached a DM or the screen."""
-    told = bool(await private_note.send(bot, campaign, text, make or (lambda: discord.ui.View())))
-    if told and campaign.dm_bot_channel_id:
-        with contextlib.suppress(Exception):  # (a courtesy: the words have gone out)
-            await bot.post(campaign.dm_bot_channel_id, POINTER.format(n=count))
-    return told
+    """The words privately (the screen as the fallback) and one counts-only pointer in the DM Bot
+    channel. True when the words reached a DM or the screen."""
+    return await pointer_note.send(
+        bot, campaign, text, make or (lambda: discord.ui.View()), POINTER.format(n=count)
+    )

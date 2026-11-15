@@ -41,6 +41,13 @@ from dmbot.rules.house_file_sync import Applied, Item
 
 log = logging.getLogger(__name__)
 
+# What the DM Bot channel is told when the linked house-rules file differs (#3874): a count of
+# nothing but the fact. The differences themselves are house-rule text, sent privately.
+HOUSE_FILE_POINTER = (
+    "📄 The linked house-rules file differs from your campaign's house rules. The details are in "
+    "your private message."
+)
+
 MAX_PENDING = 20
 TEXT_MAX = MESSAGE_MAX - 100  # margin kept from before: room for the words a sender adds around it
 READ_MAX_BYTES = 4 * house_file.MAX_FILE_CHARS  # as bytes: UTF-8 is up to 4 per character
