@@ -160,7 +160,13 @@ class OnTheScreen(NamesTest):
         it = self.it()
         await view._strength("once")(it)
         card, _ = await self.card()
-        self.assertIn("🏛️ **Culture:** once Illuskan, strongly dwarven", card)
+        # (both kept, the strength on the typed one; two made in the same second come back in id
+        # order, so the line's order is not checked)
+        line = next(x for x in card.splitlines() if x.startswith("🏛️ **Culture:**"))
+        self.assertEqual(
+            sorted(line.removeprefix("🏛️ **Culture:** ").split(", ")),
+            ["once Illuskan", "strongly dwarven"],
+        )
 
     async def test_players_never_see_a_read_and_keep_makes_it_the_dms(self) -> None:
         await self.memory.add_read_map_facts(
