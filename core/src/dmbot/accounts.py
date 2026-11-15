@@ -87,12 +87,21 @@ LINK_WORDS = {
         "That Discord account is already on another DMbot account. Remove it there first, then "
         "add it here."
     ),
-    "not_yours": "That didn't work. Sign in again, then try once more.",
+    "not_yours": (
+        "DMbot couldn't confirm you own that Discord account. Sign in as that account, then try "
+        "again."
+    ),
 }
 UNLINK_WORDS = {
     "last": ("That is your only Discord account. Add another one first, then take this one off."),
-    "not_linked": "That Discord account isn't on your DMbot account.",
-    "not_yours": "That didn't work. Sign in again, then try once more.",
+    "not_linked": (
+        "That Discord account isn't on your DMbot account any more. Refresh the page to see your "
+        "current accounts."
+    ),
+    "not_yours": (
+        "DMbot couldn't confirm you own that Discord account. Sign in as that account, then try "
+        "again."
+    ),
 }
 
 
