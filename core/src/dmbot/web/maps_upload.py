@@ -5,8 +5,8 @@ as one Undo, so this module only does what the bot should not wait for: it check
 the file, puts the two files in the bucket under random keys (`p/<token>.<ext>` and
 `p/<token>-preview.webp`, as the picture keeper does) and queues one `maps-add` action
 (migration 0498). The bot re-checks the sender and the files, writes the rows, and deletes the
-files if it refuses; a file nobody picked up is swept by the picture sweep (about an hour). Nothing is stored for
-anyone outside the campaign's people, for a picture the person did not say they may use, or for a
+files if it refuses; a file nobody picked up is swept by the picture sweep (about an hour).
+Nothing is stored for anyone outside the campaign's people, for a picture the person did not say they may use, or for a
 file that is not a PNG, JPEG or WebP picture by its own bytes (an SVG is never one). The picture
 is re-encoded first, so no location data or hidden text rides along. Words, ids and sizes only
 are queued, never a word of the picture.
@@ -92,7 +92,7 @@ async def add(
     """Stage the picture and queue `maps-add`; the answer id the page polls. Refusals are
     `RecapError` codes: `needs_rights`, `bad_name`, `bad_file`, `uploads_off`, `not_allowed`,
     and `failed` (the bucket did not take it)."""
-    guild_id, campaign_id = _parse(ref)
+    guild_id, _campaign = _parse(ref)
     _guild_of(session, guild_id)
     if not rights:
         raise RecapError("needs_rights")  # (nothing is stored without the person's own yes)
@@ -118,9 +118,9 @@ async def add(
         log.warning("A sent map could not be staged (%s)", exc)
         await _forget(bucket, key, preview_key)
         raise RecapError("failed") from None
-    # `ready.sha256` is the hash of the bytes sent, not of the re-encoded file that is staged, so the
-    # bot must not compare it with the staged object: it only names the picture (the same file sent
-    # twice is one picture). The sizes are of the staged files.
+    # `ready.sha256` is the hash of the bytes sent, not of the re-encoded file that is staged, so
+    # the bot must not compare it with the staged object: it only names the picture (the same file
+    # sent twice is one picture). The sizes are of the staged files.
     text = (
         f"{token} {ready.ext} {ready.sha256} {len(ready.data)} {len(ready.preview)} "
         f"{ready.width} {ready.height} {name}"

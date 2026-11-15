@@ -75,7 +75,8 @@ _QUEUE_SWAPS = (
         "           OR NOT (EXISTS (SELECT 1 FROM campaign_dms d\n"
         "                           WHERE d.guild_id = g AND d.campaign_id = c\n"
         "                             AND d.user_id = dmbot_current_user())\n"
-        "                   OR (COALESCE(act IN ('maps-add', 'maps-takeback', 'maps-undo'), false)\n"
+        "                   OR (COALESCE(act IN ('maps-add', 'maps-takeback',"
+        " 'maps-undo'), false)\n"
         "                       AND dmbot_web_reads_campaign(g, c))) THEN",
         1,
     ),
