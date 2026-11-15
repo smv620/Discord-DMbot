@@ -164,7 +164,6 @@ from dmbot.dm_screen import (
     pack_suggestion,
     pack_update,
     peek_view,
-    private_note,
     rules_cards,
     said_as_hears,
     said_as_listens,
@@ -4217,7 +4216,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self, guild.id, campaign
         )  # the one reminder (#4344, never raises)
         try:
-            await self._old_chat_notice(guild, campaign, screen_id)
+            # (a setup note: the DM Bot channel, the screen only if there is none; #3874)
+            await self._old_chat_notice(guild, campaign, upkeep.channel_for(campaign) or screen_id)
         except Exception:
             log.exception("Couldn't tell the DM about the old chat channel")  # never blocks a start
         await self._tell_players_the_clock(
@@ -4274,8 +4274,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             except Exception:
                 log.exception("Couldn't forget the session that failed to start")
             return False, SAVE_FAILED
-        if transcript_problem:
-            await self.post(screen_id, transcript_problem)
+        if transcript_problem:  # (words only; the DM Bot channel's own problem stays on the screen)
+            await self.post(upkeep.channel_for(campaign) or screen_id, transcript_problem)
         if dm_bot_problem:
             await self.post(screen_id, dm_bot_problem)
         self._check_house_file(campaign, screen_id)
@@ -13574,7 +13574,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             f"DMbot removed {count} old {word} to make room. "
             "Mark the ones to keep as permanent on the website."
         )
-        await private_note.send(self, campaign, text, lambda: discord.ui.View())
+        # Private first; a count, so the DM Bot channel is the fallback (#3874), not the screen.
+        if await self.ask_privately(guild_id, campaign_id, text, discord.ui.View()):
+            return
+        channel = upkeep.channel_for(campaign)
+        if channel is not None:
+            await self.post(channel, text)
 
     async def run_picture_actions(self) -> None:
         """What posters and DMs chose on the website's Pictures page, applied through the picture
