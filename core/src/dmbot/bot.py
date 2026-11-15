@@ -172,6 +172,7 @@ from dmbot.dm_screen import (
     set_suggestion,
     set_update,
     update_notes,
+    upkeep,
     web_settings,
 )
 from dmbot.dm_screen import clock as clock_screen
@@ -8678,12 +8679,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
                 if table is not None and table.campaign_id == campaign_id:
                     table.screen_level = campaign.dm_screen_level
-        if was != campaign.dm_screen_level and campaign.dm_screen_channel_id is not None:
+        channel = upkeep.channel_for(campaign)  # (the DM Bot channel, else the screen; #3874)
+        if was != campaign.dm_screen_level and channel is not None:
             # Always posted: a note about the level, not something the level governs.
-            await self.post(
-                campaign.dm_screen_channel_id,
-                screen_messages.level_changed(campaign.dm_screen_level),
-            )
+            await self.post(channel, screen_messages.level_changed(campaign.dm_screen_level))
         return campaign
 
     async def _alert_dm(self, guild_id: int, message: str) -> None:
@@ -13388,15 +13387,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self, campaign: Campaign, rule: OptionalRule, turn_on: bool, sender_id: int
     ) -> bool:
         """An optional rule chosen on the website (#2755), as `/dmbot optionalrules` does it:
-        saved, then noted in the DM screen if the campaign has one. A line that could not be
+        saved, then noted in the DM Bot channel (the screen if none). A line that could not be
         posted is not the choice's failure (the rule is saved): False says so, for the page to
         mention. The note never pings."""
         await self.campaigns.set_optional_rule(campaign.guild_id, campaign.id, rule.id, turn_on)
-        if campaign.dm_screen_channel_id is None:
+        channel = upkeep.channel_for(campaign)  # (the DM Bot channel, else the screen; #3874)
+        if channel is None:
             return True
         try:
             return await self.post(
-                campaign.dm_screen_channel_id,
+                channel,
                 optional.screen_line(rule, turn_on, f"<@{sender_id}>"),
             )
         except Exception as exc:  # the type only
