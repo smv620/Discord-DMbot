@@ -12,6 +12,9 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { parsePage } from "./dom";
 import { notAffiliated } from "../src/content/legal";
 import { publicPaths } from "../src/content/site";
+import { entries, monthHeading, monthPages, splitEntries } from "../src/content/whats-new";
+
+const newestMonth = monthPages(splitEntries(entries, new Date()).older)[0];
 
 // Every file in src/pages gets a smoke test; a new page without an entry here fails below.
 const found = import.meta.glob<{ default: AstroComponentFactory }>("../src/pages/**/*.astro", {
@@ -63,6 +66,8 @@ const pages: [path: string, file: string, title: string, noindex: boolean][] = [
   ["/players", "players.astro", "Playing at a table · DMbot", false],
   ["/whats-new", "whats-new.astro", "What&#39;s new · DMbot", false],
   ["/whats-new/older", "whats-new/older.astro", "Older changes · DMbot", false],
+  // (a month page: the build makes one for each month of older changes; with no month given it shows the newest, #4203)
+  [`/whats-new/${newestMonth?.slug ?? "older"}`, "whats-new/[month].astro", `${newestMonth ? monthHeading(newestMonth) : "Older changes"} · DMbot`, true],
   ["/hello", "hello.astro", "Say hello · DMbot", false],
   ["/admin", "admin.astro", "Admin · DMbot", true],
   ["/unsubscribe", "unsubscribe.astro", "Stop these emails · DMbot", true],

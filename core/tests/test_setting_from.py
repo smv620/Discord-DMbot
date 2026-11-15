@@ -17,8 +17,10 @@ from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.db import Database, drop_schema
 from dmbot.dm_screen import adventure_card
+from dmbot.memory import map_facts as mf
 from dmbot.memory import setting_worlds as sw
 from dmbot.memory.lookup import LookupCache
+from dmbot.memory.map_fact_store import Read
 from dmbot.memory.models import CONFIRMED, REJECTED, MemoryRuleError
 from dmbot.memory.models import DM as BY_DM
 from dmbot.memory.search import find
@@ -337,6 +339,146 @@ class TheNo(MemoryTest):
         kept = await self.memory.entity(GUILD_A, self.c, made.value.id)
         assert kept is not None
         self.assertEqual((kept.status, kept.setting_from), (CONFIRMED, "declined"))
+
+    async def _pick_takes_the_made_place(self, *, pick_own: bool) -> None:
+        made = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        assert made.value is not None
+        own = None
+        if pick_own:
+            own = await self.add("Toril", type="place", status=CONFIRMED)
+            await self.memory.set_place_level(GUILD_A, self.c, own, "world", source=BY_DM)
+        pick = await self.memory.set_setting(GUILD_A, self.c, own, source=BY_DM)
+        gone = await self.memory.entity(GUILD_A, self.c, made.value.id)
+        assert gone is not None and pick.batch is not None
+        self.assertEqual((gone.status, gone.setting_from), (REJECTED, "declined"))
+        lookup = await LookupCache(self.memory).get(GUILD_A, self.c)
+        self.assertEqual(find(lookup, "Faerûn", secrets=True), [])
+        await self.memory.undo(GUILD_A, self.c, pick.batch)  # (one Undo brings it back)
+        back = await self.memory.entity(GUILD_A, self.c, made.value.id)
+        assert back is not None
+        self.assertEqual((back.status, back.setting_guessed), (CONFIRMED, True))
+
+    async def test_the_dms_own_pick_takes_the_made_place_too(self) -> None:
+        """(Supervisor's ruling on #4291: `set_setting` level with ✖)"""
+        await self._pick_takes_the_made_place(pick_own=True)
+
+    async def test_no_setting_takes_the_made_place_too(self) -> None:
+        await self._pick_takes_the_made_place(pick_own=False)
+
+    async def test_the_dms_pick_leaves_a_found_place_alone(self) -> None:
+        faerun = await self.add("Faerûn", type="place", status=CONFIRMED)
+        await self.memory.set_place_level(GUILD_A, self.c, faerun, "world", source=BY_DM)
+        made = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        assert made.value is not None and made.value.id == faerun
+        before = await self.memory.entity(GUILD_A, self.c, faerun)
+        await self.memory.set_setting(GUILD_A, self.c, None, source=BY_DM)
+        after = await self.memory.entity(GUILD_A, self.c, faerun)
+        assert before is not None and after is not None
+        self.assertEqual((after.setting, after.setting_from), (False, "declined"))
+        same = ("status", "hidden_from_players", "place_level", "name", "source")
+        self.assertEqual([getattr(after, f) for f in same], [getattr(before, f) for f in same])
+
+    async def test_the_dms_pick_keeps_a_made_place_the_players_were_shown(self) -> None:
+        made = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        assert made.value is not None
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, made.value.id, False, source=BY_DM
+        )
+        await self.memory.set_setting(GUILD_A, self.c, None, source=BY_DM)
+        kept = await self.memory.entity(GUILD_A, self.c, made.value.id)
+        assert kept is not None
+        self.assertEqual((kept.status, kept.setting_from), (CONFIRMED, "declined"))
+
+    async def test_a_turned_down_link_ties_nothing(self) -> None:
+        made = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        assert made.value is not None
+        town = await self.add("Targos", type="place", status=CONFIRMED)
+        link = await self.relate(town, "located_in", made.value.id)
+        await self.memory.update_relation(
+            GUILD_A, self.c, link.value[0].id, source=BY_DM, status=REJECTED
+        )
+        await self.memory.set_setting(GUILD_A, self.c, None, source=BY_DM)
+        gone = await self.memory.entity(GUILD_A, self.c, made.value.id)
+        assert gone is not None
+        self.assertEqual(gone.status, REJECTED)
+
+    async def test_picking_the_guess_itself_keeps_it_as_the_dms(self) -> None:
+        made = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        assert made.value is not None
+        await self.memory.set_setting(GUILD_A, self.c, made.value.id, source=BY_DM)
+        kept = await self.memory.entity(GUILD_A, self.c, made.value.id)
+        assert kept is not None
+        self.assertEqual((kept.status, kept.setting, kept.setting_from), (CONFIRMED, True, BY_DM))
+
+    async def test_the_dms_pick_keeps_a_made_place_something_points_at(self) -> None:
+        made = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        assert made.value is not None
+        town = await self.add("Targos", type="place", status=CONFIRMED)
+        await self.relate(town, "located_in", made.value.id)
+        await self.memory.set_setting(GUILD_A, self.c, None, source=BY_DM)
+        kept = await self.memory.entity(GUILD_A, self.c, made.value.id)
+        assert kept is not None
+        self.assertEqual((kept.status, kept.setting_from), (CONFIRMED, "declined"))
+
+
+class MapFactsTie(MemoryTest):
+    """#4495: a map fact on the made place (the DM's, or one of DMbot's World notes) ties it, as a
+    connection does, so a no to the guess never drops the DM's land or ruler with it."""
+
+    async def _made(self) -> str:
+        made = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        assert made.value is not None
+        return made.value.id
+
+    async def _status(self, place: str) -> str:
+        row = await self.memory.entity(GUILD_A, self.c, place)
+        assert row is not None
+        return row.status
+
+    async def _dms_land_then(self, *, decline: bool) -> None:
+        place = await self._made()
+        await self.memory.set_map_fact(GUILD_A, self.c, place, mf.TERRAIN, "hill", source=BY_DM)
+        if decline:
+            await self.memory.decline_setting(GUILD_A, self.c, place, source=BY_DM)
+        else:
+            await self.memory.set_setting(GUILD_A, self.c, None, source=BY_DM)
+        self.assertEqual(await self._status(place), CONFIRMED)
+
+    async def test_the_dms_land_keeps_it_on_a_no(self) -> None:
+        await self._dms_land_then(decline=True)
+
+    async def test_the_dms_land_keeps_it_when_the_dm_picks_no_setting(self) -> None:
+        await self._dms_land_then(decline=False)
+
+    async def test_a_closed_fact_keeps_it_and_undo_gives_the_guess_back(self) -> None:
+        place = await self._made()
+        await self.memory.set_map_fact(GUILD_A, self.c, place, mf.TERRAIN, "hill", source=BY_DM)
+        async with self.db.guild(GUILD_A) as conn:  # (history: "it was hills, once")
+            await conn.execute(
+                "UPDATE memory_map_facts SET to_session_at = 1 WHERE entity_id = %s", [place]
+            )
+        no = await self.memory.decline_setting(GUILD_A, self.c, place, source=BY_DM)
+        self.assertEqual(await self._status(place), CONFIRMED)
+        assert no.batch is not None
+        await self.memory.undo(GUILD_A, self.c, no.batch)
+        back = await self.memory.entity(GUILD_A, self.c, place)
+        assert back is not None
+        self.assertEqual((back.setting, back.setting_guessed), (True, True))
+
+    async def test_a_world_note_keeps_it(self) -> None:
+        place = await self._made()
+        await self.memory.add_read_map_facts(
+            GUILD_A, self.c, [Read(place, mf.TERRAIN, "hill")], source="background"
+        )
+        await self.memory.decline_setting(GUILD_A, self.c, place, source=BY_DM)
+        self.assertEqual(await self._status(place), CONFIRMED)
+
+    async def test_a_cleared_fact_ties_nothing(self) -> None:
+        place = await self._made()
+        await self.memory.set_map_fact(GUILD_A, self.c, place, mf.TERRAIN, "hill", source=BY_DM)
+        await self.memory.set_map_fact(GUILD_A, self.c, place, mf.TERRAIN, None, source=BY_DM)
+        await self.memory.set_setting(GUILD_A, self.c, None, source=BY_DM)
+        self.assertEqual(await self._status(place), REJECTED)
 
 
 class TheFormsReply(unittest.TestCase):
