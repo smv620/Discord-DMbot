@@ -190,6 +190,25 @@ class Steps(DatabaseTest):
         self.assertIsNone(await self.campaigns.get(GUILD, first.id))
         self.assertEqual([NAME], [c.name for c in await self.campaigns.list_campaigns(GUILD)])
 
+    async def test_a_failed_make_says_how_far_the_deleting_got(self) -> None:
+        await self.made(name=sample_name.name_for(5))
+        await self.made(name=sample_name.name_for(6))
+        await self.made(name=sample_name.name_for(7))
+        await self.made(name=sample_name.name_for(8))
+        like = await self.made(name=NAME.upper())  # (the new name clashes with it)
+        with self.assertRaises(SampleError):
+            await steps.fresh_campaign(self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say)
+        self.assertIn("stopped after deleting 2 of 2 old sample campaign(s)", self.said)
+        self.assertIsNotNone(await self.campaigns.get(GUILD, like.id))
+
+    async def test_a_numbered_sample_that_is_another_dms_stops_the_run_untouched(self) -> None:
+        theirs = await self.made(owner=ELSE, name=sample_name.name_for(5))
+        mine = await self.made(name=sample_name.name_for(4))
+        with self.assertRaises(SampleError):
+            await steps.fresh_campaign(self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say)
+        for c in (theirs, mine):
+            self.assertIsNotNone(await self.campaigns.get(GUILD, c.id))
+
     async def test_a_look_alike_name_is_never_deleted(self) -> None:
         keep = [
             await self.made(name=f"{sample_name.name_for(5)} copy"),

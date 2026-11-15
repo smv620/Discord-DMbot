@@ -144,11 +144,15 @@ async def fresh_campaign(
         [(old.campaign_id, names[old.campaign_id]) for old in found if old.campaign_id in names],
         deploy,
     )
-    for campaign_id in kept.delete:
-        await campaigns.delete(guild, campaign_id, only_if_owner=dm)
+    deleted = 0
     try:
+        for campaign_id in kept.delete:
+            await campaigns.delete(guild, campaign_id, only_if_owner=dm)
+            deleted += 1
         made = await campaigns.create(guild, sample_name.name_for(deploy), dm)
     except CampaignError as exc:  # e.g. a campaign whose name differs only in capitals
+        # Deleting comes first because it frees the paid slot: say how far it got (a count only).
+        say(f"stopped after deleting {deleted} of {len(kept.delete)} old sample campaign(s)")
         raise SampleError(
             "the sample campaign could not be made (a campaign with a look-alike name exists)"
         ) from exc

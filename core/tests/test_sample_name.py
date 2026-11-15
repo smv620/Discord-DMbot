@@ -69,6 +69,18 @@ class Keeping(unittest.TestCase):
             sample_name.counts_line(kept), "Sample campaigns kept: 29, 30, 31. Deleted: 27, 28."
         )
 
+    def test_the_same_deploy_says_replaced_not_deleted(self) -> None:
+        kept = self.plan([31, 32, 33], 33)
+        self.assertEqual(
+            sample_name.counts_line(kept),
+            "Sample campaigns kept: 31, 32, 33. Deleted: none. Replaced: 33.",
+        )
+
+    def test_several_unnumbered_and_the_same_deploy_together(self) -> None:
+        kept = self.plan([None, None, 33, 32], 33)
+        self.assertCountEqual(kept.delete, ["old0", "old1", "id33"])
+        self.assertEqual(kept.kept_numbers, (32, 33))
+
     def test_the_issues_example_30_31_32_then_33(self) -> None:
         kept = self.plan([30, 31, 32], 33)
         self.assertEqual(kept.kept_numbers, (31, 32, 33))

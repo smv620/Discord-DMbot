@@ -49,6 +49,8 @@ class Kept:
     kept_numbers: tuple[int, ...]
     deleted_numbers: tuple[int, ...]
     deleted_old: int  # how many unnumbered ones go (always, as they count as oldest)
+    deploy: int = 0  # the deploy being made now
+    replaced: bool = False  # this deploy's own campaign was there and is made again
 
 
 def plan_keep(existing: Iterable[tuple[str, str]], deploy: int) -> Kept:
@@ -73,8 +75,10 @@ def plan_keep(existing: Iterable[tuple[str, str]], deploy: int) -> Kept:
         keep=tuple(cid for _, cid in stay),
         delete=tuple([*same, *old, *(cid for _, cid in go)]),
         kept_numbers=tuple(sorted([n for n, _ in stay] + [deploy])),
-        deleted_numbers=tuple(sorted([deploy] * bool(same) + [n for n, _ in go])),
+        deleted_numbers=tuple(sorted(n for n, _ in go)),
         deleted_old=len(old),
+        deploy=deploy,
+        replaced=bool(same),
     )
 
 
@@ -84,4 +88,7 @@ def counts_line(kept: Kept) -> str:
     gone = [str(n) for n in kept.deleted_numbers]
     if kept.deleted_old:
         gone.append(f"{kept.deleted_old} unnumbered")
-    return f"Sample campaigns kept: {keep}. Deleted: {', '.join(gone) if gone else 'none'}."
+    replaced = f" Replaced: {kept.deploy}." if kept.replaced else ""
+    return (
+        f"Sample campaigns kept: {keep}. Deleted: {', '.join(gone) if gone else 'none'}.{replaced}"
+    )
