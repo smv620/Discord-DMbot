@@ -165,6 +165,10 @@ class Sweep(DatabaseTest):
             self.assertEqual(await self.waiting_ids(), [])  # (it waits before the next try)
             self.now += CLOSE_READ_LEASE_S + 1
         self.assertEqual(await self.waiting_ids(), [])  # (left alone, counted in the log)
+        # (the count `sample_run --map` reads to stop waiting, #4423)
+        tries = await self.maps.close_read_tries(GUILD, self.campaign.id, a_map.id)
+        self.assertEqual(tries, CLOSE_READ_TRIES)
+        self.assertEqual(await self.maps.close_read_tries(GUILD, self.campaign.id, "f" * 32), 0)
 
     async def test_a_read_with_nothing_to_keep_is_tried_again(self) -> None:
         # (a cut or empty close read: never kept as "nothing found")
