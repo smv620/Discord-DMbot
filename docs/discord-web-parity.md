@@ -71,7 +71,7 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | House rules (read), the house-rules file, rules sharing and rulesets | `/account/house-rules`, `/account/sharing` | read live; file and sharing switched off | `HOUSE_FILE_LIVE`, `RULE_SHARING_LIVE`, `RULESETS_LIVE` |
 | Homebrew (read and file) | `/account/homebrew` | live | none |
 | Pictures gallery | `/account/pictures` | built, switched off | `PICTURES_LIVE` |
-| Maps page: the list, a DM's yes or no, show or hide for the table, remove, a poster's take-back, Undo | `/account/maps` | built, switched off | `MAPS_LIVE` (#4347); Discord has no show or hide yet: its half is #4414 |
+| Maps page: the list, a DM's yes or no, show or hide for the table, remove, a poster's take-back, Undo | `/account/maps` | built, switched off | `MAPS_LIVE` (#4347); Discord: `/dmbot maps` shows a map to the table or hides it, with the same warning and an Undo (#4414); the rest of the page (the DM's yes or no, a poster's take-back) is in Questions and the map's own question |
 | Story timeline | `/account/timeline` | live | none |
 | Plot check (ask, answer an issue, chat, decide a proposal) | campaign | built, switched off | `PLOT_CHECK_LIVE` |
 | Story mode | campaign | built, switched off | `STORY_MODE_LIVE` |

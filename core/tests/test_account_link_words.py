@@ -10,6 +10,8 @@ from dmbot import accounts
 from dmbot.campaigns import CampaignStore
 from tests.pg import DatabaseTest
 from tests.test_account_discord_ids import add_user
+from tests.test_owner_campaigns import WORKS
+from tests.test_web_accounts_db import INSERT_PLAN, PLAN_ROW
 
 ACCOUNT, SECOND, THIRD, OWNER_OF_CAMPAIGNS, OTHER_ACCOUNT = 9001, 9002, 9003, 9004, 9005
 NOW = 1_700_000_000
@@ -45,16 +47,33 @@ class LinkingWithWords(DatabaseTest):
         )
 
     async def test_one_with_its_own_plan_gets_the_ruled_words(self) -> None:
-        async with self.db.plan_writer(OTHER_ACCOUNT) as conn:
+        # As give_plan in test_owner_campaigns does: the account row, then its plan. The door
+        # checks a plan before a plain account (after taken and has_campaigns), so this is has_plan.
+        async with self.db.user(OTHER_ACCOUNT) as conn:
             await conn.execute(
                 "INSERT INTO web_users (user_id, email, created_at, last_sign_in_at)"
-                " VALUES (%s, NULL, 0, 0) ON CONFLICT DO NOTHING",
+                " VALUES (%s, NULL, 0, 0)",
                 (OTHER_ACCOUNT,),
             )
+        async with self.db.plan_writer(OTHER_ACCOUNT) as conn:
+            await conn.execute(
+                INSERT_PLAN, {**PLAN_ROW, **WORKS, "campaign_cap": 1, "user_id": OTHER_ACCOUNT}
+            )
         got = await accounts.link_discord_id(self.db, ACCOUNT, OTHER_ACCOUNT, now=NOW)
-        self.assertFalse(got.ok)
-        self.assertIn(got.code, ("has_plan", "has_account"))  # (an account of its own, plan or not)
-        self.assertEqual(got.words, accounts.LINK_WORDS[got.code])
+        self.assertEqual((got.ok, got.code), (False, "has_plan"))
+        self.assertEqual(
+            got.words,
+            "That Discord account pays for its own DMbot plan. Sign in as that account and cancel "
+            "its plan first, then add it here.",
+        )
+
+    async def test_one_that_is_only_an_account_with_no_plan_gets_the_other_account_words(
+        self,
+    ) -> None:
+        await add_user(self.db, OTHER_ACCOUNT)
+        got = await accounts.link_discord_id(self.db, ACCOUNT, OTHER_ACCOUNT, now=NOW)
+        self.assertEqual((got.ok, got.code), (False, "has_account"))
+        self.assertEqual(got.words, accounts.LINK_WORDS["has_account"])
 
     async def test_one_already_on_another_account_gets_the_ruled_words(self) -> None:
         await add_user(self.db, OTHER_ACCOUNT)

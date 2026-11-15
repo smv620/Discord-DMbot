@@ -86,3 +86,38 @@ async def sweep(db: Database, bucket: SweepBucket, now: dt.datetime | None = Non
         deleted,
     )
     return Swept(len(in_bucket), len(wanted), deleted)
+
+
+# A staged map (the website's Maps page, #4347) waits for the bot only a short while. Its own
+# constant, never `GRACE_S`: that one is how long an upload may take between its files and its row,
+# this one is how long a staged file may wait for the bot (Supervisor, 2026-11-15). The staging
+# bucket's own one-day lifecycle rule does the same job; this is the second pair of eyes for the
+# files that rule missed (a rule that was never switched on).
+STAGING_GRACE_S = 86400
+
+
+async def sweep_staging(bucket: SweepBucket, now: dt.datetime | None = None) -> Swept:
+    """Delete the staged files older than `STAGING_GRACE_S`. No database is read: a staged file is
+    never named by a row (the bot keeps a copy in the pictures bucket and deletes the staged one),
+    so age is the only test. A listing that errors deletes nothing. Counts only in the log."""
+    now = now or dt.datetime.now(dt.UTC)
+    try:
+        found = await bucket.objects(PREFIX)
+    except BucketError as exc:
+        log.warning("Staging sweep: couldn't list the bucket (%s)", exc)
+        return Swept(0, 0, 0, "listing failed")
+    cutoff = now - dt.timedelta(seconds=STAGING_GRACE_S)
+    # the oldest first, at most `MAX_DELETES` a run: what is left goes at the next one, so a big
+    # backlog is cleared over a few days instead of never
+    stale = sorted((w, k) for k, w in found if w < cutoff)
+    left = max(0, len(stale) - MAX_DELETES)
+    stale_keys = [key for _, key in stale[:MAX_DELETES]]
+    deleted = 0
+    for key in stale_keys:
+        try:
+            await bucket.delete(key)
+            deleted += 1
+        except BucketError as exc:
+            log.warning("Staging sweep: couldn't delete a file (%s)", exc)
+    log.info("Staging sweep: %d files, %d stale deleted, %d left", len(found), deleted, left)
+    return Swept(len(found), 0, deleted)
