@@ -1419,16 +1419,8 @@ class MemoryStore:
                 # (the DM taking away DMbot's guess is a no to it: never guessed again)
                 gone_from = "declined" if r.get("setting_from") == place_levels.READ else None
                 change: dict[str, Any] = {"setting": False, "setting_from": gone_from}
-                # (a place DMbot made for its guess goes with it, as ✖ does: it never keeps one
-                # the DM didn't ask for)
-                if r.get("source") == SETTING_GUESS_SOURCE and r.get("hidden_from_players"):
-                    tied = await w.select(
-                        RELATIONS,
-                        " AND status <> 'rejected' AND (subject_id = %s OR object_id = %s)",
-                        [r["id"], r["id"]],
-                    )
-                    if not tied:
-                        change["status"] = REJECTED
+                if r.get("setting_from") == place_levels.READ:  # (its place too, as ✖ and
+                    change |= await _guess_place_goes(w, r)  # `set_setting`: one rule, #4291)
                 await w.update(ENTITIES, r["id"], change)
             if found:
                 place = found[0]
