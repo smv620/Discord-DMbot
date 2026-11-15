@@ -1667,6 +1667,26 @@ class MemoryStore:
             row = await thread_parts.set_state(w, part_id, state)
             return Written(thread_parts.from_row(row), w.batch)
 
+    async def set_time_limit_date(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        part_id: str,
+        minute: int | None,
+        *,
+        now: int | None,
+        source: str,
+        given_by: str = thread_parts.DM_SOURCE,
+    ) -> Written[thread_parts.Part]:
+        """A time limit's game date, or None to make it words only again (quests slice 4; §8.2;
+        `thread_parts.set_due`). Only the DM: the one-tap date (`given_by` 'dm'), or DMbot's read
+        the DM kept (`given_by` 'read', slice 4c). One change, one Undo."""
+        if source != DM:
+            raise MemoryRuleError(thread_parts.ONLY_DM)
+        async with self._write(guild_id, campaign_id, source) as w:
+            row = await thread_parts.set_due(w, part_id, minute, now=now, source=given_by)
+            return Written(thread_parts.from_row(row), w.batch)
+
     async def remove_thread_part(
         self, guild_id: int, campaign_id: str, part_id: str, *, source: str
     ) -> Written[None]:

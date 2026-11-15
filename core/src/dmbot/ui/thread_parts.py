@@ -22,6 +22,7 @@ from typing import Any
 import discord
 
 from dmbot.memory import thread_parts as tp
+from dmbot.memory import time_limits
 from dmbot.memory.models import DM, MemoryRuleError
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
@@ -53,6 +54,13 @@ MOVE_IT, LEAVE_IT = "🌿 Move it", "Leave it"
 NOT_A_BRANCH = "Not a branch of anything"
 NOT_PROMISED = "No, it wasn't promised"
 NONE = "none"  # a menu choice's value for "none of them" (Discord refuses an empty value)
+# A time limit's game date (quests slice 4, §8.2: the DM's one tap)
+SET_DATE = "⏰ Set a date"
+CLEAR_DATE = "🗑️ Clear the date"
+PICK_DAY = "Pick a day…"
+QUICK_SAID = {1: "Tomorrow", 3: "In 3 days", 7: "In a week"}
+DATE_QUESTION = "**When is it due?** Counted from the game clock now."
+NO_CLOCK_YET = "⚠️ No game clock here, so I can't count this down. Start the clock on the DM screen."
 
 # The Add menu: (kind, label, description)
 ADD_CHOICES = (
@@ -116,6 +124,9 @@ FOLDED_SAID = {
     "met": "time limit(s) met", "lifted": "time limit(s) lifted",
 }  # fmt: skip
 SEEN = " 👁️"
+# A dated limit with no game clock to count on (§8.2: "No game clock here, so I can't count this
+# down.")
+NO_CLOCK = "no game clock here, so I can't count this down"
 SEEN_NOTE = "👁️ Players can see it (once you show them the thread)."
 ONLY_DM = "Only the DM can change a story thread."
 TOO_LATE = "⚠️ Can't undo: it was changed since. Change it here instead."
@@ -172,6 +183,7 @@ def card_lines(
     branches: Sequence[str],
     *,
     most: int | None = None,
+    clock: tuple[int, Any] | None = None,
 ) -> list[str]:
     """What a thread's card shows of its steps, rewards and more, and its branches (§10.1; the
     ux-critic's layout). Standing parts only; finished obstacles, help and time limits fold into one
@@ -224,7 +236,16 @@ def card_lines(
             folded[p.state] = folded.get(p.state, 0) + 1
             continue
         kind = f" ({'hard' if p.limit_kind == tp.HARD else 'soft'})" if p.limit_kind else ""
-        lines.append(f"⏰ **Time limit:** {_md(p.words)}{kind}" + mark(p))
+        # (slice 4: a dated limit counts down on the clock, `clock` = (now, the calendar); with no
+        # game clock it can't be counted, and the card says so once)
+        left = ""
+        if p.due_minute is not None:
+            left = (
+                f" · {time_limits.left_said(p.due_minute, clock[0], clock[1])}"
+                if clock is not None
+                else f" · {NO_CLOCK}"
+            )
+        lines.append(f"⏰ **Time limit:** {_md(p.words)}{kind}{left}" + mark(p))
     if folded:
         said = ", ".join(f"{n} {FOLDED_SAID[s]}" for s, n in folded.items())
         lines.append(f"Also: {said}. Tap 📋 to see them.")
@@ -269,6 +290,28 @@ async def _dm(interaction: discord.Interaction, campaign_id: str) -> Any:
     return await _dm_and_memory(interaction, campaign_id)
 
 
+async def clock_now(client: Any, guild_id: int, campaign_id: str) -> tuple[int, Any] | None:
+    """The clock a time limit is counted on (slice 4, §8.2): the group furthest ahead while the
+    party is split, and the campaign's calendar for its words. None with no game clock; a failure
+    to read it is no clock too, so a card never fails for it."""
+    clocks = getattr(client, "clocks", None)
+    if clocks is None:
+        return None
+    try:
+        stored = await clocks.get(guild_id, campaign_id)
+        if stored is None:
+            return None
+        now = time_limits.furthest([stored.clock.minute, *(g.clock.minute for g in stored.groups)])
+        return (now, await clocks.calendar(guild_id, campaign_id)) if now is not None else None
+    except Exception:
+        log.warning("Couldn't read the game clock for a thread's card", exc_info=True)
+        return None
+
+
+def dated(parts: Sequence[tp.Part]) -> bool:
+    return any(p.kind == tp.TIME_LIMIT and p.due_minute is not None for p in parts)
+
+
 async def open_parts(
     interaction: discord.Interaction,
     campaign_id: str,
@@ -289,7 +332,14 @@ async def open_parts(
     if thread is None:
         await _replace(interaction, SAID_FOR[tp.GONE], None)
         return
-    lines = card_lines(parts, names, bigger, branches) or ["Nothing yet. Pick ➕ Add… to start."]
+    clock = (
+        await clock_now(interaction.client, campaign.guild_id, campaign.id)
+        if dated(parts)
+        else None
+    )
+    lines = card_lines(parts, names, bigger, branches, clock=clock) or [
+        "Nothing yet. Pick ➕ Add… to start."
+    ]
     head = f"📋 **{_md(thread.name)}**"
     text = "\n".join(([note, ""] if note else []) + [head, *lines])
     await _replace(
@@ -601,6 +651,8 @@ class PartMenu(_Menu):
             self.add_item(_Button(self._sub_step, label=SUB_STEP, row=2))
         if part.kind == tp.REWARD_GIVEN and owed:
             self.add_item(_Button(self._toward, label=TOWARD, row=2))
+        if part.kind == tp.TIME_LIMIT and part.state == "running":
+            self.add_item(_Button(self._date, label=SET_DATE, row=2))
         self.add_item(_Button(self._back, label=BACK, row=2))
 
     async def _run(self, interaction: discord.Interaction, write: Any, note: Any) -> None:
@@ -669,6 +721,13 @@ class PartMenu(_Menu):
             AddForm(self.campaign_id, self.thread_id, tp.OBJECTIVE, under_id=self.part.id)
         )
 
+    async def _date(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        self.stop()
+        await _replace(
+            interaction, DATE_QUESTION, DateMenu(self.campaign_id, self.thread_id, self.part)
+        )
+
     async def _toward(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
         self.stop()
@@ -682,6 +741,97 @@ class PartMenu(_Menu):
         await _answer_first(interaction, in_place=True)
         self.stop()
         await open_parts(interaction, self.campaign_id, self.thread_id)
+
+
+class DateMenu(_Menu):
+    """A time limit's date (slice 4, §8.2): Tomorrow, In 3 days, In a week, or a number of days
+    from now; Clear the date makes it words only again. Counted from the clock's now (the group
+    furthest ahead while the party is split). One change, one Undo."""
+
+    def __init__(self, campaign_id: str, thread_id: str, part: tp.Part) -> None:
+        super().__init__()
+        self.campaign_id, self.thread_id, self.part = campaign_id, thread_id, part
+        for days in time_limits.QUICK_DAYS:
+            self.add_item(_Button(partial(self._days, days), label=QUICK_SAID[days], row=0))
+        self.add_item(_Button(self._pick, label=PICK_DAY, row=0))
+        if part.due_minute is not None:
+            self.add_item(_Button(self._clear, label=CLEAR_DATE, row=1))
+        self.add_item(_Button(self._back, label=BACK, row=1))
+
+    async def _days(self, days: int, interaction: discord.Interaction) -> None:
+        await set_date(interaction, self.campaign_id, self.thread_id, self.part, days)
+        self.stop()
+
+    async def _pick(self, interaction: discord.Interaction) -> None:
+        # (not stopped: a form closed unsent leaves this screen working)
+        await interaction.response.send_modal(DaysForm(self.campaign_id, self.thread_id, self.part))
+
+    async def _clear(self, interaction: discord.Interaction) -> None:
+        await set_date(interaction, self.campaign_id, self.thread_id, self.part, None)
+        self.stop()
+
+    async def _back(self, interaction: discord.Interaction) -> None:
+        await _answer_first(interaction, in_place=True)
+        self.stop()
+        await open_parts(interaction, self.campaign_id, self.thread_id)
+
+
+class DaysForm(discord.ui.Modal, title="When is it due?"):
+    def __init__(self, campaign_id: str, thread_id: str, part: tp.Part) -> None:
+        super().__init__(timeout=VIEW_TIMEOUT_S)
+        self.campaign_id, self.thread_id, self.part = campaign_id, thread_id, part
+        self.days: discord.ui.TextInput[DaysForm] = discord.ui.TextInput(
+            label="How many game days from now?", placeholder="3", max_length=4
+        )
+        self.add_item(self.days)
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        text = self.days.value.strip()
+        days = int(text) if text.isascii() and text.isdigit() else 0
+        if not 1 <= days <= time_limits.MOST_DAYS:
+            await _answer_first(interaction, in_place=True)
+            await open_parts(interaction, self.campaign_id, self.thread_id, note=DAYS_NUMBER)
+            return
+        await set_date(interaction, self.campaign_id, self.thread_id, self.part, days)
+
+
+DAYS_NUMBER = f"⚠️ Type a number of game days, 1 to {time_limits.MOST_DAYS}, then try again."
+
+
+async def set_date(
+    interaction: discord.Interaction,
+    campaign_id: str,
+    thread_id: str,
+    part: tp.Part,
+    days: int | None,
+) -> None:
+    """Write a time limit's date `days` game days from the clock's now, or clear it (None), then
+    back to the 📋 screen with its words and ↩ Undo. No game clock: nothing is written."""
+    await _answer_first(interaction, in_place=True)
+    got = await _dm(interaction, campaign_id)
+    if got is None:
+        return
+    campaign, memory = got
+    clock = await clock_now(interaction.client, campaign.guild_id, campaign.id)
+    if days is not None and clock is None:
+        await open_parts(interaction, campaign_id, thread_id, note=NO_CLOCK_YET)
+        return
+    now = clock[0] if clock is not None else None
+    due = time_limits.days_from(now, days) if days is not None and now is not None else None
+    try:
+        done = await memory.set_time_limit_date(
+            campaign.guild_id, campaign.id, part.id, due, now=now, source=DM
+        )
+    except MemoryRuleError as exc:
+        await open_parts(interaction, campaign_id, thread_id, note=_said(exc))
+        return
+    changed(interaction, campaign)
+    words = _md(part.words)
+    if due is None or clock is None:
+        note = f"✅ Words only now: **{words}**."
+    else:
+        note = f"✅ **{words}**: {time_limits.left_said(due, clock[0], clock[1])}."
+    await open_parts(interaction, campaign_id, thread_id, note=note, undo=done.batch)
 
 
 class TowardMenu(_Menu):
