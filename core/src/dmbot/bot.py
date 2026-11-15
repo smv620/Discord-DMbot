@@ -225,6 +225,7 @@ from dmbot.dm_screen.old_chat import notice_text as old_chat_notice
 from dmbot.dm_screen.old_chat import notice_view as old_chat_view
 from dmbot.dm_screen.pause import PauseButton
 from dmbot.dm_screen.peek_notices import PeekNotices
+from dmbot.dm_screen.peek_notices import counts_line as peek_counts_line
 from dmbot.dm_screen.peek_notices import notice as peek_notice
 from dmbot.dm_screen.quiet_stop import (
     CANCELLED,
@@ -3615,7 +3616,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         channel when it has one, else on the DM screen as before. False if it has neither or the
         post failed. The DM Bot channel is read by the campaign's people, so `text` holds counts
         and never a name."""
-        channel = campaign.dm_bot_channel_id or campaign.dm_screen_channel_id
+        channel = self._upkeep_channel(campaign)[0]
         if channel is None:
             return False
         return await self.post(channel, text)
@@ -13037,19 +13038,35 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             await self.campaigns.forget_guild_if_empty(guild_id)
 
     async def run_peek_notices(self) -> None:
-        """Tell the DM, on the DM screen, that a player turned the peek on (#2404): one line for
-        each visit, taken from the website's peek door's rows. Nothing but the person's display
-        name is in it."""
+        """Tell the campaign that players turned the peek on (#2404, #3874): one counts-only line
+        in the DM Bot channel (the DM screen if there is none) for each campaign and round, and
+        each name only in a private message to the campaign's DMs, taken from the website's peek
+        door's rows. The name is the person's own display name and nothing else is in it."""
         store = self.peek_notices
         if store is None:
             return
         for guild in list(self.guilds):
+            by_campaign: dict[str, list[str]] = {}
             for peek in await store.take(guild.id):
-                with log_context(guild_id=guild.id, campaign_id=peek.campaign_id):
-                    campaign = await self.campaigns.get(guild.id, peek.campaign_id)
-                    if campaign is None or not campaign.dm_screen_channel_id:
-                        continue
-                    await self.post(campaign.dm_screen_channel_id, peek_notice(peek.name))
+                by_campaign.setdefault(peek.campaign_id, []).append(peek.name)
+            for campaign_id, names in by_campaign.items():
+                with log_context(guild_id=guild.id, campaign_id=campaign_id):
+                    # Each campaign in its own try: the rows were marked posted when taken, so one
+                    # failure must not lose the others' names. Only the error's type is logged.
+                    try:
+                        campaign = await self.campaigns.get(guild.id, campaign_id)
+                        if campaign is None:
+                            continue
+                        try:  # (a courtesy: the names below go out even if it fails)
+                            await self._post_upkeep(campaign, peek_counts_line(len(names)))
+                        except Exception as exc:
+                            log.warning("Peek count not posted: %s", type(exc).__name__)
+                        # (a person with two accounts is told once: `dm_accounts`, not the ids)
+                        for user_id in sorted(campaign.dm_accounts):
+                            for name in names:
+                                await self._dm_user(user_id, peek_notice(name))
+                    except Exception as exc:
+                        log.warning("Peek notices failed: %s", type(exc).__name__)
 
     def _waiting_answers(self, guild_id: int) -> web_actions.Waiting | None:
         """What the website's answers to waiting connections need (#2635): the claims, the
