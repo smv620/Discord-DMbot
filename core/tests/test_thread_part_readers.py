@@ -18,6 +18,7 @@ ALLOWED = {
     "campaigns/tables.py": "only names the table, on the backup section's list",
     "lineage.py": "only names the table, on the list that carries the build's stamp (#3739)",
     "migrations/0504_thread_parts.py": "creates the table",
+    "migrations/0508_time_limit_told.py": "a foreign key to a limit's first row (#4448)",
 }
 NAMES = re.compile(r"memory_thread_parts|\bTHREAD_PARTS\b")
 
@@ -44,7 +45,9 @@ class OneReader(unittest.TestCase):
         readers = re.findall(
             r"async def (\w+)\((?:(?!\nasync def ).)*?(?<!\bw)\.select\(\s*THREAD_PARTS", text, re.S
         )
-        self.assertEqual(readers, ["parts_for"], "the one reader")
+        # (and `dated_running`, the DM's own: the time limits the clock is checked against after
+        # it moves, for the DM's private messages, never a players' view; quests slice 4b, #4448)
+        self.assertEqual(readers, ["dated_running", "parts_for"], "the readers")
         body = text.split("async def parts_for", 1)[1].split("\nasync def ", 1)[0]
         # every part of the players' rule (§10.2): the behaviour is tested against a database in
         # test_thread_parts.py; this keeps a refactor from dropping one
