@@ -11,7 +11,7 @@ import psycopg
 from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.memory import gate, link_edits
 from dmbot.memory import map_facts as mf
-from dmbot.memory._changes import RELATIONS
+from dmbot.memory._changes import CHANGED_SINCE, RELATIONS
 from dmbot.memory.map_fact_store import ONLY_KNOWN_ROAD, Condition, Read
 from dmbot.memory.models import MemoryRuleError, new_id
 from tests.test_memory_store import GUILD_A, GUILD_B, MemoryTest
@@ -20,7 +20,7 @@ DM = "dm"
 SESSION_5 = 5_000
 
 
-class RouteCondition(MemoryTest):
+class _Road(MemoryTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.pass_ = await self.add("Icewind Pass", type="place", status="confirmed")
@@ -40,11 +40,10 @@ class RouteCondition(MemoryTest):
                 (new_id(), GUILD_A, self.c, started_at),
             )
 
-    async def set(self, value: str | None, **kw: str) -> int | None:
+    async def set(self, value: str | None, **kw: str) -> int:
         kw.setdefault("place_id", self.pass_)
-        return (
-            await self.memory.set_route_condition(GUILD_A, self.c, value, source=DM, **kw)
-        ).batch
+        done = await self.memory.set_route_condition(GUILD_A, self.c, value, source=DM, **kw)
+        return done.batch or 0  # (0: nothing written, never an Undo)
 
     async def cond(
         self, target: str | None = None, viewer: gate.Viewer | None = None
@@ -62,6 +61,8 @@ class RouteCondition(MemoryTest):
         )
         return dict(got.value)
 
+
+class RouteCondition(_Road):
     async def test_a_change_keeps_the_old_one_as_history_and_undo_takes_it_back(self) -> None:
         await self.set("open")
         first = await self.cond()
@@ -138,7 +139,7 @@ class RouteCondition(MemoryTest):
         assert road is not None
         removed = await link_edits.remove(self.memory, GUILD_A, self.c, road)  # (🗑 Remove)
         self.assertIsNone(await self.cond(self.road))
-        await self.memory.undo(GUILD_A, self.c, removed.batch)
+        await self.memory.undo(GUILD_A, self.c, removed.batch or 0)
         got = await self.cond(self.road)
         assert got is not None
         self.assertEqual(got.now.value, "closed")
@@ -147,7 +148,7 @@ class RouteCondition(MemoryTest):
             await w.delete(RELATIONS, self.road)
             batch = w.batch
         self.assertIsNone(await self.cond(self.road))
-        await self.memory.undo(GUILD_A, self.c, batch)
+        await self.memory.undo(GUILD_A, self.c, batch or 0)
         self.assertIsNotNone(await self.cond(self.road))
 
     async def test_dmbots_read_waits_and_a_dm_correction_rejects_it(self) -> None:
@@ -233,7 +234,7 @@ class RouteCondition(MemoryTest):
 DM_USER = 1001
 
 
-class InWorldNotes(RouteCondition):
+class InWorldNotes(_Road):
     async def test_a_roads_condition_is_a_world_note_and_its_keep_keeps_it(self) -> None:
         await self.read(Read("", mf.CONDITION, "closed", relation_id=self.road))
         await self.read(Read(self.pass_, mf.CONDITION, "hard"))
@@ -251,3 +252,49 @@ class InWorldNotes(RouteCondition):
         got = await self.cond(self.road)
         assert got is not None
         self.assertEqual(got.now.status, mf.CONFIRMED)
+
+
+class ItFollowsItsRoad(_Road):
+    """The reviewer's blockers on #4258: Undo never deletes a road's condition unlogged, and the
+    condition follows the road to new words, a turn round and a merge, as its length does."""
+
+    async def test_undo_of_the_road_is_refused_while_it_has_a_condition(self) -> None:
+        made = await self.relate(
+            self.targos, "route_to", self.pass_, detail="track", status="confirmed"
+        )
+        await self.set("closed", place_id="", relation_id=made.value[0].id)
+        with self.assertRaisesRegex(MemoryRuleError, CHANGED_SINCE):
+            await self.memory.undo(GUILD_A, self.c, made.batch or 0)
+        got = await self.cond(made.value[0].id)
+        assert got is not None
+        self.assertEqual(got.now.value, "closed")
+
+    async def test_new_words_and_a_turn_keep_it(self) -> None:
+        await self.set("open", place_id="", relation_id=self.road)
+        await self.session(SESSION_5)
+        await self.set("closed", place_id="", relation_id=self.road)
+        moved = await self.memory.change_relation_words(
+            GUILD_A, self.c, self.road, "route_to", "trail", source=DM
+        )
+        got = await self.cond(moved.value.id)
+        assert got is not None and got.before is not None
+        self.assertEqual((got.now.value, got.before.value), ("closed", "open"))
+        turned = await self.memory.set_direction(
+            GUILD_A, self.c, moved.value.id, moved.value.object_id, source=DM
+        )
+        again = await self.cond(turned.value.id)
+        assert again is not None
+        self.assertEqual(again.now.value, "closed")
+
+    async def test_a_merge_folding_the_road_moves_it_to_its_twin(self) -> None:
+        other = await self.add("Bryn Shander's twin", type="place", status="confirmed")
+        twin = (
+            (await self.relate(other, "route_to", self.targos, detail="road", status="confirmed"))
+            .value[0]
+            .id
+        )
+        await self.set("gone", place_id="", relation_id=twin)
+        await self.memory.merge(GUILD_A, self.c, self.town, other, source=DM, dm_said_same=True)
+        got = await self.cond(self.road)
+        assert got is not None
+        self.assertEqual(got.now.value, "gone")

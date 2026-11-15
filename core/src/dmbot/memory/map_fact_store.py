@@ -415,12 +415,13 @@ async def add_read(w: Changes, onto: Ontology, found: Iterable[Read]) -> Counter
             others = []
         else:
             others = now
-        if f.changed and not others:
+        if f.changed and f.layer in mf.HISTORY and not others:
             counts["change_alone"] += 1  # ("reopened" with nothing it ends says nothing, #4258)
             continue
         outcome = mf.KEEP
+        says_change = f.changed and f.layer in mf.HISTORY  # (only a history layer's words count)
         for x in others:
-            outcome = mf.meet(f.layer, x.source, x.status, mf.FROM_TEXT, changed=f.changed)
+            outcome = mf.meet(f.layer, x.source, x.status, mf.FROM_TEXT, changed=says_change)
             if outcome == mf.NOTE:
                 break
         if outcome == mf.NOTE:
@@ -428,8 +429,10 @@ async def add_read(w: Changes, onto: Ontology, found: Iterable[Read]) -> Counter
             continue
         since = f.session_at
         if outcome == mf.CLOSE:  # (the story changed it: the old row is history from now)
-            since = f.session_at if f.session_at is not None else await story_now(w)
-            await _close(w, [r for r in rows if str(r["id"]) in {x.id for x in others}], since)
+            ended = [r for r in rows if str(r["id"]) in {x.id for x in others}]
+            when = f.session_at if f.session_at is not None else await story_now(w)
+            since = _not_before(when, ended)
+            await _close(w, ended, since)
             counts["closed"] += len(others)
         else:
             for x in others:
@@ -593,8 +596,8 @@ def _target(place_id: str, relation_id: str) -> tuple[str, str]:
 
 async def _known_road(w: Changes, relation_id: str) -> dict[str, Any]:
     row = await w.get(RELATIONS, relation_id)
-    if row is None:
-        raise MemoryRuleError(GONE)
+    if row is None or row["status"] == "rejected" or row.get("to_session_at") is not None:
+        raise MemoryRuleError(GONE)  # (a road taken away or ended: a stale screen)
     if row["predicate"] != route_words.ROUTE_TO or row.get("route_state") != route_words.KNOWN:
         raise MemoryRuleError(ONLY_KNOWN_ROAD)
     return row
@@ -602,14 +605,23 @@ async def _known_road(w: Changes, relation_id: str) -> dict[str, Any]:
 
 async def story_now(w: Changes) -> int:
     """The story's time for a change said now: the campaign's latest session's start, or, before
-    any session, now (the card then says "since the start")."""
+    any session, the campaign's own start (Supervisor's ruling on #4258). The card names a session
+    only when there is one; with none it says only what it was before (the ux-critic: "since the
+    start" read as if it had always been so)."""
     cur = await w.conn.execute(
-        "SELECT max(started_at) AS at FROM transcript_sessions"
-        " WHERE guild_id = %s AND campaign_id = %s",
-        w.ids,
+        "SELECT COALESCE((SELECT max(started_at) FROM transcript_sessions"
+        " WHERE guild_id = %(g)s AND campaign_id = %(c)s),"
+        " (SELECT created_at FROM campaigns WHERE guild_id = %(g)s AND id = %(c)s)) AS at",
+        {"g": w.guild_id, "c": w.campaign_id},
     )
     row = await cur.fetchone()
     return int(row["at"]) if row is not None and row["at"] is not None else int(w.now)
+
+
+def _not_before(at: int, rows: Iterable[Mapping[str, Any]]) -> int:
+    """A change's story time, never before a row it ends began (a session deleted since, or one
+    imported out of order), so the new row never starts before the old one."""
+    return max([at, *(int(r["from_session_at"]) for r in rows if r["from_session_at"] is not None)])
 
 
 async def _close(w: Changes, rows: Iterable[Mapping[str, Any]], at: int) -> None:
@@ -670,7 +682,16 @@ async def set_condition(
     await w.update_rows(
         MAP_FACTS, {str(r["id"]): {"status": mf.REJECTED} for r in others if r not in kept}
     )
-    since = await story_now(w) if kept else None  # (a first condition: since before the story)
+    if kept:
+        since: int | None = _not_before(await story_now(w), kept)
+    else:  # (a first condition starts before the story; after a "Not sure", where history ends)
+        ended = await w.select(
+            MAP_FACTS,
+            target + " AND layer = 'condition' AND status <> 'rejected'"
+            " AND to_session_at IS NOT NULL",
+            [at],
+        )
+        since = max((int(r["to_session_at"]) for r in ended), default=None)
     if since is not None:
         await _close(w, kept, since)
     if same:
@@ -735,7 +756,11 @@ async def conditions_for(
             out[f.relation_id or f.place_id] = Condition(f, r["from_session_at"], None)
     for f, r in sorted(facts, key=lambda p: p[1]["to_session_at"] or 0):
         held = out.get(f.relation_id or f.place_id)
-        if r["to_session_at"] is not None and held is not None and f.value != held.now.value:
+        if (
+            r["to_session_at"] is not None
+            and held is not None
+            and (f.value, f.words) != (held.now.value, held.now.words)
+        ):
             out[f.relation_id or f.place_id] = held._replace(before=f)
     return out
 
@@ -762,3 +787,28 @@ async def show_route(w: Changes, relation_id: str, shown: bool) -> int:
     }
     await w.update_rows(MAP_FACTS, changed)
     return len(changed)
+
+
+async def move_road(w: Changes, old_id: str, new_id: str) -> int:
+    """A road written anew (new words, a turn round, #4154) or folded into its twin by a merge:
+    its condition, history too, follows it to `new_id`, through the log, so Undo puts it back. When
+    the new road has its own open condition already, that one stands and the old open one is
+    rejected (the one-open-row rule never trips). Nothing moves to a connection that isn't a known
+    road (new words that make it no road): the rows stay with the old one, and Undo of the change
+    brings them back with it. How many moved."""
+    rows = await w.select(MAP_FACTS, " AND relation_id = %s", [old_id])
+    if not rows or old_id == new_id:
+        return 0
+    target = await w.get(RELATIONS, new_id)
+    if (
+        target is None
+        or target["predicate"] != route_words.ROUTE_TO
+        or target.get("route_state") != route_words.KNOWN
+    ):
+        return 0
+    theirs = await w.select(MAP_FACTS, " AND relation_id = %s" + _OPEN, [new_id])
+    for r in rows:
+        if theirs and r["status"] != mf.REJECTED and r["to_session_at"] is None:
+            await w.update(MAP_FACTS, str(r["id"]), {"status": mf.REJECTED})
+        await w.update(MAP_FACTS, str(r["id"]), {"relation_id": new_id})
+    return len(rows)

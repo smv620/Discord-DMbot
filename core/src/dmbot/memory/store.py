@@ -7169,6 +7169,8 @@ class MemoryStore:
         # and who knows it (#2935): the list follows the statement to its new row, so new words or
         # a turn never quietly tell nobody or everybody (#4154, the reviewer's finding)
         await knowers.move_rows(w, "relation_id", relation_id, new.id)
+        # and a road's condition (#4258), as its length does
+        await map_fact_store.move_road(w, relation_id, new.id)
         check_status_change(current["status"], REJECTED, w.source)
         await w.update(RELATIONS, relation_id, {"status": REJECTED})
         return new
@@ -9714,6 +9716,8 @@ async def _move_relations(
                 # kept from the players, keep the DM's own list). Only a fact the players were
                 # shown, folding into one they were not, hands over nothing.
                 await knowers.move_rows(w, "relation_id", relation_id, folded[relation_id])
+            # a road's condition goes to its twin too (#4258), as its length does
+            await map_fact_store.move_road(w, relation_id, folded[relation_id])
         await _delete_relation(w, relation_id)
     # A place that now has a stated parent keeps no assumed one (#4173 slice 3: a merge of a place
     # with a guess and one with a stated parent)

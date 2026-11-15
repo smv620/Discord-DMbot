@@ -271,7 +271,12 @@ class ConditionMenu(_Menu):
                 note = (
                     f"👁️ Noted: players who can see **{name}** see its condition."
                     if show
-                    else f"🙈 Noted: players can't see the condition of **{name}**."
+                    # (a place's one 🙈 covers all it holds: the ux-critic's point, the reviewer's)
+                    else (
+                        f"🙈 Noted: players can't see the condition of **{name}**."
+                        if self.relation_id
+                        else f"🙈 Noted: players can't see what you set for **{name}**."
+                    )
                 )
         except MemoryRuleError as exc:
             await self.redraw(interaction, f"🚧 Couldn't change it. {exc}")

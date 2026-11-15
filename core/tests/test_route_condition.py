@@ -46,6 +46,8 @@ class Phrases(unittest.TestCase):
             "The road to Icewind Pass is closed.",  # (not right after the name)
             "Icewind Pass is out of sight from here.",  # ("is out" must end its clause)
             "Icewind Pass is overgrownish.",
+            "Icewind Pass is no more than a muddy track.",  # (the reviewer's finding)
+            "Icewind Pass reopened its tolls.",
         ):
             with self.subTest(text=text):
                 self.assertIsNone(rc.read("Icewind Pass", text, is_route=True))

@@ -30,8 +30,11 @@ PHRASES: dict[str, str] = {
     "is open again": OPEN, "was cleared": OPEN, "reopened": OPEN,
 }  # fmt: skip
 CHANGE = OPEN  # (the value only words of change give)
-# "is out" ends its clause ("the bridge is out."), so "is out of reach" or "is out west" say nothing
-_ENDS_CLAUSE = frozenset({"is out"})
+# These end their clause ("the bridge is out."), so "is out of reach", "is out west" and "is no more
+# than a muddy track" say nothing (the reviewer's finding on #4258)
+_ENDS_CLAUSE = frozenset({"is out", "is no more"})
+# "reopened its tolls" reopened something else: never the road
+_NOT_BEFORE = {"reopened": frozenset({"its", "the", "a", "an", "his", "her", "their", "our"})}
 _WAYS = r"(?:road|way|path|trail)"
 # A name after one of these is part of another road's name ("the road to Icewind Pass is closed"
 # is about that road, not the pass): the safe side says nothing
@@ -65,8 +68,10 @@ def _phrase_at(rest: str) -> Said | None:
         if phrase in _ENDS_CLAUSE:
             if after.strip() and after.lstrip()[:1] not in ",.;:!?)":
                 continue
-        elif after[:1].isalnum():
-            continue
+        else:
+            following = after.split()[:1]
+            if after[:1].isalnum() or (following and following[0] in _NOT_BEFORE.get(phrase, ())):
+                continue
         value = PHRASES[phrase]
         return Said(value, value == CHANGE)
     return None

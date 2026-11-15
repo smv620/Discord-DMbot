@@ -405,6 +405,9 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_flags", "relation_id", False),
         ("memory_flags", "other_id", False),
         ("memory_beliefs", "relation_id", False),
+        # (a road's condition, #4258: outside an Undo the store deletes it first, logged; an Undo
+        # that would delete the road is refused while it has one, so nothing goes unlogged)
+        ("memory_map_facts", "relation_id", False),
     ),
     "memory_perspectives": (
         ("memory_beliefs", "perspective_id", False),

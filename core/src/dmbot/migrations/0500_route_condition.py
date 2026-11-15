@@ -15,8 +15,9 @@ from __future__ import annotations
 #   between Bryn Shander and Targos". Never a travelled or planned leg, which is a journey, not a
 #   road (§6); a trigger refuses it, since a check can't look at another table. Only a condition
 #   ever names a connection. `entity_id` becomes nullable for it, and "exactly one" is a check.
-# The connection's foreign key goes with it (`ON DELETE CASCADE`, the store deletes them first,
-# logged, so Undo brings both back) and follows a campaign moved to another server (#2550). The
+# The connection's foreign key goes with it (`ON DELETE CASCADE`; the store deletes them first,
+# logged, and an Undo that would delete the road is refused while it has one, so the cascade never
+# deletes a row unlogged) and follows a campaign moved to another server (#2550). The
 # open-row index takes `relation_id` in. Condition is the first layer whose change in the story
 # closes the old row as history (`to_session_at`) instead of rejecting it (Supervisor's point 2);
 # that needs nothing new here. The layer check is read back from the table as it is and must be
