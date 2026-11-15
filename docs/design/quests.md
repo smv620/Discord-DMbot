@@ -16,6 +16,7 @@ pattern and the same rule for getting the DM's attention).
 3. [What a thread is made of](#3-what-a-thread-is-made-of)
 4. [The `thread_parts` row](#4-the-thread_parts-row)
 5. [The parts, one by one](#5-the-parts-one-by-one)
+   - [5a. Rewards: promised and given](#5a-rewards-promised-and-given)
 6. [Who is doing it: the party without an entry](#6-who-is-doing-it-the-party-without-an-entry)
    - [6a. Bigger quests and their branches](#6a-bigger-quests-and-their-branches)
 7. [Mysteries, clues and "solved so far"](#7-mysteries-clues-and-solved-so-far)
@@ -107,7 +108,7 @@ by hand:
 | **A branch of a bigger thread** | a side quest or a mystery inside a quest | `memory_relations` | **one new connection, `branch_of`** |
 | **Progression** | objectives and sub-steps, each with a state | `thread_parts` | **yes** |
 | **Complications** | a setback, twist or new obstacle, each with a state | `thread_parts` | **yes** |
-| **Rewards** | what was offered, by whom, and whether it was paid | `thread_parts` | **yes** |
+| **Rewards** | what was promised and what was handed over, matched against each other (section 5a) | `thread_parts` | **yes** |
 | **Promises** | a `promise` thread with `promised_by` and `promised_to` | as today | no |
 | **Time limits** | soft or hard, with words and a game date when known | `thread_parts` | **yes** |
 | **Clues** | a `clue` entry | `memory_entities` | no |
@@ -137,9 +138,10 @@ One row is one part of one thread.
 |---|---|
 | campaign scope, `id` | as every memory table |
 | thread | the thread entry it belongs to |
-| `kind` | `objective`, `complication`, `reward` or `time_limit` |
+| `kind` | `objective`, `complication`, `reward` (promised), `reward_given` (handed over) or `time_limit` |
 | words | what it is, in the source's or the DM's words: "find where Sephek sleeps", "100 gold" |
-| under | another objective this one is a sub-step of. Objectives only, one level deep |
+| under | for an objective, the objective it is a sub-step of (one level deep). For a `reward_given`, the promised reward it counts against, when there is one |
+| amount | an optional number and unit when the words give one ("100 gold" → 100, gold). Rewards only |
 | place in the list | a number for the DM's order. Objectives only |
 | `state` | one word from that kind's short list (section 5) |
 | points at | an optional entry: the event that brought a complication or met an objective; the item that is the reward; who offers the reward |
@@ -171,17 +173,71 @@ same thing become one.
 |---|---|---|
 | **Objective** | to do · done · failed · no longer needed | Order and one level of sub-steps. Meeting every objective does **not** finish the thread: only the DM changes a thread's state |
 | **Complication** | in the way · overcome · no longer matters | A setback, a twist, a new obstacle. It may point at the event that brought it |
-| **Reward** | offered · paid · not paid · turned down | Words, who offers it, and the item entry when the reward is a named thing. Any kind counts: gold, goods, a favour, a privilege, standing ("100 gold", "a room whenever you pass", "the town's goodwill") |
+| **Reward promised** | owed · settled · won't be given · turned down | Section 5a. Words, who promises it, when it is due (up front, afterwards, or not said), and the item entry when it is a named thing |
+| **Reward given** | (none: it is a record of something handed over) | Section 5a. Words, who gave it, when, and the promise it counts against |
 | **Time limit** | running · met · passed · lifted | Section 8. "Passed" is worked out from the clock, never stored |
 
-- **A reward is not a promise thread.** It is what a quest's giver offers for the job, and it
-  lives and ends with the quest. A free-standing promise ("I'll bring the healer back") stays a
+- **A reward is not a promise thread.** It is what a quest's giver offers for the job, and it is
+  kept on the quest, where it stays owed or settled whatever the quest's own state. A free-standing promise ("I'll bring the healer back") stays a
   `promise` thread, which can now have objectives and a time limit like any thread.
 - **The existing "reward" part of `in_thread`** stays readable. New rewards are written as parts,
   which can hold "100 gold" without making an entry for it.
 - **A complication is not an event.** The event that caused it is an entry and the part points at
   it. That keeps "the bridge collapsed" (something that happened) apart from "the road north is
   cut" (what is now in the way).
+
+---
+
+## 5a. Rewards: promised and given
+
+(Owner, 2026-11-15.) A reward can be material or not, given up front, afterwards or some of each,
+and given in part. What was promised and what was handed over are kept as two kinds of row and
+matched, so a promise that has been met stops showing as outstanding.
+
+**What counts as a reward:** gold, goods, a named item, a favour, a privilege, standing ("100
+gold", "a route map", "a room whenever you pass", "the town's goodwill"). An item handed over to
+help with the job is a reward given up front.
+
+**Two kinds of row:**
+
+| Row | Says | Example |
+|---|---|---|
+| **promised** | who promises what, and when it is due: up front, afterwards, or not said | "Hlin: 100 gold, afterwards" |
+| **given** | who handed over what, and when in the story; and which promise it counts against | "Keegan: 50 gold, on agreeing" |
+
+**Matching them:**
+
+- **A given row is tied to the promise it meets** (`under`). A reader's suggestion proposes the
+  match when the quest, the giver and the kind of thing agree; otherwise it is suggested as "given,
+  not matched" and the DM ties it with one tap.
+- **Something given that was never promised** is a given row with no promise. It is recorded and
+  never shows as owed.
+- **A promise's state:**
+  - **owed:** nothing or only part has been given;
+  - **settled:** what was promised has been given;
+  - **won't be given:** the giver refused, died or went back on it (the DM's word; whether that is
+    a broken promise is the DM's to say);
+  - **turned down:** the party refused it.
+- **"Partly given" is worked out, never stored:** an owed promise with something given against it.
+- **When DMbot can settle it by counting:** both rows have a number in the same unit. 100 gold
+  promised, 50 given: "50 gold still owed". When the given amounts reach the promise, DMbot
+  suggests "settled" in the after-session review; the DM keeps it.
+- **When it can't be counted** (a favour, standing, "a fair share"): one given row against it
+  suggests "settled", and the DM says if more is still owed.
+- **A combination is two promises:** "50 now and 50 when it's done" is one promise due up front and
+  one due afterwards, each matched alone.
+
+**Rewards and the quest are separate:**
+
+- **Getting the reward does not finish the quest,** and finishing the quest does not settle the
+  reward. Only the DM changes a thread's state.
+- **A finished or dropped quest with a reward still owed keeps showing it** until the DM settles it
+  or marks it "won't be given".
+- **What the DM sees:** on the quest's card, "Promised: 100 gold (50 given, 50 owed)". In the
+  pre-session note, one line, "🎁 Still owed:", listing only owed promises on quests that are
+  finished or where the reward was due up front.
+- **A reward of standing is only words.** Marking it given never changes a reputation or an
+  attitude: those stay the DM's to set (STORY_MEMORY section 5).
 
 ---
 
@@ -327,7 +383,7 @@ attention"): a private message from DMbot, one button at most, never a post on t
   note as a reminder.
 - **The pre-session note** gains one line, "⏳ Time limits:", beside "🧵 Quiet threads" and
   "🤝 Due soon" (`memory/presession.py`): the nearest first, then the worded ones.
-- **A passed limit changes nothing by itself.** The thread's state, its objectives and its reward
+- **A passed limit changes nothing by itself.** The thread's state, its objectives and its rewards
   stay as they are until the DM changes them.
 
 ---
@@ -401,7 +457,7 @@ are the first rows of the quest keys, and they show both shapes.
 | ↳ **Who killed Wit?** (a branch, "Just a hint") | lore | a question the text leaves open | Cerric | Wit (the victim) | none stated | none | none | Wit's last words |
 | **Why Okthandom's family vanish, and how to break the curse** | lore | a pursuit | Okthandom ("takes it on") | Vaelrith (vanished), Nyssara (in danger); the unseen presence | find answers; break the curse | none | **soft, words only:** "before the shadow claims his sister, his child, and himself" | the ancestral journal; the blood-stained campsite; the whispers Nyssara hears |
 | **Hlin's contract on Sephek Kaltro** | lore | an ask and a taker | the party | Hlin Trollbane (quest giver), Sephek Kaltro (target) | capture or eliminate Sephek Kaltro | only what the text states | none | none in this passage |
-| **Find Garret Velryn** | session | an ask and a taker | the party (Belleros agrees for them) | Keegan Velryn (quest giver), Garret Velryn (target); Kelvin's Cairn | find Garret | 50 gold and a route map, already handed over: "paid" | none stated | the route map; where he was last seen |
+| **Find Garret Velryn** | session | an ask and a taker | the party (Belleros agrees for them) | Keegan Velryn (quest giver), Garret Velryn (target); Kelvin's Cairn | find Garret | 50 gold and a route map, both given up front; nothing owed | none stated | the route map; where he was last seen |
 
 **What these fix for the readers:**
 
@@ -413,7 +469,8 @@ are the first rows of the quest keys, and they show both shapes.
 - **Neither backstory says "quest",** and neither has anyone asking. Both must be found.
 - **"Capture or eliminate" is one objective with the text's own "or",** never two, and never
   DMbot's choice of which.
-- **A reward handed over on agreeing is "paid" from the start,** not "offered".
+- **A reward handed over on agreeing is a "given" row from the start,** dated to that moment. The
+  50 gold and the route map are given up front, and nothing is left owed.
 - **"Before the shadow claims …" is a soft limit with no date,** and stays words.
 - **The clue rows are suggestions too:** the tome's warning and the journal become clue entries
   only when the DM keeps them, each tied to its quest with `clue_to`.
@@ -458,7 +515,8 @@ there (same giver and target, or the same name).
 ### 9.7 Scoring
 Each reader slice is scored on the sample, lore first and then the session, before and after:
 
-- **The keys gain rows for:** threads (kind, giver, target), objectives, rewards, time limits (the
+- **The keys gain rows for:** threads (kind, giver, target), objectives, rewards promised and given
+  (with the promise each given row meets), time limits (the
   words, and the game date where the key has one), clues with the thread they are a clue to, and
   progress in the session key.
 - **The four quests of section 9.3 are must-find rows,** and Cerric's must be found as the wide
@@ -507,6 +565,7 @@ which has none today.
 ## 11. Never
 
 - **Never add a thread, a part or a clue by itself.** A reader suggests; the DM keeps.
+- **Never treat a reward as the end of a quest,** or a quest's end as the reward being settled.
 - **Never invent** a quest, an objective, a reward, a deadline or a clue the text doesn't state, and
   never fill in a part because quests "usually have one".
 - **Never finish, fail or drop a thread.** Not when every objective is met, and not when a hard
@@ -532,6 +591,7 @@ which has none today.
 | **A table for each kind of part** | Four copies of the read/keep rule, history, Undo, the backup and the players' rule |
 | **Parts as JSON on the thread entry** | No history for one step and no Undo for one change |
 | **A complication as an event with a new connection** | An event is what happened; a complication is what is now in the way, and it has a state of its own. The part points at the event instead |
+| **One reward row with a state "paid"** (revision 1) | It can't hold a part payment, something given that was never promised, or a reward still owed after the quest ended |
 | **A reward as a promise thread** | A second thread for every paid job, to be kept in step with the first |
 | **The party as an entry, or a stored "taken by the party"** | Ruled out on #3157. A default needs no storage |
 | **New connections `hired`, `gives_quest`, `seeks`, `wants`** | `in_thread` with its part already says each, and each new term is one more thing a reader can get wrong |
