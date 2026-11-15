@@ -35,6 +35,7 @@ EVERY_ACTION = (
     "maps-use", "maps-show", "maps-remove", "maps-takeback", "maps-undo",  # the Maps page (#4347)
     "map-terrain", "map-climate", "map-control", "map-show",  # a place's land, climate, ruler
     "world-keep", "world-not", "world-undo",  # World notes (#4285)
+    "maps-add",  # a map sent from the website (#4347, slice B)
 )  # fmt: skip
 
 
