@@ -31,7 +31,7 @@ from dmbot.ui.dmbot_commands import (
     _tell,
 )
 from dmbot.ui.names import _campaign_for, _md, _memory, changed, sees_secrets
-from dmbot.ui.place_world import RULED, climate_words, land_words
+from dmbot.ui.place_world import RULED, climate_words, culture_words, land_words, people_words
 
 log = logging.getLogger(__name__)
 
@@ -52,7 +52,10 @@ NOT_UNDONE = "Not undone, because something changed since. Open the place or the
 NEVER_AGAIN = "DMbot won't guess this again."  # (a place and a language alike since #4362)
 MENU_MAX = SELECT_OPTIONS_MAX  # (Discord's limit for a menu's choices)
 LIST_MAX = MESSAGE_MAX - 300  # the list, so the reply with a line above it stays inside one message
-LAYER = {mf.TERRAIN: "Land", mf.CLIMATE: "Climate", mf.CONTROL: "Ruler"}
+LAYER = {
+    mf.TERRAIN: "Land", mf.CLIMATE: "Climate", mf.CONTROL: "Ruler",
+    mf.CULTURE: "Culture", mf.POPULATION: "Who lives here",  # (#4257: never "people")
+}  # fmt: skip
 GROUP = {wn.PLACE: "Places", wn.LANGUAGE: "Languages"}
 ONE = {wn.PLACE: "place", wn.LANGUAGE: "language"}
 
@@ -75,6 +78,10 @@ def guess(note: wn.Note) -> str:
         return f"{RULED.get(note.how or 'rules', 'Ruled by').lower()} {note.ruler}"
     if f is None:
         return note.value
+    if note.layer == mf.CULTURE:
+        return culture_words(f)
+    if note.layer == mf.POPULATION:
+        return people_words(f)
     return land_words(f) if note.layer == mf.TERRAIN else climate_words(f)
 
 
@@ -224,6 +231,11 @@ class OneNote(_Menu):
         await _act(
             interaction, self.campaign_id, [self.note.id], lambda _: done_text(self.note, False),
             turn_down=True,
+            note_words=(
+                self.note.fact.words
+                if self.note.fact is not None and mf.is_named(self.note.layer, self.note.value)
+                else ""
+            ),
         )  # fmt: skip
 
     async def _change(self, interaction: discord.Interaction) -> None:
@@ -249,12 +261,14 @@ async def _act(
     done: Callable[[int], str],
     *,
     turn_down: bool = False,
+    note_words: str = "",
 ) -> None:
     """Keep these lines, or turn one down, as one change; then say so (`done` gets how many were
     kept), with ↩ Undo."""
     await _answer_first(interaction, in_place=True)
     campaign = await _campaign_for(interaction, campaign_id)
     memory = _memory(interaction)
+    extra = ""
     if campaign is None or memory is None:
         return
     if not sees_secrets(campaign, interaction.user.id):  # (asked again as it is saved)
@@ -266,6 +280,8 @@ async def _act(
                 campaign.guild_id, campaign.id, ids[0], source=DM
             )
             batch, n = written.batch, 1
+            if written.value and note_words:  # (a named culture: it went at every place)
+                extra = f" “{_md(note_words)}” is taken out for every place."
         else:
             kept = await memory.keep_world_notes(campaign.guild_id, campaign.id, ids, source=DM)
             batch, n = kept.batch, kept.value
@@ -280,7 +296,7 @@ async def _act(
         await _tell(interaction, FAILED)
         return
     changed(interaction, campaign)
-    await _replace(interaction, done(n), Done(campaign_id, batch))
+    await _replace(interaction, done(n) + extra, Done(campaign_id, batch))
 
 
 class Done(_Menu):

@@ -10,10 +10,14 @@ import re
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import NamedTuple
 
-from dmbot.memory import place_levels
+from dmbot.memory import place_levels, place_peoples
 
 TERRAIN, CLIMATE, CONTROL = "terrain", "climate", "control"
-LAYERS = (TERRAIN, CLIMATE, CONTROL)
+CULTURE, POPULATION = place_peoples.CULTURE, place_peoples.POPULATION  # (#4257, slice 3a)
+LAYERS = (TERRAIN, CLIMATE, CONTROL, CULTURE, POPULATION)
+# Read up the place tree (§6): a town takes its region's land, climate and ruler. Culture and who
+# lives there are never read up: a dwarven kingdom's human town is not dwarven.
+UP_TREE = frozenset({TERRAIN, CLIMATE, CONTROL})
 OTHER = "other"  # a value off the list, kept with the text's own words
 WORDS_MAX = 60  # the text's own words for "other", and a part ("the northern half")
 READ, CONFIRMED, REJECTED = "read", "confirmed", "rejected"
@@ -27,23 +31,40 @@ VALUES: dict[str, tuple[str, ...]] = {
               "underdark", "urban", "waterborne"),
     CLIMATE: ("arctic", "cold", "temperate", "warm", "hot"),
     CONTROL: (),  # a faction entry, never a word
+    CULTURE: tuple(place_peoples.LINEAGES),  # a lineage, shown as its adjective ("dwarven")
+    POPULATION: tuple(place_peoples.LINEAGES),  # a lineage, shown as its plural ("halflings")
 }  # fmt: skip
 # The value's shade (`how`): '' is none. Climate's dry or wet lives here (Supervisor, point 1).
 HOWS: dict[str, tuple[str, ...]] = {
     TERRAIN: ("mostly", "partly"),
     CLIMATE: ("dry", "wet"),
     CONTROL: ("rules", "claims", "occupies", "protects"),
+    CULTURE: place_peoples.CULTURE_HOWS,
+    POPULATION: place_peoples.POPULATION_HOWS,
 }
+# A culture always says how strong (the migration's check); every other layer may say nothing.
+HOW_NEEDED = frozenset({CULTURE})
 # A different value means (§6): terrain was wrong; climate and control can change in the story.
 CORRECTED = frozenset({TERRAIN})
 
 
+_AN_ID = re.compile(r"[0-9a-f]{32}")
+
+
+def is_named(layer: str, value: str) -> bool:
+    """Is this culture value one of the campaign's named cultures (#4257 slice 3b)? Its value is
+    the culture's id, as control's is the group's; its `words` are the culture's name."""
+    return layer == CULTURE and _AN_ID.fullmatch(value) is not None
+
+
 def valid(layer: str, value: str, how: str = "") -> bool:
     """Is this a value (or "other") and a shade the layer allows? Control's value is a faction, so
-    only its `how` is checked."""
+    only its `how` is checked; a culture's may be a named culture's id (checked by the store)."""
     if layer not in LAYERS or (how and how not in HOWS[layer]):
         return False
-    return layer == CONTROL or value == OTHER or value in VALUES[layer]
+    if layer in HOW_NEEDED and not how:
+        return False
+    return layer == CONTROL or value == OTHER or value in VALUES[layer] or is_named(layer, value)
 
 
 def allowed_on(layer: str, *, form: str | None, level: str | None) -> bool:
@@ -54,7 +75,7 @@ def allowed_on(layer: str, *, form: str | None, level: str | None) -> bool:
         return form is None
     if layer == CLIMATE:
         return level is None or place_levels.RANK[level] <= place_levels.RANK["region"]
-    return layer == CONTROL
+    return layer in (CONTROL, CULTURE, POPULATION)  # (any place: a quarter, a town, a realm)
 
 
 # ---- The set phrases the text readers know (§7.2; Supervisor's point 3: short on purpose, and each
@@ -81,12 +102,14 @@ _ARTICLES = ("the", "a", "an")
 
 
 class Found(NamedTuple):
-    """One fact a reader found beside a name: its layer, value (the faction's name for control) and
-    shade."""
+    """One fact a reader found beside a name: its layer, value (the faction's name for control),
+    shade and part ("the dwarven quarter", a culture's only)."""
 
     layer: str
     value: str
     how: str = ""
+    part: str = ""
+    culture: str = ""  # a named culture's name, the value then '' (#4257 slice 3b)
 
 
 def _bare(word: str) -> str:
@@ -106,7 +129,9 @@ def _sentence_of(name: str, text: str) -> tuple[str, str] | None:
     return before, after
 
 
-def read_facts(name: str, text: str, factions: Iterable[str]) -> list[Found]:
+def read_facts(
+    name: str, text: str, factions: Iterable[str], known: Collection[str] = ()
+) -> list[Found]:
     """What the words right beside a place's name say, in three set shapes only:
     - "Bryn Shander, ruled by the Council of Speakers" or "Luskan … held by the Arcane
       Brotherhood": control, when what follows the phrase is one of `factions` (names, matched
@@ -115,7 +140,7 @@ def read_facts(name: str, text: str, factions: Iterable[str]) -> list[Found]:
       `WORD_FACTS` in the words just before "of";
     - "Icewind Dale, a frozen land": the same word right after the comma and its article.
     Anything else says nothing, a phrase further on in the sentence included. One fact per layer,
-    the first found."""
+    the first found. `known`: the campaign's entry names, never read as a named culture."""
     around = _sentence_of(name, text)
     if around is None:
         return []
@@ -147,6 +172,9 @@ def read_facts(name: str, text: str, factions: Iterable[str]) -> list[Found]:
         if len(ahead) >= 2 and ahead[0] in _ARTICLES and ahead[1] in WORD_FACTS:
             layer, value = WORD_FACTS[ahead[1]]
             out.setdefault(layer, Found(layer, value))
+    # a culture and who lives there: their own set phrases (#4257, `place_peoples`)
+    for p in place_peoples.read(name, text, known):
+        out.setdefault(p.layer, Found(p.layer, p.value, p.how, p.part, p.culture))
     return [out[k] for k in LAYERS if k in out]
 
 
@@ -188,8 +216,8 @@ def read_up(
     a demiplane's weather is not the Material Plane's). A loop in the data can't hang it. None:
     nothing on the way up."""
     mine = tuple(f for f in own.get(place_id, ()) if f.layer == layer)
-    if mine:
-        return Held(mine)
+    if mine or layer not in UP_TREE:  # (culture and who lives there: the place's own only)
+        return Held(mine) if mine else None
     seen = {place_id}
     step = [place_id]
     while step:

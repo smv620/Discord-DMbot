@@ -9,9 +9,9 @@ from collections import Counter
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from typing import Any, NamedTuple
 
-from dmbot.memory import gate
+from dmbot.memory import gate, place_peoples
 from dmbot.memory import map_facts as mf
-from dmbot.memory._changes import ENTITIES, MAP_FACTS, Changes, Scope
+from dmbot.memory._changes import CULTURES, ENTITIES, MAP_FACTS, Changes, Scope
 from dmbot.memory.models import REJECTED as ENTRY_REJECTED
 from dmbot.memory.models import MemoryRuleError, new_id
 from dmbot.memory.ontology import Ontology
@@ -24,13 +24,27 @@ GONE = "That's gone. Open the card again to see it as it is now."
 BAD_WORD = "That isn't one of the choices."
 
 
-def _fact(r: Mapping[str, Any]) -> mf.Fact:
+# What a World notes 🚫 turned down (`reject_row`): nothing (checked or gone already), the row, or
+# a named culture DMbot read with every row of it, at every place (#4257 slice 3b)
+GONE_ALREADY, ROW_ONLY, NAME_TOO = 0, 1, 2
+
+# Layers whose values sit side by side (#4257): a town can be strongly dwarven and a little elven,
+# and home to mostly halflings and some humans. A different lineage never corrects another.
+BESIDE = frozenset({mf.CULTURE, mf.POPULATION})
+
+
+def _fact(r: Mapping[str, Any], names: Mapping[str, str] | None = None) -> mf.Fact:
+    """A row as the card and the answers use it. A named culture's value is its id, as control's
+    is the group's, and its words its name (from `names`, the campaign's cultures by id)."""
+    culture = r.get("culture_id")
     return mf.Fact(
         id=str(r["id"]),
         place_id=str(r["entity_id"]),
         layer=str(r["layer"]),
-        value=str(r["faction_id"] if r["layer"] == mf.CONTROL else r["value"]),
-        words=str(r["words"]),
+        value=str(
+            r["faction_id"] if r["layer"] == mf.CONTROL else culture if culture else r["value"]
+        ),
+        words=str((names or {}).get(str(culture), "") if culture else r["words"]),
         how=str(r["how"]),
         part=str(r["part"]),
         status=str(r["status"]),
@@ -61,7 +75,9 @@ async def facts_for(
         MAP_FACTS, " AND entity_id = ANY(%s)" + _OPEN + " ORDER BY created_at, id",
         [list(place_ids)],
     )  # fmt: skip
-    facts = [_fact(r) for r in rows]
+    named = sorted({str(r["culture_id"]) for r in rows if r.get("culture_id")})
+    names = await culture_names(scope, named)
+    facts = [_fact(r, names) for r in rows]
     if not viewer.dm:
         if shown is None:
             seen = await gate.visible_to(scope, viewer)
@@ -76,6 +92,61 @@ async def facts_for(
     for f in sorted(facts, key=lambda f: mf.LAYERS.index(f.layer)):
         out.setdefault(f.place_id, []).append(f)
     return out
+
+
+async def culture_names(scope: Scope, ids: Sequence[str]) -> dict[str, str]:
+    """The campaign's named cultures by id (#4257 slice 3b): their names, for the card."""
+    if not ids:
+        return {}
+    rows = await scope.select(CULTURES, " AND id = ANY(%s)", [list(ids)])
+    return {str(r["id"]): str(r["name"]) for r in rows}
+
+
+async def cultures(scope: Scope) -> list[tuple[str, str, str]]:
+    """The campaign's named cultures the DM hasn't turned down, (id, name, status), kept ones
+    first then by name: the DM's picker (#4257 slice 3b)."""
+    rows = await scope.select(CULTURES, " AND status <> 'rejected'", [])
+    rows.sort(key=lambda r: (r["status"] != mf.CONFIRMED, str(r["name_key"])))
+    return [(str(r["id"]), str(r["name"]), str(r["status"])) for r in rows]
+
+
+async def culture_for(w: Changes, name: str, *, by_dm: bool) -> str | None:
+    """The id of the named culture `name`, made when the campaign has none of that name: as the
+    DM's (confirmed) when the DM typed it, else as DMbot's read (`read`, for World notes). A name
+    the DM turned down gives None to a reader, and comes back only by the DM's own word."""
+    name = place_peoples.culture_name(name)[: mf.WORDS_MAX]
+    key = place_peoples.culture_key(name)
+    if not key:
+        raise MemoryRuleError(BAD_WORD)
+    rows = await w.select(CULTURES, " AND name_key = %s", [key])
+    if rows:
+        row = rows[0]
+        if by_dm and row["status"] != mf.CONFIRMED:
+            await w.update(CULTURES, str(row["id"]), {"status": mf.CONFIRMED, "source": mf.FROM_DM})
+        elif row["status"] == mf.REJECTED:
+            return None
+        return str(row["id"])
+    cid = new_id()
+    await w.insert(
+        CULTURES,
+        {
+            "id": cid, "name": name, "name_key": key, "lineage": "",
+            "status": mf.CONFIRMED if by_dm else mf.READ,
+            "source": mf.FROM_DM if by_dm else mf.FROM_TEXT, "created_at": w.now,
+        },
+    )  # fmt: skip
+    return cid
+
+
+async def _keep_cultures(w: Changes, rows: Sequence[Mapping[str, Any]]) -> None:
+    """Keeping a row that names a culture DMbot read keeps the culture too."""
+    ids = sorted({str(r["culture_id"]) for r in rows if r.get("culture_id")})
+    if not ids:
+        return
+    waiting = await w.select(CULTURES, " AND id = ANY(%s) AND status = 'read'", [ids])
+    await w.update_rows(
+        CULTURES, {str(c["id"]): {"status": mf.CONFIRMED, "source": mf.FROM_DM} for c in waiting}
+    )
 
 
 async def _place(w: Changes, onto: Ontology, entity_id: str) -> dict[str, Any]:
@@ -104,6 +175,10 @@ async def _check_value(
         raise MemoryRuleError(BAD_WORD)
     if not mf.allowed_on(layer, form=place.get("form"), level=place.get("place_level")):
         raise MemoryRuleError(ONLY_LAND if layer == mf.TERRAIN else ONLY_BIG)
+    if mf.is_named(layer, value):
+        culture = await w.get(CULTURES, value)
+        if culture is None or culture["status"] == mf.REJECTED:
+            raise MemoryRuleError(GONE)
     if layer == mf.CONTROL:
         group = await w.get(ENTITIES, value)
         if (
@@ -116,8 +191,10 @@ async def _check_value(
 
 def _row_value(layer: str, value: str) -> dict[str, Any]:
     if layer == mf.CONTROL:
-        return {"faction_id": value, "value": ""}
-    return {"faction_id": None, "value": value}
+        return {"faction_id": value, "value": "", "culture_id": None}
+    if mf.is_named(layer, value):
+        return {"faction_id": None, "value": "", "culture_id": value}
+    return {"faction_id": None, "value": value, "culture_id": None}
 
 
 async def set_by_dm(
@@ -134,19 +211,34 @@ async def set_by_dm(
     replaces is rejected (the DM says what it is: a correction, §7.3):
     - land and climate: every other open value of the layer;
     - who rules it: another group that "rules" it when this one now rules it, and this group's own
-      row; a different group that only claims, occupies or protects it stays beside it (§6).
+      row; a different group that only claims, occupies or protects it stays beside it (§6);
+    - culture and who lives there (#4257): only this lineage's own row; another lineage stays
+      beside it ("strongly dwarven, a little elven", "mostly halflings, some humans").
     None ("Not sure") clears the whole layer. The same value again only confirms it, with its new
     shade. Whether players see it follows the place's other rows (one 🙈 / 👁️ for the place)."""
     place = await _place(w, onto, place_id)
+    if layer == mf.CULTURE and value == mf.OTHER:
+        # ("Something else…" on a culture is always a named culture, the DM's: Supervisor, #4257)
+        value, words = await culture_for(w, words, by_dm=True), ""
     if value is not None:
         await _check_value(w, onto, place, layer, value, how, words)
+    if value is not None and mf.is_named(layer, value):
+        await _keep_cultures(w, [{"culture_id": value}])  # (the DM picked it: it is theirs)
     every = await w.select(MAP_FACTS, " AND entity_id = %s" + _OPEN, [place_id])
     known = any(bool(r["table_knows"]) for r in every)
-    now = [r for r in every if r["layer"] == layer and r["part"] == ""]
+    # (a part's row, "the dwarven quarter", is read only: the DM's set acts on the whole place, but
+    # "Not sure" for culture or who lives there clears every row of the layer, parts too; #4257)
+    now = [
+        r
+        for r in every
+        if r["layer"] == layer and (r["part"] == "" or (value is None and layer in BESIDE))
+    ]
 
     def replaced(f: mf.Fact) -> bool:
-        if value is None or layer != mf.CONTROL:
+        if value is None or layer in (mf.TERRAIN, mf.CLIMATE):
             return True
+        if layer in BESIDE:
+            return f.value == value
         return f.value == value or (how == "rules" and f.how == "rules")
 
     keeps = value is not None and any(_fact(r).value == value for r in now)
@@ -207,11 +299,22 @@ async def show_to_table(w: Changes, onto: Ontology, place_id: str, shown: bool) 
     return len(changed)
 
 
-async def keep_read(w: Changes, onto: Ontology, place_id: str) -> int:
-    """The DM's ✅ Keep what DMbot read: every row DMbot read for this place becomes the DM's word,
-    keeping whether players see it. How many."""
+async def keep_read(
+    w: Changes, onto: Ontology, place_id: str, layers: Collection[str] | None = None
+) -> int:
+    """The DM's ✅ Keep what DMbot read: every row DMbot read for this place, in `layers` (all when
+    None), becomes the DM's word, keeping whether players see it. How many. Each screen keeps only
+    the layers it shows: a confirmed row the table knows reaches players, so ✅ never keeps what
+    the DM didn't see (#4257)."""
     await _place(w, onto, place_id)
-    rows = await w.select(MAP_FACTS, " AND entity_id = %s AND status = 'read'" + _OPEN, [place_id])
+    rows = [
+        r
+        for r in await w.select(
+            MAP_FACTS, " AND entity_id = %s AND status = 'read'" + _OPEN, [place_id]
+        )
+        if layers is None or r["layer"] in layers
+    ]
+    await _keep_cultures(w, rows)
     await w.update_rows(
         MAP_FACTS,
         {str(r["id"]): {"status": mf.CONFIRMED, "source": mf.FROM_DM} for r in rows},
@@ -228,6 +331,8 @@ class Read(NamedTuple):
     value: str
     how: str = ""
     session_at: int | None = None  # the session it was read from: said at the table
+    part: str = ""  # only part of the place: "the dwarven quarter" (#4257)
+    culture: str = ""  # a named culture's name, as the text wrote it; `value` then '' (3b)
 
 
 async def add_read(w: Changes, onto: Ontology, found: Iterable[Read]) -> Counter[str]:
@@ -242,12 +347,24 @@ async def add_read(w: Changes, onto: Ontology, found: Iterable[Read]) -> Counter
             place = await _place(w, onto, f.place_id)
             if str(place["status"]) == ENTRY_REJECTED:
                 raise MemoryRuleError(GONE)  # (a waiting name may hold them: they are DM-only)
+            if f.culture and f.layer == mf.CULTURE:
+                if not mf.valid(f.layer, mf.OTHER, f.how) or not mf.allowed_on(
+                    f.layer, form=place.get("form"), level=place.get("place_level")
+                ):  # (checked before a new name is made, so none is left with no row)
+                    raise MemoryRuleError(BAD_WORD)
+                culture = await culture_for(w, f.culture, by_dm=False)
+                if culture is None:  # (a name the DM turned down: never read again)
+                    counts["rejected_before"] += 1
+                    continue
+                f = f._replace(value=culture)
             await _check_value(w, onto, place, f.layer, f.value, f.how)
         except MemoryRuleError:
             counts["not_allowed"] += 1
             continue
         rows = await w.select(
-            MAP_FACTS, " AND entity_id = %s AND layer = %s AND part = ''", [f.place_id, f.layer]
+            MAP_FACTS,
+            " AND entity_id = %s AND layer = %s AND lower(part) = lower(%s)",
+            [f.place_id, f.layer, f.part],
         )
         if any(
             r["status"] == mf.REJECTED and _fact(r).value == f.value for r in rows
@@ -271,6 +388,8 @@ async def add_read(w: Changes, onto: Ontology, found: Iterable[Read]) -> Counter
                 counts["noted"] += 1
                 continue
             others: list[mf.Fact] = []
+        elif f.layer in BESIDE:  # (another lineage sits beside it: never a correction, #4257)
+            others = []
         else:
             others = now
         outcome = mf.KEEP
@@ -288,7 +407,8 @@ async def add_read(w: Changes, onto: Ontology, found: Iterable[Read]) -> Counter
             MAP_FACTS,
             {
                 "id": new_id(), "entity_id": f.place_id, "layer": f.layer,
-                **_row_value(f.layer, f.value), "words": "", "how": f.how, "part": "",
+                **_row_value(f.layer, f.value), "words": "", "how": f.how,
+                "part": f.part[: mf.WORDS_MAX],
                 "from_session_at": f.session_at, "to_session_at": None,
                 "from_game_time": None, "to_game_time": None, "status": mf.READ,
                 "source": mf.FROM_TEXT, "also_text": True,
@@ -371,7 +491,10 @@ async def dm_read_notes(scope: Scope, viewer: gate.Viewer) -> list[tuple[mf.Fact
     rows = await scope.select(
         MAP_FACTS, " AND status = 'read'" + _OPEN + " ORDER BY created_at, id", []
     )
-    return [(_fact(r), r["from_session_at"], int(r["created_at"])) for r in rows]
+    names = await culture_names(
+        scope, sorted({str(r["culture_id"]) for r in rows if r.get("culture_id")})
+    )
+    return [(_fact(r, names), r["from_session_at"], int(r["created_at"])) for r in rows]
 
 
 async def keep_rows(w: Changes, ids: Collection[str]) -> int:
@@ -381,6 +504,7 @@ async def keep_rows(w: Changes, ids: Collection[str]) -> int:
     if not ids:
         return 0
     rows = await w.select(MAP_FACTS, " AND id = ANY(%s) AND status = 'read'" + _OPEN, [sorted(ids)])
+    await _keep_cultures(w, rows)
     await w.update_rows(
         MAP_FACTS,
         {str(r["id"]): {"status": mf.CONFIRMED, "source": mf.FROM_DM} for r in rows},
@@ -388,12 +512,21 @@ async def keep_rows(w: Changes, ids: Collection[str]) -> int:
     return len(rows)
 
 
-async def reject_row(w: Changes, fact_id: str) -> bool:
+async def reject_row(w: Changes, fact_id: str) -> int:
     """The DM's 🚫 Not right on a World notes line (#4285): the row is turned down, so the same
-    reading is never read in again (`add_read` refuses a value the DM rejected). False when it
-    was checked or gone already."""
+    reading is never read in again (`add_read` refuses a value the DM rejected). A named culture
+    DMbot read and the DM never kept goes too, with all its rows (#4257 slice 3b). GONE_ALREADY,
+    ROW_ONLY or NAME_TOO."""
     rows = await w.select(MAP_FACTS, " AND id = %s AND status = 'read'" + _OPEN, [fact_id])
     if not rows:
-        return False
+        return GONE_ALREADY
     await w.update(MAP_FACTS, fact_id, {"status": mf.REJECTED})
-    return True
+    culture = rows[0].get("culture_id")
+    if culture:  # (a name DMbot read and the DM never kept: turned down with all its rows)
+        found = await w.select(CULTURES, " AND id = %s AND status = 'read'", [culture])
+        if found:
+            await w.update(CULTURES, str(culture), {"status": mf.REJECTED})
+            others = await w.select(MAP_FACTS, " AND culture_id = %s" + _OPEN, [culture])
+            await w.update_rows(MAP_FACTS, {str(r["id"]): {"status": mf.REJECTED} for r in others})
+            return NAME_TOO
+    return ROW_ONLY

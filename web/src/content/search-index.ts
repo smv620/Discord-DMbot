@@ -53,5 +53,6 @@ export const searchIndex: SearchEntry[] = [
   { path: "/account/sharing", title: "Shared rules", about: "Share your rules with another campaign, or follow someone's.", words: ["share rules", "shared rules", "follow rules", "ruleset", "rule set", "publish rules", "share code"] },
   { path: "/account/players", title: "People you play with", about: "The players DMbot remembers for you, and the DMs who remember you.", words: ["players", "remembered players", "forget a player", "who remembers me", "clear", "played with"] },
   { path: "/account/pictures", title: "Pictures", about: "Pictures for your names and scenes.", words: ["pictures", "images", "portraits", "art", "icons", "avatar", "drawing"] },
+  { path: "/account/maps", title: "Maps", about: "The maps of a campaign: which ones DMbot may use and which the table sees.", words: ["maps", "map", "battle map", "dungeon map", "world map", "show map", "hide map"] },
   { path: "/account/restore", title: "Load a backup", about: "Bring a saved campaign back.", words: ["restore", "load backup", "restore backup", "bring back", "recover", "undo delete", "lost campaign"] },
 ];

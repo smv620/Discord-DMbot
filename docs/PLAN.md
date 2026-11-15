@@ -3638,6 +3638,12 @@ as what is said, so the clock and the other listeners hear "we take a long rest"
     permanent link is served by web-api, which answers with a short-lived signed address. Backups include the
     pictures; deleting the campaign deletes them. Nothing of this ships before the consent wording at version 7 goes
     live.
+  - *Maps sent from the website (Supervisor, 2026-11-15, #4347, #4436):* the website holds a **write key only to a
+    separate staging bucket** (with a one-day lifecycle rule), never to the pictures bucket: R2 keys cover a whole
+    bucket, so a write key there could let a fault in the website overwrite or delete every campaign's pictures. The
+    website checks the person and the file, re-encodes it (no location data) and stages it; the bot checks again,
+    copies it into the pictures bucket, writes the rows as one Undo and deletes the staged file. A staged file older
+    than 24 hours is swept.
   - *Rolling storage and permanent pictures (owner, 2026-11-02, #3274):* a campaign keeps up to its picture storage, **500 MB**
     for now (a setting, so it can change). A new picture that would go over makes DMbot delete the **oldest pictures that are not permanent**
     until it fits, and the DMs are told once. A DM can mark a picture **permanent**, which exempts it, up to

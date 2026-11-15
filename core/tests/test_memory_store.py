@@ -330,6 +330,10 @@ class Isolation(MemoryTest):
         # and a place's climate (#4256)
         dale = await self.add("Icewind Dale", type="place", status="confirmed")
         await self.memory.set_map_fact(GUILD_A, self.c, dale, "climate", "cold", source="dm")
+        # and a named culture on it (#4257 slice 3b)
+        await self.memory.set_map_fact(
+            GUILD_A, self.c, dale, "culture", "other", how="strong", words="Reghed", source="dm"
+        )
         # and where the story is (#4173 slice 4): ids only
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(

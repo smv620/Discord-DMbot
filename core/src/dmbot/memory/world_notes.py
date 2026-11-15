@@ -135,18 +135,20 @@ async def keep(w: Changes, line_ids: Collection[str]) -> int:
     return kept
 
 
-async def turn_down(w: Changes, line_id: str) -> None:
+async def turn_down(w: Changes, line_id: str) -> bool:
     """The DM's 🚫 Not right on one line (one Undo). A place's reading is turned down and a
     language is marked as the DM's no, as the character's own ✖ does (#4362): neither is ever read
-    in again."""
+    in again. True when a named culture went with it, at every place (#4257 slice 3b)."""
     places, languages = await _still_open(w, [line_id])
     if places:
-        if not await map_fact_store.reject_row(w, next(iter(places))):
+        done = await map_fact_store.reject_row(w, next(iter(places)))
+        if done == map_fact_store.GONE_ALREADY:
             raise MemoryRuleError(GONE)
-        return
+        return done == map_fact_store.NAME_TOO
     if not languages:
         raise MemoryRuleError(GONE)
     await language_rows.say_not(w, next(iter(languages)))
+    return False
 
 
 def of_kind(notes: Sequence[Note], kind: str) -> list[str]:

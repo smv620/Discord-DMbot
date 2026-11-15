@@ -1,4 +1,4 @@
-"""Who is in a campaign, on account deletion (0496, #4148; Supervisor's ruling on the issue): the
+"""Who is in a campaign, on account deletion (0497, #4148; Supervisor's ruling on the issue): the
 deleted account always comes out of the DM list, even as the only DM; open hand-over offers to or
 from it are cancelled and answered ones keep nobody in its place. Proves the three things the ruling
 asks for: (a) an only-DM deletion leaves the campaign owner-left, its backup made and restorable,

@@ -198,7 +198,51 @@ A **labelled property graph (LPG) stored in ordinary Postgres tables, with RDF's
 | Formal reasoning (OWL, SHACL engines) | Hand-written checks in `memory/checks.py`, `ontology.py` and `continuity.py`, each tested | Q-G4 |
 | Ad-hoc exploration by analysts | Read-only role for developers; website doors | Q-D4 |
 
-### 4.5 The agreed escalation ladder (if deeper graph work is ever needed)
+### 4.5 Limitations of each model, as they apply to this design
+
+Neither model is used in pure form: the store is a labelled property graph in Postgres tables, with
+RDF's discipline added (every kind and relationship defined, every write checked). This section
+says what each model would cost here, and where the chosen design pays instead.
+
+**RDF-star (why it is not the base):**
+
+1. **Annotations attach to a triple's content, not to one occurrence of it.** A quoted triple such
+   as `<< Brewner distrusts Vexnir >>` is identified by its terms, so the same statement said twice,
+   to different people at different story times, shares one identity and one set of annotations.
+   DMbot needs each occurrence apart (its knowers, its story time, its evidence line), which brings
+   back occurrence nodes, i.e. reification.
+2. **The standard is still moving.** RDF-star is becoming RDF 1.2 triple terms and reifiers, and
+   stores and tools don't yet agree on it.
+3. **The open-world assumption** works against "only DM-confirmed facts count"; reasoners and
+   defaults would have to be fought rather than used.
+4. **Isolation outside Postgres row-level security.** A triple store would rest campaign isolation
+   on named graphs and on every query filtering correctly (section 2).
+5. **Deletion, consent and Undo.** "Remove everything that came from this person's lines" or "undo
+   this one change" means finding and removing many small triples and blank nodes, with no
+   transaction shared with the rest of the campaign's data.
+6. **Operations.** A second store means second backup, restore and migration paths, which is too
+   much for self-hosters on stock Postgres.
+7. **AI and team cost.** Triples are verbose in prompts, and SPARQL is a second query language.
+
+**The labelled property graph (the limits accepted, and how each is covered):**
+
+| Limit | How the design covers it | Where the risk shows |
+|---|---|---|
+| No built-in schema or meaning: any label, any property | The ontology defines every kind and relationship; every write is checked in code; a damaged backup is refused (section 6) | A new per-kind rule must be added to every path that writes or restores it |
+| An edge can't carry an edge: no native statements about statements | Hand reification: every connection has an id, with knowers, beliefs and evidence in their own tables (sections 7, 9) | Each side table needs its own merge, Undo, backup and isolation rule. #4241 (a rule link left on a non-character broke restores) was this kind of gap |
+| No native time or history | Story time as columns on each row; history by closing a row and opening a new one (section 8) | Every new kind of fact must follow the pattern by hand (MapBot's layer rows do) |
+| No inference | Rules such as "read a value up the place tree" are explicit, tested code | Each rule is work, but it is predictable and testable |
+| No standard export | The campaign backup format is DMbot's own (section 13) | Import from other tools (Kanka, Azgaar, World Anvil) is a mapping per tool |
+| Deep traversal is slower in SQL than in a native graph database | Questions are near ones (who knows X, what is inside Y, a few hops); the escalation ladder below if that changes | Low today |
+| Identity is manual | Merging two entries moves every row that hangs on them, in one change with one Undo | Merges and kind changes are where most subtle bugs have come from (#4241, #4244) |
+
+**In one line:** RDF-star would buy standard meaning at the cost of occurrence identity, isolation
+and simple deletion; the Postgres-hosted LPG keeps isolation, transactions, Undo and simple
+operations at the cost of hand-written reification, story time and schema checks. That
+hand-written discipline is where the design has to stay careful, and where reviewers' scrutiny is
+most useful (section 14).
+
+### 4.6 The agreed escalation ladder (if deeper graph work is ever needed)
 
 ```mermaid
 flowchart TD
@@ -779,12 +823,29 @@ We would value guidance on any of these, and on anything we haven't thought to a
 - **Loop checks on `led_to`** run when a link is made, but not on confirming a rejected link, on a merge, or on restoring a backup.
 - **`memory_mentions`** (a mention index) has no writer yet. "Was this name heard?" uses `memory_heard` instead.
 - **Two documentation-versus-schema conflicts** are noted in `docs/MEMORY_TABLES.md` (`memory_entities.role`, `memory_entities.party`).
-- **Places:** the only place hierarchy today is stated `located_in` links. Level-based exclusivity is new (#4186), and assumed parents, routes and MapBot are designed but not built (section 15).
+- **Places:** this bullet is older than the work it describes. Place levels, routes and the first MapBot slices have been built since; the current design and status are in section 15's note and `docs/design/mapbot_layers.md`.
 - **The ontology steward's meaning check** is a stub.
 
 ---
 
 ## 15. Work in progress: places, levels, routes and MapBot
+
+> **Decided since this section was written** (2026-11-12 to 2026-11-15). The binding detail is in
+> `docs/design/` (index: `docs/design/README.md`); where this section and those documents differ,
+> they win.
+> - **MapBot** (`docs/design/mapbot_layers.md`, binding): a map is a kept picture with its own
+>   record, used only after its uploader's right-to-use yes. **Positions are kept per map** (pins,
+>   paths, areas, with that map's scale and north), never on a place entry, and nothing measured is
+>   stored. A place's terrain, climate, control, culture and population are rows in one table beside
+>   the graph (`map_facts`); containment, adjacency and reachability stay in `located_in`,
+>   `next_to` and `route_to`. This answers Q-G8's question on routes: they stay graph links, with a
+>   stated length, and a measured length is worked out from a traced path on one map.
+> - **Quests** (`docs/design/quests.md`, in review as #4450): threads stay entries; objectives,
+>   complications, rewards, help and time limits are rows beside them (`thread_parts`); two new
+>   connections, `clue_to` and `branch_of`; readers only suggest.
+> - **One tagger for a session** (`docs/design/session_tagger.md`, in review as #4455): it bears on
+>   Q-M6 and section 11's pipeline. One small call tags each batch with the kinds present, each
+>   reader reads only its tagged batches, and every tag ends with a recorded outcome.
 
 These are approved designs (issue #4173), being built in slices. Reviewer input here is especially timely.
 
