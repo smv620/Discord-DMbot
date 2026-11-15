@@ -130,6 +130,8 @@ STORE = {
     "points at it (#4299)",
     "choose_setting": DM_ONLY + ": a made place for a replaced setting guess goes only if nothing "
     "points at it (#4291)",
+    "_guess_place_goes": DM_ONLY + ": a made place for a setting guess the DM replaced goes only "
+    "if nothing points at it (#4299, #4291)",
     "set_knows_how": "writes: the DM's has met / is aware of (#3881); never shows anything",
     "set_direction": DM_ONLY + ": which way a connection reads (#4154); a turn is a rewrite",
     "_replace_relation_in": DM_ONLY

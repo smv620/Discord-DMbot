@@ -1314,7 +1314,10 @@ class MemoryStore:
                 if r["id"] != entity_id:
                     # (the DM taking away DMbot's guess is a no to it: never guessed again)
                     gone_from = "declined" if r.get("setting_from") == place_levels.READ else None
-                    await w.update(ENTITIES, r["id"], {"setting": False, "setting_from": gone_from})
+                    gone: dict[str, Any] = {"setting": False, "setting_from": gone_from}
+                    if r.get("setting_from") == place_levels.READ:  # (its place too, as ✖: #4291)
+                        gone |= await _guess_place_goes(w, r)
+                    await w.update(ENTITIES, r["id"], gone)
             if entity_id is not None:  # (the DM's word: a guess of DMbot's kept is the DM's now)
                 row = await w.update(ENTITIES, entity_id, {"setting": True, "setting_from": DM})
             return Written(_entity(row) if row else None, w.batch)
@@ -1491,18 +1494,7 @@ class MemoryStore:
             if not (row.get("setting") and row.get("setting_from") == place_levels.READ):
                 raise MemoryRuleError(NOT_FOUND)
             change: dict[str, Any] = {"setting": False, "setting_from": "declined"}
-            # A place DMbot made for the guess goes with it (Supervisor's review of #4299): the bot
-            # never keeps a place the DM didn't ask for. Rejected, so it leaves every list, with
-            # its declined mark kept, so the "never again" check still finds it; Undo brings it
-            # back as a guess. Only while it is still hidden and nothing else points at it.
-            if row.get("source") == SETTING_GUESS_SOURCE and row.get("hidden_from_players"):
-                tied = await w.select(
-                    RELATIONS,
-                    " AND status <> 'rejected' AND (subject_id = %s OR object_id = %s)",
-                    [entity_id, entity_id],
-                )
-                if not tied:
-                    change["status"] = REJECTED
+            change |= await _guess_place_goes(w, row)
             row = await w.update(ENTITIES, entity_id, change)
             return Written(_entity(row), w.batch)
 
@@ -9796,6 +9788,22 @@ async def _move_aliases(
             [confirming],
         )
     await w.update_where(ALIASES, {"used_by": keep_id}, " AND used_by = %s", [gone_id])
+
+
+async def _guess_place_goes(w: Changes, row: Mapping[str, Any]) -> dict[str, Any]:
+    """A place DMbot made only for its guess at the setting goes with the guess (Supervisor's
+    review of #4299, and the ruling on #4291 for the DM's own pick): the bot never keeps a place
+    the DM didn't ask for. Rejected, so it leaves every list, with its declined mark kept, so the
+    "never again" check still finds it; Undo brings it back as a guess. Only while it is still
+    hidden and nothing points at it. The change to add, or nothing."""
+    if row.get("source") != SETTING_GUESS_SOURCE or not row.get("hidden_from_players"):
+        return {}
+    tied = await w.select(
+        RELATIONS,
+        " AND status <> 'rejected' AND (subject_id = %s OR object_id = %s)",
+        [row["id"], row["id"]],
+    )
+    return {} if tied else {"status": REJECTED}
 
 
 async def _live_led_to(
