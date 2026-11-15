@@ -231,6 +231,11 @@ class OneNote(_Menu):
         await _act(
             interaction, self.campaign_id, [self.note.id], lambda _: done_text(self.note, False),
             turn_down=True,
+            note_words=(
+                self.note.fact.words
+                if self.note.fact is not None and mf.is_named(self.note.layer, self.note.value)
+                else ""
+            ),
         )  # fmt: skip
 
     async def _change(self, interaction: discord.Interaction) -> None:
@@ -256,12 +261,14 @@ async def _act(
     done: Callable[[int], str],
     *,
     turn_down: bool = False,
+    note_words: str = "",
 ) -> None:
     """Keep these lines, or turn one down, as one change; then say so (`done` gets how many were
     kept), with ↩ Undo."""
     await _answer_first(interaction, in_place=True)
     campaign = await _campaign_for(interaction, campaign_id)
     memory = _memory(interaction)
+    extra = ""
     if campaign is None or memory is None:
         return
     if not sees_secrets(campaign, interaction.user.id):  # (asked again as it is saved)
@@ -273,6 +280,8 @@ async def _act(
                 campaign.guild_id, campaign.id, ids[0], source=DM
             )
             batch, n = written.batch, 1
+            if written.value and note_words:  # (a named culture: it went at every place)
+                extra = f" “{_md(note_words)}” is taken out for every place."
         else:
             kept = await memory.keep_world_notes(campaign.guild_id, campaign.id, ids, source=DM)
             batch, n = kept.batch, kept.value
@@ -287,7 +296,7 @@ async def _act(
         await _tell(interaction, FAILED)
         return
     changed(interaction, campaign)
-    await _replace(interaction, done(n), Done(campaign_id, batch))
+    await _replace(interaction, done(n) + extra, Done(campaign_id, batch))
 
 
 class Done(_Menu):

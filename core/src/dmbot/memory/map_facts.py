@@ -48,14 +48,23 @@ HOW_NEEDED = frozenset({CULTURE})
 CORRECTED = frozenset({TERRAIN})
 
 
+_AN_ID = re.compile(r"[0-9a-f]{32}")
+
+
+def is_named(layer: str, value: str) -> bool:
+    """Is this culture value one of the campaign's named cultures (#4257 slice 3b)? Its value is
+    the culture's id, as control's is the group's; its `words` are the culture's name."""
+    return layer == CULTURE and _AN_ID.fullmatch(value) is not None
+
+
 def valid(layer: str, value: str, how: str = "") -> bool:
     """Is this a value (or "other") and a shade the layer allows? Control's value is a faction, so
-    only its `how` is checked."""
+    only its `how` is checked; a culture's may be a named culture's id (checked by the store)."""
     if layer not in LAYERS or (how and how not in HOWS[layer]):
         return False
     if layer in HOW_NEEDED and not how:
         return False
-    return layer == CONTROL or value == OTHER or value in VALUES[layer]
+    return layer == CONTROL or value == OTHER or value in VALUES[layer] or is_named(layer, value)
 
 
 def allowed_on(layer: str, *, form: str | None, level: str | None) -> bool:
@@ -100,6 +109,7 @@ class Found(NamedTuple):
     value: str
     how: str = ""
     part: str = ""
+    culture: str = ""  # a named culture's name, the value then '' (#4257 slice 3b)
 
 
 def _bare(word: str) -> str:
@@ -119,7 +129,9 @@ def _sentence_of(name: str, text: str) -> tuple[str, str] | None:
     return before, after
 
 
-def read_facts(name: str, text: str, factions: Iterable[str]) -> list[Found]:
+def read_facts(
+    name: str, text: str, factions: Iterable[str], known: Collection[str] = ()
+) -> list[Found]:
     """What the words right beside a place's name say, in three set shapes only:
     - "Bryn Shander, ruled by the Council of Speakers" or "Luskan … held by the Arcane
       Brotherhood": control, when what follows the phrase is one of `factions` (names, matched
@@ -128,7 +140,7 @@ def read_facts(name: str, text: str, factions: Iterable[str]) -> list[Found]:
       `WORD_FACTS` in the words just before "of";
     - "Icewind Dale, a frozen land": the same word right after the comma and its article.
     Anything else says nothing, a phrase further on in the sentence included. One fact per layer,
-    the first found."""
+    the first found. `known`: the campaign's entry names, never read as a named culture."""
     around = _sentence_of(name, text)
     if around is None:
         return []
@@ -161,8 +173,8 @@ def read_facts(name: str, text: str, factions: Iterable[str]) -> list[Found]:
             layer, value = WORD_FACTS[ahead[1]]
             out.setdefault(layer, Found(layer, value))
     # a culture and who lives there: their own set phrases (#4257, `place_peoples`)
-    for p in place_peoples.read(name, text):
-        out.setdefault(p.layer, Found(p.layer, p.value, p.how, p.part))
+    for p in place_peoples.read(name, text, known):
+        out.setdefault(p.layer, Found(p.layer, p.value, p.how, p.part, p.culture))
     return [out[k] for k in LAYERS if k in out]
 
 

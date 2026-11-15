@@ -191,6 +191,12 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " VALUES (%s, %s, %s, %s, 'Elvish', 'elvish', true, 'dm', 1)",
                 (g, c, new_id(), A),
             ),
+            "memory_cultures": (  # a named culture (#4257 slice 3b)
+                "INSERT INTO memory_cultures (guild_id, campaign_id, id, name, name_key, status,"
+                " source, created_at) VALUES (%s, %s, %s, 'Illuskan', 'illuskan', 'confirmed',"
+                " 'dm', 1)",
+                (g, c, new_id()),
+            ),
             "memory_map_facts": (  # a place's climate (#4256)
                 "INSERT INTO memory_map_facts (guild_id, campaign_id, id, entity_id, layer, value,"
                 " status, source, created_at) VALUES (%s, %s, %s, %s, 'climate', 'cold',"
