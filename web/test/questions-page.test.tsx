@@ -517,6 +517,15 @@ describe("Check everything, one walk through what can be answered here (#4193)",
     expect(await screen.findByText(w.partLine(believe, 2, 2, 3))).toBeTruthy();
   });
 
+  it("stopping on the first part still says Carry on, with everything left", async () => {
+    await show();
+    fireEvent.click(screen.getByRole("button", { name: w.checkEverything(9) }));
+    fireEvent.click(await screen.findByRole("button", { name: w.stopForNow }));
+    fireEvent.click(screen.getByRole("button", { name: w.carryOn(9) }));
+    expect(await screen.findByText(w.partLine(connections, 1, 2, 6))).toBeTruthy();
+    expect(screen.queryByText(w.walkStopped)).toBeNull(); // (the old line goes when the walk starts again)
+  });
+
   it("ends after the last part and offers the whole walk again", async () => {
     await show();
     fireEvent.click(screen.getByRole("button", { name: w.checkEverything(9) }));

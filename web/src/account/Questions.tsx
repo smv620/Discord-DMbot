@@ -88,20 +88,24 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
   }));
   const [walk, setWalk] = useState<number | null>(null);
   const [resume, setResume] = useState(0);
+  const [stopped, setStopped] = useState(false); // (stopping on the first part must still read "Carry on")
   const [note, setNote] = useState<string | null>(null);
   const goTo = (i: number): void => {
     // (an earlier "stopped" or "ended" line goes when a walk starts again)
     setNote(walk !== null ? words.partDone(parts[walk]?.label ?? "", parts[i]?.label ?? "", parts[i]?.count ?? 0) : null);
     setWalk(i);
     setResume(i);
+    setStopped(false);
   };
   const stop = (): void => {
     setResume(walk ?? 0);
+    setStopped(true);
     setWalk(null);
     setNote(words.walkStopped);
   };
   const finish = (): void => {
     setResume(0);
+    setStopped(false);
     setWalk(null);
     setNote(words.walkEnded);
   };
@@ -131,7 +135,7 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
             <div class="stack">
               {walking === undefined ? (
                 <button type="button" class="button" onClick={() => goTo(resume)}>
-                  {resume === 0
+                  {!stopped
                     ? words.checkEverything(parts.reduce((n, p) => n + p.count, 0))
                     : words.carryOn(parts.slice(resume).reduce((n, p) => n + p.count, 0))}
                 </button>
@@ -190,7 +194,7 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
                       >
                         {open.has(k.kind) ? words.hideHere : words.showHere}
                       </button>
-                      {open.has(k.kind) && (
+                      {open.has(k.kind) && walking?.group !== groupOf(k.kind) && (
                         <QuestionsHere api={api} campaignRef={campaign.ref} group={groupOf(k.kind) ?? "names"} id={`q-${campaign.ref}-${k.kind}`} />
                       )}
                     </>
