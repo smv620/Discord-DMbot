@@ -1409,19 +1409,22 @@ async def store_place_facts(
         elif onto.is_a(who.type, "faction"):
             groups.setdefault(entry.text, set()).add(who.id)
     group_ids = {name: next(iter(ids)) for name, ids in groups.items() if len(ids) == 1}
+    known = {entry.text for entry in lookup.names}  # (never read as a named culture, #4257 3b)
     found: list[map_fact_store.Read] = []
     counts: Counter[str] = Counter()
     for name, ids in places.items():
         if len(ids) != 1 or not re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", text, re.I):
             continue
-        read = map_facts.read_facts(name, text, group_ids)
+        read = map_facts.read_facts(name, text, group_ids, known)
         if not read:
             counts["unknown"] += 1
         for f in read:
             counts[f.layer] += 1
             value = group_ids[f.value] if f.layer == map_facts.CONTROL else f.value
             found.append(
-                map_fact_store.Read(next(iter(ids)), f.layer, value, f.how, session_at, f.part)
+                map_fact_store.Read(
+                    next(iter(ids)), f.layer, value, f.how, session_at, f.part, f.culture
+                )
             )
     if not found:
         return 0

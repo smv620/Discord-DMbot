@@ -162,6 +162,13 @@ STORY_LANGUAGES = Table(
     "id",
     ("id", "entity_id", "name", "name_key", "srd", "given_by", "created_at"),
 )
+# The campaign's named cultures (#4257 slice 3b, #4229's catalogue), beside the graph: never an
+# entry. A place's culture row may point at one (`MAP_FACTS.culture_id`).
+CULTURES = Table(
+    "memory_cultures",
+    "id",
+    ("id", "name", "name_key", "lineage", "status", "source", "created_at"),
+)
 # A place's land, climate and who rules it (#4256, MapBot layers slice 2), beside the graph: a
 # layer row never says one place is in, next to or reachable from another (design §13.2).
 MAP_FACTS = Table(
@@ -169,7 +176,8 @@ MAP_FACTS = Table(
     "id",
     ("id", "entity_id", "layer", "value", "words", "faction_id", "how", "part",
      "from_session_at", "to_session_at", "from_game_time", "to_game_time", "status", "source",
-     "also_text", "table_knows", "created_at"),
+     "also_text", "table_knows", "created_at", "culture_id"),
+    defaults={"culture_id": None},  # (a named culture, #4257 slice 3b)
 )  # fmt: skip
 # One map: a kept picture DMbot knows is a map (#4344, MapBot layers slice 3a). It is in the log so
 # that each DM action on a map (keep, yes or no to using it, show to the table, remove) is one Undo
@@ -323,7 +331,7 @@ PLAN_POSITION = Table(
     "plan_position", "id", ("id", "document_id", "chapter_id", "set_by", "created_at")
 )
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
-       STORY_LANGUAGES, MAP_FACTS, MAPS,
+       STORY_LANGUAGES, CULTURES, MAP_FACTS, MAPS,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
        BELIEFS, EVIDENCE, ALIAS_KNOWERS, KNOWERS, TOLD)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
@@ -383,6 +391,9 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         # (`plan_divergences` is not listed on purpose: it is derived from the plan and the table
         # and unlogged, so it simply goes with the entry and is worked out again when needed.)
     ),
+    # (a logged delete of a culture is refused while a row points at it: the database's cascade
+    # would delete those rows outside the log)
+    "memory_cultures": (("memory_map_facts", "culture_id", False),),
     # (the database would set these to NULL outside the log: #4346)
     "campaign_maps": (
         ("memory_map_facts", "map_id", False),

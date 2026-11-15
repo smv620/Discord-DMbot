@@ -38,6 +38,30 @@ class TheLines(unittest.TestCase):
             "\n🏘️ **Who lives here:** mostly halflings, humans",
         )
 
+    def test_a_named_culture_reads_like_a_lineage(self) -> None:
+        """#4257 slice 3b: "Culture: strongly Illuskan", the culture's name as it was written."""
+        cid = "a" * 32
+        named = mf.Fact("f1", "p", mf.CULTURE, cid, "Illuskan", "strong", "", mf.CONFIRMED,
+                        mf.FROM_DM, True)  # fmt: skip
+        held = {mf.CULTURE: mf.Held((named, fact(mf.CULTURE, "human", "some")))}
+        self.assertEqual(
+            pw.card_lines(held, {}, dm=False),
+            "\n🏛️ **Culture:** strongly Illuskan, somewhat human",
+        )
+
+    def test_the_menu_lists_kept_cultures_first_and_fits_discord(self) -> None:
+        named = [(f"{i:032x}", f"Culture {i}") for i in range(20)]
+        options = pp.culture_options(None, named)
+        self.assertLessEqual(len(options), 25)
+        self.assertEqual([o.label for o in options[:2]], ["Culture 0", "Culture 1"])
+        self.assertEqual(sum(o.label.startswith("Culture") for o in options), pp.NAMED_SHOWN)
+        self.assertEqual([o.label for o in options[-2:]], ["Something else…", "Not sure"])
+        # (the place's own named culture is always there, and chosen)
+        own = mf.Fact("f1", "p", mf.CULTURE, f"{19:032x}", "Culture 19", "strong", "",
+                      mf.CONFIRMED, mf.FROM_DM, True)  # fmt: skip
+        first = pp.culture_options(own, named)[0]
+        self.assertEqual((first.label, first.default), ("Culture 19", True))
+
     def test_a_part_and_once(self) -> None:
         held = {mf.CULTURE: mf.Held((fact(mf.CULTURE, "gnome", "once", part="the old quarter"),))}
         self.assertIn("once gnomish (in the old quarter)", pw.card_lines(held, {}, dm=False))
@@ -117,6 +141,32 @@ class OnTheScreen(NamesTest):
         card, _ = await self.card()
         self.assertIn("🏛️ **Culture:** a little dwarven", card)
         self.assertIn("🏘️ **Who lives here:** mostly halflings", card)
+
+    async def test_a_typed_culture_is_named_and_the_screen_focuses_on_it(self) -> None:
+        """#4257 slice 3b: "Something else…" makes a named culture, and the strength buttons then
+        act on it, never on the lineage the place already had (ux-critic)."""
+        _, view = await self.screen()
+        view.culture_pick._values = ["dwarf"]
+        it = self.it()
+        await view._culture_picked(it)
+        _, view = it.response.edited[-1]
+        form = pp.OwnWordsForm(view, mf.CULTURE)
+        form.words._value = "Illuskan"
+        it = self.it()
+        await form.on_submit(it)
+        text, view = it.response.edited[-1]
+        self.assertIn("“Illuskan” is now in the culture list for every place.", text)
+        self.assertEqual(view.culture.words, "Illuskan")
+        it = self.it()
+        await view._strength("once")(it)
+        card, _ = await self.card()
+        # (both kept, the strength on the typed one; two made in the same second come back in id
+        # order, so the line's order is not checked)
+        line = next(x for x in card.splitlines() if x.startswith("🏛️ **Culture:**"))
+        self.assertEqual(
+            sorted(line.removeprefix("🏛️ **Culture:** ").split(", ")),
+            ["once Illuskan", "strongly dwarven"],
+        )
 
     async def test_players_never_see_a_read_and_keep_makes_it_the_dms(self) -> None:
         await self.memory.add_read_map_facts(
