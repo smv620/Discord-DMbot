@@ -73,11 +73,12 @@ async def account_of(db: Database, discord_id: int) -> int | None:
 # campaigns or which plan (isolation). The rest are plain words of the same kind.
 LINK_WORDS = {
     "has_campaigns": (
-        "That Discord account already runs its own campaigns. Hand those campaigns over or "
-        "remove them first, then add the account."
+        "That Discord account is already the DM of its own campaigns. Hand those campaigns over "
+        "or delete them first, then add the account."
     ),
     "has_plan": (
-        "That Discord account has its own DMbot plan. End that plan first, then add the account."
+        "That Discord account pays for its own DMbot plan. Sign in as that account and cancel "
+        "its plan first, then add it here."
     ),
     "has_account": (
         "That Discord account is already on another DMbot account. Remove it there first, then "

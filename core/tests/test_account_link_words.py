@@ -40,8 +40,8 @@ class LinkingWithWords(DatabaseTest):
         self.assertEqual((got.ok, got.code), (False, "has_campaigns"))
         self.assertEqual(
             got.words,
-            "That Discord account already runs its own campaigns. Hand those campaigns over or "
-            "remove them first, then add the account.",
+            "That Discord account is already the DM of its own campaigns. Hand those campaigns "
+            "over or delete them first, then add the account.",
         )
 
     async def test_one_with_its_own_plan_gets_the_ruled_words(self) -> None:
