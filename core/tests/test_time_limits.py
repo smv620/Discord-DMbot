@@ -39,7 +39,7 @@ class Counting(unittest.TestCase):
         self.assertEqual(tl.left_said(due, 0, days), "3 days left (due Day 4)")
         self.assertEqual(tl.left_said(due, 2 * DAY, days), "1 day left (due Day 4)")
         self.assertEqual(tl.left_said(due, due - 90, days), "2 hours left (due Day 4)")
-        self.assertEqual(tl.left_said(due, due, days), "the time limit passed (Day 4)")
+        self.assertEqual(tl.left_said(due, due, days), "time's up (was due Day 4)")
 
     def test_days_from_now_and_the_furthest_group(self) -> None:
         self.assertEqual(tl.days_from(100, 3), 100 + 3 * DAY)
@@ -63,7 +63,13 @@ class TheCard(unittest.TestCase):
         self.assertEqual(words_only, "⏰ **Time limit:** before the thaw")
 
     def test_every_new_label_fits_discord(self) -> None:
-        for label in (ui.SET_DATE, ui.CLEAR_DATE, ui.PICK_DAY, *ui.QUICK_SAID.values()):
+        for label in (
+            ui.SET_DATE,
+            ui.CHANGE_DATE,
+            ui.CLEAR_DATE,
+            ui.PICK_DAY,
+            *ui.QUICK_SAID.values(),
+        ):
             self.assertLessEqual(len(label), 80, label)
         self.assertEqual(set(ui.QUICK_SAID), set(tl.QUICK_DAYS))
 

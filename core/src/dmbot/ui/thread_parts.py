@@ -55,12 +55,22 @@ NOT_A_BRANCH = "Not a branch of anything"
 NOT_PROMISED = "No, it wasn't promised"
 NONE = "none"  # a menu choice's value for "none of them" (Discord refuses an empty value)
 # A time limit's game date (quests slice 4, §8.2: the DM's one tap)
-SET_DATE = "⏰ Set a date"
+# (📅, not ⏰: the part's own "⏰ Still running" sits on the same screen; the ux-critic)
+SET_DATE, CHANGE_DATE = "📅 Set a date", "📅 Change the date"
 CLEAR_DATE = "🗑️ Clear the date"
-PICK_DAY = "Pick a day…"
+PICK_DAY = "Other number of days…"
 QUICK_SAID = {1: "Tomorrow", 3: "In 3 days", 7: "In a week"}
-DATE_QUESTION = "**When is it due?** Counted from the game clock now."
-NO_CLOCK_YET = "⚠️ No game clock here, so I can't count this down. Start the clock on the DM screen."
+NO_CLOCK_YET = (
+    "⚠️ No game clock yet, so nothing was dated. Set one up: ⚙️ Manage DMbot, then Game clock."
+)
+
+
+def date_question(words: str, today: str | None) -> str:
+    """The date screen's question, naming the limit and today's date, so the quick choices need
+    no sum (the ux-critic on #4448)."""
+    now = f" (it's {today})" if today else ""
+    return f"**When is it due: {_md(words)}?** In game days from now{now}."
+
 
 # The Add menu: (kind, label, description)
 ADD_CHOICES = (
@@ -126,7 +136,7 @@ FOLDED_SAID = {
 SEEN = " 👁️"
 # A dated limit with no game clock to count on (§8.2: "No game clock here, so I can't count this
 # down.")
-NO_CLOCK = "no game clock here, so I can't count this down"
+NO_CLOCK = "no game clock yet, so no countdown"
 SEEN_NOTE = "👁️ Players can see it (once you show them the thread)."
 ONLY_DM = "Only the DM can change a story thread."
 TOO_LATE = "⚠️ Can't undo: it was changed since. Change it here instead."
@@ -652,7 +662,8 @@ class PartMenu(_Menu):
         if part.kind == tp.REWARD_GIVEN and owed:
             self.add_item(_Button(self._toward, label=TOWARD, row=2))
         if part.kind == tp.TIME_LIMIT and part.state == "running":
-            self.add_item(_Button(self._date, label=SET_DATE, row=2))
+            dated = part.due_minute is not None
+            self.add_item(_Button(self._date, label=CHANGE_DATE if dated else SET_DATE, row=2))
         self.add_item(_Button(self._back, label=BACK, row=2))
 
     async def _run(self, interaction: discord.Interaction, write: Any, note: Any) -> None:
@@ -724,9 +735,7 @@ class PartMenu(_Menu):
     async def _date(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
         self.stop()
-        await _replace(
-            interaction, DATE_QUESTION, DateMenu(self.campaign_id, self.thread_id, self.part)
-        )
+        await open_date(interaction, self.campaign_id, self.thread_id, self.part)
 
     async def _toward(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -741,6 +750,28 @@ class PartMenu(_Menu):
         await _answer_first(interaction, in_place=True)
         self.stop()
         await open_parts(interaction, self.campaign_id, self.thread_id)
+
+
+async def open_date(
+    interaction: discord.Interaction,
+    campaign_id: str,
+    thread_id: str,
+    part: tp.Part,
+    note: str = "",
+) -> None:
+    """The date screen, with today's date when the clock can be read."""
+    got = await _dm(interaction, campaign_id)
+    if got is None:
+        return
+    campaign, _memory = got
+    clock = await clock_now(interaction.client, campaign.guild_id, campaign.id)
+    today = time_limits.date_said(clock[0], clock[1]) if clock is not None else None
+    question = date_question(part.words, today)
+    await _replace(
+        interaction,
+        f"{note}\n\n{question}" if note else question,
+        DateMenu(campaign_id, thread_id, part),
+    )
 
 
 class DateMenu(_Menu):
@@ -790,12 +821,12 @@ class DaysForm(discord.ui.Modal, title="When is it due?"):
         days = int(text) if text.isascii() and text.isdigit() else 0
         if not 1 <= days <= time_limits.MOST_DAYS:
             await _answer_first(interaction, in_place=True)
-            await open_parts(interaction, self.campaign_id, self.thread_id, note=DAYS_NUMBER)
+            await open_date(interaction, self.campaign_id, self.thread_id, self.part, DAYS_NUMBER)
             return
         await set_date(interaction, self.campaign_id, self.thread_id, self.part, days)
 
 
-DAYS_NUMBER = f"⚠️ Type a number of game days, 1 to {time_limits.MOST_DAYS}, then try again."
+DAYS_NUMBER = f"⚠️ Nothing was changed. Type a number of game days, 1 to {time_limits.MOST_DAYS}."
 
 
 async def set_date(
@@ -828,9 +859,9 @@ async def set_date(
     changed(interaction, campaign)
     words = _md(part.words)
     if due is None or clock is None:
-        note = f"✅ Words only now: **{words}**."
+        note = f"✅ Date cleared: **{words}**. No countdown now."
     else:
-        note = f"✅ **{words}**: {time_limits.left_said(due, clock[0], clock[1])}."
+        note = f"✅ Date set: **{words}**, {time_limits.left_said(due, clock[0], clock[1])}."
     await open_parts(interaction, campaign_id, thread_id, note=note, undo=done.batch)
 
 

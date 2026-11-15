@@ -57,11 +57,11 @@ def date_said(due: int, calendar: cal.Calendar) -> str:
 
 def left_said(due: int, now: int, calendar: cal.Calendar) -> str:
     """What the cards say of a dated limit (§8.3, §8.4): "1 day left (due Day 12)", "5 hours left
-    (due …)", or "the time limit passed (Day 12)". Whole days while a day or more is left; the
+    (due …)", or "time's up (was due Day 12)". Whole days while a day or more is left; the
     hours (rounded up) on the last day, so it never reads "0 days"."""
     date = date_said(due, calendar)
     if now >= due:
-        return f"the time limit passed ({date})"
+        return f"time's up (was due {date})"
     left = due - now
     if left >= MINUTES_PER_DAY:
         days = left // MINUTES_PER_DAY
