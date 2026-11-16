@@ -207,6 +207,7 @@ def card_lines(
     *,
     most: int | None = None,
     clock: tuple[int, Any] | None = None,
+    clues: str = "",
 ) -> list[str]:
     """What a thread's card shows of its steps, rewards and more, and its branches (§10.1; the
     ux-critic's layout). Standing parts only; finished obstacles, help and time limits fold into one
@@ -280,6 +281,8 @@ def card_lines(
     if folded:
         said = ", ".join(f"{n} {FOLDED_SAID[s]}" for s, n in folded.items())
         lines.append(f"Also: {said}. Tap 📋 to see them.")
+    if clues:  # (#4624: the count, worked out by the caller; the DM's card only)
+        lines.append(f"🔎 **Clues:** {clues}")
     if branches:
         lines.append("🌿 **Branches:** " + ", ".join(_name(names, b) for b in branches))
     if bigger is not None:
@@ -357,7 +360,12 @@ async def open_parts(
         if dated(parts)
         else None
     )
-    lines = card_lines(parts, names, bigger, branches, clock=clock) or [
+    from dmbot.memory import gate
+    from dmbot.memory.thread_clues import found_text
+
+    dm = gate.Viewer.the_dm()
+    clues = await memory.thread_clues(campaign.guild_id, campaign.id, thread_id, dm)
+    lines = card_lines(parts, names, bigger, branches, clock=clock, clues=found_text(clues)) or [
         "Nothing yet. Pick ➕ Add… to start."
     ]
     head = f"📋 **{_md(thread.name)}**"
@@ -404,6 +412,7 @@ class PartsScreen(_Menu):
         if undo is not None:
             self.add_item(_Button(partial(self._undo, undo), label=UNDO, row=2))
         self.add_item(_Button(self._branch, label=BRANCH_BUTTON, row=2))
+        self.add_item(_Button(self._clues, label="🔎 Clues", row=2))
         self.add_item(_Button(self._back, label=BACK, row=2))
 
     async def _add(self, interaction: discord.Interaction) -> None:
@@ -469,6 +478,13 @@ class PartsScreen(_Menu):
         await _answer_first(interaction, in_place=True)
         self.stop()
         await open_branch(interaction, self.campaign_id, self.thread_id)
+
+    async def _clues(self, interaction: discord.Interaction) -> None:
+        from dmbot.ui.thread_clues import open_clues
+
+        await _answer_first(interaction, in_place=True)
+        self.stop()
+        await open_clues(interaction, self.campaign_id, self.thread_id)
 
     async def _back(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.threads import show_thread

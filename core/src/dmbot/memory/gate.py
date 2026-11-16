@@ -378,9 +378,16 @@ async def load(scope: Scope) -> Statements:
         )
     }
     states = {r["id"]: r["entity_id"] for r in await _by_id(scope, STATES, wanted_states)}
+    # (a clue's tie to a story thread is the DM's alone, #4624: whoever a row says knows it, it
+    # grants nothing here; the write layer refuses such rows too, `Changes._dm_only_check`)
     relations = {
         r["id"]: (r["subject_id"], r["object_id"])
-        for r in await _by_id(scope, RELATIONS, wanted_relations, " AND status <> 'rejected'")
+        for r in await _by_id(
+            scope,
+            RELATIONS,
+            wanted_relations,
+            " AND status <> 'rejected' AND predicate <> 'clue_to'",
+        )
     }
     aliases = {
         r["id"]: tuple(i for i in (r["entity_id"], r["used_by"]) if i is not None)

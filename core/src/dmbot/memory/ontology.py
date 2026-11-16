@@ -440,6 +440,24 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         synonyms=("side_quest_of", "sub_quest_of"),
     ),
     PredicateTerm(
+        "clue_to",
+        "is a clue to",
+        "A clue bears on a story thread, as the DM says: a piece of the answer to a mystery, or a "
+        'lead in a quest (quests design §3, §7). Its word is "points to it" or "false lead". '
+        "The DM's alone: never guessed, and never shown to the players, who see only the clues "
+        "their own characters know.",
+        ("clue",),
+        ("thread",),
+        covers=("the warning in the azure tome, a clue to what happened to Master Sparkwalker",),
+        not_this=(
+            ("one thing that sent the party on to another", "led_to"),
+            ("who knows the clue", "knows"),
+        ),
+        examples=("The bloody glove is a clue to Who killed the Speaker?",),
+        inverse_label="has the clue",
+        synonyms=("evidence_for", "lead_to"),
+    ),
+    PredicateTerm(
         "of_people",
         "is one of",
         "Belongs to a whole people or kind, as the DM says: a tabaxi, an elf, an outsider. "

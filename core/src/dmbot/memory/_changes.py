@@ -20,6 +20,13 @@ from dmbot.memory.ontology import MIGRATED_KINDS, god_is_an_npc
 from dmbot.pictures.store import _lock as pictures_lock
 
 NOT_FOUND = "DMbot doesn't remember that any more."
+# The columns whose change could let a player know a DM-only connection (#4624: a clue's tie to
+# a thread): `Changes._dm_only_check` reads only when one of them changes
+_DM_ONLY_COLUMNS: dict[str, frozenset[str]] = {
+    "memory_relations": frozenset({"predicate", "secret"}),
+    "memory_knowers": frozenset({"relation_id", "perspective_id", "confidence"}),
+    "memory_beliefs": frozenset({"relation_id", "perspective_id", "confidence"}),
+}
 ALREADY_UNDONE = "That was already undone."
 CHANGED_SINCE = "That was changed again since, so it can't be undone on its own."
 MAP_PICTURE_GONE = "That map's picture was deleted since, so this can't be undone."
@@ -540,6 +547,8 @@ class Changes(Scope):
         # Rows this write brought back from turned down (#4524): the players saw none of them
         # before, so holding one back in the same write takes nothing from them (`public_guard`).
         self.revived: set[tuple[str, str]] = set()
+        # (#4624) each connection's predicate, read once per write by `_dm_only_check`
+        self._predicates: dict[str, str | None] = {}
         # True while a "same person" join moves an unnamed person's statements onto the named one
         # (`MemoryStore` join): what it makes secret keeps the players from learning who the
         # stranger was, which takes nothing from them, so the guard lets it through
@@ -572,7 +581,39 @@ class Changes(Scope):
             None  # The truth's and The party's ids, once known
         )
 
+    async def _dm_only_check(
+        self, table: Table, row: Mapping[str, Any], before: Mapping[str, Any] | None = None
+    ) -> None:
+        """A story thread's clues are the DM's alone (#4624, Supervisor's condition): a `clue_to`
+        connection is always stored secret, and nobody but The truth may ever know it, so no
+        player's view, list, door or graph can hold it or its "false lead" word. Checked here, the
+        one write layer every writer goes through, so no path can add one."""
+        from dmbot.memory.thread_clues import DM_ONLY_PREDICATES, DM_ONLY_TIE
+
+        if table is RELATIONS:
+            merged = {**(before or {}), **row}
+            self._predicates[str(merged.get("id"))] = merged.get("predicate")
+            if merged.get("predicate") in DM_ONLY_PREDICATES and not merged.get("secret"):
+                raise MemoryRuleError(DM_ONLY_TIE)
+            return
+        if table not in (KNOWERS, BELIEFS) or not row.get("relation_id"):
+            return
+        if table is BELIEFS and float(row.get("confidence") or 0.0) <= 0.0:
+            return  # (a 0.0 belief knows nothing: The party's "it's secret" row)
+        relation_id = str(row["relation_id"])
+        if relation_id not in self._predicates:
+            relation = await self.get(RELATIONS, relation_id, lock=False)
+            self._predicates[relation_id] = None if relation is None else relation["predicate"]
+        if self._predicates[relation_id] not in DM_ONLY_PREDICATES:
+            return
+        if table is BELIEFS:
+            view = await self.get(PERSPECTIVES, str(row["perspective_id"]), lock=False)
+            if view is not None and view["kind"] == "truth":
+                return  # (The truth holds every connection: the DM's own view)
+        raise MemoryRuleError(DM_ONLY_TIE)
+
     async def insert(self, table: Table, row: dict[str, Any]) -> dict[str, Any]:
+        await self._dm_only_check(table, row)
         cols = ("guild_id", "campaign_id", *table.columns)
         query = sql.SQL("INSERT INTO {} ({}) VALUES ({}) RETURNING {}").format(
             sql.Identifier(table.name),
@@ -607,6 +648,8 @@ class Changes(Scope):
         ):  # (a tie reopened is current again: why it once ended no longer holds, #4115)
             changes = {"end_reason": None, **changes}
         changes = {k: v for k, v in changes.items() if before[k] != v}
+        if changes.keys() & _DM_ONLY_COLUMNS.get(table.name, frozenset()):
+            await self._dm_only_check(table, {**before, **changes}, before)
         if changes and table.name in _GUARDED:  # (public never becomes secret by itself, #4524)
             from dmbot.memory import public_guard
 
