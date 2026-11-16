@@ -56,6 +56,7 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | Confirm kinds of names; places written two ways | Names, Story Graph | built, switched off | `CONFIRM_KINDS_LIVE`, `NAME_PLACES_LIVE` |
 | Story Graph: view, details panel, settings, centre on a name | `/account/web` | live | none |
 | A quest's sheet: what it's about, who gave it, the reward, its state and steps (#4540) | the 🧵 card | Story Graph detail pane (DM only): built, switched off, `QUEST_SHEET_LIVE` (#4547) | `QUEST_SHEET_LIVE` |
+| A kept story thread's steps, rewards and more: add, change, state, show to the table, take off, and its branches (#4476) | the 🧵 card, "📋 Steps, rewards and more" | the read door and the changes (the queue door's `part-*` and `branch-*` actions) are built; the page is next, switched off. A loan's terms are added with a change afterwards, not in the add form; a time limit's date (#4503) follows |  |
 | Story Graph: waiting connections (answer, All true / All secret / Undo all) | `/account/web` | live | none |
 | Story Graph: what people believe (readings); who knows a connection; secret names told; peek and reveal | `/account/web` | readings live; others switched off | `WHO_KNOWS_LIVE`, `TOLD_LIVE` |
 | Story Graph: change a connection, its feeling | `/account/web` | change live; feeling picker is in an open PR, switched off | `knows-feeling-switch` |

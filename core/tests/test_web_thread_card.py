@@ -168,12 +168,15 @@ class TheChanges(Card):
 
     async def test_a_state_a_show_and_a_remove(self) -> None:
         made = await self.act("part-add", f"{self.thread} objective - - - - - - Cross the pass")
-        part_id = (await self.parts())[0]["id"]
         self.assertEqual(made.error, "")
+        part_id = await self._id()
         self.assertEqual((await self.act("part-state", f"{part_id} done")).error, "")
+        # (a state change is a change in the story: the part stands as a new row with a new id)
+        part_id = await self._id()
         card = await thread_card.read(self.web, self.session, self.cref, self.thread)
         self.assertEqual((card["done"], card["of"]), (1, 1))
         self.assertEqual((await self.act("part-show", f"{part_id} 1")).error, "")
+        part_id = await self._id()
         self.assertTrue((await self.parts())[0]["tableKnows"])
         removed = await self.act("part-remove", part_id)
         self.assertEqual(removed.error, "")
@@ -214,11 +217,36 @@ class TheChanges(Card):
         card = await thread_card.read(self.web, self.session, self.cref, self.thread)
         self.assertEqual(card["branches"], [])
 
-    async def test_a_part_that_is_gone_is_gone_and_another_actions_batch_is_not_undone(
+    async def test_a_part_that_is_gone_is_gone_and_an_undo_takes_back_only_this_dms_own_part_change(
         self,
     ) -> None:
         self.assertEqual((await self.act("part-state", f"{'a' * 32} done")).error, wa.GONE)
         self.assertEqual((await self.act("part-undo", "999999")).error, wa.GONE)
+        # (a batch the bot made itself, outside the website's part actions)
+        direct = await self.memory.add_thread_part(
+            self.g, self.one.id, self.thread, "objective", "Made in Discord", source=DM
+        )
+        self.assertEqual((await self.act("part-undo", str(direct.batch))).error, wa.GONE)
+        # (another DM's change, and the Undo's own batch)
+        mine = await self.act("part-add", f"{self.thread} objective - - - - - - Find the heir")
+        (batch,) = mine.batches
+        await self.sql(
+            "UPDATE name_actions SET user_id = %s WHERE guild_id = %s"
+            " AND %s = ANY (result_batches)",
+            BOB.id, self.g, batch,
+        )  # fmt: skip
+        self.assertEqual((await self.act("part-undo", str(batch))).error, wa.GONE)
+
+    async def test_a_player_cannot_queue_a_part_change(self) -> None:
+        bob = await self.signed(BOB, THURSDAY)
+        async with self.web.user(bob.user_id, session=bob.id_hash) as conn:
+            await _scoped(conn, self.g)
+            cur = await conn.execute(
+                "SELECT dmbot_web_name_action_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
+                (self.g, self.one.id, None, "part-remove", "", "", "a" * 32, False),
+            )
+            found = await cur.fetchone()
+        self.assertIsNone(found and found["r"])  # (the door answers NULL: a DM only)
 
     async def test_only_the_action_shapes_are_taken(self) -> None:
         t = self.thread

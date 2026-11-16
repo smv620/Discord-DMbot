@@ -1016,9 +1016,9 @@ async def _parts(
     calls as Discord's 🧵 card (`add_thread_part`, `correct_thread_part`, `set_thread_part_state`,
     `show_thread_part`, `remove_thread_part`, `branch_of`, `not_a_branch`), so each is one change
     and one Undo. The door checked the text's shape; the store checks the rest again, so a part or
-    thread gone meanwhile is `gone`, and a refusal by the rules (a loop of branches, a name that is
-    not allowed) is `bad_target`. ↩ Undo takes back only a change this DM's own done part action
-    made, read again here."""
+    thread gone meanwhile is `gone`, and a refusal by the rules (a loop of branches, a thread no
+    longer kept, a name that is not allowed) is `bad_target`. ↩ Undo takes back only a change this
+    DM's own done part action made, read again here."""
     from dmbot.memory import thread_parts as tp
 
     try:
