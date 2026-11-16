@@ -27,6 +27,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import datetime as dt
+import functools
 import os
 import sys
 import time
@@ -64,6 +65,9 @@ RECAP_RESERVE_USD = 0.75
 # And for the sample map's one close read (#4423): one careful-model look at one picture
 MAP_RESERVE_USD = 0.10
 _ON = {"1", "true", "on", "yes"}
+# A backstory is read with spoilers: it is its owner's own story, known to that character (and kept
+# from the others by its knowers), never the world's (#4523)
+BACKSTORY_CHOICE = "spoilers"
 
 
 def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
@@ -129,6 +133,29 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "--accept-all",
         action="store_true",
         help="the old way: accept everything (#3544) instead of sure, then the AI's decisions",
+    )
+    parser.add_argument(
+        "--stages",
+        type=int,
+        choices=(1, 2),
+        default=1,
+        help="1: today's run (lore, then session). 2 (#4523): the players' four secret "
+        "backstories, each read as its own character's, then the lore (stage 1, scored against "
+        "total_key.json), then the session (stage 2, full_key.json), both with the tiers",
+    )
+    parser.add_argument(
+        "--backstory",
+        action="append",
+        default=[],
+        metavar="SLUG=FILE",
+        help="with --stages 2, once for each of the four: cerric=, okthandom=, claude=, belleros=",
+    )
+    parser.add_argument(
+        "--cap",
+        type=int,
+        default=plan.DEFAULT_STAGE_CAP,
+        help=f"with --stages 2, the most careful-model decisions a stage (default "
+        f"{plan.DEFAULT_STAGE_CAP}); what is left waiting is not decided",
     )
     parser.add_argument("--yes", action="store_true", help="spend the money")
     return parser.parse_args(argv)
@@ -209,6 +236,20 @@ async def run(
         plan.require_character_players(players)
     lore_text, session_text = read_text(args.lore, "lore"), read_text(args.session, "session")
     steps.check_lore(lore_text, args.lore_choice)
+    two = args.stages == 2
+    backstories: dict[str, str] = {}
+    if two:  # (#4523: all four files and both built keys, before anything is spent)
+        if args.accept_all:
+            raise SampleError("--stages 2 scores the AI DM's decisions: it can't --accept-all")
+        if args.cap < 0:
+            raise SampleError("--cap is a whole number, 0 or more")
+        for slug, path in plan.parse_backstories(args.backstory).items():
+            backstories[slug] = read_text(Path(path), f"{slug} backstory")
+            steps.check_lore(backstories[slug], BACKSTORY_CHOICE)
+        for name in plan.STAGE_KEYS.values():
+            steps.built_key(name)
+    elif args.backstory:
+        raise SampleError("--backstory needs --stages 2")
     started = session_start(args.date, now)
     from dmbot.transcript import importer
 
@@ -227,12 +268,13 @@ async def run(
     elif labels - set(players):
         raise SampleError("a speaker in the session file has no --players entry")
     chars = sum(len(u.text) for u in transcript.utterances)
+    words = len(lore_text.split()) + sum(len(t.split()) for t in backstories.values())
     lore, windows, story, recap_calls = steps.estimate_cost(
-        len(lore_text.split()), len(transcript.utterances), chars
+        words, len(transcript.utterances), chars
     )
     say(plan.Cost(lore, windows, story, recap_calls if recap else 0).line())
     if not args.accept_all:
-        calls = max(args.max_decisions, 0)
+        calls = 2 * args.cap if two else max(args.max_decisions, 0)
         say(
             f"decisions: at most {calls} careful-model calls (#3900),"
             f" about ${decide_mod.estimate(calls):.2f}"
@@ -309,7 +351,7 @@ async def run(
         async def accept_step() -> Mapping[str, int | str]:
             return await accept(db, gid, cid)
 
-        docs = (lore_text, session_text)
+        docs = (*backstories.values(), lore_text, session_text)  # (the excerpts' sources)
         # One asker for the whole run (#3900): the cap, the counts and the cost add up across the
         # lore and session stages, and the record is this run's own file (stamped, owner-only).
         record = folder / f"decisions-{dt.datetime.now(dt.UTC).strftime('%Y%m%d-%H%M%S')}.jsonl"
@@ -324,15 +366,16 @@ async def run(
             from dmbot.devtools.sample_run import judge
 
             try:
-                line = await decide_mod.own_matches(
-                    db, memory, judge.Key(steps.master_key()), gid, cid
-                )
+                the_key = steps.built_key(plan.STAGE_KEYS[2]) if two else steps.master_key()
+                line = await decide_mod.own_matches(db, memory, judge.Key(the_key), gid, cid)
             except accept_all.WrongCampaign as exc:
                 raise SampleError(str(exc)) from exc
             say(line)
             return await sure(db, gid, cid)
 
-        async def decide_step(label: str) -> Mapping[str, int | str]:
+        async def decide_step(
+            label: str, key: Mapping[str, object] | None = None
+        ) -> Mapping[str, int | str]:
             """The careful model's answers for what is still waiting (#3900), then the connections
             those answers made ready, kept as the sure step keeps them."""
             from dmbot.consent import ConsentStore as Consents
@@ -350,20 +393,27 @@ async def run(
                 decider.extend([asker, close])
             asker = decider[0]
             asker.stage = label
+            if two:  # (ruling E: each stage has its own cap)
+                asker.budget = decide_mod.Budget(args.cap)
             calls, cost = asker.run.calls, asker.run.cost
+            left_before = sum(asker.run.over_cap.values())
             try:
                 await decide_mod.run(
                     db, memory, BackstoryLinks(db), ClaimStore(memory), asker,
-                    judge.Key(steps.master_key()), gid, cid, docs=docs,
+                    judge.Key(key or steps.master_key()), gid, cid, docs=docs,
                     opted_in=await Consents(db).recorded_in(gid, cid), dm=dm,
                 )  # fmt: skip
             except accept_all.WrongCampaign as exc:
                 raise SampleError(str(exc)) from exc
             after = await sure(db, gid, cid, connections_only=True)
+            left = sum(asker.run.over_cap.values()) - left_before
+            if left:
+                say(plan.cap_line(left))
             return {
                 "calls": asker.run.calls - calls,
                 "cost": f"${asker.run.cost - cost:.2f}",
                 "connections kept after": after.get("accepted", 0),
+                **({"left at the cap": left} if two else {}),
             }
 
         async def score_step(label: str, docs: str) -> Mapping[str, int | str]:
@@ -372,6 +422,33 @@ async def run(
             for line in lines:
                 say(line)
             return {"lines": len(lines), **steps.score_numbers(path, docs)}
+
+        async def stage_score_step(stage: int) -> Mapping[str, int | str]:
+            """A stage's backup scored against its built key, every document it holds, with the
+            decision record for the tiers (#4523). Counts only."""
+            name = plan.STAGE_KEYS[stage]
+            path = await steps.backup(campaigns, gid, cid, folder, f"stage{stage}")
+            lines = steps.score(
+                path, "all", key=steps.built_key_path(name),
+                record=record if record.exists() else None,
+            )  # fmt: skip
+            for line in lines:
+                say(line)
+            return {
+                "lines": len(lines),
+                **steps.score_numbers(path, "all", key=steps.built_key(name)),
+            }
+
+        async def backstory_step(slug: str) -> Mapping[str, int | str]:
+            """One backstory, queued as its owner's own (the page's "Whose backstory is this?"),
+            read by the running bot before the next is queued."""
+            owners = await characters.ids_by_name(db, memory, gid, cid)
+            speaker = owners[dict(plan.BACKSTORIES)[slug]]
+            upload = await steps.queue_lore(
+                db, gid, cid, dm, backstories[slug], choice=BACKSTORY_CHOICE,
+                now=int(time.time()), speaker=speaker,
+            )  # fmt: skip
+            return await steps.wait_lore(db, gid, upload, say=say, sleep=sleep)
 
         async def found_step() -> Mapping[str, int | str]:
             n = await characters.found_by_the_read(db, memory, gid, cid)
@@ -453,12 +530,31 @@ async def run(
                 "AI decides (session)": lambda: decide_step("session"),
                 "backup and score (both, sure + AI)": lambda: score_step("both", "both"),
             }
-        order = plan.STEPS if args.accept_all else plan.STEPS_DECIDE
+        if two:  # (#4523: the backstories and lore are stage 1, the session stage 2)
+            lore_accept = {
+                **{
+                    f"backstory read ({slug})": functools.partial(backstory_step, slug)
+                    for slug, _ in plan.BACKSTORIES
+                },
+                "sure (stage 1)": sure_step,
+                "AI decides (stage 1)": lambda: decide_step(
+                    "stage 1", steps.built_key(plan.STAGE_KEYS[1])
+                ),
+                "backup and score (stage 1)": lambda: stage_score_step(1),
+            }
+            both_accept = {
+                "sure (stage 2)": session_sure_step,
+                "AI decides (stage 2)": lambda: decide_step(
+                    "stage 2", steps.built_key(plan.STAGE_KEYS[2])
+                ),
+                "backup and score (stage 2)": lambda: stage_score_step(2),
+            }
+        order = plan.STEPS_TWO if two else plan.STEPS if args.accept_all else plan.STEPS_DECIDE
         if not recap:  # (only the kept run writes one: it costs most and is no graph score)
             order = tuple(s for s in order if s != "recap (no audio)")
         actions = {
                 "lore read": lore_step,
-                "player characters found by the read": found_step,
+                **({} if two else {"player characters found by the read": found_step}),
                 **lore_accept,
                 "players not on Discord": speakers_step,
                 "player characters corrected": correct_step,

@@ -118,3 +118,20 @@ async def correct_player_characters(
             raise SampleError(f"a player character could not be set ({exc})") from exc
     await memory.party_on_assignment(guild, campaign)  # as the name card does (a lore-only start)
     return Corrected(corrected, made)
+
+
+async def ids_by_name(
+    db: Database, memory: MemoryStore, guild: int, campaign: str
+) -> dict[str, str]:
+    """The four player characters' entry ids by their full names, once they are set (#4523: each
+    backstory is queued as its own character's, as the page's "Whose backstory is this?" does).
+    Refuses when one of them is not a confirmed player character yet. Ids are never printed."""
+    await check_sample(db, guild, campaign)
+    lookup, entries = await _entries(memory, guild, campaign)
+    out: dict[str, str] = {}
+    for name, entry in entries.items():
+        e = lookup.entities.get(entry) if entry is not None else None
+        if e is None or e.role != PC or e.status != CONFIRMED:
+            raise SampleError("a player character is not set yet, so its backstory has no owner")
+        out[name] = e.id
+    return out
