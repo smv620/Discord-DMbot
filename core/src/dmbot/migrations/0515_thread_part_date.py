@@ -8,8 +8,8 @@ date.
 from __future__ import annotations
 
 # `part-date`: `<part id> <days>` (the door checks the shape only, 1 to 9999; the bot takes 1 to
-# 3650, `time_limits.MOST_DAYS`, and refuses more) or `<part id> -` to clear. Filed under no name, with no target and no flag, like 0514's actions; the
-# door checks only the shape. The page never sends a minute: the bot counts the days from the
+# 3650, `time_limits.MOST_DAYS`, and refuses more) or `<part id> -` to clear. Filed under no name,
+# with no target and no flag, like 0514's actions. The page never sends a minute: the bot counts the days from the
 # campaign's game clock when it applies the action (`time_limits.days_from`), so the website can
 # never write a date the clock would not, and answers "no game clock" when there is none. The bot
 # applies it through the store call Discord's card makes (`set_time_limit_date`): one change, one
