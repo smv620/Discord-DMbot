@@ -74,6 +74,14 @@ class TheDoor(Languages):
         await self.memory.add_story_language(
             self.g, self.one.id, self.mira, "Elvish", source="background"
         )
+        # (both were given in the same second, and the order after that is the random id: the door
+        # orders by when each was given, so say when, as Discord's list would have it)
+        for name, at in (("Giant", 1_000), ("Elvish", 2_000)):
+            await self.sql(
+                "UPDATE memory_story_languages SET created_at = %s WHERE guild_id = %s"
+                " AND entity_id = %s AND name = %s",
+                at, self.g, self.mira, name,
+            )  # fmt: skip
         shown = await self.shown()
         self.assertEqual([(r["name"], r["source"]) for r in shown["languages"]],
                          [("Giant", "dm"), ("Elvish", "read")])  # fmt: skip
