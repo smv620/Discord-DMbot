@@ -8,7 +8,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from dmbot.memory import thread_parts as parts
 from dmbot.memory import thread_progress as tp
@@ -245,10 +245,9 @@ class TheCard(MemoryTest):
                 raise RuntimeError("boom")
             return await real(g, c, ids, **kw)
 
-        self.memory.keep_thread_progress = keep  # type: ignore[method-assign]
-        kept = await accept_all.keep_progress(self.db, self.memory, GUILD_A, self.c)
+        with patch.object(self.memory, "keep_thread_progress", keep):
+            kept = await accept_all.keep_progress(self.db, self.memory, GUILD_A, self.c)
         self.assertEqual(kept, 3)
-        self.memory.keep_thread_progress = real  # type: ignore[method-assign]
         await self.store.turn_down(GUILD_A, self.c, list(broken_ids))
         self.assertEqual(await self.state(), GOING)
         self.assertIn(parts.COMPLICATION, await self.kinds_kept())
