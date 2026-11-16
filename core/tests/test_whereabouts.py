@@ -3,6 +3,7 @@ other, the newest wins, and with no order carrying wins. Names are invented."""
 
 from __future__ import annotations
 
+import dataclasses
 import unittest
 from dataclasses import replace
 
@@ -118,35 +119,57 @@ class Movers(unittest.TestCase):
     def test_a_later_sighting_ends_the_older_one_and_it_becomes_history(self) -> None:
         old = seen(TOWN_A, "1" * 32, start=100)
         got = whereabouts.settle(seen(TOWN_B, "2" * 32, start=200), "faction", "place", [old])
-        self.assertEqual(dict(got.ends), {old.id: {"to_session_at": 200}})
+        self.assertEqual(dict(got.ends), {old.id: {"to_session_at": 200, "detail": "was in"}})
         self.assertEqual(dict(got.new_changes), {})
 
     def test_an_earlier_sighting_read_late_is_history_and_never_ends_the_newer(self) -> None:
         newer = seen(TOWN_A, "1" * 32, start=300)
         got = whereabouts.settle(seen(TOWN_B, "2" * 32, start=200), "faction", "place", [newer])
         self.assertEqual(dict(got.ends), {})
-        self.assertEqual(dict(got.new_changes), {"to_session_at": 300})
+        self.assertEqual(dict(got.new_changes), {"to_session_at": 300, "detail": "was in"})
 
     def test_an_older_and_a_newer_place_together_whatever_the_row_order(self) -> None:
         older = seen(TOWN_A, "1" * 32, start=100)
         newer = seen(TOWN_B, "3" * 32, start=300)
         for rows in ([older, newer], [newer, older]):
             got = whereabouts.settle(seen("c" * 32, "2" * 32, start=200), "faction", "place", rows)
-            self.assertEqual(dict(got.ends), {older.id: {"to_session_at": 200}})
-            self.assertEqual(dict(got.new_changes), {"to_session_at": 300})
+            self.assertEqual(dict(got.ends), {older.id: {"to_session_at": 200, "detail": "was in"}})
+            self.assertEqual(dict(got.new_changes), {"to_session_at": 300, "detail": "was in"})
 
-    def test_with_no_order_on_either_side_both_stay_for_the_dm_to_settle(self) -> None:
+    def test_with_no_order_both_visits_are_history_and_nobody_is_asked(self) -> None:
+        """#4530, the ruling's A: two visits nothing orders are both "was in"; neither is where
+        they were last seen until an ordered visit comes. Never a question for the DM."""
         got = whereabouts.settle(
-            seen(TOWN_B, "2" * 32), "faction", "place", [seen(TOWN_A, "1" * 32)]
+            seen(TOWN_B, "2" * 32), "faction", "place", [seen(TOWN_A, "1" * 32)], now=50
         )
-        self.assertEqual((dict(got.ends), dict(got.new_changes)), ({}, {}))
+        self.assertEqual(dict(got.ends), {"1" * 32: {"to_session_at": 50, "detail": "was in"}})
+        self.assertEqual(dict(got.new_changes), {"to_session_at": 50, "detail": "was in"})
         same_session = whereabouts.settle(
             seen(TOWN_B, "2" * 32, start=100),
             "faction",
             "place",
             [seen(TOWN_A, "1" * 32, start=100)],
-        )
-        self.assertEqual((dict(same_session.ends), dict(same_session.new_changes)), ({}, {}))
+        )  # (one session, no lines known: no order)
+        self.assertEqual(set(same_session.ends), {"1" * 32})
+        self.assertEqual(same_session.new_changes["detail"], "was in")
+
+    def test_in_one_session_the_later_line_is_the_newer_visit(self) -> None:
+        old = seen(TOWN_A, "1" * 32, start=100)
+        new = seen(TOWN_B, "2" * 32, start=100)
+        lines = {old.id: 12, new.id: 40}
+        got = whereabouts.settle(new, "faction", "place", [old], line_of=lines.get)
+        self.assertEqual(dict(got.ends), {old.id: {"to_session_at": 100, "detail": "was in"}})
+        self.assertEqual(dict(got.new_changes), {})
+        earlier = whereabouts.settle(old, "faction", "place", [new], line_of=lines.get)
+        self.assertEqual(dict(earlier.ends), {})  # (said first: history, the later one stands)
+        self.assertEqual(dict(earlier.new_changes), {"to_session_at": 100, "detail": "was in"})
+
+    def test_an_uploads_visit_is_ordered_by_when_it_was_read(self) -> None:
+        session = seen(TOWN_A, "1" * 32, start=100)
+        upload = dataclasses.replace(seen(TOWN_B, "2" * 32), created_at=500)
+        got = whereabouts.settle(upload, "faction", "place", [session])
+        self.assertEqual(set(got.ends), {session.id})  # (read after the session: newer)
+        self.assertEqual(dict(got.new_changes), {})
 
     def test_a_newer_place_that_is_only_proposed_ends_nothing(self) -> None:
         old = seen(TOWN_A, "1" * 32, start=100)
@@ -185,7 +208,7 @@ class Movers(unittest.TestCase):
             seen(TOWN_B, "2" * 32, start=100), "faction", "place", [old], by_hand=True, now=900
         )
         self.assertEqual(
-            dict(got.ends), {old.id: {"to_session_at": 500}}
+            dict(got.ends), {old.id: {"to_session_at": 500, "detail": "was in"}}
         )  # (never before it began)
 
     def test_a_hidden_fact_never_ends_one_the_players_can_see(self) -> None:
@@ -220,7 +243,9 @@ class Movers(unittest.TestCase):
         late = whereabouts.settle(
             seen(TOWN_B, "4" * 32, start=300, secret=True), "faction", "place", [hidden_old]
         )
-        self.assertEqual(dict(late.ends), {hidden_old.id: {"to_session_at": 300}})
+        self.assertEqual(
+            dict(late.ends), {hidden_old.id: {"to_session_at": 300, "detail": "was in"}}
+        )
 
     def test_a_home_read_late_is_history_and_reads_in_the_past(self) -> None:
         newer = rel(TAVIN, "located_in", TOWN_B, "lives in", rid="1" * 32, start=300)
@@ -228,12 +253,14 @@ class Movers(unittest.TestCase):
         got = whereabouts.settle(older, "character", "place", [newer])
         self.assertEqual(dict(got.new_changes), {"to_session_at": 300, "detail": "lived in"})
 
-    def test_a_date_missing_on_either_side_is_no_order(self) -> None:
+    def test_a_visit_with_no_time_at_all_is_no_order(self) -> None:
+        """Neither a session nor a read time (an old row with no time): both are history."""
         dated = seen(TOWN_A, "1" * 32, start=100)
         undated = seen(TOWN_B, "2" * 32)
         for new, old in ((undated, dated), (dated, undated)):
-            got = whereabouts.settle(new, "faction", "place", [old])
-            self.assertEqual((dict(got.ends), dict(got.new_changes)), ({}, {}))
+            got = whereabouts.settle(new, "faction", "place", [old], now=100)
+            self.assertEqual(set(got.ends), {old.id})
+            self.assertEqual(got.new_changes["detail"], "was in")
 
     def test_a_place_inside_the_other_is_one_place_and_ends_nothing(self) -> None:
         inn = seen(TOWN_A, "1" * 32, start=100)
@@ -311,7 +338,7 @@ class InTheStore(ConfirmedMemoryTest):
         await self.put(party, "located_in", self.vault, "was last seen in", 100)
         await self.put(party, "located_in", self.chest, "was last seen in", 200)
         held = await self.held()
-        self.assertEqual(held[("located_in", self.vault)], ("was last seen in", 200))  # history
+        self.assertEqual(held[("located_in", self.vault)], ("was in", 200))  # history (#4530)
         self.assertEqual(held[("located_in", self.chest)], ("was last seen in", None))  # present
 
     async def test_a_proposed_newer_place_waits_and_ends_the_confirmed_one_only_when_kept(

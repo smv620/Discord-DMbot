@@ -158,7 +158,7 @@ RELATIONSHIPS
 - Captain Ryl — mentors — Vessa | quote: "Vessa, Orin and Pell rode north, and Captain Ryl mentored them"
 - Captain Ryl — mentors — Orin | quote: "Orin and Pell rode north, and Captain Ryl mentored them"
 - Captain Ryl — mentors — Pell | quote: "Pell rode north, and Captain Ryl mentored them"
-- Danrel — was last seen in — Eastvale | quote: "Danrel, Eastvale"
+- Danrel — went to — Eastvale | quote: "Danrel, Eastvale"
 - Order — knows — Danrel | quote: "Danrel, Eastvale. The Order knows who you are"
 
 Example 5. Input (a list of names, no relationships):
@@ -297,7 +297,8 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "pack, grabbed and fled with; write owns and carries for one pair only when the text "
         "says both), found (discovered, came upon, dug up), is in (a place inside a place; for a "
         "character or group say whether it lives in, lived in, works in, worked in, comes from "
-        "or was last seen in; an item is only ever kept in a place), leads (also: rules, is the "
+        "or went to (a visit, true whenever it happened); an item is only ever kept in a place), "
+        "leads (also: rules, is the "
         "speaker, mayor or captain of), founded, worships, "
         "is a parent of, is a child of, is a sibling of (a brother or sister), is a spouse of "
         "(a husband or wife), is held captive by "
@@ -351,7 +352,7 @@ def read_instructions(own: Mapping[str, str] | None = None) -> str:
         "it says, from the described person to the named one, how they are connected, in the "
         "words of the RELATIONSHIPS kinds (works for, serves, mentors, is an apprentice of, is a "
         "member of, leads, is a rival of, knows with its feeling in brackets, or for a place: "
-        "lives in, works in, comes from, was last seen in) or "
+        "lives in, works in, comes from, went to) or "
         "the text's own few words from the quote ('gave a pouch to'). The text's words for the "
         "person are the "
         "description that best tells them apart from anyone else, copied from the text: where "

@@ -2269,6 +2269,8 @@ class ClaimStore:
                     if not secret and not hold
                     else None
                 )
+                numbers = [int(n) for n in claim.lines if str(n).isdigit()]
+                w.said_line = min(numbers) if numbers else None  # (to order visits, #4530)
                 relation, flags = await self._store.add_relation_in(
                     w, subject_id, term.key, object_id, confidence=1.0, status=CONFIRMED,
                     detail=label or self._detail(term.key, claim, subject_kind),

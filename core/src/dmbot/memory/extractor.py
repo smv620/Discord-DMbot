@@ -69,7 +69,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-PROMPT_VERSION = "extractor-3"  # bump when SYSTEM changes (it is recorded with every claim)
+PROMPT_VERSION = "extractor-4"  # bump when SYSTEM changes (it is recorded with every claim)
 DEED_PROMPT_VERSION = "deeds-2"  # bump when deed_reading.DEED_SYSTEM changes (stored with each)
 READING_PROMPT_VERSION = "readings-1"  # bump when readings.READING_SYSTEM changes
 REVEAL_PROMPT_VERSION = "reveals-1"  # bump when reveal_reading.REVEAL_SYSTEM changes (stored)
@@ -134,7 +134,8 @@ Rules for what counts as a claim:
 
 7. Where a character, creature or group is tied to a place, the relationship is one of these
    words: "lives in" (or "lived in"), "works in" (or "worked in"), "comes from" (born or raised
-   there), or "was last seen in" (the line says they were seen, are, or went there). Use only
+   there), or "went to" (the line says they went there, were there or were seen there: a visit,
+   true whenever it happened; never say where they are now). Use only
    what the line says: a place they merely pass is no claim. An item is only ever "is kept in" a
    place (or "was kept in"). A place inside a place, or an event held at a place, is "is in".
 

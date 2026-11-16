@@ -367,9 +367,13 @@ def check_relation(
                 # present one. A past word ("lived in", "worked in") is history and is never
                 # limited at all: two past homes both stay (#3363).
                 mine = place_words.slot(new.detail, subject_type)
+                # A sighting is never flagged either (#4530, the ruling's B): visits stay true,
+                # and the newest is worked out by when they happened, never asked. (Only for
+                # something that moves: a place with no word is a place inside a place.)
                 others = (
                     []
                     if mine[1]
+                    or (mine[0] == place_words.LAST_SEEN and place_words.is_mobile(subject_type))
                     else [r for r in others if place_words.slot(r.detail, subject_type) == mine]
                 )
             if p.key == NESTS and nesting is not None:

@@ -9906,15 +9906,34 @@ async def _settle_whereabouts(
         # a place inside another is one place (the inn and its town), a bigger place elsewhere is
         # a move (#4173 slice 5): the mover rule asks
         relation = (await states.place_nesting(w, await _load_ontology(w))).relation
+    lines = await _first_lines(w, [rel.id, *(r.id for r in others)]) if relation else {}
+    if w.said_line is not None:
+        lines.setdefault(rel.id, w.said_line)
     settled = whereabouts.settle(
         rel, kinds[rel.subject_id], kinds[rel.object_id], others, by_hand=by_hand, now=w.now,
-        relation=relation,
+        relation=relation, line_of=lines.get,
     )  # fmt: skip
     if settled.new_changes:
         rel = _relation(await w.update(RELATIONS, rel.id, dict(settled.new_changes)))
     for ended_id, changes in settled.ends.items():
         await w.update(RELATIONS, ended_id, dict(changes))
     return rel, set(settled.ends)
+
+
+async def _first_lines(w: Changes, fact_ids: Sequence[str]) -> dict[str, int]:
+    """The first transcript line of the claim that made each of these facts, to order two visits
+    said in one session (#4530). Numbers only, never words; a claim whose lines went with a
+    speaker's consent has none, and nothing orders it."""
+    if not fact_ids:
+        return {}
+    rows = await w.select(CLAIMS, " AND fact_id = ANY(%s)", [list(fact_ids)])
+    first: dict[str, int] = {}
+    for r in rows:
+        numbers = [int(n) for n in r["lines"] or () if str(n).isdigit()]
+        if numbers and r["fact_id"] is not None:
+            fact = str(r["fact_id"])
+            first[fact] = min([*numbers, first.get(fact, min(numbers))])
+    return first
 
 
 async def _not_assumed(w: Changes, kind: str, statement_id: str) -> None:

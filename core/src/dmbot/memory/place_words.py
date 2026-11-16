@@ -33,6 +33,9 @@ _WAYS: dict[str, Way] = {
     "grew up in": Way(FROM), "was born in": Way(FROM),
     "was last seen in": Way(LAST_SEEN), "last seen in": Way(LAST_SEEN),
     "last seen": Way(LAST_SEEN), "visited": Way(LAST_SEEN),  # a visit is one moment (#3244)
+    # A visit is an event, and stays true (#4530): the readers say "went to"; the newest visit is
+    # where they were last seen, and every older one is history, "was in".
+    "went to": Way(LAST_SEEN), "was seen in": Way(LAST_SEEN), "was in": Way(LAST_SEEN, True),
 }  # fmt: skip
 # The words as they read from the first name, in the present and the past.
 _FORWARD = {
@@ -40,7 +43,7 @@ _FORWARD = {
     WORKS: ("works in", "worked in"),
     KEPT: ("is kept in", "was kept in"),
     FROM: ("comes from", "comes from"),  # where someone began never ends, so it has no past
-    LAST_SEEN: ("was last seen in", "was last seen in"),
+    LAST_SEEN: ("was last seen in", "was in"),  # (an older visit is history, #4530)
 }
 # The same from the place's side: (words before the name, words after it), present then past
 # ("Aldmoor is home to Tavin", "Aldmoor is where Tavin was last seen"). The past stays past here
@@ -51,7 +54,7 @@ _BACK = {
     WORKS: (("is the workplace of", ""), ("was the workplace of", "")),
     KEPT: (("holds", ""), ("held", "")),
     FROM: (("is where", "comes from"), ("is where", "comes from")),
-    LAST_SEEN: (("is where", "was last seen"), ("is where", "was last seen")),
+    LAST_SEEN: (("is where", "was last seen"), ("is where", "was once")),
 }
 # How a place tie reads in a node's summary: (when the node is the subject, when it is the object),
 # before any word is known and after ("lives there", "where they live").
@@ -60,7 +63,10 @@ _SUMMARY = {
     WORKS: (("works there", "where they work"), ("worked there", "where they worked")),
     KEPT: (("is kept there", "where it is kept"), ("was kept there", "where it was kept")),
     FROM: (("comes from there", "where they come from"),) * 2,
-    LAST_SEEN: (("was last seen there", "where they were last seen"),) * 2,
+    LAST_SEEN: (
+        ("was last seen there", "where they were last seen"),
+        ("was there", "where they were"),
+    ),
 }
 # With no word said and no kind known the summary claims nothing about when or how.
 _SUMMARY_PLAIN = ("tied to it", "tied to this place")
@@ -103,6 +109,23 @@ def slot(detail: str, kind: str = "") -> tuple[str, bool]:
     has only one of those."""
     way = way_for(detail, kind)
     return (way.key, way.past) if way is not None else (LAST_SEEN, False)
+
+
+def is_visit(words: str) -> bool:
+    """Whether these words say a visit ("went to", "was last seen in", "visited"), the present
+    sighting, never a past "was in" (#4530)."""
+    way = way_of(words)
+    return way is not None and way.key == LAST_SEEN and not way.past
+
+
+def visit_question(subject: str, place: str, details: str, when: str) -> str:
+    """The question about a visit, in Supervisor's words (#4530): whether it happened, with when,
+    never where someone is now. `when`: "session of 15 Nov", "in <upload label>", or "" for no time.
+    The names come in already escaped for Discord."""
+    extra = f" ({details})" if details else ""
+    if not when:
+        return f"🗺️ **{subject}** was in **{place}**{extra} at some point?"
+    return f"🗺️ **{subject}** went to **{place}**{extra}: {when}?"
 
 
 def canonical(text: str, kind: str = "") -> str | None:

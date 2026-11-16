@@ -7,6 +7,7 @@ never in a transcript and never shown to players. Grouped by who they are about,
 from __future__ import annotations
 
 import asyncio
+import datetime as dt
 import logging
 import re
 from collections.abc import Mapping
@@ -15,6 +16,7 @@ from typing import Any
 import discord
 
 from dmbot.discord_limits import shorten
+from dmbot.memory import place_words
 from dmbot.memory.claims import (
     GONE,
     ODD_NOW,
@@ -151,9 +153,23 @@ def statement(claim: Claim) -> str:
 
 
 def question_text(claim: Claim) -> str:
-    """The statement as a question, and who said it."""
+    """The statement as a question, and who said it. A visit asks whether it happened, with its
+    session's day, never where someone is now (#4530: "last seen" goes stale, a visit stays)."""
     by = "you said" if claim.how == HOW_DM else "a player said"
+    if claim.object and place_words.is_visit(claim.relationship):
+        when = (
+            f"session of {visit_day(claim.session_started_at)}" if claim.session_started_at else ""
+        )
+        details = _md(claim.details) if claim.details else ""
+        asked = place_words.visit_question(_md(claim.subject), _md(claim.object), details, when)
+        return f"{asked} _({by})_"
     return f"{statement(claim)}? _({by})_"
+
+
+def visit_day(started_at: int) -> str:
+    """A session's day as the visit question says it ("15 Nov"; the session's start, UTC)."""
+    day = dt.datetime.fromtimestamp(started_at, dt.timezone.utc)  # noqa: UP017
+    return f"{day.day} {day:%b}"
 
 
 def knows(count: int) -> str:

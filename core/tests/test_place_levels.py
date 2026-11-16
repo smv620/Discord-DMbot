@@ -4,6 +4,7 @@ building and in a town at once is in one place, not two. Invented names througho
 
 from __future__ import annotations
 
+import dataclasses
 import unittest
 
 from dmbot.campaigns import CampaignError
@@ -110,8 +111,9 @@ class TheWords(unittest.TestCase):
 class TheRule(unittest.TestCase):
     def check(self, levels: dict[str, str]) -> list[str]:
         nest = Nesting((), levels)
-        in_bank = fact(1, "mira", "located_in", "bank")
-        in_town = fact(2, "mira", "located_in", "town")
+        # (homes: a sighting is never flagged since #4530, so the rival rule is shown on homes)
+        in_bank = dataclasses.replace(fact(1, "mira", "located_in", "bank"), detail="lives in")
+        in_town = dataclasses.replace(fact(2, "mira", "located_in", "town"), detail="lives in")
         return [
             p.kind
             for p in check_relation(ONTO, in_town, "character", "place", [in_bank], nesting=nest)
@@ -203,19 +205,23 @@ class TheMoveRule(unittest.TestCase):
         old = _seen("bakery", "1" * 32, 100)
         got = self.settle(_seen("waterdeep", "2" * 32, 200), old, nest)
         self.assertEqual(
-            dict(got.ends), {old.id: {"to_session_at": 200, "end_reason": whereabouts.MOVED}}
+            dict(got.ends),
+            {old.id: {"to_session_at": 200, "detail": "was in", "end_reason": whereabouts.MOVED}},
         )
 
-    def test_a_move_with_no_order_ends_nothing_and_flags_nothing(self) -> None:
+    def test_a_move_with_no_order_makes_both_history_and_flags_nothing(self) -> None:
+        """#4530: two visits nothing orders are both "was in" (the ruling's A)."""
         nest = Nesting([("bakery", "neverwinter")], SIZES)
         got = self.settle(_seen("waterdeep", "2" * 32, None), _seen("bakery", "1" * 32, 100), nest)
-        self.assertEqual((dict(got.ends), dict(got.new_changes)), ({}, {}))
+        self.assertEqual(set(got.ends), {"1" * 32})
+        self.assertEqual(got.new_changes["detail"], "was in")
 
     def test_an_older_move_read_late_is_history_with_the_reason(self) -> None:
         nest = Nesting([("bakery", "neverwinter")], SIZES)
         got = self.settle(_seen("waterdeep", "2" * 32, 100), _seen("bakery", "1" * 32, 200), nest)
         self.assertEqual(
-            dict(got.new_changes), {"to_session_at": 200, "end_reason": whereabouts.MOVED}
+            dict(got.new_changes),
+            {"to_session_at": 200, "detail": "was in", "end_reason": whereabouts.MOVED},
         )
 
     def test_reopening_puts_the_present_wording_back(self) -> None:
@@ -418,8 +424,11 @@ class TheStore(MemoryTest):
         bank, bakery = await self.place("The Copper Bank"), await self.place("Hilda's Bakery")
         for p in (bank, bakery):
             await self.memory.set_place_level(GUILD_A, self.c, p, "building", source=BY_DM)
-        await self.relate(mira, "located_in", bank, status=CONFIRMED)
-        written = await self.relate(mira, "located_in", bakery, source="cleaner", confidence=0.7)
+        # (homes: a sighting is never flagged since #4530)
+        await self.relate(mira, "located_in", bank, status=CONFIRMED, detail="lives in")
+        written = await self.relate(
+            mira, "located_in", bakery, source="cleaner", confidence=0.7, detail="lives in"
+        )
         self.assertEqual([f.kind for f in written.value[1]], [TOO_MANY])
 
     async def open_on_the_chain(self, *places: str) -> None:
