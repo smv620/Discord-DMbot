@@ -335,7 +335,11 @@ async def run(
         docs = (lore_text, session_text)
         # One asker for the whole run (#3900): the cap, the counts and the cost add up across the
         # lore and session stages, and the record is this run's own file (stamped, owner-only).
-        record = folder / f"decisions-{dt.datetime.now(dt.UTC).strftime('%Y%m%d-%H%M%S')}.jsonl"
+        # (a run beside others has its own file: they start in the same second, #4551)
+        which = f"-{run_k}" if run_k is not None else ""
+        record = (
+            folder / f"decisions-{dt.datetime.now(dt.UTC).strftime('%Y%m%d-%H%M%S')}{which}.jsonl"
+        )
 
         async def sure_step() -> Mapping[str, int | str]:
             return await sure(db, gid, cid)
@@ -769,7 +773,9 @@ async def run_parallel(args: argparse.Namespace, n: int, **kw: Any) -> int:
     while todo and not failures:
         size = width
         if runs:  # (sized from the dearest run so far, not the allowance)
-            size = fit_parallel(budget - spent, dearest, width)
+            size = fit_parallel(
+                budget - spent, dearest or args.run_usd, width
+            )  # (0: no spend read)
             if size == 0:
                 say(f"Stopped after {len(runs)} runs: another would pass ${args.max_usd:g}.")
                 break
@@ -777,14 +783,15 @@ async def run_parallel(args: argparse.Namespace, n: int, **kw: Any) -> int:
         say(f"=== runs {', '.join(str(k) for k in batch)} of {n}, together ===")
         for k, metrics, why in await asyncio.gather(*(one(k) for k in batch)):
             if metrics:
-                runs.append(metrics)
-                spent += _cost(metrics)
+                spent += _cost(metrics)  # (a failed run's money is spent all the same)
                 dearest = max(dearest, _cost(metrics))
                 say(f"run {k}: about ${_cost(metrics):.2f}; ${spent:.2f} so far")
+                if not why:  # (half a run's counts would spoil the median and the spread)
+                    runs.append(metrics)
             if why:
                 failures.append(why)
     if failures:
-        say(f"{len(failures)} run(s) stopped; the summary of the {len(runs)} done follows.")
+        say(f"{len(failures)} run(s) stopped; the summary of the {len(runs)} finished follows.")
     first = next((kd for _, kd in sorted(kept_by_run.items()) if kd.get("campaign")), {})
     return await _finish(
         args, say, first, failures[0] if failures else None, runs, spent, folder, stamp, commit

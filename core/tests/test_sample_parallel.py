@@ -143,7 +143,17 @@ class Parallel(unittest.TestCase):
             started, said, code, done = self.go(
                 d, "--repeat", "6", "--parallel", "3", "--max-usd", "100", fail=frozenset({2})
             )
-            self.assertEqual((sorted(started), code, done["runs"]), ([1, 2, 3], 1, 3))
+            self.assertEqual(
+                (sorted(started), code, done["runs"]), ([1, 2, 3], 1, 2)
+            )  # (the failed run is not a finished one)
             self.assertTrue(done["failed"])  # (no new batch after a failure)
             self.assertIn("1 run(s) stopped", "\n".join(said))
             self.assertTrue(any(line.startswith("[run 2] stopped") for line in said))
+
+    def test_a_later_batch_is_sized_even_when_the_finished_runs_read_no_spend(self) -> None:
+        """(the reviewer: a dearest run of $0 must not stop the deploy after the money is spent)"""
+        with tempfile.TemporaryDirectory() as d:
+            started, _said, code, done = self.go(
+                d, "--repeat", "5", "--parallel", "5", "--max-usd", "8", "--run-usd", "2", cost=0.0
+            )
+            self.assertEqual((len(started), code, done["runs"]), (5, 0, 5))

@@ -587,7 +587,8 @@ async def backup(
     from dmbot.campaigns.store import encode_backup
 
     stamp = time.strftime("%Y%m%d-%H%M%S")  # a new file each run: an earlier backup is kept
-    path = folder / f"sample-{stamp}-{label}.dmbot.json.gz"
+    # (the campaign's own id in the name: runs side by side finish in the same second, #4551)
+    path = folder / f"sample-{stamp}-{campaign_id[:8]}-{label}.dmbot.json.gz"
     data = encode_backup(await campaigns.export(guild, campaign_id))
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "wb") as handle:
