@@ -161,6 +161,17 @@ async def mark_kept(w: Any, line_ids: Sequence[str], batch: int | None) -> int:
     return int(cur.rowcount or 0)
 
 
+async def drop_in(w: Any, line_ids: Sequence[str]) -> int:
+    """Inside the keep's own write: delete waiting lines that quote someone no longer recorded
+    (the consent re-check at keep time, as the sweep does on the read path)."""
+    cur = await w.conn.execute(
+        "DELETE FROM thread_progress WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)"
+        " AND status = 'waiting'",
+        (w.guild_id, w.campaign_id, sorted(set(line_ids))),
+    )
+    return int(cur.rowcount or 0)
+
+
 async def mark_unfit(w: Any, line_ids: Sequence[str]) -> int:
     """Inside the keep's own write: lines that no longer fit their thread (it or the part is
     gone or changed since) are answered as turned down, so the card never shows them as kept and
@@ -353,6 +364,7 @@ __all__ = [
     "Line",
     "ThreadProgressStore",
     "check",
+    "drop_in",
     "forget",
     "forget_session",
     "mark_kept",

@@ -2244,7 +2244,10 @@ class MemoryStore:
         kept). A part and a part's new state are dated at the story's newest moment, as the DM's
         own adds are (`thread_parts.story_now`); a thread's state at the line's session. Returns
         how many were written (no change, and no Undo, when none); raises when none of them still
-        waited."""
+        waited. Consent is read again inside the write (`consent.still_recorded`): a line quoting
+        someone no longer recorded is deleted, never kept, and the deletion stands even when
+        nothing else is left (the keep then writes nothing rather than raising, which would undo
+        the deletion)."""
         if source != DM:
             raise MemoryRuleError(thread_parts.ONLY_DM)
         tp = tp_mod
@@ -2253,6 +2256,18 @@ class MemoryStore:
             lines = await tp.waiting_in(w, line_ids)
             if not lines:
                 raise MemoryRuleError(tp.GONE)
+            # (consent read again inside this write, after the card's own check: a stop between
+            # the card opening and the press, even one `forget` never ran for, keeps the words of
+            # whoever stopped out of the story; #4153's way, Supervisor on #4610)
+            from dmbot.consent import still_recorded
+
+            speakers = {u for line in lines for u in line.speaker_ids}
+            allowed = await still_recorded(w.conn, guild_id, campaign_id, speakers)
+            stopped = [line.id for line in lines if not set(line.speaker_ids) <= allowed]
+            if stopped:
+                await tp.drop_in(w, stopped)
+                log.info("Story thread progress: %d line(s) dropped at keep", len(stopped))
+                lines = [line for line in lines if line.id not in stopped]
             fits = [line.id for line in lines if await self._keep_progress_line(w, onto, line)]
             await tp.mark_kept(w, fits, w.batch)
             await tp.mark_unfit(w, [line.id for line in lines if line.id not in fits])

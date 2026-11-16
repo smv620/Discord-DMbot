@@ -153,6 +153,21 @@ class TheStore(MemoryTest):
         self.assertEqual(written.value, 1)
         self.assertEqual(sorted(await self.statuses()), ["kept", "turned_down"])
 
+    async def test_a_speaker_who_stopped_since_the_card_opened_is_never_kept(self) -> None:
+        """Supervisor on #4610: consent read again inside the keep's write (#4153), with no
+        `forget` run for the stop."""
+        await self.offer(self.TRAP)
+        ids = [line.id for line in await self.lines()]
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "DELETE FROM consent WHERE guild_id = %s AND user_id = %s", (GUILD_A, BEL)
+            )
+        written = await self.memory.keep_thread_progress(GUILD_A, self.c, ids, source=DM)
+        self.assertEqual((written.value, written.batch), (0, None))
+        kinds = {p.kind for p in await self.kept_parts()}
+        self.assertNotIn(parts.COMPLICATION, kinds)
+        self.assertEqual(await self.statuses(), [])  # (the line is gone)
+
     async def test_only_the_dm_keeps(self) -> None:
         from dmbot.memory.models import MemoryRuleError
 
