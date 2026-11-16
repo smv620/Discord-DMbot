@@ -3837,7 +3837,7 @@ class ConnectionOffer(_Menu):
                 await keep.mark_guess(
                     memory, campaign.guild_id, campaign.id, "connection", [made.id], made_since=now
                 )
-            await keep.common_connection(memory, campaign.guild_id, campaign.id, c, made)
+            await keep.common_connection(memory, campaign.guild_id, campaign.id, c, made, now)
             if c.truth and not c.inferred:  # the DM called this upload 100% truth (#2447)
                 try:
                     await memory.pin(

@@ -402,7 +402,7 @@ async def load(scope: Scope) -> Statements:
         for r in members:
             if r["object_id"] not in party:
                 groups.setdefault(r["subject_id"], set()).add(r["object_id"])
-    await _common_while_shown(scope, knowers, relations, aliases)
+    await common_while_shown(scope, knowers, relations, aliases)
     kept = {
         key: value
         for key, value in knowers.items()
@@ -426,7 +426,7 @@ async def load(scope: Scope) -> Statements:
     )
 
 
-async def _common_while_shown(
+async def common_while_shown(
     scope: Scope,
     knowers: dict[tuple[str, str], dict[str, float]],
     relations: Mapping[str, tuple[str, str]],
@@ -447,6 +447,7 @@ async def _common_while_shown(
     wanted = set(ids[ENTRY])
     wanted.update(e for r in rel_rows.values() for e in (r["subject_id"], r["object_id"]))
     wanted.update(r["entity_id"] for r in alias_rows.values())
+    wanted.update(r["used_by"] for r in alias_rows.values() if r["used_by"] is not None)
     wanted.update(r["entity_id"] for r in state_rows.values())
     entities = {r["id"]: r for r in await _by_id(scope, ENTITIES, sorted(wanted))}
 
@@ -459,9 +460,14 @@ async def _common_while_shown(
         if kind == PROPERTY:
             row = state_rows.get(statement_id)
             return row is not None and entry_ok(row["entity_id"])
-        if kind == ALIAS:
+        if kind == ALIAS:  # (its entry and the one it is used by are both learned: both shown)
             row = alias_rows.get(statement_id)
-            return row is not None and lists.alias_shown(row) and entry_ok(row["entity_id"])
+            return (
+                row is not None
+                and lists.alias_shown(row)
+                and entry_ok(row["entity_id"])
+                and (row["used_by"] is None or entry_ok(row["used_by"]))
+            )
         row = rel_rows.get(statement_id)
         return (
             row is not None
@@ -501,7 +507,9 @@ def knowers_of(data: Statements) -> Callable[[str, str], set[str]]:
 
     def who(kind: str, statement: str) -> set[str]:
         found = set(_sure(data.knowers.get((kind, statement), {})))
-        if COMMON in found:  # (common knowledge: every player character knows it, #4537)
+        # (common knowledge, #4537: listed as every player character, the people these lists are
+        # for; `reach` also gives it to every NPC, whom no list names one by one)
+        if COMMON in found:
             found.discard(COMMON)
             found.update(data.player_characters)
         for group in tuple(found):
@@ -570,7 +578,7 @@ async def party_entries(scope: Scope) -> frozenset[str] | None:
     if len(everyone) == 1:  # a lone player character knows its own entry whatever the lists say
         seen.update(views)
     # Common knowledge (#4537): an entry "everyone" holds is in the party's view while it is shown
-    # (as `_common_while_shown` reads it), whatever the characters' own rows say: even a 0.0 row of
+    # (as `common_while_shown` reads it), whatever the characters' own rows say: even a 0.0 row of
     # their own is knowing of it. One more aggregate, the usual case handled here, not by the gate.
     cur = await scope.conn.execute(
         "SELECT k.about_entity_id FROM memory_knowers k"

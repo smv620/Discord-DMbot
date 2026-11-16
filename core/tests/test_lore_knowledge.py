@@ -397,6 +397,7 @@ class TheUpload(Fixture):
         # Undo takes the connection back, and the guess's rows with it
         await keep.undo_all(self.memory, self.store, GUILD, self.campaign.id, done)
         self.assertEqual(await self.sure(kept.id), [])
+        self.assertEqual(await self.common(kept.id), [])  # (common knowledge goes too, #4537)
         (again,) = [w for w in await self.store.waiting(GUILD, self.campaign.id) if w.world]
         self.assertEqual(again.world, lk.GUESS)
 

@@ -283,9 +283,13 @@ async def set_statement_knowers(
         elif have[view_id]["confidence"] != sure[entity_id]:
             await w.update(KNOWERS, have[view_id]["id"], {"confidence": sure[entity_id]})
     _kept, kept_views = await _players_kept(w, kind, statement_id, list(chosen))
-    # (common knowledge is not a character on the list: Who knows this never takes it off, #4537;
-    # the DM's own "Everyone knows this" switch does)
-    common = {str(r["id"]) for r in await w.select(PERSPECTIVES, " AND kind = 'everyone'")}
+    # Common knowledge (#4537): the DM's own list (`dm_chose_secret`: Who knows this) says exactly
+    # who knows it, so it replaces "everyone"; any other write keeps it (public stays public, #4524)
+    common = (
+        set()
+        if w.dm_chose_secret
+        else {str(r["id"]) for r in await w.select(PERSPECTIVES, " AND kind = 'everyone'")}
+    )
     for view_id, row in have.items():
         if view_id not in views.values() and view_id not in kept_views and view_id not in common:
             await w.delete(KNOWERS, row["id"])
@@ -476,18 +480,47 @@ async def mark_guess(
 async def statement_knowers(
     scope: Scope, kind: str, statement_ids: Sequence[str]
 ) -> dict[str, list[str]]:
-    """For each of these statements, the characters who know it (their entry ids)."""
+    """For each of these statements, the characters who know it (their entry ids). Common
+    knowledge lists every player character (#4537), so the DM's list never reads as "only the
+    DM" for something every player knows."""
     out: dict[str, list[str]] = {}
     if not statement_ids:
         return out
     column, _ = _COLUMNS[kind]
     views = {
         r["id"]: r["entity_id"]
-        for r in await scope.select(PERSPECTIVES, " AND entity_id IS NOT NULL")
+        for r in await scope.select(
+            PERSPECTIVES, " AND (entity_id IS NOT NULL OR kind = 'everyone')"
+        )
     }
-    for row in await scope.select(KNOWERS, f" AND {column} = ANY(%s)", [list(statement_ids)]):
-        if row["perspective_id"] in views:
-            out.setdefault(row[column], []).append(views[row["perspective_id"]])
+    pcs: list[str] | None = None
+    rows = await scope.select(KNOWERS, f" AND {column} = ANY(%s)", [list(statement_ids)])
+    # (common knowledge counts as the gate counts it: only while the statement is shown, #4537)
+    common: dict[tuple[str, str], dict[str, float]] = {
+        (kind, str(r[column])): {gate.COMMON: 1.0}
+        for r in rows
+        if r["perspective_id"] in views and views[r["perspective_id"]] is None
+    }
+    await gate.common_while_shown(scope, common, {}, {})
+    for row in rows:
+        if row["perspective_id"] not in views:
+            continue
+        who = views[row["perspective_id"]]
+        if who is None and (kind, str(row[column])) not in common:
+            continue
+        if who is None:  # (common knowledge, #4537: every player character knows it)
+            if pcs is None:
+                pcs = [
+                    str(e["id"])
+                    for e in await scope.select(
+                        ENTITIES, " AND type = 'character' AND role = %s AND status = %s",
+                        [PLAYER_CHARACTER, CONFIRMED],
+                    )
+                ]  # fmt: skip
+            have = out.setdefault(row[column], [])
+            have.extend(p for p in pcs if p not in have)
+        elif who not in out.get(row[column], []):
+            out.setdefault(row[column], []).append(who)
     return out
 
 

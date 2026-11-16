@@ -21,7 +21,7 @@ from collections.abc import Collection
 from typing import TYPE_CHECKING, Any
 
 from dmbot.memory._changes import ALIAS_KNOWERS, ENTITIES, KNOWERS, PERSPECTIVES, Table
-from dmbot.memory.models import EVERYONE, PC_VIEW
+from dmbot.memory.models import PC_VIEW
 
 if TYPE_CHECKING:
     from dmbot.memory._changes import Changes
@@ -47,8 +47,11 @@ def narrows(table: str, change: tuple[str, Any]) -> bool:
 
 # The points of view whose rows make an item public (read only: the guard never makes one). A
 # player character's, including one who left the party (party_knowledge.md §10: the guard protects
-# their rows too), and the "everyone" view's: common knowledge is public (#4537, §4).
-PUBLIC_VIEW_KINDS: tuple[str, ...] = (PC_VIEW, EVERYONE)
+# their rows too). Not the "everyone" view's (#4537): the gate counts common knowledge only while
+# the item's own flags show it, and a shown item is public by its flags already; its row is kept
+# by the knowers setters themselves (`knowers.set_statement_knowers`), so counting it here would
+# only ask about things the players were never shown.
+PUBLIC_VIEW_KINDS: tuple[str, ...] = (PC_VIEW,)
 
 
 async def player_views(w: Changes) -> set[str]:

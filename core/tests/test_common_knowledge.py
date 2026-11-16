@@ -13,6 +13,7 @@ import uuid
 from typing import Any
 
 from dmbot.campaigns import CampaignStore
+from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.db import Database, drop_schema
 from dmbot.memory import gate, public_guard
 from dmbot.memory.gate import COMMON, ENTRY, Statements, Viewer
@@ -20,7 +21,8 @@ from dmbot.memory.models import CONFIRMED, DM, PROPOSED
 from dmbot.memory.store import MemoryStore
 from dmbot.schema import MIGRATIONS
 from tests.pg import REQUIRE_DB, TEST_URL
-from tests.test_memory_store import GUILD_A, MemoryTest
+from tests.test_memory_store import DM as DM_USER
+from tests.test_memory_store import GUILD_A, GUILD_B, MemoryTest
 
 PLAYER = 4242
 
@@ -80,7 +82,7 @@ class CommonKnowledge(MemoryTest):
         await self.memory.confirm_entity(GUILD_A, self.c, rumour, "place", source=DM)
         self.assertTrue(await self.sees(Viewer.character(self.npc), rumour))
 
-    async def test_only_adds_and_who_knows_this_never_takes_it_off(self) -> None:
+    async def test_only_adds_and_the_dms_own_list_replaces_it(self) -> None:
         await self.memory.add_common_knowledge(
             GUILD_A, self.c, "entry", [self.town], 0.75, source=DM
         )
@@ -88,18 +90,36 @@ class CommonKnowledge(MemoryTest):
             GUILD_A, self.c, "entry", [self.town], 0.6, source=DM
         )
         self.assertEqual(again.value, 0)  # (never made less sure)
+        # (the DM's list shows every player character for common knowledge, never "only the DM")
+        listed = await self.memory.statement_knowers(GUILD_A, self.c, "entry", [self.town])
+        self.assertEqual(listed, {self.town: [self.hero]})
+        # (a write that is not the DM's own choice keeps it: public stays public, #4524)
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, "entry", self.town, [self.hero], source=DM, dm_chose_secret=False
+        )
+        self.assertTrue(await self.sees(Viewer.character(self.npc), self.town))
+        # (the DM's own Who knows this says exactly who knows it: common knowledge goes)
         await self.memory.set_statement_knowers(
             GUILD_A, self.c, "entry", self.town, [self.hero], source=DM, dm_chose_secret=True
         )
-        await self.memory.set_statement_knowers(
-            GUILD_A, self.c, "entry", self.town, [], source=DM, dm_chose_secret=True
-        )
-        self.assertTrue(await self.sees(Viewer.character(self.npc), self.town))
+        self.assertFalse(await self.sees(Viewer.character(self.npc), self.town))
+        self.assertTrue(await self.sees(Viewer.character(self.hero), self.town))
 
-    async def test_the_guard_counts_it_as_public(self) -> None:
+    async def test_the_guard_goes_by_what_the_players_are_shown(self) -> None:
         await self.memory.add_common_knowledge(GUILD_A, self.c, "entry", [self.town], source=DM)
-        async with self.memory._write(GUILD_A, self.c, DM) as w:
-            self.assertTrue(await public_guard.known_to_players(w, "memory_entities", self.town))
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, self.town, True, source=DM, dm_chose_secret=True
+        )
+        async with self.memory._write(GUILD_A, self.c, DM) as w:  # (hidden: the gate shows nobody)
+            self.assertFalse(await public_guard.known_to_players(w, "memory_entities", self.town))
+
+    async def test_a_backup_carries_common_knowledge(self) -> None:
+        await self.memory.add_common_knowledge(GUILD_A, self.c, "entry", [self.town], source=DM)
+        raw = encode_backup(await self.campaigns.export(GUILD_A, self.c))
+        restored = await self.campaigns.import_backup(GUILD_B, decode_backup(raw), DM_USER)
+        names = {e.name: e.id for e in await self.memory.entities(GUILD_B, restored.id)}
+        seen = await self.memory.visible_to(GUILD_B, restored.id, Viewer.character(names["Mira"]))
+        self.assertTrue(seen.knows(ENTRY, names["Bryn Shander"]))
 
 
 GUILD, DM_ID = 4537, 99
