@@ -363,8 +363,6 @@ class RecapFeatures:
             user_id: int,
             text: str,
             view: discord.ui.View | None = None,
-            *,
-            link_to_itself: bool = False,
         ) -> str: ...
 
     def recap_tasks(self) -> list[asyncio.Task[None]]:
@@ -503,7 +501,6 @@ class RecapFeatures:
                 user_id,
                 stopped,
                 _recap_links(self.settings, campaign, job.session_at),
-                link_to_itself=True,  # (both buttons, like every private message, #3663)
             )
             return True
         sorted_ = await recap_feedback.sort_feedback(self.recap_feedback_ai, text)
@@ -514,9 +511,7 @@ class RecapFeatures:
             shown = dm_links.add_links(
                 view, site_url=_recap_site(self.settings, campaign, job.session_at)
             )
-            sent = await self._dm_message(user_id, message, shown)
-            await dm_links.point_at_itself(sent, shown)
-            return sent
+            return await self._dm_message(user_id, message, shown)
 
         await recap_feedback_screen.present(send, sorted_, self.recaps, campaign, job.session_at)
         return True
@@ -1732,12 +1727,11 @@ class RecapFeatures:
                 )
                 or base
             )
-            sent = await user.send(
+            await user.send(
                 recap_names_text(added),
                 view=view,
                 allowed_mentions=discord.AllowedMentions.none(),
             )
-            await dm_links.point_at_itself(sent, view)
         except discord.Forbidden:
             log.info("Recap: the DM's private messages are closed (names note)")
         except Exception:
