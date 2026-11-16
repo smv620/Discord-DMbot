@@ -106,6 +106,9 @@ NOT_STAMPED: dict[str, str] = {
     # (#4453: a wait for the DM, rebuilt by reading the lore again; the thread a keep makes is an
     # entry and carries the stamp)
     "thread_suggestions": "a suggestion waiting for the DM; the kept thread is stamped",
+    # (#4524: the DM's 🤫 questions; what an answer changes is an entry, name or connection, which
+    # carries the stamp, and the question keeps its own evidence label)
+    "secret_questions": "a question waiting for the DM; what an answer changes is stamped",
     # (#4448: which time-limit messages were said; the limit itself is a stamped part)
     "time_limit_told": "a record of a private message said, not story; the limit is stamped",
     **dict.fromkeys(
