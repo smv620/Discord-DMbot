@@ -152,7 +152,7 @@ class SomeKnow(ConfirmedMemoryTest):
         picker = it.sent[-1][1]
         picker.chosen = [self.wren]
         await picker._save(it)
-        self.assertIn("see this already", it.sent[-1][0])
+        self.assertIn("can already see this", it.sent[-1][0])
         self.assertFalse(picker.is_finished())
         self.assertNotIn(view.page[0].id, view.answered)
 
@@ -173,6 +173,44 @@ class SomeKnow(ConfirmedMemoryTest):
         await view._pick(stranger, view.page[0].id)
         self.assertFalse(any(isinstance(v, claims_review.KnowersPicker) for _, v in stranger.sent))
         self.assertEqual(len(stranger.sent), before + 1)  # (told no, once)
+
+    async def test_save_with_nothing_ticked_says_so_and_writes_nothing(self) -> None:
+        await self.both()
+        it, view, _ = await self.page(said("Bram", "is in", "Veldmoor"))
+        await view._pick(it, view.page[0].id)
+        picker = it.sent[-1][1]
+        picker.chosen = []
+        await picker._save(it)
+        self.assertIn("Tick at least one", it.sent[-1][0])
+        self.assertEqual(await self.facts(), [])
+
+    async def test_a_save_by_someone_who_is_not_the_dm_is_refused_and_writes_nothing(self) -> None:
+        await self.both()
+        it, view, _ = await self.page(said("Bram", "is in", "Veldmoor"))
+        await view._pick(it, view.page[0].id)
+        picker = it.sent[-1][1]
+        picker.chosen = [self.wren]
+        stranger = self.interaction(user=99)
+        await picker._save(stranger)
+        self.assertEqual(await self.facts(), [])
+
+    async def test_the_guess_is_empty_when_all_or_none_of_the_party_spoke(self) -> None:
+        await self.both()
+        _, view, _ = await self.page(said("Bram", "is in", "Veldmoor"))
+        claim = view.page[0]
+        everyone = SimpleNamespace(speaker_ids=(7, 8))
+        nobody = SimpleNamespace(speaker_ids=(5,))
+        self.assertEqual(claims_review.guess_for(everyone, view.party), [])  # type: ignore[arg-type]
+        self.assertEqual(claims_review.guess_for(nobody, view.party), [])  # type: ignore[arg-type]
+        self.assertEqual(claims_review.guess_for(claim, view.party), [self.wren])
+
+    async def test_the_hint_goes_once_the_card_is_answered(self) -> None:
+        await self.both()
+        it, view, _ = await self.page(
+            said("Bram", "is in", "Veldmoor"), said("Bram", "carries", "Heartseeker")
+        )
+        await view._decide(it, view.page[0].id, True)
+        self.assertNotIn(view.page[0].id, view._hints())
 
 
 if __name__ == "__main__":

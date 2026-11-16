@@ -146,11 +146,11 @@ SECRET_NAME_REASON = "a name in it is one only the DM may use"
 NAME_FIRST = "Say what the new name is first (in Check new names)."
 # The DM's 👥 Some know (#4534): refused in plain words, nothing written, never quietly different.
 SOME_KNOW_NONE = "Tick at least one character who knows it, or use 🤫 for nobody."
-SOME_KNOW_WHO = "Only player characters in this campaign can be ticked."
+SOME_KNOW_WHO = "Only characters in this campaign can be ticked."
 SOME_KNOW_STATE = "A state (like 'is dead') has no audience: choose ✅ or ❌."
 SOME_KNOW_SHOWN = (
-    "Your players can see this already. Hide it first (open either name, ✏️ Edit a connection…, "
-    "👁️ Who knows this?), then choose who knows it."
+    "Your players can already see this. Use 👁️ Who knows this? on the connection to change who "
+    "knows it."
 )
 SOME_KNOW_HIDDEN = (
     "A name in it, or the connection itself, is hidden from your players, so choosing who knows "
@@ -2107,9 +2107,10 @@ class ClaimStore:
         `secret`: the DM's "truth but secret" (#2410): The truth holds the connection and the
         players are not shown it. A condition ("Roan is dead") has no secret flag, so it is
         never written secret. `knowers` (#4534, the DM's 👥 Some know): the connection happened
-        and only these player characters know it. It is written held back and each learns it, in
+        and only these characters know it. It is written held back and each learns it, in
         the claim's own change (one Undo), exactly as for a split party's scene, and it takes
-        the place of that guess. Never for a condition, which has no audience."""
+        the place of that guess. Any confirmed character of the campaign may be ticked, a player
+        character or an NPC with a point of view. Never for a condition, which has no audience."""
         claim = await self.get(guild_id, campaign_id, claim_id)
         # A held claim (waiting for its name, or past a read's cap, #3749) is in no list the DM
         # sees: an id that reaches here anyway is gone, never written.
@@ -2212,11 +2213,15 @@ class ClaimStore:
                 other = made.get(other[0], other)
             if before is not None:
                 await before(w)
-            if picked is not None:  # each must be a confirmed player character of this campaign
+            if (
+                picked is not None
+            ):  # each a confirmed, unmerged character of this campaign: a player
+                # character or an NPC with a point of view (`knowers.learn` gives an NPC its own)
                 real = await w.select(
                     ENTITIES,
-                    " AND id = ANY(%s) AND status = %s AND type = 'character' AND role = %s",
-                    [picked, CONFIRMED, PLAYER_CHARACTER],
+                    " AND id = ANY(%s) AND status = %s AND type = 'character'"
+                    " AND merged_into IS NULL",
+                    [picked, CONFIRMED],
                 )
                 if len(real) != len(picked):
                     raise MemoryRuleError(SOME_KNOW_WHO)

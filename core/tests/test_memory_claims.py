@@ -882,19 +882,30 @@ class Stored(ConfirmedMemoryTest):
         self.assertIn("Tick at least one", str(err.exception))
         self.assertEqual(len(await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)), 1)
 
-    async def test_only_player_characters_of_this_campaign_can_be_ticked(self) -> None:
+    async def test_only_characters_of_this_campaign_can_be_ticked(self) -> None:
+        await self.session_lines()
+        wren, _ash = await self.two_characters()
+        for bad in ([self.town], [wren, "f" * 32], [wren, self.town]):
+            with self.assertRaises(MemoryRuleError) as err:
+                await self.confirm_for(bad)
+            self.assertIn("Only characters in this campaign", str(err.exception))
+        # nothing was written: the question still waits
+        self.assertEqual(len(await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)), 1)
+
+    async def test_an_npc_with_a_point_of_view_learns_it_beside_a_player_character(self) -> None:
+        """#4534, party-knowledge design section 10: the picker's others are NPCs too."""
         await self.session_lines()
         wren, _ash = await self.two_characters()
         npc = await self.memory.add_entity(
-            GUILD_A, self.c, name="Bram's cook", type="character", role="npc",
+            GUILD_A, self.c, name="Wit", type="character", role="npc",
             status="confirmed", source="dm",
         )  # fmt: skip
-        for bad in ([npc.value.id], [wren, "f" * 32], [wren, npc.value.id]):
-            with self.assertRaises(MemoryRuleError) as err:
-                await self.confirm_for(bad)
-            self.assertIn("player characters", str(err.exception))
-        # nothing was written: the question still waits
-        self.assertEqual(len(await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)), 1)
+        done = await self.confirm_for([wren, npc.value.id])
+        self.assertEqual(done.scene, 2)
+        knows = await self.memory.statement_knowers(
+            GUILD_A, self.c, "connection", [done.claim.fact_id]
+        )
+        self.assertCountEqual(knows.get(done.claim.fact_id, []), [wren, npc.value.id])
 
     async def test_a_name_ticked_twice_counts_once(self) -> None:
         await self.session_lines()
@@ -939,7 +950,7 @@ class Stored(ConfirmedMemoryTest):
         )  # fmt: skip
         with self.assertRaises(MemoryRuleError) as err:
             await self.confirm_for([wren])
-        self.assertIn("see this already", str(err.exception))
+        self.assertIn("can already see this", str(err.exception))
         self.assertEqual(len(await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)), 1)
 
     async def test_a_pick_on_a_connection_held_back_already_is_applied(self) -> None:

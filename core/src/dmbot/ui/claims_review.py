@@ -156,6 +156,11 @@ def question_text(claim: Claim) -> str:
     return f"{statement(claim)}? _({by})_"
 
 
+def knows(count: int) -> str:
+    """ "knows" for one, "know" for more."""
+    return "knows" if count == 1 else "know"
+
+
 def party_names(party: list[Entity], ids: list[str]) -> str:
     """ "Cerric, Belleros": the characters' names, in the party list's order. Names only."""
     wanted = set(ids)
@@ -368,9 +373,7 @@ class ClaimsReview(_Menu):
             guessed = guess_for(claim, self.party)
             if guessed:
                 who = party_names(self.party, guessed)
-                out[claim.id] = (
-                    f"{SOME} DMbot thinks only {who} know{'s' * (len(guessed) == 1)} this."
-                )
+                out[claim.id] = f"{SOME} DMbot thinks only {who} {knows(len(guessed))} this."
         return out
 
     def _render(self) -> str:
@@ -586,7 +589,8 @@ class KnowersPicker(_Menu):
     def __init__(self, review: ClaimsReview, claim: Claim) -> None:
         super().__init__()
         self.review, self.claim = review, claim
-        guessed = guess_for(claim, review.party)
+        shown = {e.id for e in review.party[: self.MAX_OPTIONS]}  # (a menu holds 25)
+        guessed = [i for i in guess_for(claim, review.party) if i in shown]
         self.chosen: list[str] = guessed
         self.guessed = bool(guessed)
         self.select: discord.ui.Select[Any] = discord.ui.Select(
@@ -599,9 +603,7 @@ class KnowersPicker(_Menu):
         self.select.callback = self._ticked  # type: ignore[method-assign]
         self.add_item(self.select)
         self.add_item(_Button(self._save, label="Save", style=discord.ButtonStyle.success, row=1))
-        self.add_item(
-            _Button(self._back, label="↩️ Back", style=discord.ButtonStyle.secondary, row=1)
-        )
+        self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary, row=1))
 
     def _options(self) -> list[discord.SelectOption]:
         return [
@@ -612,7 +614,7 @@ class KnowersPicker(_Menu):
     def text(self) -> str:
         who = (
             f"DMbot thinks only {party_names(self.review.party, self.chosen)} "
-            f"know{'s' * (len(self.chosen) == 1)} this: it is ticked. "
+            f"{knows(len(self.chosen))} this: it is ticked. "
             if self.guessed
             else ""
         )
@@ -630,6 +632,7 @@ class KnowersPicker(_Menu):
         if not self.chosen:  # (the menu needs one, but a card with nothing ticked says so)
             await _tell(interaction, "Tick at least one character who knows it, or go back.")
             return
+        await _answer_first(interaction, in_place=True)  # (the write below can take a moment)
         await self.review._decide(interaction, self.claim.id, True, knowers=self.chosen)
         if self.claim.id in self.review.answered:
             self.stop()  # (a refusal leaves this card in place to change the ticks)
