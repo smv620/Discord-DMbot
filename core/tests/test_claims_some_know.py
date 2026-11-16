@@ -179,13 +179,14 @@ class SomeKnow(ConfirmedMemoryTest):
             status="confirmed", confidence=1.0,
         )  # fmt: skip
         it, view, _ = await self.page(said("Bram", "is in", "Veldmoor"))
-        await view._pick(it, view.page[0].id)
+        claim_id = view.page[0].id
+        await view._pick(it, claim_id)
         picker = it.sent[-1][1]
         picker.chosen = [self.wren]
         await picker._save(it)
         self.assertIn("Known to: Wren.", it.sent[-1][0])
-        self.assertIn(view.page[0].id, view.answered)
-        self.assertIn(view.page[0].id, view.undoable)  # (one ↩️ gives it back to everyone)
+        waiting = await self.claims.waiting(GUILD_A, self.c, opted_in={7, 8})
+        self.assertNotIn(claim_id, [w.id for w in waiting])  # (answered: nothing left to ask)
 
     async def test_back_returns_to_the_page_unchanged(self) -> None:
         await self.both()

@@ -888,7 +888,7 @@ class Stored(ConfirmedMemoryTest):
         for bad in ([self.town], [wren, "f" * 32], [wren, self.town]):
             with self.assertRaises(MemoryRuleError) as err:
                 await self.confirm_for(bad)
-            self.assertIn("Only characters in this campaign", str(err.exception))
+            self.assertIn("isn't in this campaign", str(err.exception))
         # nothing was written: the question still waits
         self.assertEqual(len(await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)), 1)
 
@@ -930,7 +930,7 @@ class Stored(ConfirmedMemoryTest):
         (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
         with self.assertRaises(MemoryRuleError) as err:
             await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7}, knowers=[wren])
-        self.assertIn("no audience", str(err.exception))
+        self.assertIn("for everyone", str(err.exception))
 
     async def test_a_pick_with_a_hidden_end_is_refused_not_quietly_nobody(self) -> None:
         await self.session_lines()
@@ -953,7 +953,7 @@ class Stored(ConfirmedMemoryTest):
             status="confirmed", confidence=1.0,
         )  # fmt: skip
         done = await self.confirm_for([wren])
-        rel = await self.relation(shown.value.id)
+        rel = await self.relation(shown.value[0].id)
         self.assertEqual((done.claim.fact_id, rel.unrevealed, done.scene), (rel.id, True, 1))
         knows = await self.memory.statement_knowers(GUILD_A, self.c, "connection", [rel.id])
         self.assertEqual(knows.get(rel.id), [wren])
