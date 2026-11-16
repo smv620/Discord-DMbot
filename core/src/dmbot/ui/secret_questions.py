@@ -518,6 +518,42 @@ def count_line(n: int) -> str:
     )
 
 
+REVEALED_SHOWN = 10  # names a private list gives; the rest are counted (Supervisor's ruling B)
+
+
+async def revealed_names(
+    memory: MemoryStore, g: int, c: str, revealed: world_reveal.Revealed
+) -> list[str]:
+    """What a World read revealed by itself, in words, for the DMs only (#4590 B): each entry's
+    name, each connection ("**Ash** works for **Orlen**") and each other name with its person.
+    Built only for a private message and never logged."""
+    lines = [(await _entry_name(memory, g, c, e))[0] for e in revealed.entry_ids]
+    lines += [await _connection(memory, g, c, r) for r in revealed.link_ids]
+    if revealed.alias_ids:
+        wanted = set(revealed.alias_ids)
+        for a in await memory.aliases(g, c, include_secret=True):
+            if a.id in wanted:
+                owner, _ = await _entry_name(memory, g, c, a.entity_id)
+                lines.append(f"**{_md(a.text)}**, another name of {owner}")
+    return [line for line in lines if line != GONE_ITEM]
+
+
+def revealed_text(lines: list[str]) -> str:
+    """The private line under an upload's notice: which hidden things are now known to everyone,
+    at most `REVEALED_SHOWN`, then how many more. "" for none. Never for a shared channel."""
+    if not lines:
+        return ""
+    shown = lines[:REVEALED_SHOWN]
+    more = len(lines) - len(shown)
+    tail = f", and {more} more" if more else ""
+    return (
+        "\n🌍 _Only you see this:_ now known to everyone: "
+        + "; ".join(shown)
+        + tail
+        + f". ↩️ Undo this upload takes {'it' if len(lines) == 1 else 'them'} back."
+    )
+
+
 def notice_view(campaign_id: str) -> discord.ui.View:
     out = discord.ui.View(timeout=None)
     out.add_item(SecretQuestionsButton(campaign_id))

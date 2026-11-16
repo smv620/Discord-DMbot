@@ -67,6 +67,51 @@ class Pure(unittest.TestCase):
         bg.keep_connections([[secretly]], hooded, {}, skip=skip)
         self.assertTrue(seen[-1].secret)
 
+    def test_the_private_names_line_shows_ten_then_counts(self) -> None:
+        from dmbot.ui import secret_questions as card
+
+        self.assertEqual(card.revealed_text([]), "")
+        one = card.revealed_text(["**Ash Morrow**"])
+        self.assertIn("Only you see this", one)
+        self.assertIn(
+            "now known to everyone: **Ash Morrow**. ↩️ Undo this upload takes it back.", one
+        )
+        many = card.revealed_text([f"**N{i}**" for i in range(12)])
+        self.assertIn("**N9**, and 2 more.", many)
+        self.assertNotIn("**N10**", many)
+
+
+class TheDMsCopy(unittest.IsolatedAsyncioTestCase):
+    async def test_the_names_go_to_each_dms_private_copy_and_never_the_channel(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+        from dmbot.upload_notices import Notice
+
+        channel: list[str] = []
+        private: list[str] = []
+
+        async def post(_channel: int, text: str, _view: Any) -> Any:
+            channel.append(text)
+            return None
+
+        async def dm(_user: int, text: str, _view: Any) -> None:
+            private.append(text)
+
+        bot = SimpleNamespace(
+            settings=SimpleNamespace(site_url=""), upload_notices=object(),
+            post_message=post, sidebar_send_dm=dm,
+        )  # fmt: skip
+        campaign = SimpleNamespace(
+            guild_id=1, name="Frozen Wastes", dm_bot_channel_id=5, dm_accounts={2, 3}
+        )
+        notice = Notice(1, "c1", "n1", "the city guide, 3 Nov", 1, {"revealed": 1})
+        names = "\n🌍 _Only you see this:_ now known to everyone: **Ash Morrow**."
+        await DMBot.post_upload_notice(bot, campaign, notice, 0, private=names)  # type: ignore[arg-type]
+        self.assertTrue(channel and all("Ash Morrow" not in t for t in channel))
+        self.assertEqual(len(private), 2)
+        self.assertTrue(all("Ash Morrow" in t for t in private))
+
     def test_the_notice_counts_and_never_names(self) -> None:
         text = un.notice_text("the city guide, 3 Nov", {"revealed": 3}, 0)
         self.assertIn("🌍 **3 hidden things** are now known to everyone.", text)
@@ -145,6 +190,15 @@ class TheRead(NamesTest):
         self.assertTrue(await self.hidden(self.ash))
         common = await self.memory.common_knowledge(GUILD, self.campaign.id, "entry", [self.ash])
         self.assertEqual(common, set())
+
+    async def test_a_world_read_keeps_the_names_of_what_it_revealed_for_the_dms(self) -> None:
+        await self.hide(self.ash)
+        tie = await self.secret_tie()
+        done = await self.read("world")
+        self.assertIn("**Ash Morrow**", done.revealed_lines)
+        ties = [line for line in done.revealed_lines if line != "**Ash Morrow**"]
+        self.assertTrue(any("Master Orlen" in line and "Ash Morrow" in line for line in ties))
+        self.assertFalse(await self.tie_secret(tie))
 
     async def test_undo_hides_a_revealed_connection_again(self) -> None:
         tie = await self.secret_tie()

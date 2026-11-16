@@ -47,6 +47,10 @@ class Revealed:
     """What a World read revealed: the changes (for the upload's Undo) and the counts."""
 
     batches: list[int] = field(default_factory=list)
+    # what it revealed, for the names the DMs are told privately (#4590 B; never logged)
+    entry_ids: list[str] = field(default_factory=list)
+    link_ids: list[str] = field(default_factory=list)
+    alias_ids: list[str] = field(default_factory=list)
     entries: int = 0
     connections: int = 0
     names: int = 0
@@ -96,6 +100,7 @@ async def reveal(
         out.batches.append(shown.batch)
     shown_now = list(shown.value)
     out.entries = len(shown_now)
+    out.entry_ids = list(shown_now)
     if shown_now:
         common = await memory.add_common_knowledge(
             guild_id, campaign_id, "entry", shown_now, source=DM
@@ -130,6 +135,7 @@ async def reveal(
         if made:
             out.batches.extend(made)
             out.connections += 1
+            out.link_ids.append(link.id)
     for alias in {a.id: a for a in aliases}.values():
         if not alias.secret:
             continue
@@ -144,6 +150,7 @@ async def reveal(
         if made:
             out.batches.extend(made)
             out.names += 1
+            out.alias_ids.append(alias.id)
     return out
 
 

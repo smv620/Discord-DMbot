@@ -752,6 +752,8 @@ class BackgroundRead:
     # What the players know that the read would have made secret (#4524): how many 🤫 questions
     # it asked instead, answered on the 🤫 Known or secret? card, privately
     secret_questions: int = 0
+    # What a World read revealed by itself, in words, for the DMs privately (#4590 B)
+    revealed_lines: tuple[str, ...] = ()
 
 
 async def read_background(
@@ -1151,6 +1153,15 @@ async def _read_background(
             await _ask_world(memory, campaign, items, everything=True)
         if added is not None:
             done.notice, done.questions_left = added
+            if shown.total:  # (which ones: to the DMs privately, #4590 B)
+                try:
+                    done.revealed_lines = tuple(
+                        await secret_questions_ui.revealed_names(
+                            memory, campaign.guild_id, campaign.id, shown
+                        )
+                    )
+                except Exception as exc:  # (the count on the notice stands)
+                    log.warning("Revealed names weren't read (%s)", type(exc).__name__)
     if trait_offers:
         notice_id = done.notice.id if done.notice is not None else None
         done.trait_questions = await ask_traits(memory, campaign, trait_offers, label, notice_id)
@@ -2604,8 +2615,9 @@ async def announce(
         from dmbot.ui.secret_questions import SecretQuestionsButton
 
         asks.append(partial(SecretQuestionsButton, campaign.id))
+    private = secret_questions_ui.revealed_text(list(done.revealed_lines))
     posted: discord.Message | None = await bot.post_upload_notice(
-        campaign, notice, done.questions_left, asks
+        campaign, notice, done.questions_left, asks, private=private
     )
     text = notice_text(notice.label, notice.counts, done.questions_left)
     if posted is not None:
@@ -2616,6 +2628,8 @@ async def announce(
         view = notice_view(notice, site_url=bot.settings.site_url, asks=[m() for m in asks])
     if done.knowledge_note:
         card += done.knowledge_note
+    if interaction.user.id in campaign.dm_user_ids:  # (a manager who isn't a DM: counts only)
+        card += private
     with contextlib.suppress(discord.HTTPException):
         await interaction.edit_original_response(content=card, view=view, allowed_mentions=NO_PINGS)
     return posted

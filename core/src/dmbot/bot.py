@@ -12016,10 +12016,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         notice: UploadNotice,
         questions: int,
         asks: Sequence[Callable[[], discord.ui.Item[Any]]] = (),
+        *,
+        private: str = "",
     ) -> discord.Message | None:
         """A lore upload added what DMbot was sure of (#3878): the live notice in the DM Bot
         channel (counts only, the DM screen is for live play), and the same words privately to
-        every DM. Returns the channel message, or None when it could not be posted there (no DM Bot
+        every DM, with `private` under them (what a World read revealed, by name: #4590 B).
+        Returns the channel message, or None when it could not be posted there (no DM Bot
         channel, no permission): the DM's own card then carries it. Never raises."""
         text = notice_text(notice.label, notice.counts, questions)
         site = self.settings.site_url
@@ -12040,7 +12043,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 try:  # one DM failing must not stop the others
                     await self.sidebar_send_dm(
                         user_id,
-                        f"**{who}**\n{text}",
+                        f"**{who}**\n{text}{private}",
                         notice_view(notice, site_url=site, asks=[make() for make in asks]),
                     )
                 except Exception:
