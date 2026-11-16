@@ -15,7 +15,8 @@ from dmbot.db import Database
 from dmbot.memory import thread_parts as tp
 from dmbot.memory import threads
 from dmbot.memory.models import CONFIRMED
-from dmbot.memory.time_limits import MOST_DAYS
+from dmbot.memory.time_limits import MOST_DAYS, left_said
+from dmbot.timebot import calendar as cal
 from dmbot.web import relationships
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -38,6 +39,41 @@ def _part(thread: str, r: dict[str, Any]) -> tp.Part:
     )  # fmt: skip
 
 
+async def _clock(
+    db: Database, session: Session, guild_id: int, campaign_id: str
+) -> tuple[int, cal.Calendar] | None:
+    """The campaign's game clock and calendar for a countdown, or None with no clock (or one the
+    calendar cannot read: the card then shows no countdown, never a failure)."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_game_clock(%s, %s) AS r", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if not got or got.get("minute") is None:
+        return None
+    try:
+        if got.get("kind") == cal.HARPTOS and got.get("year") is not None:
+            calendar = cal.Calendar(cal.HARPTOS, cal.DayOne(int(got["year"]), int(got["ordinal"])))
+        else:
+            calendar = cal.Calendar()
+        return int(got["minute"]), calendar
+    except (ValueError, TypeError):
+        return None
+
+
+def _date_words(row: dict[str, Any], clock: tuple[int, cal.Calendar] | None) -> str:
+    """A dated time limit's countdown as the Discord card words it ("1 day left (due Day 4)"), or
+    "" for a limit with no date. With no clock to count on, the card's own line (never a minute)."""
+    due = row.get("dueMinute")
+    if due is None:
+        return ""
+    if clock is None:
+        return NO_CLOCK
+    return left_said(int(due), clock[0], clock[1])
+
+
 async def read(db: Database, session: Session, ref: str, thread_id: str) -> dict[str, Any]:
     """The thread's card: its standing parts by kind with what is owed on each reward promised, how
     many objectives are done, and its branches. `not_allowed` for anyone who is not a DM of the
@@ -58,6 +94,11 @@ async def read(db: Database, session: Session, ref: str, thread_id: str) -> dict
     if got.get("status") != "ok":
         raise RecapError("not_found")
     rows: list[dict[str, Any]] = got.get("parts") or []
+    clock = (
+        await _clock(db, session, guild_id, campaign_id)
+        if any(r.get("dueMinute") is not None for r in rows)
+        else None
+    )
     parts = [_part(thread_id, r) for r in rows]
     by_id = {p.id: p for p in parts}
     given = [p for p in parts if p.kind == tp.REWARD_GIVEN]
@@ -82,6 +123,7 @@ async def read(db: Database, session: Session, ref: str, thread_id: str) -> dict
                 "terms": part.terms,
                 "limitKind": part.limit_kind,
                 "dated": r.get("dueMinute") is not None,
+                "dateWords": _date_words(r, clock),
                 "fromRead": r.get("source") != "dm",
                 "tableKnows": part.table_knows,
             }
@@ -123,6 +165,8 @@ async def read(db: Database, session: Session, ref: str, thread_id: str) -> dict
     }
 
 
+# Discord's line for a dated limit with no game clock to count it on (`ui/thread_parts.NO_CLOCK`)
+NO_CLOCK = "no game clock here, so I can't count this down"
 _ID = re.compile(r"^[0-9a-f]{32}$")
 _WORD = re.compile(r"^[a-z_]{1,20}$")
 _KINDS = ("objective", "complication", "reward", "reward_given", "help", "time_limit")
