@@ -9443,8 +9443,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         from dmbot.ai import OUTPUT_FLOOR
         from dmbot.memory import session_threads
+        from dmbot.memory.thread_progress import ThreadProgressStore
         from dmbot.memory.thread_suggestions import ThreadSuggestionStore
-        from dmbot.ui.name_background import thread_inputs
+        from dmbot.ui.name_background import progress_inputs, thread_inputs
         from dmbot.ui.thread_questions import session_label
 
         memory, transcripts, ai = self.memory, self.transcripts, self.extractor_ai
@@ -9480,6 +9481,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if not lines:
                     return
                 have, entries, names, known = await thread_inputs(memory, gid, cid)
+                moving = await progress_inputs(memory, gid, cid)  # (5b: progress on these)
 
                 async def count_call() -> None:
                     await transcripts.record_extraction(
@@ -9491,7 +9493,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 found, report = await session_threads.run(
                     ai, lines, dm_ids=dm_ids, entries=entries, names=names, have=have,
                     known=known, consenting=consenting, max_calls=allowed,
-                    max_tokens=OUTPUT_FLOOR, count_call=count_call,
+                    max_tokens=OUTPUT_FLOOR, count_call=count_call, progress=moving,
                 )  # fmt: skip
                 store = ThreadSuggestionStore(memory._db)
                 # (the consent re-check just before storing: who stopped meanwhile is never kept)
@@ -9501,27 +9503,35 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     gid, cid, found, label, int(time.time()),
                     session_id=sid, session_at=session.started_at,
                 )  # fmt: skip
-                await self._tell_threads(campaign, made, report.stopped, label)
+                moved = await ThreadProgressStore(memory._db).offer(
+                    gid, cid, sid, session.started_at,
+                    [m for m in report.progress if set(m[3]) <= agreed], now=int(time.time()),
+                )  # fmt: skip
+                await self._tell_threads(campaign, made, report.stopped, label, moved)
             except Exception as exc:  # the type only: never fatal, never a word of the story
                 log.warning("Session threads: the reading failed (%s)", type(exc).__name__)
 
-    async def _tell_threads(self, campaign: Campaign, made: int, stopped: str, label: str) -> None:
+    async def _tell_threads(
+        self, campaign: Campaign, made: int, stopped: str, label: str, changes: int = 0
+    ) -> None:
         """One counts line in the DM Bot channel (#3874; the DM screen when there is none) when a
         session's reading made new story threads to check, or stopped early: counts only (the
         channel is the campaign's people's), with the 📜 button that opens the card privately for
         a DM. Nothing when nothing was found and nothing stopped it."""
         from dmbot.ui.thread_questions import ThreadQuestionsButton, threads_found_text
 
-        if not made and not stopped:
+        if not made and not changes and not stopped:
             return
         channel, _counts_only = self._upkeep_channel(campaign)
         if channel is None:
             return
         view = discord.ui.View(timeout=None)
-        if made:
+        if made or changes:
             view.add_item(ThreadQuestionsButton(campaign.id))
         try:
-            await self.post(channel, threads_found_text(made, bool(stopped), label), view=view)
+            await self.post(
+                channel, threads_found_text(made, bool(stopped), label, changes), view=view
+            )
         except Exception as exc:
             log.warning("Session threads: couldn't post the count (%s)", type(exc).__name__)
 

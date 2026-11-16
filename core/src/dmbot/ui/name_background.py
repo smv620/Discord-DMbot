@@ -1642,7 +1642,9 @@ async def thread_inputs(
     known: list[str] = []
     for t in await memory.threads(guild_id, campaign_id):
         have.append((name_key(t.thread.name), frozenset(i.who.id for i in t.involved)))
-        if t.state in LIVE_STATES:
+        # (by its condition: comparing the state row itself never matched, so the session reader
+        # was told no thread at all; found in #4522 5b)
+        if t.state is not None and t.state.condition in LIVE_STATES:
             known.append(t.thread.name)
     rows = []
     for entry in lookup.names:
@@ -1658,6 +1660,41 @@ async def thread_inputs(
     entries = thread_read.entries_by_name(rows)
     names = {i: e.name for i, e in lookup.entities.items()}
     return have, entries, names, known
+
+
+async def progress_inputs(memory: Any, guild_id: int, campaign_id: str) -> list[Any]:
+    """The open threads and their standing parts, for the session reader's progress lines (#4522
+    5b; `session_progress.KnownThread`): the DM's view, as the reading is the DM's. Live threads
+    only (a hint, not started or happening now), the ones touched most recently first, so the
+    model's list keeps the busiest when it is cut."""
+    from dmbot.memory import session_progress
+    from dmbot.memory.gate import Viewer
+    from dmbot.memory.threads import LIVE_STATES
+
+    live = [
+        t
+        for t in await memory.threads(guild_id, campaign_id)
+        if t.state is not None and t.state.condition in LIVE_STATES
+    ]
+    live.sort(key=lambda t: -t.last_touch)
+    live = live[: session_progress.KNOWN_MAX]
+    if not live:
+        return []
+    parts = await memory.parts_of_threads(
+        guild_id, campaign_id, [t.thread.id for t in live], Viewer.the_dm()
+    )
+    standing: dict[str, list[session_progress.KnownPart]] = {}
+    for p in parts:
+        if p.closed is None and p.status == CONFIRMED:
+            standing.setdefault(p.thread_id, []).append(
+                session_progress.KnownPart(p.id, p.kind, p.words, p.state)
+            )
+    return [
+        session_progress.KnownThread(
+            t.thread.id, t.thread.name, tuple(standing.get(t.thread.id, ()))
+        )
+        for t in live
+    ]
 
 
 async def store_thread_suggestions(
