@@ -93,6 +93,8 @@ export default function QuestSheet({
     if (p.kind === "complication") return `${w.inTheWay}${p.words}${p.state === "overcome" ? w.overcome : p.state === "no_longer_matters" ? w.noLongerMatters : ""}`;
     const end = p.dated ? w.dated : "";
     const state = p.state === "met" ? w.met : p.state === "lifted" ? w.lifted : "";
+    // A dated limit reads its countdown after its words, as Discord's card does ("Before the new moon · 3 days left (due Day 10)").
+    if (p.dateWords !== "") return `${w.timeLimit}${p.words}${state} · ${p.dateWords}`;
     return `${w.timeLimit}${p.words}${end}${state}`;
   };
 

@@ -27,7 +27,7 @@ afterEach(() => {
 const DM = "100.cmp1";
 const part = (id: string, kind: string, words: string, state: string, extra: Partial<ThreadCardPart> = {}): ThreadCardPart => ({
   id, kind, words, state, underId: null, who: null, about: null, amount: null, unit: "", owed: null, due: "",
-  terms: "", limitKind: "", dated: false, fromRead: false, tableKnows: false, ...extra,
+  terms: "", limitKind: "", dated: false, dateWords: "", fromRead: false, tableKnows: false, ...extra,
 });
 const card = (over: Partial<ThreadCard> = {}): ThreadCard => ({
   thread: { id: "t1", name: "Bring the heir home", kind: "Quest", state: "active", stateWords: "Happening now", description: "Bring the heir home." },
@@ -54,6 +54,17 @@ const sheet = (c: ThreadCard, onSelect = () => {}) => {
   api.threadCard = async () => c;
   render(<QuestSheet api={api} refId={DM} thread={{ id: "t1", name: "Bring the heir home" }} onSelect={onSelect} />);
 };
+
+describe("a time limit's countdown on the sheet (#4583)", () => {
+  it("the sheet prints the countdown after a dated time limit's words and nothing for an undated one", async () => {
+    const api = mockApi("table");
+    api.threadCard = async () =>
+      card({ parts: [part("p6", "time_limit", "Before the new moon", "running", { dated: true, dateWords: "3 days left (due Day 10)" }), part("p7", "time_limit", "Before dusk", "running")] });
+    render(<QuestSheet api={api} refId={DM} thread={{ id: "t1", name: "Bring the heir home" }} onSelect={() => {}} />);
+    expect(await screen.findByText("⏰ Before the new moon · 3 days left (due Day 10)")).toBeTruthy();
+    expect(screen.getByText("⏰ Before dusk")).toBeTruthy();
+  });
+});
 
 describe("the quest sheet", () => {
   it("shows the heading line, the description, who is in it and the reward", async () => {

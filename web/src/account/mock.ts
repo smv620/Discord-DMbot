@@ -2728,7 +2728,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (thread !== "thread-heir") throw new ApiError("not-found");
       const part = (id: string, kind: string, words: string, state: string, extra: Partial<ThreadCardPart> = {}): ThreadCardPart => ({
         id, kind, words, state, underId: null, who: null, about: null, amount: null, unit: "", owed: null, due: "",
-        terms: "", limitKind: "", dated: false, fromRead: false, tableKnows: false, ...extra,
+        terms: "", limitKind: "", dated: false, dateWords: "", fromRead: false, tableKnows: false, ...extra,
       });
       return {
         thread: { id: thread, name: "Bring the heir home", kind: "Quest", state: "active", stateWords: "Happening now", description: "Bring the heir home." },
@@ -2745,6 +2745,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           part("p3", "help", "A team of sleds", "to_keep"),
           part("p4", "objective", "Find the heir", "done"),
           part("p5", "objective", "Cross the pass", "to_do"),
+          part("p6", "time_limit", "Before the new moon", "running"),
         ],
         bigger: null,
         branches: [],
@@ -2755,6 +2756,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       calls.push(`changeThreadParts:${ref}:${thread}:${JSON.stringify(change)}`);
       if (thread !== "thread-heir") throw new ApiError("not-found");
       if (change.action === "undo") return { batch: null };
+      // The mock has no game clock for day 13 (the spec's example): a date that day is refused as the bot would (#4503).
+      if (change.action === "date" && change.days === 13) throw new ApiError("no-clock");
       return { batch: 1 };
     },
     // The story threads DMbot found (#4482): two suggestions, each with one step and one branch as a line; a keep, a turn-down and their Undo
