@@ -203,10 +203,10 @@ class TheCountLine(unittest.TestCase):
         label = "the session of 14 Nov 2026"
         both = ui.threads_found_text(2, False, label, 3)
         self.assertIn(
-            "heard 2 possible story threads and 3 changes to story threads you have in", both
+            "heard 2 possible story threads and 3 possible updates to story threads in", both
         )
         self.assertIn(
-            "1 change to a story thread you have", ui.threads_found_text(0, False, label, 1)
+            "1 possible update to a story thread in", ui.threads_found_text(0, False, label, 1)
         )
         self.assertEqual(
             ui.threads_found_text(2, False, label),

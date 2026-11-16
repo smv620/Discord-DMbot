@@ -186,15 +186,29 @@ async def mark_unfit(w: Any, line_ids: Sequence[str]) -> int:
     return int(cur.rowcount or 0)
 
 
+async def turn_down_in(w: Any, line_ids: Sequence[str], batch: int | None) -> int:
+    """Inside a keep's own write: the lines the DM unticked are turned down with the keep's change
+    number, so the keep's Undo (`unkeep_in`) brings them back too."""
+    if not line_ids:
+        return 0
+    cur = await w.conn.execute(
+        "UPDATE thread_progress SET status = 'turned_down', kept_batch = %s WHERE guild_id = %s"
+        " AND campaign_id = %s AND id = ANY(%s) AND status = 'waiting'",
+        (batch, w.guild_id, w.campaign_id, sorted(set(line_ids))),
+    )
+    return int(cur.rowcount or 0)
+
+
 def unkeep_in(batch: int) -> Any:
-    """For `MemoryStore.undo`'s `after`: the lines a keep made wait again, inside the Undo's own
-    write, so the change and the lines never part."""
+    """For `MemoryStore.undo`'s `after`: the lines a keep made, and the ones it turned down for
+    the DM (`turn_down_in`), wait again, inside the Undo's own write, so the change and the lines
+    never part."""
 
     async def after(w: Any) -> None:
         await w.conn.execute(
             "UPDATE thread_progress SET status = 'waiting', kept_batch = NULL"
-            " WHERE guild_id = %s AND campaign_id = %s AND kept_batch = %s AND status = 'kept'"
-            + _CAN_WAIT,
+            " WHERE guild_id = %s AND campaign_id = %s AND kept_batch = %s"
+            " AND status IN ('kept', 'turned_down')" + _CAN_WAIT,
             (w.guild_id, w.campaign_id, batch),
         )
 
@@ -369,6 +383,7 @@ __all__ = [
     "forget_session",
     "mark_kept",
     "mark_unfit",
+    "turn_down_in",
     "unkeep_in",
     "waiting_in",
 ]
