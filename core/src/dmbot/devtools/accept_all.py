@@ -14,7 +14,8 @@ name that needs a person to say who plays it, a question with no suggestion, and
 refuses stay waiting and are counted.
 
 Guard: it refuses any campaign not named "test of the frostmaiden (sample N)" (or the old
-unnumbered name), the same as `graph_key_check`, and there is no flag to override that. Without `--dry-run` it needs `--yes`.
+unnumbered name), the same as `graph_key_check`, and there is no flag to override that.
+Without `--dry-run` it needs `--yes`.
 Output: counts by kind only (accepted, left waiting, refused by a rule), never a name or a word of
 a text. It reads no transcript. Connect as the normal `dmbot` user, as `movers_check` does.
 """
