@@ -2232,7 +2232,13 @@ class MemoryStore:
             return Written(_entity(row), w.batch)
 
     async def keep_thread_progress(
-        self, guild_id: int, campaign_id: str, line_ids: Sequence[str], *, source: str
+        self,
+        guild_id: int,
+        campaign_id: str,
+        line_ids: Sequence[str],
+        *,
+        source: str,
+        turn_down: Sequence[str] = (),
     ) -> Written[int]:
         """The DM keeps progress lines the session reader offered on threads the campaign has
         (#4522, quests slice 5b; `thread_progress`): every line left on, in ONE change, so one
@@ -2244,7 +2250,10 @@ class MemoryStore:
         kept). A part and a part's new state are dated at the story's newest moment, as the DM's
         own adds are (`thread_parts.story_now`); a thread's state at the line's session. Returns
         how many were written (no change, and no Undo, when none); raises when none of them still
-        waited. Consent is read again inside the write (`consent.still_recorded`): a line quoting
+        waited. `turn_down`: the lines the DM unticked on the same card, turned down in this same
+        change when anything is kept, so its Undo brings them back with the rest (the reviewer on
+        part 3); with nothing kept they are left for the caller. Consent is read again inside the
+        write (`consent.still_recorded`): a line quoting
         someone no longer recorded is deleted, never kept, and the deletion stands even when
         nothing else is left (the keep then writes nothing rather than raising, which would undo
         the deletion)."""
@@ -2271,6 +2280,8 @@ class MemoryStore:
             fits = [line.id for line in lines if await self._keep_progress_line(w, onto, line)]
             await tp.mark_kept(w, fits, w.batch)
             await tp.mark_unfit(w, [line.id for line in lines if line.id not in fits])
+            if fits and turn_down:  # (the DM's unticked lines, in this same change: one Undo)
+                await tp.turn_down_in(w, turn_down, w.batch)
             return Written(len(fits), w.batch)
 
     async def _keep_progress_line(self, w: Changes, onto: Ontology, line: tp_mod.Line) -> bool:

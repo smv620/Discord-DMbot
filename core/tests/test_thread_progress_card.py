@@ -31,25 +31,47 @@ LINE_MS = 1_700_000_005_000
 class TheWords(unittest.TestCase):
     def test_each_kind_of_line_reads_in_the_threads_cards_words(self) -> None:
         trap = tp.Change(tp.PART, parts.COMPLICATION, "the bridge snapped")
-        self.assertEqual(card.line_text(trap, {}), "New: in the way, the bridge snapped")
+        self.assertEqual(card.line_text(trap, {}), "New · In the way: the bridge snapped")
         sleds = tp.Change(tp.PART, parts.HELP, "two sleds", "lent")
-        self.assertIn("(lent: to give back)", card.line_text(sleds, {}))
+        self.assertEqual(card.line_text(sleds, {}), "New · Help: two sleds (lent)")
         moon = tp.Change(tp.PART, parts.TIME_LIMIT, "before the moon", due="the full moon")
-        self.assertIn("(when: the full moon)", card.line_text(moon, {}))
+        self.assertIn("(by: the full moon)", card.line_text(moon, {}))
         done = tp.Change(tp.PART_STATE, state="done", part_id="p1")
-        self.assertEqual(card.line_text(done, {"p1": "find Garret"}), "“find Garret”: done")
+        self.assertEqual(card.line_text(done, {"p1": "find Garret"}), "Done: find Garret")
+        self.assertEqual(card.line_text(done, {}), "Done: a step")
         going = tp.Change(tp.THREAD_STATE, state=GOING)
-        self.assertEqual(card.line_text(going, {}), "The thread: happening now")
+        self.assertEqual(card.line_text(going, {}), "This thread: happening now")
+        kept = tp.Change(tp.THREAD_STATE, state="resolved")
+        self.assertEqual(card.line_text(kept, {}, "promise"), "This promise: kept")
 
     def test_an_unticked_line_is_struck_and_the_session_named(self) -> None:
         a = tp.Line("a", "t", tp.Change(tp.THREAD_STATE, state=GOING), "s", 1, (1,), (2,), 1)
         b = tp.Line("b", "t", tp.Change(tp.PART, parts.OBJECTIVE, "find it"), "s", 1, (1,), (2,), 1)
         text = card.card_text("Find *Garret*", [a, b], {}, frozenset({"a"}), at=1, of=2,
                               heard="the session of 14 Nov 2026")  # fmt: skip
-        self.assertIn("🧵 **Progress to check** (1 of 2 threads)", text)
-        self.assertIn("On **Find \\*Garret\\***, DMbot heard in **the session of 14 Nov", text)
-        self.assertIn("• The thread: happening now", text)
-        self.assertIn("• ~~New: step, find it~~ (left out)", text)
+        self.assertIn("🧵 **Progress to check** (thread 1 of 2)", text)
+        self.assertIn(
+            "**Find \\*Garret\\***: did these happen? DMbot heard them in **the session", text
+        )
+        self.assertIn("• This thread: happening now", text)
+        self.assertIn("• ~~New · Step: find it~~ (left out)", text)
+        self.assertIn("2 sessions", card.card_text("X", [a, b], {}, frozenset(), at=1, of=1,
+                                                   heard="", sessions=2))  # fmt: skip
+
+    def test_a_long_card_with_a_long_answer_in_front_stays_under_discords_limit(self) -> None:
+        from dmbot.discord_limits import MESSAGE_MAX
+
+        long = "x" * 200
+        lines = [
+            tp.Line(str(i), "t", tp.Change(tp.PART, parts.TIME_LIMIT, long, due=long), "s", 1,
+                    (1,), (2,), 1)
+            for i in range(card.SHOWN)
+        ]  # fmt: skip
+        text = card.card_text("N" * 200, lines, {}, frozenset(), at=1, of=9, heard="h")
+        said = card.kept_text("N" * 200, 25)
+        self.assertLessEqual(len(f"{said}\n\n{text}"), MESSAGE_MAX)
+        self.assertIn("more: see the menu below", text)
+        self.assertTrue(text.endswith(card.HELP))
 
 
 class TheCard(MemoryTest):
@@ -90,6 +112,7 @@ class TheCard(MemoryTest):
         it.response.is_done = lambda: False
         it.response.defer = AsyncMock()
         it.response.edit_message = it.followup.send = it.edit_original_response = reply
+        it.response.send_message = reply
         it.sent = sent
         return it
 
@@ -108,7 +131,7 @@ class TheCard(MemoryTest):
         text = await view._load(self.interaction())
         assert text is not None
         self.assertIn(card.HEADING, text)
-        self.assertIn("On **Find Garret**", text)
+        self.assertIn("**Find Garret**: did these happen?", text)
         labels = [getattr(b, "label", None) for b in view.children]
         self.assertIn(card.KEEP, labels)
         self.assertIn(card.NONE, labels)
@@ -126,7 +149,66 @@ class TheCard(MemoryTest):
         self.assertEqual(await self.store.waiting(GUILD_A, self.c), [])
         await view._undo(it)
         self.assertEqual(await self.state(), OPEN)
+        back = await self.store.waiting(GUILD_A, self.c)
+        self.assertEqual(len(back), 2)
+        self.assertIn(trap, [x.id for x in back])  # (the unticked one is back too, in the Undo)
+
+    async def test_a_keep_where_nothing_fits_still_turns_down_what_was_unticked(self) -> None:
+        view = ui.ThreadQuestions(self.c, GUILD_A)
+        it = self.interaction()
+        await view._load(it)
+        going = next(x.id for x in view.progress if x.change.kind == tp.THREAD_STATE)
+        view.progress_on = frozenset({going})
+        # (the thread moved on since: "happening now" no longer fits)
+        await self.memory.set_condition(GUILD_A, self.c, self.thread, GOING, source=DM)
+        await view._keep_progress(it)
+        self.assertEqual(await self.store.waiting(GUILD_A, self.c), [])
+        self.assertIn(card.NONE_FIT, "\n".join(it.sent))
+
+    async def test_a_long_list_shows_a_cards_worth_and_answers_only_those(self) -> None:
+        await self.store.offer(
+            GUILD_A, self.c, self.sid, 1_700_000_000,
+            [(self.thread, tp.Change(tp.PART, parts.OBJECTIVE, f"step {i}"), (LINE_MS,), (BEL,))
+             for i in range(30)],
+            now=1_700_000_200,
+        )  # fmt: skip
+        view = ui.ThreadQuestions(self.c, GUILD_A)
+        it = self.interaction()
+        await view._load(it)
+        self.assertEqual(len(view.progress), card.SHOWN)
+        await view._no_progress(it)
+        self.assertEqual(len(await self.store.waiting(GUILD_A, self.c)), 32 - card.SHOWN)
+
+    async def test_skip_moves_to_the_next_thread_and_comes_back_round(self) -> None:
+        other = (await self.memory.new_thread(GUILD_A, self.c, "Guard the caravan", "quest", OPEN,
+                                              source=DM)).value.id  # fmt: skip
+        await self.store.offer(
+            GUILD_A, self.c, self.sid, 1_700_000_000,
+            [(other, tp.Change(tp.THREAD_STATE, state=GOING), (LINE_MS,), (BEL,))],
+            now=1_700_000_300,
+        )  # fmt: skip
+        view = ui.ThreadQuestions(self.c, GUILD_A)
+        it = self.interaction()
+        text = await view._load(it)
+        assert text is not None
+        self.assertIn("(thread 1 of 2)", text)
+        first = view.progress[0].thread_id
+        await view._skip_progress(it)
+        self.assertNotEqual(view.progress[0].thread_id, first)
+        await view._skip_progress(it)  # (all skipped: back to the first, so Skip keeps working)
+        self.assertEqual(view.progress[0].thread_id, first)
+
+    async def test_someone_not_the_dm_changes_nothing(self) -> None:
+        view = ui.ThreadQuestions(self.c, GUILD_A)
+        it = self.interaction()
+        await view._load(it)
+        it.user = SimpleNamespace(id=999_000_111, guild_permissions=SimpleNamespace(
+            manage_guild=False))  # fmt: skip
+        await view._keep_progress(it)
+        await view._no_progress(it)
         self.assertEqual(len(await self.store.waiting(GUILD_A, self.c)), 2)
+        self.assertEqual(await self.state(), OPEN)
+        self.assertIn("Only this campaign's DM", "\n".join(it.sent))
 
     async def test_none_of_these_happened_and_undo(self) -> None:
         view = ui.ThreadQuestions(self.c, GUILD_A)
@@ -152,7 +234,7 @@ class TheCard(MemoryTest):
 
     async def test_the_after_session_line_counts_both(self) -> None:
         text = ui.threads_found_text(0, False, "the session of 14 Nov 2026", 2)
-        self.assertIn("2 changes to story threads you have", text)
+        self.assertIn("2 possible updates to story threads in", text)
 
 
 if __name__ == "__main__":
