@@ -141,7 +141,7 @@ class Parallel(unittest.TestCase):
     def test_a_failed_run_is_counted_and_the_others_are_still_summarised(self) -> None:
         with tempfile.TemporaryDirectory() as d:
             started, said, code, done = self.go(
-                d, "--repeat", "6", "--parallel", "3", "--max-usd", "100", fail={2}
+                d, "--repeat", "6", "--parallel", "3", "--max-usd", "100", fail=frozenset({2})
             )
             self.assertEqual((sorted(started), code, done["runs"]), ([1, 2, 3], 1, 3))
             self.assertTrue(done["failed"])  # (no new batch after a failure)
