@@ -11,13 +11,14 @@ from unittest.mock import AsyncMock, patch
 
 from dmbot import trait_answer
 from dmbot.memory import trait_offers as to
-from dmbot.memory.models import CLASS, CONFIRMED, SPECIES, MemoryRuleError, NewName, Trait
+from dmbot.memory.models import CLASS, CONFIRMED, LANGUAGE, SPECIES, MemoryRuleError, NewName, Trait
 from dmbot.trait_answer import TraitAnswers
 from tests.test_memory_names import DM, GUILD, MANAGER, NamesTest
 
 NOW = int(time.time())  # (the round uses the real clock)
 DWARF = Trait(SPECIES, "Dwarf", "SRD 5.2.1", "2024", True)
 CLERIC = Trait(CLASS, "Cleric", "SRD 5.2.1", "2024", True)
+GIANT = Trait(LANGUAGE, "Giant", "", None, False)
 
 
 class Answers(NamesTest):
@@ -184,6 +185,42 @@ class Answers(NamesTest):
     async def test_a_retaken_yes_whose_write_already_landed_ends_done(self) -> None:
         rid = await self.queue()
         await self.store.keep(self.memory, GUILD, self.campaign.id, self.offer(DWARF))
+        async with self.db.guild(GUILD) as conn:  # (it was taken once, then the bot stopped)
+            await conn.execute("UPDATE trait_answers SET tries = 1")
+        await trait_answer.run_round(self.fake_bot(), GUILD)
+        row = await self.row(rid)
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+
+    # ---- language questions (#4271 part 2, migration 0521) ------------------------------------
+    # A Yes writes the language as the DM's own word, with the change kept for Undo; a No is final;
+    # a Yes whose write landed before the row was closed ends done.
+
+    async def languages(self) -> list[tuple[str, str]]:
+        found = await self.memory.story_languages(GUILD, self.campaign.id, self.torvin)
+        return [(r.name, r.given_by) for r in found]
+
+    async def test_a_language_yes_adds_it_as_the_dms_word_and_undo_takes_it_back(self) -> None:
+        await self.store.offer(GUILD, self.campaign.id, [self.offer(GIANT)])
+        rid = await self.queue(trait=GIANT)
+        self.assertEqual(await trait_answer.run_round(self.fake_bot(), GUILD), 1)
+        row = await self.row(rid)
+        self.assertEqual((row["state"], row["error"]), ("done", ""))
+        self.assertEqual(await self.languages(), [("Giant", "dm")])
+        self.assertIsNotNone(row["batch"])
+        await self.memory.undo(GUILD, self.campaign.id, row["batch"])
+        self.assertEqual(await self.languages(), [])
+
+    async def test_a_language_no_is_final_and_adds_nothing(self) -> None:
+        await self.store.offer(GUILD, self.campaign.id, [self.offer(GIANT)])
+        rid = await self.queue("never", trait=GIANT)
+        await trait_answer.run_round(self.fake_bot(), GUILD)
+        self.assertEqual((await self.row(rid))["state"], "done")
+        self.assertEqual(await self.languages(), [])
+
+    async def test_a_retaken_language_yes_whose_write_already_landed_ends_done(self) -> None:
+        await self.store.offer(GUILD, self.campaign.id, [self.offer(GIANT)])
+        rid = await self.queue(trait=GIANT)
+        await self.store.keep(self.memory, GUILD, self.campaign.id, self.offer(GIANT))
         async with self.db.guild(GUILD) as conn:  # (it was taken once, then the bot stopped)
             await conn.execute("UPDATE trait_answers SET tries = 1")
         await trait_answer.run_round(self.fake_bot(), GUILD)
