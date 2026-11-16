@@ -663,6 +663,10 @@ class LoreRead:
     # The TRAITS lines as pass 1 gave them (#2959 item 3): checked by `traits_read` with the
     # campaign's rules, which this pure reader does not hold.
     trait_lines: list[str] = field(default_factory=list)
+    # The names the text gives that the campaign already has, as the text writes them and only
+    # where the text holds them word for word (#4524 slice 1b): a World read reveals the hidden
+    # ones it names plainly.
+    known_named: tuple[str, ...] = ()
 
 
 async def _call(
@@ -1110,6 +1114,19 @@ def fold_names(
     return out
 
 
+def _says_word_for_word(text: str, name: str) -> bool:
+    """Whether the text holds this name as whole words: what a World read may reveal is only what
+    the text states, never a name the AI listed from nowhere (#4524). A name with capitals must be
+    there with them ("no hope" never names an NPC called Hope); one written all in small letters
+    ("the hooded stranger") is matched as `name_key` writes both."""
+    if name != name.lower():
+        flat = " ".join(text.replace("\u2019", "'").split())
+        said = " ".join(name.replace("\u2019", "'").split())
+        return bool(said) and re.search(rf"(?<!\w){re.escape(said)}(?!\w)", flat) is not None
+    key = name_key(name)
+    return bool(key) and re.search(rf"(?<!\w){re.escape(key)}(?!\w)", name_key(text)) is not None
+
+
 def line_name(line: str) -> str:
     """The name a pass-1 name line is about: "- Mira Voss | person | ..." gives "Mira Voss"."""
     return line.lstrip("-* ").split("|", 1)[0].strip()
@@ -1226,10 +1243,18 @@ async def _read_lore(
     listed, cut = await read_list(read_ai, text, own, gate, stats, tick, look)
     words_read[0] = len(text.split())
     _counts()
+    known_named: tuple[str, ...] = ()
     if skip_name is not None:
         # A name the campaign already has is not offered again, but a line that gives it new
         # spellings stays for shaping: a relationship may be written with one (#2841). Those
         # spellings come back in `known_spellings`; the name itself is still not offered.
+        known_named = tuple(
+            dict.fromkeys(
+                line_name(n)
+                for n in listed.names
+                if skip_name(line_name(n)) and _says_word_for_word(text, line_name(n))
+            )
+        )
         listed.names = [
             n for n in listed.names if not skip_name(line_name(n)) or _gives_spellings(n)
         ]
@@ -1359,4 +1384,7 @@ async def _read_lore(
     )  # fmt: skip
     # "the Ash Wolves, Tavin and Mira": a list a group of this read leads is its members (#3383)
     links = [*links, *bg.group_connections([names], known_keys)]
-    return LoreRead(names, links, cut, stats, known, secrets, unnamed, dedupe_traits(listed.traits))
+    return LoreRead(
+        names, links, cut, stats, known, secrets, unnamed, dedupe_traits(listed.traits),
+        known_named,
+    )  # fmt: skip
