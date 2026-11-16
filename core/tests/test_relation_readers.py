@@ -76,6 +76,9 @@ READERS = {
     " rejected); a player is told a condition only on a confirmed road (`conditions_for`)",
     "memory/notify.py": DM_ONLY + ": what the DM is told",
     "memory/world_notes.py": DM_ONLY + ": the road a condition note is on, in the DM's World notes",
+    "memory/world_reveal.py": DM_ONLY
+    + ": a World read's reveals of connections it states, and the DM's 🌍 questions about them,"
+    " asked only of confirmed ones (#4524, #4590)",
     "memory/graph_review_run.py": DM_ONLY
     + ": the DM's own fixed connections and their lore quotes, read for the careful check (#3741); "
     "the report is DM-only and never shown to players",
@@ -113,6 +116,8 @@ STORE = {
     "_audience": CONFIRMED_ONLY + ": who may be told",
     "_live_led_to": CONFIRMED_ONLY + ': only live, confirmed "led to" links, for the loop check',
     "_take_off_branch": CONFIRMED_ONLY + ': a thread\'s live "branch of" link, taken off (#4471)',
+    "ask_world_reveals": CONFIRMED_ONLY
+    + ": asks the DM about a hidden confirmed connection a World read states (#4590)",
     "bigger_thread": CONFIRMED_ONLY + ": the bigger thread one is a branch of, for the DM (#4471)",
     "thread_card": CONFIRMED_ONLY + ": a thread's live branch links, on the DM's card (#4471)",
     "_recheck_led_to_after_undo": CONFIRMED_ONLY

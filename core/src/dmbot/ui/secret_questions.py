@@ -17,12 +17,12 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any
 
 import discord
 
-from dmbot.memory import link_words, public_guard
+from dmbot.memory import link_words, public_guard, world_reveal
 from dmbot.memory import secret_questions as sq
 from dmbot.memory.models import DM, MemoryRuleError, TooLateToUndo
 from dmbot.memory.store import MemoryStore
@@ -40,10 +40,31 @@ WHY = "DMbot never changes what your players know without asking you."
 KEEP_KNOWN, MAKE_SECRET = "👁️ Keep it known", "🤫 Make it secret"
 KEEP_BOTH, END_OLD = "🔗 Keep both", "⏹️ End the old one"
 KEEP_SECRET, LET_KNOW = "🤫 Keep it secret", "👁️ Let them know"
+# A 🌍 World read's reveal, asked instead of made (#4590): one is the older reveal's "Let them
+# know" (never "everyone", which reads as a post to the server; ux-critic). The same person is
+# Supervisor's ruled words for A. Every one the same upload asked is one change with one Undo, and
+# keeping them all secret is offered beside it, so revealing is never the only quick answer.
+SAME_YES = "👁️ Yes, let everyone know"
+
+
+def same_for_all(n: int) -> str:
+    return f"👁️ Same for all {n}"
+
+
+def keep_all(n: int) -> str:
+    return f"🤫 Keep all {n} secret"
+
+
+LORE = "Your 🌍 Common knowledge lore"
 UNDO = "↩️ Undo"
 GONE_NOW = "Already answered. Showing what is left."
 TOO_LATE = "It's too late to undo that one here. Showing what is left."
 NOTHING_TO_DO = "That had already changed, so nothing was done. Showing what is left."
+CANT_SHOW_YET = (
+    "DMbot couldn't show that yet: something it needs is still hidden from your players (a name "
+    "at one end, or the person). Show that first, or keep it secret. Showing what is left."
+)
+CANT_SHOW_SOME = "Some couldn't be shown yet, so they wait for you."
 COULD_NOT = (
     "DMbot couldn't change that, so it was left as it is. To change it yourself, open the name's "
     "card. Showing what is left."
@@ -70,6 +91,12 @@ class Shown:
     owner: str = ""  # an other name's person, "**Ash Morrow**"
     knowers: tuple[str, ...] = ()  # the player characters a knowers change would take off
     new: str = ""  # a replace question's new connection, in words
+    from_upload: int = 0  # 🌍 questions waiting from the same upload, this one included (#4590)
+
+
+def is_world(q: sq.Question) -> bool:
+    """A 🌍 World read's reveal, asked instead of made (#4590), answered by `world_reveal`."""
+    return q.kind == sq.REVEAL and bool(q.change.get("common"))
 
 
 def _plural(n: int, word: str) -> str:
@@ -111,6 +138,30 @@ def card_text(s: Shown, waiting: int) -> str:
     if GONE_ITEM in (s.item, s.owner):
         lines.append(GONE_LINE)
         answers: tuple[str, ...] = ()
+    elif is_world(q):
+        lines.append(_world_line(s))
+        if q.change.get("lone"):
+            answers = (
+                f"{KEEP_SECRET}: it stays secret (the same person, or someone else), and DMbot "
+                "won't ask this again.",
+                f"{SAME_YES}: your players learn that {s.item} is {s.owner}. {UNDO} takes it back.",
+            )
+        else:
+            answers = (
+                f"{KEEP_SECRET}: it stays hidden, and DMbot won't ask this again.",
+                f"{LET_KNOW}: your players can see it in DMbot, and every player character knows "
+                f"it, including ones who join later. DMbot doesn't post it anywhere. {UNDO} takes "
+                "it back.",
+            )
+        if s.from_upload > 1:
+            n = s.from_upload
+            answers += (
+                f"{same_for_all(n)}: your players can see all {n} from this upload. A secret "
+                "name that may be someone else's is still asked on its own. "
+                f"{UNDO} takes them all back.",
+                f"{keep_all(n)}: none of the {n} from this upload change, and DMbot won't ask "
+                "about them again.",
+            )
     elif q.kind == sq.REPLACE:
         lines += [
             f"Did this change? Your players know {s.item}.",
@@ -141,9 +192,34 @@ def card_text(s: Shown, waiting: int) -> str:
     return "\n".join(lines).rstrip()
 
 
+def _world_line(s: Shown) -> str:
+    """A 🌍 question's line: what the lore said that the players don't know yet."""
+    q = s.question
+    if q.change.get("lone"):
+        return (
+            f"{LORE} names {s.item}, which is also a secret name of {s.owner}. Is it the same "
+            "person?"
+        )
+    if s.what == "other name":
+        return (
+            f"{LORE} gives {s.item} as another name of {s.owner}, which is hidden from your "
+            "players."
+        )
+    if s.what == "connection":
+        return f"{LORE} says {s.item}, which is hidden from your players."
+    return f"{LORE} names {s.item}, which is hidden from your players."
+
+
 def done_text(s: Shown, make_secret: bool) -> str:
     """What the DM's answer did."""
     q = s.question
+    if is_world(q) and not make_secret:
+        if q.change.get("lone"):
+            return f"Done: your players now know {s.item} is {s.owner}. {UNDO} takes it back."
+        return (
+            f"Done: your players can see {s.item} now, and every player character knows it. "
+            f"{UNDO} takes it back."
+        )
     if q.kind == sq.REPLACE:
         if make_secret:
             return f"Done: {s.item} is now how things were. {UNDO} takes it back."
@@ -155,6 +231,27 @@ def done_text(s: Shown, make_secret: bool) -> str:
     if make_secret:
         return f"Done: {s.item} is a secret now. {UNDO} takes it back."
     return "Left as known. DMbot won't ask about this again."
+
+
+def all_done_text(n: int) -> str:
+    return f"Done: your players can see all {n} from this upload now. {UNDO} takes them all back."
+
+
+def all_kept_text(n: int) -> str:
+    return f"Kept all {n} secret. DMbot won't ask about them again."
+
+
+def _same_upload(q: sq.Question, waiting: list[sq.Question]) -> list[sq.Question]:
+    """The 🌍 questions still waiting from the same upload as `q` (the run that asked them): what
+    "Same for all" and "Keep all secret" answer. Never another upload's."""
+    # (never a lone secret name's "same person?": only the DM can say whose it is, one by one.
+    # By the run that asked, never the label: two uploads may share a name and a day)
+    run = q.change.get(sq.RUN)
+    return [
+        x
+        for x in waiting
+        if is_world(x) and not x.change.get("lone") and run and x.change.get(sq.RUN) == run
+    ]
 
 
 UNDONE = "Undone. The question is back, so you can answer it again."
@@ -208,9 +305,12 @@ async def _connection(memory: MemoryStore, g: int, c: str, relation_id: str) -> 
     return f"{a} {_md(words)} {b}"
 
 
-def _buttons(kind: str) -> tuple[str, str]:
-    """(the answer that changes nothing, the answer that changes something) for this kind; for
-    a reveal the change is Let them know."""
+def _buttons(q: sq.Question) -> tuple[str, str]:
+    """(the answer that changes nothing, the answer that changes something) for this question;
+    for a reveal the change is the reveal."""
+    kind = q.kind
+    if is_world(q):
+        return KEEP_SECRET, SAME_YES if q.change.get("lone") else LET_KNOW
     if kind == sq.REPLACE:
         return KEEP_BOTH, END_OLD
     if kind == sq.REVEAL:
@@ -226,7 +326,8 @@ class SecretQuestions(_Menu):
         self.campaign_id = campaign_id
         self.guild_id = guild_id  # from the campaign: a DM's private chat has no server (#3210)
         self.current: Shown | None = None
-        self.undo_batch: int | None = None  # the last change, while Undo is offered
+        # the last answer's changes, newest last, while Undo is offered (a 🌍 reveal is several)
+        self.undo_batches: list[int] = []
 
     async def _load(self, interaction: discord.Interaction) -> str | None:
         """The next question's words (its buttons drawn), or None when none is left."""
@@ -237,16 +338,24 @@ class SecretQuestions(_Menu):
         self.clear_items()
         if not waiting:
             self.current = None
-            if self.undo_batch is not None:
+            if self.undo_batches:
                 self.add_item(_Button(self._undo, label=UNDO, style=discord.ButtonStyle.secondary))
             return None
         shown = await describe(memory, self.guild_id, self.campaign_id, waiting[0])
+        if is_world(shown.question) and not shown.question.change.get("lone"):
+            same = _same_upload(shown.question, waiting)
+            shown = replace(shown, from_upload=len(same))
         self.current = shown
-        stay, change = _buttons(shown.question.kind)
+        stay, change = _buttons(shown.question)
         self.add_item(_Button(self._stay, label=stay, style=discord.ButtonStyle.secondary))
         # (both grey: a highlighted answer would look like DMbot's advice, and the DM decides)
         self.add_item(_Button(self._change, label=change, style=discord.ButtonStyle.secondary))
-        if self.undo_batch is not None:
+        if shown.from_upload > 1:
+            n = shown.from_upload
+            grey = discord.ButtonStyle.secondary
+            self.add_item(_Button(self._all, label=same_for_all(n), style=grey))
+            self.add_item(_Button(self._keep_all, label=keep_all(n), style=grey))
+        if self.undo_batches:
             self.add_item(_Button(self._undo, label=UNDO, style=discord.ButtonStyle.secondary))
         return card_text(shown, len(waiting))
 
@@ -259,6 +368,12 @@ class SecretQuestions(_Menu):
     async def _undo(self, interaction: discord.Interaction) -> None:
         await self._answer(interaction, "undo")
 
+    async def _all(self, interaction: discord.Interaction) -> None:
+        await self._answer(interaction, "all")
+
+    async def _keep_all(self, interaction: discord.Interaction) -> None:
+        await self._answer(interaction, "keep all")
+
     async def _answer(self, interaction: discord.Interaction, what: str) -> None:
         await _answer_first(interaction, in_place=True)
         campaign = await _dm_campaign(interaction, self.campaign_id)  # asked again each press
@@ -269,12 +384,50 @@ class SecretQuestions(_Menu):
         said = GONE_NOW
         shown = self.current
         try:
-            if what == "undo" and self.undo_batch is not None:
-                batch, self.undo_batch = self.undo_batch, None
-                await memory.undo(self.guild_id, self.campaign_id, batch)
+            if what == "undo" and self.undo_batches:
                 said = UNDONE
+                while self.undo_batches:  # (newest first; one that can't be undone stays offered)
+                    try:
+                        await memory.undo(self.guild_id, self.campaign_id, self.undo_batches[-1])
+                    except (TooLateToUndo, MemoryRuleError):
+                        said = TOO_LATE
+                        break
+                    self.undo_batches.pop()
+            elif shown is not None and is_world(shown.question) and what == "keep all":
+                self.undo_batches = []
+                waiting = await memory.secret_questions_waiting(self.guild_id, self.campaign_id)
+                kept = 0
+                for x in _same_upload(shown.question, waiting):  # (this upload's only)
+                    try:
+                        await memory.answer_secret_question(
+                            self.guild_id, self.campaign_id, x.id, True, source=DM
+                        )
+                        kept += 1
+                    except MemoryRuleError:  # (answered meanwhile elsewhere)
+                        continue
+                said = all_kept_text(kept) if kept else GONE_NOW
+            elif shown is not None and is_world(shown.question) and what in ("change", "all"):
+                self.undo_batches = []
+                q = shown.question
+                ids = [q.id]
+                if what == "all":  # (only this upload's: never another upload's, #4590 C)
+                    waiting = await memory.secret_questions_waiting(self.guild_id, self.campaign_id)
+                    ids = [x.id for x in _same_upload(q, waiting)] or ids
+                made = await world_reveal.answer(memory, self.guild_id, self.campaign_id, ids)
+                if made is None:
+                    said = GONE_NOW
+                else:
+                    self.undo_batches = list(made.batches)
+                    if not made.answered:
+                        said = CANT_SHOW_YET if made.refused else NOTHING_TO_DO
+                    elif len(ids) > 1:
+                        said = all_done_text(made.answered)
+                    else:
+                        said = done_text(shown, False)
+                    if made.refused and made.answered:
+                        said += f" {CANT_SHOW_SOME}"
             elif shown is not None and what in ("stay", "change"):
-                self.undo_batch = None
+                self.undo_batches = []
                 q = shown.question
                 # (the store's `make_secret`: for a reveal, True keeps it secret, so Let them know
                 # is False; for the others the change is True)
@@ -283,7 +436,7 @@ class SecretQuestions(_Menu):
                 written = await memory.answer_secret_question(
                     self.guild_id, self.campaign_id, q.id, make_secret, source=DM
                 )
-                self.undo_batch = written.batch if changes else None
+                self.undo_batches = [written.batch] if changes and written.batch else []
                 # (a change with nothing left to change, the item gone or merged since, has no
                 # batch and no Undo: never say it was done)
                 nothing = changes and written.batch is None
@@ -296,12 +449,12 @@ class SecretQuestions(_Menu):
                 log.info("A 🤫 answer was refused (%s)", type(exc).__name__)
         text = await self._load(interaction)
         if text is None:
-            if self.undo_batch is None:
+            if not self.undo_batches:
                 self.stop()
             await _replace(
                 interaction,
                 f"{said}\n\n{NOTHING_LEFT}",
-                self if self.undo_batch is not None else None,
+                self if self.undo_batches else None,
             )
             return
         await _replace(interaction, f"{said}\n\n{text}", self)

@@ -70,6 +70,10 @@ class TheChange(NamesTest):
         await it.response.sent[0][1]["view"]._read(press)
         return press
 
+    async def replace_questions(self) -> list[Any]:
+        waiting = await self.memory.secret_questions_waiting(GUILD, self.campaign.id)
+        return [q for q in waiting if q.kind == "replace"]
+
     async def relations(self) -> list[Any]:
         return await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
 
@@ -162,14 +166,16 @@ class TheChange(NamesTest):
         done = await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, waiting)
         by_kind = {r.predicate: r for r in await self.relations()}
         self.assertIsNone(by_kind["ally_of"].to_session_at)
-        (q,) = await self.memory.secret_questions_waiting(GUILD, self.campaign.id)
+        # (only its "Did this change?": the 🌍 World read in this campaign, which asks first, also
+        # asks to show the two hidden names it gives, #4590 C)
+        (q,) = await self.replace_questions()
         self.assertEqual((q.kind, q.item_id), ("replace", by_kind["ally_of"].id))
         self.assertEqual(
             await keep.undo_all(self.memory, self.store, GUILD, self.campaign.id, done), 1
         )
         live = [r.predicate for r in await self.relations() if r.to_session_at is None]
         self.assertEqual(live, ["ally_of"])
-        self.assertEqual(await self.memory.secret_questions_waiting(GUILD, self.campaign.id), [])
+        self.assertEqual(await self.replace_questions(), [])
 
     async def test_a_refused_change_leaves_the_old_connection_as_it_was(self) -> None:
         await self.read("enemy")
