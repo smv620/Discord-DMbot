@@ -42,7 +42,7 @@ import {
   SIGNED_OUT_EVENT,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
-import type { AccountApi, ApiHelpers, HandOverQuestion, MapsRead, MapsResult, NodeSummary, ThreadCard, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
+import type { AccountApi, ApiHelpers, HandOverQuestion, MapsRead, MapsResult, NodeSummary, StoryThreads, ThreadCard, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
 export function countOf(counts: unknown, key: string): number | undefined {
@@ -545,6 +545,27 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/pc-icons/${encodeURIComponent(entityId)}`, { choice })) as { previous: IconChoice; now: IconChoice },
     worldNotes: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/world-notes`)) as WorldNotes,
     // The quest sheet of a kept story thread (#4547): read only, DM only (the door answers anyone else with nothing).
+    // The story threads DMbot found (#4482): read only, DM only (the door answers anyone else with nothing).
+    storyThreads: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/threads`)) as StoryThreads,
+    // Queued for the bot (202 {answer}); this waits for it and gives back the batch of a keep, for Undo (#4482).
+    changeStoryThreads: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      let queued: { answer: string } | undefined;
+      if (change.action === "keep") {
+        const body: Record<string, unknown> = { id: change.id, on: change.on, lines: change.lines };
+        if (change.name !== undefined) body.name = change.name;
+        queued = (await call("POST", `${base}/threads/keep`, body)) as { answer: string };
+      } else if (change.action === "not") {
+        queued = (await call("POST", `${base}/threads/not`, { id: change.id })) as { answer: string };
+      } else if ("keep" in change) {
+        queued = (await call("POST", `${base}/threads/undo`, { keep: String(change.keep) })) as { answer: string };
+      } else {
+        queued = (await call("POST", `${base}/threads/undo`, { not: change.not })) as { answer: string };
+      }
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { batch: typeof got.batch === "number" ? got.batch : null };
+    },
     // Queued for the bot like the other website presses (202 {answer}); this waits for it and gives back the batch for Undo (#4562).
     changeThreadParts: async (ref, thread, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;
