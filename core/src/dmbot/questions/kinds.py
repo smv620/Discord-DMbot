@@ -54,7 +54,7 @@ LABELS: Final[dict[str, str]] = {
     TRAITS: "Lineage and class",
     WORLD: "World notes",
     THREADS: "Story threads to check",
-    SECRETS: "Secrets to check",
+    SECRETS: "Known or secret?",
     MAPS: "Maps waiting for your yes",
     CLAIMS: "Facts to check",
     READINGS: "What people believe",

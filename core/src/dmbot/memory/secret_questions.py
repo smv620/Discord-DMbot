@@ -69,8 +69,12 @@ def evidence(
     """Every 🤫 question asked inside this block cites this evidence (an upload's run, a session's
     read). From a session only line starts and speakers: 5a's consent rule. Yields the ids of the
     new questions asked inside it, filled as they are asked, so the run's own note can count them
-    (#4524 slice 2)."""
-    asked: list[str] = []
+    (#4524 slice 2). A block opened inside another (`backstory_keep.keep_all` within an upload's
+    read) cites its own evidence but fills the outer run's list, so the run counts them all. The
+    list may hold a question taken back since (a refused write, an Undo in the same run): the
+    caller counts the ones still waiting (`MemoryStore.secret_questions_still_waiting`)."""
+    outer = _EVIDENCE.get()
+    asked: list[str] = outer["asked"] if outer is not None else []
     token = _EVIDENCE.set(
         {"label": label, "session_id": session_id, "line_starts": list(line_starts),
          "speaker_ids": list(speaker_ids), "asked": asked}

@@ -1,4 +1,4 @@
-"""🤫 Secrets to check (#4524 slice 2): the card that answers the questions DMbot asks instead of
+"""🤫 Known or secret? (#4524 slice 2): the card that answers the questions DMbot asks instead of
 taking knowledge away from the players by itself. Its words for each kind, that the answers do
 what they say (with ↩️ Undo after a change), that only a DM may answer, the board's count and
 button, and the counts-only lines for an upload and a session. Postgres for the store. Invented
@@ -24,26 +24,27 @@ STRANGER = 99
 
 
 def question(kind: str = sq.NARROW, table: str = "memory_relations", **change: Any) -> sq.Question:
-    return sq.Question("q1", kind, table, "i1", change or {"secret": True}, "Tavin's tale, 3 Nov", 1)
+    proof = "Tavin's tale, 3 Nov"
+    return sq.Question("q1", kind, table, "i1", change or {"secret": True}, proof, 1)
 
 
 class TheWords(unittest.TestCase):
     def test_a_narrow_question_says_what_make_it_secret_does(self) -> None:
         tie = card.Shown(question(), "**Bob** is an ally of **Ilsa**", "connection")
         text = card.card_text(tie, 2)
-        self.assertIn("🤫 **Secrets to check** (2 waiting)", text)
-        self.assertIn(
-            "**Bob** is an ally of **Ilsa** sounds like a secret, but your players already know it.",
-            text,
-        )
+        self.assertIn("🤫 **Known or secret?** (2 waiting)", text)
+        said = "**Bob** is an ally of **Ilsa** sounds like a secret, but your players already know"
+        self.assertIn(said, text)
         self.assertIn('From "Tavin\'s tale, 3 Nov".', text)
-        self.assertIn("🤫 Make it secret: your players stop seeing this connection.", text)
+        self.assertIn(
+            "🤫 Make it secret: this connection is hidden from your players in DMbot.", text
+        )
         self.assertIn("👁️ Keep it known: nothing changes, and DMbot won't ask this again.", text)
 
     def test_a_knowers_change_names_the_characters_who_would_stop_knowing(self) -> None:
         q = question(knowers_off=["e1", "e2"])
         text = card.card_text(card.Shown(q, "**Bob**", "name", knowers=("Ilsa", "Wren")), 1)
-        self.assertIn("**Ilsa** and **Wren** stop knowing it.", text)
+        self.assertIn("DMbot stops showing **Ilsa** and **Wren** as knowing it.", text)
         self.assertNotIn("waiting", text.splitlines()[0])  # (one question: no count)
 
     def test_an_other_name_says_whose_it_is(self) -> None:
@@ -56,24 +57,32 @@ class TheWords(unittest.TestCase):
                          "connection", new="**A** serves **C**")  # fmt: skip
         text = card.card_text(old, 1)
         self.assertIn("Did this change? Your players know **A** serves **B**.", text)
-        self.assertIn("Your lore now says **A** serves **C**.", text)
+        self.assertIn("Now: **A** serves **C**.", text)
         self.assertEqual(card._buttons(sq.REPLACE), (card.KEEP_BOTH, card.END_OLD))
         name = card.Shown(question(sq.REVEAL, "memory_aliases", secret=False), "**Tamsin**",
                           "other name", owner="**Ash**")  # fmt: skip
         text = card.card_text(name, 1)
-        self.assertIn("knew the name **Tamsin**, but it is also a secret name of **Ash**", text)
+        self.assertIn("Your players know the name **Tamsin**. Only you know it is **Ash**.", text)
+        self.assertIn("👁️ Let them know: your players learn that **Tamsin** is **Ash**.", text)
         self.assertEqual(card._buttons(sq.REVEAL), (card.KEEP_SECRET, card.LET_KNOW))
 
     def test_the_count_line_counts_and_never_names(self) -> None:
         self.assertEqual(card.count_line(0), "")
-        self.assertIn("🤫 **1 thing your players know** sounded like a secret", card.count_line(1))
-        self.assertIn("**3 things your players know** sounded like secrets", card.count_line(3))
+        one = "🤫 DM: **1 thing** the players know sounded secret. DMbot left it as it is"
+        self.assertIn(one, card.count_line(1))
+        self.assertIn("**3 things** the players know sounded secret", card.count_line(3))
+        self.assertNotIn("kept", card.count_line(3))  # (neutral: a reveal question kept a secret)
         self.assertIn("❓ Questions for you", card.count_line(3))
 
+    def test_a_removed_item_says_so_in_one_line(self) -> None:
+        text = card.card_text(card.Shown(question(), card.GONE_ITEM, "connection"), 1)
+        self.assertIn(card.GONE_LINE, text)
+        self.assertNotIn("sounds like a secret", text)
+
     def test_the_board_has_the_kind_and_its_button(self) -> None:
-        self.assertEqual(kinds.LABELS[kinds.SECRETS], "Secrets to check")
+        self.assertEqual(kinds.LABELS[kinds.SECRETS], "Known or secret?")
         found = {kinds.SECRETS: Counted(2)}
-        self.assertIn("• Secrets to check: **2**", board.text("Frozen Wastes", found))
+        self.assertIn("• Known or secret?: **2**", board.text("Frozen Wastes", found))
         view = board.view(GUILD_A, "a" * 32, found)
         ids = [getattr(item, "custom_id", "") for item in view.children]
         self.assertIn(f"dmbot:secrets:ask:{'a' * 32}", ids)
@@ -149,7 +158,7 @@ class TheCard(MemoryTest):
         await view._load(it)
         await view._stay(it)
         self.assertFalse(await self.secret())
-        self.assertIn("Kept known", it.sent[-1])
+        self.assertIn("Left as known", it.sent[-1])
         self.assertEqual(await self.memory.secret_questions_count(GUILD_A, self.c), 0)
         await self.memory.update_relation(GUILD_A, self.c, self.tie.id, secret=True, source=DM)
         self.assertEqual(await self.memory.secret_questions_count(GUILD_A, self.c), 0)
@@ -182,11 +191,68 @@ class TheCard(MemoryTest):
                 if x.kind == sq.REVEAL]  # fmt: skip
         shown = await card.describe(self.memory, GUILD_A, self.c, q)
         self.assertEqual((shown.item, shown.owner), ("**Old Bob**", "**Bob**"))
+        await self.memory.answer_secret_question(GUILD_A, self.c, self.asked[0], False, source=DM)
         view = card.SecretQuestions(self.c, GUILD_A)
-        view.current = shown
-        await view._change(self.interaction())
+        it = self.interaction()
+        await view._load(it)
+        self.assertEqual([getattr(b, "label", "") for b in view.children],
+                         [card.KEEP_SECRET, card.LET_KNOW])  # fmt: skip
+        await view._change(it)
+        self.assertIn("now know **Old Bob** is **Bob**", it.sent[-1])
         names = await self.memory.aliases(GUILD_A, self.c, entity_id=self.bob, include_secret=True)
         self.assertFalse(next(a for a in names if a.id == made.value.id).secret)
+
+    async def test_a_run_inside_a_run_counts_into_the_outer_one(self) -> None:
+        other = (await self.relate(self.hero, "enemy_of", self.bob, status=CONFIRMED)).value[0]
+        with sq.evidence("the upload") as outer, sq.evidence("one kept connection") as inner:
+            await self.memory.update_relation(GUILD_A, self.c, other.id, secret=True, source=DM)
+        self.assertIs(inner, outer)
+        self.assertEqual(len(outer), 1)
+        q = next(x for x in await self.memory.secret_questions_waiting(GUILD_A, self.c)
+                 if x.item_id == other.id)  # fmt: skip
+        self.assertEqual(q.label, "one kept connection")  # (its own evidence)
+
+    async def test_a_question_taken_back_in_the_run_is_not_counted(self) -> None:
+        other = (await self.relate(self.hero, "enemy_of", self.bob, status=CONFIRMED)).value[0]
+        with sq.evidence("the upload") as asked:
+            written = await self.memory.update_relation(
+                GUILD_A, self.c, other.id, secret=True, to_session_at=self.now, source=DM
+            )
+            assert written.batch is not None
+            await self.memory.undo(GUILD_A, self.c, written.batch, source=DM)
+        self.assertEqual(len(asked), 1)
+        self.assertEqual(
+            await self.memory.secret_questions_still_waiting(GUILD_A, self.c, asked), 0
+        )
+        self.assertEqual(
+            await self.memory.secret_questions_still_waiting(GUILD_A, self.c, self.asked), 1
+        )
+
+    async def test_end_the_old_one_then_undo(self) -> None:
+        new = (await self.relate(self.bob, "enemy_of", self.hero, status=CONFIRMED)).value[0]
+        await self.memory.answer_secret_question(
+            GUILD_A, self.c, (await self.memory.secret_questions_waiting(GUILD_A, self.c))[0].id,
+            False, source=DM,
+        )  # fmt: skip
+        await self.memory.ask_replace(
+            GUILD_A, self.c, self.tie.id, by=new.id, end_at=self.now, label="Tavin's tale"
+        )
+        view = card.SecretQuestions(self.c, GUILD_A)
+        it = self.interaction()
+        text = await view._load(it)
+        assert text is not None
+        self.assertIn("Did this change?", text)
+        self.assertEqual([getattr(b, "label", "") for b in view.children],
+                         [card.KEEP_BOTH, card.END_OLD])  # fmt: skip
+        await view._change(it)
+        tie = await self.memory.relation(GUILD_A, self.c, self.tie.id)
+        assert tie is not None
+        self.assertIsNotNone(tie.to_session_at)
+        await view._undo(it)
+        tie = await self.memory.relation(GUILD_A, self.c, self.tie.id)
+        assert tie is not None
+        self.assertIsNone(tie.to_session_at)
+        self.assertEqual(await self.memory.secret_questions_count(GUILD_A, self.c), 1)
 
     async def test_the_count_is_the_cards(self) -> None:
         got = await counts._COUNTERS[kinds.SECRETS](

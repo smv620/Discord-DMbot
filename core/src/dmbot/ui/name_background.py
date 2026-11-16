@@ -748,7 +748,7 @@ class BackgroundRead:
     thread_suggestions: int = 0
     threads_short: str = ""  # why the story threads weren't read in full, a `THREADS_SHORT` key
     # What the players know that the read would have made secret (#4524): how many 🤫 questions
-    # it asked instead, asked only in the DM's private chat ("🤫 Secrets to check")
+    # it asked instead, answered on the 🤫 Known or secret? card, privately
     secret_questions: int = 0
 
 
@@ -785,8 +785,15 @@ async def read_background(
             choice=choice,
         )
     # (its 🤫 questions are counted on its note and open from its button: slice 2)
-    done.secret_questions = len(asked)
-    done.questions_left += len(asked)
+    memory = bot.memory
+    if asked and memory is not None:
+        try:
+            n = await memory.secret_questions_still_waiting(campaign.guild_id, campaign.id, asked)
+        except Exception as exc:  # (the read is done: a count it can't make is left off its note)
+            log.warning("Secret questions: couldn't count an upload's (%s)", type(exc).__name__)
+            n = 0
+        done.secret_questions = n
+        done.questions_left += n
     return done
 
 

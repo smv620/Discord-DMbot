@@ -94,7 +94,7 @@ class TheButtons(unittest.TestCase):
         self.assertEqual(ids(board.view(GUILD, CAMPAIGN, found(plot=3, rules=1))), [])
 
     def test_the_most_buttons_fit_three_rows(self) -> None:
-        """Three rows of five since 🤫 Secrets to check (#4524), with room left under Discord's
+        """Three rows of five since 🤫 Known or secret? (#4524), with room left under Discord's
         five for the website link `dm_links.add_links` puts on its own row."""
         everything = found(**{k: 1 for k in kinds.ORDER})
         self.assertLessEqual(len(board.view(GUILD, CAMPAIGN, everything).children), 15)

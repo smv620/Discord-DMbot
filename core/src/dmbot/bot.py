@@ -1958,7 +1958,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             TraitQuestionsButton,  # 🧬 Lineage and class (#3926)
             WorldNotesButton,  # 🌍 World notes (#4285)
             ThreadQuestionsButton,  # 📜 Story threads (#4453)
-            SecretQuestionsButton,  # 🤫 Secrets to check (#4524)
+            SecretQuestionsButton,  # 🤫 Known or secret? (#4524)
         )  # the Questions message and the card's button (#3435)
         self.question_round = questions_discord.build_round(self)
         self.question_notices = (
@@ -9786,18 +9786,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # session's events: the lines the stored split labels so are left out. A session with
             # no split yet is read as all play.
             recap_lines = await self._recap_lines(gid, sid)
-            # (a character's first name said alone is their short name before the claims are
-            # matched to names, so "Claude" is Claude Ambere and not a new name: #3880)
-            agreed = await consenting()
-            await self.add_short_names(gid, cid, extractor.heard_texts(lines, agreed, recap_lines))
             # (a 🤫 question the read asks cites this session, never its words, and is counted on
-            # the after-session line: #4524)
+            # the after-session line: #4524; the short names too, which can ask one)
             from dmbot.memory import secret_questions
             from dmbot.ui.thread_questions import session_label
 
             with secret_questions.evidence(
                 session_label(session.started_at), session_id=sid
             ) as asked:
+                # (a character's first name said alone is their short name before the claims
+                # are matched to names, so "Claude" is Claude Ambere and not a new name: #3880)
+                agreed = await consenting()
+                await self.add_short_names(
+                    gid, cid, extractor.heard_texts(lines, agreed, recap_lines)
+                )
                 report = await extractor.run(
                     self.extractor_ai,
                     ClaimStore(self.memory),
@@ -9860,13 +9862,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 from dmbot.ui import secret_questions as secret_questions_ui
 
                 try:
-                    await self.post(
-                        notice_channel,
-                        secret_questions_ui.count_line(len(asked)).strip(),
-                        view=secret_questions_ui.notice_view(cid),
-                    )
+                    left = await self.memory.secret_questions_still_waiting(gid, cid, asked)
+                    if left:
+                        await self.post(
+                            notice_channel,
+                            secret_questions_ui.count_line(left).strip(),
+                            view=secret_questions_ui.notice_view(cid),
+                        )
                 except Exception as exc:
-                    log.warning("Secrets to check: no note (%s)", type(exc).__name__)
+                    log.warning("Secret questions: no note (%s)", type(exc).__name__)
             if report.met_made and notice_channel is not None:  # (#4045: counts only)
                 try:
                     await self.post(

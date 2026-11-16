@@ -1,7 +1,8 @@
-"""🤫 Secrets to check (#4524 slice 2): the card that answers the questions DMbot asks instead of
+"""🤫 Known or secret? (#4524 slice 2): the card that answers the questions DMbot asks instead of
 taking knowledge away from the players by itself (`memory/secret_questions.py`, slice 1).
 
-One question at a time, in the DM's private chat only, never in a shared channel (the card names
+One question at a time, in a private reply only the DM sees (as 👪 Family ties), never in a shared
+channel (the card names
 the item, and may spoil a backstory; the DM Bot channel gets counts only, #3874). Opened from
 ❓ Questions for you, an upload's note or the after-session line; only a DM of the campaign can
 open it or answer, checked on every press. Each kind has its own two answers:
@@ -31,16 +32,26 @@ from dmbot.ui.names import _md, _memory
 
 log = logging.getLogger(__name__)
 
-HEADING = "🤫 **Secrets to check**"
-LABEL = "🤫 Secrets to check"
-WHY = "DMbot never takes something away from your players without asking you."
+HEADING = "🤫 **Known or secret?**"
+# (not "Secrets to check": its button sits under counts in the channel the players read, and a
+# label that says secrets exist teases them; ux-critic)
+LABEL = "🤫 Known or secret?"
+WHY = "DMbot never changes what your players know without asking you."
 KEEP_KNOWN, MAKE_SECRET = "👁️ Keep it known", "🤫 Make it secret"
 KEEP_BOTH, END_OLD = "🔗 Keep both", "⏹️ End the old one"
 KEEP_SECRET, LET_KNOW = "🤫 Keep it secret", "👁️ Let them know"
 UNDO = "↩️ Undo"
 GONE_NOW = "Already answered. Showing what is left."
-COULD_NOT = "DMbot couldn't change that, so it was left as it is. Showing what is left."
-NOTHING_LEFT = "✅ Nothing left to answer. If DMbot finds more, they show in ❓ Questions for you."
+TOO_LATE = "It's too late to undo that one here. Showing what is left."
+NOTHING_TO_DO = "That had already changed, so nothing was done. Showing what is left."
+COULD_NOT = (
+    "DMbot couldn't change that, so it was left as it is. To change it yourself, open the name's "
+    "card. Showing what is left."
+)
+NOTHING_LEFT = (
+    "✅ Nothing left to answer. If DMbot finds more, they'll show up in ❓ Questions for you."
+)
+GONE_LINE = "This one was about something since removed. Either answer just clears it."
 NOT_AVAILABLE = (
     "Remembering names isn't switched on for this DMbot yet. Ask whoever runs DMbot to turn it on."
 )
@@ -81,51 +92,53 @@ def _source(q: sq.Question) -> str:
 
 
 def _make_secret_says(s: Shown) -> str:
-    """What Make it secret does, in plain words."""
+    """What Make it secret does, in plain words: DMbot's record, never the game itself."""
     change = s.question.change
     if "knowers_off" in change:
-        who = _names(s.knowers) if s.knowers else "their characters"
-        return f"{who} stop knowing it."
+        who = _names(s.knowers) if s.knowers else "some player characters"
+        return f"DMbot stops showing {who} as knowing it."
     if change.get("audience_limited"):
-        return "only the players you chose for this clue see it."
-    return f"your players stop seeing this {s.what}."
+        return "only the players this clue was meant for see it."
+    return f"this {s.what} is hidden from your players in DMbot."
 
 
 def card_text(s: Shown, waiting: int) -> str:
     """The question first, in one plain line, then where it came from, why DMbot asks and what
-    each button does. Never posted in a shared channel."""
+    each button does, one line each (easier on a phone). Never posted in a shared channel."""
     q = s.question
     count = f" ({waiting} waiting)" if waiting > 1 else ""
     lines = [f"{HEADING}{count}"]
-    if q.kind == sq.REPLACE:
+    if GONE_ITEM in (s.item, s.owner):
+        lines.append(GONE_LINE)
+        answers: tuple[str, ...] = ()
+    elif q.kind == sq.REPLACE:
         lines += [
             f"Did this change? Your players know {s.item}.",
-            f"Your lore now says {s.new}." if s.new else "Your lore now says something else.",
+            f"Now: {s.new}." if s.new else "Something newer says otherwise.",
         ]
         answers = (
-            f"{KEEP_BOTH}: both stay, and DMbot won't ask this again. "
-            f"{END_OLD}: the old one ends; {UNDO} takes it back."
+            f"{KEEP_BOTH}: both stay true, and DMbot won't ask this again.",
+            f"{END_OLD}: the old one becomes how things were. {UNDO} takes it back.",
         )
     elif q.kind == sq.REVEAL:
-        lines.append(
-            f"Your players knew the name {s.item}, but it is also a secret name of {s.owner}."
-        )
+        # (a secret identity is the biggest spoiler DMbot holds: said plainly, never softened)
+        lines.append(f"Your players know the name {s.item}. Only you know it is {s.owner}.")
         answers = (
-            f"{KEEP_SECRET}: it stays the DM's, and DMbot won't ask this again. "
-            f"{LET_KNOW}: your players see it as {s.owner}'s name; {UNDO} takes it back."
+            f"{KEEP_SECRET}: they don't learn it is {s.owner}, and DMbot won't ask this again.",
+            f"{LET_KNOW}: your players learn that {s.item} is {s.owner}. {UNDO} takes it back.",
         )
     else:
         thing = f"{s.item}, another name of {s.owner}," if s.what == "other name" else s.item
         lines.append(f"{thing} sounds like a secret, but your players already know it.")
         answers = (
-            f"{KEEP_KNOWN}: nothing changes, and DMbot won't ask this again. "
-            f"{MAKE_SECRET}: {_make_secret_says(s)} {UNDO} takes it back."
+            f"{KEEP_KNOWN}: nothing changes, and DMbot won't ask this again.",
+            f"{MAKE_SECRET}: {_make_secret_says(s)} {UNDO} takes it back.",
         )
     source = _source(q)
     if source:
         lines.append(source)
-    lines += [f"_{WHY}_", "", f"_{answers}_"]
-    return "\n".join(lines)
+    lines += [f"_{WHY}_", "", *(f"_{a}_" for a in answers)]
+    return "\n".join(lines).rstrip()
 
 
 def done_text(s: Shown, make_secret: bool) -> str:
@@ -133,15 +146,15 @@ def done_text(s: Shown, make_secret: bool) -> str:
     q = s.question
     if q.kind == sq.REPLACE:
         if make_secret:
-            return f"Done: {s.item} has ended. {UNDO} takes it back."
+            return f"Done: {s.item} is now how things were. {UNDO} takes it back."
         return "Kept both. DMbot won't ask about this again."
     if q.kind == sq.REVEAL:
         if make_secret:
-            return f"Kept secret. DMbot won't ask about {s.item} again."
-        return f"Done: your players now see {s.item} as {s.owner}'s name. {UNDO} takes it back."
+            return "Kept secret. DMbot won't ask about this again."
+        return f"Done: your players now know {s.item} is {s.owner}. {UNDO} takes it back."
     if make_secret:
         return f"Done: {s.item} is a secret now. {UNDO} takes it back."
-    return f"Kept known. DMbot won't ask about {s.item} again."
+    return "Left as known. DMbot won't ask about this again."
 
 
 UNDONE = "Undone. The question is back, so you can answer it again."
@@ -231,7 +244,8 @@ class SecretQuestions(_Menu):
         self.current = shown
         stay, change = _buttons(shown.question.kind)
         self.add_item(_Button(self._stay, label=stay, style=discord.ButtonStyle.secondary))
-        self.add_item(_Button(self._change, label=change, style=discord.ButtonStyle.primary))
+        # (both grey: a highlighted answer would look like DMbot's advice, and the DM decides)
+        self.add_item(_Button(self._change, label=change, style=discord.ButtonStyle.secondary))
         if self.undo_batch is not None:
             self.add_item(_Button(self._undo, label=UNDO, style=discord.ButtonStyle.secondary))
         return card_text(shown, len(waiting))
@@ -270,9 +284,12 @@ class SecretQuestions(_Menu):
                     self.guild_id, self.campaign_id, q.id, make_secret, source=DM
                 )
                 self.undo_batch = written.batch if changes else None
-                said = done_text(shown, make_secret)
+                # (a change with nothing left to change, the item gone or merged since, has no
+                # batch and no Undo: never say it was done)
+                nothing = changes and written.batch is None
+                said = NOTHING_TO_DO if nothing else done_text(shown, make_secret)
         except TooLateToUndo:
-            said = GONE_NOW
+            said = TOO_LATE
         except MemoryRuleError as exc:
             said = GONE_NOW if str(exc) == sq.GONE else COULD_NOT
             if str(exc) != sq.GONE:
@@ -294,7 +311,7 @@ class SecretQuestionsButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=r"dmbot:secrets:ask:(?P<campaign>[0-9a-f]{32})",
 ):
-    """🤫 Secrets to check, from the Questions message, an upload's note or the after-session
+    """🤫 Known or secret?, from the Questions message, an upload's note or the after-session
     line; works after a restart (the campaign is in the button's ID). The card opens privately,
     for a DM only."""
 
@@ -336,14 +353,15 @@ async def start_secret_questions(interaction: discord.Interaction, campaign_id: 
 
 
 def count_line(n: int) -> str:
-    """The count line for an upload's note or after a session: counts only, never which (the DM
-    Bot channel is read by the whole campaign); "" for none."""
+    """The count line for an upload's note or after a session, in the DM Bot channel the whole
+    campaign reads: counts only, never which, and addressed to the DM. Neutral words, as a reveal
+    question kept a secret and the others kept something known; "" for none."""
     if not n:
         return ""
     return (
-        f"\n🤫 **{_plural(n, 'thing')} your players know** sounded like "
-        f"{'a secret' if n == 1 else 'secrets'}. DMbot kept "
-        f"{'it' if n == 1 else 'them'} known and asks you in ❓ Questions for you."
+        f"\n🤫 DM: **{_plural(n, 'thing')}** the players know sounded secret. DMbot left "
+        f"{'it as it is' if n == 1 else 'them as they are'}; check "
+        f"{'it' if n == 1 else 'them'} in ❓ Questions for you."
     )
 
 
