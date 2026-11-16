@@ -66,15 +66,17 @@
    "name": "Okthandom Korran",
    "kind": "person",
    "aliases": [
-    "Okthandom",
-    "Oktandom"
+    "Okthandom"
    ],
    "note": "Player character.",
    "knowers": "party",
    "docs": [
     "lore",
     "backstory_okthandom"
-   ]
+   ],
+   "secret_aliases": {
+    "Oktandom": "party"
+   }
   },
   {
    "name": "Claude Ambere",
@@ -82,17 +84,19 @@
    "aliases": [
     "Claude",
     "Griz",
-    "Major Ursa",
-    "Claude Ambère",
-    "Claud",
-    "The Bear-Man of the Black Pines"
+    "Major Ursa"
    ],
    "note": "Player character. His first name was Griz, son of Lee.",
    "knowers": "party",
    "docs": [
     "lore",
     "backstory_claude"
-   ]
+   ],
+   "secret_aliases": {
+    "Claude Ambère": "party",
+    "Claud": "party",
+    "The Bear-Man of the Black Pines": "party"
+   }
   },
   {
    "name": "The party",
@@ -100,41 +104,51 @@
    "aliases": [
     "the heroes",
     "our four adventurers",
-    "the company",
-    "a small band of adventurers"
+    "the company"
    ],
    "note": "The four player characters.",
    "knowers": "party",
    "docs": [
     "lore",
     "backstory_claude"
-   ]
+   ],
+   "secret_aliases": {
+    "a small band of adventurers": "party"
+   }
   },
   {
    "name": "Roceran",
    "kind": "person",
-   "aliases": [
-    "Roceran Fa'ertenya"
-   ],
+   "aliases": [],
    "note": "Cerric's father, an explorer and wanderer",
    "knowers": "party",
    "docs": [
     "lore",
     "backstory_cerric"
-   ]
+   ],
+   "secret_aliases": {
+    "Roceran Fa'ertenya": [
+     "Cerric Vanya'elen",
+     "Roceran"
+    ]
+   }
   },
   {
    "name": "Shafina",
    "kind": "person",
-   "aliases": [
-    "Shafina Fa'ertenya"
-   ],
+   "aliases": [],
    "note": "Cerric's mother, a magical weaver",
    "knowers": "party",
    "docs": [
     "lore",
     "backstory_cerric"
-   ]
+   ],
+   "secret_aliases": {
+    "Shafina Fa'ertenya": [
+     "Cerric Vanya'elen",
+     "Shafina"
+    ]
+   }
   },
   {
    "name": "Valyra",
@@ -173,29 +187,41 @@
    "name": "Syllar Sparkwalker",
    "kind": "person",
    "aliases": [
-    "Master Sparkwalker",
-    "Syllar",
-    "Master Syllar"
+    "Master Sparkwalker"
    ],
    "note": "Cerric's master",
    "knowers": "party",
    "docs": [
     "lore",
     "backstory_cerric"
-   ]
+   ],
+   "secret_aliases": {
+    "Syllar": [
+     "Cerric Vanya'elen",
+     "Syllar Sparkwalker"
+    ],
+    "Master Syllar": [
+     "Cerric Vanya'elen",
+     "Syllar Sparkwalker"
+    ]
+   }
   },
   {
    "name": "Emmerich",
    "kind": "person",
-   "aliases": [
-    "Emmerich Ravenstride"
-   ],
+   "aliases": [],
    "note": "a rival apprentice",
    "knowers": "party",
    "docs": [
     "lore",
     "backstory_cerric"
-   ]
+   ],
+   "secret_aliases": {
+    "Emmerich Ravenstride": [
+     "Cerric Vanya'elen",
+     "Emmerich Ravenstride"
+    ]
+   }
   },
   {
    "name": "Wit",
@@ -222,28 +248,36 @@
   {
    "name": "Vaelrith",
    "kind": "person",
-   "aliases": [
-    "Vaelrith Korran"
-   ],
+   "aliases": [],
    "note": "Okthandom's elder brother, vanished",
    "knowers": "party",
    "docs": [
     "lore",
     "backstory_okthandom"
-   ]
+   ],
+   "secret_aliases": {
+    "Vaelrith Korran": [
+     "Okthandom Korran",
+     "Vaelrith Korran"
+    ]
+   }
   },
   {
    "name": "Nyssara",
    "kind": "person",
-   "aliases": [
-    "Nyssara Korran"
-   ],
+   "aliases": [],
    "note": "Okthandom's younger sister",
    "knowers": "party",
    "docs": [
     "lore",
     "backstory_okthandom"
-   ]
+   ],
+   "secret_aliases": {
+    "Nyssara Korran": [
+     "Okthandom Korran",
+     "Nyssara Korran"
+    ]
+   }
   },
   {
    "name": "Lee",
@@ -560,29 +594,31 @@
   {
    "name": "Lord's Alliance",
    "kind": "group",
-   "aliases": [
-    "Lords' Alliance"
-   ],
+   "aliases": [],
    "note": "alliance Qinric serves",
    "knowers": "everyone",
    "docs": [
     "lore",
     "backstory_cerric"
-   ]
+   ],
+   "secret_aliases": {
+    "Lords' Alliance": "everyone"
+   }
   },
   {
    "name": "Explorer's League",
    "kind": "group",
-   "aliases": [
-    "Explorers League",
-    "the League"
-   ],
+   "aliases": [],
    "note": "guild of explorers",
    "knowers": "everyone",
    "docs": [
     "lore",
     "backstory_belleros"
-   ]
+   ],
+   "secret_aliases": {
+    "Explorers League": "everyone",
+    "the League": "everyone"
+   }
   },
   {
    "name": "Torg's Caravan",
@@ -597,15 +633,18 @@
   {
    "name": "The circus",
    "kind": "group",
-   "aliases": [
-    "traveling circus"
-   ],
+   "aliases": [],
    "note": "Unnamed travelling circus that held Claude",
    "knowers": "party",
    "docs": [
     "lore",
     "backstory_claude"
-   ]
+   ],
+   "secret_aliases": {
+    "traveling circus": [
+     "Claude Ambere"
+    ]
+   }
   },
   {
    "name": "The Brotherhood",
@@ -621,9 +660,7 @@
   {
    "name": "Icewind Dale",
    "kind": "place",
-   "aliases": [
-    "the Dale"
-   ],
+   "aliases": [],
    "note": "",
    "knowers": "everyone",
    "docs": [
@@ -631,21 +668,25 @@
     "backstory_cerric",
     "backstory_okthandom",
     "backstory_belleros"
-   ]
+   ],
+   "secret_aliases": {
+    "the Dale": "everyone"
+   }
   },
   {
    "name": "Ten-Towns",
    "kind": "place",
-   "aliases": [
-    "Ten Towns"
-   ],
+   "aliases": [],
    "note": "",
    "knowers": "everyone",
    "docs": [
     "lore",
     "backstory_cerric",
     "backstory_belleros"
-   ]
+   ],
+   "secret_aliases": {
+    "Ten Towns": "everyone"
+   }
   },
   {
    "name": "Targos",
@@ -671,15 +712,17 @@
    "name": "Easthaven",
    "kind": "place",
    "aliases": [
-    "Eashaven",
-    "East Haven"
+    "Eashaven"
    ],
    "note": "",
    "knowers": "everyone",
    "docs": [
     "lore",
     "backstory_cerric"
-   ]
+   ],
+   "secret_aliases": {
+    "East Haven": "everyone"
+   }
   },
   {
    "name": "Termalaine",
@@ -882,15 +925,16 @@
   {
    "name": "Kelvin's Cairn",
    "kind": "place",
-   "aliases": [
-    "Kalvin's Cairn"
-   ],
+   "aliases": [],
    "note": "",
    "knowers": "everyone",
    "docs": [
     "lore",
     "backstory_belleros"
-   ]
+   ],
+   "secret_aliases": {
+    "Kalvin's Cairn": "everyone"
+   }
   },
   {
    "name": "Eastway Road",
@@ -959,30 +1003,40 @@
   {
    "name": "Azure tome",
    "kind": "item",
-   "aliases": [
-    "the Master's tome",
-    "the tome"
-   ],
+   "aliases": [],
    "note": "Syllar's locked tome",
    "knowers": "party",
    "docs": [
     "lore",
     "backstory_cerric"
-   ]
+   ],
+   "secret_aliases": {
+    "the Master's tome": [
+     "Cerric Vanya'elen"
+    ],
+    "the tome": [
+     "Cerric Vanya'elen"
+    ]
+   }
   },
   {
    "name": "Ancestral journal",
    "kind": "item",
-   "aliases": [
-    "family journal",
-    "the journal"
-   ],
+   "aliases": [],
    "note": "Okthandom's family journal",
    "knowers": "party",
    "docs": [
     "lore",
     "backstory_okthandom"
-   ]
+   ],
+   "secret_aliases": {
+    "family journal": [
+     "Okthandom Korran"
+    ],
+    "the journal": [
+     "Okthandom Korran"
+    ]
+   }
   },
   {
    "name": "Wolf figurine",
@@ -1174,10 +1228,10 @@
     "Okthandom Korran",
     "Okthandom's father"
    ],
+   "check": true,
    "docs": [
     "backstory_okthandom"
-   ],
-   "check": true
+   ]
   },
   {
    "name": "Lady Martha",
@@ -1187,10 +1241,10 @@
     "Okthandom Korran",
     "Lady Martha"
    ],
+   "check": true,
    "docs": [
     "backstory_okthandom"
-   ],
-   "check": true
+   ]
   },
   {
    "name": "The apparition",
@@ -1204,10 +1258,10 @@
     "Okthandom Korran",
     "The apparition"
    ],
+   "check": true,
    "docs": [
     "backstory_okthandom"
-   ],
-   "check": true
+   ]
   },
   {
    "name": "Family talisman",
@@ -1230,10 +1284,10 @@
     "Claude Ambere",
     "The ringmaster"
    ],
+   "check": true,
    "docs": [
     "backstory_claude"
-   ],
-   "check": true
+   ]
   },
   {
    "name": "Wardens of the Wilds",
@@ -4225,9 +4279,7 @@
      "line": 64
     }
    ],
-   "knowers": [
-    "Cerric Vanya'elen"
-   ],
+   "knowers": "party",
    "check": true,
    "note": "he knows only the name"
   },
@@ -4366,10 +4418,7 @@
      "line": 4
     }
    ],
-   "knowers": [
-    "Okthandom Korran",
-    "The apparition"
-   ],
+   "knowers": "party",
    "check": true,
    "note": "it haunts him"
   },
@@ -4390,11 +4439,7 @@
      "line": 13
     }
    ],
-   "knowers": [
-    "Okthandom Korran",
-    "Nyssara Korran",
-    "The apparition"
-   ],
+   "knowers": "party",
    "check": true,
    "note": "she confessed it to him: an event between the two"
   },
@@ -5080,134 +5125,97 @@
   {
    "id": "ce01",
    "what": "Valyra leaves for her apprenticeship and the siblings stop meeting",
-   "who": [
-    "Cerric Vanya'elen",
-    "Valyra"
-   ],
-   "line": 13,
-   "knowers": [
-    "Cerric Vanya'elen",
-    "Valyra"
-   ],
-   "doc": "backstory_cerric"
+   "doc": "backstory_cerric",
+   "who": "Cerric Vanya'elen, Valyra",
+   "lines": "13",
+   "knowers": "party"
   },
   {
    "id": "ce02",
    "what": "The grandfather dies in a storm; Qinric visits and Cerric becomes the spire's steward",
-   "who": [
-    "Cerric Vanya'elen",
-    "Qinric"
-   ],
-   "line": 16,
-   "knowers": [
-    "Cerric Vanya'elen",
-    "Qinric"
-   ],
-   "doc": "backstory_cerric"
+   "doc": "backstory_cerric",
+   "who": "Cerric Vanya'elen, Qinric",
+   "lines": "16",
+   "knowers": "party"
   },
   {
    "id": "ce07",
    "what": "Emmerich, then Wit, leave to look for the master",
-   "who": [
-    "Cerric Vanya'elen",
-    "Emmerich Ravenstride",
-    "Wit"
-   ],
-   "line": 31,
+   "doc": "backstory_cerric",
+   "who": "Cerric Vanya'elen, Emmerich Ravenstride, Wit",
+   "lines": "31",
    "knowers": [
     "Cerric Vanya'elen",
     "Emmerich Ravenstride",
     "Wit"
-   ],
-   "doc": "backstory_cerric"
+   ]
   },
   {
    "id": "ce08",
    "what": "He breaks the lock with the bust, and a figure enters as he leaves",
-   "who": [
-    "Cerric Vanya'elen"
-   ],
-   "line": 37,
+   "doc": "backstory_cerric",
+   "who": "Cerric Vanya'elen",
+   "lines": "37",
    "knowers": [
     "Cerric Vanya'elen"
-   ],
-   "doc": "backstory_cerric"
+   ]
   },
   {
    "id": "oe03",
    "what": "A shattered family talisman is left at his campsite",
-   "who": [
-    "Okthandom Korran",
-    "Nyssara Korran"
-   ],
-   "line": 10,
+   "doc": "backstory_okthandom",
+   "who": "Okthandom Korran, Nyssara Korran",
+   "lines": "10",
    "knowers": [
     "Okthandom Korran",
     "Nyssara Korran"
-   ],
-   "doc": "backstory_okthandom"
+   ]
   },
   {
    "id": "oe02",
    "what": "Nyssara confesses the whispers have started for her",
-   "who": [
-    "Okthandom Korran",
-    "Nyssara Korran"
-   ],
-   "line": 13,
-   "knowers": [
-    "Okthandom Korran",
-    "Nyssara Korran"
-   ],
-   "doc": "backstory_okthandom"
+   "doc": "backstory_okthandom",
+   "who": "Okthandom Korran, Nyssara Korran",
+   "lines": "13",
+   "knowers": "party"
   },
   {
    "id": "ae04",
    "what": "The ringmaster dies in Claude's cage",
-   "who": [
-    "Claude Ambere",
-    "The ringmaster"
-   ],
-   "line": 31,
+   "doc": "backstory_claude",
+   "who": "Claude Ambere, The ringmaster",
+   "lines": "31",
    "knowers": [
     "Claude Ambere"
-   ],
-   "doc": "backstory_claude"
+   ]
   },
   {
    "id": "be01",
    "what": "He swears the Explorer's Oath",
-   "who": [
-    "Belleros Stormgrace"
-   ],
-   "line": 32,
+   "doc": "backstory_belleros",
+   "who": "Belleros Stormgrace",
+   "lines": "32",
    "knowers": [
     "Belleros Stormgrace"
-   ],
-   "doc": "backstory_belleros"
+   ]
   },
   {
    "id": "be02",
    "what": "After a narrow escape from a ruin he trains as a ranger of the Ward",
-   "who": [
-    "Belleros Stormgrace"
-   ],
-   "line": 64,
+   "doc": "backstory_belleros",
+   "who": "Belleros Stormgrace",
+   "lines": "64",
    "knowers": [
     "Belleros Stormgrace"
-   ],
-   "doc": "backstory_belleros"
+   ]
   },
   {
    "id": "be03",
    "what": "Shimmergloom destroys Mithral Hall and scatters his people",
-   "who": [
-    "Belleros Stormgrace",
-    "Shimmergloom"
-   ],
-   "line": 89,
-   "knowers": "everyone",
-   "doc": "backstory_belleros"
+   "doc": "backstory_belleros",
+   "who": "Belleros Stormgrace, Shimmergloom",
+   "lines": "89",
+   "knowers": "everyone"
   }
  ],
  "threads": [
@@ -5474,9 +5482,7 @@
    "in_danger": [],
    "line": 52,
    "hint": "a tragedy, a crime, a secret or a truth: the text leaves it open",
-   "knowers": [
-    "Claude Ambere"
-   ],
+   "knowers": "party",
    "doc": "backstory_claude"
   },
   {
@@ -5527,14 +5533,16 @@
    "language": "Elvish",
    "line": 21,
    "note": "'raised fluent in Elvish' (from his elven heritage); the owner added this paragraph on 2026-11-14",
-   "doc": "lore"
+   "doc": "lore",
+   "knowers": "party"
   },
   {
    "character": "Cerric Vanya'elen",
    "language": "Draconic",
    "line": 21,
    "note": "'earned him fluency in Draconic as well' (from his studies of arcane texts)",
-   "doc": "lore"
+   "doc": "lore",
+   "knowers": "party"
   }
  ],
  "must_not_find": [
@@ -5545,6 +5553,12 @@
   "'The Brotherhood' in the note is named once and nothing is said about it: no members, no leader, and it is not the Explorer's League",
   "the unnamed boy who shouts the news, the unnamed beggar woman's prophecy and the unnamed ghost's own name: do not invent names for them",
   "'Eashaven' is Easthaven spelled wrongly (one place, not two)",
-  "the Sylvan runes on Claude's wolf figurine (line 48) are writing on an item, not a language Claude speaks: no language row for him"
+  "the Sylvan runes on Claude's wolf figurine (line 48) are writing on an item, not a language Claude speaks: no language row for him",
+  "the teleport command word is not an entry (backstory_cerric)",
+  "Azuth appears only in an exclamation: no entry needed (a good find if kept as a deity, not a miss) (backstory_cerric)",
+  "the kinds of thing it might be (spirit, ghost, devil, demon, trickster god) are not entries (backstory_okthandom)",
+  "Ursine (bear-folk) is his kind, not an entry (backstory_claude)",
+  "his four guesses are not events (backstory_claude)",
+  "the oath's words and the background feature are not entries or ties (backstory_belleros)"
  ]
 }
