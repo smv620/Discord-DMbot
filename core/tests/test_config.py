@@ -354,3 +354,15 @@ class ServerJobs(unittest.TestCase):
         for bad in ("0", "21", "x", "-1"):
             with self.assertRaisesRegex(ConfigError, "DMBOT_SERVER_JOBS_AT_ONCE"):
                 load_settings({**BASE, "DMBOT_SERVER_JOBS_AT_ONCE": bad})
+
+
+class LoreReadsPerDay(unittest.TestCase):
+    def test_twenty_unless_set_and_outside_1_to_500_is_a_start_up_error(self) -> None:
+        """(#4582: the day's document reads a server, so the test server can raise it)"""
+        self.assertEqual(load_settings(BASE).lore_reads_per_day, 20)
+        self.assertEqual(
+            load_settings({**BASE, "DMBOT_LORE_READS_PER_DAY": "60"}).lore_reads_per_day, 60
+        )
+        for bad in ("0", "501", "x", "-3"):
+            with self.assertRaisesRegex(ConfigError, "DMBOT_LORE_READS_PER_DAY"):
+                load_settings({**BASE, "DMBOT_LORE_READS_PER_DAY": bad})
