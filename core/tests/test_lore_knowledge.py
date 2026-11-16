@@ -213,10 +213,20 @@ class Fixture(NamesTest):
 
     async def sure(self, relation_id: str) -> list[float]:
         """How sure each player character is of a connection (the rows, no ids)."""
+        return await self._sure(relation_id, "pc")
+
+    async def common(self, relation_id: str) -> list[float]:
+        """How sure common knowledge is of a connection (#4537: one row, or none)."""
+        return await self._sure(relation_id, "everyone")
+
+    async def _sure(self, relation_id: str, kind: str) -> list[float]:
         async with self.db.guild(GUILD) as conn:
             cur = await conn.execute(
-                "SELECT confidence FROM memory_knowers WHERE campaign_id = %s AND relation_id = %s",
-                (self.campaign.id, relation_id),
+                "SELECT k.confidence FROM memory_knowers k JOIN memory_perspectives p"
+                " ON p.guild_id = k.guild_id AND p.campaign_id = k.campaign_id"
+                " AND p.id = k.perspective_id"
+                " WHERE k.campaign_id = %s AND k.relation_id = %s AND p.kind = %s",
+                (self.campaign.id, relation_id, kind),
             )
             return [float(r["confidence"]) for r in await cur.fetchall()]
 
@@ -280,6 +290,7 @@ class TheUpload(Fixture):
         self.assertIn(kept.id, {r.id for r in shown})
         self.assertEqual(await self.known("connection", [kept.id]), {kept.id: [self.tavin]})
         self.assertEqual(await self.sure(kept.id), [1.0])
+        self.assertEqual(await self.common(kept.id), [1.0])  # (common knowledge, #4537)
 
     async def test_a_secret_connection_stays_secret_and_unknown_under_world(self) -> None:
         await self.read(lk.WORLD)
@@ -382,9 +393,11 @@ class TheUpload(Fixture):
         self.assertEqual(
             await self.sure(kept.id), [lk.GUESS_CERTAINTY]
         )  # a guess, not the DM's word
+        self.assertEqual(await self.common(kept.id), [lk.GUESS_CERTAINTY])  # (#4537)
         # Undo takes the connection back, and the guess's rows with it
         await keep.undo_all(self.memory, self.store, GUILD, self.campaign.id, done)
         self.assertEqual(await self.sure(kept.id), [])
+        self.assertEqual(await self.common(kept.id), [])  # (common knowledge goes too, #4537)
         (again,) = [w for w in await self.store.waiting(GUILD, self.campaign.id) if w.world]
         self.assertEqual(again.world, lk.GUESS)
 
