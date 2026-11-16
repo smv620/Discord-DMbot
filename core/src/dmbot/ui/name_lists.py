@@ -633,7 +633,8 @@ def read_upload(raw: bytes) -> tuple[str | None, str | None]:
 
 
 ONLY_DM_SECRETS = "only the campaign's DM can add secret names"
-AI_READS_PER_DAY = 20  # per server, for the operator's bill (bring-your-own keys: #50)
+AI_READS_PER_DAY = 20  # the default a server a day, for the operator's bill (bring-your-own
+# keys: #50); the setting DMBOT_LORE_READS_PER_DAY overrides it (#4582)
 AI_TIME_LIMIT_S = 600  # well inside Discord's 15 minutes to answer
 # server -> the campaigns with an AI read running there ("" for a Discord read). Discord's button
 # takes the whole server (one at a time); the website's reads take one campaign each, up to the
@@ -646,17 +647,23 @@ AI_AT_ONCE = asyncio.Semaphore(3)  # AI requests running at once, across all ser
 BUSY, LIMIT = "busy", "limit"  # why `start_ai_read` said no
 
 
-def start_ai_read(guild_id: int, now: float, campaign_id: str = "", at_once: int = 1) -> str | None:
+def start_ai_read(
+    guild_id: int,
+    now: float,
+    campaign_id: str = "",
+    at_once: int = 1,
+    per_day: int = AI_READS_PER_DAY,
+) -> str | None:
     """Take one of the server's document reads for the day and mark it as reading, or say why not:
     BUSY (the campaign already has one running, or the server has `at_once` running; try again
     soon) or LIMIT (today's are used). The Discord button (the defaults: one on the server) and the
     website's Upload lore (#3022; its campaign and the server's cap, #4551) share this, so they
-    share one allowance. The caller ends it with `end_ai_read`."""
+    share one allowance, `per_day` (the setting). The caller ends it with `end_ai_read`."""
     day = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%d")
     running = _ai_busy.get(guild_id, set())
     if campaign_id in running or len(running) >= at_once:
         return BUSY
-    if _ai_reads.get((guild_id, day), 0) >= AI_READS_PER_DAY:
+    if _ai_reads.get((guild_id, day), 0) >= per_day:
         return LIMIT
     _ai_busy.setdefault(guild_id, set()).add(campaign_id)
     for old in [k for k in _ai_reads if k[1] != day]:
