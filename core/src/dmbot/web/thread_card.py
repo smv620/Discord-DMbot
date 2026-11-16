@@ -12,6 +12,7 @@ from typing import Any
 
 from dmbot.db import Database
 from dmbot.memory import thread_parts as tp
+from dmbot.memory import threads
 from dmbot.memory.models import CONFIRMED
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -82,8 +83,35 @@ async def read(db: Database, session: Session, ref: str, thread_id: str) -> dict
                 "tableKnows": part.table_knows,
             }
         )
+    thread = got["thread"]
+    kind_type = str(thread.get("type") or "")
+    state = str(thread.get("state") or "")
+    # The giver first, then the other parts in the order Discord's list knows them, then the rest.
+    order = {role: i for i, role in enumerate(threads.ROLES)}
+    # (The door already lists them by name; the sort is stable, so within a role they stay A to Z.
+    # A person and the entry it was merged into both on the thread show once, as one.)
+    seen: set[tuple[str, str]] = set()
+    unique = []
+    for p in got.get("people") or []:
+        key = (str(p["id"]), str(p.get("role") or ""))
+        if key not in seen:
+            seen.add(key)
+            unique.append(p)
+    people = sorted(unique, key=lambda p: order.get(str(p.get("role") or ""), len(order)))
     return {
-        "thread": {"id": str(got["thread"]["id"]), "name": str(got["thread"]["name"])},
+        "thread": {
+            "id": str(thread["id"]),
+            "name": str(thread["name"]),
+            "kind": kind_type.replace("_", " ").capitalize(),
+            "state": state,
+            "stateWords": threads.words_for(kind_type).get(state, ""),
+            "description": str(thread.get("description") or ""),
+        },
+        "people": [
+            {"id": str(p["id"]), "name": str(p["name"]), "role": str(p.get("role") or "")}
+            for p in people
+        ],
+        "waiting": int(got.get("waiting") or 0),
         "done": done,
         "of": total,
         "parts": out,
