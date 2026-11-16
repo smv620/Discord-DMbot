@@ -172,6 +172,8 @@ class Report:
     # Extras by how they came: added by DMbot itself (a failure), kept by the AI DM's yes, or
     # flagged and turned down (counted apart, never a failure); and decisions DMbot gave no order
     extras: Counter[str] = field(default_factory=Counter)
+    # key rows the AI DM said no to, by kind: the stand-in's misses, outside the tiers
+    ai_said_no: Counter[str] = field(default_factory=Counter)
     unordered: int = 0
 
 
@@ -966,6 +968,7 @@ def summarize(report: Report) -> dict[str, Any]:
                 "tiers": dict(report.tiers),
                 "tiers_must": dict(report.tiers_must),
                 "extras": dict(report.extras),
+                "ai_said_no": dict(report.ai_said_no),
                 "unordered": report.unordered,
             }
             if report.tiers
@@ -1085,18 +1088,27 @@ def render(report: Report, counts_only: bool = False) -> str:
                 if x.section == "tie" or not counts_only:
                     lines.append(f"  {x.section} {x.id}")
     if report.tiers:  # (#4523 slice 2: with the decision record)
-        for label, c in (("every key row", report.tiers), ("must-find rows", report.tiers_must)):
+        for label, c in (
+            ("every key row and extra", report.tiers),
+            ("must-find rows", report.tiers_must),
+        ):
             lines.append(
                 f"Tiers, {label}: "
                 + ", ".join(f"{t} {c[t]}" for t in key_tiers.TIERS)
                 + f"; not decided (stopped at the cap) {c[key_tiers.NOT_DECIDED]}"
                 + f"; found despite a no {c[key_tiers.FOUND_DESPITE_NO]}"
+                + f"; {key_tiers.AI_SAID_NO} {c[key_tiers.AI_SAID_NO]}"
             )
         extra = report.extras
         lines.append(
             f"Extras: added by DMbot itself {extra[key_tiers.EXTRA_ITSELF]} (failures), "
             f"kept by the AI DM {extra[key_tiers.EXTRA_KEPT]}, "
-            f"flagged and turned down {extra[key_tiers.EXTRA_TURNED_DOWN]}"
+            f"flagged and turned down {extra[key_tiers.EXTRA_TURNED_DOWN]} (partial failures)"
+        )
+        said_no = report.ai_said_no
+        lines.append(
+            f"The AI DM said no to a right one (key rows, by kind): {sum(said_no.values())} "
+            + str(dict(sorted(said_no.items())))
         )
         lines.append(
             f"Decisions where DMbot gave no order (its first is the first stored): "

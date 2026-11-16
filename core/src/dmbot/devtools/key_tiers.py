@@ -1,23 +1,25 @@
 """Each key row's tier, from the backup and the sample run's decision record (#4523 slice 2).
 
-Supervisor's ruling on #4523 (the tier table, and E and F): how a row the key lists got into the
-graph, or why it didn't.
+Supervisor's ruling on #4523 (the tier table, and E and F) and the owner's definitions there: how
+a row the key lists got into the graph, or why it didn't, and what DMbot suggested that the key
+doesn't list.
 
 | Tier | When |
 |---|---|
-| total success | in the graph, and never asked about: DMbot added it by itself |
+| total success | a key row in the graph, never asked about: DMbot added it by itself |
 | partial success | asked, and the AI DM took DMbot's first choice (a yes to a yes-or-no item) |
 | provisional success | asked, and the AI DM took another choice the card offered |
-| partial failure | not in the graph, and the AI DM said "not a name" or "not a connection" |
-| failure | not in the graph otherwise, or found but leaked to a player character |
+| partial failure | DMbot suggested an extra and the AI DM said "not a name" / "not a connection" |
+| failure | a key row missing, an extra DMbot added by itself, or a row leaked to a player |
+
+A key row the AI DM said no to is DMbot right and the stand-in DM wrong: it goes on its own line,
+**the AI DM said no to a right one**, by kind, outside the tiers, so a weak stand-in shows.
 
 A row left waiting because the stage reached its cap is **not decided**: its own line, never a
 success or a failure. A row in the graph that the AI DM said no to (it came in by another way) is
 **found despite a no**, its own line too, since it was asked about. A look-alike answer ("is this
 unnamed person that one?") joins or keeps apart two entries; it never adds or refuses a name or a
-tie, so no row's tier comes from it. Extras (a name or tie the key doesn't list) are counted by
-how they came: added by DMbot itself is a failure, one the AI DM kept is counted, and one flagged
-and turned down is counted apart and never a failure.
+tie, so no row's tier comes from it. An extra the AI DM kept is counted on the extras line only.
 
 A decision is matched to a key row by the names it is about (`Decision.names`), compared as the
 check compares names (`name_key`), or through the backup's own entries for them. The record stays
@@ -42,6 +44,7 @@ PARTIAL_FAILURE, FAILURE = "partial failure", "failure"
 TIERS = (TOTAL, PARTIAL, PROVISIONAL, PARTIAL_FAILURE, FAILURE)
 NOT_DECIDED = "not decided"  # (decide.NOT_DECIDED: the record's word for an item left at the cap)
 FOUND_DESPITE_NO = "found despite a no"  # (asked, said no, and in the graph all the same)
+AI_SAID_NO = "the AI DM said no to a right one"  # (a key row turned down: the stand-in's miss)
 EXTRA_ITSELF, EXTRA_KEPT, EXTRA_TURNED_DOWN = "added by itself", "kept by the AI DM", "turned down"
 
 # The decision kinds (decide.KINDS) by what they are about: a name, or a tie between two names.
@@ -139,7 +142,7 @@ def tier(found: bool, leaked: bool, decisions: Sequence[Mapping[str, Any]]) -> s
             return FOUND_DESPITE_NO
         return TOTAL  # (never asked, or asked and left "not sure": DMbot's own)
     if any(d.get("decision") == NO for d in done):
-        return PARTIAL_FAILURE
+        return AI_SAID_NO
     if any(d.get("decision") == NOT_DECIDED for d in decisions) and not yes:
         return NOT_DECIDED
     return FAILURE
@@ -173,21 +176,24 @@ def score(
         or any(_touches_tie(d, str(t["a"]), str(t["b"]), names) for t in key["pairs"])
     }
 
-    def count(row_tier: str, must: bool) -> None:
+    def count(row_tier: str, must: bool, kind: str) -> None:
         report.tiers[row_tier] += 1
         if must:
             report.tiers_must[row_tier] += 1
+        if row_tier == AI_SAID_NO:
+            report.ai_said_no[kind] += 1
 
     for row in report.entries:
         if row.status == by_design:
             continue
         mine = [d for d in record if _touches_node(d, row.id, names)]
         found = row.status == found_status and row.id in confirmed_entries
-        count(tier(found, ("entry", row.id) in leaked, mine), row.must)
+        count(tier(found, ("entry", row.id) in leaked, mine), row.must, row.group)
     for row in report.ties:
         t = pairs[row.id]
         mine = [d for d in record if _touches_tie(d, t["a"], t["b"], names)]
-        count(tier(row.status == found_status, ("tie", row.id) in leaked, mine), row.must)
+        tie_tier = tier(row.status == found_status, ("tie", row.id) in leaked, mine)
+        count(tie_tier, row.must, row.group)
 
     def kept(d: Mapping[str, Any]) -> bool:
         return d.get("decision") == YES and bool(d.get("done", True))
@@ -219,4 +225,8 @@ def score(
         and d.get("decision") == NO
         and d.get("done", True)
     )
+    # (the owner's definitions: DMbot's wrong suggestion caught is a partial failure; one it added
+    # by itself is a failure. Not in `tiers_must`: an extra is no must-find row.)
+    report.tiers[PARTIAL_FAILURE] += report.extras[EXTRA_TURNED_DOWN]
+    report.tiers[FAILURE] += report.extras[EXTRA_ITSELF]
     report.unordered = sum(1 for d in record if d.get("no_order"))

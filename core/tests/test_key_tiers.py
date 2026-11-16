@@ -48,8 +48,8 @@ class TheTable(unittest.TestCase):
     def test_a_leak_is_a_failure_however_it_came(self) -> None:
         self.assertEqual(kt.tier(True, True, []), kt.FAILURE)
 
-    def test_a_no_to_a_key_row_is_a_partial_failure(self) -> None:
-        self.assertEqual(kt.tier(False, False, [said("names", "no")]), kt.PARTIAL_FAILURE)
+    def test_a_no_to_a_key_row_is_the_ai_dms_miss_not_a_tier(self) -> None:
+        self.assertEqual(kt.tier(False, False, [said("names", "no")]), kt.AI_SAID_NO)
 
     def test_left_at_the_cap_is_not_decided(self) -> None:
         self.assertEqual(kt.tier(False, False, [said("names", kt.NOT_DECIDED)]), kt.NOT_DECIDED)
@@ -77,13 +77,18 @@ class InACheck(unittest.TestCase):
                 row["status"] = "rejected"
         record = [said("names", "no", "Stonehall"), said("names", "no", "Dog sleds")]
         report = tiers(data, record)
+        # the key row turned down: the stand-in's miss, by kind, outside the tiers
+        self.assertEqual(report.tiers[kt.AI_SAID_NO], 1)
+        self.assertEqual(report.ai_said_no, {"place": 1})
+        # the extra turned down: DMbot's wrong suggestion caught, the owner's partial failure
+        self.assertEqual(report.extras[kt.EXTRA_TURNED_DOWN], 1)
         self.assertEqual(report.tiers[kt.PARTIAL_FAILURE], 1)
-        self.assertEqual(report.extras[kt.EXTRA_TURNED_DOWN], 1)  # (never a failure)
 
     def test_an_extra_is_dmbots_own_or_kept_by_the_ai_dm(self) -> None:
         more = (entity("grey", "Greyford", kind="place"), entity("ash", "Ashwell", kind="place"))
         report = tiers(backup([], *more), [said("names", "yes", "Ashwell")])
         self.assertEqual(report.extras[kt.EXTRA_ITSELF], 2)  # (Greyford, and the backup's guild)
+        self.assertEqual(report.tiers[kt.FAILURE], 2)  # (added by itself: failures; kept: none)
         self.assertEqual(report.extras[kt.EXTRA_KEPT], 1)
 
     def test_an_extra_tie_between_key_entries_is_counted_by_how_it_came(self) -> None:
@@ -121,7 +126,8 @@ class InACheck(unittest.TestCase):
         capped = tiers(self.waiting_hall(), [said("names", kt.NOT_DECIDED, "Stonehall")])
         self.assertEqual(capped.tiers[kt.NOT_DECIDED], 1)
         unsure = tiers(self.waiting_hall(), [said("names", "not sure", "Stonehall")])
-        self.assertEqual((unsure.tiers[kt.FAILURE], unsure.tiers[kt.TOTAL]), (1, 4))  # (+ the tie)
+        # (Stonehall, and the backup's extra guild that DMbot added by itself)
+        self.assertEqual((unsure.tiers[kt.FAILURE], unsure.tiers[kt.TOTAL]), (2, 4))
 
     def test_found_though_the_ai_dm_said_no_is_its_own_line(self) -> None:
         report = tiers(backup([]), [said("names", "no", "Stonehall")])
@@ -171,7 +177,7 @@ class InACheck(unittest.TestCase):
                 code = gkc.main([str(b), "--key", str(k), "--record", str(r), "--counts-only"])
         self.assertEqual(code, 0)
         text = out.getvalue()
-        self.assertIn("Tiers, every key row: total success", text)
+        self.assertIn("Tiers, every key row and extra: total success", text)
         self.assertIn("flagged and turned down 1", text)
         for name in ("Greyford", "Dog sleds", "Stonehall"):
             self.assertNotIn(name, text)
