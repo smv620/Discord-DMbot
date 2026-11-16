@@ -106,7 +106,7 @@ class TheFacts(Base):
         keeper = await self.add("The Keeper", "npc")
         await self.memory.add_alias(
             self.g, self.c, keeper, "The Keeper", kind="short", source=DM_SOURCE,
-            status="confirmed", secret=True,
+            status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         limited = await self.add("Veiled", "npc")
         await self.sql("UPDATE memory_entities SET audience_limited = true WHERE id = %s", limited)

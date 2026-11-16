@@ -50,14 +50,16 @@ class Base(MergeMovesConnections):
 
     async def hide(self, entity: str, hidden: bool = True) -> Any:
         return await self.memory.set_hidden_from_players(
-            GUILD_A, self.c, entity, hidden, source="dm"
+            GUILD_A, self.c, entity, hidden, source="dm", dm_chose_secret=True
         )
 
     async def listed(self, arlo_target: str | None = None) -> str:
         """A secret connection of Arlo, listed to the first player character only."""
         arlo = arlo_target or await self.add("Arlo", type="character", role="npc", status=CONFIRMED)
         rel = await self.connect(arlo)
-        await self.memory.set_connection_knowers(GUILD_A, self.c, rel, [self.pc], source="dm")
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, rel, [self.pc], source="dm", dm_chose_secret=True
+        )
         self.arlo = arlo
         return rel
 
@@ -83,7 +85,9 @@ class HidingAndShowingAgain(Base):
 
     async def test_what_the_dm_changed_in_between_stays(self) -> None:
         rel = await self.listed()
-        await self.memory.update_relation(GUILD_A, self.c, rel, source="dm", secret=False)
+        await self.memory.update_relation(
+            GUILD_A, self.c, rel, source="dm", secret=False, dm_chose_secret=True
+        )
         await self.hide(self.arlo)
         persp = {p.entity_id: p.id for p in await self.memory.perspectives(GUILD_A, self.c)}
         await self.memory.believe(
@@ -94,9 +98,13 @@ class HidingAndShowingAgain(Base):
 
     async def test_nothing_comes_back_that_the_hide_did_not_close(self) -> None:
         rel = await self.listed()
-        await self.memory.set_connection_knowers(GUILD_A, self.c, rel, [], source="dm")  # removed
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, rel, [], source="dm", dm_chose_secret=True
+        )  # removed
         removed = await self.newest(rel, self.pc)
-        await self.memory.update_relation(GUILD_A, self.c, rel, source="dm", secret=False)
+        await self.memory.update_relation(
+            GUILD_A, self.c, rel, source="dm", secret=False, dm_chose_secret=True
+        )
         await self.hide(self.arlo)
         await self.hide(self.arlo, False)
         self.assertEqual((await self.newest(rel, self.pc))["confidence"], removed["confidence"])
@@ -127,7 +135,13 @@ class HidingAndShowingAgain(Base):
     async def test_only_player_characters_close(self) -> None:
         rel = await self.listed()
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, CONNECTION, rel, {self.pc: 1.0, self.captain: 1.0}, source="dm"
+            GUILD_A,
+            self.c,
+            CONNECTION,
+            rel,
+            {self.pc: 1.0, self.captain: 1.0},
+            source="dm",
+            dm_chose_secret=True,
         )
         await self.memory.pin(GUILD_A, self.c, rel, True, source="dm")
         npc_before, truth_before = await self.newest(rel, self.captain), await self.truth(rel)
@@ -142,7 +156,9 @@ class HidingAndShowingAgain(Base):
         clue = await self.add("Torn Map", type="clue", status=CONFIRMED)
         rel = await self.listed(clue)
         await self.memory.add_knower(GUILD_A, self.c, clue, self.ids["mara"], source="dm")
-        done = await self.memory.set_audience_limited(GUILD_A, self.c, clue, True, source="dm")
+        done = await self.memory.set_audience_limited(
+            GUILD_A, self.c, clue, True, source="dm", dm_chose_secret=True
+        )
         self.assertEqual(await self.knowers(rel), [])
         self.assertFalse(await self.believes(rel))
         assert done.batch is not None
@@ -156,7 +172,9 @@ class HidingAndShowingAgain(Base):
             "Arlo Two", type="character", role="npc", status=CONFIRMED, hidden_from_players=True
         )
         rel = await self.listed(keep)
-        done = await self.memory.merge(GUILD_A, self.c, keep, gone, source="dm", dm_said_same=True)
+        done = await self.memory.merge(
+            GUILD_A, self.c, keep, gone, source="dm", dm_said_same=True, dm_chose_secret=True
+        )
         self.assertEqual(await self.knowers(rel), [])
         self.assertFalse(await self.believes(rel))
         assert done.batch is not None
@@ -173,7 +191,12 @@ class HidingAndShowingAgain(Base):
                 status=CONFIRMED, secret=True,
             )  # fmt: skip
             await self.memory.set_connection_knowers(
-                GUILD_A, self.c, str(made.value[0].id), [self.pc, self.ids["mara"]], source="dm"
+                GUILD_A,
+                self.c,
+                str(made.value[0].id),
+                [self.pc, self.ids["mara"]],
+                source="dm",
+                dm_chose_secret=True,
             )
         count = {"n": 0}
         original = psycopg.AsyncConnection.execute
@@ -230,7 +253,9 @@ class WhatTheHideKeeps(Base):
             status=CONFIRMED, secret=True,
         )  # fmt: skip
         rel = str(made.value[0].id)
-        await self.memory.set_connection_knowers(GUILD_A, self.c, rel, [self.pc], source="dm")
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, rel, [self.pc], source="dm", dm_chose_secret=True
+        )
         return a, b, rel
 
     async def test_a_hide_a_month_old_and_pruned_still_comes_back(self) -> None:
@@ -257,7 +282,7 @@ class WhatTheHideKeeps(Base):
         rel = await self.listed()
         await self.hide(self.arlo)
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, CONNECTION, rel, {self.pc: 0.5}, source="dm"
+            GUILD_A, self.c, CONNECTION, rel, {self.pc: 0.5}, source="dm", dm_chose_secret=True
         )
         mid = await self.krows(rel), await self.newest(rel, self.pc)
         await self.hide(self.arlo, False)
@@ -267,7 +292,7 @@ class WhatTheHideKeeps(Base):
         rel = await self.listed()
         await self.hide(self.arlo)
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, rel, [self.ids["mara"]], source="dm"
+            GUILD_A, self.c, rel, [self.ids["mara"]], source="dm", dm_chose_secret=True
         )
         await self.hide(self.arlo, False)
         known = await self.knowers(rel)
@@ -323,7 +348,9 @@ class WhatTheHideKeeps(Base):
         other = await self.add(
             "Arlo Two", type="character", role="npc", status=CONFIRMED, hidden_from_players=True
         )
-        await self.memory.merge(GUILD_A, self.c, self.arlo, other, source="dm", dm_said_same=True)
+        await self.memory.merge(
+            GUILD_A, self.c, self.arlo, other, source="dm", dm_said_same=True, dm_chose_secret=True
+        )
         await self.hide(self.arlo, False)
         self.assertEqual(await self.knowers(rel), [self.pc])
         self.assertTrue(await self.believes(rel))
@@ -418,7 +445,7 @@ class UndoAcrossTheMigration(Base):
         arlo = await self.add("Arlo", type="character", role="npc", status=CONFIRMED)
         rel = await self.connect(arlo)
         written = await self.memory.set_connection_knowers(
-            GUILD_A, self.c, rel, [self.pc], source="dm"
+            GUILD_A, self.c, rel, [self.pc], source="dm", dm_chose_secret=True
         )
         assert written.batch is not None
         await self.strip(written.batch)
@@ -430,9 +457,11 @@ class UndoAcrossTheMigration(Base):
     async def test_a_removal_logged_before_the_column_can_still_be_undone(self) -> None:
         arlo = await self.add("Arlo", type="character", role="npc", status=CONFIRMED)
         rel = await self.connect(arlo)
-        await self.memory.set_connection_knowers(GUILD_A, self.c, rel, [self.pc], source="dm")
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, rel, [self.pc], source="dm", dm_chose_secret=True
+        )
         removed = await self.memory.set_connection_knowers(
-            GUILD_A, self.c, rel, [], source="dm"
+            GUILD_A, self.c, rel, [], source="dm", dm_chose_secret=True
         )  # (a row deleted and a 0.0 belief written: what a hide logged before this release)
         assert removed.batch is not None
         await self.strip(removed.batch)
@@ -448,12 +477,17 @@ class JoinedThroughTheGuardsName(MyCharacters):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         await self.memory.set_connection_knowers(
-            self.g, self.one.id, self.guard_link, [self.okra], source=DM_SOURCE
+            self.g,
+            self.one.id,
+            self.guard_link,
+            [self.okra],
+            source=DM_SOURCE,
+            dm_chose_secret=True,
         )
 
     async def hide(self, entity: str, hidden: bool) -> Any:
         return await self.memory.set_hidden_from_players(
-            self.g, self.one.id, entity, hidden, source="dm"
+            self.g, self.one.id, entity, hidden, source="dm", dm_chose_secret=True
         )
 
     async def holds_guard_name(self) -> bool:

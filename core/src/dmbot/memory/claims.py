@@ -1966,6 +1966,7 @@ class ClaimStore:
             met_store,
             private_scene_store,
             reveal_proposals,
+            secret_questions,
             thread_suggestions,
         )
 
@@ -1984,6 +1985,8 @@ class ClaimStore:
             readings += await scenes.forget(conn, guild_id, user_id)
             # (DMbot's graph check reports that quote them, #3741)
             readings += await graph_review.forget(conn, guild_id, user_id)
+            # (the 🤫 questions that quote them, #4524)
+            readings += await secret_questions.forget(conn, guild_id, user_id)
             # (the story threads read from a session that quote them, #4522)
             readings += await thread_suggestions.forget(conn, guild_id, user_id)
             answers = await who_answers.forget(conn, guild_id, user_id)

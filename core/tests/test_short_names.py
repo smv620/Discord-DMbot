@@ -197,7 +197,14 @@ class TheStore(DatabaseTest):
         tran = await self.person("Tran Vosk")
         other = await self.person("Bruno Hale")
         await self.memory.add_alias(
-            GUILD, self.campaign.id, other, "Tran", kind="nickname", source=DM_SOURCE, secret=True
+            GUILD,
+            self.campaign.id,
+            other,
+            "Tran",
+            kind="nickname",
+            source=DM_SOURCE,
+            secret=True,
+            dm_chose_secret=True,
         )
         self.assertEqual(
             (await self.memory.add_short_names(GUILD, self.campaign.id, [TEXT])).value, []

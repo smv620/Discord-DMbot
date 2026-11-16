@@ -1007,7 +1007,7 @@ class NameCards(NamesTest):
             GUILD, self.campaign.id, before.id, status=CONFIRMED, source=DM_SOURCE
         )
         await self.memory.update_relation(
-            GUILD, self.campaign.id, before.id, secret=True, source=DM_SOURCE
+            GUILD, self.campaign.id, before.id, secret=True, source=DM_SOURCE, dm_chose_secret=True
         )
         it = self.it()
         await undo.callback(it)
@@ -1187,7 +1187,7 @@ class NameCards(NamesTest):
         await page._who(it)
         self.assertIn("Players can see this connection.", it.response.edited[0][0])
         await self.memory.update_relation(
-            GUILD, self.campaign.id, rel.id, secret=True, source=DM_SOURCE
+            GUILD, self.campaign.id, rel.id, secret=True, source=DM_SOURCE, dm_chose_secret=True
         )
         self.fresh()
         page = await self.page_of(corin.id, rel.id)
@@ -1466,7 +1466,7 @@ class NameCards(NamesTest):
         for k in range(n):
             await self.memory.add_alias(
                 GUILD, self.campaign.id, self.bell.id, f"{'Hush' if secret else 'Bell'} {k:02d}",
-                kind="nickname", source="dm", status=CONFIRMED, secret=secret,
+                kind="nickname", source="dm", status=CONFIRMED, secret=secret, dm_chose_secret=True,
             )  # fmt: skip
         self.fresh()
 

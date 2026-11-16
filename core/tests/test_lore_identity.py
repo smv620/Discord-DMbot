@@ -453,7 +453,7 @@ class TheSecrecyEdges(NamesTest):
     ) -> None:
         await self.memory.add_alias(
             GUILD, self.campaign.id, self.ash, "the hooded stranger", kind="title", secret=True,
-            status=CONFIRMED, source="dm",
+            status=CONFIRMED, source="dm", dm_chose_secret=True,
         )  # fmt: skip
         answer = {
             "names": [

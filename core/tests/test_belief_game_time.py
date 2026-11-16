@@ -39,7 +39,9 @@ class GameTime(lies_t.Lies):
 
     async def test_a_pin_and_a_reword_keep_the_same_beliefs_minute(self) -> None:
         made = await self.think(self.truth, "revealed_fact", 1.0, [], game_time=5000)
-        await self.memory.update_relation(GUILD_A, self.c, self.rel, source="dm", secret=False)
+        await self.memory.update_relation(
+            GUILD_A, self.c, self.rel, source="dm", secret=False, dm_chose_secret=True
+        )
         await self.memory.pin(GUILD_A, self.c, self.rel, True, source="dm")
         async with self.db.guild(GUILD_A) as conn:
             cur = await conn.execute(

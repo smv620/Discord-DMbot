@@ -27,7 +27,7 @@ class WhoKnowsOnTheWeb(Web):
 
     async def knowers(self, link: str, *characters: str) -> None:
         await self.memory.set_connection_knowers(
-            self.g, self.one.id, link, list(characters), source=DM_SOURCE
+            self.g, self.one.id, link, list(characters), source=DM_SOURCE, dm_chose_secret=True
         )
 
     def link_of(self, got: dict[str, Any], tag: str) -> dict[str, Any]:

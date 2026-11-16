@@ -30,7 +30,7 @@ class TheOpenThreads(ConfirmedMemoryTest):
         made = await self.memory.new_thread(GUILD_A, self.c, name, "quest", state, source="dm")
         thread_id = made.value.id
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, ENTRY, thread_id, knowers, source="dm"
+            GUILD_A, self.c, ENTRY, thread_id, knowers, source="dm", dm_chose_secret=True
         )
         return str(thread_id)
 
@@ -77,7 +77,7 @@ class TheOpenThreads(ConfirmedMemoryTest):
         other = await self.campaigns.create(GUILD_A, "Other", 7)
         made = await self.memory.new_thread(GUILD_A, other.id, "Theirs", "quest", OPEN, source="dm")
         await self.memory.set_statement_knowers(
-            GUILD_A, other.id, ENTRY, made.value.id, [], source="dm"
+            GUILD_A, other.id, ENTRY, made.value.id, [], source="dm", dm_chose_secret=True
         )
         await self.thread("Mine", [self.ada, self.bryn])
         self.assertEqual(await self.seen(), ("Mine",))

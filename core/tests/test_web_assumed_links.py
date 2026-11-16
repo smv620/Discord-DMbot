@@ -60,7 +60,7 @@ class Assumed(link_actions.Editing):
         self.assertNotIn(guess, await self.edges(self.player))
         # the DM's own 👁️ Reveal is their word on it: then the players see it like any other
         await self.memory.update_relation(
-            self.g, self.one.id, guess, source=DM_SOURCE, unrevealed=False
+            self.g, self.one.id, guess, source=DM_SOURCE, unrevealed=False, dm_chose_secret=True
         )
         self.assertIn(guess, await self.edges(self.player))
 

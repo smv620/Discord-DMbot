@@ -189,7 +189,9 @@ class RouteCondition(_Road):
         pc = await self.add("Testa", type="player_character", played_by=9, status="confirmed")
         party = gate.Viewer.player([pc])
         for kind, target in ((gate.ENTRY, self.pass_), (gate.CONNECTION, self.road)):
-            await self.memory.set_statement_knowers(GUILD_A, self.c, kind, target, [pc], source=DM)
+            await self.memory.set_statement_knowers(
+                GUILD_A, self.c, kind, target, [pc], source=DM, dm_chose_secret=True
+            )
         await self.read(Read(self.pass_, mf.CONDITION, "closed"))
         self.assertIsNone(await self.cond(viewer=party))  # (DMbot's read is the DM's)
         await self.memory.keep_map_facts(GUILD_A, self.c, self.pass_, source=DM)
@@ -215,7 +217,7 @@ class RouteCondition(_Road):
         )
         track = made.value[0].id
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, gate.CONNECTION, track, [pc], source=DM
+            GUILD_A, self.c, gate.CONNECTION, track, [pc], source=DM, dm_chose_secret=True
         )
         await self.set("closed", place_id="", relation_id=track)
         await self.memory.show_road_condition(GUILD_A, self.c, track, True, source=DM)

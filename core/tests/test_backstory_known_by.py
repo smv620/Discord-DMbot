@@ -267,6 +267,30 @@ class UploadsNeverHide(_Table):
         ]
         self.assertTrue(rel.secret)  # (the DM pressed 🤫: that is their word, not the text's)
 
+    async def test_the_websites_keep_as_secret_ends_the_public_one_it_replaces(self) -> None:
+        # (#4524, Supervisor's review: the same press is the DM's choice for the new connection
+        # and for ending the old one, so nothing is held back and nothing asked)
+        ids = await self.ids()
+        old = await self.memory.add_relation(
+            GUILD, self.campaign.id, ids["Voss"], "ally_of", ids["Tavin"],
+            source="dm", confidence=1.0, status=CONFIRMED,
+        )  # fmt: skip
+        await self.store.add(
+            GUILD, self.campaign.id, [NewLink(ids["Voss"], "enemy_of", ids["Tavin"], "q")]
+        )
+        (waiting,) = await self.store.waiting(GUILD, self.campaign.id)
+        await keep.keep_all(
+            self.memory, self.store, GUILD, self.campaign.id,
+            [replace(waiting, secret=True)], keep_flags=False,
+        )  # fmt: skip
+        (ended,) = [
+            r
+            for r in await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
+            if r.id == old.value[0].id
+        ]
+        self.assertIsNotNone(ended.to_session_at)
+        self.assertEqual(await self.memory.secret_questions_waiting(GUILD, self.campaign.id), [])
+
     async def test_a_secret_spelling_of_a_public_name_leaves_it_public(self) -> None:
         ids = await self.ids()
         await self.memory.add_alias(

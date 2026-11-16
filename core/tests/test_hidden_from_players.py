@@ -26,7 +26,9 @@ class Hidden(ConfirmedMemoryTest):
         self.shadow = await self.add("The Shadow", type="character", role="npc")
         await self.relate(self.jack, "member_of", self.guild, status="confirmed")
         await self.relate(self.shadow, "member_of", self.guild, status="confirmed")
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.shadow, True, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, self.shadow, True, source="dm", dm_chose_secret=True
+        )
 
     async def entity(
         self, entity_id: str, guild: int = GUILD_A, campaign: str | None = None
@@ -36,7 +38,7 @@ class Hidden(ConfirmedMemoryTest):
     async def test_only_the_dm_sets_it_and_it_can_be_turned_off(self) -> None:
         with self.assertRaises(MemoryRuleError):
             await self.memory.set_hidden_from_players(
-                GUILD_A, self.c, self.jack, True, source="entitybot"
+                GUILD_A, self.c, self.jack, True, source="entitybot", dm_chose_secret=True
             )
         with self.assertRaises(MemoryRuleError):
             await self.memory.add_entity(
@@ -44,19 +46,25 @@ class Hidden(ConfirmedMemoryTest):
                 hidden_from_players=True,
             )  # fmt: skip
         self.assertTrue((await self.entity(self.shadow)).hidden_from_players)
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.shadow, False, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, self.shadow, False, source="dm", dm_chose_secret=True
+        )
         self.assertFalse((await self.entity(self.shadow)).hidden_from_players)
 
     async def test_a_players_character_can_never_be_hidden(self) -> None:
         pc = await self.add("Cerric", type="character", role="player_character", played_by=5)
         with self.assertRaises(MemoryRuleError):
-            await self.memory.set_hidden_from_players(GUILD_A, self.c, pc, True, source="dm")
+            await self.memory.set_hidden_from_players(
+                GUILD_A, self.c, pc, True, source="dm", dm_chose_secret=True
+            )
         with self.assertRaises(MemoryRuleError):
             await self.memory.add_entity(
                 GUILD_A, self.c, type="character", name="Kesh", source="dm",
                 role="player_character", hidden_from_players=True,
             )  # fmt: skip
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, pc, False, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, pc, False, source="dm", dm_chose_secret=True
+        )
 
     async def test_the_recap_doors_keep_their_pinned_search_path(self) -> None:
         async with self.db.guild(GUILD_A) as conn:
@@ -99,7 +107,9 @@ class Hidden(ConfirmedMemoryTest):
         got = names_of(await service.roster(GUILD_A, self.c))
         self.assertIn("Jack", got)
         self.assertNotIn("The Shadow", got)
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.shadow, False, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, self.shadow, False, source="dm", dm_chose_secret=True
+        )
         self.assertIn("The Shadow", names_of(await service.roster(GUILD_A, self.c)))
 
     async def test_a_lookup_hides_it_from_players_and_not_from_the_dm(self) -> None:
@@ -135,7 +145,9 @@ class Hidden(ConfirmedMemoryTest):
         flag in the same write (one database trigger covers them all)."""
         for how in ("kind", "plays", "party"):
             hidden = await self.add(f"Hidden {how}", type="character", role="npc")
-            await self.memory.set_hidden_from_players(GUILD_A, self.c, hidden, True, source="dm")
+            await self.memory.set_hidden_from_players(
+                GUILD_A, self.c, hidden, True, source="dm", dm_chose_secret=True
+            )
             if how == "kind":
                 await self.memory.set_entity_type(
                     GUILD_A, self.c, hidden, "character", source="dm", role="player_character"
@@ -154,7 +166,9 @@ class Hidden(ConfirmedMemoryTest):
 
     async def test_a_merge_into_a_players_character_is_shown(self) -> None:
         pc = await self.add("Cerric", type="character", role="player_character", played_by=7)
-        await self.memory.merge(GUILD_A, self.c, pc, self.shadow, source="dm", dm_said_same=True)
+        await self.memory.merge(
+            GUILD_A, self.c, pc, self.shadow, source="dm", dm_said_same=True, dm_chose_secret=True
+        )
         await self.becomes_a_player_character_and_is_shown(pc)
 
     async def test_a_hidden_entrys_names_are_marked_but_not_secret_for_the_listeners(self) -> None:
@@ -181,7 +195,13 @@ class Hidden(ConfirmedMemoryTest):
     async def test_a_merge_keeps_it_hidden_if_either_was(self) -> None:
         keeper = await self.add("Shade", type="character", role="npc")
         await self.memory.merge(
-            GUILD_A, self.c, keeper, self.shadow, source="dm", dm_said_same=True
+            GUILD_A,
+            self.c,
+            keeper,
+            self.shadow,
+            source="dm",
+            dm_said_same=True,
+            dm_chose_secret=True,
         )
         self.assertTrue((await self.entity(keeper)).hidden_from_players)
 

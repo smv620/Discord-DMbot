@@ -898,7 +898,7 @@ class ThePlayerCharacters(DatabaseTest):
         villain = await self.read("The Pale Hand", role="npc")
         await self.memory.add_alias(
             GUILD, self.sample.id, villain, "Cerric", kind="nickname", source="dm",
-            status="confirmed", secret=True,
+            status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         await self.read("Claude", role="npc")
         got = await self.run_it()

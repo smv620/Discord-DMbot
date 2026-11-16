@@ -334,7 +334,7 @@ class TheUpload(Fixture):
         )  # fmt: skip
         rid = old.value[0].id
         await self.memory.set_statement_knowers(
-            GUILD, self.campaign.id, "connection", rid, [npc], source="dm"
+            GUILD, self.campaign.id, "connection", rid, [npc], source="dm", dm_chose_secret=True
         )
         await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, [w])
         self.assertEqual((await self.known("connection", [rid])).get(rid), [npc])
@@ -374,7 +374,7 @@ class TheUpload(Fixture):
         # (the other end is a spoiler, so the connection waits: the DM tells the players about it)
         for end in (guessed[0].subject_id, guessed[0].object_id):
             await self.memory.set_hidden_from_players(
-                GUILD, self.campaign.id, end, False, source="dm"
+                GUILD, self.campaign.id, end, False, source="dm", dm_chose_secret=True
             )
         done = await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, guessed[:1])
         (kept,) = await self.mine(guessed[0])
@@ -656,7 +656,7 @@ class Rules(Fixture):
         # (both ends are shown to the players, so a world connection between them is too)
         for entity_id in (mara, order):
             await self.memory.set_hidden_from_players(
-                GUILD, self.campaign.id, entity_id, False, source="dm"
+                GUILD, self.campaign.id, entity_id, False, source="dm", dm_chose_secret=True
             )
         await self.store.add(
             GUILD, self.campaign.id, [NewLink(mara, "member_of", order, "q", world=lk.SURE)]

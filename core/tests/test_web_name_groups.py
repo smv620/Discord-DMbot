@@ -149,7 +149,14 @@ class TheDatabaseHalf(WithChecks):
         """Parity (Supervisor, #3406): the store and the page give the same hints."""
         brannoch, veshla = await self.person("Brannoch"), await self.person("Veshla")
         await self.memory.add_alias(
-            GUILD, self.one.id, veshla, "The Boy Wonder", kind="nickname", source=DM, secret=True
+            GUILD,
+            self.one.id,
+            veshla,
+            "The Boy Wonder",
+            kind="nickname",
+            source=DM,
+            secret=True,
+            dm_chose_secret=True,
         )
         await self.group("The Ashen Circle", brannoch, veshla)
         await self.group("A Secret Club", brannoch, secret=True)  # a secret membership: no hint

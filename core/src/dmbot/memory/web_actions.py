@@ -1380,13 +1380,17 @@ async def _do(
         if alias_id is None:
             return _failed(NOT_FOUND)
         try:
-            await memory.update_alias(guild_id, cid, alias_id, source=DM, secret=a.flag)
+            await memory.update_alias(
+                guild_id, cid, alias_id, source=DM, secret=a.flag, dm_chose_secret=True
+            )
         except MemoryRuleError:
             return _failed(BAD_TARGET)
         return Outcome(result_id=entity_id)
     if a.action == "hide":  # "Players don't know this one yet", the whole entry
         try:
-            await memory.set_hidden_from_players(guild_id, cid, entity_id, a.flag, source=DM)
+            await memory.set_hidden_from_players(
+                guild_id, cid, entity_id, a.flag, source=DM, dm_chose_secret=True
+            )
         except MemoryRuleError:
             return _failed(BAD_TARGET)
         return Outcome(result_id=entity_id)
