@@ -42,7 +42,7 @@ import {
   SIGNED_OUT_EVENT,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
-import type { AccountApi, ApiHelpers, HandOverQuestion, MapsRead, MapsResult, NodeSummary, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
+import type { AccountApi, ApiHelpers, HandOverQuestion, MapsRead, MapsResult, NodeSummary, ThreadCard, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
 export function countOf(counts: unknown, key: string): number | undefined {
@@ -544,6 +544,9 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     setPcIcon: async (ref, entityId, choice) =>
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/pc-icons/${encodeURIComponent(entityId)}`, { choice })) as { previous: IconChoice; now: IconChoice },
     worldNotes: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/world-notes`)) as WorldNotes,
+    // The quest sheet of a kept story thread (#4547): read only, DM only (the door answers anyone else with nothing).
+    threadCard: async (ref, thread) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/threads/${encodeURIComponent(thread)}/card`)) as ThreadCard,
     // Queued for the bot like the connection edits (202 {answer}); this waits for it and gives back the change it made, for Undo.
     changeWorldNotes: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;
