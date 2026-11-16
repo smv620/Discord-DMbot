@@ -14,11 +14,12 @@ from tests.pg import DatabaseTest
 INSERT = re.compile(r"INSERT INTO\s+(\w+)\s*\(([^)]*)\)", re.IGNORECASE)
 
 # What each door writes that the sample run deliberately does not, and why:
-# - the lore door also takes a link and a speaker, both empty for a file upload;
+# - the lore door also takes a link, empty for a file upload (the speaker is written since #4523:
+#   the two-stage run queues each backstory as its owner's, as the door does);
 # - the import door also records each speaker's consent line (`import_consents`); the sample run
 #   does not fake one, it needs the test accounts to have agreed in Discord (see steps.py).
 LEFT_OUT = {
-    ("dmbot_web_lore_add", "lore_uploads"): {"link", "speaker"},
+    ("dmbot_web_lore_add", "lore_uploads"): {"link"},
 }
 NOT_WRITTEN = {("dmbot_import_store", "import_consents")}
 DOORS = {

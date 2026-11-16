@@ -261,18 +261,32 @@ def check_lore(text: str, choice: str) -> None:
 
 
 async def queue_lore(
-    db: Database, guild: int, campaign_id: str, dm: int, text: str, *, choice: str, now: int
+    db: Database,
+    guild: int,
+    campaign_id: str,
+    dm: int,
+    text: str,
+    *,
+    choice: str,
+    now: int,
+    speaker: str = "",
 ) -> str:
     """The lore, queued as the website's upload does (`dmbot_web_lore_add`): the DM's own words,
-    the right to use them confirmed by the DM now (recorded as this run), the choice stored."""
+    the right to use them confirmed by the DM now (recorded as this run), the choice stored.
+    `speaker`: a player character's entry id, for a backstory read as that character's own (the
+    page's "Whose backstory is this?", #4523): the worker checks it against the campaign's own
+    characters, as it does the website's. (This insert skips the door's own checks, `bad_speaker`,
+    `busy` and `too_soon`: the run stands in for them by reading the owners from the campaign's
+    confirmed player characters, `characters.ids_by_name`, and by waiting out each upload before
+    queuing the next.)"""
     check_lore(text, choice)
     async with db.guild(guild) as conn:
         cur = await conn.execute(
-            "INSERT INTO lore_uploads (guild_id, campaign_id, id, user_id, source, text, choice,"
-            " rights_by, rights_at, created_at, updated_at) VALUES (%s, %s,"
-            " replace(gen_random_uuid()::text, '-', ''), %s, 'file', %s, %s, %s, %s, %s, %s)"
+            "INSERT INTO lore_uploads (guild_id, campaign_id, id, user_id, source, text, speaker,"
+            " choice, rights_by, rights_at, created_at, updated_at) VALUES (%s, %s,"
+            " replace(gen_random_uuid()::text, '-', ''), %s, 'file', %s, %s, %s, %s, %s, %s, %s)"
             " RETURNING id",
-            (guild, campaign_id, dm, text, choice, dm, now, now, now),
+            (guild, campaign_id, dm, text, speaker, choice, dm, now, now, now),
         )
         row = await cur.fetchone()
     assert row is not None
@@ -557,14 +571,37 @@ def master_key() -> dict[str, object]:
     return key
 
 
-def score(path: Path, docs: str) -> list[str]:
+def built_key_path(name: str) -> Path:
+    """One of the built keys (`total_key.json`, `full_key.json`, #4523), beside the master key."""
+    from dmbot.devtools import graph_key_check
+
+    return graph_key_check.DEFAULT_KEY.with_name(name)
+
+
+def built_key(name: str) -> dict[str, object]:
+    import json
+
+    try:
+        key = json.loads(built_key_path(name).read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SampleError(f"the answer key {name} is not readable") from exc
+    if not isinstance(key, dict):
+        raise SampleError(f"the answer key {name} is not readable")
+    return key
+
+
+def score(
+    path: Path, docs: str, *, key: Path | None = None, record: Path | None = None
+) -> list[str]:
     """`graph_key_check --docs DOCS --counts-only` on a backup, as the command does, and its
-    counts-only lines back."""
+    counts-only lines back. `key`: another answer key than the master (a stage's built key);
+    `record`: the decision record, so each key row's tier is scored too (#4523)."""
     from dmbot.devtools import graph_key_check
 
     out, err = io.StringIO(), io.StringIO()
+    more = [*(["--key", str(key)] if key else []), *(["--record", str(record)] if record else [])]
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        code = graph_key_check.main([str(path), "--docs", docs, "--counts-only"])
+        code = graph_key_check.main([str(path), "--docs", docs, "--counts-only", *more])
     if code != 0:
         # (the checker's own one-line reason: it names a rule, never a name from the backup)
         why = err.getvalue().strip().splitlines()[:1]
@@ -575,15 +612,18 @@ def score(path: Path, docs: str) -> list[str]:
     return out.getvalue().splitlines()
 
 
-def score_numbers(path: Path, docs: str) -> dict[str, int]:
+def score_numbers(
+    path: Path, docs: str, *, key: Mapping[str, object] | None = None
+) -> dict[str, int]:
     """The answer-key check's totals as numbers (#3545's spread): entries and ties found, missing,
-    wrong and waiting over every group, and the extras. Counts only."""
+    wrong and waiting over every group, and the extras. Counts only. `key`: another answer key
+    than the master (a stage's built key, #4523)."""
     from collections import Counter
 
     from dmbot.campaigns.store import decode_backup
     from dmbot.devtools import graph_key_check as gkc
 
-    summary = gkc.summarize(gkc.check(decode_backup(path.read_bytes()), master_key(), docs))
+    summary = gkc.summarize(gkc.check(decode_backup(path.read_bytes()), key or master_key(), docs))
     out: dict[str, int] = {}
     for part in ("entries", "ties"):
         total: Counter[str] = Counter()

@@ -275,6 +275,20 @@ class TheStage(unittest.IsolatedAsyncioTestCase):
         got = await self.stage(ai, asker=asker)
         self.assertEqual((ai.calls, got.over_cap["names"]), (3, 1))
 
+    async def test_a_cap_for_each_stage(self) -> None:
+        """--stages 2 (#4523, ruling E): one asker, a new budget for each stage, so each stage asks
+        up to its own cap, and what each leaves over it is counted for that stage."""
+        self.names(entity("e1", "Tran"), entity("e2", "Bruno Hale"), entity("e3", "Shela Marr"))
+        ai = FakeAI()
+        asker = d.Asker(ai, "m", d.Budget(0), d.Run(), self.record)
+        left = []
+        for _stage in (1, 2):
+            asker.budget = d.Budget(2)
+            before = sum(asker.run.over_cap.values())
+            await self.stage(ai, asker=asker)
+            left.append(sum(asker.run.over_cap.values()) - before)
+        self.assertEqual((ai.calls, left), (4, [1, 1]))
+
     async def test_a_refused_which_one_pick_is_counted_refused_not_done(self) -> None:
         q = SimpleNamespace(id="q1", other="Tran", predicate="knows", word="Bruno", quote="",
                             candidates=(("e2", "Bruno Hale"), ("e3", "Shela Marr")))  # fmt: skip

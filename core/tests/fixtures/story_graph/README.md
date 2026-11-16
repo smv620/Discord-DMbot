@@ -30,6 +30,32 @@ To score a backup against them: `python -m dmbot.devtools.graph_key_check BACKUP
 
 With `--record <the run's decisions.jsonl>` the report also gives each key row's tier (#4523): **total success** (found, never asked: DMbot added it itself), **partial success** (the AI DM took DMbot's first choice), **provisional success** (another choice the card offered), **partial failure** (DMbot suggested something the key doesn't list and the AI DM turned it down), **failure** (a key row missing, an extra DMbot added by itself, or a leak), and on their own lines **not decided** (left at the cap), **found despite a no**, and **the AI DM said no to a right one** (by kind: the stand-in DM's misses, not DMbot's). Extras are also listed as added by DMbot itself, kept by the AI DM, or turned down. A key entry's `secret_aliases` are scored as names of their own: found or missing, and who knows each found one. The record stays on the server; the report prints counts only.
 
+## Running the two stages (dev1)
+
+`sample_run --stages 2` runs the whole two-stage sample (#4523):
+1. It sets up the four player characters and their players.
+2. It reads each backstory as its own character's: one upload at a time, the page's "Whose backstory is this?" answer given, with spoilers.
+3. It reads the public lore.
+4. **Stage 1:** what DMbot is sure of, then the AI DM's decisions, then a backup scored against `total_key.json`.
+5. **Stage 2:** the session import, what DMbot is sure of, the AI DM's decisions, then a backup scored against `full_key.json`.
+6. The recap.
+
+Both scores read the run's decision record, so every key row gets its tier and its knowers. Each stage has its own cap of careful-model decisions, 150 by default (`--cap N`). A stage that reaches it says "stopped at the cap: N still waiting"; those rows score as not decided.
+
+1. Save each backstory document above as plain text on the server, outside the repository (File, Download, Plain text).
+2. Run it once without `--yes`. `--lore-choice world` reads the public lore as 🌍 Common knowledge, which is what makes it reveal the backstory rows it states (#4524 slice 1b); the run's default, `smart`, reveals nothing. It prints the most it can spend (the decisions are at most twice the cap) and changes nothing:
+
+   ```
+   python -m dmbot.devtools.sample_run --guild GUILD --dm DM_USER_ID --deploy N \
+       --lore LORE.txt --session SESSION.txt --stages 2 --lore-choice world \
+       --backstory cerric=CERRIC.txt --backstory okthandom=OKTHANDOM.txt \
+       --backstory claude=CLAUDE.txt --backstory belleros=BELLEROS.txt
+   ```
+3. Run it again with `--yes`.
+4. Post the printed counts on #3545: the two stages' tier lines, the who-knows lines and the cap lines. The backups and the decision record stay in the backup folder on the server, never on GitHub.
+
+Without `--stages 2`, the run is today's single-stage one, so the old series goes on.
+
 ## The test players
 
 | Player character | Player (not on Discord) |

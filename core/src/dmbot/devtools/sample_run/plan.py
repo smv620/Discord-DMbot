@@ -102,6 +102,60 @@ STEPS_DECIDE: tuple[str, ...] = (
     "recap (no audio)",
 )
 
+# The two-stage run (#4523, Supervisor's ruling): the four player characters and their players
+# first, then each player's secret backstory read as that character's own (one upload at a time:
+# a campaign has one open upload), then the public lore. Stage 1 is what DMbot is sure of, the AI
+# DM's answers, and a score against `total_key.json`; stage 2 adds the session and is scored
+# against `full_key.json`. Both scores read the decision record, for the tiers.
+BACKSTORIES: tuple[tuple[str, str], ...] = (
+    ("cerric", "Cerric Vanya'elen"),
+    ("okthandom", "Okthandom Korran"),
+    ("claude", "Claude Ambere"),
+    ("belleros", "Belleros Stormgrace"),
+)
+STAGE_KEYS = {1: "total_key.json", 2: "full_key.json"}
+DEFAULT_STAGE_CAP = 150  # careful-model decisions a stage (ruling E); `--cap` overrides it
+STEPS_TWO: tuple[str, ...] = (
+    "players not on Discord",
+    "player characters corrected",
+    *(f"backstory read ({slug})" for slug, _ in BACKSTORIES),
+    "lore read",
+    "sure (stage 1)",
+    "AI decides (stage 1)",
+    "backup and score (stage 1)",
+    "session import",
+    "sure (stage 2)",
+    "AI decides (stage 2)",
+    "backup and score (stage 2)",
+    "recap (no audio)",
+)
+
+
+def parse_backstories(given: Sequence[str]) -> dict[str, str]:
+    """`--backstory slug=FILE`, once for each of the four (#4523): {slug: file}. Every one of the
+    four, each once, and nothing else, or a refusal that changes nothing."""
+    known = {slug for slug, _ in BACKSTORIES}
+    out: dict[str, str] = {}
+    for item in given:
+        slug, sep, path = item.partition("=")
+        slug, path = slug.strip().casefold(), path.strip()
+        if not sep or not path or slug not in known:
+            raise SampleError(
+                "--backstory is SLUG=FILE, SLUG one of " + ", ".join(s for s, _ in BACKSTORIES)
+            )
+        if slug in out:
+            raise SampleError(f"the {slug} backstory is given twice")
+        out[slug] = path
+    if set(out) != known:
+        missing = ", ".join(s for s, _ in BACKSTORIES if s not in out)
+        raise SampleError(f"--stages 2 needs all four backstories (missing: {missing})")
+    return out
+
+
+def cap_line(left: int) -> str:
+    """Ruling E: a stage that hit its cap says how many items it left waiting, never which."""
+    return f"stopped at the cap: {left} still waiting"
+
 
 def off_discord_roles(
     labels: Collection[str], display: Mapping[str, str]
