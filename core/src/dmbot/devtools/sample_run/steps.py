@@ -531,6 +531,7 @@ async def write_recap(
     *,
     run: Callable[[list[str]], Awaitable[int]] | None = None,
     spent: list[CostLine] | None = None,
+    why: list[str] | None = None,
 ) -> int:
     """The recap, with no audio, by the same code as `recap_run --session ... --yes`. Its report
     holds the recap's words, so it is swallowed: only the exit code comes back (0: made). `spent`
@@ -543,9 +544,17 @@ async def write_recap(
             return await rr.main_async(rr.parse_args(argv))
 
     argv = ["--session", str(guild), campaign_id, str(session_at), "--yes"]
-    swallowed = io.StringIO()
-    with contextlib.redirect_stdout(swallowed):
+    swallowed, complaints = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(swallowed), contextlib.redirect_stderr(complaints):
         code = await run(argv)
+    if code != 0 and why is not None:
+        # The tool's own "recap_run: ..." lines say why and hold none of the recap's words (the
+        # stdout report does, which is why it is swallowed): pass them on (#4543).
+        why.extend(
+            line.strip()
+            for line in complaints.getvalue().splitlines()
+            if line.startswith("recap_run:")
+        )
     if spent is not None and (line := recap_line(swallowed.getvalue())) is not None:
         spent.append(line)
     return code
