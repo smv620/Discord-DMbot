@@ -43,11 +43,11 @@ With `--record <the run's decisions.jsonl>` the report also gives each key row's
 Both scores read the run's decision record, so every key row gets its tier and its knowers. Each stage has its own cap of careful-model decisions, 150 by default (`--cap N`). A stage that reaches it says "stopped at the cap: N still waiting"; those rows score as not decided.
 
 1. Save each backstory document above as plain text on the server, outside the repository (File, Download, Plain text).
-2. Run it once without `--yes`. It prints the most it can spend (the decisions are at most twice the cap) and changes nothing:
+2. Run it once without `--yes`. `--lore-choice world` reads the public lore as 🌍 Common knowledge, which is what makes it reveal the backstory rows it states (#4524 slice 1b); the run's default, `smart`, reveals nothing. It prints the most it can spend (the decisions are at most twice the cap) and changes nothing:
 
    ```
    python -m dmbot.devtools.sample_run --guild GUILD --dm DM_USER_ID --deploy N \
-       --lore LORE.txt --session SESSION.txt --stages 2 \
+       --lore LORE.txt --session SESSION.txt --stages 2 --lore-choice world \
        --backstory cerric=CERRIC.txt --backstory okthandom=OKTHANDOM.txt \
        --backstory claude=CLAUDE.txt --backstory belleros=BELLEROS.txt
    ```
