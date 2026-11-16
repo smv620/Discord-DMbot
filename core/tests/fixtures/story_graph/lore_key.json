@@ -1,7 +1,7 @@
 {
  "campaign": "test of the frostmaiden (sample)",
  "source": "the public sample lore, https://docs.google.com/document/d/1zbt7g3r6uFfiSYr3fl_gyaxARhwJPizauI0jmiEa2aw/edit?usp=sharing (the plain-text export; each connection names its line)",
- "version": 5,
+ "version": 6,
  "how_to_read": {
   "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted as a fact); by_rule = made by a rule, not read",
   "relation": "parent_of, grandparent_of, sibling, spouse, uncle_of, apprentice_of, mentor_of, owns, carries, knows (+ one of nine feeling words), member, leads, works_for, enemy_of, rival_of, held_captive_by, found, associate; place ties by word: lives_in, lived_in, works_in, comes_from, last_seen_in (a character, creature or group), kept_in, was_kept_in (an item); in (only a place inside a place)",
@@ -11,7 +11,10 @@
   "line": "the line of the document's plain-text export that supports it (blank lines count)",
   "map_facts": "a place's land, climate or ruler (#4256): layer terrain, climate or control; value a word of that layer's list, or the ruling group's key name; scored per layer as found, wrong, missed and extra (a row the key does not list)",
   "languages": "a character's languages are a property of the character, never a tie (owner, 2026-11-14; #4229): {character, language, line, note}; scored as found, missed, and extra (a language the key does not list)",
-  "threads": "a story thread (quests design, #4450 §9.3; #4453): kind quest, hook or mystery; giver, target and taker (who takes it on, for a pursuit that is one character's own) are key names; missing and in_danger list who the thread is about. The party is never named: a thread is the party's unless it has a taker. hint = a question the text leaves open, counted when found and never missed. Scored as found, missed, wrong (another kind), doubles and extra (a thread the key does not list)"
+  "threads": "a story thread (quests design, #4450 §9.3; #4453): kind quest, hook or mystery; giver, target and taker (who takes it on, for a pursuit that is one character's own) are key names; missing and in_danger list who the thread is about. The party is never named: a thread is the party's unless it has a taker. hint = a question the text leaves open, counted when found and never missed. Scored as found, missed, wrong (another kind), doubles and extra (a thread the key does not list)",
+  "knowers": "who knows each row (#4523): \"everyone\" = common knowledge, the world's (#4537); \"party\" = the four player characters, told as their own story. The player characters' backgrounds here are the party's: what they state from a secret backstory becomes the party's (see reveals)",
+  "reveals": "each lore row, event or thread id, and the backstory key rows (backstory_*.json) it makes known to its knowers; every backstory row not listed stays its own knowers' secret. A backstory node is revealed when this key has a node of the same name or alias",
+  "thread_knowers": "the lore's threads are all the party's: \"thread_knowers\""
  },
  "players": {
   "Cerric Vanya'elen": "player_ist",
@@ -29,7 +32,8 @@
     "Norro",
     "Spellweave"
    ],
-   "note": "Player character. Norro is his old name."
+   "note": "Player character. Norro is his old name.",
+   "knowers": "party"
   },
   {
    "name": "Belleros Stormgrace",
@@ -37,7 +41,8 @@
    "aliases": [
     "Belleros"
    ],
-   "note": "Player character."
+   "note": "Player character.",
+   "knowers": "party"
   },
   {
    "name": "Okthandom Korran",
@@ -45,7 +50,8 @@
    "aliases": [
     "Okthandom"
    ],
-   "note": "Player character."
+   "note": "Player character.",
+   "knowers": "party"
   },
   {
    "name": "Claude Ambere",
@@ -55,7 +61,8 @@
     "Griz",
     "Major Ursa"
    ],
-   "note": "Player character. His first name was Griz, son of Lee."
+   "note": "Player character. His first name was Griz, son of Lee.",
+   "knowers": "party"
   },
   {
    "name": "The party",
@@ -65,37 +72,43 @@
     "our four adventurers",
     "the company"
    ],
-   "note": "The four player characters."
+   "note": "The four player characters.",
+   "knowers": "party"
   },
   {
    "name": "Roceran",
    "kind": "person",
    "aliases": [],
-   "note": "Cerric's father, an explorer and wanderer"
+   "note": "Cerric's father, an explorer and wanderer",
+   "knowers": "party"
   },
   {
    "name": "Shafina",
    "kind": "person",
    "aliases": [],
-   "note": "Cerric's mother, a magical weaver"
+   "note": "Cerric's mother, a magical weaver",
+   "knowers": "party"
   },
   {
    "name": "Valyra",
    "kind": "person",
    "aliases": [],
-   "note": "Cerric's younger sister, a sorcerer"
+   "note": "Cerric's younger sister, a sorcerer",
+   "knowers": "party"
   },
   {
    "name": "Kelfir Ama'Kiir",
    "kind": "person",
    "aliases": [],
-   "note": "elven mage Valyra serves"
+   "note": "elven mage Valyra serves",
+   "knowers": "party"
   },
   {
    "name": "Qinric",
    "kind": "person",
    "aliases": [],
-   "note": "Roceran's brother, a war mage"
+   "note": "Roceran's brother, a war mage",
+   "knowers": "party"
   },
   {
    "name": "Syllar Sparkwalker",
@@ -103,133 +116,155 @@
    "aliases": [
     "Master Sparkwalker"
    ],
-   "note": "Cerric's master"
+   "note": "Cerric's master",
+   "knowers": "party"
   },
   {
    "name": "Emmerich",
    "kind": "person",
    "aliases": [],
-   "note": "a rival apprentice"
+   "note": "a rival apprentice",
+   "knowers": "party"
   },
   {
    "name": "Wit",
    "kind": "person",
    "aliases": [],
-   "note": "a rival apprentice, returns fatally wounded"
+   "note": "a rival apprentice, returns fatally wounded",
+   "knowers": "party"
   },
   {
    "name": "Danneth",
    "kind": "person",
    "aliases": [],
-   "note": "named in the note in the tome"
+   "note": "named in the note in the tome",
+   "knowers": "party"
   },
   {
    "name": "Vaelrith",
    "kind": "person",
    "aliases": [],
-   "note": "Okthandom's elder brother, vanished"
+   "note": "Okthandom's elder brother, vanished",
+   "knowers": "party"
   },
   {
    "name": "Nyssara",
    "kind": "person",
    "aliases": [],
-   "note": "Okthandom's younger sister"
+   "note": "Okthandom's younger sister",
+   "knowers": "party"
   },
   {
    "name": "Lee",
    "kind": "person",
    "aliases": [],
-   "note": "Claude's father"
+   "note": "Claude's father",
+   "knowers": "party"
   },
   {
    "name": "Hlin Trollbane",
    "kind": "person",
    "aliases": [],
-   "note": "retired bounty hunter in Lonelywood"
+   "note": "retired bounty hunter in Lonelywood",
+   "knowers": "everyone"
   },
   {
    "name": "Sephek Kaltro",
    "kind": "person",
    "aliases": [],
-   "note": "bodyguard the party is hired to catch"
+   "note": "bodyguard the party is hired to catch",
+   "knowers": "everyone"
   },
   {
    "name": "Torrga Icevein",
    "kind": "person",
    "aliases": [],
-   "note": "dwarf merchant leading Torg's Caravan"
+   "note": "dwarf merchant leading Torg's Caravan",
+   "knowers": "everyone"
   },
   {
    "name": "Speaker Masthew",
    "kind": "person",
    "aliases": [],
-   "note": "Town Speaker of Termalaine"
+   "note": "Town Speaker of Termalaine",
+   "knowers": "everyone"
   },
   {
    "name": "Veron Braig",
    "kind": "person",
    "aliases": [],
-   "note": "half-orc owner of The Blue Clam"
+   "note": "half-orc owner of The Blue Clam",
+   "knowers": "everyone"
   },
   {
    "name": "Brewner",
    "kind": "person",
    "aliases": [],
-   "note": "dwarf who argued mithril smelting with Belleros"
+   "note": "dwarf who argued mithril smelting with Belleros",
+   "knowers": "party"
   },
   {
    "name": "Thorin",
    "kind": "person",
    "aliases": [],
-   "note": "worker at the gemstone mine, Bruni's brother"
+   "note": "worker at the gemstone mine, Bruni's brother",
+   "knowers": "party"
   },
   {
    "name": "Bruni Stonewake",
    "kind": "person",
    "aliases": [],
-   "note": "miner"
+   "note": "miner",
+   "knowers": "party"
   },
   {
    "name": "Grek",
    "kind": "person",
    "aliases": [],
-   "note": "surrendered kobold, then killed"
+   "note": "surrendered kobold, then killed",
+   "knowers": "party"
   },
   {
    "name": "Trex",
    "kind": "person",
    "aliases": [],
-   "note": "kobold leader, killed by Okthandom"
+   "note": "kobold leader, killed by Okthandom",
+   "knowers": "party"
   },
   {
    "name": "Fizzlebomb",
    "kind": "person",
    "aliases": [],
-   "note": "owner of the ship Aurora's Wind"
+   "note": "owner of the ship Aurora's Wind",
+   "knowers": "party"
   },
   {
    "name": "Keegan Velryn",
    "kind": "person",
    "aliases": [],
-   "note": "Garret's wife, hires the party"
+   "note": "Garret's wife, hires the party",
+   "knowers": "party"
   },
   {
    "name": "Garret Velryn",
    "kind": "person",
    "aliases": [],
-   "note": "missing explorer"
+   "note": "missing explorer",
+   "knowers": "party"
   },
   {
    "name": "Jebidiah",
    "kind": "person",
    "aliases": [],
-   "note": "kennel master"
+   "note": "kennel master",
+   "knowers": "party"
   },
   {
    "name": "Cerric's paternal grandfather",
    "kind": "person",
    "aliases": [],
-   "note": "Unnamed. Died in a storm."
+   "note": "Unnamed. Died in a storm.",
+   "knowers": "party"
   },
   {
    "name": "Okthandom's child",
@@ -237,7 +272,8 @@
    "aliases": [
     "Okthandom Korran's child (name unknown)"
    ],
-   "note": "Unnamed. Mentioned once."
+   "note": "Unnamed. Mentioned once.",
+   "knowers": "party"
   },
   {
    "name": "Brewner's daughter",
@@ -245,7 +281,8 @@
    "aliases": [
     "Brewner's daughter (name unknown)"
    ],
-   "note": "Unnamed. Leads Brewner home."
+   "note": "Unnamed. Leads Brewner home.",
+   "knowers": "party"
   },
   {
    "name": "The minotaur captain",
@@ -254,7 +291,8 @@
     "Minotaur captain of the first ship",
     "Minotaur captain"
    ],
-   "note": "Unnamed. Captain of the first ship."
+   "note": "Unnamed. Captain of the first ship.",
+   "knowers": "party"
   },
   {
    "name": "The beggar woman",
@@ -262,7 +300,8 @@
    "aliases": [
     "beggar woman"
    ],
-   "note": "Unnamed. Gives a prophecy."
+   "note": "Unnamed. Gives a prophecy.",
+   "knowers": "party"
   },
   {
    "name": "Auril the Frostmaiden",
@@ -271,31 +310,36 @@
     "Auril",
     "the Frostmaiden"
    ],
-   "note": "Minor deity of winter's wrath."
+   "note": "Minor deity of winter's wrath.",
+   "knowers": "everyone"
   },
   {
    "name": "Glyph",
    "kind": "creature",
    "aliases": [],
-   "note": "Cerric's snowy owl familiar, destroyed by the grell"
+   "note": "Cerric's snowy owl familiar, destroyed by the grell",
+   "knowers": "party"
   },
   {
    "name": "Boy",
    "kind": "creature",
    "aliases": [],
-   "note": "sled dog Belleros befriended"
+   "note": "sled dog Belleros befriended",
+   "knowers": "party"
   },
   {
    "name": "The ghost",
    "kind": "creature",
    "aliases": [],
-   "note": "Unnamed possessed ghost that emerged when Trex fell"
+   "note": "Unnamed possessed ghost that emerged when Trex fell",
+   "knowers": "party"
   },
   {
    "name": "Penolopi",
    "kind": "creature",
    "aliases": [],
-   "note": "pet plant the party burned"
+   "note": "pet plant the party burned",
+   "knowers": "party"
   },
   {
    "name": "The wind spirit",
@@ -306,82 +350,95 @@
     "ancient spirit"
    ],
    "note": "Unnamed. The ancient wind spirit that guides and guards Okthandom (lore line 36); kept as a being the story never names, found by its description ('unnamed - ancient wind spirit'), never as a name.",
-   "unnamed": true
+   "unnamed": true,
+   "knowers": "party"
   },
   {
    "name": "Yeti",
    "kind": "creature",
    "by_design": true,
    "aliases": [],
-   "note": "evaded on the road"
+   "note": "evaded on the road",
+   "knowers": "party"
   },
   {
    "name": "Ice troll",
    "kind": "creature",
    "by_design": true,
    "aliases": [],
-   "note": "ate the first ship's captain"
+   "note": "ate the first ship's captain",
+   "knowers": "party"
   },
   {
    "name": "Mind flayer",
    "kind": "creature",
    "by_design": true,
    "aliases": [],
-   "note": "petrified skull in the mine"
+   "note": "petrified skull in the mine",
+   "knowers": "party"
   },
   {
    "name": "Lord's Alliance",
    "kind": "group",
    "aliases": [],
-   "note": "alliance Qinric serves"
+   "note": "alliance Qinric serves",
+   "knowers": "everyone"
   },
   {
    "name": "Explorer's League",
    "kind": "group",
    "aliases": [],
-   "note": "guild of explorers"
+   "note": "guild of explorers",
+   "knowers": "everyone"
   },
   {
    "name": "Torg's Caravan",
    "kind": "group",
    "aliases": [],
-   "note": "Torrga's merchant caravan"
+   "note": "Torrga's merchant caravan",
+   "knowers": "everyone"
   },
   {
    "name": "The circus",
    "kind": "group",
    "aliases": [],
-   "note": "Unnamed travelling circus that held Claude"
+   "note": "Unnamed travelling circus that held Claude",
+   "knowers": "party"
   },
   {
    "name": "The Brotherhood",
    "kind": "group",
    "aliases": [],
-   "note": "Unnamed. Named in the note in the tome"
+   "note": "Unnamed. Named in the note in the tome",
+   "knowers": "party"
   },
   {
    "name": "Icewind Dale",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "Ten-Towns",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "Targos",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "Bryn Shander",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "Easthaven",
@@ -389,103 +446,120 @@
    "aliases": [
     "Eashaven"
    ],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "Termalaine",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "Bremen",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "Good Mead",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "Dougan's Hole",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "Caer-Dineval",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "Caer-Konig",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "Lonelywood",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "Waterdeep",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "Temple of the Seldarine",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "Castle Ward",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "Sparkwalker Spire",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "party"
   },
   {
    "name": "Blackstaff Tower",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "Neverwinter",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "Spine of the World",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "The Lucky Liar",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "The Blue Clam",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "The gemstone mine",
@@ -493,43 +567,50 @@
    "aliases": [
     "the mine"
    ],
-   "note": ""
+   "note": "",
+   "knowers": "party"
   },
   {
    "name": "Maer Dualdon",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "Three Flags Sailing",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "Kelvin's Cairn",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "Eastway Road",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "The Underdark",
    "kind": "place",
    "aliases": [],
-   "note": ""
+   "note": "",
+   "knowers": "everyone"
   },
   {
    "name": "Sacrifice of souls",
    "kind": "event",
    "aliases": [],
-   "note": "every ten-day humanoid souls are sacrificed, spellcasters first, to appease Auril"
+   "note": "every ten-day humanoid souls are sacrificed, spellcasters first, to appease Auril",
+   "knowers": "everyone"
   },
   {
    "name": "Sacrifice of warmth",
@@ -537,13 +618,15 @@
    "aliases": [
     "Sacrifices of Warmth"
    ],
-   "note": "recurring Sacrifices of Warmth: all warmth is forsaken, to appease Auril"
+   "note": "recurring Sacrifices of Warmth: all warmth is forsaken, to appease Auril",
+   "knowers": "everyone"
   },
   {
    "name": "Sacrifice of food",
    "kind": "event",
    "aliases": [],
-   "note": "the residents fast and surrender their daily food to the beasts of the tundra, to appease Auril"
+   "note": "the residents fast and surrender their daily food to the beasts of the tundra, to appease Auril",
+   "knowers": "everyone"
   },
   {
    "name": "The Everlasting Rime",
@@ -551,61 +634,71 @@
    "aliases": [
     "Everlasting Rime"
    ],
-   "note": "the magical winter Auril casts each night so the sun cannot rise"
+   "note": "the magical winter Auril casts each night so the sun cannot rise",
+   "knowers": "everyone"
   },
   {
    "name": "Azure tome",
    "kind": "item",
    "aliases": [],
-   "note": "Syllar's locked tome"
+   "note": "Syllar's locked tome",
+   "knowers": "party"
   },
   {
    "name": "Ancestral journal",
    "kind": "item",
    "aliases": [],
-   "note": "Okthandom's family journal"
+   "note": "Okthandom's family journal",
+   "knowers": "party"
   },
   {
    "name": "Wolf figurine",
    "kind": "item",
    "aliases": [],
-   "note": "inlaid with black gems, etched with Sylvan runes"
+   "note": "inlaid with black gems, etched with Sylvan runes",
+   "knowers": "party"
   },
   {
    "name": "Aurora's Wind",
    "kind": "item",
    "aliases": [],
-   "note": "Fizzlebomb's ship"
+   "note": "Fizzlebomb's ship",
+   "knowers": "party"
   },
   {
    "name": "Wand of Conducting",
    "kind": "item",
    "aliases": [],
-   "note": "found in the mine"
+   "note": "found in the mine",
+   "knowers": "party"
   },
   {
    "name": "Lantern of Greater Tracking",
    "kind": "item",
    "aliases": [],
-   "note": "found in the mine"
+   "note": "found in the mine",
+   "knowers": "party"
   },
   {
    "name": "Chardalyn spear",
    "kind": "item",
    "aliases": [],
-   "note": "found in the mine"
+   "note": "found in the mine",
+   "knowers": "party"
   },
   {
    "name": "Psi crystal",
    "kind": "item",
    "aliases": [],
-   "note": "from a petrified mind flayer skull; gives telepathy"
+   "note": "from a petrified mind flayer skull; gives telepathy",
+   "knowers": "party"
   },
   {
    "name": "Heart of chardalyn",
    "kind": "item",
    "aliases": [],
-   "note": "hidden under the bucket lift"
+   "note": "hidden under the bucket lift",
+   "knowers": "party"
   }
  ],
  "pairs": [
@@ -616,7 +709,8 @@
    "b": "Cerric Vanya'elen",
    "tier": "stated",
    "must_find": true,
-   "line": 18
+   "line": 18,
+   "knowers": "party"
   },
   {
    "id": "l002",
@@ -625,7 +719,8 @@
    "b": "Cerric Vanya'elen",
    "tier": "stated",
    "must_find": true,
-   "line": 18
+   "line": 18,
+   "knowers": "party"
   },
   {
    "id": "l003",
@@ -635,7 +730,8 @@
    "tier": "inferred",
    "must_find": false,
    "line": 18,
-   "note": "'his younger sister, Valyra': the same parents"
+   "note": "'his younger sister, Valyra': the same parents",
+   "knowers": "party"
   },
   {
    "id": "l004",
@@ -644,7 +740,8 @@
    "b": "Valyra",
    "tier": "inferred",
    "must_find": false,
-   "line": 18
+   "line": 18,
+   "knowers": "party"
   },
   {
    "id": "l005",
@@ -654,7 +751,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 18,
-   "note": "younger sister"
+   "note": "younger sister",
+   "knowers": "party"
   },
   {
    "id": "l006",
@@ -664,7 +762,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 24,
-   "note": "died in a severe storm"
+   "note": "died in a severe storm",
+   "knowers": "party"
   },
   {
    "id": "l007",
@@ -674,7 +773,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 24,
-   "note": "'Roceran's brother Qinric'; the owner asked for this tie directly"
+   "note": "'Roceran's brother Qinric'; the owner asked for this tie directly",
+   "knowers": "party"
   },
   {
    "id": "l008",
@@ -684,7 +784,8 @@
    "tier": "inferred",
    "must_find": true,
    "line": 24,
-   "note": "never said as 'uncle': Roceran's brother"
+   "note": "never said as 'uncle': Roceran's brother",
+   "knowers": "party"
   },
   {
    "id": "l009",
@@ -694,7 +795,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 24,
-   "note": "a war mage evoker in it"
+   "note": "a war mage evoker in it",
+   "knowers": "party"
   },
   {
    "id": "l010",
@@ -703,7 +805,8 @@
    "b": "Kelfir Ama'Kiir",
    "tier": "stated",
    "must_find": true,
-   "line": 18
+   "line": 18,
+   "knowers": "party"
   },
   {
    "id": "l011",
@@ -713,7 +816,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 24,
-   "note": "Keeper of the Sparkwalker Spire under him"
+   "note": "Keeper of the Sparkwalker Spire under him",
+   "knowers": "party"
   },
   {
    "id": "l012",
@@ -723,7 +827,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 24,
-   "note": "Keeper of it (leads; works_in is also true and kept as optional, Supervisor 2026-11-04)"
+   "note": "Keeper of it (leads; works_in is also true and kept as optional, Supervisor 2026-11-04)",
+   "knowers": "party"
   },
   {
    "id": "l013",
@@ -733,7 +838,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 24,
-   "note": "Keeper of it"
+   "note": "Keeper of it",
+   "knowers": "party"
   },
   {
    "id": "l014",
@@ -743,7 +849,8 @@
    "tier": "inferred",
    "must_find": false,
    "line": 24,
-   "note": "'Syllar Sparkwalker of Blackstaff Tower'"
+   "note": "'Syllar Sparkwalker of Blackstaff Tower'",
+   "knowers": "party"
   },
   {
    "id": "l015",
@@ -753,7 +860,8 @@
    "tier": "inferred",
    "must_find": false,
    "line": 24,
-   "note": "Cerric's fellow apprentices"
+   "note": "Cerric's fellow apprentices",
+   "knowers": "party"
   },
   {
    "id": "l016",
@@ -762,7 +870,8 @@
    "b": "Wit",
    "tier": "inferred",
    "must_find": false,
-   "line": 24
+   "line": 24,
+   "knowers": "party"
   },
   {
    "id": "l017",
@@ -772,7 +881,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 24,
-   "note": "'rival apprentices Emmerich and Wit'; the owner flagged backstory rivals as missing"
+   "note": "'rival apprentices Emmerich and Wit'; the owner flagged backstory rivals as missing",
+   "knowers": "party"
   },
   {
    "id": "l018",
@@ -781,7 +891,8 @@
    "b": "Cerric Vanya'elen",
    "tier": "stated",
    "must_find": false,
-   "line": 24
+   "line": 24,
+   "knowers": "party"
   },
   {
    "id": "l019",
@@ -791,7 +902,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 18,
-   "note": "born in the Temple of the Seldarine"
+   "note": "born in the Temple of the Seldarine",
+   "knowers": "party"
   },
   {
    "id": "l020",
@@ -800,7 +912,8 @@
    "b": "Waterdeep",
    "tier": "stated",
    "must_find": true,
-   "line": 18
+   "line": 18,
+   "knowers": "everyone"
   },
   {
    "id": "l021",
@@ -811,7 +924,8 @@
    "must_find": false,
    "line": 18,
    "current": false,
-   "note": "raised in a mansion there"
+   "note": "raised in a mansion there",
+   "knowers": "party"
   },
   {
    "id": "l022",
@@ -820,7 +934,8 @@
    "b": "Waterdeep",
    "tier": "inferred",
    "must_find": false,
-   "line": 18
+   "line": 18,
+   "knowers": "everyone"
   },
   {
    "id": "l023",
@@ -830,7 +945,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 27,
-   "note": "grabbed his master's locked tome"
+   "note": "grabbed his master's locked tome",
+   "knowers": "party"
   },
   {
    "id": "l024",
@@ -840,7 +956,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 27,
-   "note": "'his master's'"
+   "note": "'his master's'",
+   "knowers": "party"
   },
   {
    "id": "l025",
@@ -850,7 +967,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 27,
-   "note": "fled there by teleportation rune"
+   "note": "fled there by teleportation rune",
+   "knowers": "party"
   },
   {
    "id": "l026",
@@ -860,7 +978,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 27,
-   "note": "journeyed north into it"
+   "note": "journeyed north into it",
+   "knowers": "party"
   },
   {
    "id": "l027",
@@ -870,7 +989,8 @@
    "tier": "inferred",
    "must_find": false,
    "line": 27,
-   "note": "the note is addressed 'Danneth, Easthaven'"
+   "note": "the note is addressed 'Danneth, Easthaven'",
+   "knowers": "party"
   },
   {
    "id": "l028",
@@ -880,7 +1000,8 @@
    "tier": "inferred",
    "must_find": false,
    "line": 27,
-   "note": "the note is signed S"
+   "note": "the note is signed S",
+   "knowers": "party"
   },
   {
    "id": "l029",
@@ -890,7 +1011,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 27,
-   "note": "snowy owl familiar"
+   "note": "snowy owl familiar",
+   "knowers": "party"
   },
   {
    "id": "l030",
@@ -899,7 +1021,8 @@
    "b": "Icewind Dale",
    "tier": "stated",
    "must_find": true,
-   "line": 27
+   "line": 27,
+   "knowers": "everyone"
   },
   {
    "id": "l031",
@@ -909,7 +1032,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 33,
-   "note": "elder brother, vanished at 105"
+   "note": "elder brother, vanished at 105",
+   "knowers": "party"
   },
   {
    "id": "l032",
@@ -919,7 +1043,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 33,
-   "note": "younger sister; a player character's family must be kept"
+   "note": "younger sister; a player character's family must be kept",
+   "knowers": "party"
   },
   {
    "id": "l033",
@@ -928,7 +1053,8 @@
    "b": "Nyssara",
    "tier": "inferred",
    "must_find": false,
-   "line": 33
+   "line": 33,
+   "knowers": "party"
   },
   {
    "id": "l034",
@@ -938,7 +1064,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 36,
-   "note": "'his child', named once in passing"
+   "note": "'his child', named once in passing",
+   "knowers": "party"
   },
   {
    "id": "l035",
@@ -948,7 +1075,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 36,
-   "note": "guides and guards him"
+   "note": "guides and guards him",
+   "knowers": "party"
   },
   {
    "id": "l036",
@@ -958,7 +1086,8 @@
    "tier": "inferred",
    "must_find": false,
    "line": 33,
-   "note": "found the curse in it"
+   "note": "found the curse in it",
+   "knowers": "party"
   },
   {
    "id": "l037",
@@ -968,7 +1097,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 42,
-   "note": "'a scout associated with the Explorer's League'"
+   "note": "'a scout associated with the Explorer's League'",
+   "knowers": "party"
   },
   {
    "id": "l038",
@@ -977,7 +1107,8 @@
    "b": "Spine of the World",
    "tier": "stated",
    "must_find": true,
-   "line": 48
+   "line": 48,
+   "knowers": "party"
   },
   {
    "id": "l039",
@@ -987,7 +1118,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 48,
-   "note": "'Griz, son of Lee'; the owner flagged this as missing"
+   "note": "'Griz, son of Lee'; the owner flagged this as missing",
+   "knowers": "party"
   },
   {
    "id": "l040",
@@ -998,7 +1130,8 @@
    "must_find": true,
    "line": 48,
    "current": false,
-   "note": "before he escaped"
+   "note": "before he escaped",
+   "knowers": "party"
   },
   {
    "id": "l041",
@@ -1009,7 +1142,8 @@
    "must_find": true,
    "line": 48,
    "current": false,
-   "note": "the owner: Claude found it first (line 48: he carries a unique wolf figurine; line 96: he sells it). Offered to the DM, never extracted"
+   "note": "the owner: Claude found it first (line 48: he carries a unique wolf figurine; line 96: he sells it). Offered to the DM, never extracted",
+   "knowers": "party"
   },
   {
    "id": "l042",
@@ -1019,7 +1153,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 57,
-   "note": "withdrawn there to live among mortals"
+   "note": "withdrawn there to live among mortals",
+   "knowers": "everyone"
   },
   {
    "id": "l043",
@@ -1029,7 +1164,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 96,
-   "note": "its towns sacrifice every ten-day to appease her"
+   "note": "its towns sacrifice every ten-day to appease her",
+   "knowers": "everyone"
   },
   {
    "id": "l044",
@@ -1039,7 +1175,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 96,
-   "note": "listed with its sacrifice (also line 7)"
+   "note": "listed with its sacrifice (also line 7)",
+   "knowers": "everyone"
   },
   {
    "id": "l045",
@@ -1049,7 +1186,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 96,
-   "note": "listed with its sacrifice (also line 7)"
+   "note": "listed with its sacrifice (also line 7)",
+   "knowers": "everyone"
   },
   {
    "id": "l046",
@@ -1059,7 +1197,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 96,
-   "note": "listed with its sacrifice (also line 7)"
+   "note": "listed with its sacrifice (also line 7)",
+   "knowers": "everyone"
   },
   {
    "id": "l047",
@@ -1069,7 +1208,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 96,
-   "note": "listed with its sacrifice (also line 7)"
+   "note": "listed with its sacrifice (also line 7)",
+   "knowers": "everyone"
   },
   {
    "id": "l048",
@@ -1079,7 +1219,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 96,
-   "note": "listed with its sacrifice (also line 7)"
+   "note": "listed with its sacrifice (also line 7)",
+   "knowers": "everyone"
   },
   {
    "id": "l049",
@@ -1089,7 +1230,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 96,
-   "note": "listed with its sacrifice (also line 7)"
+   "note": "listed with its sacrifice (also line 7)",
+   "knowers": "everyone"
   },
   {
    "id": "l050",
@@ -1099,7 +1241,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 96,
-   "note": "listed with its sacrifice (also line 7)"
+   "note": "listed with its sacrifice (also line 7)",
+   "knowers": "everyone"
   },
   {
    "id": "l051",
@@ -1109,7 +1252,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 96,
-   "note": "listed with its sacrifice (also line 7)"
+   "note": "listed with its sacrifice (also line 7)",
+   "knowers": "everyone"
   },
   {
    "id": "l052",
@@ -1119,7 +1263,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 96,
-   "note": "listed with its sacrifice (also line 7)"
+   "note": "listed with its sacrifice (also line 7)",
+   "knowers": "everyone"
   },
   {
    "id": "l127",
@@ -1129,7 +1274,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 96,
-   "note": "listed with its sacrifice (added to the lore on 2026-11-15; not on line 7)"
+   "note": "listed with its sacrifice (added to the lore on 2026-11-15; not on line 7)",
+   "knowers": "everyone"
   },
   {
    "id": "l053",
@@ -1138,7 +1284,8 @@
    "b": "Icewind Dale",
    "tier": "stated",
    "must_find": true,
-   "line": 63
+   "line": 63,
+   "knowers": "everyone"
   },
   {
    "id": "l054",
@@ -1148,7 +1295,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 7,
-   "note": "held there every ten-day (line 96)"
+   "note": "held there every ten-day (line 96)",
+   "knowers": "everyone"
   },
   {
    "id": "l055",
@@ -1158,7 +1306,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 7,
-   "note": "held there every ten-day (line 96)"
+   "note": "held there every ten-day (line 96)",
+   "knowers": "everyone"
   },
   {
    "id": "l056",
@@ -1168,7 +1317,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 7,
-   "note": "held there every ten-day (line 96)"
+   "note": "held there every ten-day (line 96)",
+   "knowers": "everyone"
   },
   {
    "id": "l057",
@@ -1178,7 +1328,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 96,
-   "note": "to appease her"
+   "note": "to appease her",
+   "knowers": "everyone"
   },
   {
    "id": "l058",
@@ -1188,7 +1339,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 7,
-   "note": "held there every ten-day (line 96)"
+   "note": "held there every ten-day (line 96)",
+   "knowers": "everyone"
   },
   {
    "id": "l059",
@@ -1198,7 +1350,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 7,
-   "note": "held there every ten-day (line 96)"
+   "note": "held there every ten-day (line 96)",
+   "knowers": "everyone"
   },
   {
    "id": "l060",
@@ -1208,7 +1361,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 7,
-   "note": "held there every ten-day (line 96)"
+   "note": "held there every ten-day (line 96)",
+   "knowers": "everyone"
   },
   {
    "id": "l061",
@@ -1218,7 +1372,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 96,
-   "note": "to appease her"
+   "note": "to appease her",
+   "knowers": "everyone"
   },
   {
    "id": "l062",
@@ -1228,7 +1383,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 7,
-   "note": "held there every ten-day (line 96)"
+   "note": "held there every ten-day (line 96)",
+   "knowers": "everyone"
   },
   {
    "id": "l063",
@@ -1238,7 +1394,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 7,
-   "note": "held there every ten-day (line 96)"
+   "note": "held there every ten-day (line 96)",
+   "knowers": "everyone"
   },
   {
    "id": "l064",
@@ -1248,7 +1405,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 7,
-   "note": "held there every ten-day (line 96)"
+   "note": "held there every ten-day (line 96)",
+   "knowers": "everyone"
   },
   {
    "id": "l065",
@@ -1258,7 +1416,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 96,
-   "note": "to appease her"
+   "note": "to appease her",
+   "knowers": "everyone"
   },
   {
    "id": "l066",
@@ -1268,7 +1427,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 57,
-   "note": "casts it each night before midnight (line 4)"
+   "note": "casts it each night before midnight (line 4)",
+   "knowers": "everyone"
   },
   {
    "id": "l067",
@@ -1278,7 +1438,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 4,
-   "note": "holds the Ten-Towns in a frozen vice"
+   "note": "holds the Ten-Towns in a frozen vice",
+   "knowers": "everyone"
   },
   {
    "id": "l068",
@@ -1288,7 +1449,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 59,
-   "note": "operates out of it"
+   "note": "operates out of it",
+   "knowers": "everyone"
   },
   {
    "id": "l070",
@@ -1298,7 +1460,8 @@
    "tier": "inferred",
    "must_find": false,
    "line": 59,
-   "note": "she hires against him; she is not his servant (#3256)"
+   "note": "she hires against him; she is not his servant (#3256)",
+   "knowers": "party"
   },
   {
    "id": "l071",
@@ -1308,7 +1471,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 63,
-   "note": "her bodyguard (also line 61)"
+   "note": "her bodyguard (also line 61)",
+   "knowers": "everyone"
   },
   {
    "id": "l072",
@@ -1318,7 +1482,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 63,
-   "note": "under her own heading on line 62"
+   "note": "under her own heading on line 62",
+   "knowers": "everyone"
   },
   {
    "id": "l073",
@@ -1328,7 +1493,8 @@
    "tier": "inferred",
    "must_find": false,
    "line": 61,
-   "note": "accompanies it"
+   "note": "accompanies it",
+   "knowers": "everyone"
   },
   {
    "id": "l074",
@@ -1338,7 +1504,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 102,
-   "note": "his last known location"
+   "note": "his last known location",
+   "knowers": "party"
   },
   {
    "id": "l075",
@@ -1347,7 +1514,8 @@
    "b": "Termalaine",
    "tier": "stated",
    "must_find": true,
-   "line": 65
+   "line": 65,
+   "knowers": "everyone"
   },
   {
    "id": "l077",
@@ -1356,7 +1524,8 @@
    "b": "The Blue Clam",
    "tier": "stated",
    "must_find": true,
-   "line": 67
+   "line": 67,
+   "knowers": "everyone"
   },
   {
    "id": "l078",
@@ -1366,7 +1535,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 67,
-   "note": "owner and proprietor"
+   "note": "owner and proprietor",
+   "knowers": "everyone"
   },
   {
    "id": "l079",
@@ -1375,7 +1545,8 @@
    "b": "Termalaine",
    "tier": "stated",
    "must_find": true,
-   "line": 67
+   "line": 67,
+   "knowers": "everyone"
   },
   {
    "id": "l080",
@@ -1384,7 +1555,8 @@
    "b": "Lonelywood",
    "tier": "stated",
    "must_find": true,
-   "line": 73
+   "line": 73,
+   "knowers": "everyone"
   },
   {
    "id": "l081",
@@ -1395,7 +1567,8 @@
    "must_find": false,
    "line": 73,
    "feeling": "wary",
-   "note": "a heated debate"
+   "note": "a heated debate",
+   "knowers": "party"
   },
   {
    "id": "l082",
@@ -1404,7 +1577,8 @@
    "b": "Brewner's daughter",
    "tier": "stated",
    "must_find": false,
-   "line": 73
+   "line": 73,
+   "knowers": "party"
   },
   {
    "id": "l083",
@@ -1414,7 +1588,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 73,
-   "note": "'our four adventurers'"
+   "note": "'our four adventurers'",
+   "knowers": "party"
   },
   {
    "id": "l084",
@@ -1424,7 +1599,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 73,
-   "note": "'our four adventurers'"
+   "note": "'our four adventurers'",
+   "knowers": "party"
   },
   {
    "id": "l085",
@@ -1434,7 +1610,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 73,
-   "note": "'our four adventurers'"
+   "note": "'our four adventurers'",
+   "knowers": "party"
   },
   {
    "id": "l086",
@@ -1444,7 +1621,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 73,
-   "note": "'our four adventurers'"
+   "note": "'our four adventurers'",
+   "knowers": "party"
   },
   {
    "id": "l087",
@@ -1454,7 +1632,8 @@
    "tier": "by_rule",
    "must_find": true,
    "line": 73,
-   "note": "player characters who play together know each other (#3036)"
+   "note": "player characters who play together know each other (#3036)",
+   "knowers": "party"
   },
   {
    "id": "l088",
@@ -1464,7 +1643,8 @@
    "tier": "by_rule",
    "must_find": true,
    "line": 73,
-   "note": "player characters who play together know each other (#3036)"
+   "note": "player characters who play together know each other (#3036)",
+   "knowers": "party"
   },
   {
    "id": "l089",
@@ -1474,7 +1654,8 @@
    "tier": "by_rule",
    "must_find": true,
    "line": 73,
-   "note": "player characters who play together know each other (#3036)"
+   "note": "player characters who play together know each other (#3036)",
+   "knowers": "party"
   },
   {
    "id": "l090",
@@ -1484,7 +1665,8 @@
    "tier": "by_rule",
    "must_find": true,
    "line": 73,
-   "note": "player characters who play together know each other (#3036)"
+   "note": "player characters who play together know each other (#3036)",
+   "knowers": "party"
   },
   {
    "id": "l091",
@@ -1494,7 +1676,8 @@
    "tier": "by_rule",
    "must_find": true,
    "line": 73,
-   "note": "player characters who play together know each other (#3036)"
+   "note": "player characters who play together know each other (#3036)",
+   "knowers": "party"
   },
   {
    "id": "l092",
@@ -1504,7 +1687,8 @@
    "tier": "by_rule",
    "must_find": true,
    "line": 73,
-   "note": "player characters who play together know each other (#3036)"
+   "note": "player characters who play together know each other (#3036)",
+   "knowers": "party"
   },
   {
    "id": "l093",
@@ -1514,7 +1698,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 84,
-   "note": "'Thorin, his miner brother Bruni'"
+   "note": "'Thorin, his miner brother Bruni'",
+   "knowers": "party"
   },
   {
    "id": "l094",
@@ -1524,7 +1709,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 84,
-   "note": "a miner"
+   "note": "a miner",
+   "knowers": "party"
   },
   {
    "id": "l095",
@@ -1533,7 +1719,8 @@
    "b": "Termalaine",
    "tier": "inferred",
    "must_find": false,
-   "line": 84
+   "line": 84,
+   "knowers": "everyone"
   },
   {
    "id": "l096",
@@ -1543,7 +1730,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 90,
-   "note": "a possessed ghost emerged when he fell"
+   "note": "a possessed ghost emerged when he fell",
+   "knowers": "party"
   },
   {
    "id": "l097",
@@ -1553,7 +1741,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 90,
-   "note": "the plant was in his backpack"
+   "note": "the plant was in his backpack",
+   "knowers": "party"
   },
   {
    "id": "l098",
@@ -1563,7 +1752,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 90,
-   "note": "killed him with an arrow"
+   "note": "killed him with an arrow",
+   "knowers": "party"
   },
   {
    "id": "l099",
@@ -1573,7 +1763,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 90,
-   "note": "Okthandom found it and gave it to him"
+   "note": "Okthandom found it and gave it to him",
+   "knowers": "party"
   },
   {
    "id": "l100",
@@ -1583,7 +1774,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 90,
-   "note": "found in the mine"
+   "note": "found in the mine",
+   "knowers": "party"
   },
   {
    "id": "l101",
@@ -1593,7 +1785,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 90,
-   "note": "spoils of the mine"
+   "note": "spoils of the mine",
+   "knowers": "party"
   },
   {
    "id": "l102",
@@ -1603,7 +1796,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 90,
-   "note": "hidden under the bucket lift"
+   "note": "hidden under the bucket lift",
+   "knowers": "party"
   },
   {
    "id": "l103",
@@ -1613,7 +1807,8 @@
    "tier": "inferred",
    "must_find": true,
    "line": 93,
-   "note": "studied it; the party took it from the skull"
+   "note": "studied it; the party took it from the skull",
+   "knowers": "party"
   },
   {
    "id": "l104",
@@ -1624,7 +1819,8 @@
    "must_find": true,
    "line": 90,
    "current": false,
-   "note": "found there in the mind flayer's skull, then taken: the place is history"
+   "note": "found there in the mind flayer's skull, then taken: the place is history",
+   "knowers": "party"
   },
   {
    "id": "l105",
@@ -1634,7 +1830,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 90,
-   "note": "from its petrified skull"
+   "note": "from its petrified skull",
+   "knowers": "party"
   },
   {
    "id": "l106",
@@ -1644,7 +1841,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 96,
-   "note": "bought it from Claude for 75 gold"
+   "note": "bought it from Claude for 75 gold",
+   "knowers": "party"
   },
   {
    "id": "l107",
@@ -1654,7 +1852,8 @@
    "tier": "inferred",
    "must_find": true,
    "line": 96,
-   "note": "the owner: he owns it and carries it now; the text says only that he bought it"
+   "note": "the owner: he owns it and carries it now; the text says only that he bought it",
+   "knowers": "party"
   },
   {
    "id": "l108",
@@ -1664,7 +1863,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 96,
-   "note": "'Fizzlebomb's vessel'; the owner flagged this as missing"
+   "note": "'Fizzlebomb's vessel'; the owner flagged this as missing",
+   "knowers": "party"
   },
   {
    "id": "l109",
@@ -1674,7 +1874,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 96,
-   "note": "devoured him and shattered his ship"
+   "note": "devoured him and shattered his ship",
+   "knowers": "party"
   },
   {
    "id": "l110",
@@ -1683,7 +1884,8 @@
    "b": "Maer Dualdon",
    "tier": "stated",
    "must_find": false,
-   "line": 96
+   "line": 96,
+   "knowers": "party"
   },
   {
    "id": "l111",
@@ -1694,7 +1896,8 @@
    "must_find": false,
    "line": 102,
    "feeling": "friendly",
-   "note": "befriended him"
+   "note": "befriended him",
+   "knowers": "party"
   },
   {
    "id": "l112",
@@ -1703,7 +1906,8 @@
    "b": "Three Flags Sailing",
    "tier": "stated",
    "must_find": false,
-   "line": 102
+   "line": 102,
+   "knowers": "party"
   },
   {
    "id": "l113",
@@ -1712,7 +1916,8 @@
    "b": "Targos",
    "tier": "inferred",
    "must_find": false,
-   "line": 102
+   "line": 102,
+   "knowers": "everyone"
   },
   {
    "id": "l114",
@@ -1722,7 +1927,8 @@
    "tier": "inferred",
    "must_find": true,
    "line": 102,
-   "note": "Boy led the party to Keegan's home: the owner says he is Garret's dog. The text never says it; offer it to the DM, never extract it"
+   "note": "Boy led the party to Keegan's home: the owner says he is Garret's dog. The text never says it; offer it to the DM, never extract it",
+   "knowers": "party"
   },
   {
    "id": "l115",
@@ -1732,7 +1938,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 102,
-   "note": "'whose husband'"
+   "note": "'whose husband'",
+   "knowers": "party"
   },
   {
    "id": "l116",
@@ -1742,7 +1949,8 @@
    "tier": "stated",
    "must_find": true,
    "line": 102,
-   "note": "'a noted member'"
+   "note": "'a noted member'",
+   "knowers": "party"
   },
   {
    "id": "l117",
@@ -1752,7 +1960,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 102,
-   "note": "vanished five days ago leading an expedition up it"
+   "note": "vanished five days ago leading an expedition up it",
+   "knowers": "party"
   },
   {
    "id": "l119",
@@ -1762,7 +1971,8 @@
    "tier": "inferred",
    "must_find": false,
    "line": 102,
-   "note": "a kennel master the party met there"
+   "note": "a kennel master the party met there",
+   "knowers": "party"
   },
   {
    "id": "l120",
@@ -1772,7 +1982,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 18,
-   "note": "born in the Temple of the Seldarine (the more exact place; l019 says the city)"
+   "note": "born in the Temple of the Seldarine (the more exact place; l019 says the city)",
+   "knowers": "party"
   },
   {
    "id": "l121",
@@ -1782,7 +1993,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 24,
-   "note": "served as Keeper of the Sparkwalker Spire \"under Master Syllar Sparkwalker\", \"alongside rival apprentices Emmerich and Wit\": an apprentice of his (l011 says works_for)"
+   "note": "served as Keeper of the Sparkwalker Spire \"under Master Syllar Sparkwalker\", \"alongside rival apprentices Emmerich and Wit\": an apprentice of his (l011 says works_for)",
+   "knowers": "party"
   },
   {
    "id": "l122",
@@ -1793,7 +2005,8 @@
    "must_find": false,
    "line": 73,
    "feeling": "wary",
-   "note": "the other side of the heated debate on mithril smelting (l081 is Belleros toward Brewner)"
+   "note": "the other side of the heated debate on mithril smelting (l081 is Belleros toward Brewner)",
+   "knowers": "party"
   },
   {
    "id": "l123",
@@ -1803,7 +2016,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 36,
-   "note": "'hunts across Icewind Dale searching for answers': where he roams now (#3545, step 11b)"
+   "note": "'hunts across Icewind Dale searching for answers': where he roams now (#3545, step 11b)",
+   "knowers": "party"
   },
   {
    "id": "l124",
@@ -1813,7 +2027,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 99,
-   "note": "'Belleros took command of the vessel and ran the ship ashore' (#3545, step 11b)"
+   "note": "'Belleros took command of the vessel and ran the ship ashore' (#3545, step 11b)",
+   "knowers": "party"
   },
   {
    "id": "l125",
@@ -1823,7 +2038,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 99,
-   "note": "pushed Fizzlebomb overboard into the freezing waters, at Cerric's urging (#3545, step 11b)"
+   "note": "pushed Fizzlebomb overboard into the freezing waters, at Cerric's urging (#3545, step 11b)",
+   "knowers": "party"
   },
   {
    "id": "l126",
@@ -1833,7 +2049,8 @@
    "tier": "stated",
    "must_find": false,
    "line": 99,
-   "note": "'Cerric to convince Okthandom to push Fizzlebomb overboard' (#3545, step 11b)"
+   "note": "'Cerric to convince Okthandom to push Fizzlebomb overboard' (#3545, step 11b)",
+   "knowers": "party"
   }
  ],
  "events": [
@@ -1841,115 +2058,134 @@
    "id": "e01",
    "what": "Master Sparkwalker disappears, Wit comes back fatally wounded, and Cerric flees to Neverwinter with the tome",
    "who": "Cerric, Syllar Sparkwalker, Wit",
-   "line": 27
+   "line": 27,
+   "knowers": "party"
   },
   {
    "id": "e02",
    "what": "Vaelrith vanishes at 105, leaving a bloodstained campsite",
    "who": "Okthandom, Vaelrith",
-   "line": 33
+   "line": 33,
+   "knowers": "party"
   },
   {
    "id": "e03",
    "what": "Claude erases his own memory, is held by a circus and escapes",
    "who": "Claude",
-   "line": 48
+   "line": 48,
+   "knowers": "party"
   },
   {
    "id": "e04",
    "what": "Hlin Trollbane offers the party a contract on Sephek Kaltro in The Lucky Liar",
    "who": "the party, Hlin Trollbane, Sephek Kaltro",
-   "line": 73
+   "line": 73,
+   "knowers": "party"
   },
   {
    "id": "e05",
    "what": "The party fights six ice kobolds and evades a yeti on the road to Termalaine",
    "who": "the party",
-   "line": 81
+   "line": 81,
+   "knowers": "party"
   },
   {
    "id": "e06",
    "what": "Rumours reach the party that an evil wizard captured in Easthaven will be burned at the stake",
    "who": "the party",
-   "line": 84
+   "line": 84,
+   "knowers": "party"
   },
   {
    "id": "e07",
    "what": "The grell paralyzes Claude and destroys Glyph, then the party kills it",
    "who": "Claude, Cerric, the party",
-   "line": 90
+   "line": 90,
+   "knowers": "party"
   },
   {
    "id": "e08",
    "what": "Okthandom kills Trex with an arrow, and Claude burns Penolopi to banish the ghost",
    "who": "Okthandom, Trex, Claude, Cerric",
-   "line": 90
+   "line": 90,
+   "knowers": "party"
   },
   {
    "id": "e09",
    "what": "The party secures the spoils of the mine, including a psi crystal and a heart of chardalyn",
    "who": "the party",
-   "line": 90
+   "line": 90,
+   "knowers": "party"
   },
   {
    "id": "e10",
    "what": "Speaker Masthew pays a bounty of 250 gold for clearing the mine",
    "who": "the party, Speaker Masthew",
-   "line": 93
+   "line": 93,
+   "knowers": "party"
   },
   {
    "id": "e11",
    "what": "Claude sells the wolf figurine to Belleros for 75 gold",
    "who": "Claude, Belleros",
-   "line": 96
+   "line": 96,
+   "knowers": "party"
   },
   {
    "id": "e12",
    "what": "An ice troll devours the first ship's captain and shatters his ship",
    "who": "ice troll, the minotaur captain",
-   "line": 96
+   "line": 96,
+   "knowers": "party"
   },
   {
    "id": "e13",
    "what": "Cerric talks Okthandom into pushing Fizzlebomb overboard; Belleros runs the Aurora's Wind ashore",
    "who": "Cerric, Okthandom, Belleros, Fizzlebomb",
-   "line": 99
+   "line": 99,
+   "knowers": "party"
   },
   {
    "id": "e14",
    "what": "Three owlbears ambush the party near Targos",
    "who": "the party",
-   "line": 99
+   "line": 99,
+   "knowers": "party"
   },
   {
    "id": "e15",
    "what": "Belleros befriends Boy, who leads the party to Keegan Velryn; she asks them to find Garret",
    "who": "Belleros, Boy, Keegan Velryn, Garret Velryn",
-   "line": 102
+   "line": 102,
+   "knowers": "party"
   },
   {
    "id": "e16",
    "what": "Every ten-day Targos, Bryn Shander and Easthaven sacrifice humanoid souls, spellcasters first, to appease Auril",
    "who": "Targos, Bryn Shander, Easthaven, Auril",
-   "line": 7
+   "line": 7,
+   "knowers": "everyone"
   },
   {
    "id": "e17",
    "what": "Every ten-day Termalaine, Bremen and Good Mead forsake all warmth in a Sacrifice of Warmth",
    "who": "Termalaine, Bremen, Good Mead, Auril",
-   "line": 7
+   "line": 7,
+   "knowers": "everyone"
   },
   {
    "id": "e18",
    "what": "Every ten-day Caer-Dineval, Caer-Konig and Lonelywood fast and surrender their food to the beasts of the tundra",
    "who": "Caer-Dineval, Caer-Konig, Lonelywood, Auril",
-   "line": 7
+   "line": 7,
+   "knowers": "everyone"
   },
   {
    "id": "e19",
    "what": "Each night before midnight Auril casts the spell that keeps the sun from rising: the Everlasting Rime",
    "who": "Auril",
-   "line": 57
+   "line": 57,
+   "knowers": "everyone"
   }
  ],
  "deferred": [
@@ -1980,5 +2216,7 @@
   {"id": "lq04", "kind": "quest", "name": "Hlin's contract on Sephek Kaltro", "giver": "Hlin Trollbane", "target": "Sephek Kaltro", "taker": "", "missing": [], "in_danger": [], "parts": [{"kind": "objective", "words": ["capture or eliminate"], "line": 59, "note": "one objective with the text's own 'or', never two"}], "must_find": true, "hint": false, "line": 73, "note": "an ask and a taker; replaces l069 'the party works for Hlin' (§6); capture or eliminate, one objective"},
   {"id": "lq05", "kind": "quest", "name": "Speaker Masthew's bounty on the mine", "giver": "Speaker Masthew", "target": "The gemstone mine", "taker": "", "missing": [], "in_danger": [], "parts": [{"kind": "objective", "words": ["mine"], "line": 84, "note": "clear out the gemstone mine"}, {"kind": "reward", "words": ["gold"], "line": 84, "note": "50 gold offered (line 84), raised to 250 in all (line 93)"}], "must_find": false, "hint": false, "line": 84, "note": "an ask and a taker, already paid (line 93); replaces l076; not one of §9.3's four, so a good find"},
   {"id": "lq06", "kind": "quest", "name": "Find Garret Velryn", "giver": "Keegan Velryn", "target": "Garret Velryn", "taker": "", "missing": [], "in_danger": [], "parts": [{"kind": "objective", "words": ["Garret"], "line": 102, "note": "locate Garret"}, {"kind": "reward", "words": ["50 gold"], "line": 102, "note": "offering 50 gold pieces"}, {"kind": "help", "words": ["map"], "line": 102, "note": "the route map: help to keep (§9.3)"}, {"kind": "help", "words": ["sled", "dogs"], "line": 102, "note": "two dog sleds with eight dogs from Jebidiah; the lore doesn't say lent, so to keep (§5b)"}], "must_find": true, "hint": false, "line": 102, "note": "an ask and a taker (Belleros agrees for the party); replaces l118"}
- ]
+ ],
+ "thread_knowers": "party",
+ "reveals": {"l001": ["c001"], "l002": ["c002"], "l003": ["c003"], "l004": ["c004"], "l005": ["c005"], "l006": ["c006", "ce02"], "l007": ["c007"], "l008": ["c008"], "l009": ["c009"], "l010": ["c010"], "l011": ["c011"], "l012": ["c012"], "l013": ["c013"], "l014": ["c033"], "l015": ["c015"], "l016": ["c016"], "l017": ["c017"], "l019": ["c019"], "l020": ["c020"], "l021": ["c021"], "l022": ["c022"], "l023": ["c023"], "l024": ["c024"], "l025": ["c025"], "l027": ["c028"], "l028": ["c029"], "l046": ["c030"], "l053": ["c031", "b017"], "l031": ["o001"], "l032": ["o002"], "l033": ["o003"], "l034": ["o004"], "l036": ["o006"], "l123": ["o010"], "l040": ["a001"], "l086": ["a004"], "l037": ["b001"], "e01": ["ce03", "ce04", "ce05", "ce06"], "e02": ["oe01", "oe02"], "e03": ["ae01", "ae02", "ae03"], "lq01": ["bc01"], "lq03": ["bo01"]}
 }
