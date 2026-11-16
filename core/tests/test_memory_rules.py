@@ -313,7 +313,7 @@ class Checks(unittest.TestCase):
         later_sighting = self.place(C, "was last seen in", rid="6" * 32)
         seen = self.place(B, "", rid="7" * 32)
         problems = check_relation(self.onto, later_sighting, "character", "place", [home, seen])
-        self.assertEqual([(p.kind, p.other_id) for p in problems], [(TOO_MANY, seen.id)])
+        self.assertEqual(problems, [])  # (two sightings are two visits, never flagged: #4530)
 
     def test_an_item_has_one_place_whatever_word_it_was_said_in(self) -> None:
         kept = self.place(B, "is kept in", rid="1" * 32)

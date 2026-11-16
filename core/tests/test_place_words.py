@@ -86,9 +86,12 @@ class PlaceWords(unittest.TestCase):
         from dmbot.memory.extractor import SYSTEM
 
         for word in ("lives in", "lived in", "works in", "worked in", "is kept in", "was kept in",
-                     "comes from", "was last seen in"):  # fmt: skip
+                     "comes from"):  # fmt: skip
             self.assertIn(f'"{word}"', SYSTEM)
             self.assertEqual(place_words.canonical(word), word)
+        # a visit is "went to" (#4530), kept as the sighting it is
+        self.assertIn('"went to"', SYSTEM)
+        self.assertEqual(place_words.canonical("went to"), "was last seen in")
         self.assertEqual(place_words.canonical("lives_in"), "lives in")  # (an ontology spelling)
 
     def test_the_lore_reader_is_told_the_same_words(self) -> None:
@@ -96,7 +99,7 @@ class PlaceWords(unittest.TestCase):
             self.assertIn(word, lore_read.shape_instructions(), word)
             self.assertIsNotNone(place_words.canonical(word), word)
         self.assertIn("worked in", lore_read.read_instructions())
-        self.assertIn("was last seen in", lore_read.read_instructions())
+        self.assertIn("went to", lore_read.read_instructions())  # (a visit, #4530)
 
     def test_the_sayings_a_text_uses_are_each_one_word(self) -> None:
         for said, kept in {

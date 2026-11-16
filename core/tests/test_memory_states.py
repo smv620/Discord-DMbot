@@ -1,6 +1,7 @@
 """Story memory 5a, slice 1 (#1267): state facts, one-of-a-kind items with `carries`, and the
 checks that read them. The first half needs no database; the second runs against Postgres."""
 
+import dataclasses
 import json
 import unittest
 from typing import Any
@@ -234,8 +235,9 @@ class Places(unittest.TestCase):
 
     def test_a_character_in_two_places_that_are_not_nested_is_a_flag(self) -> None:
         nest = self.nesting(("inn", "town"))
-        in_inn = fact(1, "mira", "located_in", "inn")
-        in_keep = fact(2, "mira", "located_in", "keep")
+        # (homes: two sightings are two visits and never flagged since #4530)
+        in_inn = dataclasses.replace(fact(1, "mira", "located_in", "inn"), detail="lives in")
+        in_keep = dataclasses.replace(fact(2, "mira", "located_in", "keep"), detail="lives in")
         self.assertEqual(self.check(in_keep, [in_inn], nest, ("character", "place")), [TOO_MANY])
 
     def test_two_places_inside_each_other_through_a_chain_count_as_nested(self) -> None:
@@ -246,6 +248,7 @@ class Places(unittest.TestCase):
 
     def test_without_the_places_the_old_rule_stands(self) -> None:
         a, b = fact(1, "mira", "located_in", "inn"), fact(2, "mira", "located_in", "town")
+        a, b = (dataclasses.replace(x, detail="lives in") for x in (a, b))  # (homes, #4530)
         problems = check_relation(ONTO, b, "character", "place", [a])
         self.assertEqual([p.kind for p in problems], [TOO_MANY])
 
@@ -542,15 +545,15 @@ class Storage(MemoryTest):
     async def test_a_character_in_two_unrelated_places_is_still_flagged(self) -> None:
         keep, inn = await self.add("Keep", type="place"), await self.add("Inn", type="place")
         mira = await self.add("Mira")
-        await self.relate(mira, "located_in", keep)
-        again = await self.relate(mira, "located_in", inn)
+        await self.relate(mira, "located_in", keep, detail="lives in")  # (homes, #4530)
+        again = await self.relate(mira, "located_in", inn, detail="lives in")
         self.assertEqual([f.kind for f in again.value[1]], [TOO_MANY])
 
     async def test_a_flag_closes_when_the_places_turn_out_to_be_nested(self) -> None:
         keep, inn = await self.add("Keep", type="place"), await self.add("Inn", type="place")
         mira = await self.add("Mira")
-        await self.relate(mira, "located_in", keep)
-        await self.relate(mira, "located_in", inn)
+        await self.relate(mira, "located_in", keep, detail="lives in")  # (homes, #4530)
+        await self.relate(mira, "located_in", inn, detail="lives in")
         self.assertEqual(len(await self.flags(TOO_MANY)), 1)
         await self.relate(inn, "located_in", keep)  # the inn is inside the keep after all
         closed = await self.memory.resolve_stale_flags(GUILD_A, self.c)
@@ -875,8 +878,8 @@ class Storage(MemoryTest):
         await self.memory.update_relation(
             GUILD_A, self.c, old.value[0].id, source="dm", to_session_at=5
         )
-        await self.relate(mira, "located_in", keep)
-        again = await self.relate(mira, "located_in", inn)
+        await self.relate(mira, "located_in", keep, detail="lives in")  # (homes, #4530)
+        again = await self.relate(mira, "located_in", inn, detail="lives in")
         self.assertEqual([f.kind for f in again.value[1]], [TOO_MANY])
 
     async def test_a_kind_change_away_from_item_forgets_one_of_a_kind(self) -> None:

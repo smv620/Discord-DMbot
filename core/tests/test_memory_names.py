@@ -3571,12 +3571,14 @@ class AfterSession(NamesTest):
 
         cerric = await add("Cerric", "npc")
         p1, p2 = await add("Brynwater", "place"), await add("Thornewick", "place")
+        # (homes: two sightings are two visits and never flagged since #4530)
         first = await self.memory.add_relation(
-            GUILD, cid, cerric, "located_in", p1, source="dm", confidence=1.0
+            GUILD, cid, cerric, "located_in", p1, source="dm", confidence=1.0, detail="lives in"
         )
         await self.memory.add_relation(
-            GUILD, cid, cerric, "located_in", p2, source="cleaner", confidence=0.5
-        )
+            GUILD, cid, cerric, "located_in", p2, source="cleaner", confidence=0.5,
+            detail="lives in",
+        )  # fmt: skip
         self.assertEqual(len(await self.memory.flags(GUILD, cid)), 1)
         await self.memory.update_relation(
             GUILD, cid, first.value[0].id, status=REJECTED, source="dm"

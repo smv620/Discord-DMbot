@@ -9918,15 +9918,43 @@ async def _settle_whereabouts(
         # a place inside another is one place (the inn and its town), a bigger place elsewhere is
         # a move (#4173 slice 5): the mover rule asks
         relation = (await states.place_nesting(w, await _load_ontology(w))).relation
+    lines: dict[str, int] = {}
+    visit = place_words.slot(rel.detail, kinds[rel.subject_id])[0] == place_words.LAST_SEEN
+    if relation is not None and visit:
+        # (only the mover's own sightings: the lines that order two visits in one session)
+        seen = [rel, *(r for r in others if r.predicate == whereabouts.LOCATED
+                       and r.subject_id == rel.subject_id)]  # fmt: skip
+        lines = await _first_lines(w, seen)
+        if w.said_line is not None and w.said_line[0] == rel.from_session_at:
+            lines.setdefault(rel.id, w.said_line[1])  # (the claim being kept: its own fact)
     settled = whereabouts.settle(
         rel, kinds[rel.subject_id], kinds[rel.object_id], others, by_hand=by_hand, now=w.now,
-        relation=relation,
+        relation=relation, line_of=lines.get,
     )  # fmt: skip
     if settled.new_changes:
         rel = _relation(await w.update(RELATIONS, rel.id, dict(settled.new_changes)))
     for ended_id, changes in settled.ends.items():
         await w.update(RELATIONS, ended_id, dict(changes))
     return rel, set(settled.ends)
+
+
+async def _first_lines(w: Changes, facts: Sequence[Relation]) -> dict[str, int]:
+    """The first transcript line of the claim that made each of these facts, in the fact's own
+    session, to order two visits said in one session (#4530). Numbers only, never words; a claim
+    whose lines went with a speaker's consent has none, and nothing orders it."""
+    session = {f.id: f.from_session_at for f in facts if f.from_session_at is not None}
+    if not session:
+        return {}
+    rows = await w.select(CLAIMS, " AND fact_id = ANY(%s)", [sorted(session)])
+    first: dict[str, int] = {}
+    for r in rows:
+        fact = str(r["fact_id"])
+        if r["session_started_at"] != session.get(fact):
+            continue  # (the same fact said in another session: its lines count there)
+        numbers = [int(n) for n in r["lines"] or () if str(n).isdigit()]
+        if numbers:
+            first[fact] = min([*numbers, first.get(fact, min(numbers))])
+    return first
 
 
 async def _not_assumed(w: Changes, kind: str, statement_id: str) -> None:
