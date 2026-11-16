@@ -11,7 +11,7 @@ from typing import Any
 from dmbot.memory import web_actions as wa
 from dmbot.memory.models import DM
 from dmbot.memory.thread_read import STATE
-from dmbot.web import thread_card
+from dmbot.web import relationships, thread_card
 from dmbot.web.recaps import RecapError, _scoped
 from tests.test_recap_web import BOB
 from tests.test_web_api import ALICE, GORRAK, THURSDAY
@@ -215,6 +215,23 @@ class TheChanges(Card):
         for text in (f"{'a' * 32} 0", f"{'a' * 32} 10000", f"{'a' * 32} x", f"{'a' * 32}", "5 3"):
             got = await self.queue_part("part-date", text)
             self.assertNotEqual(got["status"], "ok", text)
+
+    async def test_the_answer_route_reads_a_change_and_gives_its_undo_batch(self) -> None:
+        answer = await thread_card.change(
+            self.web, self.session, self.cref, self.thread,
+            {"action": "add", "kind": "objective", "words": "Find the heir"},
+        )  # fmt: skip
+        waiting = await relationships.read_answer(self.web, self.session, self.cref, answer)
+        self.assertEqual((waiting["state"], waiting["batch"]), ("waiting", None))
+        claimed = await self.actions.claim_next(self.g)
+        assert claimed is not None
+        done = await wa.apply(
+            self.memory, self.g, {ALICE.id}, claimed, actions=self.actions, game_now=self.game_now
+        )
+        await self.actions.finish(self.g, claimed, error=done.error, result_batches=done.batches)
+        read = await relationships.read_answer(self.web, self.session, self.cref, answer)
+        self.assertEqual((read["state"], read["error"]), ("done", ""))
+        self.assertEqual(read["batch"], done.batches[0])
 
     async def test_a_state_a_show_and_a_remove(self) -> None:
         made = await self.act("part-add", f"{self.thread} objective - - - - - - Cross the pass")
