@@ -1628,7 +1628,7 @@ class SuggestionReview(_Menu):
                 memory,
                 self.entity_id,
                 self.spellings,
-                refs=self.refs or None,
+                refs=self.refs,
                 lore=lore,
                 lore_source=source,
                 lore_card=True,
