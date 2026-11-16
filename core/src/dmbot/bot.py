@@ -164,7 +164,6 @@ from dmbot.dm_screen import (
     pack_suggestion,
     pack_update,
     peek_view,
-    private_note,
     rules_cards,
     said_as_hears,
     said_as_listens,
@@ -172,6 +171,7 @@ from dmbot.dm_screen import (
     set_suggestion,
     set_update,
     update_notes,
+    upkeep,
     web_settings,
 )
 from dmbot.dm_screen import clock as clock_screen
@@ -225,6 +225,7 @@ from dmbot.dm_screen.old_chat import notice_text as old_chat_notice
 from dmbot.dm_screen.old_chat import notice_view as old_chat_view
 from dmbot.dm_screen.pause import PauseButton
 from dmbot.dm_screen.peek_notices import PeekNotices
+from dmbot.dm_screen.peek_notices import counts_line as peek_counts_line
 from dmbot.dm_screen.peek_notices import notice as peek_notice
 from dmbot.dm_screen.quiet_stop import (
     CANCELLED,
@@ -238,6 +239,7 @@ from dmbot.dm_screen.quiet_stop import (
 from dmbot.dm_screen.recap_panel import RecapsButton
 from dmbot.dm_screen.recap_style import RecapStyleButton
 from dmbot.dm_screen.retired_channels import remove_old_channels
+from dmbot.dm_screen.setting_field import KeepSettingButton
 from dmbot.dm_screen.settings import (
     AskBeforeAddingButton,
     BackToSettingsButton,
@@ -578,6 +580,7 @@ from dmbot.ui import (
     reveal_card,
     shared_rules_defs,
     theatre_button,
+    time_limit_alerts,
 )
 from dmbot.ui import guide as guide_screen
 from dmbot.ui import logic as ui_logic
@@ -1276,7 +1279,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 campaigns=campaigns,
                 transcripts=transcripts,
                 guild_ids=campaigns.guilds_with_campaigns,
-                post_screen=self._post_to_screen,
+                post_screen=self._post_upkeep,
             )
         if meter is not None:
             self.retention = RetentionJob(
@@ -1792,6 +1795,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             dm_bot_buttons.OpenButton, dm_bot_buttons.HelpButton, dm_bot_buttons.RuleButton
         )  # #1666, #1691
         self.add_dynamic_items(looked_at.LookedButton, looked_at.OpenCard)  # #1957
+        self.add_dynamic_items(time_limit_alerts.OpenThread)  # (quests slice 4b, #4448)
         self.add_dynamic_items(
             SettingsButton,
             LevelButton,
@@ -1803,6 +1807,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             RuleLookupButton,
             RulesCardsButton,
             AskBeforeAddingButton,
+            KeepSettingButton,
             channel_sync_ui.ChannelsMenuButton,
             channel_sync_ui.ChannelsChoiceButton,
             channel_sync_ui.PeopleButton,
@@ -3027,8 +3032,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     return
                 agreed = await self.consent.consenting(gid)
                 presession = PreSession(
-                    self.memory, RecallService(self.memory), ClaimStore(self.memory), self.recaps
-                )
+                    self.memory, RecallService(self.memory), ClaimStore(self.memory), self.recaps,
+                    # (getattr: the tests' stand-in bots have no clock store)
+                    getattr(self, "clocks", None),
+                )  # fmt: skip
                 async with asyncio.timeout(PRESESSION_NOTE_WAIT_S):  # never a stuck connection
                     note = await presession.note(
                         gid,
@@ -3612,12 +3619,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except Exception:
             log.exception("The daily owner check failed")
 
-    async def _post_to_screen(self, campaign: Campaign, text: str) -> bool:
-        """Say something on a campaign's DM screen (for the daily jobs); False if it has none
-        or the post failed."""
-        if campaign.dm_screen_channel_id is None:
+    async def _post_upkeep(self, campaign: Campaign, text: str) -> bool:
+        """Say a counts-only upkeep note for a campaign (the daily jobs; #3874): in the DM Bot
+        channel when it has one, else on the DM screen as before. False if it has neither or the
+        post failed. The DM Bot channel is read by the campaign's people, so `text` holds counts
+        and never a name."""
+        channel = self._upkeep_channel(campaign)[0]
+        if channel is None:
             return False
-        return await self.post(campaign.dm_screen_channel_id, text)
+        return await self.post(channel, text)
 
     async def _tell_admin(self, user_id: int, text: str) -> None:
         """A private message to one of DMbot's admins (#972). Raises if it can't be sent, so
@@ -4217,7 +4227,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self, guild.id, campaign
         )  # the one reminder (#4344, never raises)
         try:
-            await self._old_chat_notice(guild, campaign, screen_id)
+            # (a setup note: the DM Bot channel, the screen only if there is none; #3874)
+            fresh = await self.campaigns.get(guild.id, campaign.id) or campaign  # (the DM Bot
+            # channel may have been made just above)
+            await self._old_chat_notice(guild, campaign, upkeep.channel_for(fresh) or screen_id)
         except Exception:
             log.exception("Couldn't tell the DM about the old chat channel")  # never blocks a start
         await self._tell_players_the_clock(
@@ -4274,8 +4287,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             except Exception:
                 log.exception("Couldn't forget the session that failed to start")
             return False, SAVE_FAILED
-        if transcript_problem:
-            await self.post(screen_id, transcript_problem)
+        if transcript_problem:  # (words only; the DM Bot channel's own problem stays on the screen)
+            await self.post(upkeep.channel_for(campaign) or screen_id, transcript_problem)
         if dm_bot_problem:
             await self.post(screen_id, dm_bot_problem)
         self._check_house_file(campaign, screen_id)
@@ -5202,8 +5215,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         user_id: int,
         text: str,
         view: discord.ui.View | None = None,
-        *,
-        link_to_itself: bool = False,
     ) -> str:
         """ "sent", "forbidden" (their messages from DMbot are closed) or "failed"."""
         try:
@@ -5215,8 +5226,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 keep = getattr(view, "keep_message", None)  # a view that edits itself later (#2284)
                 if keep is not None:
                     keep(sent)
-                if link_to_itself:  # "Open in Discord" on a question the message itself holds
-                    await dm_links.point_at_itself(sent, view)
         except discord.Forbidden as exc:
             log.info("Couldn't message user %s privately: %s", user_id, exc)
             return "forbidden"
@@ -8672,19 +8681,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         """How much DMbot says in this campaign's DM screen (#504, #515): saved, and a
         running session (or one still finishing) follows the change from now on. Under
         the session lock, so a session starting meanwhile can't miss it (#553). A change
-        from `was` (the level the DM saw) is noted in the DM screen, so a co-DM knows why
-        DMbot went quiet."""
+        from `was` (the level the DM saw) is noted in the DM Bot channel (the screen if none), so
+        a co-DM knows why DMbot went quiet."""
         campaign = await self.campaigns.set_dm_screen_level(guild_id, campaign_id, level)
         async with self.session_lock(guild_id):
             for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
                 if table is not None and table.campaign_id == campaign_id:
                     table.screen_level = campaign.dm_screen_level
-        if was != campaign.dm_screen_level and campaign.dm_screen_channel_id is not None:
+        channel = upkeep.channel_for(campaign)  # (the DM Bot channel, else the screen; #3874)
+        if was != campaign.dm_screen_level and channel is not None:
             # Always posted: a note about the level, not something the level governs.
-            await self.post(
-                campaign.dm_screen_channel_id,
-                screen_messages.level_changed(campaign.dm_screen_level),
-            )
+            await self.post(channel, screen_messages.level_changed(campaign.dm_screen_level))
         return campaign
 
     async def _alert_dm(self, guild_id: int, message: str) -> None:
@@ -11941,7 +11948,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         dm_links.DMLinks(),
                     )
                     message = await self._dm_message(user_id, marked, copy)
-                    await dm_links.point_at_itself(message, copy)  # (its own jump link)
                 except Exception:
                     log.exception("Couldn't ask a DM a live question privately")
                     continue
@@ -12108,12 +12114,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 # send that worked (the caller would then also post on the DM screen, asking
                 # twice). "At least one DM got it" is the contract.
                 try:
-                    # ("Open in Discord" opens the message itself, unless the caller gave another)
-                    own = not (links and links.discord_url)
-                    if (
-                        await self.sidebar_send_dm(user_id, text, view, link_to_itself=own)
-                        == "sent"
-                    ):
+                    # ("Open in Discord" only when it points somewhere else: never at the message)
+                    if await self.sidebar_send_dm(user_id, text, view) == "sent":
                         sent = True
                 except Exception:
                     log.exception("Couldn't ask a DM privately")
@@ -13157,19 +13159,35 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             await self.campaigns.forget_guild_if_empty(guild_id)
 
     async def run_peek_notices(self) -> None:
-        """Tell the DM, on the DM screen, that a player turned the peek on (#2404): one line for
-        each visit, taken from the website's peek door's rows. Nothing but the person's display
-        name is in it."""
+        """Tell the campaign that players turned the peek on (#2404, #3874): one counts-only line
+        in the DM Bot channel (the DM screen if there is none) for each campaign and round, and
+        each name only in a private message to the campaign's DMs, taken from the website's peek
+        door's rows. The name is the person's own display name and nothing else is in it."""
         store = self.peek_notices
         if store is None:
             return
         for guild in list(self.guilds):
+            by_campaign: dict[str, list[str]] = {}
             for peek in await store.take(guild.id):
-                with log_context(guild_id=guild.id, campaign_id=peek.campaign_id):
-                    campaign = await self.campaigns.get(guild.id, peek.campaign_id)
-                    if campaign is None or not campaign.dm_screen_channel_id:
-                        continue
-                    await self.post(campaign.dm_screen_channel_id, peek_notice(peek.name))
+                by_campaign.setdefault(peek.campaign_id, []).append(peek.name)
+            for campaign_id, names in by_campaign.items():
+                with log_context(guild_id=guild.id, campaign_id=campaign_id):
+                    # Each campaign in its own try: the rows were marked posted when taken, so one
+                    # failure must not lose the others' names. Only the error's type is logged.
+                    try:
+                        campaign = await self.campaigns.get(guild.id, campaign_id)
+                        if campaign is None:
+                            continue
+                        try:  # (a courtesy: the names below go out even if it fails)
+                            await self._post_upkeep(campaign, peek_counts_line(len(names)))
+                        except Exception as exc:
+                            log.warning("Peek count not posted: %s", type(exc).__name__)
+                        # (a person with two accounts is told once: `dm_accounts`, not the ids)
+                        for user_id in sorted(campaign.dm_accounts):
+                            for name in names:
+                                await self._dm_user(user_id, peek_notice(name))
+                    except Exception as exc:
+                        log.warning("Peek notices failed: %s", type(exc).__name__)
 
     def _waiting_answers(self, guild_id: int) -> web_actions.Waiting | None:
         """What the website's answers to waiting connections need (#2635): the claims, the
@@ -13510,15 +13528,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self, campaign: Campaign, rule: OptionalRule, turn_on: bool, sender_id: int
     ) -> bool:
         """An optional rule chosen on the website (#2755), as `/dmbot optionalrules` does it:
-        saved, then noted in the DM screen if the campaign has one. A line that could not be
+        saved, then noted in the DM Bot channel (the screen if none). A line that could not be
         posted is not the choice's failure (the rule is saved): False says so, for the page to
         mention. The note never pings."""
         await self.campaigns.set_optional_rule(campaign.guild_id, campaign.id, rule.id, turn_on)
-        if campaign.dm_screen_channel_id is None:
+        channel = upkeep.channel_for(campaign)  # (the DM Bot channel, else the screen; #3874)
+        if channel is None:
             return True
         try:
             return await self.post(
-                campaign.dm_screen_channel_id,
+                channel,
                 optional.screen_line(rule, turn_on, f"<@{sender_id}>"),
             )
         except Exception as exc:  # the type only
@@ -13696,7 +13715,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             f"DMbot removed {count} old {word} to make room. "
             "Mark the ones to keep as permanent on the website."
         )
-        await private_note.send(self, campaign, text, lambda: discord.ui.View())
+        # Private first; a count, so the DM Bot channel is the fallback (#3874), not the screen.
+        if await self.ask_privately(guild_id, campaign_id, text, discord.ui.View()):
+            return
+        channel = upkeep.channel_for(campaign)
+        if channel is not None:
+            await self.post(channel, text)
+        else:
+            log.info("A pictures-removed note had nowhere to go (%d pictures)", count)
 
     async def run_picture_actions(self) -> None:
         """What posters and DMs chose on the website's Pictures page, applied through the picture
@@ -15225,18 +15251,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self._npcs_dirty.discard(campaign_id)
 
     async def _old_chat_notice(
-        self, guild: discord.Guild, campaign: Campaign, screen_id: int
+        self, guild: discord.Guild, campaign: Campaign, post_to: int
     ) -> None:
         """A campaign that still has the old `dmb-chat` channel (#3212): DMbot no longer uses it,
-        and says so once, with the button to remove it (never removed by DMbot itself). A channel
-        that is gone already is forgotten. Told once for each run of the bot; nothing is stored."""
-        channel_id = campaign.dmbchat_channel_id
-        if channel_id is None or campaign.id in self._old_chat_told:
+        and says so once, in `post_to` (the DM Bot channel, else the screen; #3874), with the
+        button to remove it (never removed by DMbot itself). A channel that is gone already is
+        forgotten. Told once for each run of the bot; nothing is stored."""
+        old_channel = campaign.dmbchat_channel_id
+        if old_channel is None or campaign.id in self._old_chat_told:
             return
-        if guild.get_channel(channel_id) is None:
+        if guild.get_channel(old_channel) is None:
             return  # not cached, or gone: say nothing (the button forgets a channel that is gone)
         self._old_chat_told.add(campaign.id)
-        await self.post(screen_id, old_chat_notice(channel_id), view=old_chat_view(campaign.id))
+        await self.post(post_to, old_chat_notice(old_channel), view=old_chat_view(campaign.id))
 
     def _usable_transcript(self, guild: discord.Guild, campaign: Campaign) -> int | None:
         """After a restart: the campaign's transcript channel, if it's still one and

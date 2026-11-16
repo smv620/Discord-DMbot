@@ -25,7 +25,7 @@ from dmbot.memory.models import CONFIRMED, DM, KNOWS_HOWS, MemoryRuleError, Rela
 from dmbot.memory.store import MemoryStore
 from dmbot.memory.who_resolve import checked_line
 from dmbot.mentions import NO_PINGS
-from dmbot.ui import all_names, logic
+from dmbot.ui import all_names, logic, route_condition
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
     _answer_first,
@@ -245,6 +245,7 @@ async def show_one(
         + "\n"
         + (checked_line(found.relation.decided or "") if found.secrets else "")  # DMs only
         + await why_line(found)  # DMs only: the DM's own text
+        + await _condition_line(interaction, found)
         + (
             (
                 "Change the words, say if they've met, hide it, or remove it."
@@ -256,6 +257,24 @@ async def show_one(
         ),
         view,
     )
+
+
+async def _condition_line(interaction: discord.Interaction, found: Found) -> str:
+    """A known road's condition (#4258), for the DM, on its own line; "" for anything else."""
+    r = found.relation
+    if r.predicate != route_words.ROUTE_TO or r.route_state or not found.secrets:
+        return ""
+    from dmbot.memory import gate
+    from dmbot.ui.continuity import _session_numbers
+
+    c = found.campaign
+    got = await found.memory.route_conditions(
+        c.guild_id, c.id, gate.Viewer.the_dm(), relation_ids=[r.id]
+    )
+    held = got.get(r.id)
+    numbers = await _session_numbers(interaction, c.id) if held and held.before else {}
+    line = route_condition.condition_line(held, numbers, dm=True)
+    return f"{line.lstrip()}\n" if line else ""
 
 
 # The DM's "Why?" (#3606), in the words Discord uses for the upload ("📜 Upload campaign lore") and
@@ -338,6 +357,8 @@ class OneConnection(_Menu):
             # a route's stated length, the DM's (#4255; the ux-critic's words): 🛣️ (📏 is Size)
             self.length_words = r.length_words or ""
             self.add_item(_Button(self._length, label=LENGTH_BUTTON, style=grey, row=3))
+            # and whether it is open (#4258): its own screen, as a route place's
+            self.add_item(_Button(self._condition, label=route_condition.BUTTON, style=grey, row=3))
             if r.length_words is not None and r.length_from == place_levels.READ:
                 self.add_item(
                     _Button(self._keep_length, label=KEEP_LENGTH_BUTTON, style=grey, row=3)
@@ -370,6 +391,12 @@ class OneConnection(_Menu):
                 row=4,
             )
             self.add_item(self.direction)
+
+    async def _condition(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await route_condition.show(
+            interaction, self.campaign_id, entity_id=self.entity_id, relation_id=self.relation_id
+        )
 
     async def _changed(
         self, interaction: discord.Interaction, found: Found, note: str, *, undo: int | None = None

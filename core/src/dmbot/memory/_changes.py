@@ -176,8 +176,9 @@ MAP_FACTS = Table(
     "id",
     ("id", "entity_id", "layer", "value", "words", "faction_id", "how", "part",
      "from_session_at", "to_session_at", "from_game_time", "to_game_time", "status", "source",
-     "also_text", "table_knows", "created_at", "culture_id"),
-    defaults={"culture_id": None},  # (a named culture, #4257 slice 3b)
+     "also_text", "table_knows", "created_at", "culture_id", "relation_id"),
+    # (a named culture, #4257 slice 3b; a road's condition on a known `route_to`, #4258)
+    defaults={"culture_id": None, "relation_id": None},
 )  # fmt: skip
 # One map: a kept picture DMbot knows is a map (#4344, MapBot layers slice 3a). It is in the log so
 # that each DM action on a map (keep, yes or no to using it, show to the table, remove) is one Undo
@@ -419,6 +420,9 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_flags", "relation_id", False),
         ("memory_flags", "other_id", False),
         ("memory_beliefs", "relation_id", False),
+        # (a road's condition, #4258: outside an Undo the store deletes it first, logged; an Undo
+        # that would delete the road is refused while it has one, so nothing goes unlogged)
+        ("memory_map_facts", "relation_id", False),
     ),
     "memory_perspectives": (
         ("memory_beliefs", "perspective_id", False),
@@ -637,6 +641,9 @@ class Changes(Scope):
             # its beliefs go with it, each logged, so an Undo brings the connection back whole
             for belief in await self.select(BELIEFS, " AND relation_id = %s", [row_id]):
                 await self.delete(BELIEFS, belief["id"])
+            # and so does a road's condition (#4258), which the database would delete unlogged
+            for fact in await self.select(MAP_FACTS, " AND relation_id = %s", [row_id]):
+                await self.delete(MAP_FACTS, fact["id"])
         if table is ALIASES:  # who knows an other name goes with it (#2935)
             for knower in await self.select(ALIAS_KNOWERS, " AND alias_id = %s", [row_id]):
                 await self.delete(ALIAS_KNOWERS, knower["id"])

@@ -3,6 +3,7 @@
 // colour pairs the stylesheet uses are measured for contrast in light and dark (a DOM without
 // layout can't measure contrast itself). The keyboard walk in a real browser is in
 // scripts/check-a11y.mjs; the parts that need no layout are checked here.
+import { entries, monthPages, splitEntries } from "../src/content/whats-new";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,10 +23,13 @@ const found = import.meta.glob<{ default: AstroComponentFactory }>("../src/pages
 });
 
 // Every built page, by its address.
+// A month page of the older changes (#4203) is one file for many addresses: it is checked as the newest month.
+const newestMonth = monthPages(splitEntries(entries, new Date()).older)[0]?.slug ?? "older";
 const pagePaths = Object.keys(found).map((file) => {
   const path = file.replace("../src/pages", "").replace(/\.astro$/, "");
   return path === "/index" ? "/" : path;
 });
+const addressOf = (path: string): string => path.replace("[month]", newestMonth);
 
 let container: AstroContainer;
 beforeAll(async () => {
@@ -59,7 +63,8 @@ async function axeOn(html: string): Promise<string[]> {
 async function violationsOn(path: string): Promise<string[]> {
   const file = path === "/" ? "/index" : path;
   const html = await container.renderToString(found[`../src/pages${file}.astro`]!.default, {
-    request: new Request(`https://dmbot.example${path}`),
+    params: { month: newestMonth },
+    request: new Request(`https://dmbot.example${addressOf(path)}`),
   });
   return axeOn(html);
 }
@@ -68,7 +73,8 @@ describe("structure", () => {
   it.each(pagePaths)("%s has one h1, headings in order and the four landmarks", async (path) => {
     const file = path === "/" ? "/index" : path;
     const html = await container.renderToString(found[`../src/pages${file}.astro`]!.default, {
-      request: new Request(`https://dmbot.example${path}`),
+      params: { month: newestMonth },
+      request: new Request(`https://dmbot.example${addressOf(path)}`),
     });
     const doc = parsePage(html);
     expect(doc.documentElement.getAttribute("lang")).toBe("en");

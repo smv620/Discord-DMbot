@@ -279,7 +279,7 @@ async def apply(host: Host, guild_id: int, item: Setting) -> Outcome:
                 return Outcome(BAD_VALUE)
             if item.value != campaign.dm_screen_level:
                 await host.apply_level(campaign, item.value)
-            return Outcome(note=messages.level_changed(item.value))  # (the line the screen gets)
+            return Outcome(note=messages.level_changed(item.value))  # (the line the note gets)
         if item.setting == RETENTION:
             if item.value not in RETENTION_CHOICES:
                 return Outcome(BAD_VALUE)

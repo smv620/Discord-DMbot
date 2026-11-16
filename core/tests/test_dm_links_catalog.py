@@ -36,6 +36,8 @@ OUT_OF_SCOPE = {
     "a map); it is their answer, in the message's two buttons (#4344)",
     "sidebar/service.py": "the DM's own live questions and DMbot's in-game replies at the table: "
     "live and brief on purpose, no links",
+    "ui/time_limit_alerts.py": "a live alert to the DM about a quest's time limit, with one button "
+    "at most (design quests §8.4, the owner's rule for the DM's attention): its Open is the card",
 }
 
 

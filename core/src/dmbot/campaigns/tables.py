@@ -213,6 +213,7 @@ NOT_IN_BACKUP: dict[str, str] = {
     # session's point at its lines by when they began, which a restore into another server may not
     # match, and quote people whose consent a backup doesn't carry; the kept threads are in it)
     "thread_suggestions": _WAIT,
+    "time_limit_told": _WAIT,  # (#4448: which messages were said; a restore tells afresh)
     "secret_exposures": _WAIT,
     "name_actions": _WAIT,
     "setting_actions": _WAIT,

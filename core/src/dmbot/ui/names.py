@@ -188,6 +188,13 @@ async def _campaign_for(interaction: discord.Interaction, campaign_id: str) -> C
         await _tell(interaction, NOT_IN_SERVER)
         return None
     campaign = await _bot(interaction).campaigns.get(guild_id, campaign_id)
+    if campaign is None and interaction.guild is None:
+        # A remembered server can be out of date (a campaign moved to another server, #2550):
+        # ask the database before saying no.
+        fresh = await _bot(interaction).campaigns.guild_of(campaign_id)
+        if fresh is not None and fresh != guild_id:
+            _PRIVATE_SERVERS[campaign_id] = fresh
+            campaign = await _bot(interaction).campaigns.get(fresh, campaign_id)
     if campaign is None or not logic.can_run(
         campaign, interaction.user.id, _is_manager(interaction)
     ):

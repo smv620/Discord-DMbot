@@ -247,6 +247,9 @@ ONLY_PLACES = "Only a place has a size, and this isn't a place now."
 SETTING_LEVELS = place_levels.SETTING_LEVELS
 SETTING_PLACE = "Confirm this place first, then make it the setting."
 SETTING_SIZE = "Tap 📏 Size and kind first and pick Region or bigger."
+SETTING_TWO = (
+    "More than one place has that name. Open the one you mean and tap 🌍 Make it the setting."
+)
 # How two people know each other is a `knows` thing only (#3881).
 # A connection's direction set by the DM (#4154), refused in plain words
 ROLE_ONE_WAY = "That family role only reads one way (like niece). Pick one of the arrows instead."
@@ -1312,7 +1315,10 @@ class MemoryStore:
                 if r["id"] != entity_id:
                     # (the DM taking away DMbot's guess is a no to it: never guessed again)
                     gone_from = "declined" if r.get("setting_from") == place_levels.READ else None
-                    await w.update(ENTITIES, r["id"], {"setting": False, "setting_from": gone_from})
+                    gone: dict[str, Any] = {"setting": False, "setting_from": gone_from}
+                    if r.get("setting_from") == place_levels.READ:  # (its place too, as ✖: #4291)
+                        gone |= await _guess_place_goes(w, r)
+                    await w.update(ENTITIES, r["id"], gone)
             if entity_id is not None:  # (the DM's word: a guess of DMbot's kept is the DM's now)
                 row = await w.update(ENTITIES, entity_id, {"setting": True, "setting_from": DM})
             return Written(_entity(row) if row else None, w.batch)
@@ -1370,6 +1376,80 @@ class MemoryStore:
             await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", CONFIRMED, False, None))
             return Written(_entity(row), w.batch)
 
+    async def choose_setting(
+        self, guild_id: int, campaign_id: str, name: str, *, source: str
+    ) -> Written[Entity]:
+        """The DM's own pick of the campaign's setting by name (#4291): the confirmed place of
+        that name (found as `guess_setting` finds one), or a new place at world size, shown to the
+        players (it is the DM's word, not a guess). Any other setting is taken away in the same
+        change, so one change, one Undo. A place of that name that is smaller than a region is
+        refused, as `set_setting` refuses it, and so are two places of one name (DMbot can't tell
+        which: the DM picks from the place's own card)."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        world = clean_text(name)  # (refuses an empty name)
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+
+            def bare(text: str) -> str:  # ("the Flanaess" and "Flanaess" are one world)
+                key = name_key(text)
+                return key[4:] if key.startswith("the ") else key
+
+            key = bare(world)
+            found = [
+                r
+                for r in await w.select(
+                    ENTITIES, " AND status = %s AND merged_into IS NULL", [CONFIRMED]
+                )
+                if bare(str(r["name"])) == key and onto.is_a(str(r["type"]), "place")
+            ]
+            if len(found) > 1:
+                raise MemoryRuleError(SETTING_TWO)
+            if found and found[0].get("place_level") not in SETTING_LEVELS:
+                raise MemoryRuleError(SETTING_SIZE)  # (before any write)
+            now = await w.select(ENTITIES, " AND setting", [])
+            if (
+                found
+                and [r["id"] for r in now] == [found[0]["id"]]
+                and now[0].get("setting_from") == DM
+            ):
+                return Written(_entity(found[0]), None)  # (already the DM's word: nothing to write)
+            for r in now:
+                if found and r["id"] == found[0]["id"]:
+                    continue
+                # (the DM taking away DMbot's guess is a no to it: never guessed again)
+                gone_from = "declined" if r.get("setting_from") == place_levels.READ else None
+                change: dict[str, Any] = {"setting": False, "setting_from": gone_from}
+                # (its place too, as ✖ and `set_setting` do: one rule, #4291)
+                if r.get("setting_from") == place_levels.READ:
+                    change |= await _guess_place_goes(w, r)
+                await w.update(ENTITIES, r["id"], change)
+            if found:
+                place = found[0]
+                change = {"setting": True, "setting_from": DM}
+                # (only the place DMbot made for a guess, still hidden for it: never one the DM hid)
+                if (
+                    place.get("source") == SETTING_GUESS_SOURCE
+                    and place.get("setting_from") == place_levels.READ
+                    and place.get("hidden_from_players")
+                ):
+                    change["hidden_from_players"] = False
+                row = await w.update(ENTITIES, str(place["id"]), change)
+                return Written(_entity(row), w.batch)
+            row = await w.insert(
+                ENTITIES,
+                {
+                    "id": new_id(), "type": "place", "name": world, "description": "",
+                    "status": CONFIRMED, "merged_into": None, "source": source,
+                    "created_at": w.now, "played_by": None, "role": None, "needs_look": False,
+                    "unique_item": None, "hidden_from_players": False,
+                    "place_level": "world", "place_level_from": DM,
+                    "setting": True, "setting_from": DM,
+                },
+            )  # fmt: skip
+            await w.insert(ALIASES, _new_alias(w, row["id"], world, "full", CONFIRMED, False, None))
+            return Written(_entity(row), w.batch)
+
     async def keep_setting(
         self, guild_id: int, campaign_id: str, entity_id: str, *, source: str
     ) -> Written[Entity]:
@@ -1408,18 +1488,7 @@ class MemoryStore:
             if not (row.get("setting") and row.get("setting_from") == place_levels.READ):
                 raise MemoryRuleError(NOT_FOUND)
             change: dict[str, Any] = {"setting": False, "setting_from": "declined"}
-            # A place DMbot made for the guess goes with it (Supervisor's review of #4299): the bot
-            # never keeps a place the DM didn't ask for. Rejected, so it leaves every list, with
-            # its declined mark kept, so the "never again" check still finds it; Undo brings it
-            # back as a guess. Only while it is still hidden and nothing else points at it.
-            if row.get("source") == SETTING_GUESS_SOURCE and row.get("hidden_from_players"):
-                tied = await w.select(
-                    RELATIONS,
-                    " AND status <> 'rejected' AND (subject_id = %s OR object_id = %s)",
-                    [entity_id, entity_id],
-                )
-                if not tied:
-                    change["status"] = REJECTED
+            change |= await _guess_place_goes(w, row)
             row = await w.update(ENTITIES, entity_id, change)
             return Written(_entity(row), w.batch)
 
@@ -1668,6 +1737,67 @@ class MemoryStore:
             row = await thread_parts.set_state(w, part_id, state)
             return Written(thread_parts.from_row(row), w.batch)
 
+    async def set_time_limit_date(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        part_id: str,
+        minute: int | None,
+        *,
+        now: int | None,
+        source: str,
+        given_by: str = thread_parts.DM_SOURCE,
+    ) -> Written[thread_parts.Part]:
+        """A time limit's game date, or None to make it words only again (quests slice 4; §8.2;
+        `thread_parts.set_due`). Only the DM: the one-tap date (`given_by` 'dm'), or DMbot's read
+        the DM kept (`given_by` 'read', slice 4c). One change, one Undo."""
+        if source != DM:
+            raise MemoryRuleError(thread_parts.ONLY_DM)
+        async with self._write(guild_id, campaign_id, source) as w:
+            row = await thread_parts.set_due(w, part_id, minute, now=now, source=given_by)
+            return Written(thread_parts.from_row(row), w.batch)
+
+    async def time_limits_to_tell(
+        self, guild_id: int, campaign_id: str, now: int, *, at: int
+    ) -> list[tuple[str, str, thread_parts.Part, str]]:
+        """After the clock moved to `now` (the group furthest ahead): the dated running limits of
+        live threads whose "soon" or "passed" mark the clock has reached and that weren't said
+        yet, each claimed now so it is said once (slice 4b, §8.4; `time_limit_told`). As (thread
+        id, thread name, the part, the stage). `at` is the wall-clock second, for the record."""
+        from dmbot.memory import time_limit_told
+        from dmbot.memory import time_limits as tl
+
+        async with self._read(guild_id, campaign_id) as scope:
+            dated = await thread_parts.dated_running(scope)
+        if not dated:
+            return []
+        async with self._db.guild(guild_id) as conn:
+            said = await time_limit_told.told(conn, guild_id, campaign_id)
+        staged = [
+            (p, stage)
+            for p in dated
+            if p.due_minute is not None
+            and (stage := tl.stage(p.due_minute, p.set_at, now)) is not None
+            and (p.first_id, p.due_minute, stage) not in said
+        ]
+        if not staged:
+            return []  # (nothing new: no threads read, however long ago a limit passed)
+        live = {
+            t.thread.id: t.thread.name
+            for t in await self.threads(guild_id, campaign_id)
+            if t.state is not None and t.state.condition in threads_mod.LIVE_STATES
+        }
+        out: list[tuple[str, str, thread_parts.Part, str]] = []
+        async with self._db.guild(guild_id) as conn:
+            for p, stage in staged:
+                if p.thread_id not in live or p.due_minute is None:
+                    continue  # (a finished or dropped thread: its limit says nothing, §8.4)
+                if await time_limit_told.claim(
+                    conn, guild_id, campaign_id, p.first_id, p.due_minute, stage, at
+                ):
+                    out.append((p.thread_id, live[p.thread_id], p, stage))
+        return out
+
     async def remove_thread_part(
         self, guild_id: int, campaign_id: str, part_id: str, *, source: str
     ) -> Written[None]:
@@ -1736,6 +1866,65 @@ class MemoryStore:
             onto = await _load_ontology(w)
             kept = await map_fact_store.keep_read(w, onto, place_id, layers)
             return Written(kept, w.batch)
+
+    # ---- A road's, pass's or bridge's condition (#4258, MapBot layers slice 4a) ---------------
+
+    async def route_conditions(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        viewer: gate.Viewer,
+        *,
+        place_ids: Sequence[str] = (),
+        relation_ids: Sequence[str] = (),
+        shown: Collection[str] | None = None,
+    ) -> dict[str, map_fact_store.Condition]:
+        """Each route's condition with what it ended, by place or connection id, as `viewer` may
+        see it (`map_fact_store.conditions_for`)."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await map_fact_store.conditions_for(
+                scope, viewer, place_ids=place_ids, relation_ids=relation_ids, shown=shown
+            )
+
+    async def set_route_condition(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        value: str | None,
+        *,
+        words: str = "",
+        place_id: str = "",
+        relation_id: str = "",
+        source: str,
+    ) -> Written[None]:
+        """The DM's 🚧 Condition for a route place or a known road between two places: one change,
+        so one Undo. A different value keeps the old one as history; None is "Not sure"."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            await map_fact_store.set_condition(
+                w, onto, value, words=words, place_id=place_id, relation_id=relation_id
+            )
+            return Written(None, w.batch)
+
+    async def keep_road_condition(
+        self, guild_id: int, campaign_id: str, relation_id: str, *, source: str
+    ) -> Written[int]:
+        """The DM's ✅ on a road's condition DMbot read: one change, so one Undo."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            return Written(await map_fact_store.keep_route(w, relation_id), w.batch)
+
+    async def show_road_condition(
+        self, guild_id: int, campaign_id: str, relation_id: str, shown: bool, *, source: str
+    ) -> Written[int]:
+        """The DM's 🙈 / 👁️ for a road's condition: one change, so one Undo."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            return Written(await map_fact_store.show_route(w, relation_id, shown), w.batch)
 
     # ---- World notes: DMbot's guesses about the world, for the DM to check (#4285) ----------
 
@@ -7421,6 +7610,8 @@ class MemoryStore:
         # and who knows it (#2935): the list follows the statement to its new row, so new words or
         # a turn never quietly tell nobody or everybody (#4154, the reviewer's finding)
         await knowers.move_rows(w, "relation_id", relation_id, new.id)
+        # and a road's condition (#4258), as its length does
+        await map_fact_store.move_road(w, relation_id, new.id)
         check_status_change(current["status"], REJECTED, w.source)
         await w.update(RELATIONS, relation_id, {"status": REJECTED})
         return new
@@ -9731,6 +9922,27 @@ async def _keep_read_part(
                 return
 
 
+async def _guess_place_goes(w: Changes, row: Mapping[str, Any]) -> dict[str, Any]:
+    """A place DMbot made only for its guess at the setting goes with the guess (Supervisor's
+    review of #4299, and the ruling on #4291 for the DM's own pick): the bot never keeps a place
+    the DM didn't ask for. Rejected, so it leaves every list, with its declined mark kept, so the
+    "never again" check still finds it; Undo brings it back as a guess. Only while it is still
+    hidden and nothing points at it: no connection, and no land, climate, ruler or culture (a map
+    fact, #4495), open or closed, the DM's or one of DMbot's World notes, as a connection of
+    either counts. The
+    change to add, or nothing."""
+    if row.get("source") != SETTING_GUESS_SOURCE or not row.get("hidden_from_players"):
+        return {}
+    tied = await w.select(
+        RELATIONS,
+        " AND status <> 'rejected' AND (subject_id = %s OR object_id = %s)",
+        [row["id"], row["id"]],
+    )
+    if tied or await map_fact_store.ties_place(w, row["id"]):
+        return {}
+    return {"status": REJECTED}
+
+
 async def _live_led_to(
     w: Changes, *, skip: str | None = None, predicate: str = threads_mod.LED_TO
 ) -> list[tuple[str, str]]:
@@ -10092,6 +10304,8 @@ async def _move_relations(
                 # kept from the players, keep the DM's own list). Only a fact the players were
                 # shown, folding into one they were not, hands over nothing.
                 await knowers.move_rows(w, "relation_id", relation_id, folded[relation_id])
+            # a road's condition goes to its twin too (#4258), as its length does
+            await map_fact_store.move_road(w, relation_id, folded[relation_id])
         await _delete_relation(w, relation_id)
     # A place that now has a stated parent keeps no assumed one (#4173 slice 3: a merge of a place
     # with a guess and one with a stated parent)

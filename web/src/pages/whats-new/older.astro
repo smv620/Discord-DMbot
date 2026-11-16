@@ -1,17 +1,20 @@
 ---
-import EntryList from "../../components/EntryList.astro";
 import Base from "../../layouts/Base.astro";
-import { entries, olderHeading, olderIntro, splitEntries, whatsNewHeading } from "../../content/whats-new";
+import { entries, monthLink, monthPages, olderHeading, olderIntro, olderMonthsIntro, splitEntries, whatsNewHeading } from "../../content/whats-new";
 
-// Everything the main page does not show (#4200), from the same entry files; held entries are in neither.
+// What the main page does not show (#4200), as a list of months, newest first (#4203): each month is its own page, built from the same
+// entry files, so no page grows past its size budget. Held entries are on none of them.
 const { older } = splitEntries(entries, new Date());
+const months = monthPages(older);
 ---
 
-<Base title={olderHeading} description="Older changes to DMbot, newest first, in plain words.">
+<Base title={olderHeading} description="Older changes to DMbot, a page for each month, in plain words.">
   <h1>{olderHeading}</h1>
-  <p class="lead muted">{olderIntro}</p>
+  <p class="lead muted">{olderIntro} {olderMonthsIntro}</p>
 
-  <EntryList entries={older} />
+  <ul class="stack">
+    {months.map((m) => <li><a href={`/whats-new/${m.slug}`}>{monthLink(m)}</a></li>)}
+  </ul>
 
   <p><a href="/whats-new">Back to {whatsNewHeading}</a></p>
 </Base>
