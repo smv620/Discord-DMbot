@@ -2120,6 +2120,10 @@ export interface StoryThreadSuggestion {
   people: { index: number; role: string; name: string }[];
   /** The lines the DM can keep with it (#4501): a step, a reward or a branch, in the card's order; a line's position is its number. */
   lines: { words: string; what: string; branch: boolean }[];
+  /** True when DMbot heard it in a session, not in an upload (#4526): the card says "heard", not "found in your lore". */
+  session: boolean;
+  /** Up to three of the lines it was heard in, as spoken (#4526); "" lines never. Only for a session suggestion. */
+  heard: string[];
 }
 /** One press on the story threads card: keep one (the people and lines ticked, a new name if renamed), turn one down, or Undo. */
 export type StoryThreadsChange =
