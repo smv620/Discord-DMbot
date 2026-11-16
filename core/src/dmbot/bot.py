@@ -12223,7 +12223,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         while True:
             for guild in list(self.guilds):
                 try:
-                    await self.import_job.run_round(guild.id)
+                    await self.import_job.run_round(
+                        guild.id, int(getattr(self.settings, "server_jobs_at_once", 1))
+                    )
                     await self.run_import_followups(guild.id)
                 except Exception:
                     log.exception("Import: a round failed for a server")
@@ -12243,12 +12245,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # First: the DM's "plays which character" choices, so a session scanned below is linked to
         # the characters those choices make the players' own (#3036).
         await self._apply_import_plays(gid, store)
-        done = 0
-        for ready in await store.ready_for_scan(gid):
+
+        async def scan_one(ready: Ready) -> int:
             with log_context(guild_id=gid, campaign_id=ready.campaign_id):
                 began = int(time.time())
                 if not await store.claim_scan(gid, ready.session_id, began):
-                    continue  # another round or bot has it
+                    return 0  # another round or bot has it
                 try:
                     # Well inside the stale claim. A scan cancelled here may have proposed names
                     # already: they are on the review list, just not in the "new names" post.
@@ -12258,8 +12260,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     await store.finish_scan(gid, ready.session_id, int(time.time()))
                     await self._link_import_party(gid, ready)
                     await self._offer_import_time(gid, ready)
-                    done += 1
                     self._import_names.setdefault(ready.campaign_id, []).extend(added)
+                    return 1
                 except Exception:
                     log.exception("Import: a session's name scan failed")
                     if await store.release_scan(gid, ready.session_id) >= IMPORT_SCAN_TRIES:
@@ -12268,6 +12270,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         self._import_unchecked[ready.campaign_id] = (
                             self._import_unchecked.get(ready.campaign_id, 0) + 1
                         )
+                    return 0
+
+        # One campaign's sessions are scanned in date order, one after another; up to the server's
+        # cap of campaigns go side by side (#4551).
+        by_campaign: dict[str, list[Ready]] = {}
+        for ready in await store.ready_for_scan(gid):
+            by_campaign.setdefault(ready.campaign_id, []).append(ready)
+        gate = asyncio.Semaphore(max(1, int(getattr(self.settings, "server_jobs_at_once", 1))))
+
+        async def scan_campaign(group: list[Ready]) -> int:
+            async with gate:
+                return sum([await scan_one(ready) for ready in group])
+
+        done = sum(await asyncio.gather(*(scan_campaign(g) for g in by_campaign.values())))
         for ready in await store.ready_for_recap(gid):
             with log_context(guild_id=gid, campaign_id=ready.campaign_id):
                 await self._start_import_recap(gid, store, ready)
