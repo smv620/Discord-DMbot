@@ -67,6 +67,31 @@ class Pure(unittest.TestCase):
         bg.keep_connections([[secretly]], hooded, {}, skip=skip)
         self.assertTrue(seen[-1].secret)
 
+    def test_the_private_names_line_shows_ten_then_counts(self) -> None:
+        from dmbot.ui import secret_questions as card
+
+        self.assertEqual(card.revealed_text([]), "")
+        one = card.revealed_text(["**Ash Morrow**"])
+        self.assertIn("Only you see this.", one)
+        self.assertIn(
+            "can now see this in DMbot, and their characters know it:\n• **Ash Morrow**", one
+        )
+        self.assertIn("takes back the whole upload (within 7 days)", one)
+        many = card.revealed_text([f"**N{i}**" for i in range(12)])
+        self.assertIn("• **N9**\n…and 2 more.", many)
+        self.assertNotIn("**N10**", many)
+
+    def test_ten_long_names_still_fit_one_message(self) -> None:
+        """Discord's 2,000 characters: the list is cut to fit with the notice above it."""
+        from dmbot.ui import secret_questions as card
+
+        name = card._cut("N" * 100, card.NAME_CUT)
+        lines = [f"**{name}** works for **{name}**" for _ in range(10)]
+        notice = un.notice_text("L" * 80, {"revealed": 10, "npc": 9, "place": 9}, 9)
+        private = card.revealed_text(lines)
+        self.assertLessEqual(len(f"**{'C' * 80}**\n{notice}{private}"), 2000)
+        self.assertIn("more.", private)  # (what didn't fit is counted)
+
     def test_the_notice_counts_and_never_names(self) -> None:
         text = un.notice_text("the city guide, 3 Nov", {"revealed": 3}, 0)
         self.assertIn("🌍 **3 hidden things** are now known to everyone.", text)
@@ -76,6 +101,73 @@ class Pure(unittest.TestCase):
         from dmbot.web import upload_notice as web_notice
 
         self.assertIn("revealed", web_notice._NOT_KINDS)  # (nor on the website)
+
+
+class TheDMsCopy(unittest.IsolatedAsyncioTestCase):
+    async def test_the_names_go_to_each_dms_private_copy_and_never_the_channel(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+        from dmbot.upload_notices import Notice
+
+        channel: list[str] = []
+        private: list[str] = []
+
+        async def post(_channel: int, text: str, _view: Any) -> Any:
+            channel.append(text)
+            return None
+
+        async def dm(_user: int, text: str, _view: Any) -> None:
+            private.append(text)
+
+        bot = SimpleNamespace(
+            settings=SimpleNamespace(site_url=""), upload_notices=object(),
+            post_message=post, sidebar_send_dm=dm,
+        )  # fmt: skip
+        campaign = SimpleNamespace(
+            guild_id=1, name="Frozen Wastes", dm_bot_channel_id=5, dm_accounts={2, 3}
+        )
+        notice = Notice(1, "c1", "n1", "the city guide, 3 Nov", 1, {"revealed": 1})
+        names = "\n🌍 _Only you see this:_ now known to everyone: **Ash Morrow**."
+        await DMBot.post_upload_notice(bot, campaign, notice, 0, private=names)  # type: ignore[arg-type]
+        self.assertTrue(channel and all("Ash Morrow" not in t for t in channel))
+        self.assertEqual(len(private), 2)
+        self.assertTrue(all("Ash Morrow" in t for t in private))
+
+    async def announce_as(self, user: int) -> str:
+        """The presser's own card after `announce`, for a campaign whose DM is 2."""
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from dmbot.upload_notices import Notice
+
+        shown: list[str] = []
+
+        async def edit(**kw: Any) -> None:
+            shown.append(str(kw.get("content", "")))
+
+        it = MagicMock()
+        it.user = SimpleNamespace(id=user)
+        it.edit_original_response = edit
+        bot = SimpleNamespace(
+            post_upload_notice=AsyncMock(return_value=None), settings=SimpleNamespace(site_url="")
+        )
+        campaign = SimpleNamespace(id="c1", guild_id=1, dm_user_ids={2})
+        done = SimpleNamespace(
+            notice=Notice(1, "c1", "n1", "the city guide, 3 Nov", 1, {"revealed": 1}),
+            questions_left=0, trait_questions=0, thread_suggestions=0, secret_questions=0,
+            knowledge_note="", revealed_lines=("**Ash Morrow**",),
+        )  # fmt: skip
+        await ui_bg.announce(it, bot, campaign, done)  # type: ignore[arg-type]
+        return shown[-1]
+
+    async def test_a_dm_who_pressed_sees_the_names_on_their_card(self) -> None:
+        self.assertIn("**Ash Morrow**", await self.announce_as(2))
+
+    async def test_a_manager_who_is_not_a_dm_sees_counts_only(self) -> None:
+        card = await self.announce_as(99)
+        self.assertNotIn("Ash Morrow", card)
+        self.assertIn("1 hidden thing", card)
 
 
 class TheRead(NamesTest):
@@ -145,6 +237,15 @@ class TheRead(NamesTest):
         self.assertTrue(await self.hidden(self.ash))
         common = await self.memory.common_knowledge(GUILD, self.campaign.id, "entry", [self.ash])
         self.assertEqual(common, set())
+
+    async def test_a_world_read_keeps_the_names_of_what_it_revealed_for_the_dms(self) -> None:
+        await self.hide(self.ash)
+        tie = await self.secret_tie()
+        done = await self.read("world")
+        self.assertIn("**Ash Morrow**", done.revealed_lines)
+        ties = [line for line in done.revealed_lines if line != "**Ash Morrow**"]
+        self.assertTrue(any("Master Orlen" in line and "Ash Morrow" in line for line in ties))
+        self.assertFalse(await self.tie_secret(tie))
 
     async def test_undo_hides_a_revealed_connection_again(self) -> None:
         tie = await self.secret_tie()
