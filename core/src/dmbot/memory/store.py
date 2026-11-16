@@ -3212,6 +3212,29 @@ class MemoryStore:
         a replacement no longer kept, is only marked answered."""
         if source != DM:
             raise MemoryRuleError(ONLY_DM_SAYS)
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT kind FROM secret_questions WHERE guild_id = %s AND campaign_id = %s"
+                " AND id = %s",
+                (guild_id, campaign_id, question_id),
+            )
+            found = await cur.fetchone()
+        if found is not None and found["kind"] == secret_questions_mod.REVEAL:
+            # (its default is the secret: Keep it secret only records it, Let them know is the
+            # DM's own change, one ↩ Undo)
+            if not make_secret:
+                return Written(
+                    question_id, await self._apply_reveal(guild_id, campaign_id, question_id)
+                )
+            async with self._db.guild(guild_id) as conn:
+                cur = await conn.execute(
+                    "UPDATE secret_questions SET status = 'made_secret' WHERE guild_id = %s"
+                    " AND campaign_id = %s AND id = %s AND status = 'waiting'",
+                    (guild_id, campaign_id, question_id),
+                )
+                if not cur.rowcount:
+                    raise MemoryRuleError(secret_questions_mod.GONE)
+            return Written(question_id, None)
         if make_secret:
             return Written(
                 question_id, await self._apply_secret(guild_id, campaign_id, question_id)
@@ -3225,6 +3248,32 @@ class MemoryStore:
             if not cur.rowcount:
                 raise MemoryRuleError(secret_questions_mod.GONE)
         return Written(question_id, None)
+
+    async def _apply_reveal(self, guild_id: int, campaign_id: str, question_id: str) -> int | None:
+        """Let them know (a 🤫 reveal question, #4524): the DM's secret name the players knew on a
+        merged-away entry is shown, and the who-knows rows that slept under the question wake.
+        The question is locked and answered in the same change; its Undo hides the name again,
+        puts the rows back to sleep and the question back to waiting."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            cur = await w.conn.execute(
+                "SELECT item_id, status FROM secret_questions WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s FOR UPDATE",
+                (*w.ids, question_id),
+            )
+            q = await cur.fetchone()
+            if q is None or q["status"] != secret_questions_mod.WAITING:
+                raise MemoryRuleError(secret_questions_mod.GONE)
+            alias_id = str(q["item_id"])
+            alias = await w.get(ALIASES, alias_id)
+            if alias is not None and alias["status"] != REJECTED and alias["secret"]:
+                await self._change_alias(w, alias_id, DM, None, False)
+            await knowers.wake_under(w, "alias_id", alias_id, question_id)
+            await w.conn.execute(
+                "UPDATE secret_questions SET status = 'kept_known', answered_batch = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+                (w.batch, *w.ids, question_id),
+            )
+            return w.batch
 
     async def _apply_secret(self, guild_id: int, campaign_id: str, question_id: str) -> int | None:
         """Make it secret / End the old one (#4524): the change a 🤫 question held back, as the
@@ -10107,9 +10156,15 @@ async def _move_aliases(
     keep_aliases = {a["key"]: a for a in await w.select(ALIASES, " AND entity_id = %s", [keep_id])}
     moving: list[str] = []
     confirming: list[str] = []
-    kept = await w.get(ENTITIES, keep_id, lock=False)
+    both = {
+        str(r["id"]): r for r in await w.select(ENTITIES, " AND id = ANY(%s)", [[keep_id, gone_id]])
+    }
     # (the kept entry's main name, which everyone sees: a secret copy of it is refused below)
-    main_key = lookup_key(kept["name"]) if kept is not None else None
+    main_key = lookup_key(both[keep_id]["name"]) if keep_id in both else None
+    # (a name the players saw on the entry that goes, and the twin it meets is the DM's secret:
+    # kept secret, and asked, #4524; not for a join, which keeps who the stranger was)
+    asks = not (join or secret or w.dm_chose_secret or w.joining or w.undoes is not None)
+    gone_shown = gone_id in both and knowers.entry_shown(both[gone_id])
     for alias in await w.select(ALIASES, " AND entity_id = %s", [gone_id]):
         said = alias["key"] in confirm
         twin = keep_aliases.get(alias["key"])
@@ -10126,8 +10181,20 @@ async def _move_aliases(
         # goes knows his)
         upgrade = _upgrade(twin, status, alias["secret"] and not join, DM)
         # (a secret copy that would make a public twin secret is held by the guard in
-        # `Changes.update` and asked, #4524; a twin that is already secret stays so: it is the DM's
-        # own secret name, and showing it would tell the players who the merged-away entry was)
+        # `Changes.update` and asked, #4524)
+        if asks and gone_shown and knowers.alias_shown(alias) and twin["secret"]:
+            # The players knew this name on the entry that goes, and it is the DM's own secret
+            # name of the kept one (a disguise): it stays secret, the DM's earlier choice, and is
+            # asked "Keep it secret / Let them know" (Supervisor's review of #4545). Whoever knew
+            # the copy that goes is carried over asleep under the question, so nobody sees it on
+            # the kept entry before the answer; the older per-name list has no sleep mark, so its
+            # rows go with the copy (a Let them know shows the name to everyone anyway).
+            question = await secret_questions_mod.ask_reveal(w, twin["id"])
+            await knowers.move_rows(w, "alias_id", alias["id"], twin["id"], asleep=question)
+            await w.delete(ALIASES, alias["id"])
+            if upgrade:
+                await w.update(ALIASES, twin["id"], upgrade)
+            continue
         # (whoever knew the copy that goes knows the twin, in both lists: a join's rule, and
         # #4524's for a merge)
         await knowers.move_rows(w, "alias_id", alias["id"], twin["id"])

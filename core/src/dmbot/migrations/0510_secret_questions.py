@@ -13,7 +13,8 @@ from dmbot.migrations._shared import _isolate
 # who knows it, keeps it as it is and asks instead (`memory.public_guard`):
 # - `kind`: 'narrow' ("This sounds like a secret, but the players already know it: Keep it known /
 #   Make it secret") or 'replace' (a backstory connection that would end a public one: "Did this
-#   change? Keep both / End the old one").
+#   change? Keep both / End the old one"), or 'reveal' (a merge kept the DM's own secret name
+#   though the players knew it on the entry that went: "Keep it secret / Let them know").
 # - `item_table` and `item_id`: the entry, other name or connection it is about (ids only). No
 #   foreign key, as the change log's rows have none: the item is looked up when the card is drawn,
 #   and a question whose item is gone shows as answered.
@@ -42,7 +43,7 @@ SQL = r"""
         FOREIGN KEY (campaign_id, guild_id)
             REFERENCES campaigns (id, guild_id) ON DELETE CASCADE ON UPDATE CASCADE,
         id           TEXT NOT NULL,
-        kind         TEXT NOT NULL CHECK (kind IN ('narrow', 'replace')),
+        kind         TEXT NOT NULL CHECK (kind IN ('narrow', 'replace', 'reveal')),
         item_table   TEXT NOT NULL
             CHECK (item_table IN ('memory_entities', 'memory_aliases', 'memory_relations')),
         item_id      TEXT NOT NULL CHECK (char_length(item_id) <= 64),

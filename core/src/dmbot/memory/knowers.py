@@ -946,12 +946,13 @@ def _stronger(row: Mapping[str, Any], other: Mapping[str, Any]) -> bool:
     )
 
 
-async def move_rows(w: Changes, column: str, old_id: str, new_id: str) -> None:
+async def move_rows(w: Changes, column: str, old_id: str, new_id: str, *, asleep: str = "") -> None:
     """A statement is folded into its twin (the same name or connection Ken already had, #3037):
     whoever knew the folded one knows the twin, and nothing is lost with the copy that goes. A
     character on both keeps the stronger of its two rows (`_stronger`), so a fold never takes
     knowledge away or makes anyone less sure (#4524). `column`: which statement column of the
-    list (`relation_id` or `alias_id`)."""
+    list (`relation_id` or `alias_id`). `asleep`: a 🤫 question's id: a row that arrives for
+    someone the twin didn't list sleeps under it until the DM answers (`wake_under`)."""
     mine = await w.select(KNOWERS, f" AND {column} = %s", [new_id], dormant=True)
     have = {r["perspective_id"]: r for r in mine}
     folded = await w.select(KNOWERS, f" AND {column} = %s", [old_id], dormant=True)
@@ -963,7 +964,10 @@ async def move_rows(w: Changes, column: str, old_id: str, new_id: str) -> None:
         if held is not None:  # (the folded row is the stronger: it stays, the weaker goes, #4524)
             await w.delete(KNOWERS, held["id"])
         have[row["perspective_id"]] = row
-        await w.update(KNOWERS, row["id"], {column: new_id})
+        moved: dict[str, Any] = {column: new_id}
+        if asleep and held is None:  # (asleep until the DM answers `asleep`, a 🤫 question)
+            moved["hidden_by"] = _joined(row["hidden_by"], [asleep])
+        await w.update(KNOWERS, row["id"], moved)
 
 
 async def move_alias_list(w: Changes, old_id: str, new_id: str) -> None:
@@ -980,6 +984,20 @@ async def move_alias_list(w: Changes, old_id: str, new_id: str) -> None:
         else:
             have.add(row["perspective_id"])
             await w.update(ALIAS_KNOWERS, row["id"], {"alias_id": new_id})
+
+
+async def wake_under(w: Changes, column: str, statement_id: str, mark: str) -> None:
+    """The rows of this statement that slept under `mark` (a 🤫 question's id, `move_rows`) wake:
+    the DM answered Let them know (#4524). Logged, so the answer's Undo puts them back to sleep."""
+    rows = await w.select(KNOWERS, f" AND {column} = %s", [statement_id], dormant=True)
+    await w.update_rows(
+        KNOWERS,
+        {
+            r["id"]: {"hidden_by": [h for h in r["hidden_by"] if h != mark]}
+            for r in rows
+            if mark in r["hidden_by"]
+        },
+    )
 
 
 # ---- the old flags keep the lists in step (slice 2b) --------------------------------------------
