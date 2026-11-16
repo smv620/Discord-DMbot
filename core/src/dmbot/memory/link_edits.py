@@ -13,7 +13,7 @@ import logging
 from collections.abc import Awaitable, Callable, Sequence
 
 from dmbot.memory import kin
-from dmbot.memory.models import CONFIRMED, DM, REJECTED, Entity, MemoryRuleError, Relation, Written
+from dmbot.memory.models import DM, REJECTED, MemoryRuleError, Relation, Written
 from dmbot.memory.store import MemoryStore
 
 log = logging.getLogger(__name__)
@@ -67,10 +67,13 @@ async def set_who_knows(
 ) -> Written[object]:
     """ "Who knows this?" for one connection, with its fourth answer, 🌍 Common knowledge (#4537
     slice 1b). See `with_common`; the flags are `_set_flags`."""
-    ends = [
-        await memory.entity(guild_id, campaign_id, x) for x in (link.subject_id, link.object_id)
-    ]
-    hidden_end = next((e for e in ends if not shown_entry(e)), None)
+    ends = (link.subject_id, link.object_id)
+    shown = await memory.entries_shown(guild_id, campaign_id, ends)
+    hidden_id = next((e for e in ends if e not in shown), None)
+    hidden_end = (
+        await memory.entity(guild_id, campaign_id, hidden_id) if hidden_id is not None else None
+    )
+    hidden_name = hidden_end.name if hidden_end is not None else "both names"
 
     async def flags(answer: str, chosen: Sequence[str], log: list[int]) -> Written[object]:
         return await _set_flags(
@@ -82,19 +85,12 @@ async def set_who_knows(
         memory, guild_id, campaign_id, "connection", link.id,
         shown=not (link.secret or link.unrevealed),
         cannot_show=(
-            f"Show {hidden_end.name} to the players first: common knowledge is something they see."
-            if hidden_end is not None else ""
+            f"Show {hidden_name} to the players first: common knowledge is something they see."
+            if hidden_id is not None
+            else ""
         ),
         who=who, characters=characters, set_flags=flags, made=made,
     )  # fmt: skip
-
-
-def shown_entry(entry: Entity | None) -> bool:
-    """An entry the players are shown (`knowers.entry_shown`'s rule, on the model)."""
-    return entry is not None and (
-        entry.status == CONFIRMED
-        and not (entry.hidden_from_players or entry.audience_limited or entry.unnamed)
-    )
 
 
 FlagSetter = Callable[[str, Sequence[str], list[int]], Awaitable[Written[object]]]

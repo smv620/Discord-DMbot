@@ -17,7 +17,6 @@ from dmbot.memory.link_edits import (
     SOME_CHARACTERS,
     WHO_KNOWS,
     keep_batch,
-    shown_entry,
     with_common,
 )
 from dmbot.memory.models import DM, Alias, MemoryRuleError, Written
@@ -46,7 +45,8 @@ async def set_who_knows(
 ) -> Written[object]:
     """ "Who knows this?" for one other name, with its fourth answer, 🌍 Common knowledge (#4537
     slice 1b): `link_edits.with_common`, with this name's own flags (`_set_flags`)."""
-    entry = await memory.entity(guild_id, campaign_id, alias.entity_id)
+    shown = alias.entity_id in await memory.entries_shown(guild_id, campaign_id, [alias.entity_id])
+    entry = None if shown else await memory.entity(guild_id, campaign_id, alias.entity_id)
 
     async def flags(answer: str, chosen: Sequence[str], log: list[int]) -> Written[object]:
         return await _set_flags(
@@ -59,9 +59,9 @@ async def set_who_knows(
         shown=not alias.secret,
         cannot_show=(
             ""
-            if shown_entry(entry) else
-            f"Show {entry.name if entry else 'its entry'} to the players first: common knowledge "
-            "is something they see."
+            if shown
+            else f"Show {entry.name if entry else 'its entry'} to the players first: common "
+            "knowledge is something they see."
         ),
         who=who, characters=characters, set_flags=flags, made=made,
     )  # fmt: skip

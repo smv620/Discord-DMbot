@@ -7689,6 +7689,17 @@ class MemoryStore:
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             return await knowers.common_of(scope, kind, statement_ids)
 
+    async def entries_shown(
+        self, guild_id: int, campaign_id: str, entity_ids: Sequence[str]
+    ) -> set[str]:
+        """Which of these entries the players are shown (`knowers.entry_shown`, the gate's rule):
+        🌍 Common knowledge is refused for anything that hangs off one they aren't (#4537)."""
+        if not entity_ids:
+            return set()
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            rows = await scope.select(ENTITIES, " AND id = ANY(%s)", [list(entity_ids)])
+        return {str(r["id"]) for r in rows if knowers.entry_shown(r)}
+
     async def mark_guess(
         self,
         guild_id: int,
