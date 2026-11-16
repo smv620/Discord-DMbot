@@ -155,11 +155,14 @@ class Asked(NamesTest):
         self.assertEqual(await self.store.waiting(GUILD, self.campaign.id), [])
 
 
-class TheWebsiteLeavesThemOut(WebBase):
-    async def test_a_language_question_is_not_listed_yet(self) -> None:
+class TheWebsiteListsThemToo(WebBase):
+    """0451 kept language questions off the website until its page could word them; migration 0521
+    (#4271 part 2) lists them beside the lineage and class ones, with the same still-open rule."""
+
+    async def test_a_language_question_is_listed_with_the_lineage_one(self) -> None:
         await self.leave(
             to.Offer(self.mira, GIANT, "Mira speaks Giant", "Notes"),
             to.Offer(self.mira, DWARF, "Mira is a dwarf", "Notes"),
         )
         got = (await web_offers.waiting(self.web, self.session, self.cref))["offers"]
-        self.assertEqual([o["kind"] for o in got], ["species"])  # the lineage one only
+        self.assertEqual(sorted(o["kind"] for o in got), ["language", "species"])
