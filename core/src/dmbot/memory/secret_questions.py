@@ -48,6 +48,10 @@ log = logging.getLogger(__name__)
 NARROW, REPLACE, REVEAL = "narrow", "replace", "reveal"
 WAITING, KEPT_KNOWN, MADE_SECRET = "waiting", "kept_known", "made_secret"
 LABEL_MAX = 200
+# A 🌍 World read's reveal, asked instead of made (#4590 C), and a secret other name it gave on
+# its own, asked as "the same person?" (#4590 A). Answered by `world_reveal.answer`.
+COMMON: dict[str, Any] = {"common": True}
+LONE: dict[str, Any] = {"common": True, "lone": True}
 GONE = "That question was already answered."
 
 
@@ -227,8 +231,10 @@ async def forget(conn: Any, guild_id: int, user_id: int, campaign_id: str | None
 
 
 __all__ = [
+    "COMMON",
     "GONE",
     "KEPT_KNOWN",
+    "LONE",
     "MADE_SECRET",
     "NARROW",
     "REPLACE",

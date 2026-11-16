@@ -127,6 +127,45 @@ async def reveal(
     return out
 
 
+async def answer(
+    memory: MemoryStore, guild_id: int, campaign_id: str, question_ids: Sequence[str]
+) -> Revealed | None:
+    """The DM's "Let everyone know" on 🌍 World read questions (#4590): the reveals the read would
+    have made by itself, made now as the DM's answer, exactly as `reveal` makes them. A lone
+    secret other name (A) is "the same person", so its person is shown with it. Every question is
+    taken first, so none is answered twice; the reveal's changes are its Undo, which puts them
+    all back to waiting. None when none was still waiting."""
+    taken = await memory.claim_secret_questions(guild_id, campaign_id, question_ids)
+    if not taken:
+        return None
+    ids = [q.id for q in taken]
+    try:
+        entries = [q.item_id for q in taken if q.item_table == "memory_entities"]
+        link_ids = {q.item_id for q in taken if q.item_table == "memory_relations"}
+        alias_ids = {q.item_id for q in taken if q.item_table == "memory_aliases"}
+        links = [
+            r
+            for r in await memory.relations(guild_id, campaign_id, include_secret=True)
+            if r.id in link_ids
+        ]
+        aliases = (
+            [a for a in await memory.aliases(guild_id, campaign_id, include_secret=True)
+             if a.id in alias_ids]
+            if alias_ids else []
+        )  # fmt: skip
+        lone = {q.item_id for q in taken if q.change.get("lone")}
+        entries += [a.entity_id for a in aliases if a.id in lone]
+        out = await reveal(
+            memory, guild_id, campaign_id, entries=entries, links=links, aliases=aliases
+        )
+    except Exception:
+        await memory.unclaim_secret_questions(guild_id, campaign_id, ids)
+        raise
+    if out.batches:
+        await memory.secret_questions_answered(guild_id, campaign_id, ids, out.batches[-1])
+    return out
+
+
 async def take_back(
     memory: MemoryStore, guild_id: int, campaign_id: str, batches: Sequence[int]
 ) -> None:

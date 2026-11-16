@@ -16,7 +16,7 @@ import re
 import time
 from collections import Counter
 from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 from functools import partial
 from typing import Any, cast
@@ -80,6 +80,7 @@ from dmbot.memory.models import (
     PROPOSED,
     REJECTED,
     SPECIES,
+    Alias,
     MemoryRuleError,
     MoreNames,
     NewName,
@@ -1109,14 +1110,29 @@ async def _read_background(
         read.stats.dropped, questions, suggested, note,
         picture_held=frozenset(held_ids),
     )  # fmt: skip
+    items: _WorldItems | None = None
+    if revealable is not None:  # (a World read: what it states plainly, #4524 slice 1b)
+        try:
+            items = await _world_items(memory, campaign, read, revealable)
+        except Exception as exc:  # the read is kept whatever happens to this
+            log.warning("A World read's hidden things weren't matched (%s)", type(exc).__name__)
+    # (reveals by itself only where the upload's notice can be kept: its ↩️ Undo is what takes a
+    # reveal back; otherwise, and for a lone secret name always, it asks: #4590)
+    by_itself = (
+        items is not None
+        and not campaign.ask_before_adding
+        and not read.cut
+        and getattr(bot, "upload_notices", None) is not None
+    )
+    if items is not None:
+        await _ask_world(memory, campaign, items, everything=not by_itself)
     if not campaign.ask_before_adding and not read.cut:
         # (a read that was cut off is not finished: nothing is added until the DM has seen it)
         from dmbot.ui.upload_notice import add_sure
 
-        # (only where the upload's notice can be kept: its ↩️ Undo is what takes a reveal back)
         shown = (
-            await _reveal_world(memory, campaign, read, revealable)
-            if revealable is not None and getattr(bot, "upload_notices", None) is not None
+            await _reveal_world(memory, campaign, items)
+            if by_itself and items is not None
             else world_reveal.Revealed()
         )
         added = await add_sure(
@@ -1128,9 +1144,11 @@ async def _read_background(
             earlier=shown.batches,
             revealed=shown.total,
         )
-        if added is None and shown.batches:
-            # no notice, so no Undo for the reveals: they are taken back now (ruling C on #4524)
+        if added is None and shown.batches and items is not None:
+            # no notice, so no Undo for the reveals: they are taken back now (ruling C on #4524),
+            # and asked instead (#4590 C)
             await world_reveal.take_back(memory, campaign.guild_id, campaign.id, shown.batches)
+            await _ask_world(memory, campaign, items, everything=True)
         if added is not None:
             done.notice, done.questions_left = added
     if trait_offers:
@@ -1154,51 +1172,96 @@ async def _read_background(
     return done
 
 
-async def _reveal_world(
+@dataclass
+class _WorldItems:
+    """What a World read states plainly about hidden things (#4524 slice 1b, #4590): the entries
+    it names word for word, the connections it states, the secret other names it gives with
+    their person, and the secret other names it gives on their own (`lone`, #4590 A)."""
+
+    entries: list[str] = field(default_factory=list)
+    links: list[Relation] = field(default_factory=list)
+    aliases: list[Alias] = field(default_factory=list)
+    lone: list[str] = field(default_factory=list)
+
+
+async def _world_items(
     memory: MemoryStore,
     campaign: Campaign,
     read: lore_read.LoreRead,
     links: Sequence[Relation],
-) -> world_reveal.Revealed:
-    """What a World read reveals (#4524 slice 1b, `world_reveal`): the entries it names word for
-    word, the connections it states (`links`, from `queue_links`), and a secret other name only
-    where the line about that person's own name lists it. Never stops the read: a failure is
-    logged and nothing is revealed."""
-    try:
-        lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+) -> _WorldItems:
+    """`_WorldItems` for a World read (`links` from `queue_links`). A name line whose name is only
+    one person's secret other name, with nothing on it giving that person's own name, is `lone`:
+    it may be someone else, so it is only ever asked about."""
+    lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
 
-        def public(name: str) -> str | None:
-            ids = {
-                e.entity_id
-                for e in lookup.by_key.get(name_key(name), ())
-                if not e.secret and not e.person
-            }
-            return next(iter(ids)) if len(ids) == 1 else None
+    def public(name: str) -> str | None:
+        ids = {
+            e.entity_id
+            for e in lookup.by_key.get(name_key(name), ())
+            if not e.secret and not e.person
+        }
+        return next(iter(ids)) if len(ids) == 1 else None
 
-        entries = [i for i in map(public, read.known_named) if i is not None]
-        wanted: dict[str, set[str]] = {}  # entry -> its secret names the text gives with it
-        for main, spellings in read.known_spellings.items():
-            owner = public(main)
-            if owner is None:
-                continue
-            for sp in spellings:
-                for e in lookup.by_key.get(name_key(sp), ()):
-                    if e.secret and e.entity_id == owner:
-                        wanted.setdefault(owner, set()).add(e.alias_id)
-        aliases = [
-            a
-            for owner, ids in wanted.items()
-            for a in await memory.aliases(
-                campaign.guild_id, campaign.id, entity_id=owner, include_secret=True
-            )
-            if a.id in ids
-        ]
-        return await world_reveal.reveal(
-            memory, campaign.guild_id, campaign.id, entries=entries, links=links, aliases=aliases
+    out = _WorldItems(links=list(links))
+    out.entries = [i for i in map(public, read.known_named) if i is not None]
+    wanted: dict[str, set[str]] = {}  # entry -> its secret names the text gives with it
+    for main, spellings in read.known_spellings.items():
+        owner = public(main)
+        if owner is None:
+            continue
+        for sp in spellings:
+            for e in lookup.by_key.get(name_key(sp), ()):
+                if e.secret and e.entity_id == owner:
+                    wanted.setdefault(owner, set()).add(e.alias_id)
+    given = {a for ids in wanted.values() for a in ids}
+    for name in read.known_named:
+        hits = list(lookup.by_key.get(name_key(name), ()))
+        secret = {e.alias_id for e in hits if e.secret and e.alias_id}
+        if hits and len(secret) == 1 and all(e.secret for e in hits) and not secret & given:
+            out.lone.append(next(iter(secret)))
+    out.aliases = [
+        a
+        for owner, ids in wanted.items()
+        for a in await memory.aliases(
+            campaign.guild_id, campaign.id, entity_id=owner, include_secret=True
         )
+        if a.id in ids
+    ]
+    return out
+
+
+async def _reveal_world(
+    memory: MemoryStore, campaign: Campaign, items: _WorldItems
+) -> world_reveal.Revealed:
+    """What a World read reveals by itself (#4524 slice 1b, `world_reveal`). Never stops the
+    read: a failure is logged and nothing is revealed."""
+    try:
+        return await world_reveal.reveal(
+            memory, campaign.guild_id, campaign.id,
+            entries=items.entries, links=items.links, aliases=items.aliases,
+        )  # fmt: skip
     except Exception as exc:  # the read is kept whatever happens to this
         log.warning("A World read's reveals were not made (%s)", type(exc).__name__)
         return world_reveal.Revealed()
+
+
+async def _ask_world(
+    memory: MemoryStore, campaign: Campaign, items: _WorldItems, *, everything: bool
+) -> None:
+    """Ask instead of revealing (#4590): `everything` when this read may not reveal by itself
+    (C), else only the lone secret names (A). Each is a 🤫 question in the upload's own evidence,
+    counted on its note. Never stops the read."""
+    try:
+        await memory.ask_world_reveals(
+            campaign.guild_id, campaign.id,
+            entries=items.entries if everything else (),
+            links=[r.id for r in items.links] if everything else (),
+            aliases=[a.id for a in items.aliases] if everything else (),
+            lone=items.lone,
+        )  # fmt: skip
+    except Exception as exc:
+        log.warning("A World read's questions were not asked (%s)", type(exc).__name__)
 
 
 def not_held(stored: Mapping[str, Sequence[str]], held: Collection[str]) -> dict[str, list[str]]:

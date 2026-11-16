@@ -105,13 +105,18 @@ class TheRead(NamesTest):
         return str(relation.id)
 
     async def read(
-        self, choice: str, names: Any = NAMES, links: Any = (SERVED,), text: str = TEXT
+        self,
+        choice: str,
+        names: Any = NAMES,
+        links: Any = (SERVED,),
+        text: str = TEXT,
+        label: str = "the city guide",
     ) -> Any:
         answer = {"names": list(names), "connections": list(links)}
         ai = lore_fake.lore_ai(json.dumps(answer))
         self.bot.background_ai = self.bot.background_read_ai = ai  # type: ignore[assignment]
         return await ui_bg.read_background(
-            self.bot, self.campaign, Upload(text, "the city guide", True),
+            self.bot, self.campaign, Upload(text, label, True),
             truth=False, speaker=None, known_by="", started=time.monotonic(), choice=choice,
         )  # fmt: skip
 
@@ -227,6 +232,110 @@ class TheRead(NamesTest):
         await self.hide(self.ash)
         await self.read("world", links=(), text="Master Orlen kept the old ways.")
         self.assertTrue(await self.hidden(self.ash))
+
+    # ---- #4590: asked instead of revealed ----------------------------------------------------
+
+    async def waiting(self) -> list[Any]:
+        return await self.memory.secret_questions_waiting(GUILD, self.campaign.id)
+
+    async def test_a_campaign_that_asks_first_is_asked_and_the_answer_reveals_with_one_undo(
+        self,
+    ) -> None:
+        await self.hide(self.ash)
+        self.campaign = await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, True)
+        done = await self.read("world", links=())
+        (q,) = await self.waiting()
+        self.assertEqual((q.kind, q.item_id, q.change), ("reveal", self.ash, {"common": True}))
+        self.assertEqual(done.secret_questions, 1)  # (counted on its note)
+        made = await world_reveal.answer(self.memory, GUILD, self.campaign.id, [q.id])
+        assert made is not None
+        self.assertFalse(await self.hidden(self.ash))
+        common = await self.memory.common_knowledge(GUILD, self.campaign.id, "entry", [self.ash])
+        self.assertEqual(common, {self.ash})
+        self.assertIsNone(await world_reveal.answer(self.memory, GUILD, self.campaign.id, [q.id]))
+        for batch in reversed(made.batches):
+            await self.memory.undo(GUILD, self.campaign.id, batch)
+        self.assertTrue(await self.hidden(self.ash))
+        self.assertEqual([x.id for x in await self.waiting()], [q.id])  # (back to waiting)
+
+    async def test_with_no_notice_to_undo_it_a_connection_is_asked_about(self) -> None:
+        tie = await self.secret_tie()
+        self.bot.upload_notices = None
+        await self.read("world")
+        self.assertTrue(await self.tie_secret(tie))
+        self.assertIn(tie, [q.item_id for q in await self.waiting()])
+
+    async def test_a_lone_secret_name_asks_whether_it_is_the_same_person(self) -> None:
+        await self.hide(self.ash)
+        made = await self.memory.add_alias(
+            GUILD, self.campaign.id, self.ash, "Tamsin Vell", kind="old", secret=True,
+            status=CONFIRMED, source=DM, dm_chose_secret=True,
+        )  # fmt: skip
+        alone = [{"name": "Tamsin Vell", "kind": "person", "also": [], "secret": [],
+                  "quote": "Tamsin Vell"}]  # fmt: skip
+        await self.read("world", names=alone, links=(), text="Tamsin Vell fled north.")
+        (q,) = await self.waiting()
+        self.assertEqual((q.item_id, q.change), (made.value.id, {"common": True, "lone": True}))
+        await world_reveal.answer(self.memory, GUILD, self.campaign.id, [q.id])
+        names = await self.memory.aliases(
+            GUILD, self.campaign.id, entity_id=self.ash, include_secret=True
+        )
+        self.assertFalse(next(a for a in names if a.id == made.value.id).secret)
+        self.assertFalse(await self.hidden(self.ash))  # (the same person: shown with it)
+
+    async def test_keep_it_secret_is_never_asked_again(self) -> None:
+        await self.hide(self.ash)
+        self.campaign = await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, True)
+        await self.read("world", links=())
+        (q,) = await self.waiting()
+        await self.memory.answer_secret_question(GUILD, self.campaign.id, q.id, True, source=DM)
+        await self.read("world", links=())
+        self.assertEqual(await self.waiting(), [])
+        self.assertTrue(await self.hidden(self.ash))
+
+    async def test_let_them_all_know_reveals_only_that_uploads_questions(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import MagicMock
+
+        from dmbot.ui import secret_questions as card
+
+        wren = await self.npc("Wren Hale")
+        for entry in (self.ash, self.orlen, wren):
+            await self.hide(entry)
+        self.campaign = await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, True)
+        await self.read("world", links=(), label="the city guide")
+        wren_line = [{"name": "Wren Hale", "kind": "person", "also": [], "secret": [],
+                      "quote": "Wren Hale"}]  # fmt: skip
+        await self.read("world", names=wren_line, links=(), text="Wren Hale walked.",
+                        label="the harbour notes")  # fmt: skip
+        waiting = await self.waiting()
+        first = next(q for q in waiting if q.item_id == self.ash)
+        it = MagicMock()
+        it.user = SimpleNamespace(id=THE_DM, guild_permissions=SimpleNamespace(manage_guild=False))
+        it.guild = SimpleNamespace(id=GUILD)
+        it.client = SimpleNamespace(memory=self.memory, campaigns=self.campaigns)
+        it.response.is_done = lambda: False
+        it.response.defer = AsyncMock()
+        sent: list[str] = []
+
+        async def reply(text: str = "", **kw: Any) -> None:
+            sent.append(str(kw.get("content", text)))
+
+        it.response.edit_message = it.followup.send = it.edit_original_response = reply
+        view = card.SecretQuestions(self.campaign.id, GUILD)
+        shown = await card.describe(self.memory, GUILD, self.campaign.id, first)
+        view.current = card.Shown(first, shown.item, shown.what, from_upload=2)
+        self.assertIn(card.LET_UPLOAD, card.card_text(view.current, 3))
+        await view._all(it)
+        self.assertFalse(await self.hidden(self.ash))
+        self.assertFalse(await self.hidden(self.orlen))
+        self.assertTrue(await self.hidden(wren))  # (another upload's: untouched)
+        self.assertEqual([q.item_id for q in await self.waiting()], [wren])
+        self.assertIn("everyone knows all 2 now", sent[-1])
+        await view._undo(it)
+        self.assertTrue(await self.hidden(self.ash))
+        self.assertTrue(await self.hidden(self.orlen))
+        self.assertEqual(len(await self.waiting()), 3)
 
 
 if __name__ == "__main__":
