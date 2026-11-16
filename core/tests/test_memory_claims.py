@@ -941,17 +941,26 @@ class Stored(ConfirmedMemoryTest):
         self.assertIn("hidden from your players", str(err.exception))
         self.assertEqual(len(await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)), 1)
 
-    async def test_a_pick_on_a_connection_already_shown_is_refused(self) -> None:
+    async def test_a_pick_on_a_connection_already_shown_narrows_it_and_one_undo_shows_it_again(
+        self,
+    ) -> None:
+        """#4534 point 4 with #4524: the DM's own choice may take a shown connection back to some
+        characters; the claim's own change holds it, and Undo gives it back to everyone."""
         await self.session_lines()
-        wren, _ash = await self.two_characters()
-        await self.memory.add_relation(
+        wren, ash = await self.two_characters()
+        shown = await self.memory.add_relation(
             GUILD_A, self.c, self.bram, "located_in", self.town, source="dm",
             status="confirmed", confidence=1.0,
         )  # fmt: skip
-        with self.assertRaises(MemoryRuleError) as err:
-            await self.confirm_for([wren])
-        self.assertIn("can already see this", str(err.exception))
-        self.assertEqual(len(await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)), 1)
+        done = await self.confirm_for([wren])
+        rel = await self.relation(shown.value.id)
+        self.assertEqual((done.claim.fact_id, rel.unrevealed, done.scene), (rel.id, True, 1))
+        knows = await self.memory.statement_knowers(GUILD_A, self.c, "connection", [rel.id])
+        self.assertEqual(knows.get(rel.id), [wren])
+        self.assertNotIn(ash, knows.get(rel.id, []))
+        assert done.batch is not None
+        await self.memory.undo(GUILD_A, self.c, done.batch)
+        self.assertFalse((await self.relation(rel.id)).unrevealed)  # (everyone sees it again)
 
     async def test_a_pick_on_a_connection_held_back_already_is_applied(self) -> None:
         await self.session_lines()

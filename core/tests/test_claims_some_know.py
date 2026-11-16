@@ -170,7 +170,9 @@ class SomeKnow(ConfirmedMemoryTest):
         self.assertEqual(join(party, ["0", "2"]), "A and C")  # type: ignore[arg-type]
         self.assertEqual(join(party, ["0", "1", "2"]), "A, B and C")  # type: ignore[arg-type]
 
-    async def test_a_refusal_keeps_the_picker_and_says_why(self) -> None:
+    async def test_a_pick_on_a_connection_the_players_see_narrows_it_instead_of_refusing(
+        self,
+    ) -> None:
         await self.both()
         await self.memory.add_relation(
             GUILD_A, self.c, self.bram, "located_in", self.town, source="dm",
@@ -181,9 +183,9 @@ class SomeKnow(ConfirmedMemoryTest):
         picker = it.sent[-1][1]
         picker.chosen = [self.wren]
         await picker._save(it)
-        self.assertIn("can already see this", it.sent[-1][0])
-        self.assertFalse(picker.is_finished())
-        self.assertNotIn(view.page[0].id, view.answered)
+        self.assertIn("Known to: Wren.", it.sent[-1][0])
+        self.assertIn(view.page[0].id, view.answered)
+        self.assertIn(view.page[0].id, view.undoable)  # (one ↩️ gives it back to everyone)
 
     async def test_back_returns_to_the_page_unchanged(self) -> None:
         await self.both()

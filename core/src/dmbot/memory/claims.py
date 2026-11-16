@@ -152,10 +152,6 @@ SOME_KNOW_WHO = "That character isn't in this campaign. Go Back and pick again."
 SOME_KNOW_STATE = (
     "Facts like 'is dead' are for everyone, so you can't pick who knows. Press ✅ or ❌."
 )
-SOME_KNOW_SHOWN = (
-    "Your players can already see this, so it can't be limited here. To change who knows it: "
-    "open either name, ✏️ Edit a connection…, 👁️ Who knows this?"
-)
 SOME_KNOW_HIDDEN = (
     "Can't pick who knows this yet: a name in it is hidden from your players. Press 🤫 to keep it "
     "secret, or show that name first (open the name, then 👁️ Who knows this?), then try again."
@@ -1022,6 +1018,14 @@ def which_choices(
         options.sort(key=lambda o: (o.name.casefold(), o.kind, o.id))
         out.append(WhichOne(str(row[side]), side, tuple(options)))
     return out
+
+
+async def _narrow_to(w: Changes, relation_id: str, characters: Sequence[str]) -> int:
+    """The DM's 👥 pick on a connection the players already see (#4534, #4524): it is held back
+    now and exactly these characters know it, in the claim's own change, so one Undo gives it back
+    to everyone. The pick is the DM's own choice, so the guard lets it through (the write is made
+    with `dm_chose_secret`). Returns how many know it now."""
+    return len(await knowers.set_connection_knowers(w, relation_id, characters))
 
 
 async def _learn_in_scene(w: Changes, relation_id: str, characters: Sequence[str]) -> int:
@@ -2204,7 +2208,11 @@ class ClaimStore:
         # second press waits and then finds the question gone. A fact the rules refuse rolls
         # the whole thing back and leaves the question waiting. The check at the top of
         # `confirm` is only an early exit: this one, under the lock, is the one that counts.
-        async with self._store._write(guild_id, campaign_id, DM) as w:
+        # (the DM's 👥 pick may narrow a connection the players already see: that is the DM's own
+        # choice, so the guard of #4524 lets it through, #4534)
+        async with self._store._write(
+            guild_id, campaign_id, DM, dm_chose_secret=picked is not None
+        ) as w:
             current = await w.get(CLAIMS, claim_id)
             if (
                 current is None
@@ -2240,7 +2248,7 @@ class ClaimStore:
                 )
                 if len(real) != len(picked):
                     raise MemoryRuleError(SOME_KNOW_WHO)
-            shown = held = split = False
+            shown = held = split = narrowed = False
             scene = 0
             if condition is not None:
                 state, flags = await self._store.set_condition_in(
@@ -2290,8 +2298,11 @@ class ClaimStore:
                 if relation.id in live:
                     if not live[relation.id]:  # (False: it is already shown to the players)
                         if picked is not None:
-                            raise MemoryRuleError(SOME_KNOW_SHOWN)  # never quietly left shown
-                        in_scene = None  # (one already shown stays as it is: nothing to learn)
+                            # the DM's own narrowing: held back now, and only these know it
+                            await w.update(RELATIONS, relation.id, {"unrevealed": True})
+                            narrowed = True
+                        else:
+                            in_scene = None  # (one already shown stays as it is)
                     elif in_scene is None and not secret:
                         # (the table said a connection the story holds back: the party's now,
                         # #3963 c)
@@ -2309,7 +2320,10 @@ class ClaimStore:
                     split = True
                     if picked is not None and not await learnable_in_scene(w, relation.id):
                         raise MemoryRuleError(SOME_KNOW_HIDDEN)  # (the DM's word is not dropped)
-                    if in_scene and await learnable_in_scene(w, relation.id):
+                    if narrowed:
+                        # exactly these characters: any other who knew it stops knowing
+                        scene = await _narrow_to(w, relation.id, picked or [])
+                    elif in_scene and await learnable_in_scene(w, relation.id):
                         scene = await _learn_in_scene(w, relation.id, in_scene)
                 # (a secret one is the DM's own choice, and says so already)
                 held = hold and not secret and relation.id not in live
