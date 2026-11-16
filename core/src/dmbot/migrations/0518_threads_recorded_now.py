@@ -11,13 +11,19 @@ from __future__ import annotations
 # proposal is that it is shown only while all its speakers are recorded (Supervisor's ruling B on
 # #4522; Discord does it with `ThreadSuggestionStore.waiting(opted_in=…)`). The same repair as 0341
 # made for the waiting list: a session's suggestion is listed only when every speaker is recorded
-# now by the bot's own rule (`consent._select`): a consent row under the current wording (`terms`)
-# and, while an outside company hears the voices, for that company (`outside`). Both arrive as
-# arguments because the database cannot know them, so the door has a new signature and the old one
-# goes. A suggestion read from lore has no speakers and is listed as before.
+# now by the rule `consent._select` has: a consent row under the current wording (`terms`) and,
+# while an outside company hears the voices, for that company (`outside`). Both arrive as arguments
+# because the database cannot know them, so the door has a new signature and the old one goes. It
+# is narrower than Discord's `recorded_in` on purpose, as 0341's is for the waiting list: it leaves
+# out the people an import's uploader confirmed and speakers without Discord (they have no consent
+# row), so such a suggestion waits for Discord until the door learns them; it hides too much,
+# never too little (follow-up #4595). A pause (off the record for the moment) lives in the bot's
+# memory and a door cannot see it, as for 0341. A suggestion read from lore has no speakers and is
+# listed as before.
 #
 # The door also says where a suggestion was heard: `session` (true for one read from a session) and
-# `heard`, up to three of the lines it points at (`line_starts`), read now from the transcript and
+# `heard`, up to three of the lines it points at (`line_starts`), read now from the transcript of
+# this campaign's own session (the writer already holds it to that; the door checks it too) and
 # only from its speakers (all recorded, by the filter above), in the order spoken, as Discord's
 # `heard_lines` does. A line deleted since is simply not there. The words are the DM's own
 # transcript, shown to a DM of the campaign and to nobody else (the door answers anyone else NULL).
@@ -47,6 +53,10 @@ _QUOTE_NEW = (
     "                                            COALESCE(l.text, l.heard) AS said\n"
     "                                     FROM transcript_lines l\n"
     "                                     WHERE l.guild_id = g AND l.session_id = s.session_id\n"
+    "                                       AND EXISTS (SELECT 1 FROM transcript_sessions ts\n"
+    "                                                   WHERE ts.id = s.session_id\n"
+    "                                                     AND ts.guild_id = g\n"
+    "                                                     AND ts.campaign_id = c)\n"
     "                                       AND l.started_ms = ANY (s.line_starts)\n"
     "                                       AND l.user_id = ANY (s.speaker_ids)\n"
     "                                       AND btrim(COALESCE(l.text, l.heard)) <> ''\n"

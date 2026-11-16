@@ -318,6 +318,15 @@ class TheSessions(Threads):
         )  # fmt: skip
         self.assertEqual((await self.listed())["Heard Heir"]["heard"], ["Keegan wrings his cap."])
 
+    async def test_a_session_of_another_campaign_is_never_read(self) -> None:
+        other = await self.transcripts.open_session(self.g, self.two.id, 1_700_000_500)
+        await self.transcripts.add_lines(self.g, other, [Heard(LINE_MS, SAY, "x", "Not here.")])
+        await self.sql(
+            "UPDATE thread_suggestions SET session_id = %s WHERE guild_id = %s AND name = %s",
+            other, self.g, "Heard Heir",
+        )  # fmt: skip
+        self.assertEqual((await self.listed())["Heard Heir"]["heard"], [])
+
     async def test_a_player_still_gets_nothing(self) -> None:
         self.assertIsNone(await self.door(await self.signed(BOB, THURSDAY)))
 
