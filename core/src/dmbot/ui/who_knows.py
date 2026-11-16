@@ -95,6 +95,26 @@ COMMON_DONE_SHOWN = (
 )
 NO_LONGER_COMMON = "No longer common knowledge."
 UNDONE = "↩ Put back as it was before."
+UNDONE_PARTLY = (
+    "↩ Couldn't put all of it back: it changed since, or it's too late to undo. Here is how it "
+    "stands now."
+)
+ALREADY = "Already like that. Nothing changed. Press Back to see the card."
+NOTHING_TO_UNDO = "That was already undone. Nothing changed."
+
+
+def taken_back(who: str, mine: Sequence[str], *, was_shown: bool) -> str:
+    """The line after an answer that took common knowledge back (#4537 slice 1b): where it stands
+    now. On a common item the players saw (`was_shown`), 👁️ changes nothing they see, so it says
+    so; on a hidden one, 👁️ shows it."""
+    if who == link_edits.EVERYONE and not was_shown:
+        return "👁️ Players can see it now."
+    if who == link_edits.EVERYONE:
+        return "👁️ Players still see it, but it's no longer something every NPC knows."
+    if who == link_edits.SOME_CHARACTERS:
+        verb = "knows" if len(mine) == 1 else "know"
+        return f"👥 Hidden from the party. Only {called(list(mine))} {verb} it now (and the DM)."
+    return "🤫 Hidden from players. Only the DM knows it now."
 
 
 def common_done(was_hidden: bool) -> str:
@@ -103,8 +123,10 @@ def common_done(was_hidden: bool) -> str:
 
 
 class WhoKnowsMenu(_Menu):
-    """🤫 Only the DM, 👥 Only some characters (a menu to pick them), 👁️ Everyone at the table. The
-    owner of the page says what each answer writes (`_set`) and where Back goes (`_back`)."""
+    """🤫 Only the DM, 👥 Only some characters (a menu to pick them), 👁️ Everyone at the table, and
+    🌍 Common knowledge (#4537), with ↩ Undo when the page is redrawn after an answer that made
+    several changes (`undo`). The owner of the page says what each answer writes (`_set`), how
+    Undo takes it back (`_undo`) and where Back goes (`_back`)."""
 
     def __init__(
         self,

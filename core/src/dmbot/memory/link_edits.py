@@ -9,11 +9,14 @@ are never logged here.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import logging
+from collections.abc import Awaitable, Callable, Sequence
 
 from dmbot.memory import kin
-from dmbot.memory.models import DM, REJECTED, MemoryRuleError, Relation, Written
+from dmbot.memory.models import CONFIRMED, DM, REJECTED, Entity, MemoryRuleError, Relation, Written
 from dmbot.memory.store import MemoryStore
+
+log = logging.getLogger(__name__)
 
 
 async def set_secret(
@@ -37,7 +40,9 @@ async def set_secret(
 ONLY_THE_DM, SOME_CHARACTERS, EVERYONE = "dm", "some", "everyone"
 WHO_KNOWS = (ONLY_THE_DM, SOME_CHARACTERS, EVERYONE)
 COMMON = "common"  # 🌍 Common knowledge (#4537 slice 1b): every character, NPCs and later joiners
-PICK_WHO = "Pick who knows it: only you, some characters, everyone at the table, or everyone."
+PICK_WHO = (
+    "Pick who knows it: only the DM, some characters, everyone at the table, or common knowledge."
+)
 PICK_ONE = "Pick at least one character."
 
 
@@ -60,49 +65,117 @@ async def set_who_knows(
     players_only: bool = False,
     made: list[int] | None = None,
 ) -> Written[object]:
-    """ "Who knows this?" with its fourth answer, 🌍 Common knowledge (#4537 slice 1b): every
-    character knows it, NPCs too, and anyone who joins later. It shows the connection to the
-    players first if it is hidden (common knowledge can't be hidden), then writes the common row;
-    any other answer on a common connection takes common knowledge back first. All of it is the
-    DM's own choice, each change's batch in `made`, so one ↩ Undo takes back the whole answer
-    (#4159)."""
+    """ "Who knows this?" for one connection, with its fourth answer, 🌍 Common knowledge (#4537
+    slice 1b). See `with_common`; the flags are `_set_flags`."""
+    ends = [
+        await memory.entity(guild_id, campaign_id, x) for x in (link.subject_id, link.object_id)
+    ]
+    hidden_end = next((e for e in ends if not shown_entry(e)), None)
+
+    async def flags(answer: str, chosen: Sequence[str], log: list[int]) -> Written[object]:
+        return await _set_flags(
+            memory, guild_id, campaign_id, link, answer, chosen,
+            players_only=players_only, made=log,
+        )  # fmt: skip
+
+    return await with_common(
+        memory, guild_id, campaign_id, "connection", link.id,
+        shown=not (link.secret or link.unrevealed),
+        cannot_show=(
+            f"Show {hidden_end.name} to the players first: common knowledge is something they see."
+            if hidden_end is not None else ""
+        ),
+        who=who, characters=characters, set_flags=flags, made=made,
+    )  # fmt: skip
+
+
+def shown_entry(entry: Entity | None) -> bool:
+    """An entry the players are shown (`knowers.entry_shown`'s rule, on the model)."""
+    return entry is not None and (
+        entry.status == CONFIRMED
+        and not (entry.hidden_from_players or entry.audience_limited or entry.unnamed)
+    )
+
+
+FlagSetter = Callable[[str, Sequence[str], list[int]], Awaitable[Written[object]]]
+
+
+async def with_common(
+    memory: MemoryStore,
+    guild_id: int,
+    campaign_id: str,
+    kind: str,
+    item_id: str,
+    *,
+    shown: bool,
+    cannot_show: str,
+    who: str,
+    characters: Sequence[str],
+    set_flags: FlagSetter,
+    made: list[int] | None,
+) -> Written[object]:
+    """The four answers of "Who knows this?" for a connection or an other name (#4537 slice 1b).
+
+    🌍 Common knowledge: every character knows it, NPCs too, and anyone who joins later. It shows
+    the item to the players first if it is hidden (common knowledge is only counted while shown,
+    the gate's rule), then writes the common row; refused with `cannot_show` when the item can't be
+    shown (an end or its entry kept from the players), since the page would claim what nobody sees.
+    Any other answer on a common item takes common knowledge back first.
+
+    Every pick is checked before anything is written, so a refused pick writes nothing. All of it
+    is the DM's own choice, each change's batch in `made`, so one ↩ Undo takes back the whole
+    answer (#4159). If a later step fails, the earlier ones are taken back before the error goes
+    on: the item is never left half changed (shown with no common row, or common knowledge gone
+    with the flags unchanged). Two DMs pressing at once can still interleave the two or three
+    writes, as the other two-write answers can."""
     log = made if made is not None else []
     if who not in (*WHO_KNOWS, COMMON):
         raise MemoryRuleError(PICK_WHO)
-    common = link.id in await memory.common_knowledge(
-        guild_id, campaign_id, "connection", [link.id]
+    if who == SOME_CHARACTERS and not characters:
+        raise MemoryRuleError(PICK_ONE)
+    await memory.check_knowers(
+        guild_id, campaign_id, list(characters) if who == SOME_CHARACTERS else []
     )
-    if who == COMMON:
-        if common and not (link.secret or link.unrevealed):
-            return Written(None, None)  # already common knowledge
-        shown = await _set_flags(
-            memory, guild_id, campaign_id, link, EVERYONE, players_only=players_only, made=log
-        )
-        if common:
-            return shown
-        return keep_batch(
-            log,
-            await memory.add_common_knowledge(
-                guild_id, campaign_id, "connection", [link.id], source=DM
-            ),
-        )
-    removed: Written[object] = Written(None, None)
-    if common:
-        removed = keep_batch(
-            log,
-            await memory.remove_common_knowledge(guild_id, campaign_id, "connection", [link.id]),
-        )
+    common = item_id in await memory.common_knowledge(guild_id, campaign_id, kind, [item_id])
+    if who == COMMON and common and shown:
+        return Written(None, None)  # already common knowledge
+    if who == COMMON and cannot_show:
+        raise MemoryRuleError(cannot_show)
+    if who != COMMON and not common:
+        return await set_flags(who, characters, log)
+    first = len(log)
     try:
-        result = await _set_flags(
-            memory, guild_id, campaign_id, link, who, characters,
-            players_only=players_only, made=log,
-        )  # fmt: skip
-    except MemoryRuleError:
-        if removed.batch is not None:  # (nothing else changed: put common knowledge back)
-            await memory.undo(guild_id, campaign_id, removed.batch, source=DM)
-            log.remove(removed.batch)
+        if who == COMMON:
+            result = await set_flags(EVERYONE, (), log)
+            if not common:
+                result = keep_batch(
+                    log,
+                    await memory.add_common_knowledge(
+                        guild_id, campaign_id, kind, [item_id], source=DM
+                    ),
+                )
+            return result
+        removed = keep_batch(
+            log, await memory.remove_common_knowledge(guild_id, campaign_id, kind, [item_id])
+        )
+        result = await set_flags(who, characters, log)
+        return result if result.batch is not None else removed
+    except Exception:
+        await _take_back(memory, guild_id, campaign_id, log[first:])
+        del log[first:]
         raise
-    return result if result.batch is not None else removed
+
+
+async def _take_back(
+    memory: MemoryStore, guild_id: int, campaign_id: str, batches: Sequence[int]
+) -> None:
+    """Undo these writes, newest first, after a later step failed. A write that can't be taken
+    back is logged by its type and skipped, so the first error is the one that goes on."""
+    for batch in reversed(batches):
+        try:
+            await memory.undo(guild_id, campaign_id, batch, source=DM)
+        except Exception as exc:  # (never hide the error that started this)
+            log.warning("A who-knows change could not be taken back: %s", type(exc).__name__)
 
 
 async def _set_flags(

@@ -559,6 +559,89 @@ class Cards(base.NamesTest):
             set(),
         )
 
+    async def test_everyone_on_a_common_connection_says_players_still_see_it_and_undo_works(
+        self,
+    ) -> None:
+        await self.know("Kesh")
+        _, view = await self.who_page()
+        await view._common(self.it())
+        _, view = await self.who_page()
+        it = self.it()
+        await view._everyone(it)
+        text, page = it.response.edited[0]
+        self.assertIn(who_knows.NO_LONGER_COMMON, text)
+        self.assertIn("Players still see it", text)
+        self.assertNotIn("Undo** within", text)  # (no promise of the card's one-change Undo)
+        (link,) = await self.relations()
+        self.assertFalse(link.secret)
+        common = self.memory.common_knowledge
+        self.assertEqual(await common(GUILD, self.campaign.id, "connection", [link.id]), set())
+        (undo,) = [c for c in page.children if getattr(c, "label", "") == "↩ Undo"]
+        await undo.callback(self.it())
+        self.assertEqual(await common(GUILD, self.campaign.id, "connection", [link.id]), {link.id})
+        again = self.it()
+        await undo.callback(again)  # (the same page pressed twice: nothing more is undone)
+        self.assertIn(
+            who_knows.NOTHING_TO_UNDO, str(again.response.sent or again.followup.send.await_args)
+        )
+
+    async def test_an_undo_that_cannot_take_all_of_it_back_says_so(self) -> None:
+        await self.know("Kesh", secret=True)
+        _, view = await self.who_page()
+        it = self.it()
+        await view._common(it)
+        (undo,) = [
+            c for c in it.response.edited[0][1].children if getattr(c, "label", "") == "↩ Undo"
+        ]
+        with patch.object(connection_edit, "undo_batches", AsyncMock(return_value=False)):
+            it = self.it()
+            await undo.callback(it)
+        self.assertIn(who_knows.UNDONE_PARTLY, it.response.edited[0][0])
+
+    async def test_a_refused_pick_on_a_common_connection_writes_nothing(self) -> None:
+        await self.know("Kesh")
+        npc = await ui.save_name(self.memory, self.campaign, "Old Mill", "place", [], [])
+        _, view = await self.who_page()
+        await view._common(self.it())
+        before = await self.memory.version(GUILD, self.campaign.id)
+        _, view = await self.who_page()
+        view.picked = [npc.id]  # forged: not a character
+        it = self.it()
+        await view._some(it)
+        self.assertIn("Couldn't change that", str(it.response.sent or it.followup.send.await_args))
+        self.assertEqual(await self.memory.version(GUILD, self.campaign.id), before)
+        (link,) = await self.relations()
+        self.assertEqual(
+            await self.memory.common_knowledge(GUILD, self.campaign.id, "connection", [link.id]),
+            {link.id},
+        )
+
+    async def test_common_knowledge_is_refused_while_an_end_is_hidden(self) -> None:
+        kesh = await self.know("Kesh", secret=True)
+        await self.memory.set_hidden_from_players(
+            GUILD, self.campaign.id, kesh.id, True, source=DM_SOURCE, dm_chose_secret=True
+        )
+        self.fresh()
+        _, view = await self.who_page()
+        it = self.it()
+        await view._common(it)
+        said = str(it.response.sent or it.followup.send.await_args)
+        self.assertIn("Show Kesh to the players first", said)
+        (link,) = await self.relations()
+        self.assertTrue(link.secret)
+
+    async def test_a_manager_cannot_press_undo(self) -> None:
+        await self.know("Kesh", secret=True)
+        _, view = await self.who_page()
+        it = self.it()
+        await view._common(it)
+        (undo,) = [
+            c for c in it.response.edited[0][1].children if getattr(c, "label", "") == "↩ Undo"
+        ]
+        await undo.callback(self.it(MANAGER))
+        (link,) = await self.relations()
+        self.assertFalse(link.secret)  # still shown and common: the manager's press did nothing
+
     async def test_the_menu_holds_no_more_than_the_server_accepts(self) -> None:
         await self.know("Kesh")
         for k in range(14):

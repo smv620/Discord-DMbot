@@ -12,13 +12,13 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from dmbot.memory.link_edits import (
-    COMMON,
     EVERYONE,
     ONLY_THE_DM,
-    PICK_WHO,
     SOME_CHARACTERS,
     WHO_KNOWS,
     keep_batch,
+    shown_entry,
+    with_common,
 )
 from dmbot.memory.models import DM, Alias, MemoryRuleError, Written
 from dmbot.memory.store import MemoryStore
@@ -44,47 +44,27 @@ async def set_who_knows(
     players_only: bool = False,
     made: list[int] | None = None,
 ) -> Written[object]:
-    """ "Who knows this?" with its fourth answer, 🌍 Common knowledge (#4537 slice 1b): every
-    character knows it, NPCs too, and anyone who joins later. It shows the alias to the
-    players first if it is hidden (common knowledge can't be hidden), then writes the common row;
-    any other answer on a common alias takes common knowledge back first. All of it is the
-    DM's own choice, each change's batch in `made`, so one ↩ Undo takes back the whole answer
-    (#4159)."""
-    log = made if made is not None else []
-    if who not in (*WHO_KNOWS, COMMON):
-        raise MemoryRuleError(PICK_WHO)
-    common = alias.id in await memory.common_knowledge(guild_id, campaign_id, "alias", [alias.id])
-    if who == COMMON:
-        if common and not alias.secret:
-            return Written(None, None)  # already common knowledge
-        shown = await _set_flags(
-            memory, guild_id, campaign_id, alias, EVERYONE, players_only=players_only, made=log
-        )
-        if common:
-            return shown
-        return keep_batch(
-            log,
-            await memory.add_common_knowledge(
-                guild_id, campaign_id, "alias", [alias.id], source=DM
-            ),
-        )
-    removed: Written[object] = Written(None, None)
-    if common:
-        removed = keep_batch(
-            log,
-            await memory.remove_common_knowledge(guild_id, campaign_id, "alias", [alias.id]),
-        )
-    try:
-        result = await _set_flags(
-            memory, guild_id, campaign_id, alias, who, characters,
+    """ "Who knows this?" for one other name, with its fourth answer, 🌍 Common knowledge (#4537
+    slice 1b): `link_edits.with_common`, with this name's own flags (`_set_flags`)."""
+    entry = await memory.entity(guild_id, campaign_id, alias.entity_id)
+
+    async def flags(answer: str, chosen: Sequence[str], log: list[int]) -> Written[object]:
+        return await _set_flags(
+            memory, guild_id, campaign_id, alias, answer, chosen,
             players_only=players_only, made=log,
         )  # fmt: skip
-    except MemoryRuleError:
-        if removed.batch is not None:  # (nothing else changed: put common knowledge back)
-            await memory.undo(guild_id, campaign_id, removed.batch, source=DM)
-            log.remove(removed.batch)
-        raise
-    return result if result.batch is not None else removed
+
+    return await with_common(
+        memory, guild_id, campaign_id, "alias", alias.id,
+        shown=not alias.secret,
+        cannot_show=(
+            ""
+            if shown_entry(entry) else
+            f"Show {entry.name if entry else 'its entry'} to the players first: common knowledge "
+            "is something they see."
+        ),
+        who=who, characters=characters, set_flags=flags, made=made,
+    )  # fmt: skip
 
 
 async def _set_flags(

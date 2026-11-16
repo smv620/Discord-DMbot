@@ -178,3 +178,34 @@ class NameWho(base.NamesTest):
         self.assertEqual(
             await self.memory.common_knowledge(GUILD, self.campaign.id, "alias", [now.id]), set()
         )
+
+    async def test_a_manager_can_neither_make_it_common_nor_undo_it(self) -> None:
+        alias = await self.alias()
+        _, view = await self.who_page(alias)
+        await view._only_me(self.it())
+        _, view = await self.who_page(await self.current())
+        await view._common(self.it(MANAGER))
+        self.assertTrue((await self.current()).secret)
+        it = self.it()
+        await view._common(it)
+        (undo,) = [
+            c for c in it.response.edited[0][1].children if getattr(c, "label", "") == "↩ Undo"
+        ]
+        await undo.callback(self.it(MANAGER))
+        self.assertFalse((await self.current()).secret)
+
+    async def test_common_knowledge_is_refused_while_its_entry_is_hidden(self) -> None:
+        alias = await self.alias()
+        await self.memory.set_hidden_from_players(
+            GUILD, self.campaign.id, self.bell.id, True, source="dm", dm_chose_secret=True
+        )
+        self.fresh()
+        _, view = await self.who_page(alias)
+        it = self.it()
+        await view._common(it)
+        said = str(it.response.sent or it.followup.send.await_args)
+        self.assertIn("Show Belleros to the players first", said)
+        now = await self.current()
+        self.assertEqual(
+            await self.memory.common_knowledge(GUILD, self.campaign.id, "alias", [now.id]), set()
+        )

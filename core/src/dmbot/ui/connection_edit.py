@@ -55,12 +55,16 @@ from dmbot.ui.place_size import (
     ONLY_DM_LENGTH,
 )
 from dmbot.ui.who_knows import (
+    ALREADY,
     NO_LONGER_COMMON,
+    NOTHING_TO_UNDO,
     UNDONE,
+    UNDONE_PARTLY,
     WhoKnowsMenu,
     called,
     common_done,
     player_characters,
+    taken_back,
     who_text,
 )
 
@@ -818,15 +822,26 @@ class WhoKnows(WhoKnowsMenu):
             await _tell(interaction, SECRET_DENIED_PRESS)
             return
         c = found.campaign
-        await undo_batches(found.memory, c.guild_id, c.id, self.undo)
+        batches, self.undo = self.undo, []  # (a second press on this page undoes nothing more)
+        if not batches:
+            await _tell(interaction, NOTHING_TO_UNDO)
+            return
+        every = await undo_batches(found.memory, c.guild_id, c.id, batches)
         changed(interaction, c)
         self.stop()
+        await self._redraw(interaction, UNDONE if every else UNDONE_PARTLY)
+
+    async def _redraw(
+        self, interaction: discord.Interaction, note: str, undo: Sequence[int] = ()
+    ) -> None:
+        """This page again, read afresh, with `note` on top and ↩ Undo for `undo`."""
         found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
         if found is None:
             return
-        pcs = await player_characters(found.memory, c)
+        pcs = await player_characters(found.memory, found.campaign)
         await _replace(
-            interaction, *await _who_page(found, self.campaign_id, self.entity_id, pcs, note=UNDONE)
+            interaction,
+            *await _who_page(found, self.campaign_id, self.entity_id, pcs, note=note, undo=undo),
         )
 
     async def _back(self, interaction: discord.Interaction) -> None:
@@ -860,9 +875,7 @@ class WhoKnows(WhoKnowsMenu):
         if who == now and (
             who != link_edits.SOME_CHARACTERS or sorted(self.picked) == sorted(live)
         ):
-            await _tell(
-                interaction, "Already like that. Nothing changed. Press Back to see the card."
-            )
+            await _tell(interaction, ALREADY)
             return
         made: list[int] = []
         try:
@@ -886,20 +899,22 @@ class WhoKnows(WhoKnowsMenu):
             else:
                 await _tell(interaction, f"Couldn't change that. {exc}")
             return
-        if who == link_edits.COMMON:  # (the page again, with what changed and ↩ Undo, #4537)
+        if not made:  # (another press got there first: nothing was written)
+            await _tell(interaction, ALREADY)
+            return
+        if who == link_edits.COMMON or was_common:
+            # (the page again, with what changed and one ↩ Undo for all of it, #4537: taking common
+            # knowledge back is two changes, which the card's one-change Undo can't reverse)
+            if who == link_edits.COMMON:
+                note = common_done(found.relation.secret or found.relation.unrevealed)
+            else:
+                mine = [self.names[x] for x in self.picked if x in self.names]
+                note = taken_back(who, mine, was_shown=now == link_edits.COMMON)
+                if now == link_edits.COMMON:  # (only when the page showed it as common)
+                    note = f"{NO_LONGER_COMMON} {note}"
             changed(interaction, c)
             self.stop()
-            hidden = found.relation.secret or found.relation.unrevealed
-            found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
-            if found is None:
-                return
-            await _replace(
-                interaction,
-                *await _who_page(
-                    found, self.campaign_id, self.entity_id, list(self.names.items()),
-                    note=common_done(hidden), undo=made,
-                ),
-            )  # fmt: skip
+            await self._redraw(interaction, note, undo=made)
             return
         said = _said(found)
         undo: int | None = None
@@ -919,9 +934,6 @@ class WhoKnows(WhoKnowsMenu):
                 f"🤫 Hidden from players. Only the DM can see it now: {said}. "
                 "Not right? Change it again."
             )
-        if was_common:  # (any other answer took common knowledge back, #4537)
-            note = f"{NO_LONGER_COMMON} {note}"
-            undo = None  # (two changes now: the card's one-change Undo can't take back both)
         changed(interaction, c)
         self.stop()
         await show_card(

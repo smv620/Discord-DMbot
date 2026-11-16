@@ -225,7 +225,10 @@ async def remove_common(w: Changes, kind: str, statement_ids: Sequence[str]) -> 
 
 
 async def common_of(scope: Scope, kind: str, statement_ids: Sequence[str]) -> set[str]:
-    """Which of these statements hold a common-knowledge row (#4537), whatever their flags say."""
+    """Which of these statements hold a common-knowledge row (#4537), whatever their flags say.
+    Awake rows only, unlike `remove_common` (which also takes sleeping ones): nothing puts an
+    "everyone" row to sleep today (`_sleep` touches player views only). If that changes, decide
+    here whether a sleeping row still makes the page say 🌍, or the two will disagree."""
     if kind not in _COLUMNS or not statement_ids:
         return set()
     column, _ = _COLUMNS[kind]

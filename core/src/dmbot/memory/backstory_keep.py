@@ -310,16 +310,20 @@ async def ask_held(
 
 async def undo_batches(
     memory: MemoryStore, guild_id: int, campaign_id: str, batches: Sequence[int | None]
-) -> None:
-    """Take back these writes, newest first. One that cannot be reversed (changed since) is
-    logged and skipped: the rest still go back."""
+) -> bool:
+    """Take back these writes, newest first. One that cannot be reversed (changed since, too
+    late, already undone) is logged and skipped: the rest still go back. True when every one
+    went back, so a caller can say when only part of it did."""
+    every = True
     for batch in reversed(batches):
         if batch is None:
             continue
         try:
             await memory.undo(guild_id, campaign_id, batch, source=DM)
         except MemoryRuleError:
+            every = False
             log.info("A write of a change could not be taken back")
+    return every
 
 
 async def keep_guesses(

@@ -133,12 +133,16 @@ from dmbot.ui.names import (
     split_names,
 )
 from dmbot.ui.who_knows import (
+    ALREADY,
     NO_LONGER_COMMON,
+    NOTHING_TO_UNDO,
     UNDONE,
+    UNDONE_PARTLY,
     WhoKnowsMenu,
     called,
     common_done,
     player_characters,
+    taken_back,
     who_text,
 )
 
@@ -3072,10 +3076,17 @@ class WhoKnowsName(WhoKnowsMenu):
         if not sees_secrets(campaign, interaction.user.id):  # checked on every press
             await _tell(interaction, "Only the campaign's DMs can change secret names.")
             return
-        await undo_batches(memory, campaign.guild_id, campaign.id, self.undo)
+        batches, self.undo = self.undo, []  # (a second press on this page undoes nothing more)
+        if not batches:
+            await _tell(interaction, NOTHING_TO_UNDO)
+            return
+        every = await undo_batches(memory, campaign.guild_id, campaign.id, batches)
         changed(interaction, campaign)
         self.stop()
-        await show_who_page(interaction, campaign.id, self.entity_id, self.alias_id, note=UNDONE)
+        await show_who_page(
+            interaction, campaign.id, self.entity_id, self.alias_id,
+            note=UNDONE if every else UNDONE_PARTLY,
+        )  # fmt: skip
 
     async def _set(self, interaction: discord.Interaction, who: str) -> None:
         await _answer_first(interaction, in_place=True)
@@ -3099,9 +3110,7 @@ class WhoKnowsName(WhoKnowsMenu):
         if who == now and (
             who != link_edits.SOME_CHARACTERS or sorted(self.picked) == sorted(live)
         ):
-            await _tell(
-                interaction, "Already like that. Nothing changed. Press Back to see the card."
-            )
+            await _tell(interaction, ALREADY)
             return
         made: list[int] = []
         try:
@@ -3125,13 +3134,23 @@ class WhoKnowsName(WhoKnowsMenu):
             else:
                 await _tell(interaction, f"Couldn't change that. {exc}")
             return
-        if who == link_edits.COMMON:  # (the page again, with what changed and ↩ Undo, #4537)
+        if not made:  # (another press got there first: nothing was written)
+            await _tell(interaction, ALREADY)
+            return
+        if who == link_edits.COMMON or was_common:
+            # (the page again, with what changed and one ↩ Undo for all of it, #4537)
+            if who == link_edits.COMMON:
+                note = common_done(alias.secret)
+            else:
+                mine = [self.names[x] for x in self.picked if x in self.names]
+                note = taken_back(who, mine, was_shown=now == link_edits.COMMON)
+                if now == link_edits.COMMON:  # (only when the page showed it as common)
+                    note = f"{NO_LONGER_COMMON} {note}"
             changed(interaction, campaign)
             self.stop()
             await show_who_page(
-                interaction, campaign.id, self.entity_id, self.alias_id,
-                note=common_done(alias.secret), undo=made,
-            )  # fmt: skip
+                interaction, campaign.id, self.entity_id, self.alias_id, note=note, undo=made
+            )
             return
         text = f"**{_md(alias.text)}**"
         if who == link_edits.EVERYONE:
@@ -3148,8 +3167,6 @@ class WhoKnowsName(WhoKnowsMenu):
                 f"🤫 {text} is secret now: only the DM knows it. Hidden from players from now on, "
                 "and DMbot leaves it out of new transcripts. Past transcripts don't change."
             )
-        if was_common:  # (any other answer took common knowledge back, #4537)
-            note = f"{NO_LONGER_COMMON} {note}"
         changed(interaction, campaign)
         self.stop()
         await show_card(interaction, campaign.id, self.entity_id, replace=True, note=note)
