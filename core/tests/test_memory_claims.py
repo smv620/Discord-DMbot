@@ -867,12 +867,12 @@ class Stored(ConfirmedMemoryTest):
         self.assertEqual((plain.split, plain.scene), (False, 0))
         self.assertFalse((await self.relation(plain.claim.fact_id)).unrevealed)
 
-    async def test_a_secret_answer_ignores_a_pick(self) -> None:
+    async def test_a_secret_answer_with_a_pick_is_refused(self) -> None:
         await self.session_lines()
         wren, _ash = await self.two_characters()
-        done = await self.confirm_for([wren], secret=True)
-        self.assertEqual((done.split, done.scene), (False, 0))
-        self.assertTrue((await self.relation(done.claim.fact_id)).secret)
+        with self.assertRaises(MemoryRuleError):
+            await self.confirm_for([wren], secret=True)
+        self.assertEqual(len(await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)), 1)
 
     async def test_a_pick_of_nobody_is_refused_in_plain_words(self) -> None:
         await self.session_lines()

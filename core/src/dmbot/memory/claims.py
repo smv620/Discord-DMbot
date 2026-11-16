@@ -2268,9 +2268,9 @@ class ClaimStore:
                 )  # fmt: skip
                 fact_id = relation.id
                 if relation.id in live:
-                    if picked is not None and live[relation.id]:
-                        raise MemoryRuleError(SOME_KNOW_SHOWN)  # (never quietly left shown)
-                    if not live[relation.id] and picked is None:
+                    if not live[relation.id]:  # (False: it is already shown to the players)
+                        if picked is not None:
+                            raise MemoryRuleError(SOME_KNOW_SHOWN)  # never quietly left shown
                         in_scene = None  # (one already shown stays as it is: nothing to learn)
                     elif in_scene is None and not secret:
                         # (the table said a connection the story holds back: the party's now,
