@@ -1083,7 +1083,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # What a call costs in AI credits, for the calls made because a DM added material (#4005):
         # it needs the campaign's owner, found the first time a job charges.
         credits.configure(recaps.db if recaps is not None else None, self._owner_of_campaign)
-        self._lore_reads: dict[int, asyncio.Task[None]] = {}  # server -> its read in progress
+        # (server, campaign) -> its read in progress: one a campaign, several a server (#4551)
+        self._lore_reads: dict[tuple[int, str], asyncio.Task[None]] = {}
         self._lore_swept: dict[int, float] = {}  # server -> when its queue was last swept
         # The website's House-rules file requests (#3087), one at a time per server like lore.
         self.house_file_queue = HouseFileQueue(recaps.db) if recaps is not None else None
@@ -13433,30 +13434,32 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         """The lore DMs uploaded on the website (#3022): for each server, sweep its queue (words
         never stay just because the DM did not come back), and when no read is running there, take
         the oldest waiting upload and read it in its own task. A read takes minutes, so it must not
-        hold this loop, which every other website action shares. One read at a time per server."""
+        hold this loop, which every other website action shares. One read at a time per campaign,
+        and at most `server_jobs_at_once` on a server (#4551)."""
         queue = self.lore_uploads
         if queue is None or self.memory is None:
             return
+        cap = max(1, int(getattr(self.settings, "server_jobs_at_once", 2)))
         for guild in list(self.guilds):
             if self._closing:
                 return
-            running = self._lore_reads.get(guild.id)
-            if running is not None and running.done():
-                del self._lore_reads[guild.id]
-                running = None
+            for key in [k for k, t in self._lore_reads.items() if k[0] == guild.id and t.done()]:
+                del self._lore_reads[key]
             now = time.monotonic()
             if now - self._lore_swept.get(guild.id, -LORE_SWEEP_EVERY_S) >= LORE_SWEEP_EVERY_S:
                 self._lore_swept[guild.id] = now
                 await queue.sweep(guild.id)
-            if running is not None:
-                continue
-            claim = await queue.claim_next(guild.id)
-            if claim is None:
-                continue
-            with log_context(guild_id=guild.id, campaign_id=claim.campaign_id):
-                self._lore_reads[guild.id] = asyncio.ensure_future(
-                    lore_upload.run_upload(self, queue, claim, guild.id)
-                )
+            while True:
+                busy = [k[1] for k in self._lore_reads if k[0] == guild.id]
+                if len(busy) >= cap:  # (the server's cap: the AI and the bill are shared)
+                    break
+                claim = await queue.claim_next(guild.id, not_campaigns=busy)
+                if claim is None:
+                    break
+                with log_context(guild_id=guild.id, campaign_id=claim.campaign_id):
+                    self._lore_reads[(guild.id, claim.campaign_id)] = asyncio.ensure_future(
+                        lore_upload.run_upload(self, queue, claim, guild.id)
+                    )
 
     async def run_house_file_requests(self) -> None:
         """The House-rules file requests DMs made on the website (#3087): for each server, sweep

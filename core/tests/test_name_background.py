@@ -1101,9 +1101,9 @@ class ThePath(NamesTest):
 
     async def test_a_busy_server_and_the_daily_limit_stop_it(self) -> None:
         _, view = await self.offer()
-        _ai_busy.add(GUILD)
+        _ai_busy[GUILD] = {""}
         await view._read(self.it())
-        _ai_busy.discard(GUILD)
+        _ai_busy.pop(GUILD, None)
         day = datetime.fromtimestamp(time.time(), UTC).strftime("%Y-%m-%d")
         _ai_reads[(GUILD, day)] = AI_READS_PER_DAY
         _, view = await self.offer()
