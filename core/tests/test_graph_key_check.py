@@ -950,6 +950,55 @@ class StoryThreads(unittest.TestCase):
         )  # fmt: skip
         self.assertIn("Thread parts found: objective 1/1, complication 1/1", gkc.render(report))
 
+    def test_clues_on_the_matched_thread(self) -> None:
+        """#4624, quests 6b: a clue tied to the matched thread by words, one on another thread,
+        a good find missed, an extra tie, and a must-not thread with a tie (false)."""
+        key = {
+            "nodes": [{"name": n, "kind": "person", "aliases": [], "note": ""}
+                      for n in ("Hlin", "Sephek", "Cerric")],
+            "pairs": [],
+            "threads": [
+                {"id": "t1", "kind": "quest", "name": "x", "giver": "Hlin", "target": "Sephek",
+                 "taker": "", "missing": [], "in_danger": [], "must_find": True, "hint": False},
+                {"id": "t2", "kind": "quest", "name": "y", "giver": "", "target": "",
+                 "taker": "Cerric", "missing": [], "in_danger": [], "must_find": True,
+                 "hint": False},
+            ],
+            "clues": [
+                {"thread": "t2", "words": ["Tome"]},
+                {"thread": "t2", "words": ["journal"]},
+                {"thread": "t2", "words": ["whisper"], "must_find": False},
+            ],
+            "must_not_clues": [{"thread": "t1"}],
+        }  # fmt: skip
+        people = [("h", "Hlin", "npc"), ("s", "Sephek", "npc"), ("c", "Cerric", "npc")]
+        things = [("q1", "Hlin's job", "quest"), ("q2", "Cerric's search", "quest"),
+                  ("k1", "the warning in the azure tome", "clue"), ("k2", "his journal", "clue"),
+                  ("k3", "a strange mark", "clue")]  # fmt: skip
+
+        def tie(i: str, clue: str, thread: str) -> dict[str, Any]:
+            return {"table": "relation", "id": i, "subject_id": clue, "predicate": "clue_to",
+                    "object_id": thread, "status": "confirmed"}  # fmt: skip
+
+        rows = [
+            self.rel("r1", "h", "q1", "quest giver"), self.rel("r2", "s", "q1", "target"),
+            self.rel("r3", "c", "q2", "takes it on"),
+            tie("c1", "k1", "q2"), tie("c2", "k2", "q1"), tie("c3", "k3", "q2"),
+        ]  # fmt: skip
+        report = gkc.check(backup(people + things, rows), key)
+        self.assertEqual(
+            dict(report.clues),
+            {"found": 1, "wrong thread": 1, "good finds missed": 1, "extra": 1, "false": 1},
+        )
+        self.assertIn("Clues: found 1, missed 0, wrong thread 1", gkc.render(report))
+
+    def test_the_keys_clue_rows_name_their_threads(self) -> None:
+        for name in ("lore_key.json", "master_key.json"):
+            key = load(name)
+            ids = {t["id"] for t in key["threads"]}
+            for c in [*key["clues"], *key["must_not_clues"]]:
+                self.assertIn(c["thread"], ids)
+
     def test_the_quest_cases_key_reads_and_scores_its_must_nots(self) -> None:
         key = load("quest_cases_key.json")
         self.assertEqual(len(key["threads"]), 5)

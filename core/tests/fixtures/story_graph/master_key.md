@@ -425,3 +425,17 @@ Each part is found when the thread it belongs to has a part of that kind whose w
 | L-lq06 | reward | 50 gold | 102 | offering 50 gold pieces |
 | L-lq06 | help | map | 102 | the route map: help to keep (§9.3) |
 | L-lq06 | help | sled, dogs | 102 | two dog sleds with eight dogs from Jebidiah; the lore doesn't say lent, so to keep (§5b) |
+
+### Clues (quests slice 6b, #4624; design §7, §9.3)
+
+A clue is found when a clue tied to the thread (`clue_to`, kept with the thread) has a name holding one of the words. Tied only to another thread, it is "wrong thread"; a clue tied to a listed thread that no row is, is extra. Who has a clue is not scored yet.
+
+| Thread | Words to find | Must find | Line | Note |
+|---|---|---|---|---|
+| L-lq01 | tome | yes | 27 | the warning in the locked azure tome |
+| L-lq01 | coming, Wit | no | 27 | Wit's warning that they are coming |
+| L-lq03 | journal | yes | 36 | the ancestral journal |
+| L-lq03 | campsite, camp | no | 36 | the blood-stained campsite |
+| L-lq03 | whisper | no | 36 | the whispers Nyssara hears |
+
+**Must have no clue tied:** L-lq04 (Hlin's contract has none in this passage); L-lq06 (the route map and the sleds are its help, never its clues).

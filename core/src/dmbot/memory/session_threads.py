@@ -114,6 +114,7 @@ def _no_words(s: Suggestion, starts: tuple[int, ...], speakers: tuple[int, ...])
         quote="",
         reads=tuple(replace(p, quote="") for p in s.reads),
         branches=tuple(replace(b, quote="") for b in s.branches),
+        clues=(),  # (a session's clues are quests slice 6c's: who found one, with consent, #4624)
         line_starts=starts,
         speaker_ids=speakers,
     )

@@ -26,7 +26,7 @@ from typing import Any
 
 from dmbot.memory._changes import Changes
 from dmbot.memory.models import name_key, new_id
-from dmbot.memory.thread_read import ReadBranch, ReadPart, Suggestion
+from dmbot.memory.thread_read import ReadBranch, ReadClue, ReadPart, Suggestion
 
 log = logging.getLogger(__name__)
 
@@ -50,14 +50,15 @@ class Waiting:
     reads: tuple[ReadPart, ...] = ()  # (slice 3, #4500: its parts, then its branches)
     branches: tuple[ReadBranch, ...] = ()
     session_id: str | None = None  # (slice 5a: read from this session's lines, not from lore)
+    clues: tuple[ReadClue, ...] = ()  # (#4624 6b: after its branches on the card)
     line_starts: tuple[int, ...] = ()
     speaker_ids: tuple[int, ...] = ()
 
     @property
-    def lines(self) -> tuple[ReadPart | ReadBranch, ...]:
-        """What the DM can switch off before keeping, in the card's order: the parts, then the
-        branches. `keep_thread`'s `leave_off` counts in this order."""
-        return (*self.reads, *self.branches)
+    def lines(self) -> tuple[ReadPart | ReadBranch | ReadClue, ...]:
+        """What the DM can switch off before keeping, in the card's order: the parts, the
+        branches, then the clues. `keep_thread`'s `leave_off` counts in this order."""
+        return (*self.reads, *self.branches, *self.clues)
 
     @property
     def state(self) -> str:
@@ -90,6 +91,9 @@ def extra_json(s: Suggestion) -> str:
                     "state": b.state, "parts": [list(x) for x in b.parts],
                 }
                 for b in s.branches
+            ],
+            "clues": [
+                {"words": c.words, "quote": c.quote, "who": list(c.who_ids)} for c in s.clues
             ],
         }
     )  # fmt: skip
@@ -130,6 +134,33 @@ def from_extra(raw: Any) -> tuple[tuple[ReadPart, ...], tuple[ReadBranch, ...]]:
         for b in raw_branches if isinstance(b, dict)
     )  # fmt: skip
     return reads, branches
+
+
+def clues_from(raw: Any) -> tuple[ReadClue, ...]:
+    """The stored clues (#4624 6b); a row from before them has none. Never raises."""
+    try:
+        data = raw if isinstance(raw, dict) else json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return ()
+    rows = data.get("clues") if isinstance(data, dict) else None
+    return tuple(
+        ReadClue(
+            _text(c, "words"), _text(c, "quote"),
+            tuple(str(i) for i in c.get("who", []) if isinstance(i, str)),
+        )
+        for c in rows if isinstance(c, dict) and _text(c, "words")
+    ) if isinstance(rows, list) else ()  # fmt: skip
+
+
+async def clues_in(w: Changes, suggestion_id: str) -> tuple[ReadClue, ...]:
+    """Inside the keep's own write: the waiting suggestion's clues (#4624 6b), as `lines_in`."""
+    cur = await w.conn.execute(
+        "SELECT extra FROM thread_suggestions"
+        " WHERE guild_id = %s AND campaign_id = %s AND id = %s AND status = 'waiting'",
+        (w.guild_id, w.campaign_id, suggestion_id),
+    )
+    row = await cur.fetchone()
+    return clues_from(row["extra"]) if row is not None else ()
 
 
 async def lines_in(
@@ -388,6 +419,7 @@ class ThreadSuggestionStore:
                 session_id=None if r["session_id"] is None else str(r["session_id"]),
                 line_starts=tuple(int(n) for n in r["line_starts"] or ()),
                 speaker_ids=tuple(int(n) for n in r["speaker_ids"] or ()),
+                clues=clues_from(r["extra"]),
             )
             for r in rows
         ]  # fmt: skip

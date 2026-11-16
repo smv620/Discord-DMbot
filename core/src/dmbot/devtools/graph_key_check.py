@@ -154,6 +154,10 @@ class Report:
     # and missed by kind ("found objective"), on the wrong thread, and extra. Branches: found and
     # missed (a hint's miss isn't held against the reader), each a `branch_of` to its quest.
     thread_parts: Counter[str] = field(default_factory=Counter)
+    # A thread's clues (#4624, quests slice 6b): found on the backup thread its key thread matched,
+    # on the wrong thread, missed (must-find only), good finds missed, extra (a clue tied to a
+    # matched thread that no key row is), false (a `must_not_clues` row: any tie to that thread)
+    clues: Counter[str] = field(default_factory=Counter)
 
 
 def _live(row: Mapping[str, Any]) -> bool:
@@ -713,6 +717,7 @@ def _score_threads(
                 report.threads["false"] += 1
                 break
     _score_thread_parts(report, graph, key, matched)
+    _score_clues(report, graph, key, matched)
 
 
 def _score_thread_parts(
@@ -767,6 +772,48 @@ def _score_thread_parts(
         )
 
 
+def _score_clues(
+    report: Report, graph: Graph, key: Mapping[str, Any], matched: Mapping[str, str]
+) -> None:
+    """The key's `clues` (#4624, quests 6b; design §7, §9.3): a clue tied with `clue_to` to the
+    backup thread its key thread matched, whose name holds one of the row's `words` (casefold), is
+    found; tied only to another thread, it is "wrong thread". Clues tied to a matched thread that no
+    row is are extra. A `must_not_clues` row names a thread that must have no clue tied at all."""
+    if not key.get("clues") and not key.get("must_not_clues"):
+        return
+    ties = [
+        (str(r["subject_id"]), str(r["object_id"]))
+        for r in graph.relations
+        if r.get("predicate") == "clue_to"
+    ]
+
+    def named(clue: str, words: Sequence[str]) -> bool:
+        said = str(graph.entities.get(clue, {}).get("name", "")).casefold()
+        return any(str(w).casefold() in said for w in words)
+
+    used: set[tuple[str, str]] = set()
+    for c in key.get("clues", []):
+        thread = matched.get(str(c.get("thread", "")), "")
+        words = [str(w) for w in c.get("words", [])]
+        here = [t for t in ties if thread and t[1] == thread and named(t[0], words)]
+        if here:
+            report.clues["found"] += 1
+            used.update(here)
+        elif any(named(clue, words) for clue, _ in ties):
+            report.clues["wrong thread"] += 1
+        elif c.get("must_find", True):
+            report.clues["missed"] += 1
+        else:
+            report.clues["good finds missed"] += 1
+    named_threads = {str(c.get("thread", "")) for c in key.get("clues", [])}
+    keyed = {matched[t] for t in named_threads if t in matched}
+    report.clues["extra"] += sum(1 for t in ties if t[1] in keyed and t not in used)
+    for rule in key.get("must_not_clues", []):
+        thread = matched.get(str(rule.get("thread", "")), "")
+        if thread and any(t[1] == thread for t in ties):
+            report.clues["false"] += 1
+
+
 def _kind_for(entry_type: str) -> str:
     for kind, types in ENTRY_TYPES.items():
         if entry_type in types:
@@ -802,6 +849,7 @@ def summarize(report: Report) -> dict[str, Any]:
         "map_facts": {layer: dict(c) for layer, c in sorted(report.map_facts.items())},
         "threads": dict(report.threads),
         **({"thread_parts": dict(report.thread_parts)} if report.thread_parts else {}),
+        **({"clues": dict(report.clues)} if report.clues else {}),
         **({"languages": dict(report.languages)} if report.languages else {}),
         **({"route_lengths": dict(report.route_lengths)} if report.route_lengths else {}),
     }
@@ -864,6 +912,12 @@ def render(report: Report, counts_only: bool = False) -> str:
             f"Thread parts found: {said or 'none in the key'}; wrong thread {c['wrong thread']}, "
             f"extra {c['extra']}; branches found {c['branches found']}, "
             f"missed {c['branches missed']}"
+        )
+    if report.clues:  # (#4624: a thread's clues, quests 6b)
+        c = report.clues
+        lines.append(
+            f"Clues: found {c['found']}, missed {c['missed']}, wrong thread {c['wrong thread']}, "
+            f"extra {c['extra']}, false {c['false']} (good finds missed {c['good finds missed']})"
         )
     if report.route_lengths:  # (#4255: a road's length, a property of the road, not a tie)
         c = report.route_lengths
