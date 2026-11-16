@@ -225,8 +225,31 @@ class TheCard(MemoryTest):
         so the sample's backup holds what the reader moved."""
         from dmbot.devtools import accept_all
 
+        other = (await self.memory.new_thread(GUILD_A, self.c, "Guard the caravan", "quest", OPEN,
+                                              source=DM)).value.id  # fmt: skip
+        broken = (await self.memory.new_thread(GUILD_A, self.c, "A third", "quest", OPEN,
+                                               source=DM)).value.id  # fmt: skip
+        await self.store.offer(
+            GUILD_A, self.c, self.sid, 1_700_000_000,
+            [(other, tp.Change(tp.THREAD_STATE, state=GOING), (LINE_MS,), (BEL,)),
+             (broken, tp.Change(tp.THREAD_STATE, state=GOING), (LINE_MS,), (BEL,))],
+            now=1_700_000_300,
+        )  # fmt: skip
+        self.assertEqual(await accept_all.progress_waiting(self.db, GUILD_A, self.c), 4)
+        real = self.memory.keep_thread_progress
+        broken_ids = {x.id for x in await self.store.waiting(GUILD_A, self.c)
+                      if x.thread_id == broken}  # fmt: skip
+
+        async def keep(g: int, c: str, ids: Any, **kw: Any) -> Any:
+            if set(ids) & broken_ids:  # (one thread's keep fails: the others are still kept)
+                raise RuntimeError("boom")
+            return await real(g, c, ids, **kw)
+
+        self.memory.keep_thread_progress = keep  # type: ignore[method-assign]
         kept = await accept_all.keep_progress(self.db, self.memory, GUILD_A, self.c)
-        self.assertEqual(kept, 2)
+        self.assertEqual(kept, 3)
+        self.memory.keep_thread_progress = real  # type: ignore[method-assign]
+        await self.store.turn_down(GUILD_A, self.c, list(broken_ids))
         self.assertEqual(await self.state(), GOING)
         self.assertIn(parts.COMPLICATION, await self.kinds_kept())
         self.assertEqual(await self.store.waiting(GUILD_A, self.c), [])

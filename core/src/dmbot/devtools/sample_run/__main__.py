@@ -808,7 +808,12 @@ def _sure() -> Sure:
             0 if connections_only else await accept_all.keep_threads(db, memory, guild, campaign)
         )
         # and the progress a session read on the campaign's threads (#4522 5c): kept for the
-        # score only too, after the threads, so a session's own new thread is kept first
+        # score only too, after the threads, in the order the 📜 card asks them
+        # (what no longer fit the thread is left out by the keep: counted, so a reader's
+        # drop in quality shows in the counts)
+        progress_waiting = (
+            0 if connections_only else await accept_all.progress_waiting(db, guild, campaign)
+        )
         progress = (
             0 if connections_only else await accept_all.keep_progress(db, memory, guild, campaign)
         )
@@ -830,6 +835,7 @@ def _sure() -> Sure:
             "names kept so far": kept_so_far,
             "story threads kept for the score": threads,
             "thread progress kept for the score": progress,
+            "thread progress left out": progress_waiting - progress,
             "waiting names": tally.waiting[auto.NAMES],
             "waiting other names": tally.waiting[auto.OTHER_NAMES],
             "waiting connections": tally.waiting[auto.CONNECTIONS],

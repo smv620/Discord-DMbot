@@ -185,6 +185,13 @@ async def keep_threads(db: Database, memory: MemoryStore, guild: int, campaign: 
     return kept
 
 
+async def progress_waiting(db: Database, guild: int, campaign: str) -> int:
+    """How many progress lines wait, before `keep_progress` (counts only)."""
+    from dmbot.memory.thread_progress import ThreadProgressStore
+
+    return len(await ThreadProgressStore(db).waiting(guild, campaign))
+
+
 async def keep_progress(db: Database, memory: MemoryStore, guild: int, campaign: str) -> int:
     """Every progress line a session read on the campaign's threads (#4522 5b), kept as the DM's
     ✅ Keep these keeps it, one thread at a time (`MemoryStore.keep_thread_progress`: one change,

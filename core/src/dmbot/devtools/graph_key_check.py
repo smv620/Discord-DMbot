@@ -33,6 +33,7 @@ from dmbot.campaigns.store import decode_backup
 from dmbot.devtools import sample_name
 from dmbot.memory import kin, place_words, reputation_words, route_length, unnamed
 from dmbot.memory.models import name_key
+from dmbot.memory.session_progress import THREAD_WORDS
 
 DEFAULT_KEY = (
     Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "story_graph" / "master_key.json"
@@ -663,6 +664,7 @@ def _score_threads(
             parts.setdefault(str(r["object_id"]), set()).add((role, str(r["subject_id"])))
     used: set[str] = set()
     matched: dict[str, str] = {}  # (the key thread's id: the backup thread it is, for its parts)
+    every: dict[str, list[str]] = {}  # (and every one it is, for progress: a double holds it too)
     for t in key.get("threads", []):
         wanted_kinds = {str(t["kind"])}
         need: list[tuple[str, set[str]]] = [
@@ -696,6 +698,7 @@ def _score_threads(
         right = [th for th in hits if str(graph.entities[th]["type"]) in wanted_kinds]
         if hits and t.get("id"):
             matched[str(t["id"])] = (right or hits)[0]
+            every[str(t["id"])] = right or hits
         if t.get("hint"):
             report.threads["hints found"] += 1 if hits else 0
             continue
@@ -717,7 +720,7 @@ def _score_threads(
                 report.threads["false"] += 1
                 break
     _score_thread_parts(report, graph, key, matched)
-    _score_progress(report, graph, key, matched)
+    _score_progress(report, graph, key, every)
 
 
 def _score_thread_parts(
@@ -772,10 +775,6 @@ def _score_thread_parts(
         )
 
 
-# The key's words for a thread's own state, as `session_progress.THREAD_WORDS` gives them
-PROGRESS_STATES = {"happening_now": "active", "finished": "resolved", "dropped": "abandoned"}
-
-
 def _progress_holds(
     graph: Graph, thread: str, row: Mapping[str, Any], parts: Sequence[Mapping[str, Any]]
 ) -> bool:
@@ -785,7 +784,7 @@ def _progress_holds(
     read from a session (casefold words, as `_score_thread_parts`)."""
     change = str(row.get("change", ""))
     if change == "thread_moves":
-        want = PROGRESS_STATES.get(str(row.get("state", "")), str(row.get("state", "")))
+        want = THREAD_WORDS.get(str(row.get("state", "")), str(row.get("state", "")))
         return any(
             str(r.get("entity_id")) == thread
             and r.get("closed_at") is None
@@ -808,12 +807,14 @@ def _progress_holds(
 
 
 def _score_progress(
-    report: Report, graph: Graph, key: Mapping[str, Any], matched: Mapping[str, str]
+    report: Report, graph: Graph, key: Mapping[str, Any], matched: Mapping[str, Sequence[str]]
 ) -> None:
     """The key's `progress` (#4522, quests 5c): what the session changes on a thread the lore
     made, read off the backup thread that key thread matched once the sample keeps every progress
-    line (`accept_all.keep_progress`). A row is found when it, or one of its `or` rows, holds; on
-    an unmatched thread it can't be. `must_not_progress` rows count as false when they hold."""
+    line (`accept_all.keep_progress`). A row is found when it, or one of its `or` rows, holds on
+    any backup thread its key thread matched (the session reader may suggest the thread again, and
+    which double sorts first is chance); on an unmatched thread it can't be. `must_not_progress`
+    rows count as false when they hold on any of them."""
     if not key.get("progress") and not key.get("must_not_progress"):
         return
     parts = [
@@ -822,17 +823,17 @@ def _score_progress(
         if r.get("status") != "rejected" and r.get("to_session_at") is None
     ]
     for p in key.get("progress", []):
-        thread = matched.get(str(p.get("thread", "")), "")
+        threads = matched.get(str(p.get("thread", "")), ())
         rows = [p, *p.get("or", [])]
-        if thread and any(_progress_holds(graph, thread, r, parts) for r in rows):
+        if any(_progress_holds(graph, th, r, parts) for th in threads for r in rows):
             report.progress["found"] += 1
         elif p.get("must_find", True):
             report.progress["missed"] += 1
         else:
             report.progress["good finds missed"] += 1
     for p in key.get("must_not_progress", []):
-        thread = matched.get(str(p.get("thread", "")), "")
-        if thread and _progress_holds(graph, thread, p, parts):
+        threads = matched.get(str(p.get("thread", "")), ())
+        if any(_progress_holds(graph, th, p, parts) for th in threads):
             report.progress["false"] += 1
 
 

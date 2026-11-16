@@ -428,13 +428,13 @@ Each part is found when the thread it belongs to has a part of that kind whose w
 
 ### Progress the session makes on the lore's threads (quests 5c, #4522; design §9.5)
 
-The session reader is shown the campaign's open threads and says what the talk moved on them; the sample keeps every line (`accept_all.keep_progress`, for the score only). A row is found when it, or its "or", stands on the backup thread its lore thread matched: the thread's state now, a part of that kind (words holding one of the words) in that state, or a new part read from the session. If the lore already left Find Garret "happening now" (Belleros agrees in the lore), sp01 stands without the session: the reader is right to say nothing then.
+The session reader is shown the campaign's open threads and says what the talk moved on them; the sample keeps every line (`accept_all.keep_progress`, for the score only). A row is found when it, or its "or", stands on the backup thread its lore thread matched: the thread's state now, a part of that kind (words holding one of the words) in that state, or a new part read from the session. A lore thread starts hinted or open and a lore part in its kind's first state, so these stand only once the session moved them. A row holds on any backup thread its lore thread matched (a second "Find Garret" the session reader suggests counts too).
 
 | ID | Thread | Change | Kind | Words | Now | Or | Must find | Line | Note |
 |---|---|---|---|---|---|---|---|---|---|
-| sp01 | L-lq06 | the thread moves | | | happening now | | yes | 135 | the party takes it up: she pays when Belleros says he will go find him, and they set off (222) |
+| sp01 | L-lq06 | the thread moves | | | happening now | | yes | 135 | the party takes it up: Belleros agrees to look for Garret and is paid, and they set off (222) |
 | sp02 | L-lq06 | a part moves | reward | 50 gold | settled | a reward given, "50", from the session | yes | 135 | the 50 gold the lore offers is paid up front |
-| sp03 | L-lq06 | a part moves | help | sled, dog | lent | new help, lent | no | 243 | Jebidiah is willing to loan the dogs: the lore's help to keep is lent |
+| sp03 | L-lq06 | a part moves | help | sled, dog | lent | new help, lent | no | 243 | the kennel master only lends the dogs: the lore's help to keep is lent |
 | sp04 | L-lq06 | a new part | time limit | 10, 15, days | | | no | 204 | Belleros's estimate: Garret can last 10 to 15 days with shelter (words only) |
 
 **Must make nothing** (each counts as false when it stands):
