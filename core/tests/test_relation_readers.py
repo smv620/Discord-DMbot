@@ -120,7 +120,7 @@ STORE = {
     + ": asks the DM about a hidden confirmed connection a World read states (#4590)",
     "bigger_thread": CONFIRMED_ONLY + ": the bigger thread one is a branch of, for the DM (#4471)",
     "thread_card": CONFIRMED_ONLY + ": a thread's live branch links, on the DM's card (#4471)",
-    "_live_clue_tie": CONFIRMED_ONLY + ": a clue's live tie to a thread, for the DM's write (#4624)",
+    "_live_clue_tie": CONFIRMED_ONLY + ": a clue's live tie to a thread, for the DM (#4624)",
     "set_clue_word": CONFIRMED_ONLY + ": the DM marks a live tie a false lead or not (#4624)",
     "untie_clue": CONFIRMED_ONLY + ": the DM takes a live tie off (#4624)",
     "thread_clues": CONFIRMED_ONLY + ": a thread's live clue ties; a player gets only the clues "
