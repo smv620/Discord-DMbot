@@ -624,7 +624,7 @@ def _check_clues(
     """A thread's clues, checked by code (#4624 6b; design §7, §9.3): each needs words and its own
     quote in the text (else `clue_no_quote`); the same words twice is one; at most `CLUES_MAX`
     (else `clue_over`). Who has it: only names the text gives, each one entry of the campaign, the
-    rest left off (the clue stays). Never the thread's own name as a clue."""
+    rest left off (the clue stays; the keep keeps only characters)."""
     out: list[ReadClue] = []
     keys: set[str] = set()
     for c in s.clues:

@@ -991,6 +991,32 @@ class StoryThreads(unittest.TestCase):
             {"found": 1, "wrong thread": 1, "good finds missed": 1, "extra": 1, "false": 1},
         )
         self.assertIn("Clues: found 1, missed 0, wrong thread 1", gkc.render(report))
+        self.assertEqual(report.extra_entries["clue"], 0)  # (a tied clue is scored here only)
+
+    def test_a_clue_answers_one_row_and_words_match_from_their_start(self) -> None:
+        key = {
+            "nodes": [{"name": "Cerric", "kind": "person", "aliases": [], "note": ""}],
+            "pairs": [],
+            "threads": [{"id": "t2", "kind": "quest", "name": "y", "giver": "", "target": "",
+                         "taker": "Cerric", "missing": [], "in_danger": [], "must_find": True,
+                         "hint": False}],
+            "clues": [
+                {"thread": "t2", "words": ["coming"], "must_find": False},
+                {"thread": "t2", "words": ["tome"]},  # (must-find rows are answered first)
+                {"thread": "t2", "words": ["Wit"]},  # ("with" is not "Wit": missed)
+                {"thread": "t9", "words": ["map"]},  # (no such thread: missed)
+            ],
+        }  # fmt: skip
+        things = [("c", "Cerric", "npc"), ("q2", "Cerric's search", "quest"),
+                  ("k1", "the tome's warning: they are coming, with blood", "clue")]  # fmt: skip
+        rows = [
+            self.rel("r3", "c", "q2", "takes it on"),
+            {"table": "relation", "id": "c1", "subject_id": "k1", "predicate": "clue_to",
+             "object_id": "q2", "status": "confirmed"},
+        ]  # fmt: skip
+        report = gkc.check(backup(things, rows), key)
+        got = {k: n for k, n in report.clues.items() if n}
+        self.assertEqual(got, {"found": 1, "missed": 2, "good finds missed": 1})
 
     def test_the_keys_clue_rows_name_their_threads(self) -> None:
         for name in ("lore_key.json", "master_key.json"):

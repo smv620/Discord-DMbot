@@ -2453,6 +2453,8 @@ class MemoryStore:
     ) -> tuple[Relation, bool]:
         """`tie_clue` inside the caller's write, for it and for a kept lore suggestion's clues
         (#4624 6b): the DM's own act both times."""
+        # (every refusal before any insert: a keep that skips a clue must leave no stray entry)
+        onto.active_predicate(clues_mod.CLUE_TO)
         name = clean_text(new_name) if new_name.strip() else ""
         if name:
             check_named(clues_mod.CLUE, name)
@@ -2495,10 +2497,12 @@ class MemoryStore:
         the DM's own (`_tie_clue_in`: the campaign's clue of that name, else a new one hidden from
         the players). The characters the text says have it learn it and are listed as knowing it,
         and then only they may (ruling 3 on #4624: "Only some people know this" on); with nobody
-        named, nobody has found it yet. A clue tied already is left as it is; a holder gone or no
-        longer a character is skipped. Never fails the keep."""
+        named, nobody has found it yet. Only a clue made new is narrowed: the campaign's own clue
+        keeps its audience as the DM set it, its holders only added (never a 🤫 question out of a
+        plain Keep, #4524). A clue tied already is left as it is; a holder gone, no longer a
+        character or refused is skipped. Never fails the keep."""
         try:
-            fact, _made = await self._tie_clue_in(w, onto, thread_id, new_name=clue.words)
+            fact, made_new = await self._tie_clue_in(w, onto, thread_id, new_name=clue.words)
         except MemoryRuleError:
             return  # (tied already, or a name that can't be a clue's: the thread is still kept)
         clue_id = fact.subject_id
@@ -2510,12 +2514,16 @@ class MemoryStore:
                 holders.append(str(row["id"]))
         if not holders:
             return
-        # (switched on first, while nobody at the table knows it: once a player character does,
-        # the public guard rightly holds any narrowing for the DM to answer, #4524)
-        await w.update(ENTITIES, clue_id, {"audience_limited": True})
+        if made_new:
+            # (switched on first, while nobody at the table knows it: once a player character
+            # does, the public guard rightly holds any narrowing for the DM to answer, #4524)
+            await w.update(ENTITIES, clue_id, {"audience_limited": True})
         for character in dict.fromkeys(holders):
-            await knowers.learn(w, gate.ENTRY, clue_id, character)
-            await self.add_knower_in(w, clue_id, character, None)
+            try:
+                await knowers.learn(w, gate.ENTRY, clue_id, character)
+                await self.add_knower_in(w, clue_id, character, None)
+            except MemoryRuleError:
+                continue  # (refused before it wrote: the rest of the keep goes ahead)
 
     async def set_clue_word(
         self,

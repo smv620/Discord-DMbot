@@ -146,7 +146,8 @@ def clues_from(raw: Any) -> tuple[ReadClue, ...]:
     return tuple(
         ReadClue(
             _text(c, "words"), _text(c, "quote"),
-            tuple(str(i) for i in c.get("who", []) if isinstance(i, str)),
+            tuple(str(i) for i in (c["who"] if isinstance(c.get("who"), list) else ())
+                  if isinstance(i, str)),
         )
         for c in rows if isinstance(c, dict) and _text(c, "words")
     ) if isinstance(rows, list) else ()  # fmt: skip

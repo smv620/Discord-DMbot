@@ -135,6 +135,8 @@ def check_window(
     them: its speaker is that line's (good enough for evidence; the DM sees the line itself)."""
     flat = "\n".join(s.text for s in window)
     found, counts = thread_read.check(said, flat, entries, names, have=have)
+    # (a session's clues wait for slice 6c, #4624: their drops would only mislead this report)
+    counts = {k: n for k, n in counts.items() if not k.startswith("clue_")}
     by_number = {s.number: s for s in window}
     out: list[Suggestion] = []
     for s in found:

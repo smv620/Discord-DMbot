@@ -16,7 +16,7 @@ import unittest
 from dmbot.memory import gate
 from dmbot.memory import thread_clues as tc
 from dmbot.memory import thread_read as tr
-from dmbot.memory._changes import ENTITIES
+from dmbot.memory._changes import ENTITIES, KNOWERS, RELATIONS
 from dmbot.memory.models import DM, name_key
 from dmbot.memory.thread_suggestions import ThreadSuggestionStore, clues_from, extra_json, unkeep_in
 from dmbot.ui import thread_questions as ui
@@ -158,6 +158,42 @@ class TheKeep(MemoryTest):
         await self.memory.undo(GUILD_A, self.c, batch, after=unkeep_in(batch))
         self.assertEqual(await self.memory.threads(GUILD_A, self.c), [])
         self.assertEqual(await self.store.count(GUILD_A, self.c), 1)
+        async with self.memory._read(GUILD_A, self.c) as scope:  # (the clues and who knew them too)
+            self.assertEqual(await scope.select(ENTITIES, " AND type = 'clue'"), [])
+            self.assertEqual(
+                await scope.select(RELATIONS, " AND predicate IN ('clue_to', 'knows')"), []
+            )
+            self.assertEqual(await scope.select(KNOWERS, " AND about_entity_id = %s", [journal]),
+                             [])  # fmt: skip
+
+    async def test_the_campaigns_own_public_clue_keeps_its_audience_and_asks_nothing(self) -> None:
+        """The reviewer's B2: a reused clue a player character already knows is never narrowed
+        by a Keep (no 🤫 question); its holders are only added."""
+        mine = await self.add("His torn journal", type="clue", status="confirmed")
+        await self.memory.learn_statement(GUILD_A, self.c, gate.ENTRY, mine, self.ilsa, source=DM)
+        await self.offer()
+        await self.keep()
+        async with self.memory._read(GUILD_A, self.c) as scope:
+            (row,) = await scope.select(ENTITIES, " AND id = %s", [mine])
+        self.assertFalse(row["audience_limited"])
+        self.assertEqual(await self.memory.secret_questions_count(GUILD_A, self.c), 0)
+
+    async def test_an_npc_holder_has_it_but_the_table_has_not_found_it(self) -> None:
+        s = tr.Suggestion(
+            "quest", "Ilsa's search", "find her lost brother", "Ilsa hunts",
+            ((tr.TAKER, self.ilsa),), tr.STATE["quest"],
+            clues=(tr.ReadClue("a warning on the door", "a warning carved", (self.brann,)),),
+        )  # fmt: skip
+        await self.store.offer(GUILD_A, self.c, [s], "Notes", 5)
+        (w,) = await self.store.waiting(GUILD_A, self.c)
+        kept = await self.memory.keep_thread(
+            GUILD_A, self.c, w.name, w.kind, w.state, aim=w.aim, parts=list(w.parts),
+            source=DM, suggestion_id=w.id,
+        )  # fmt: skip
+        (only,) = await self.clues(kept.value.id)
+        self.assertFalse(only.found)
+        audience = await self.memory.clue_audience(GUILD_A, self.c, only.clue_id)
+        self.assertEqual([e.id for e in audience], [self.brann])
 
     async def test_a_clue_left_off_is_never_kept_and_the_campaigns_own_is_reused(self) -> None:
         mine = await self.add("A warning on the door", type="clue", status="confirmed")

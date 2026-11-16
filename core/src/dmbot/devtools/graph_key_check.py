@@ -479,6 +479,7 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
     # makes it a placeholder, so only another connection makes it a real entry
     others = [r for r in graph.relations if str(r["predicate"]) != "plays"]
     linked = {str(r["subject_id"]) for r in others} | {str(r["object_id"]) for r in others}
+    tied_clues = {str(r["subject_id"]) for r in graph.relations if r["predicate"] == "clue_to"}
     for i, e in graph.entities.items():
         if i in matched_ids:
             continue
@@ -490,6 +491,8 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
             continue
         if str(e["type"]) in THREAD_TYPES:
             continue  # (a story thread is scored on its own line, #4453, never as an extra name)
+        if i in tied_clues:
+            continue  # (a clue tied to a thread is scored on the Clues line, #4624 6b)
         report.extra_entries[_kind_for(str(e["type"]))] += 1
     for name in key.get("must_not_names", ()):
         # (a must-not name is still found in a description too, as before; only one that is a
@@ -788,18 +791,23 @@ def _score_clues(
     ]
 
     def named(clue: str, words: Sequence[str]) -> bool:
-        said = str(graph.entities.get(clue, {}).get("name", "")).casefold()
-        return any(str(w).casefold() in said for w in words)
+        # (from a word's start, so "Wit" is never "with" nor "whisper" past "whispers")
+        said = str(graph.entities.get(clue, {}).get("name", ""))
+        return any(re.search(rf"\b{re.escape(str(w))}", said, re.IGNORECASE) for w in words)
 
     used: set[tuple[str, str]] = set()
-    for c in key.get("clues", []):
+    # (must-find rows first, and each tie answers one row only: one clue is never two finds)
+    rows = sorted(key.get("clues", []), key=lambda c: not c.get("must_find", True))
+    for c in rows:
         thread = matched.get(str(c.get("thread", "")), "")
         words = [str(w) for w in c.get("words", [])]
-        here = [t for t in ties if thread and t[1] == thread and named(t[0], words)]
+        here = [
+            t for t in ties if thread and t[1] == thread and t not in used and named(t[0], words)
+        ]
         if here:
             report.clues["found"] += 1
-            used.update(here)
-        elif any(named(clue, words) for clue, _ in ties):
+            used.add(here[0])
+        elif any(named(clue, words) for clue, th in ties if th != thread):
             report.clues["wrong thread"] += 1
         elif c.get("must_find", True):
             report.clues["missed"] += 1
