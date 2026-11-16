@@ -185,7 +185,7 @@ match. "In Discord" says where the DM finds it today.
 | Who may read a campaign's transcripts, and the maps shown to its table (#3891: the campaign's people, or everyone when the channels are open to everyone) | the campaign's DM Bot and transcript channels (Who can see this campaign's channels) | Transcripts pages and the Maps page: the same rule, one shared database test (`dmbot_web_reads_campaign`, migration 0489, #4401); a member outside the campaign's people is refused like a stranger and does not see the campaign listed |
 | Make these words a kind of connection | kind offer | #3577 |
 | A character's lineage and class (from lore) | name card (DM only, #2959) | #3925 |
-| A lineage or class the lore gives a character you have (asked, never changed silently) | 🧬 Lineage and class card, private, from ❓ Questions for you (#3926) | Questions for you: the same card, Yes or No (page built, switched off, `TRAIT_QUESTIONS_LIVE`; the bot's applier is CloudDev-lead's; #3946) |
+| A lineage or class the lore gives a character you have (asked, never changed silently) | 🧬 Character details card (lineage, class and languages), private, from ❓ Questions for you (#3926) | Questions for you: the same card, Yes or No (page built, switched off, `TRAIT_QUESTIONS_LIVE`; the bot's applier is CloudDev-lead's; #3946) |
 | Connections DMbot inferred from lore (marked, kept only one by one) | connection card, Why (#2959) | #3928 |
 | The party: player characters; Who plays them | party note, name card | Story Graph: PC icons (#3622); assigning a player to a player character: Names, change the kind to player character with their Discord ID (WebDev confirmed) |
 | Deeds the party did | deeds card | #3591 |
