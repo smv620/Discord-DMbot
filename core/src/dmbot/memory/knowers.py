@@ -913,45 +913,64 @@ async def fold_knowers(
         column = next(c for c in columns if moved.get(c, row[c]) is not None)
         return column, str(moved.get(column, row[column])), str(moved["perspective_id"])
 
-    seen: set[tuple[str, str, str]] = set()
+    seen: dict[tuple[str, str, str], dict[str, Any]] = {}
     changing: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for row in rows:
         moved = after(row)
         if moved["perspective_id"] == row["perspective_id"] and (
             moved["about_entity_id"] == row["about_entity_id"]
         ):
-            seen.add(key(row, moved))
+            seen[key(row, moved)] = row
         else:
             changing.append((row, moved))
     for row, moved in changing:
         k = key(row, moved)
-        if k in seen:
+        held = seen.get(k)
+        if held is not None and not _stronger(row, held):
             await w.delete(KNOWERS, row["id"])
-        else:
-            seen.add(k)
-            await w.update(KNOWERS, row["id"], moved)
+            continue
+        if held is not None:  # (the moving row is the stronger: it stays, the weaker goes, #4524)
+            await w.delete(KNOWERS, held["id"])
+        seen[k] = row
+        await w.update(KNOWERS, row["id"], moved)
     await rehome_hidden_by(w, keep_id, gone_id, rows)
+
+
+def _stronger(row: Mapping[str, Any], other: Mapping[str, Any]) -> bool:
+    """Of two who-knows rows for one character and statement (a fold or merge meets both), whether
+    `row` is the one to keep: awake beats asleep, then the surer (#4524: knowledge is never taken
+    away or lowered by a merge). A tie keeps `other`."""
+    return (not row["hidden_by"], float(row["confidence"])) > (
+        not other["hidden_by"],
+        float(other["confidence"]),
+    )
 
 
 async def move_rows(w: Changes, column: str, old_id: str, new_id: str) -> None:
     """A statement is folded into its twin (the same name or connection Ken already had, #3037):
     whoever knew the folded one knows the twin, and nothing is lost with the copy that goes. A
-    character the twin already lists keeps its own row. `column`: which statement column of the
+    character on both keeps the stronger of its two rows (`_stronger`), so a fold never takes
+    knowledge away or makes anyone less sure (#4524). `column`: which statement column of the
     list (`relation_id` or `alias_id`)."""
     mine = await w.select(KNOWERS, f" AND {column} = %s", [new_id], dormant=True)
-    have = {r["perspective_id"] for r in mine}
+    have = {r["perspective_id"]: r for r in mine}
     folded = await w.select(KNOWERS, f" AND {column} = %s", [old_id], dormant=True)
-    for row in sorted(folded, key=lambda r: bool(r["hidden_by"])):
-        if row["perspective_id"] in have:
+    for row in folded:
+        held = have.get(row["perspective_id"])
+        if held is not None and not _stronger(row, held):
             await w.delete(KNOWERS, row["id"])
-        else:
-            have.add(row["perspective_id"])
-            await w.update(KNOWERS, row["id"], {column: new_id})
+            continue
+        if held is not None:  # (the folded row is the stronger: it stays, the weaker goes, #4524)
+            await w.delete(KNOWERS, held["id"])
+        have[row["perspective_id"]] = row
+        await w.update(KNOWERS, row["id"], {column: new_id})
 
 
 async def move_alias_list(w: Changes, old_id: str, new_id: str) -> None:
     """`move_rows` for a name's older per-name list (#2935): whoever was on the folded copy's list
-    is on the twin's; one already there keeps its own row (#4524: nobody stops knowing)."""
+    is on the twin's; one already there keeps its own row (#4524: nobody stops knowing). The list
+    has no certainty and no sleep mark, so two rows for one character say the same thing and
+    either one keeps it (`_stronger` has nothing to compare)."""
     have = {
         r["perspective_id"] for r in await w.select(ALIAS_KNOWERS, " AND alias_id = %s", [new_id])
     }

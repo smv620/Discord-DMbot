@@ -17,7 +17,8 @@ import ast
 import pathlib
 import unittest
 
-from dmbot.memory import backstory_keep, lore_knowledge, secret_questions
+from dmbot.memory import backstory_keep, knowers, lore_knowledge, secret_questions
+from dmbot.memory._changes import KNOWERS
 from dmbot.memory.models import CONFIRMED, DM, REJECTED, MemoryRuleError
 from tests.test_memory_store import GUILD_A, MemoryTest
 
@@ -312,6 +313,67 @@ class ThePublicStaysPublic(MemoryTest):
         async with self.db.guild(GUILD_A) as conn:
             self.assertEqual(await secret_questions.forget(conn, GUILD_A, 77), 1)
         self.assertEqual(await self.waiting(), [])
+
+
+class AFoldKeepsTheStrongerRow(MemoryTest):
+    """#4524, Supervisor's review: a merge or a fold never takes knowledge away or lowers it. Of two
+    rows for one character, the awake one beats a sleeping one, then the surer one."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.hero = await self.add(
+            "Ilsa", type="character", role="player_character", played_by=PLAYER,
+            status=CONFIRMED,
+        )  # fmt: skip
+        self.bob = await self.add("Bob", status=CONFIRMED)
+        self.ann = await self.add("Ann", status=CONFIRMED)
+
+    async def two(self, twin: float, folded: float, *, twin_asleep: bool = False) -> float:
+        """Ilsa knows the twin and the folded copy at these certainties; fold; how sure she is."""
+        made = [
+            (await self.relate(self.bob, p, self.ann, status=CONFIRMED, secret=True)).value[0]
+            for p in ("ally_of", "enemy_of")
+        ]
+        for rel, sure in zip(made, (twin, folded), strict=True):
+            await self.memory.set_statement_knowers(
+                GUILD_A, self.c, "connection", rel.id, {self.hero: sure}, source=DM,
+                dm_chose_secret=True,
+            )  # fmt: skip
+        async with self.memory._write(GUILD_A, self.c, DM, dm_chose_secret=True) as w:
+            if twin_asleep:
+                await w.update_where(
+                    KNOWERS, {"hidden_by": [self.bob]}, " AND relation_id = %s", [made[0].id]
+                )
+            await knowers.move_rows(w, "relation_id", made[1].id, made[0].id)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT confidence, hidden_by FROM memory_knowers WHERE relation_id = %s",
+                (made[0].id,),
+            )
+            (row,) = await cur.fetchall()
+        self.assertEqual(row["hidden_by"], [])  # (the kept row is the awake one)
+        return float(row["confidence"])
+
+    async def test_the_surer_folded_row_is_kept(self) -> None:
+        self.assertEqual(await self.two(0.6, 1.0), 1.0)
+
+    async def test_the_surer_twin_row_is_kept(self) -> None:
+        self.assertEqual(await self.two(1.0, 0.6), 1.0)
+
+    async def test_an_awake_folded_row_beats_a_sleeping_twin(self) -> None:
+        self.assertEqual(await self.two(1.0, 0.6, twin_asleep=True), 0.6)
+
+    async def test_a_merge_keeps_the_surer_row_of_an_entry(self) -> None:
+        for e, sure in ((self.bob, 0.6), (self.ann, 1.0)):
+            await self.memory.set_statement_knowers(
+                GUILD_A, self.c, "entry", e, {self.hero: sure}, source=DM, dm_chose_secret=True
+            )
+        await self.memory.merge(GUILD_A, self.c, self.bob, self.ann, source=DM, dm_said_same=True)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT confidence FROM memory_knowers WHERE about_entity_id = %s", (self.bob,)
+            )
+            self.assertEqual([float(r["confidence"]) for r in await cur.fetchall()], [1.0])
 
 
 class EveryCallerThatChoseSecret(unittest.TestCase):
