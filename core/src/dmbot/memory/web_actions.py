@@ -1063,8 +1063,8 @@ async def _parts(
             )
             return Outcome(batches=(done.batch,) if done.batch is not None else ())
         if a.action == "part-state":
-            state = await memory.set_thread_part_state(guild_id, cid, words[0], words[1], source=DM)
-            return _changed(state.batch)
+            set_to = await memory.set_thread_part_state(guild_id, cid, words[0], words[1], source=DM)
+            return _changed(set_to.batch)
         if a.action == "part-show":
             shown = await memory.show_thread_part(
                 guild_id, cid, words[0], words[1] == "1", source=DM
