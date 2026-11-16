@@ -191,7 +191,7 @@ class Answers(NamesTest):
         row = await self.row(rid)
         self.assertEqual((row["state"], row["error"]), ("done", ""))
 
-    # ---- language questions (#4271 part 2, migration 0520) ------------------------------------
+    # ---- language questions (#4271 part 2, migration 0521) ------------------------------------
     # A Yes writes the language as the DM's own word, with the change kept for Undo; a No is final;
     # a Yes whose write landed before the row was closed ends done.
 

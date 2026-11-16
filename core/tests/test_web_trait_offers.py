@@ -204,7 +204,7 @@ class TraitAnswers(Base):
 
 class LanguageQuestions(Base):
     """A language the lore gives a character waits beside the lineage and class questions (#4271
-    part 2, migration 0520): "Does Mira speak Giant?". Yes writes it as the DM's own word, No is
+    part 2, migration 0521): "Does Mira speak Giant?". Yes writes it as the DM's own word, No is
     final; it is no longer open once the character's languages hold it or the character has a
     sheet, as the bot's own reader says (`_STILL_OPEN`)."""
 
