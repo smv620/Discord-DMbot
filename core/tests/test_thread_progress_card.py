@@ -220,6 +220,18 @@ class TheCard(MemoryTest):
         await view._undo(it)
         self.assertEqual(len(await self.store.waiting(GUILD_A, self.c)), 2)
 
+    async def test_the_sample_run_keeps_every_line_for_the_score(self) -> None:
+        """#4522 5c: `accept_all.keep_progress` keeps each thread's lines as the DM's Keep does,
+        so the sample's backup holds what the reader moved."""
+        from dmbot.devtools import accept_all
+
+        kept = await accept_all.keep_progress(self.db, self.memory, GUILD_A, self.c)
+        self.assertEqual(kept, 2)
+        self.assertEqual(await self.state(), GOING)
+        self.assertIn(parts.COMPLICATION, await self.kinds_kept())
+        self.assertEqual(await self.store.waiting(GUILD_A, self.c), [])
+        self.assertEqual(await accept_all.keep_progress(self.db, self.memory, GUILD_A, self.c), 0)
+
     async def test_the_board_counts_them_with_the_new_threads(self) -> None:
         got = await counts._COUNTERS[kinds.THREADS](
             Sources(db=self.db, memory=self.memory, recorded=AsyncMock(return_value={BEL})),

@@ -185,6 +185,28 @@ async def keep_threads(db: Database, memory: MemoryStore, guild: int, campaign: 
     return kept
 
 
+async def keep_progress(db: Database, memory: MemoryStore, guild: int, campaign: str) -> int:
+    """Every progress line a session read on the campaign's threads (#4522 5b), kept as the DM's
+    ✅ Keep these keeps it, one thread at a time (`MemoryStore.keep_thread_progress`: one change,
+    consent asked again inside it, a line that no longer fits left out), so the sample's backup
+    holds what the reader moved and the key check can score it (5c). The sample campaign only
+    (the caller checked); never in the bot. How many lines kept."""
+    from dmbot.memory.models import DM
+    from dmbot.memory.thread_progress import ThreadProgressStore
+
+    by_thread: dict[str, list[str]] = {}
+    for line in await ThreadProgressStore(db).waiting(guild, campaign):
+        by_thread.setdefault(line.thread_id, []).append(line.id)
+    kept = 0
+    for ids in by_thread.values():
+        try:
+            written = await memory.keep_thread_progress(guild, campaign, ids, source=DM)
+            kept += written.value
+        except Exception as exc:  # the type only
+            log.warning("Progress on a story thread couldn't be kept (%s)", type(exc).__name__)
+    return kept
+
+
 async def run(
     db: Database, guild: int, campaign: str, *, dry_run: bool, memory: MemoryStore | None = None
 ) -> Counts:

@@ -154,6 +154,10 @@ class Report:
     # and missed by kind ("found objective"), on the wrong thread, and extra. Branches: found and
     # missed (a hint's miss isn't held against the reader), each a `branch_of` to its quest.
     thread_parts: Counter[str] = field(default_factory=Counter)
+    # Progress a session makes on a thread the campaign had (#4522 quests 5b/5c), read off the
+    # matched backup thread: found, missed (must-find only), good finds missed, and false (a
+    # `must_not_progress` row that holds)
+    progress: Counter[str] = field(default_factory=Counter)
 
 
 def _live(row: Mapping[str, Any]) -> bool:
@@ -713,6 +717,7 @@ def _score_threads(
                 report.threads["false"] += 1
                 break
     _score_thread_parts(report, graph, key, matched)
+    _score_progress(report, graph, key, matched)
 
 
 def _score_thread_parts(
@@ -767,6 +772,70 @@ def _score_thread_parts(
         )
 
 
+# The key's words for a thread's own state, as `session_progress.THREAD_WORDS` gives them
+PROGRESS_STATES = {"happening_now": "active", "finished": "resolved", "dropped": "abandoned"}
+
+
+def _progress_holds(
+    graph: Graph, thread: str, row: Mapping[str, Any], parts: Sequence[Mapping[str, Any]]
+) -> bool:
+    """Whether one key progress row (or one of its `or` rows) stands on a backup thread now:
+    "thread_moves", its open state is the row's; "part_moves", an open part of the row's kind
+    whose words hold one of the row's `words` is in the row's state; "new_part", such a part was
+    read from a session (casefold words, as `_score_thread_parts`)."""
+    change = str(row.get("change", ""))
+    if change == "thread_moves":
+        want = PROGRESS_STATES.get(str(row.get("state", "")), str(row.get("state", "")))
+        return any(
+            str(r.get("entity_id")) == thread
+            and r.get("closed_at") is None
+            and str(r.get("condition")) == want
+            for r in graph.tables.get("state", ())
+        )
+    words = [str(w).casefold() for w in row.get("words", [])]
+    kind = str(row.get("part_kind", ""))
+    for r in parts:
+        if str(r["thread_id"]) != thread or str(r["kind"]) != kind:
+            continue
+        if words and not any(w in str(r.get("words", "")).casefold() for w in words):
+            continue
+        if change == "part_moves" and str(r.get("state")) == str(row.get("state")):
+            return True
+        same_state = not row.get("state") or str(r.get("state")) == str(row.get("state"))
+        if change == "new_part" and str(r.get("source")) == "session" and same_state:
+            return True
+    return False
+
+
+def _score_progress(
+    report: Report, graph: Graph, key: Mapping[str, Any], matched: Mapping[str, str]
+) -> None:
+    """The key's `progress` (#4522, quests 5c): what the session changes on a thread the lore
+    made, read off the backup thread that key thread matched once the sample keeps every progress
+    line (`accept_all.keep_progress`). A row is found when it, or one of its `or` rows, holds; on
+    an unmatched thread it can't be. `must_not_progress` rows count as false when they hold."""
+    if not key.get("progress") and not key.get("must_not_progress"):
+        return
+    parts = [
+        r
+        for r in graph.tables.get("thread_part", ())
+        if r.get("status") != "rejected" and r.get("to_session_at") is None
+    ]
+    for p in key.get("progress", []):
+        thread = matched.get(str(p.get("thread", "")), "")
+        rows = [p, *p.get("or", [])]
+        if thread and any(_progress_holds(graph, thread, r, parts) for r in rows):
+            report.progress["found"] += 1
+        elif p.get("must_find", True):
+            report.progress["missed"] += 1
+        else:
+            report.progress["good finds missed"] += 1
+    for p in key.get("must_not_progress", []):
+        thread = matched.get(str(p.get("thread", "")), "")
+        if thread and _progress_holds(graph, thread, p, parts):
+            report.progress["false"] += 1
+
+
 def _kind_for(entry_type: str) -> str:
     for kind, types in ENTRY_TYPES.items():
         if entry_type in types:
@@ -802,6 +871,7 @@ def summarize(report: Report) -> dict[str, Any]:
         "map_facts": {layer: dict(c) for layer, c in sorted(report.map_facts.items())},
         "threads": dict(report.threads),
         **({"thread_parts": dict(report.thread_parts)} if report.thread_parts else {}),
+        **({"progress": dict(report.progress)} if report.progress else {}),
         **({"languages": dict(report.languages)} if report.languages else {}),
         **({"route_lengths": dict(report.route_lengths)} if report.route_lengths else {}),
     }
@@ -864,6 +934,12 @@ def render(report: Report, counts_only: bool = False) -> str:
             f"Thread parts found: {said or 'none in the key'}; wrong thread {c['wrong thread']}, "
             f"extra {c['extra']}; branches found {c['branches found']}, "
             f"missed {c['branches missed']}"
+        )
+    if report.progress:  # (#4522: what the session moved on the lore's threads, quests 5c)
+        c = report.progress
+        lines.append(
+            f"Thread progress: found {c['found']}, missed {c['missed']}, false {c['false']} "
+            f"(good finds missed {c['good finds missed']})"
         )
     if report.route_lengths:  # (#4255: a road's length, a property of the road, not a tie)
         c = report.route_lengths

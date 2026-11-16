@@ -950,6 +950,69 @@ class StoryThreads(unittest.TestCase):
         )  # fmt: skip
         self.assertIn("Thread parts found: objective 1/1, complication 1/1", gkc.render(report))
 
+    def test_progress_on_the_matched_thread(self) -> None:
+        """#4522, quests 5c: what the session moved on a lore thread, read off the backup thread
+        its key thread matched: the thread's open state, a part's state now, a session's new part
+        (or an `or` row); a good find's miss apart; a must-not that stands is false."""
+        key = {
+            "nodes": [{"name": n, "kind": "person", "aliases": [], "note": ""}
+                      for n in ("Keegan", "Garret")],
+            "pairs": [],
+            "threads": [
+                {"id": "t1", "kind": "quest", "name": "x", "giver": "Keegan", "target": "Garret",
+                 "taker": "", "missing": [], "in_danger": [], "must_find": True, "hint": False},
+            ],
+            "progress": [
+                {"thread": "t1", "change": "thread_moves", "state": "happening_now"},
+                {"thread": "t1", "change": "part_moves", "part_kind": "reward",
+                 "words": ["50 gold"], "state": "settled",
+                 "or": [{"change": "new_part", "part_kind": "reward_given", "words": ["50"]}]},
+                {"thread": "t1", "change": "new_part", "part_kind": "help", "words": ["sled"],
+                 "state": "lent"},
+                {"thread": "t1", "change": "new_part", "part_kind": "time_limit",
+                 "words": ["days"], "must_find": False},
+                {"thread": "t9", "change": "thread_moves", "state": "finished"},
+            ],
+            "must_not_progress": [
+                {"thread": "t1", "change": "part_moves", "part_kind": "objective",
+                 "words": ["Garret"], "state": "done"},
+                {"thread": "t1", "change": "thread_moves", "state": "finished"},
+            ],
+        }  # fmt: skip
+
+        def part(i: str, kind: str, words: str, state: str, source: str) -> dict[str, Any]:
+            return {"table": "thread_part", "id": i, "thread_id": "q1", "kind": kind,
+                    "words": words, "state": state, "source": source, "status": "confirmed",
+                    "to_session_at": None}  # fmt: skip
+
+        rows = [
+            self.rel("r1", "k", "q1", "quest giver"), self.rel("r2", "g", "q1", "target"),
+            {"table": "state", "id": "s1", "entity_id": "q1", "condition": "open",
+             "closed_at": 5},
+            {"table": "state", "id": "s2", "entity_id": "q1", "condition": "active",
+             "closed_at": None},
+            part("p1", "reward_given", "50 gold up front", "given", "session"),  # (the "or")
+            part("p2", "help", "two sleds", "to_keep", "session"),  # (not lent: missed)
+            part("p3", "objective", "find Garret", "done", "lore"),  # (a must-not that stands)
+        ]  # fmt: skip
+        people = [("k", "Keegan", "npc"), ("g", "Garret", "npc"), ("q1", "Find him", "quest")]
+        report = gkc.check(backup(people, rows), key)
+        self.assertEqual(
+            dict(report.progress),
+            {"found": 2, "missed": 2, "good finds missed": 1, "false": 1},
+        )
+        self.assertIn("Thread progress: found 2, missed 2, false 1", gkc.render(report))
+        self.assertEqual(gkc.summarize(report)["progress"]["found"], 2)
+
+    def test_the_master_keys_progress_names_its_lore_threads(self) -> None:
+        key = load("master_key.json")
+        ids = {t["id"] for t in key["threads"]}
+        rows = [*key["progress"], *key["must_not_progress"]]
+        self.assertTrue(rows)
+        for p in rows:
+            self.assertIn(p["thread"], ids)
+            self.assertIn(p["change"], ("thread_moves", "part_moves", "new_part"))
+
     def test_the_quest_cases_key_reads_and_scores_its_must_nots(self) -> None:
         key = load("quest_cases_key.json")
         self.assertEqual(len(key["threads"]), 5)
