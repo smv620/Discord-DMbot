@@ -87,7 +87,7 @@ class Decision:
     stage: str  # lore or session
     kind: str
     item: str  # the entry, question, claim or connection's id, so the owner can look it up
-    decision: str  # yes, no or not sure
+    decision: str  # yes, no or not sure; "not decided" for an item left at the cap
     model: str
     tier: str
     reason: str
@@ -102,6 +102,7 @@ class Decision:
     offered: tuple[str, ...] = ()
     first: str = ""
     picked: str = ""
+    picked_at: int = 0  # the pick's place in `offered` (1 = first), 0 for none: names can repeat
     no_order: bool = False  # DMbot gave no order, so `first` is just the first stored (ruling F)
 
 
@@ -258,15 +259,24 @@ class Asker:
         the item is about, the choices in the order shown, and which one the answer took (by
         default the item itself on a yes, "" otherwise)."""
 
-        def write(decision: str, got: dict[str, Any], **more: Any) -> None:
-            chose = ""
+        def write(
+            decision: str,
+            got: dict[str, Any],
+            *,
+            model: str = "",
+            verdict: str | None = None,
+            done: bool = True,
+        ) -> None:
+            chose, at = "", 0
             if decision == YES:
                 chose = picked(got) if picked is not None else (offered[0] if offered else item)
+                at = int(got.get("pick", 0) or 0) if kind == WHICH else 0
+                if not at and chose in offered:
+                    at = list(offered).index(chose) + 1
             line = Decision(
-                self.stage, kind, item, decision, more.pop("model", self.model), "careful",
-                str(got.get("reason", "")), int(self.clock()), more.pop("verdict", None),
-                more.pop("done", True), tuple(names), tuple(offered),
-                offered[0] if offered else "", chose, no_order,
+                self.stage, kind, item, decision, model or self.model, "careful",
+                str(got.get("reason", "")), int(self.clock()), verdict, done, tuple(names),
+                tuple(offered), offered[0] if offered else "", chose, at, no_order,
             )  # fmt: skip
             open_record(self.record)
             with self.record.open("a", encoding="utf-8") as f:
@@ -477,16 +487,22 @@ def _kinds_offered(e: Any) -> tuple[str, ...]:
     """A name's kinds in the order the card shows them: DMbot's own guess first (the kind it was
     read as), then the others in their usual order. With no guess, the usual order (ruling F:
     "where DMbot gives no order, the first one stored", and the scorer says so)."""
+    guess = _guess(e)
+    return tuple(dict.fromkeys([*([guess] if guess else []), *NAME_KINDS]))
+
+
+def _guess(e: Any) -> str:
+    """The kind the question shows as DMbot's guess ("DMbot's guess of its kind: …"), as one of
+    the kinds a yes can take: the reader's own kind, else the entry's type ("character" is an
+    NPC). "" when it is none of them, so the record says DMbot gave no order."""
     from dmbot.ui.names import background_kind
 
-    guess = background_kind(e)
-    return tuple(dict.fromkeys([*([guess] if guess in NAME_KINDS else []), *NAME_KINDS]))
+    guess = background_kind(e) or {"character": "npc"}.get(str(e.type), str(e.type))
+    return guess if guess in NAME_KINDS else ""
 
 
 def _guessed(e: Any) -> bool:
-    from dmbot.ui.names import background_kind
-
-    return background_kind(e) in NAME_KINDS
+    return bool(_guess(e))
 
 
 def _kind_picked(e: Any, got: dict[str, Any]) -> str:

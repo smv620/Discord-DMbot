@@ -109,6 +109,52 @@ class InACheck(unittest.TestCase):
         report = tiers(backup([]), [said("names", "yes", "Stonehall", no_order=True)])
         self.assertEqual(report.unordered, 1)
 
+    def waiting_hall(self) -> dict[str, Any]:
+        data = backup([])
+        for row in data["sections"]["memory"]:
+            if row.get("id") == "hall":
+                row["status"] = "proposed"
+        return data
+
+    def test_a_waiting_key_entry_is_not_in_the_graph_yet(self) -> None:
+        """Left at the cap it is not decided; left "not sure" it is a failure, never DMbot's own."""
+        capped = tiers(self.waiting_hall(), [said("names", kt.NOT_DECIDED, "Stonehall")])
+        self.assertEqual(capped.tiers[kt.NOT_DECIDED], 1)
+        unsure = tiers(self.waiting_hall(), [said("names", "not sure", "Stonehall")])
+        self.assertEqual((unsure.tiers[kt.FAILURE], unsure.tiers[kt.TOTAL]), (1, 4))  # (+ the tie)
+
+    def test_found_though_the_ai_dm_said_no_is_its_own_line(self) -> None:
+        report = tiers(backup([]), [said("names", "no", "Stonehall")])
+        self.assertEqual(report.tiers[kt.FOUND_DESPITE_NO], 1)
+
+    def test_a_no_about_a_key_row_outside_the_documents_scored_is_no_turned_down_extra(
+        self,
+    ) -> None:
+        the_key = key(["Mira", "Ulf"])
+        the_key["nodes"].append({"name": "Bram", "kind": "person", "docs": ["backstory_x"],
+                                 "knowers": "dm"})  # fmt: skip
+        report = tiers(backup([]), [said("names", "no", "Bram")], the_key)
+        self.assertEqual(report.extras[kt.EXTRA_TURNED_DOWN], 0)
+
+    def test_a_look_alike_answer_is_never_about_a_name_or_an_extra(self) -> None:
+        apart = said("look-alikes", "no", "unnamed - a guard", "Stonehall")
+        report = tiers(self.waiting_hall(), [apart, said("which one", "no", "Mira", "kin",
+                                                         offered=["Bram"])])  # fmt: skip
+        self.assertEqual(report.tiers[kt.PARTIAL_FAILURE], 0)
+        self.assertEqual(report.extras[kt.EXTRA_TURNED_DOWN], 0)
+
+    def test_an_extra_kept_under_another_name_is_kept_by_the_ai_dm(self) -> None:
+        alias = {"table": "alias", "id": "al9", "entity_id": "grey", "text": "Old Ford",
+                 "key": "old ford", "status": "confirmed"}  # fmt: skip
+        data = backup([], entity("grey", "Greyford", kind="place"), alias)
+        report = tiers(data, [said("names", "yes", "Old Ford")])
+        self.assertEqual(report.extras[kt.EXTRA_KEPT], 1)
+
+    def test_a_pick_is_judged_by_its_place_not_its_name(self) -> None:
+        twin = said("which one", "yes", offered=["Ulf", "Ulf"], first="Ulf", picked="Ulf",
+                    picked_at=2)  # fmt: skip
+        self.assertEqual(kt.tier(True, False, [twin]), kt.PROVISIONAL)
+
     def test_without_a_record_there_are_no_tiers(self) -> None:
         report = gkc.check(backup([]), key("party"))
         self.assertEqual(report.tiers, {})
@@ -160,6 +206,13 @@ class SecretNames(unittest.TestCase):
         self.assertEqual(report.secret_names, {"missing": 1})
         self.assertIn("Secret names (only a backstory gives them): found 0, missing 1",
                       gkc.render(report, counts_only=True))  # fmt: skip
+
+    def test_a_missing_entrys_secret_names_are_missing(self) -> None:
+        data = backup([])
+        data["sections"]["memory"] = [
+            r for r in data["sections"]["memory"] if r.get("id") not in ("mira", "r1")
+        ]
+        self.assertEqual(gkc.check(data, self.key).secret_names, {"missing": 1})
 
     def test_its_name_is_never_printed_in_counts_only(self) -> None:
         text = gkc.render(gkc.check(self.data("mira", "tavin"), self.key), counts_only=True)

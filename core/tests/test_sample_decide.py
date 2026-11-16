@@ -191,9 +191,9 @@ class TheStage(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(rows[1]["names"], ["Bruno Hale"])
 
     async def test_the_record_says_what_was_offered_first_and_picked(self) -> None:
-        """#4523 ruling F: a name's kinds with DMbot's guess first (none here: the first stored,
-        and `no_order` says so); a "Which one?"'s candidates in the order shown; a yes-or-no item
-        offers nothing, and its yes picks the item."""
+        """#4523 ruling F: a name's kinds with DMbot's guess first; a "Which one?"'s candidates in
+        the order shown, with the pick's place; a yes-or-no item offers nothing, and its yes picks
+        the item."""
         self.names(entity("e1", "Tran"))
         q = SimpleNamespace(id="q1", other="Tran", predicate="knows", word="Bruno", quote="",
                             candidates=(("e2", "Bruno Hale"), ("e3", "Shela Marr")))  # fmt: skip
@@ -205,15 +205,23 @@ class TheStage(unittest.IsolatedAsyncioTestCase):
                     {"answer": "yes"})  # fmt: skip
         await self.stage(ai)
         name, which, said = [json.loads(line) for line in self.record.read_text().splitlines()]
+        # (the question shows its type as DMbot's guess: a character is an NPC, so that is first)
         self.assertEqual((name["names"], name["first"], name["picked"]), (["Tran"], "npc", "place"))
         self.assertEqual(name["offered"], list(d.NAME_KINDS))
-        self.assertTrue(name["no_order"])
+        self.assertFalse(name["no_order"])
+        self.assertEqual(which["picked_at"], 2)
         self.assertEqual(which["offered"], ["Bruno Hale", "Shela Marr"])
         self.assertEqual((which["first"], which["picked"]), ("Bruno Hale", "Shela Marr"))
         self.assertEqual(which["names"], ["Tran", "Bruno"])
         self.assertEqual((said["names"], said["offered"], said["picked"]),
                          (["Tran", "Bruno Hale"], [], "k1"))  # fmt: skip
         self.assertFalse(said["no_order"])
+
+    async def test_with_no_guess_the_first_is_the_first_stored_and_says_so(self) -> None:
+        self.names(entity("e1", "Tran", type="idea"))
+        await self.stage(FakeAI({"answer": "yes", "kind": "npc"}))
+        (row,) = [json.loads(line) for line in self.record.read_text().splitlines()]
+        self.assertEqual((row["first"], row["no_order"]), (d.NAME_KINDS[0], True))
 
     async def test_dmbot_s_own_guess_is_offered_first(self) -> None:
         guessed = SimpleNamespace(id="e1", name="Greyford", type="place", role=None,

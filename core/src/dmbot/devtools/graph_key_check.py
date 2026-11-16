@@ -472,7 +472,7 @@ def check(
     strict = {n["name"] for n in nodes if n.get("unnamed")}
     held: list[tuple[str, Mapping[str, Any], set[str]]] = []  # found rows, for who knows them
     extra_entities: list[Mapping[str, Any]] = []  # (confirmed extras, for the tiers' extras line)
-    extra_relations: list[tuple[str, str]] = []
+    extra_relations: list[tuple[Mapping[str, Any], Mapping[str, Any]]] = []
 
     def lookup(name: str) -> set[str]:
         # (a key entry the story never names, marked `unnamed`, is found by an unnamed entry's
@@ -561,8 +561,9 @@ def check(
         ):
             report.extra_ties += 1
             if r.get("status") == "confirmed":
-                ends = (graph.entities[str(r["subject_id"])], graph.entities[str(r["object_id"])])
-                extra_relations.append((str(ends[0]["name"]), str(ends[1]["name"])))
+                extra_relations.append(
+                    (graph.entities[str(r["subject_id"])], graph.entities[str(r["object_id"])])
+                )
     players = key.get("players", {})
     report.players_expected = len(players)
     report.players_found = sum(
@@ -587,11 +588,16 @@ def check(
             ),
             held,
         )  # fmt: skip
+    held_entries = {str(row["name"]) for section, row, _ in held if section == "entry"}
+    for n in nodes:  # (a missing entry's secret names are missing too)
+        if n["name"] not in held_entries:
+            report.secret_names["missing"] += len(n.get("secret_aliases", {}))
     if record is not None:
         key_tiers.score(
-            report, key, nodes, record,
+            report, key, record,
             ids_of_word=lambda w: graph.ids([w]),
             ids_of_key=lambda n: lookup(n) if n in names else set(),
+            confirmed_entries=held_entries,
             extra_entities=extra_entities,
             extra_relations=extra_relations,
             found_status=FOUND,
@@ -1084,6 +1090,7 @@ def render(report: Report, counts_only: bool = False) -> str:
                 f"Tiers, {label}: "
                 + ", ".join(f"{t} {c[t]}" for t in key_tiers.TIERS)
                 + f"; not decided (stopped at the cap) {c[key_tiers.NOT_DECIDED]}"
+                + f"; found despite a no {c[key_tiers.FOUND_DESPITE_NO]}"
             )
         extra = report.extras
         lines.append(

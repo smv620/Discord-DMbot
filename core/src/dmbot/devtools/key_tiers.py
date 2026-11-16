@@ -12,9 +12,12 @@ graph, or why it didn't.
 | failure | not in the graph otherwise, or found but leaked to a player character |
 
 A row left waiting because the stage reached its cap is **not decided**: its own line, never a
-success or a failure. Extras (a name or tie the key doesn't list) are counted by how they came:
-added by DMbot itself is a failure, one the AI DM kept is counted, and one flagged and turned down
-is counted apart and never a failure.
+success or a failure. A row in the graph that the AI DM said no to (it came in by another way) is
+**found despite a no**, its own line too, since it was asked about. A look-alike answer ("is this
+unnamed person that one?") joins or keeps apart two entries; it never adds or refuses a name or a
+tie, so no row's tier comes from it. Extras (a name or tie the key doesn't list) are counted by
+how they came: added by DMbot itself is a failure, one the AI DM kept is counted, and one flagged
+and turned down is counted apart and never a failure.
 
 A decision is matched to a key row by the names it is about (`Decision.names`), compared as the
 check compares names (`name_key`), or through the backup's own entries for them. The record stays
@@ -24,21 +27,29 @@ on the server: this module reads it and prints counts only.
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from dmbot.devtools import key_knowers
 from dmbot.memory.models import name_key
+
+if TYPE_CHECKING:
+    from dmbot.devtools.graph_key_check import Report
 
 TOTAL, PARTIAL, PROVISIONAL = "total success", "partial success", "provisional success"
 PARTIAL_FAILURE, FAILURE = "partial failure", "failure"
 TIERS = (TOTAL, PARTIAL, PROVISIONAL, PARTIAL_FAILURE, FAILURE)
 NOT_DECIDED = "not decided"  # (decide.NOT_DECIDED: the record's word for an item left at the cap)
+FOUND_DESPITE_NO = "found despite a no"  # (asked, said no, and in the graph all the same)
 EXTRA_ITSELF, EXTRA_KEPT, EXTRA_TURNED_DOWN = "added by itself", "kept by the AI DM", "turned down"
 
 # The decision kinds (decide.KINDS) by what they are about: a name, or a tie between two names.
-NAME_KINDS = frozenset({"names", "look-alikes"})
+# (Look-alikes are neither: see the note at the top.) A no to one of the flagged kinds is "not a
+# name" or "not a connection"; a "Which one?"'s "neither" is not about whether a tie is real.
+NAME_KINDS = frozenset({"names"})
 TIE_KINDS = frozenset({"which one", "things said", "connections"})
+FLAGGED_KINDS = frozenset({"names", "things said", "connections"})
 YES, NO = "yes", "no"
 
 
@@ -103,22 +114,30 @@ def _touches_tie(d: Mapping[str, Any], a: str, b: str, names: _Names) -> bool:
     )
 
 
+def _took_first(d: Mapping[str, Any]) -> bool:
+    """A yes took DMbot's first choice: a yes-or-no item (nothing offered), or the first offered,
+    by place when the record has it (two candidates can share a name)."""
+    if not d.get("offered"):
+        return True
+    if d.get("picked_at"):
+        return int(d["picked_at"]) == 1
+    return bool(d.get("picked") == d.get("first"))
+
+
 def tier(found: bool, leaked: bool, decisions: Sequence[Mapping[str, Any]]) -> str:
-    """One key row's tier, from whether it is in the graph (confirmed with the right kind and tie),
-    whether a player character knows it who shouldn't, and the decisions about it in order."""
+    """One key row's tier, from whether it is in the graph (an entry confirmed with the right
+    kind; a tie confirmed with the right words), whether a player character knows it who
+    shouldn't, and the decisions about it in order."""
     done = [d for d in decisions if d.get("done", True)]
     yes = [d for d in done if d.get("decision") == YES]
     if found:
         if leaked:
             return FAILURE
-        if not yes:
-            return TOTAL  # (asked and left, or never asked: DMbot's own)
-        last = yes[-1]
-        return (
-            PARTIAL
-            if not last.get("offered") or last.get("picked") == last.get("first")
-            else (PROVISIONAL)
-        )
+        if yes:
+            return PARTIAL if _took_first(yes[-1]) else PROVISIONAL
+        if any(d.get("decision") == NO for d in done):
+            return FOUND_DESPITE_NO
+        return TOTAL  # (never asked, or asked and left "not sure": DMbot's own)
     if any(d.get("decision") == NO for d in done):
         return PARTIAL_FAILURE
     if any(d.get("decision") == NOT_DECIDED for d in decisions) and not yes:
@@ -127,26 +146,32 @@ def tier(found: bool, leaked: bool, decisions: Sequence[Mapping[str, Any]]) -> s
 
 
 def score(
-    report: Any,
+    report: Report,
     key: Mapping[str, Any],
-    nodes: Sequence[Mapping[str, Any]],
     record: Sequence[Mapping[str, Any]],
     ids_of_word: Callable[[str], set[str]],
     ids_of_key: Callable[[str], set[str]],
+    confirmed_entries: Collection[str],
     extra_entities: Sequence[Mapping[str, Any]],
-    extra_relations: Sequence[tuple[str, str]],
+    extra_relations: Sequence[tuple[Mapping[str, Any], Mapping[str, Any]]],
     found_status: str,
     by_design: str,
 ) -> None:
     """Fill `report.tiers`, `tiers_must`, `extras` and `unordered` (a `graph_key_check.Report`,
-    whose entry and tie rows are already scored). `extra_entities`: the confirmed entries the key
-    doesn't list; `extra_relations`: the confirmed ties between key entries it doesn't list, as the
-    names of their two ends."""
+    whose entry and tie rows are already scored). `confirmed_entries`: the key entries found as a
+    confirmed entry (a waiting one is not in the graph yet); `extra_entities`: the confirmed
+    entries the key doesn't list; `extra_relations`: the two ends of each confirmed tie between key
+    entries it doesn't list."""
     names = _Names(key, ids_of_word, ids_of_key)
-    leaked = {(k.section, k.id) for k in report.knowers if k.verdict == "leaked"}
+    leaked = {(k.section, k.id) for k in report.knowers if k.verdict == key_knowers.LEAKED}
     pairs = {str(t["id"]): t for t in key["pairs"]}
-    in_scope = {n["name"] for n in nodes}
-    touched: set[int] = set()
+    # (a decision about any key row, scored here or not, is never an extra turned down)
+    touched = {
+        i
+        for i, d in enumerate(record)
+        if any(_touches_node(d, str(n["name"]), names) for n in key["nodes"])
+        or any(_touches_tie(d, str(t["a"]), str(t["b"]), names) for t in key["pairs"])
+    }
 
     def count(row_tier: str, must: bool) -> None:
         report.tiers[row_tier] += 1
@@ -154,43 +179,44 @@ def score(
             report.tiers_must[row_tier] += 1
 
     for row in report.entries:
-        if row.status == by_design or row.id not in in_scope:
+        if row.status == by_design:
             continue
-        mine = [i for i, d in enumerate(record) if _touches_node(d, row.id, names)]
-        touched.update(mine)
-        found = row.status == found_status
-        count(tier(found, ("entry", row.id) in leaked, [record[i] for i in mine]), row.must)
+        mine = [d for d in record if _touches_node(d, row.id, names)]
+        found = row.status == found_status and row.id in confirmed_entries
+        count(tier(found, ("entry", row.id) in leaked, mine), row.must)
     for row in report.ties:
         t = pairs[row.id]
-        mine = [i for i, d in enumerate(record) if _touches_tie(d, t["a"], t["b"], names)]
-        touched.update(mine)
-        found = row.status == found_status
-        count(tier(found, ("tie", row.id) in leaked, [record[i] for i in mine]), row.must)
+        mine = [d for d in record if _touches_tie(d, t["a"], t["b"], names)]
+        count(tier(row.status == found_status, ("tie", row.id) in leaked, mine), row.must)
 
-    kept_names = {
-        name_key(w)
-        for d in record
-        if d.get("kind") in NAME_KINDS and d.get("decision") == YES and d.get("done", True)
-        for w in d.get("names") or ()
-    }
-    for e in extra_entities:
-        mark = EXTRA_KEPT if name_key(str(e["name"])) in kept_names else EXTRA_ITSELF
-        report.extras[mark] += 1
-    kept_ties = [
-        d
-        for d in record
-        if d.get("kind") in TIE_KINDS and d.get("decision") == YES and d.get("done", True)
-    ]
-    for a, b in extra_relations:
-        kept = any(
-            name_key(_ends(d)[0]) in (name_key(a), name_key(b))
-            and {name_key(o) for o in _ends(d)[1]} & {name_key(a), name_key(b)}
-            for d in kept_ties
+    def kept(d: Mapping[str, Any]) -> bool:
+        return d.get("decision") == YES and bool(d.get("done", True))
+
+    def is_(word: str, entity: Mapping[str, Any]) -> bool:
+        """A decision's word names this backup entry: its name, or an entry the word finds."""
+        return bool(word) and (
+            name_key(word) == name_key(str(entity["name"]))
+            or str(entity["id"]) in ids_of_word(word)
         )
-        report.extras[EXTRA_KEPT if kept else EXTRA_ITSELF] += 1
+
+    kept_names = [d for d in record if d.get("kind") in NAME_KINDS and kept(d)]
+    for e in extra_entities:
+        by_ai = any(is_(w, e) for d in kept_names for w in d.get("names") or ())
+        report.extras[EXTRA_KEPT if by_ai else EXTRA_ITSELF] += 1
+    kept_ties = [d for d in record if d.get("kind") in TIE_KINDS and kept(d)]
+    for a, b in extra_relations:
+        by_ai = any(
+            (is_(one, a) and any(is_(o, b) for o in others))
+            or (is_(one, b) and any(is_(o, a) for o in others))
+            for one, others in map(_ends, kept_ties)
+        )
+        report.extras[EXTRA_KEPT if by_ai else EXTRA_ITSELF] += 1
     report.extras[EXTRA_TURNED_DOWN] += sum(
         1
         for i, d in enumerate(record)
-        if i not in touched and d.get("decision") == NO and d.get("done", True)
+        if i not in touched
+        and d.get("kind") in FLAGGED_KINDS
+        and d.get("decision") == NO
+        and d.get("done", True)
     )
     report.unordered = sum(1 for d in record if d.get("no_order"))
