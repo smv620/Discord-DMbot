@@ -113,7 +113,8 @@ class FromAFile(unittest.TestCase):
         self.assertIn("covered 1, missed 1, not given 1", text)
         self.assertNotIn("Fact check", text)
         self.assertNotIn("silver lock", text)
-        self.assertEqual(len(client.sent), 1)
+        self.assertEqual(len(client.sent), 2)  # the coverage check, then the storytelling judge
+        self.assertIn("Storytelling", text)
 
     def test_a_file_that_is_not_a_beat_sheet_makes_no_call(self) -> None:
         client = Client(says("covered"))
