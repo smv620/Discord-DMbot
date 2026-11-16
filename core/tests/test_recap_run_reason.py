@@ -5,6 +5,7 @@ that line on instead of a bare exit code."""
 from __future__ import annotations
 
 import contextlib
+import inspect
 import io
 import sys
 import unittest
@@ -73,3 +74,50 @@ class PassedOn(unittest.IsolatedAsyncioTestCase):
         why: list[str] = []
         self.assertEqual(await steps.write_recap(1, "c1", 2, run=quiet, why=why), 1)
         self.assertEqual(why, [])
+
+
+class OtherStderrStillShows(unittest.IsolatedAsyncioTestCase):
+    async def test_a_warning_that_is_not_the_tools_reason_is_still_printed(self) -> None:
+        async def noisy(argv: list[str]) -> int:
+            print("a warning from somewhere", file=sys.stderr)
+            print(
+                "recap_run: the recap did not finish (state failed): no progress", file=sys.stderr
+            )
+            return 1
+
+        shown, why = io.StringIO(), []  # type: ignore[var-annotated]
+        with contextlib.redirect_stderr(shown):
+            await steps.write_recap(1, "c1", 2, run=noisy, why=why)
+        self.assertIn("a warning from somewhere", shown.getvalue())
+        self.assertNotIn("recap_run:", shown.getvalue())  # (the reason goes to `why`)
+        self.assertEqual(len(why), 1)
+
+    async def test_the_reason_is_kept_even_when_the_run_raises(self) -> None:
+        async def boom(argv: list[str]) -> int:
+            print("recap_run: could not start", file=sys.stderr)
+            raise RuntimeError("x")
+
+        why: list[str] = []
+        with self.assertRaises(RuntimeError):
+            await steps.write_recap(1, "c1", 2, run=boom, why=why)
+        self.assertEqual(why, ["recap_run: could not start"])
+
+
+class TheSampleRunsMessage(unittest.IsolatedAsyncioTestCase):
+    """The failure text of the sample run's recap step names the reason, or says there is none."""
+
+    def test_with_and_without_a_reason(self) -> None:
+        from dmbot.devtools.sample_run import __main__ as cli
+
+        source = inspect.getsource(cli)
+        self.assertIn("recap_run exit {code}){reason}", source)
+        self.assertIn("(and no reason was printed)", source)
+
+
+class TheComparePath(unittest.TestCase):
+    def test_a_draft_that_did_not_finish_is_named_on_stderr(self) -> None:
+        from dmbot.devtools.recap_run import compare
+
+        source = inspect.getsource(compare.run_compare)
+        self.assertIn("did not finish (state", source)
+        self.assertIn("file=sys.stderr", source)

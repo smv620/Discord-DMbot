@@ -14,6 +14,7 @@ import contextlib
 import io
 import math
 import os
+import sys
 import time
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from pathlib import Path
@@ -564,16 +565,19 @@ async def write_recap(
 
     argv = ["--session", str(guild), campaign_id, str(session_at), "--yes"]
     swallowed, complaints = io.StringIO(), io.StringIO()
-    with contextlib.redirect_stdout(swallowed), contextlib.redirect_stderr(complaints):
-        code = await run(argv)
-    if code != 0 and why is not None:
+    try:
+        with contextlib.redirect_stdout(swallowed), contextlib.redirect_stderr(complaints):
+            code = await run(argv)
+    finally:
         # The tool's own "recap_run: ..." lines say why and hold none of the recap's words (the
-        # stdout report does, which is why it is swallowed): pass them on (#4543).
-        why.extend(
-            line.strip()
-            for line in complaints.getvalue().splitlines()
-            if line.startswith("recap_run:")
-        )
+        # stdout report does, which is why it is swallowed): pass them on (#4543). Anything else
+        # on stderr (a warning, a traceback) shows as it did before.
+        for said in complaints.getvalue().splitlines():
+            if said.startswith("recap_run:"):
+                if why is not None:
+                    why.append(said.strip())
+            else:
+                print(said, file=sys.stderr)
     if spent is not None and (line := recap_line(swallowed.getvalue())) is not None:
         spent.append(line)
     return code

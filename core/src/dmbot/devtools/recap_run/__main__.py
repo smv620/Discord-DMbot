@@ -415,11 +415,17 @@ def names_a_secret_anywhere(job: Job, inputs: pl.Inputs) -> bool:
     return names_a_secret(text, inputs.secret_names, inputs.allowed_names)
 
 
+WHY_MAX = 160  # characters of the reason a stopped run says on stderr
+
+
 def why_stopped(out: Outcome) -> str:
     """One line for stderr when a run did not finish (#4543): the state, the stage's reason and
     nothing of the session. The report says the same on stdout, which a caller (the sample run)
-    swallows because it holds the recap's words; this line holds none of them, so it shows."""
-    reason = " ".join((out.stopped or out.job.last_error or "no reason recorded").split())[:160]
+    swallows because it holds the recap's words; this line holds none of them, so it shows.
+    `last_error` and `stopped` are fixed words today (the pipeline's own sentences, the check kinds
+    and the allowance line): they must stay that way, or this line would carry story words."""
+    said = out.stopped or out.job.last_error or "no reason recorded"
+    reason = " ".join(said.split())[:WHY_MAX]
     return f"recap_run: the recap did not finish (state {out.job.state}): {reason}"
 
 
@@ -1264,7 +1270,7 @@ async def _transcript(
     except EOFError:  # nobody is there to answer (a pipe, a scheduled run): that is a no
         answer = ""
     if not tf.consent_given(answer):
-        print("recap_run: stopped. Nothing was sent to any service.")
+        print("recap_run: stopped. Nothing was sent to any service.", file=sys.stderr)
         return 4
     folder = Path(args.out) if args.out else None
     if folder is not None and folder.is_dir():
@@ -1278,6 +1284,7 @@ async def _transcript(
     lines = report(out, prices)
     if lines == [REFUSED]:
         print(REFUSED)
+        print("recap_run: the recap named a secret and was not printed", file=sys.stderr)
         return 3
     print("\n".join(lines))  # the paid text report first: nothing below can lose it
     if args.score:
