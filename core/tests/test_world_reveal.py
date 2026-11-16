@@ -8,7 +8,6 @@ from __future__ import annotations
 import json
 import time
 import unittest
-from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
@@ -62,17 +61,6 @@ class Pure(unittest.TestCase):
         secretly = bg.Connection("the hooded stranger", "serves", "Master Orlen", "q")
         bg.keep_connections([[secretly]], hooded, {}, skip=skip)
         self.assertTrue(seen[-1].secret)
-
-    def test_only_what_may_be_shown_is_shown(self) -> None:
-        base = {"status": CONFIRMED, "hidden_from_players": True, "type": "character",
-                "role": "npc", "played_by": None, "audience_limited": False,
-                "party": False}  # fmt: skip
-        self.assertTrue(world_reveal.may_show(SimpleNamespace(**base)))
-        for change in ({"audience_limited": True}, {"party": True}, {"type": "clue"},
-                       {"role": "player_character"}, {"hidden_from_players": False},
-                       {"status": "proposed"}):  # fmt: skip
-            with self.subTest(change):
-                self.assertFalse(world_reveal.may_show(SimpleNamespace(**{**base, **change})))
 
     def test_the_notice_counts_and_never_names(self) -> None:
         text = un.notice_text("the city guide, 3 Nov", {"revealed": 3}, 0)

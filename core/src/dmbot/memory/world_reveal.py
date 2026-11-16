@@ -8,7 +8,7 @@ a connection it already has is not offered again.
 Now a **🌍 Common knowledge** (World) read reveals the hidden items it names or states itself:
 - an entry it names word for word (`lore_read.LoreRead.known_named`) that the players are not shown,
   where showing it is allowed at all (never a clue only some know, the party, a player's own
-  character or a person at the table: `reveal_said`'s rule);
+  character or a person at the table: the store's `reveal_said`, whose rule it is);
 - a connection it states itself, never DMbot's inference and never through a secret name
   (`queue_links`'s `revealable`), and only where its kept words are the text's own or there are
   none, so the reveal shows no more than the text says;
@@ -31,9 +31,7 @@ from dataclasses import dataclass, field
 
 from dmbot.memory import link_edits, name_edits
 from dmbot.memory.models import (
-    CONFIRMED,
     DM,
-    PLAYER_CHARACTER,
     Alias,
     MemoryRuleError,
     Relation,
@@ -41,7 +39,6 @@ from dmbot.memory.models import (
 from dmbot.memory.store import MemoryStore
 
 log = logging.getLogger(__name__)
-PERSON = "person"  # (a person at the table: `store.PERSON`, never a story entry to show)
 
 
 @dataclass
@@ -58,21 +55,6 @@ class Revealed:
         return self.entries + self.connections + self.names
 
 
-def may_show(entity: object) -> bool:
-    """An entry a public read may show: confirmed and kept from the players, but never one the DM
-    made a clue only some know, the party, a player's own character or a person at the table (the
-    same rule as when the table says a name, `MemoryStore.reveal_said`)."""
-    return bool(
-        getattr(entity, "status", None) == CONFIRMED
-        and getattr(entity, "hidden_from_players", False)
-        and not getattr(entity, "audience_limited", False)
-        and not getattr(entity, "party", False)
-        and getattr(entity, "type", "") not in (PERSON, "clue")
-        and getattr(entity, "role", None) != PLAYER_CHARACTER
-        and getattr(entity, "played_by", None) is None
-    )
-
-
 async def reveal(
     memory: MemoryStore,
     guild_id: int,
@@ -87,22 +69,13 @@ async def reveal(
     from the players) or that changed meanwhile is left as it is: the read goes on. Never raises
     for one item; each change's batch is kept for the upload's Undo."""
     out = Revealed()
-    shown_now: list[str] = []
-    for entity_id in dict.fromkeys(entries):
-        entity = await memory.entity(guild_id, campaign_id, entity_id)
-        if entity is None or not may_show(entity):
-            continue
-        try:
-            written = await memory.set_hidden_from_players(
-                guild_id, campaign_id, entity_id, False, source=DM, dm_chose_secret=False
-            )
-        except MemoryRuleError as exc:
-            log.info("A World read could not show an entry (%s)", type(exc).__name__)
-            continue
-        if written.batch is not None:
-            out.batches.append(written.batch)
-        shown_now.append(entity_id)
-        out.entries += 1
+    # (the store's own rule for showing what was kept back, the one used when the table says a
+    # name: never a clue only some know, the party, a player's character or a person at the table)
+    shown = await memory.reveal_said(guild_id, campaign_id, list(dict.fromkeys(entries)))
+    if shown.batch is not None:
+        out.batches.append(shown.batch)
+    shown_now = list(shown.value)
+    out.entries = len(shown_now)
     if shown_now:
         common = await memory.add_common_knowledge(
             guild_id, campaign_id, "entry", shown_now, source=DM
