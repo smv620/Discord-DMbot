@@ -205,7 +205,9 @@ class Clues(ConfirmedMemoryTest):
         (fact,) = await self.memory.relations(
             GUILD_A, self.c, entity_id=self.cerric, confirmed_only=True
         )
-        await self.memory.update_relation(GUILD_A, self.c, fact.id, source=DM_SOURCE, secret=True)
+        await self.memory.update_relation(
+            GUILD_A, self.c, fact.id, source=DM_SOURCE, secret=True, dm_chose_secret=True
+        )
         await self.claim(said("Cerric", "told", "The baron's secret"))
         self.assertEqual((await self.check()).conflicts, ())
 

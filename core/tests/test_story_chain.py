@@ -206,7 +206,9 @@ class AnAssumedParent(Stored):
             await self.memory.set_hidden_from_players(
                 GUILD_A, self.c, e, False, source=BY_DM, dm_chose_secret=True
             )
-        await self.memory.update_relation(GUILD_A, self.c, guess, source=BY_DM, unrevealed=False)
+        await self.memory.update_relation(
+            GUILD_A, self.c, guess, source=BY_DM, unrevealed=False, dm_chose_secret=True
+        )
         r = await self.row(guess)
         self.assertEqual((r.assumed, r.unrevealed), (False, False))
 
@@ -448,7 +450,7 @@ class AfterTheReview(Stored):
                 GUILD_A, self.c, e, False, source=BY_DM, dm_chose_secret=True
             )
         shown = await self.memory.update_relation(
-            GUILD_A, self.c, guess, source=BY_DM, unrevealed=False
+            GUILD_A, self.c, guess, source=BY_DM, unrevealed=False, dm_chose_secret=True
         )
         assert shown.batch is not None
         await self.memory.undo_connection(GUILD_A, self.c, shown.batch, within=3600, secrets=True)

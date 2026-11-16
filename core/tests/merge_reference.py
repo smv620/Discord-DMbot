@@ -1,10 +1,12 @@
 """The row-by-row merge from before #164, kept as a reference: the set-based merge
 must leave every table, flag and change-log row exactly as this did (#342 review).
-Only change: the walk goes oldest first, as the new one does (the old query had no
-ORDER BY, so its order was whatever Postgres returned)."""
+Only changes: the walk goes oldest first, as the new one does (the old query had no
+ORDER BY, so its order was whatever Postgres returned), and a folded name's who-knows rows move to
+its twin, as the store's do since #4524."""
 
 from __future__ import annotations
 
+from dmbot.memory import knowers
 from dmbot.memory import store as s
 from dmbot.memory._changes import ALIASES, CORRECTIONS, ENTITIES, MENTIONS, RELATIONS, Changes
 from dmbot.memory.checks import duplicate_of, ordered
@@ -54,6 +56,9 @@ async def _move_aliases(w: Changes, keep_id: str, gone_id: str) -> None:
             await w.update(ALIASES, alias["id"], {"entity_id": keep_id})
             continue
         upgrade = s._upgrade(twin, alias["status"], alias["secret"], DM)
+        # (#4524: whoever knew the copy that goes knows the twin, in both lists, as the store does)
+        await knowers.move_rows(w, "alias_id", alias["id"], twin["id"])
+        await knowers.move_alias_list(w, alias["id"], twin["id"])
         await w.delete(ALIASES, alias["id"])
         if upgrade:
             await w.update(ALIASES, twin["id"], upgrade)

@@ -81,7 +81,14 @@ class TheMove(unittest.IsolatedAsyncioTestCase):
             GUILD, self.c, known_by_tavin, [tavin], source="dm", dm_chose_secret=True
         )
         shade = await self.memory.add_alias(
-            GUILD, self.c, voss, "Shade", kind="title", secret=True, source="dm"
+            GUILD,
+            self.c,
+            voss,
+            "Shade",
+            kind="title",
+            secret=True,
+            source="dm",
+            dm_chose_secret=True,
         )
         await self.memory.set_alias_knowers(
             GUILD, self.c, shade.value.id, [mara], source="dm", dm_chose_secret=True
@@ -163,7 +170,14 @@ class TheMove(unittest.IsolatedAsyncioTestCase):
             GUILD, self.c, held, [tavin], source="dm", dm_chose_secret=True
         )
         shade = await self.memory.add_alias(
-            GUILD, self.c, voss, "Shade", kind="title", secret=True, source="dm"
+            GUILD,
+            self.c,
+            voss,
+            "Shade",
+            kind="title",
+            secret=True,
+            source="dm",
+            dm_chose_secret=True,
         )
         await self.memory.set_alias_knowers(
             GUILD, self.c, shade.value.id, [tavin], source="dm", dm_chose_secret=True

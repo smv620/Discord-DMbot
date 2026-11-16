@@ -128,7 +128,7 @@ class Placing(Base):
     async def test_a_secret_name_is_never_placed_as_the_entry(self) -> None:
         await self.memory.add_alias(
             GUILD_A, self.c, self.ids["bruno"], "The Masked One", kind="nickname", source="dm",
-            status=CONFIRMED, secret=True,
+            status=CONFIRMED, secret=True, dm_chose_secret=True,
         )  # fmt: skip
         got = await self.put((check(subject="The Masked One", rel="", obj=""), (DM_ID,)))
         self.assertEqual((got.stored, got.counts["reveal_unplaced"]), (0, 1))

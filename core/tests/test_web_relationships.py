@@ -211,9 +211,13 @@ class TheShape(Web):
         before = await seen()
         self.assertNotIn(secret, before)
         self.assertIn(self.links["mira-keep"], before)
-        await self.memory.update_relation(self.g, self.one.id, secret, source="dm", secret=False)
+        await self.memory.update_relation(
+            self.g, self.one.id, secret, source="dm", secret=False, dm_chose_secret=True
+        )
         self.assertIn(secret, await seen())
-        await self.memory.update_relation(self.g, self.one.id, secret, source="dm", secret=True)
+        await self.memory.update_relation(
+            self.g, self.one.id, secret, source="dm", secret=True, dm_chose_secret=True
+        )
         self.assertEqual(await seen(), before)
         # reworded: a shown one stays shown (as the new connection), a hidden one stays hidden
         shown = await self.memory.change_relation_words(

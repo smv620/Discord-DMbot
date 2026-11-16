@@ -187,10 +187,15 @@ async def _dm_and_follow(
     """The campaign and its followed pack, if this person is one of its DMs now."""
     bot = _bot(interaction)
     sets = _store(bot)
-    if interaction.guild is None or sets is None:
+    if sets is None:
         await _tell(interaction, COULDNT)
         return None
-    campaign = await bot.campaigns.get(interaction.guild.id, campaign_id)
+    # In a DM's private chat (where these notes now go first) a press has no server: the
+    # database says where the campaign is, and the DM check below is what guards it (#3874).
+    guild_id = interaction.guild.id if interaction.guild is not None else None
+    if guild_id is None:
+        guild_id = await bot.campaigns.guild_of(campaign_id)
+    campaign = await bot.campaigns.get(guild_id, campaign_id) if guild_id is not None else None
     if campaign is None:
         await _tell(interaction, GONE)
         return None
@@ -499,7 +504,7 @@ async def check_updates(bot: Any, campaign: Campaign, screen_id: int) -> None:
     found = shared_update.Collected()
     await collect(bot, campaign, screen_id, found)
     try:
-        await shared_update.post(bot, campaign.id, screen_id, found)
+        await shared_update.post(bot, campaign, found)
     except Exception:
         log.exception("Couldn't post a homebrew pack update note")
 

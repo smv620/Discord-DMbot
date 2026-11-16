@@ -67,7 +67,7 @@ class WithTheStore(MemoryTest):
         (orla,) = await self.held("Orla Finch")
         await self.memory.add_alias(
             GUILD_A, self.c, orla, "The Ferrywoman", kind="title", source="dm",
-            status="confirmed", secret=True,
+            status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         await self.memory.add_alias(
             GUILD_A, self.c, orla, "Ferry Orla", kind="nickname", source="dm", status="confirmed"

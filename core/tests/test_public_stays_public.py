@@ -251,7 +251,7 @@ class ThePublicStaysPublic(MemoryTest):
         knows = await self.memory.statement_knowers(GUILD_A, self.c, "entry", [shady])
         self.assertEqual(knows.get(shady), [self.hero])  # (Ilsa still knows)
 
-    async def test_a_public_name_folded_into_a_secret_twin_stays_public(self) -> None:
+    async def test_a_secret_twin_stays_the_dms_secret_and_who_knew_still_knows(self) -> None:
         mask = await self.add("Mask", status=CONFIRMED)
         await self.memory.add_alias(
             GUILD_A, self.c, mask, "Shade", kind="nickname", source=DM, status=CONFIRMED,
@@ -274,9 +274,9 @@ class ThePublicStaysPublic(MemoryTest):
         await self.memory.merge(GUILD_A, self.c, mask, self.bob, source=DM, dm_said_same=True)
         names = await self.memory.aliases(GUILD_A, self.c, entity_id=mask, include_secret=True)
         (shade,) = [a for a in names if a.text == "Shade"]
-        self.assertFalse(shade.secret)
-        (q,) = await self.waiting()
-        self.assertEqual((q.item_id, q.change), (shade.id, {"secret": True}))
+        # (the DM's own secret name: showing it would tell the players who Bob was, #4524)
+        self.assertTrue(shade.secret)
+        self.assertEqual(await self.waiting(), [])
         (shadow,) = [a for a in names if a.text == "Shadow"]
         knows = await self.memory.alias_knowers(GUILD_A, self.c, [shadow.id])
         self.assertEqual(knows.get(shadow.id), [self.hero])  # (and still knows the twin)

@@ -316,7 +316,7 @@ class WithTheRealRecall(MemoryTest):
     async def test_a_secret_fact_a_secret_name_and_the_note_never_reach_the_prompt(self) -> None:
         await self.memory.add_alias(
             GUILD_A, self.c, self.ulfgar, "the Pale Hand", kind="nickname", source="dm",
-            status="confirmed", secret=True,
+            status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         built = await self.prompt("who does Mira work for and what about Ulfgar")
         self.assertNotIn(self.secret, [i for _, i in built.labels])

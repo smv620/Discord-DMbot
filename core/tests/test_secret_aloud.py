@@ -102,25 +102,25 @@ class Reading(MemoryTest):
         mira = await self.add("Mira", type="character", role="npc", status="confirmed")
         secret = await self.memory.add_alias(
             GUILD_A, self.c, mira, "The Hooded One", kind="nickname", source="dm",
-            status="confirmed", secret=True,
+            status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         await self.memory.add_alias(
             GUILD_A, self.c, mira, "Open Name", kind="nickname", source="dm", status="confirmed"
         )
         await self.memory.add_alias(
             GUILD_A, self.c, mira, "Guess", kind="nickname", source="dm", status="proposed",
-            secret=True,
+            secret=True, dm_chose_secret=True,
         )  # fmt: skip
         guess = await self.add("Wolf", type="character", role="npc", status="proposed")
         await self.memory.add_alias(
             GUILD_A, self.c, guess, "Wolf Secret", kind="nickname", source="dm",
-            status="confirmed", secret=True,
+            status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         other = (await self.campaigns.create(GUILD_A, "Other", 77)).id
         theirs = await self.add("Zed", campaign=other, type="character", status="confirmed")
         await self.memory.add_alias(
             GUILD_A, other, theirs, "Zed Secret", kind="nickname", source="dm",
-            status="confirmed", secret=True,
+            status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         mine = await secret_names(self.memory, GUILD_A, self.c)
         self.assertEqual([n.text for n in mine], ["The Hooded One"])
@@ -133,9 +133,11 @@ class Reading(MemoryTest):
         mira = await self.add("Mira", type="character", role="npc", status="confirmed")
         secret = await self.memory.add_alias(
             GUILD_A, self.c, mira, "The Hooded One", kind="nickname", source="dm",
-            status="confirmed", secret=True,
+            status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
-        await self.memory.update_alias(GUILD_A, self.c, secret.value.id, source=DM, secret=False)
+        await self.memory.update_alias(
+            GUILD_A, self.c, secret.value.id, source=DM, secret=False, dm_chose_secret=True
+        )
         self.assertEqual(await secret_names(self.memory, GUILD_A, self.c), [])
 
 
@@ -147,10 +149,26 @@ class SharedSpelling(MemoryTest):
         mira = await self.add("Mira", campaign=c, type="character", role="npc", status="confirmed")
         wolf = await self.add("Wolf", campaign=c, type="character", role="npc", status="confirmed")
         first = await self.memory.add_alias(
-            GUILD_A, c, mira, name, kind="nickname", source="dm", status="confirmed", secret=True
+            GUILD_A,
+            c,
+            mira,
+            name,
+            kind="nickname",
+            source="dm",
+            status="confirmed",
+            secret=True,
+            dm_chose_secret=True,
         )
         second = await self.memory.add_alias(
-            GUILD_A, c, wolf, name, kind="nickname", source="dm", status="confirmed", secret=True
+            GUILD_A,
+            c,
+            wolf,
+            name,
+            kind="nickname",
+            source="dm",
+            status="confirmed",
+            secret=True,
+            dm_chose_secret=True,
         )
         return first.value.id, second.value.id
 
@@ -198,7 +216,7 @@ class SharedSpelling(MemoryTest):
         mira = await self.add("Zed", type="character", role="npc", status="confirmed")
         other_name = await self.memory.add_alias(
             GUILD_A, self.c, mira, "Someone Else", kind="nickname", source="dm",
-            status="confirmed", secret=True,
+            status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         other = (await self.campaigns.create(GUILD_A, "Other", 77)).id
         theirs = await self.twins(other)

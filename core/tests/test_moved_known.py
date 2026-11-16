@@ -114,7 +114,9 @@ class HidingAnEnd(MergeMovesConnections):
         await self.memory.set_connection_knowers(
             GUILD_A, self.c, rel, [self.pc], source="dm", dm_chose_secret=True
         )
-        await self.memory.update_relation(GUILD_A, self.c, rel, source="dm", secret=False)
+        await self.memory.update_relation(
+            GUILD_A, self.c, rel, source="dm", secret=False, dm_chose_secret=True
+        )
         await self.memory.set_hidden_from_players(
             GUILD_A, self.c, shown, True, source="dm", dm_chose_secret=True
         )

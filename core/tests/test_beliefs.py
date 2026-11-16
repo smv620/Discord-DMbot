@@ -194,10 +194,14 @@ class Beliefs(MemoryTest):
         rel = made.value[0].id
         await self.memory.update_relation(GUILD_A, self.c, rel, source="dm", status=CONFIRMED)
         self.assertEqual(await self.party(), {rel: 1.0})
-        await self.memory.update_relation(GUILD_A, self.c, rel, source="dm", secret=True)
+        await self.memory.update_relation(
+            GUILD_A, self.c, rel, source="dm", secret=True, dm_chose_secret=True
+        )
         self.assertEqual(await self.party(), {})  # hidden again: the latest party belief is 0.0
         self.assertEqual((await self.truth())[rel], (1.0, "secret_plot"))
-        await self.memory.update_relation(GUILD_A, self.c, rel, source="dm", secret=False)
+        await self.memory.update_relation(
+            GUILD_A, self.c, rel, source="dm", secret=False, dm_chose_secret=True
+        )
         self.assertEqual(await self.party(), {rel: 1.0})
         async with self.db.guild(GUILD_A) as conn:
             cur = await conn.execute(
@@ -210,7 +214,9 @@ class Beliefs(MemoryTest):
     async def test_undoing_a_flip_takes_the_belief_with_it_in_the_same_change(self) -> None:
         a, b = await self.pair()
         rel = await self.link(a, b)
-        flipped = await self.memory.update_relation(GUILD_A, self.c, rel, source="dm", secret=True)
+        flipped = await self.memory.update_relation(
+            GUILD_A, self.c, rel, source="dm", secret=True, dm_chose_secret=True
+        )
         self.assertEqual(await self.party(), {})
         await self.memory.undo(GUILD_A, self.c, flipped.batch, source="dm")  # type: ignore[arg-type]
         self.assertEqual(await self.party(), {rel: 1.0})
@@ -480,7 +486,9 @@ class Beliefs(MemoryTest):
         rel = await self.link(a, b)
         truth = (await self.kinds())["truth"]
         await self.memory.believe(GUILD_A, self.c, truth, rel, 0.0, "false_evidence", source="dm")
-        await self.memory.update_relation(GUILD_A, self.c, rel, source="dm", secret=True)
+        await self.memory.update_relation(
+            GUILD_A, self.c, rel, source="dm", secret=True, dm_chose_secret=True
+        )
         self.assertEqual((await self.truth()).get(rel), None)  # (0.0 is "not believed")
         async with self.db.guild(GUILD_A) as conn:
             cur = await conn.execute(
@@ -576,8 +584,12 @@ class Beliefs(MemoryTest):
         self.assertEqual(by_flag, set(shown))
         self.assertEqual(set(await self.truth()), set(shown) | set(hidden))
         # and after the DM hides one and shows another
-        await self.memory.update_relation(GUILD_A, self.c, shown[0], source="dm", secret=True)
-        await self.memory.update_relation(GUILD_A, self.c, hidden[0], source="dm", secret=False)
+        await self.memory.update_relation(
+            GUILD_A, self.c, shown[0], source="dm", secret=True, dm_chose_secret=True
+        )
+        await self.memory.update_relation(
+            GUILD_A, self.c, hidden[0], source="dm", secret=False, dm_chose_secret=True
+        )
         now = {
             r.id
             for r in await self.memory.relations(GUILD_A, self.c, confirmed_only=True)
@@ -721,7 +733,9 @@ class Beliefs(MemoryTest):
         await self.memory.believe(GUILD_A, self.c, truth, rel, 0.4, "theory", source="dm")
         await self.memory.pin(GUILD_A, self.c, rel, True, source="dm")
         self.assertEqual((await self.truth())[rel], (1.0, "revealed_fact"))  # 100%, not a theory
-        await self.memory.update_relation(GUILD_A, self.c, rel, source="dm", secret=True)
+        await self.memory.update_relation(
+            GUILD_A, self.c, rel, source="dm", secret=True, dm_chose_secret=True
+        )
         self.assertEqual(await self.memory.pinned_connections(GUILD_A, self.c), {rel})
         moved = await self.memory.change_relation_words(
             GUILD_A, self.c, rel, "ally_of", "", source="dm"
@@ -835,7 +849,9 @@ class Beliefs(MemoryTest):
     async def test_a_connection_shown_and_hidden_again_still_backs_up_and_restores(self) -> None:
         a, b = await self.pair()
         rel = await self.link(a, b)
-        await self.memory.update_relation(GUILD_A, self.c, rel, source="dm", secret=True)
+        await self.memory.update_relation(
+            GUILD_A, self.c, rel, source="dm", secret=True, dm_chose_secret=True
+        )
         raw = encode_backup(await self.campaigns.export(GUILD_A, self.c))
         restored = await self.campaigns.import_backup(GUILD_B, decode_backup(raw), DM)
         async with self.db.guild(GUILD_B) as conn:

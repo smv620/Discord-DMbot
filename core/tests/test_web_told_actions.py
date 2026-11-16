@@ -107,13 +107,17 @@ class TheAnswers(Telling):
 
     async def test_a_name_that_is_no_longer_a_secret_is_turned_away_by_the_bot(self) -> None:
         await self.tell()
-        await self.memory.update_alias(self.g, self.one.id, self.guard, source="dm", secret=False)
+        await self.memory.update_alias(
+            self.g, self.one.id, self.guard, source="dm", secret=False, dm_chose_secret=True
+        )
         self.assertEqual([o.error for o in await self.apply_all()], ["bad_target"])
 
     async def test_a_telling_can_be_taken_back_after_the_name_stops_being_secret(self) -> None:
         await self.tell()
         await self.apply_all()
-        await self.memory.update_alias(self.g, self.one.id, self.guard, source="dm", secret=False)
+        await self.memory.update_alias(
+            self.g, self.one.id, self.guard, source="dm", secret=False, dm_chose_secret=True
+        )
         await self.queue(action="told-remove", alias=self.guard, character=self.okra)
         self.assertEqual([o.error for o in await self.apply_all()], [""])
         self.assertEqual(await self.told_rows(), [])
@@ -213,5 +217,7 @@ class ThePanel(Telling):
         with self.assertRaises(RecapError) as caught:
             await self.panel(player)
         self.assertEqual(caught.exception.code, "not_allowed")
-        await self.memory.update_alias(self.g, self.one.id, self.guard, source="dm", secret=False)
+        await self.memory.update_alias(
+            self.g, self.one.id, self.guard, source="dm", secret=False, dm_chose_secret=True
+        )
         self.assertEqual([r for r in await self.panel() if r["id"] == self.guard], [])

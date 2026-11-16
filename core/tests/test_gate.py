@@ -590,7 +590,14 @@ class FlagsFollow(Helpers):
         )
         self.assertEqual(await self.known(CONNECTION, rel), sorted([ids["bruno"], ids["mara"]]))
         shade = await self.memory.add_alias(
-            GUILD_A, self.c, ids["bruno"], "Shade", kind="title", secret=True, source="dm"
+            GUILD_A,
+            self.c,
+            ids["bruno"],
+            "Shade",
+            kind="title",
+            secret=True,
+            source="dm",
+            dm_chose_secret=True,
         )
         await self.memory.set_alias_knowers(
             GUILD_A, self.c, shade.value.id, [ids["mara"]], source="dm", dm_chose_secret=True

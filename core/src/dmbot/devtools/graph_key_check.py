@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from dmbot.campaigns.store import decode_backup
+from dmbot.devtools import sample_name
 from dmbot.memory import kin, place_words, reputation_words, route_length, unnamed
 from dmbot.memory.models import name_key
 
@@ -86,7 +87,7 @@ UNCLE = frozenset({"uncle", "aunt", "aunt or uncle"})
 NEPHEW = frozenset({"nephew", "niece", "niece or nephew"})
 GRAND_UP = frozenset({"grandparent", "grandmother", "grandfather"})
 GRAND_DOWN = frozenset({"grandchild", "grandson", "granddaughter"})
-SAMPLE_CAMPAIGN = "test of the frostmaiden (sample)"
+SAMPLE_CAMPAIGN = sample_name.OLD_NAME  # (numbered names pass `sample_name.is_sample`, #4538)
 # What slot (word, past) each key place tie means, as `place_words.slot` reads a stored detail.
 PLACE_SLOTS = {
     "lives_in": (place_words.LIVES, False), "lived_in": (place_words.LIVES, True),
@@ -149,6 +150,10 @@ class Report:
     # Story threads (#4453, quests slice 1): found, missed, wrong (another kind), doubles (one key
     # thread suggested twice), extra (a thread the key doesn't list), hints found
     threads: Counter[str] = field(default_factory=Counter)
+    # A thread's parts (#4500, quests slice 3), on the backup thread its key thread matched: found
+    # and missed by kind ("found objective"), on the wrong thread, and extra. Branches: found and
+    # missed (a hint's miss isn't held against the reader), each a `branch_of` to its quest.
+    thread_parts: Counter[str] = field(default_factory=Counter)
 
 
 def _live(row: Mapping[str, Any]) -> bool:
@@ -653,6 +658,7 @@ def _score_threads(
             role = str(r.get("detail") or "").strip().lower()
             parts.setdefault(str(r["object_id"]), set()).add((role, str(r["subject_id"])))
     used: set[str] = set()
+    matched: dict[str, str] = {}  # (the key thread's id: the backup thread it is, for its parts)
     for t in key.get("threads", []):
         wanted_kinds = {str(t["kind"])}
         need: list[tuple[str, set[str]]] = [
@@ -684,6 +690,8 @@ def _score_threads(
         ]
         used.update(hits)
         right = [th for th in hits if str(graph.entities[th]["type"]) in wanted_kinds]
+        if hits and t.get("id"):
+            matched[str(t["id"])] = (right or hits)[0]
         if t.get("hint"):
             report.threads["hints found"] += 1 if hits else 0
             continue
@@ -704,6 +712,59 @@ def _score_threads(
             if any(w in said for w in words):
                 report.threads["false"] += 1
                 break
+    _score_thread_parts(report, graph, key, matched)
+
+
+def _score_thread_parts(
+    report: Report, graph: Graph, key: Mapping[str, Any], matched: Mapping[str, str]
+) -> None:
+    """A thread's parts and branches (#4500; quests design §9.7). A key part is found when the
+    backup thread its key thread matched has a part of that kind whose words hold one of the key's
+    `words` (casefold); on another thread only, it is "wrong thread". A key thread's part counts as
+    missed whether or not the thread was found, so a missed quest's parts are missed too. Parts on a
+    matched thread that no key part is are extra. A key thread with `branch_of` is found when the
+    backup thread it matched has a live `branch_of` to the one its quest matched."""
+    rows = [
+        r
+        for r in graph.tables.get("thread_part", ())
+        if r.get("status") != "rejected" and r.get("to_session_at") is None
+    ]
+    on: dict[str, list[Mapping[str, Any]]] = {}
+    for r in rows:
+        on.setdefault(str(r["thread_id"]), []).append(r)
+    used: set[str] = set()
+
+    def fits(r: Mapping[str, Any], kind: str, words: Sequence[str]) -> bool:
+        said = str(r.get("words", "")).casefold()
+        return str(r["kind"]) == kind and any(str(w).casefold() in said for w in words)
+
+    for t in key.get("threads", []):
+        thread = matched.get(str(t.get("id", "")))
+        for p in t.get("parts", []):
+            kind, words = str(p["kind"]), [str(w) for w in p.get("words", [])]
+            here = [r for r in on.get(thread or "", []) if fits(r, kind, words)]
+            if here:
+                report.thread_parts[f"found {kind}"] += 1
+                used.update(str(r["id"]) for r in here)
+            elif any(fits(r, kind, words) for r in rows):
+                report.thread_parts["wrong thread"] += 1
+            else:
+                report.thread_parts[f"missed {kind}"] += 1
+        bigger = str(t.get("branch_of", ""))
+        if bigger:
+            links = {
+                (str(r["subject_id"]), str(r["object_id"]))
+                for r in graph.relations
+                if r.get("predicate") == "branch_of"
+            }
+            if thread and (thread, matched.get(bigger, "")) in links:
+                report.thread_parts["branches found"] += 1
+            elif not t.get("hint"):
+                report.thread_parts["branches missed"] += 1
+    for thread in set(matched.values()):
+        report.thread_parts["extra"] += sum(
+            1 for r in on.get(thread, []) if str(r["id"]) not in used
+        )
 
 
 def _kind_for(entry_type: str) -> str:
@@ -740,6 +801,7 @@ def summarize(report: Report) -> dict[str, Any]:
         "player_characters": {"found": report.players_found, "expected": report.players_expected},
         "map_facts": {layer: dict(c) for layer, c in sorted(report.map_facts.items())},
         "threads": dict(report.threads),
+        **({"thread_parts": dict(report.thread_parts)} if report.thread_parts else {}),
         **({"languages": dict(report.languages)} if report.languages else {}),
         **({"route_lengths": dict(report.route_lengths)} if report.route_lengths else {}),
     }
@@ -789,6 +851,19 @@ def render(report: Report, counts_only: bool = False) -> str:
             f"Story threads: found {c['found']}, missed {c['missed']}, wrong {c['wrong']}, "
             f"doubles {c['doubles']}, extra {c['extra']}, false {c['false']} "
             f"(hints found {c['hints found']})"
+        )
+    if report.thread_parts:  # (#4500: a thread's parts and branches, quests slice 3)
+        c = report.thread_parts
+        kinds = ("objective", "complication", "reward", "reward_given", "help", "time_limit")
+        said = ", ".join(
+            f"{k} {c['found ' + k]}/{c['found ' + k] + c['missed ' + k]}"
+            for k in kinds
+            if c["found " + k] or c["missed " + k]
+        )
+        lines.append(
+            f"Thread parts found: {said or 'none in the key'}; wrong thread {c['wrong thread']}, "
+            f"extra {c['extra']}; branches found {c['branches found']}, "
+            f"missed {c['branches missed']}"
         )
     if report.route_lengths:  # (#4255: a road's length, a property of the road, not a tie)
         c = report.route_lengths
@@ -854,9 +929,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         key = json.loads(args.key.read_text())
         campaign = backup.get("campaign") if isinstance(backup, dict) else None
         name = campaign.get("name") if isinstance(campaign, dict) else None
-        if name != SAMPLE_CAMPAIGN and not args.force:
+        if not (isinstance(name, str) and sample_name.is_sample(name)) and not args.force:
             raise ValueError(
-                f'This campaign is not "{SAMPLE_CAMPAIGN}"; the check is only for the sample.'
+                'This campaign is not "test of the frostmaiden (sample N)"; the check is only '
+                "for the sample."
             )
         report = check(backup, key, args.docs)
     except (ValueError, OSError) as exc:

@@ -50,7 +50,7 @@ class Listing(Base):
     async def alias(self, entity: str, text: str, *, secret: bool = False) -> None:
         await self.memory.add_alias(
             self.g, self.one.id, entity, text, kind="short", source=DM_SOURCE,
-            status="confirmed", secret=secret,
+            status="confirmed", secret=secret, dm_chose_secret=True,
         )  # fmt: skip
 
     async def sql(self, statement: str, *args: Any) -> None:

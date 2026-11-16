@@ -98,7 +98,14 @@ class WhatItRefuses(Base):
         plain = await self.add("Old Tam", "npc")
         other = await self.waiting_name("The Net Mender")
         await self.memory.add_alias(
-            self.g, self.one.id, other, "Hidden Hand", kind="short", source="scan", secret=True
+            self.g,
+            self.one.id,
+            other,
+            "Hidden Hand",
+            kind="short",
+            source="scan",
+            secret=True,
+            dm_chose_secret=True,
         )
         self.assertEqual(await self.refusal(plain, other), AI_JOIN_REFUSED)
 

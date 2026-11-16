@@ -92,7 +92,9 @@ class MoreRules(Lies):
     async def test_a_pinned_connection_takes_no_lie_and_nothing_below_a_hundred_on_the_truth(
         self,
     ) -> None:
-        await self.memory.update_relation(GUILD_A, self.c, self.rel, source="dm", secret=False)
+        await self.memory.update_relation(
+            GUILD_A, self.c, self.rel, source="dm", secret=False, dm_chose_secret=True
+        )
         await self.memory.pin(GUILD_A, self.c, self.rel, True, source="dm")
         for status, confidence, sources in (
             ("known_lie", 0.0, [self.valyra]),

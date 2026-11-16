@@ -8,8 +8,9 @@ from __future__ import annotations
 
 from typing import Any
 
+from dmbot.memory import thread_parts as tp
 from dmbot.memory import web_actions as wa
-from dmbot.memory.thread_read import Suggestion
+from dmbot.memory.thread_read import ReadBranch, ReadPart, Suggestion
 from dmbot.memory.thread_suggestions import ThreadSuggestionStore
 from dmbot.web import thread_suggestions as web_threads
 from dmbot.web.recaps import RecapError, _scoped
@@ -127,6 +128,20 @@ class TheActions(Threads):
         self.assertEqual((await self.act("thread-undo", f"keep {batch}")).error, "")
         (back,) = await self.waiting()
         self.assertEqual(back["id"], one["id"])
+
+    async def test_a_keep_on_the_website_keeps_none_of_the_lines_it_didnt_show(self) -> None:
+        """#4500: the website shows no steps, rewards or branches yet, so its keep keeps none."""
+        with_lines = Suggestion(
+            "quest", "The Second Heir", "Bring her home.", "Find the heir.", (), "now",
+            reads=(ReadPart(tp.OBJECTIVE, "find the heir", "to_do", "Find the heir."),),
+            branches=(ReadBranch("mystery", "Who took her?", "Who took her?", "x", "hinted"),),
+        )  # fmt: skip
+        await self.threads.offer(self.g, self.one.id, [with_lines], "more notes", 2_000)
+        sid = next(s["id"] for s in await self.waiting() if s["name"] == "The Second Heir")
+        done = await self.act("thread-keep", f"{sid} -")
+        self.assertEqual(done.error, "")
+        parts, _, _, branches = await self.memory.thread_card(self.g, self.one.id, done.result_id)
+        self.assertEqual((parts, branches), ([], []))
 
     async def test_a_keep_whose_name_the_store_refuses_is_not_called_gone(self) -> None:
         (one,) = await self.waiting()

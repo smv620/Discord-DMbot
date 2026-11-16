@@ -52,7 +52,7 @@ class TwoCampaigns(DatabaseTest):
         tessaly = await self.name(SERVER_ONE, self.b, ONLY_IN_B)
         await self.memory.add_alias(
             SERVER_ONE, self.b, tessaly, SECRET_IN_B, kind="nickname", source="dm",
-            status="confirmed", secret=True,
+            status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         return tessaly
 
@@ -277,7 +277,7 @@ class SharedRulesetsAreTheOnlyCrossing(TwoCampaigns):
         tessaly = await self.name(SERVER_ONE, self.a, ONLY_IN_B, description=self.NOTE)
         await self.memory.add_alias(
             SERVER_ONE, self.a, tessaly, SECRET_IN_B, kind="nickname", source="dm",
-            status="confirmed", secret=True,
+            status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         store = TranscriptStore(self.db)
         sid = await store.open_session(SERVER_ONE, self.a, 1_700_000_000)

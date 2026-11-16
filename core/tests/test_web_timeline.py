@@ -304,7 +304,7 @@ class TheReveals(TimelineBase):
         keeper = await self.entity("The Keeper")
         await self.memory.add_alias(
             self.g, self.one.id, keeper, "The Keeper", kind="short", source=DM_SOURCE,
-            status="confirmed", secret=True,
+            status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         await self.reveal(keeper, START + 3700, batch=1)
         self.assertEqual((await self.read(self.session))["sessions"][0]["revealed"], ["The Keeper"])
