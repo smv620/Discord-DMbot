@@ -335,6 +335,7 @@ NOT_A_SWITCH: dict[str, str] = {
     "recap_audio_per_month": "a limit",
     "continuity": "tuning numbers",
     "thread_stalled_sessions": "a number",
+    "server_jobs_at_once": "a number: lore reads and imports at once on one server (#4551)",
     "table_images_per_day": "a limit",
     "picture_storage_mb": "a limit",
     "r2_account_id": "which storage account, a setting; never listed",
