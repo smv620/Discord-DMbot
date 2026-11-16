@@ -440,6 +440,7 @@ class EveryCallerThatChoseSecret(unittest.TestCase):
             found,
             {
                 "dmbot/memory/backstory_keep.py:keep_all",  # the card's Players: hide
+                "dmbot/memory/claims.py:confirm",  # 👥 Some know on a connection the players see
                 "dmbot/memory/link_edits.py:set_secret",  # 🤫 on a connection
                 "dmbot/memory/link_edits.py:_set_flags",  # Who knows this connection
                 "dmbot/memory/name_edits.py:_set_flags",  # Who knows this name

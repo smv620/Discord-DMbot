@@ -149,7 +149,9 @@ class SomeKnow(ConfirmedMemoryTest):
         first, second = view.page
         await view._pick(it, first.id)
         picker = it.sent[-1][1]
-        self.assertIn("👤 DMbot thinks only Wren knows this: it is ticked.", it.sent[-1][0])
+        self.assertIn("👤 DMbot's guess is ticked: only Wren knows this.", it.sent[-1][0])
+        picker.chosen = [self.wren, self.ash]  # (the DM's own ticks never carry DMbot's name)
+        self.assertNotIn("DMbot's guess", picker.text())
         picker.chosen = [self.wren]
         await picker._save(it)
         self.assertIn("👤 Remembered:", it.sent[-1][0])
@@ -168,20 +170,23 @@ class SomeKnow(ConfirmedMemoryTest):
         self.assertEqual(join(party, ["0", "2"]), "A and C")  # type: ignore[arg-type]
         self.assertEqual(join(party, ["0", "1", "2"]), "A, B and C")  # type: ignore[arg-type]
 
-    async def test_a_refusal_keeps_the_picker_and_says_why(self) -> None:
+    async def test_a_pick_on_a_connection_the_players_see_narrows_it_instead_of_refusing(
+        self,
+    ) -> None:
         await self.both()
         await self.memory.add_relation(
             GUILD_A, self.c, self.bram, "located_in", self.town, source="dm",
             status="confirmed", confidence=1.0,
         )  # fmt: skip
         it, view, _ = await self.page(said("Bram", "is in", "Veldmoor"))
-        await view._pick(it, view.page[0].id)
+        claim_id = view.page[0].id
+        await view._pick(it, claim_id)
         picker = it.sent[-1][1]
         picker.chosen = [self.wren]
         await picker._save(it)
-        self.assertIn("can already see this", it.sent[-1][0])
-        self.assertFalse(picker.is_finished())
-        self.assertNotIn(view.page[0].id, view.answered)
+        self.assertIn("Known to: Wren.", it.sent[-1][0])
+        waiting = await self.claims.waiting(GUILD_A, self.c, opted_in={7, 8})
+        self.assertNotIn(claim_id, [w.id for w in waiting])  # (answered: nothing left to ask)
 
     async def test_back_returns_to_the_page_unchanged(self) -> None:
         await self.both()
@@ -242,3 +247,10 @@ class SomeKnow(ConfirmedMemoryTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AStalePressStillAnswers(unittest.IsolatedAsyncioTestCase):
+    async def test_party_names_of_nothing_is_safe(self) -> None:
+        from dmbot.ui.claims_review import party_names
+
+        self.assertEqual(party_names([], ["x"]), "nobody")
