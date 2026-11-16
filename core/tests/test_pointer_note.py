@@ -70,3 +70,13 @@ class Sending(unittest.IsolatedAsyncioTestCase):
         sent = b.ask_privately.await_args.args[3]
         self.assertIsNot(sent, view)
         self.assertEqual(len(b.post_message.await_args.args[2].children), 1)
+
+
+class Notes(unittest.IsolatedAsyncioTestCase):
+    async def test_a_statement_is_marked_as_a_note_not_a_question(self) -> None:
+        b = bot(True)
+        await pointer_note.send(b, campaign(), "w", lambda: discord.ui.View(), None, note=True)
+        self.assertTrue(b.ask_privately.await_args.kwargs["note"])
+        c = bot(True)
+        await run(c, campaign())
+        self.assertFalse(c.ask_privately.await_args.kwargs["note"])
