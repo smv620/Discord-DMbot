@@ -35,11 +35,14 @@ def load(name: str) -> dict[str, Any]:
         return dict(json.load(f))
 
 
-def default_knowers(key: dict[str, Any], row: dict[str, Any]) -> set[str]:
-    """Who knows a row with no knowers field: the speaker and every person or creature on it."""
+# Rows whose knowers leave out someone on them, on purpose: the ringmaster died there.
+NOT_EVERY_END = {"ae04"}
+
+
+def on_row(key: dict[str, Any], row: dict[str, Any]) -> set[str]:
+    """The people and creatures a row names: a pair's two ends, an event's who."""
     people = {n["name"] for n in key["nodes"] if n["kind"] in {"person", "creature"}}
-    on_row = {row.get("a"), row.get("b"), *row.get("who", ())}
-    return {key["speaker"]} | (on_row & people)
+    return {row.get("a"), row.get("b"), *row.get("who", ())} & people
 
 
 def names_of(key: dict[str, Any]) -> set[str]:
@@ -87,11 +90,10 @@ class TheBackstoryKeys(unittest.TestCase):
             people = {n["name"] for n in key["nodes"] if n["kind"] in {"person", "creature"}}
             for section in ("nodes", *ROWS):
                 for row in key[section]:
-                    knowers = row.get("knowers")
+                    knowers = row["knowers"]  # (written out on every row)
                     label = f"{slug} {row.get('id', row.get('name'))}"
                     with self.subTest(label):
-                        if knowers is None:  # (the speaker alone)
-                            continue
+                        self.assertIn(row.get("check", False), {True, False})
                         if isinstance(knowers, str):
                             self.assertIn(knowers, GROUP_KNOWERS)
                         else:
@@ -99,16 +101,29 @@ class TheBackstoryKeys(unittest.TestCase):
                             self.assertLessEqual(set(knowers), people)
 
     def test_the_owners_ruling_c_cases_are_in_the_keys(self) -> None:
-        """An event between two is known to both (the default reads every name on it); something
+        """What happens between two is known to both, NPCs included (Supervisor on #4566); something
         nobody knows, not even the speaker, is the DM's alone (Claude doesn't remember what he made
         himself forget); and a death only Claude saw is Claude's."""
-        cerric = self.keys["cerric"]
-        ce04 = next(r for r in cerric["events"] if r["id"] == "ce04")
-        self.assertNotIn("knowers", ce04)
-        self.assertEqual(default_knowers(cerric, ce04), {"Cerric Vanya'elen", "Wit"})
+        cerric = {r["id"]: r for s in ("pairs", "events") for r in self.keys["cerric"][s]}
+        self.assertEqual(set(cerric["ce04"]["knowers"]), {"Cerric Vanya'elen", "Wit"})
+        self.assertEqual(set(cerric["c018"]["knowers"]), {"Cerric Vanya'elen", "Wit"})
+        self.assertIn("Wit", cerric["c016"]["knowers"])
+        self.assertTrue(cerric["c006"]["check"])  # (the grandfather is dead)
         claude = {r["id"]: r for r in self.keys["claude"]["events"]}
         self.assertEqual(claude["ae01"]["knowers"], "dm")
         self.assertEqual(claude["ae04"]["knowers"], ["Claude Ambere"])
+
+    def test_everyone_on_a_row_knows_it(self) -> None:
+        """Ruling C for every row: a list of knowers holds every person on the row."""
+        for slug, key in self.keys.items():
+            for section in ("pairs", "events"):
+                for row in key[section]:
+                    knowers = row["knowers"]
+                    if isinstance(knowers, str) or row["id"] in NOT_EVERY_END:
+                        continue
+                    with self.subTest(f"{slug} {row['id']}"):
+                        self.assertLessEqual(on_row(key, row), set(knowers))
+                        self.assertIn(key["speaker"], knowers)
 
     def test_every_event_names_the_keys_own_entries(self) -> None:
         for slug, key in self.keys.items():

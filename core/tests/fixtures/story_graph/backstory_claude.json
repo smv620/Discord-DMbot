@@ -5,14 +5,15 @@
   "speaker": "Claude Ambere",
   "how_to_read": {
     "speaker": "the player character whose secret backstory this is: the upload's speaker",
-    "knowers": "who knows the row before anything public names it. With no knowers field: the speaker, and every person or creature on the row (a pair's two ends, an event's who), since what happens between two is known to both (#4523 ruling C). Otherwise a list of names (the only knowers), \"party\" (all four player characters), \"everyone\" (common knowledge) or \"dm\" (nobody: a real secret, not even the speaker). A node with no knowers is known to the speaker and to itself if it is a person",
+    "knowers": "who knows the row before anything public names it, written out on every row: a list of names (the speaker, and every person or creature on the row, since what happens between two is known to both: #4523 ruling C, NPCs included), \"party\" (all four player characters), \"everyone\" (common knowledge) or \"dm\" (nobody: a real secret, not even the speaker)",
     "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted as a fact)",
     "must_find": "false = a good find if present, not a miss if absent",
     "current": "false = history: it was true and is not now",
     "line": "the line of the document's plain-text export that supports it (blank lines count)",
     "reveals": "lore_key.json's reveals lists, by id, the rows of this key the public lore states; judged by what the lore says, row by row, never by matching ends alone",
     "threads": "kind quest, hook or mystery; taker = whose own pursuit it is; same_as = the lore key's thread for the same story",
-    "relation": "as lore_key.json"
+    "relation": "as lore_key.json",
+    "check": "true = the owner should check the knowers: one may not really know it (dead, vanished, unknowable) or the row is only implied"
   },
   "nodes": [
     {
@@ -32,13 +33,21 @@
       "kind": "group",
       "aliases": [
         "traveling circus"
+      ],
+      "knowers": [
+        "Claude Ambere"
       ]
     },
     {
       "name": "The ringmaster",
       "kind": "person",
       "must_find": false,
-      "note": "the circus's cruel ringmaster; Claude killed him"
+      "note": "the circus's cruel ringmaster; Claude killed him",
+      "knowers": [
+        "Claude Ambere",
+        "The ringmaster"
+      ],
+      "check": true
     },
     {
       "name": "The party",
@@ -58,7 +67,10 @@
       "tier": "stated",
       "must_find": true,
       "line": 28,
-      "current": false
+      "current": false,
+      "knowers": [
+        "Claude Ambere"
+      ]
     },
     {
       "id": "a002",
@@ -67,7 +79,12 @@
       "b": "The circus",
       "tier": "inferred",
       "must_find": false,
-      "line": 28
+      "line": 28,
+      "knowers": [
+        "Claude Ambere",
+        "The ringmaster"
+      ],
+      "check": true
     },
     {
       "id": "a003",
@@ -78,7 +95,12 @@
       "must_find": false,
       "line": 28,
       "current": false,
-      "note": "dead (line 31)"
+      "note": "dead (line 31)",
+      "knowers": [
+        "Claude Ambere",
+        "The ringmaster"
+      ],
+      "check": true
     },
     {
       "id": "a004",
@@ -107,7 +129,10 @@
       "who": [
         "Claude Ambere"
       ],
-      "line": 28
+      "line": 28,
+      "knowers": [
+        "Claude Ambere"
+      ]
     },
     {
       "id": "ae03",
@@ -115,7 +140,10 @@
       "who": [
         "Claude Ambere"
       ],
-      "line": 31
+      "line": 31,
+      "knowers": [
+        "Claude Ambere"
+      ]
     },
     {
       "id": "ae04",
@@ -139,7 +167,10 @@
       "missing": [],
       "in_danger": [],
       "line": 52,
-      "hint": "a tragedy, a crime, a secret or a truth: the text leaves it open"
+      "hint": "a tragedy, a crime, a secret or a truth: the text leaves it open",
+      "knowers": [
+        "Claude Ambere"
+      ]
     }
   ],
   "languages": [],

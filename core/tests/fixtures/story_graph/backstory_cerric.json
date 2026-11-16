@@ -5,14 +5,15 @@
   "speaker": "Cerric Vanya'elen",
   "how_to_read": {
     "speaker": "the player character whose secret backstory this is: the upload's speaker",
-    "knowers": "who knows the row before anything public names it. With no knowers field: the speaker, and every person or creature on the row (a pair's two ends, an event's who), since what happens between two is known to both (#4523 ruling C). Otherwise a list of names (the only knowers), \"party\" (all four player characters), \"everyone\" (common knowledge) or \"dm\" (nobody: a real secret, not even the speaker). A node with no knowers is known to the speaker and to itself if it is a person",
+    "knowers": "who knows the row before anything public names it, written out on every row: a list of names (the speaker, and every person or creature on the row, since what happens between two is known to both: #4523 ruling C, NPCs included), \"party\" (all four player characters), \"everyone\" (common knowledge) or \"dm\" (nobody: a real secret, not even the speaker)",
     "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted as a fact)",
     "must_find": "false = a good find if present, not a miss if absent",
     "current": "false = history: it was true and is not now",
     "line": "the line of the document's plain-text export that supports it (blank lines count)",
     "reveals": "lore_key.json's reveals lists, by id, the rows of this key the public lore states; judged by what the lore says, row by row, never by matching ends alone",
     "threads": "kind quest, hook or mystery; taker = whose own pursuit it is; same_as = the lore key's thread for the same story",
-    "relation": "as lore_key.json"
+    "relation": "as lore_key.json",
+    "check": "true = the owner should check the knowers: one may not really know it (dead, vanished, unknowable) or the row is only implied"
   },
   "nodes": [
     {
@@ -33,7 +34,11 @@
       "aliases": [
         "Roceran Fa'ertenya"
       ],
-      "note": "his father; an explorer and wanderer (line 81)"
+      "note": "his father; an explorer and wanderer (line 81)",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Roceran"
+      ]
     },
     {
       "name": "Shafina",
@@ -41,27 +46,48 @@
       "aliases": [
         "Shafina Fa'ertenya"
       ],
-      "note": "his mother; a weaver and merchant guild leader"
+      "note": "his mother; a weaver and merchant guild leader",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Shafina"
+      ]
     },
     {
       "name": "Valyra",
       "kind": "person",
-      "note": "his younger sister, a sorcerer"
+      "note": "his younger sister, a sorcerer",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Valyra"
+      ]
     },
     {
       "name": "Kelfir Ama'Kiir",
       "kind": "person",
-      "note": "the elven mage Valyra apprenticed under"
+      "note": "the elven mage Valyra apprenticed under",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Kelfir Ama'Kiir"
+      ]
     },
     {
       "name": "Cerric's paternal grandfather",
       "kind": "person",
-      "note": "unnamed; died in a storm (line 16)"
+      "note": "unnamed; died in a storm (line 16)",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Cerric's paternal grandfather"
+      ],
+      "check": true
     },
     {
       "name": "Qinric",
       "kind": "person",
-      "note": "his uncle, a war mage in the Lord's Alliance"
+      "note": "his uncle, a war mage in the Lord's Alliance",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Qinric"
+      ]
     },
     {
       "name": "Syllar Sparkwalker",
@@ -71,7 +97,11 @@
         "Syllar",
         "Master Syllar"
       ],
-      "note": "his master; signs the note S"
+      "note": "his master; signs the note S",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Syllar Sparkwalker"
+      ]
     },
     {
       "name": "Emmerich Ravenstride",
@@ -79,17 +109,30 @@
       "aliases": [
         "Emmerich"
       ],
-      "note": "an apprentice and Cerric's rival"
+      "note": "an apprentice and Cerric's rival",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Emmerich Ravenstride"
+      ]
     },
     {
       "name": "Wit",
       "kind": "person",
-      "note": "an apprentice; came back badly hurt (line 34); her fate is open"
+      "note": "an apprentice; came back badly hurt (line 34); her fate is open",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Wit"
+      ]
     },
     {
       "name": "Danneth",
       "kind": "person",
-      "note": "named in the master's note"
+      "note": "named in the master's note",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Danneth"
+      ],
+      "check": true
     },
     {
       "name": "Khelben Arunsun",
@@ -105,7 +148,10 @@
     {
       "name": "The Brotherhood",
       "kind": "group",
-      "note": "named in the note; who they are is open"
+      "note": "named in the note; who they are is open",
+      "knowers": [
+        "Cerric Vanya'elen"
+      ]
     },
     {
       "name": "Lord's Alliance",
@@ -122,7 +168,10 @@
         "Council of the Blackstaff Tower",
         "Council of Blackstaff"
       ],
-      "note": "the council Master Sparkwalker sits on"
+      "note": "the council Master Sparkwalker sits on",
+      "knowers": [
+        "Cerric Vanya'elen"
+      ]
     },
     {
       "name": "The Harpers",
@@ -158,7 +207,10 @@
     },
     {
       "name": "Sparkwalker Spire",
-      "kind": "place"
+      "kind": "place",
+      "knowers": [
+        "Cerric Vanya'elen"
+      ]
     },
     {
       "name": "Blackstaff Tower",
@@ -234,13 +286,19 @@
         "the Master's tome",
         "the tome"
       ],
-      "note": "locked, azure with silver; Cerric took it"
+      "note": "locked, azure with silver; Cerric took it",
+      "knowers": [
+        "Cerric Vanya'elen"
+      ]
     },
     {
       "name": "Marble bust of Khelben",
       "kind": "item",
       "must_find": false,
-      "note": "used to break the lock"
+      "note": "used to break the lock",
+      "knowers": [
+        "Cerric Vanya'elen"
+      ]
     }
   ],
   "pairs": [
@@ -251,7 +309,11 @@
       "b": "Cerric Vanya'elen",
       "tier": "stated",
       "must_find": true,
-      "line": 1
+      "line": 1,
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Roceran"
+      ]
     },
     {
       "id": "c002",
@@ -260,7 +322,11 @@
       "b": "Cerric Vanya'elen",
       "tier": "stated",
       "must_find": true,
-      "line": 1
+      "line": 1,
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Shafina"
+      ]
     },
     {
       "id": "c003",
@@ -270,7 +336,13 @@
       "tier": "inferred",
       "must_find": true,
       "line": 1,
-      "note": "the same parents: implied"
+      "note": "the same parents: implied",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Roceran",
+        "Valyra"
+      ],
+      "check": true
     },
     {
       "id": "c004",
@@ -280,7 +352,13 @@
       "tier": "inferred",
       "must_find": true,
       "line": 1,
-      "note": "the same parents: implied, never said of her"
+      "note": "the same parents: implied, never said of her",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Shafina",
+        "Valyra"
+      ],
+      "check": true
     },
     {
       "id": "c005",
@@ -290,7 +368,11 @@
       "tier": "stated",
       "must_find": true,
       "line": 1,
-      "note": "younger sister by two years"
+      "note": "younger sister by two years",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Valyra"
+      ]
     },
     {
       "id": "c006",
@@ -300,7 +382,12 @@
       "tier": "stated",
       "must_find": true,
       "line": 16,
-      "note": "died in a storm; still his grandfather"
+      "note": "died in a storm; still his grandfather",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Cerric's paternal grandfather"
+      ],
+      "check": true
     },
     {
       "id": "c007",
@@ -309,7 +396,12 @@
       "b": "Roceran",
       "tier": "stated",
       "must_find": true,
-      "line": 16
+      "line": 16,
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Qinric",
+        "Roceran"
+      ]
     },
     {
       "id": "c008",
@@ -318,7 +410,11 @@
       "b": "Cerric Vanya'elen",
       "tier": "stated",
       "must_find": true,
-      "line": 16
+      "line": 16,
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Qinric"
+      ]
     },
     {
       "id": "c009",
@@ -327,7 +423,11 @@
       "b": "Lord's Alliance",
       "tier": "stated",
       "must_find": true,
-      "line": 16
+      "line": 16,
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Qinric"
+      ]
     },
     {
       "id": "c010",
@@ -336,7 +436,12 @@
       "b": "Kelfir Ama'Kiir",
       "tier": "stated",
       "must_find": true,
-      "line": 13
+      "line": 13,
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Kelfir Ama'Kiir",
+        "Valyra"
+      ]
     },
     {
       "id": "c011",
@@ -347,7 +452,11 @@
       "must_find": true,
       "line": 16,
       "current": false,
-      "note": "a steward under him; ended when he fled"
+      "note": "a steward under him; ended when he fled",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Syllar Sparkwalker"
+      ]
     },
     {
       "id": "c012",
@@ -358,7 +467,10 @@
       "must_find": false,
       "line": 19,
       "current": false,
-      "note": "Keeper of it"
+      "note": "Keeper of it",
+      "knowers": [
+        "Cerric Vanya'elen"
+      ]
     },
     {
       "id": "c013",
@@ -368,7 +480,10 @@
       "tier": "stated",
       "must_find": true,
       "line": 19,
-      "current": false
+      "current": false,
+      "knowers": [
+        "Cerric Vanya'elen"
+      ]
     },
     {
       "id": "c014",
@@ -377,7 +492,11 @@
       "b": "Council of the Blackstaff",
       "tier": "stated",
       "must_find": true,
-      "line": 16
+      "line": 16,
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Syllar Sparkwalker"
+      ]
     },
     {
       "id": "c015",
@@ -386,7 +505,12 @@
       "b": "Emmerich Ravenstride",
       "tier": "stated",
       "must_find": true,
-      "line": 25
+      "line": 25,
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Emmerich Ravenstride",
+        "Syllar Sparkwalker"
+      ]
     },
     {
       "id": "c016",
@@ -395,7 +519,12 @@
       "b": "Wit",
       "tier": "stated",
       "must_find": true,
-      "line": 25
+      "line": 25,
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Syllar Sparkwalker",
+        "Wit"
+      ]
     },
     {
       "id": "c017",
@@ -405,7 +534,11 @@
       "tier": "stated",
       "must_find": true,
       "line": 28,
-      "note": "from both sides as told: Emmerich antagonized him (line 25)"
+      "note": "from both sides as told: Emmerich antagonized him (line 25)",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Emmerich Ravenstride"
+      ]
     },
     {
       "id": "c018",
@@ -416,7 +549,11 @@
       "must_find": true,
       "line": 28,
       "detail": "respect",
-      "note": "mutual respect. The lore calls her his rival (l018): the two disagree, the DM decides"
+      "note": "mutual respect. The lore calls her his rival (l018): the two disagree, the DM decides",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Wit"
+      ]
     },
     {
       "id": "c019",
@@ -425,7 +562,10 @@
       "b": "Waterdeep",
       "tier": "stated",
       "must_find": true,
-      "line": 1
+      "line": 1,
+      "knowers": [
+        "Cerric Vanya'elen"
+      ]
     },
     {
       "id": "c020",
@@ -446,7 +586,10 @@
       "tier": "stated",
       "must_find": true,
       "line": 4,
-      "current": false
+      "current": false,
+      "knowers": [
+        "Cerric Vanya'elen"
+      ]
     },
     {
       "id": "c022",
@@ -465,7 +608,10 @@
       "b": "Azure tome",
       "tier": "stated",
       "must_find": true,
-      "line": 37
+      "line": 37,
+      "knowers": [
+        "Cerric Vanya'elen"
+      ]
     },
     {
       "id": "c024",
@@ -474,7 +620,11 @@
       "b": "Azure tome",
       "tier": "stated",
       "must_find": true,
-      "line": 34
+      "line": 34,
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Syllar Sparkwalker"
+      ]
     },
     {
       "id": "c025",
@@ -484,7 +634,10 @@
       "tier": "stated",
       "must_find": true,
       "line": 52,
-      "note": "the newest place in the backstory (he leaves for the Dale next, line 73)"
+      "note": "the newest place in the backstory (he leaves for the Dale next, line 73)",
+      "knowers": [
+        "Cerric Vanya'elen"
+      ]
     },
     {
       "id": "c026",
@@ -494,7 +647,10 @@
       "tier": "stated",
       "must_find": false,
       "line": 43,
-      "current": false
+      "current": false,
+      "knowers": [
+        "Cerric Vanya'elen"
+      ]
     },
     {
       "id": "c027",
@@ -505,7 +661,10 @@
       "must_find": false,
       "line": 37,
       "current": false,
-      "note": "the tower's garden, by the rune"
+      "note": "the tower's garden, by the rune",
+      "knowers": [
+        "Cerric Vanya'elen"
+      ]
     },
     {
       "id": "c028",
@@ -515,7 +674,12 @@
       "tier": "inferred",
       "must_find": true,
       "line": 59,
-      "note": "the note is addressed to him there"
+      "note": "the note is addressed to him there",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Danneth"
+      ],
+      "check": true
     },
     {
       "id": "c029",
@@ -525,7 +689,13 @@
       "tier": "inferred",
       "must_find": true,
       "line": 59,
-      "note": "he wrote the note to or about him"
+      "note": "he wrote the note to or about him",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Danneth",
+        "Syllar Sparkwalker"
+      ],
+      "check": true
     },
     {
       "id": "c030",
@@ -565,7 +735,12 @@
       "tier": "inferred",
       "must_find": true,
       "line": 37,
-      "note": "his spire, study and laboratory are in it"
+      "note": "his spire, study and laboratory are in it",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Syllar Sparkwalker"
+      ],
+      "check": true
     },
     {
       "id": "c034",
@@ -575,7 +750,11 @@
       "tier": "stated",
       "must_find": false,
       "line": 34,
-      "current": false
+      "current": false,
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Wit"
+      ]
     },
     {
       "id": "c035",
@@ -596,7 +775,11 @@
       "tier": "inferred",
       "must_find": false,
       "line": 64,
-      "note": "he knows only the name"
+      "note": "he knows only the name",
+      "knowers": [
+        "Cerric Vanya'elen"
+      ],
+      "check": true
     },
     {
       "id": "c037",
@@ -606,7 +789,12 @@
       "tier": "stated",
       "must_find": true,
       "line": 16,
-      "note": "Syllar is one of his associates"
+      "note": "Syllar is one of his associates",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Qinric",
+        "Syllar Sparkwalker"
+      ]
     },
     {
       "id": "c038",
@@ -616,7 +804,13 @@
       "tier": "stated",
       "must_find": true,
       "line": 16,
-      "note": "his father's father"
+      "note": "his father's father",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Cerric's paternal grandfather",
+        "Roceran"
+      ],
+      "check": true
     },
     {
       "id": "c039",
@@ -625,7 +819,11 @@
       "b": "Sparkwalker Spire",
       "tier": "stated",
       "must_find": true,
-      "line": 22
+      "line": 22,
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Syllar Sparkwalker"
+      ]
     },
     {
       "id": "c040",
@@ -635,7 +833,12 @@
       "tier": "inferred",
       "must_find": false,
       "line": 60,
-      "note": "the note warns they know who he is"
+      "note": "the note warns they know who he is",
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Danneth"
+      ],
+      "check": true
     }
   ],
   "events": [
@@ -646,7 +849,11 @@
         "Cerric Vanya'elen",
         "Valyra"
       ],
-      "line": 13
+      "line": 13,
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Valyra"
+      ]
     },
     {
       "id": "ce02",
@@ -655,7 +862,11 @@
         "Cerric Vanya'elen",
         "Qinric"
       ],
-      "line": 16
+      "line": 16,
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Qinric"
+      ]
     },
     {
       "id": "ce03",
@@ -664,7 +875,11 @@
         "Cerric Vanya'elen",
         "Syllar Sparkwalker"
       ],
-      "line": 31
+      "line": 31,
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Syllar Sparkwalker"
+      ]
     },
     {
       "id": "ce07",
@@ -674,7 +889,12 @@
         "Emmerich Ravenstride",
         "Wit"
       ],
-      "line": 31
+      "line": 31,
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Emmerich Ravenstride",
+        "Wit"
+      ]
     },
     {
       "id": "ce04",
@@ -683,7 +903,11 @@
         "Cerric Vanya'elen",
         "Wit"
       ],
-      "line": 34
+      "line": 34,
+      "knowers": [
+        "Cerric Vanya'elen",
+        "Wit"
+      ]
     },
     {
       "id": "ce05",
@@ -691,7 +915,10 @@
       "who": [
         "Cerric Vanya'elen"
       ],
-      "line": 37
+      "line": 37,
+      "knowers": [
+        "Cerric Vanya'elen"
+      ]
     },
     {
       "id": "ce08",
@@ -699,7 +926,10 @@
       "who": [
         "Cerric Vanya'elen"
       ],
-      "line": 37
+      "line": 37,
+      "knowers": [
+        "Cerric Vanya'elen"
+      ]
     },
     {
       "id": "ce06",
@@ -707,7 +937,10 @@
       "who": [
         "Cerric Vanya'elen"
       ],
-      "line": 52
+      "line": 52,
+      "knowers": [
+        "Cerric Vanya'elen"
+      ]
     }
   ],
   "threads": [
@@ -731,6 +964,9 @@
           "line": 64,
           "note": "find Danneth in Easthaven"
         }
+      ],
+      "knowers": [
+        "Cerric Vanya'elen"
       ]
     },
     {
@@ -740,7 +976,10 @@
       "taker": "Cerric Vanya'elen",
       "missing": [],
       "in_danger": [],
-      "line": 46
+      "line": 46,
+      "knowers": [
+        "Cerric Vanya'elen"
+      ]
     },
     {
       "id": "bc03",
@@ -752,7 +991,10 @@
       ],
       "in_danger": [],
       "line": 46,
-      "must_find": false
+      "must_find": false,
+      "knowers": [
+        "Cerric Vanya'elen"
+      ]
     },
     {
       "id": "bc04",
@@ -765,7 +1007,10 @@
       "in_danger": [],
       "line": 46,
       "must_find": false,
-      "same_as": "lq02"
+      "same_as": "lq02",
+      "knowers": [
+        "Cerric Vanya'elen"
+      ]
     }
   ],
   "languages": [
