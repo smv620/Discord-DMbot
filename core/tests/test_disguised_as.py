@@ -160,7 +160,7 @@ class TheStore(moved.MergeMovesConnections):
         jax, valyra = await self.setUpPeople()
         relation = (await self.disguise(jax, valyra)).value[0]
         done = await self.memory.update_relation(
-            GUILD_A, self.c, relation.id, source="dm", secret=False
+            GUILD_A, self.c, relation.id, source="dm", secret=False, dm_chose_secret=True
         )
         self.assertFalse(done.value.secret)
         again = (await self.disguise(jax, valyra)).value[0]  # stated again: the choice stays

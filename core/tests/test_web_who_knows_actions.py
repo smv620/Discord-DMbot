@@ -110,7 +110,7 @@ class TheDoor(Web):
     async def test_an_other_name_is_asked_of_the_name_it_belongs_to(self) -> None:
         made = await self.memory.add_alias(
             self.g, self.one.id, self.keep, "the old fort", kind="nickname",
-            source=DM_SOURCE, status="confirmed", secret=True,
+            source=DM_SOURCE, status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         alias = made.value.id
         body = {"action": "alias-who", "alias": alias, "who": "some", "characters": [self.npc]}
@@ -139,7 +139,7 @@ class TheDoor(Web):
         )
         made = await self.memory.add_alias(
             self.g, self.one.id, self.keep, "the old fort", kind="nickname",
-            source=DM_SOURCE, status="confirmed", secret=True,
+            source=DM_SOURCE, status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         body = {"action": "alias-who", "alias": made.value.id, "who": "some"}
         with self.assertRaises(RecapError) as bad:  # a character the campaign does not have
@@ -232,7 +232,7 @@ class TheBotAppliesIt(Editing):
     async def test_a_secret_other_name(self) -> None:
         made = await self.memory.add_alias(
             self.g, self.one.id, self.keep, "the old fort", kind="nickname",
-            source=DM_SOURCE, status="confirmed", secret=True,
+            source=DM_SOURCE, status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         alias = made.value.id
         body = {"action": "alias-who", "alias": alias, "who": "some", "characters": [self.rook]}
@@ -274,7 +274,7 @@ class TheBotAppliesIt(Editing):
     async def secret_name(self, *, secret: bool = True) -> str:
         made = await self.memory.add_alias(
             self.g, self.one.id, self.keep, "the old fort", kind="nickname",
-            source=DM_SOURCE, status="confirmed", secret=secret,
+            source=DM_SOURCE, status="confirmed", secret=secret, dm_chose_secret=True,
         )  # fmt: skip
         return made.value.id
 

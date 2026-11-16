@@ -85,7 +85,9 @@ class HidingAndShowingAgain(Base):
 
     async def test_what_the_dm_changed_in_between_stays(self) -> None:
         rel = await self.listed()
-        await self.memory.update_relation(GUILD_A, self.c, rel, source="dm", secret=False)
+        await self.memory.update_relation(
+            GUILD_A, self.c, rel, source="dm", secret=False, dm_chose_secret=True
+        )
         await self.hide(self.arlo)
         persp = {p.entity_id: p.id for p in await self.memory.perspectives(GUILD_A, self.c)}
         await self.memory.believe(
@@ -100,7 +102,9 @@ class HidingAndShowingAgain(Base):
             GUILD_A, self.c, rel, [], source="dm", dm_chose_secret=True
         )  # removed
         removed = await self.newest(rel, self.pc)
-        await self.memory.update_relation(GUILD_A, self.c, rel, source="dm", secret=False)
+        await self.memory.update_relation(
+            GUILD_A, self.c, rel, source="dm", secret=False, dm_chose_secret=True
+        )
         await self.hide(self.arlo)
         await self.hide(self.arlo, False)
         self.assertEqual((await self.newest(rel, self.pc))["confidence"], removed["confidence"])

@@ -464,7 +464,7 @@ class YesClearsItAndUndoRestoresIt(MemoryTest):
         )
         alias = await self.memory.add_alias(
             GUILD_A, self.c, mira, "The Hooded One", kind="nickname", source="dm",
-            status="confirmed", secret=True,
+            status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         found = await secret_names(self.memory, GUILD_A, self.c)
         got = revealed_in("then the hooded one spoke", found, [], RevealSession())
@@ -482,7 +482,7 @@ class YesClearsItAndUndoRestoresIt(MemoryTest):
         )
         await self.memory.add_alias(
             GUILD_A, self.c, mira, "The Hooded One", kind="nickname", source="dm",
-            status="confirmed", secret=True,
+            status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         before = await secret_names(self.memory, GUILD_A, self.c)
         revealed_in("the hooded one", before, [], RevealSession())
@@ -497,7 +497,7 @@ class YesClearsItAndUndoRestoresIt(MemoryTest):
             aliases.append(
                 await self.memory.add_alias(
                     GUILD_A, self.c, entry, "The Hooded One", kind="nickname", source="dm",
-                    status="confirmed", secret=True,
+                    status="confirmed", secret=True, dm_chose_secret=True,
                 )
             )  # fmt: skip
         found = await secret_names(self.memory, GUILD_A, self.c)
@@ -520,7 +520,7 @@ class YesClearsItAndUndoRestoresIt(MemoryTest):
         )
         alias = await self.memory.add_alias(
             GUILD_A, self.c, mira, "The Hooded One", kind="nickname", source="dm",
-            status="confirmed", secret=True,
+            status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         before = await secret_names(self.memory, GUILD_A, self.c)
         campaign = SimpleNamespace(

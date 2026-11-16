@@ -211,7 +211,14 @@ class TheSweep(Names):
         await self.play(ALICE, "Cerric")
         villain = await self.add("Eric the Red", type="npc")
         await self.memory.add_alias(
-            GUILD_A, self.c, villain, "Eric", kind="full", source="dm", secret=True
+            GUILD_A,
+            self.c,
+            villain,
+            "Eric",
+            kind="full",
+            source="dm",
+            secret=True,
+            dm_chose_secret=True,
         )
         self.assertFalse(await self.memory.name_person(GUILD_A, self.c, ALICE, "Eric"))
         self.assertFalse(await self.memory.name_person(GUILD_A, self.c, ALICE, "DM"))

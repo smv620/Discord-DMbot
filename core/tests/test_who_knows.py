@@ -266,7 +266,9 @@ class WhoKnows(MemoryTest):
         await self.memory.set_connection_knowers(
             GUILD_A, self.c, link, [ids["tavin"]], source=DM, dm_chose_secret=True
         )
-        await self.memory.update_relation(GUILD_A, self.c, link, source=DM, secret=False)
+        await self.memory.update_relation(
+            GUILD_A, self.c, link, source=DM, secret=False, dm_chose_secret=True
+        )
         self.assertEqual((await self.party()).get(link), 1.0)  # the existing reveal, unchanged
 
     async def test_the_change_can_be_undone(self) -> None:
@@ -283,7 +285,15 @@ class WhoKnows(MemoryTest):
 
     async def secret_name(self, entity: str, text: str = "Rook") -> str:
         made = await self.memory.add_alias(
-            GUILD_A, self.c, entity, text, kind="title", secret=True, source=DM, status=CONFIRMED
+            GUILD_A,
+            self.c,
+            entity,
+            text,
+            kind="title",
+            secret=True,
+            source=DM,
+            status=CONFIRMED,
+            dm_chose_secret=True,
         )
         return str(made.value.id)
 
@@ -341,7 +351,9 @@ class WhoKnows(MemoryTest):
         )
         shown = [a.text for a in await self.memory.aliases(GUILD_A, self.c)]
         self.assertNotIn("Shade", shown)  # (the plain reader hides a secret name)
-        await self.memory.update_alias(GUILD_A, self.c, alias, secret=False, source=DM)
+        await self.memory.update_alias(
+            GUILD_A, self.c, alias, secret=False, source=DM, dm_chose_secret=True
+        )
         self.assertEqual(await self.memory.alias_knowers(GUILD_A, self.c, [alias]), {})
         await self.memory.update_alias(
             GUILD_A, self.c, alias, secret=True, source=DM, dm_chose_secret=True
@@ -521,7 +533,7 @@ class WhoKnows(MemoryTest):
         ids = await self.setup_table()
         made = await self.memory.add_alias(
             GUILD_A, self.c, ids["tavin"], "Rook", kind="nickname", source=DM,
-            status=CONFIRMED, secret=True,
+            status=CONFIRMED, secret=True, dm_chose_secret=True,
         )  # fmt: skip
         alias = str(made.value.id)
         await self.memory.set_alias_knowers(
@@ -535,7 +547,14 @@ class WhoKnows(MemoryTest):
     async def test_a_proposed_name_a_merged_owner_and_a_proposed_link_never_show(self) -> None:
         ids = await self.setup_table()
         made = await self.memory.add_alias(
-            GUILD_A, self.c, ids["tavin"], "Rook", kind="nickname", source=DM, secret=True
+            GUILD_A,
+            self.c,
+            ids["tavin"],
+            "Rook",
+            kind="nickname",
+            source=DM,
+            secret=True,
+            dm_chose_secret=True,
         )  # (not confirmed: it is still only proposed)
         await self.memory.set_alias_knowers(
             GUILD_A, self.c, str(made.value.id), [ids["tavin"]], source=DM, dm_chose_secret=True

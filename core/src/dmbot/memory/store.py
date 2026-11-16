@@ -10057,12 +10057,9 @@ async def _move_aliases(
     keep_aliases = {a["key"]: a for a in await w.select(ALIASES, " AND entity_id = %s", [keep_id])}
     moving: list[str] = []
     confirming: list[str] = []
-    gone_row = await w.get(ENTITIES, gone_id, lock=False)
-    # Public never becomes secret by itself (#4524): a name the players see on the entry that goes
-    # keeps being seen when the twin it folds into is secret, unless the DM chose it or a join
-    # keeps who the stranger was (`Changes.joining`); the DM is asked instead.
-    guard = not (join or secret or w.dm_chose_secret or w.joining or w.undoes is not None)
-    gone_shown = gone_row is not None and knowers.entry_shown(gone_row)
+    kept = await w.get(ENTITIES, keep_id, lock=False)
+    # (the kept entry's main name, which everyone sees: a secret copy of it is refused below)
+    main_key = lookup_key(kept["name"]) if kept is not None else None
     for alias in await w.select(ALIASES, " AND entity_id = %s", [gone_id]):
         said = alias["key"] in confirm
         twin = keep_aliases.get(alias["key"])
@@ -10070,18 +10067,17 @@ async def _move_aliases(
             (confirming if said and alias["status"] != CONFIRMED else moving).append(alias["id"])
             continue
         status = CONFIRMED if said else alias["status"]
+        if alias["secret"] and not join and twin["key"] == main_key:
+            # The other entry's name was a secret one: the main name everyone sees must never be.
+            # Refused here, before the #4524 guard could keep it public and let the merge tell the
+            # players who the secret name was (`_merge_in` checks the same after the move).
+            raise MemoryRuleError("A secret name can't be the main name.")
         # (a join: the name Ken already had keeps its own flag, and whoever knew the copy that
         # goes knows his)
         upgrade = _upgrade(twin, status, alias["secret"] and not join, DM)
-        public_copy = guard and gone_shown and knowers.alias_shown(alias)
-        if public_copy and (twin["secret"] or upgrade.get("secret")):
-            upgrade.pop("secret", None)
-            upgrade.pop("said_as", None)
-            if twin["secret"]:
-                upgrade["secret"] = False
-            await secret_questions_mod.ask(
-                w, secret_questions_mod.NARROW, ALIASES.name, twin["id"], {"secret": True}
-            )
+        # (a secret copy that would make a public twin secret is held by the guard in
+        # `Changes.update` and asked, #4524; a twin that is already secret stays so: it is the DM's
+        # own secret name, and showing it would tell the players who the merged-away entry was)
         # (whoever knew the copy that goes knows the twin, in both lists: a join's rule, and
         # #4524's for a merge)
         await knowers.move_rows(w, "alias_id", alias["id"], twin["id"])

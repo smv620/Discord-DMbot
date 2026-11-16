@@ -128,7 +128,7 @@ class Learning(Helpers):
     async def test_a_secret_other_name_is_listed_where_the_name_card_reads(self) -> None:
         name = await self.memory.add_alias(
             GUILD_A, self.c, self.ids["bruno"], "The Masked One", kind="nickname", source="dm",
-            status=CONFIRMED, secret=True,
+            status=CONFIRMED, secret=True, dm_chose_secret=True,
         )  # fmt: skip
         alias, pc = name.value.id, self.ids["okthandom"]
         self.assertTrue(await self.learn(pc, ALIAS, alias))

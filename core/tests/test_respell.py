@@ -308,7 +308,7 @@ class ThePastTranscripts(NamesTest):
         keeper = await ui.save_name(self.memory, self.campaign, "Mirelle", "npc", [], [])
         await self.memory.add_alias(
             GUILD, self.campaign.id, keeper.id, "Brannoch Hall", kind="title", source="dm",
-            status="confirmed", secret=True,
+            status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         await self.fix()
         texts = await self.texts()
