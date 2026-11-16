@@ -341,13 +341,15 @@ PLAN_SAME_AS = Table(
 PLAN_POSITION = Table(
     "plan_position", "id", ("id", "document_id", "chapter_id", "set_by", "created_at")
 )
-# The 🤫 questions asked instead of taking knowledge away from the players (#4524, 0510): logged,
-# so an upload's Undo takes back the questions it asked, and Make it secret is one change.
+# The 🤫 questions asked instead of taking knowledge away from the players (#4524, 0510): unlogged
+# (an upload's Undo would otherwise fail once the DM answered one), tied to the asking write's
+# batch instead, which `MemoryStore.undo` reads.
 SECRET_QUESTIONS = Table(
     "secret_questions",
     "id",
     ("id", "kind", "item_table", "item_id", "change", "change_key", "label", "session_id",
-     "line_starts", "speaker_ids", "status", "created_at"),
+     "line_starts", "speaker_ids", "status", "created_at", "batch", "answered_batch"),
+    logged=False,
 )  # fmt: skip
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
        STORY_LANGUAGES, CULTURES, MAP_FACTS, MAPS, THREAD_PARTS,
@@ -534,6 +536,7 @@ class Changes(Scope):
         # asks instead (`public_guard`), counting what it held back here for its caller's notice.
         self.dm_chose_secret = dm_chose_secret
         self.held_back = 0
+        self.asked: list[str] = []  # the 🤫 questions this write asked, for their batch
         # True while a "same person" join moves an unnamed person's statements onto the named one
         # (`MemoryStore` join): what it makes secret keeps the players from learning who the
         # stranger was, which takes nothing from them, so the guard lets it through

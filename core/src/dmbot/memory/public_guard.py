@@ -90,8 +90,14 @@ async def is_public(w: Changes, table: Table, row: dict[str, Any]) -> bool:
     elif table.name == "memory_aliases":
         owner = await w.get(ENTITIES, row["entity_id"], lock=False)
         shown = knowers.alias_shown(row) and owner is not None and knowers.entry_shown(owner)
-    else:
-        shown = knowers.relation_shown(row)
+    else:  # (a connection the players see: shown itself, and both its ends shown)
+        ends = {
+            str(e["id"]): e
+            for e in await w.select(
+                ENTITIES, " AND id = ANY(%s)", [[row["subject_id"], row["object_id"]]]
+            )
+        }
+        shown = knowers.relation_shown(row) and knowers.ends_shown(ends, row)
     return shown or await known_to_players(w, table.name, row[table.key])
 
 

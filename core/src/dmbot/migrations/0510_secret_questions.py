@@ -19,16 +19,20 @@ from dmbot.migrations._shared import _isolate
 #   and a question whose item is gone shows as answered.
 # - `change`: what the write would have done, as column values or the knowers it would have taken
 #   off ({"hidden_from_players": true}, {"secret": true}, {"knowers_off": [<point of view ids>]},
-#   {"end": true, "by": <the new connection>}); `change_key` is it in a fixed form, so the same
-#   change on the same item is asked once, whatever became of the first question (Keep it known is
-#   remembered, the ruling's point 2). A different change may still ask.
+#   {"end": true, "by": <the new connection>, "at": <when>}); `change_key` is a hash of it (without
+#   "at", a time), so the same change on the same item is asked once, whatever became of the first
+#   question (Keep it known is remembered, the ruling's point 2). A different change may still ask.
 # - Evidence: `label` (an upload's or a session's label) and, from a session, `session_id`,
 #   `line_starts` and `speaker_ids` (5a's consent rule: no words; a waiting question goes when a
 #   speaker it quotes stops recording, `secret_questions.forget`).
 # - `status`: 'waiting', 'kept_known' (Keep it known / Keep both) or 'made_secret' (Make it secret
 #   / End the old one, which is the DM's own change with its own ↩ Undo).
-# Written through the change log (`_changes.SECRET_QUESTIONS`), so an upload's Undo takes back the
-# questions it asked with the rest of it. Per campaign with forced row-level security; it follows
+# - `batch`: the change-log batch of the write that asked (NULL when that write changed nothing
+#   else); an Undo of that batch takes back the questions it asked that are still waiting.
+#   `answered_batch`: the batch of a Make it secret, whose Undo puts the question back to waiting.
+# Not itself in the change log (`_changes.SECRET_QUESTIONS` is unlogged): a logged question would
+# make an upload's Undo fail once the DM answered it, and Keep it known must outlive that Undo.
+# Per campaign with forced row-level security; it follows
 # a campaign moved to another server and goes with it. Left out of backups as a wait
 # (`campaigns/tables.py`). No existing row changes.
 SQL = r"""
@@ -43,7 +47,7 @@ SQL = r"""
             CHECK (item_table IN ('memory_entities', 'memory_aliases', 'memory_relations')),
         item_id      TEXT NOT NULL CHECK (char_length(item_id) <= 64),
         change       JSONB NOT NULL CHECK (jsonb_typeof(change) = 'object'),
-        change_key   TEXT NOT NULL CHECK (char_length(change_key) <= 400),
+        change_key   TEXT NOT NULL CHECK (char_length(change_key) = 64),
         label        TEXT NOT NULL DEFAULT '' CHECK (char_length(label) <= 200),
         session_id   TEXT CHECK (session_id IS NULL OR char_length(session_id) <= 64),
         line_starts  BIGINT[] NOT NULL DEFAULT '{}',
@@ -51,11 +55,15 @@ SQL = r"""
         status       TEXT NOT NULL DEFAULT 'waiting'
             CHECK (status IN ('waiting', 'kept_known', 'made_secret')),
         created_at   BIGINT NOT NULL CHECK (created_at > 0),
+        batch        BIGINT,
+        answered_batch BIGINT,
         PRIMARY KEY (guild_id, campaign_id, id),
         UNIQUE (guild_id, campaign_id, item_table, item_id, change_key)
     );
     CREATE INDEX secret_questions_waiting ON secret_questions (guild_id, campaign_id)
         WHERE status = 'waiting';
+    CREATE INDEX secret_questions_by_batch ON secret_questions (guild_id, campaign_id, batch)
+        WHERE batch IS NOT NULL;
     CREATE INDEX secret_questions_by_speaker ON secret_questions USING gin (speaker_ids);
     """ + _isolate("secret_questions")
 

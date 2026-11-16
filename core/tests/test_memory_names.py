@@ -1187,7 +1187,7 @@ class NameCards(NamesTest):
         await page._who(it)
         self.assertIn("Players can see this connection.", it.response.edited[0][0])
         await self.memory.update_relation(
-            GUILD, self.campaign.id, rel.id, secret=True, source=DM_SOURCE
+            GUILD, self.campaign.id, rel.id, secret=True, source=DM_SOURCE, dm_chose_secret=True
         )
         self.fresh()
         page = await self.page_of(corin.id, rel.id)

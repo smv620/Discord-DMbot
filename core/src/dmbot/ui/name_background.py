@@ -43,6 +43,7 @@ from dmbot.memory import (
     pronouns,
     route_condition,
     route_words,
+    secret_questions,
     story_chain,
     traits_read,
     who_ask,
@@ -756,8 +757,13 @@ async def read_background(
 ) -> BackgroundRead:
     """`_read_background`, its AI calls charged to the campaign's owner as AI credits (#4005): a
     lore read is made because the DM added material, so it is the owner's to meter. Every way in
-    (the 🤖 button, the website, the queue) comes through here, so none can forget the scope."""
-    with credits.preparing(campaign.guild_id, campaign.id, "lore"):
+    (the 🤖 button, the website, the queue) comes through here, so none can forget the scope. A 🤫
+    question the read asks (#4524) cites the upload as the DM sees it ("Tavin's backstory, 24
+    Oct")."""
+    with (
+        credits.preparing(campaign.guild_id, campaign.id, "lore"),
+        secret_questions.evidence(upload_label(upload.label, time.time())),
+    ):
         return await _read_background(
             bot,
             campaign,
@@ -3740,10 +3746,11 @@ class ConnectionOffer(_Menu):
             now = int(time.time())
             start = keep.change_start(old, now)
             ended: list[int | None] = []
+            held: list[str] = []
             try:
                 shown = await keep.shown_entry_ids(memory, campaign.guild_id, campaign.id)
                 await keep.end_replaced(
-                    memory, campaign.guild_id, campaign.id, old, start, ended, link=c,
+                    memory, campaign.guild_id, campaign.id, old, start, ended, held=held, link=c,
                     hidden=secret or c.secret
                     or ((
                         view.unrevealed
@@ -3751,8 +3758,9 @@ class ConnectionOffer(_Menu):
                         else keep.kept_unrevealed(c, secret or c.secret, shown)
                     )
                     and not view.reveal),
-                    # (the DM's own 🤫 or "not said yet" on this card: their choice, #4524)
-                    dm_chose_secret=secret or bool(view.unrevealed),
+                    # (only the DM's own Players toggle on this card is their choice to hide, #4524:
+                    # a secret name in the text or the card's default is DMbot's, and asks)
+                    dm_chose_secret=self.choice is True,
                 )  # fmt: skip
                 kept = await memory.add_relation(
                     campaign.guild_id, campaign.id, c.subject_id, c.predicate, c.object_id,
@@ -3773,6 +3781,7 @@ class ConnectionOffer(_Menu):
                     # a secret SPELLING in the text never hides what the players were shown (#3025);
                     # the DM's own 🤫 button is their word and does
                     keep_flags=not secret and not view.reveal,
+                    dm_chose_secret=self.choice is True,  # (the DM's own toggle, #4524)
                     # whether they've met, from the quote's own words (#3881)
                     knows_how=keep.kept_how(c, old),
                 )  # fmt: skip
@@ -3795,6 +3804,10 @@ class ConnectionOffer(_Menu):
                 )
                 return
             made = kept.value[0]
+            await keep.ask_held(
+                memory, campaign.guild_id, campaign.id, held, by=made.id, start=start,
+                label=c.upload or "", batch=kept.batch,
+            )  # fmt: skip
             # Where it came from, for the DM's "Why?" (#2946, and #2959 item 5's "DMbot inferred
             # this"): only a connection made just now, and never a reason to lose it.
             if c.upload and made.created_at >= now:
@@ -3811,7 +3824,7 @@ class ConnectionOffer(_Menu):
             # (only a connection made just now: an older twin's rows are the DM's, not a guess's)
             if c.world == lore_knowledge.GUESS and not made.unrevealed and made.created_at >= now:
                 await keep.mark_guess(
-                    memory, campaign.guild_id, campaign.id, "connection", [made.id]
+                    memory, campaign.guild_id, campaign.id, "connection", [made.id], made_since=now
                 )
             if c.truth and not c.inferred:  # the DM called this upload 100% truth (#2447)
                 try:

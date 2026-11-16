@@ -6,20 +6,26 @@ Two kinds, one board kind so the DM has one place to look:
   secret". `change` is what the write would have done: column values (`{"secret": true}`) or the
   player characters it would have taken off (`{"knowers_off": [...]}`).
 - **replace:** "Did this change? Keep both / End the old one", for a backstory connection that
-  would end a public one (`backstory_keep.end_replaced`). `change` is `{"end": <session start>}`.
+  would end a public one (`backstory_keep.end_replaced`), asked once the new one is kept. `change`
+  is `{"end": true, "by": <the new connection>, "at": <when the old one would end>}`.
 
-A question is asked once for each item and change (its `change_key`), whatever became of the first
-(Keep it known is remembered: the ruling's point 2). It is written through the change log, so an
-upload's Undo takes it back with the rest. Its evidence follows 5a's consent rule: a label, and from
-a session only line starts and speakers, never words; a waiting one goes when a speaker it quotes
-stops recording (`forget`). Make it secret is the DM's own change (`MemoryStore.
-answer_secret_question`), one ↩ Undo. Counts only in the log."""
+A question is asked once for each item and change (its `change_key`, a hash without "at"),
+whatever became of the first (Keep it known is remembered: the ruling's point 2). It is not in the
+change log: it carries the asking write's batch, and an Undo of that batch takes back the ones
+still waiting (`MemoryStore.undo`). Its evidence follows 5a's consent rule: a label, and from a
+session only line starts and speakers, never words (set by the write, `Changes.evidence`, or by
+the caller around a run, `evidence`); a waiting one goes when a speaker it quotes stops recording
+(`forget`). Make it secret is the DM's own change through the store's own buttons
+(`MemoryStore.answer_secret_question`), one ↩ Undo. Counts only in the log."""
 
 from __future__ import annotations
 
+import contextlib
+import contextvars
+import hashlib
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -39,17 +45,48 @@ LABEL_MAX = 200
 GONE = "That question was already answered."
 
 
+# The evidence a run's questions carry when its writes don't set their own (`Changes.evidence`):
+# an upload's label, or a session's label, line starts and speakers (never words).
+_EVIDENCE: contextvars.ContextVar[Mapping[str, Any] | None] = contextvars.ContextVar(
+    "secret_question_evidence", default=None
+)
+
+
+@contextlib.contextmanager
+def evidence(
+    label: str,
+    *,
+    session_id: str | None = None,
+    line_starts: Sequence[int] = (),
+    speaker_ids: Sequence[int] = (),
+) -> Iterator[None]:
+    """Every 🤫 question asked inside this block cites this evidence (an upload's run, a session's
+    read). From a session only line starts and speakers: 5a's consent rule."""
+    token = _EVIDENCE.set(
+        {"label": label, "session_id": session_id, "line_starts": list(line_starts),
+         "speaker_ids": list(speaker_ids)}
+    )  # fmt: skip
+    try:
+        yield
+    finally:
+        _EVIDENCE.reset(token)
+
+
 def change_key(change: Mapping[str, Any]) -> str:
-    """The change in a fixed form: the same change on the same item is asked once."""
-    return json.dumps(change, sort_keys=True, separators=(",", ":"))[:400]
+    """The change in a fixed form, hashed: the same change on the same item is asked once. "at" (a
+    time) is left out, so a later upload asking to end the same connection for the same new one is
+    the same question."""
+    fixed = json.dumps(
+        {k: v for k, v in change.items() if k != "at"}, sort_keys=True, separators=(",", ":")
+    )
+    return hashlib.sha256(fixed.encode()).hexdigest()
 
 
 async def ask(
     w: Changes, kind: str, item_table: str, item_id: str, change: Mapping[str, Any]
 ) -> bool:
     """Inside a write that held something back: the question, unless this change on this item
-    was asked before. Counts it held back on the write either way. True when it is new."""
-    w.held_back += 1
+    was asked before. True when it is new, which is also counted on the write (`held_back`)."""
     key = change_key(change)
     found = await w.select(
         SECRET_QUESTIONS,
@@ -58,19 +95,25 @@ async def ask(
     )
     if found:
         return False
-    evidence = w.evidence
-    await w.insert(
-        SECRET_QUESTIONS,
-        {
-            "id": new_id(), "kind": kind, "item_table": item_table, "item_id": item_id,
-            "change": Jsonb(dict(change)), "change_key": key,
-            "label": str(evidence.get("label", ""))[:LABEL_MAX],
-            "session_id": evidence.get("session_id"),
-            "line_starts": [int(n) for n in evidence.get("line_starts", ())],
-            "speaker_ids": [int(n) for n in evidence.get("speaker_ids", ())],
-            "status": WAITING, "created_at": max(w.now, 1),
-        },
+    proof = w.evidence or _EVIDENCE.get() or {}
+    question_id = new_id()
+    cur = await w.conn.execute(
+        "INSERT INTO secret_questions (guild_id, campaign_id, id, kind, item_table, item_id,"
+        " change, change_key, label, session_id, line_starts, speaker_ids, status, created_at,"
+        " batch) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'waiting', %s, %s)"
+        " ON CONFLICT DO NOTHING",
+        (
+            *w.ids, question_id, kind, item_table, item_id, Jsonb(dict(change)), key,
+            str(proof.get("label") or "")[:LABEL_MAX], proof.get("session_id"),
+            [int(n) for n in proof.get("line_starts") or ()],
+            [int(n) for n in proof.get("speaker_ids") or ()],
+            max(w.now, 1), w.batch,
+        ),
     )  # fmt: skip
+    if not cur.rowcount:
+        return False
+    w.held_back += 1
+    w.asked.append(question_id)
     log.info("Public stays public: a %s question was asked instead", kind)
     return True
 
@@ -117,6 +160,21 @@ async def count(conn: Any, guild_id: int, campaign_id: str) -> int:
     return int(row["n"]) if row is not None else 0
 
 
+async def undo(w: Changes, batch: int) -> None:
+    """An Undo of `batch` (inside its write): the questions it asked that still wait go with it,
+    and a Make it secret it was is waiting again. Keep it known stays remembered."""
+    await w.conn.execute(
+        "DELETE FROM secret_questions WHERE guild_id = %s AND campaign_id = %s AND batch = %s"
+        " AND status = 'waiting'",
+        (*w.ids, batch),
+    )
+    await w.conn.execute(
+        "UPDATE secret_questions SET status = 'waiting', answered_batch = NULL"
+        " WHERE guild_id = %s AND campaign_id = %s AND answered_batch = %s",
+        (*w.ids, batch),
+    )
+
+
 async def forget(conn: Any, guild_id: int, user_id: int, campaign_id: str | None = None) -> int:
     """Stop recording me, "Delete my transcripts" and a DM's removal of a speaker: the waiting
     questions that quote this person go (5a's consent rule); an answered one is the DM's and stays,
@@ -147,6 +205,8 @@ __all__ = [
     "ask",
     "change_key",
     "count",
+    "evidence",
     "forget",
+    "undo",
     "waiting",
 ]  # fmt: skip

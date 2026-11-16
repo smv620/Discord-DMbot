@@ -5,6 +5,10 @@ Each path the design note listed meets a public item: it stays public, and a �
 once instead. The DM's own buttons (`dm_chose_secret=True`) still hide at once; Make it secret is
 one ↩ Undo; Keep it known is remembered; a merge with a hidden entry stays public; a backstory
 connection never ends a public one by itself; a question quoting someone who stops recording goes.
+And the review's eight (#4524): a merge never unhides what only some player characters know; a
+public name folded into a secret twin stays public; Make it secret takes off only whom it asked
+about and keeps the DM's own rules; an Undo takes back a write's questions; a replace question waits
+for the new connection; a guess is marked across a clock tick; a question cites its upload.
 Postgres. Invented names."""
 
 from __future__ import annotations
@@ -13,8 +17,8 @@ import ast
 import pathlib
 import unittest
 
-from dmbot.memory import backstory_keep, secret_questions
-from dmbot.memory.models import CONFIRMED, DM
+from dmbot.memory import backstory_keep, lore_knowledge, secret_questions
+from dmbot.memory.models import CONFIRMED, DM, REJECTED, MemoryRuleError
 from tests.test_memory_store import GUILD_A, MemoryTest
 
 PLAYER = 4242
@@ -39,14 +43,34 @@ class ThePublicStaysPublic(MemoryTest):
             GUILD_A, self.c, self.tie.id, secret=True, source=DM
         )
         self.assertFalse(written.value.secret)
+        self.assertIsNone(written.batch)  # (nothing else changed: the write logged nothing)
         (q,) = await self.waiting()
         self.assertEqual((q.kind, q.item_id, q.change), ("narrow", self.tie.id, {"secret": True}))
-        asked = await self.memory.secret_questions_asked_in(GUILD_A, self.c, [written.batch])
-        self.assertEqual(asked, 1)
         mine = await self.memory.update_relation(
             GUILD_A, self.c, self.tie.id, secret=True, source=DM, dm_chose_secret=True
         )
         self.assertTrue(mine.value.secret)  # (the DM's own 🤫 hides at once)
+
+    async def test_an_undo_takes_back_the_questions_its_write_asked(self) -> None:
+        other = (await self.relate(self.hero, "ally_of", self.bob, status=CONFIRMED)).value[0]
+        written = await self.memory.update_relation(
+            GUILD_A, self.c, other.id, secret=True, to_session_at=self.now, source=DM
+        )  # (the end goes through, the secret is held: one batch with one question)
+        assert written.batch is not None
+        self.assertEqual(
+            await self.memory.secret_questions_asked_in(GUILD_A, self.c, [written.batch]), 1
+        )
+        await self.memory.undo(GUILD_A, self.c, written.batch, source=DM)
+        self.assertEqual(await self.waiting(), [])
+        again = await self.memory.update_relation(
+            GUILD_A, self.c, other.id, secret=True, to_session_at=self.now, source=DM
+        )
+        (q,) = await self.waiting()  # (asked again: the undone one is gone, not remembered)
+        await self.memory.answer_secret_question(GUILD_A, self.c, q.id, False, source=DM)
+        assert again.batch is not None
+        await self.memory.undo(GUILD_A, self.c, again.batch, source=DM)
+        await self.memory.update_relation(GUILD_A, self.c, other.id, secret=True, source=DM)
+        self.assertEqual(await self.waiting(), [])  # (Keep it known outlives the Undo)
 
     async def test_a_public_name_is_not_made_secret_by_itself(self) -> None:
         name = await self.memory.add_alias(
@@ -121,22 +145,163 @@ class ThePublicStaysPublic(MemoryTest):
 
     async def test_a_backstory_connection_never_ends_a_public_one_by_itself(self) -> None:
         ended: list[int | None] = []
+        held: list[str] = []
         await backstory_keep.end_replaced(
-            self.memory, GUILD_A, self.c, [self.tie], 100, ended, hidden=True
+            self.memory, GUILD_A, self.c, [self.tie], 100, ended, held=held, hidden=True
         )
         tie = await self.memory.relation(GUILD_A, self.c, self.tie.id)
         assert tie is not None
         self.assertIsNone(tie.to_session_at)
+        self.assertEqual((held, await self.waiting()), ([self.tie.id], []))  # (not asked yet)
+        new = (
+            await self.relate(self.bob, "enemy_of", self.hero, status=CONFIRMED, secret=True)
+        ).value[0]
+        await backstory_keep.ask_held(
+            self.memory, GUILD_A, self.c, held, by=new.id, start=100, label="Ilsa's backstory",
+            batch=None,
+        )  # fmt: skip
         (q,) = await self.waiting()
-        self.assertEqual((q.kind, q.change), ("replace", {"end": True, "at": 100}))
+        self.assertEqual(
+            (q.kind, q.change, q.label),
+            ("replace", {"end": True, "by": new.id, "at": 100}, "Ilsa's backstory"),
+        )
         await self.memory.answer_secret_question(GUILD_A, self.c, q.id, True, source=DM)
         tie = await self.memory.relation(GUILD_A, self.c, self.tie.id)
         assert tie is not None
         self.assertEqual(tie.to_session_at, 100)  # (End the old one)
         await backstory_keep.end_replaced(
-            self.memory, GUILD_A, self.c, [tie], 200, ended, hidden=True, dm_chose_secret=True
-        )  # (the DM's own hide on the card ends it as before: no question)
+            self.memory, GUILD_A, self.c, [tie], 200, ended, held=held, hidden=True,
+            dm_chose_secret=True,
+        )  # fmt: skip
+        self.assertEqual(await self.waiting(), [])  # (the DM's own hide: no question)
+
+    async def test_an_undo_of_the_keep_takes_its_replace_question_back(self) -> None:
+        kept = await self.relate(self.bob, "enemy_of", self.hero, status=CONFIRMED, secret=True)
+        new = kept.value[0]
+        await backstory_keep.ask_held(
+            self.memory, GUILD_A, self.c, [self.tie.id], by=new.id, start=100, label="",
+            batch=kept.batch,
+        )  # fmt: skip
+        self.assertEqual(len(await self.waiting()), 1)
+        assert kept.batch is not None
+        await self.memory.undo(GUILD_A, self.c, kept.batch, source=DM)
         self.assertEqual(await self.waiting(), [])
+
+    async def test_end_the_old_one_does_nothing_once_the_new_one_is_gone(self) -> None:
+        new = (
+            await self.relate(self.bob, "enemy_of", self.hero, status=CONFIRMED, secret=True)
+        ).value[0]
+        await self.memory.ask_replace(GUILD_A, self.c, self.tie.id, by=new.id, end_at=100, label="")
+        await self.memory.update_relation(GUILD_A, self.c, new.id, status=REJECTED, source=DM)
+        (q,) = await self.waiting()
+        made = await self.memory.answer_secret_question(GUILD_A, self.c, q.id, True, source=DM)
+        tie = await self.memory.relation(GUILD_A, self.c, self.tie.id)
+        assert tie is not None
+        self.assertEqual((made.batch, tie.to_session_at), (None, None))
+        self.assertEqual(await self.waiting(), [])  # (answered: nothing left to end)
+
+    async def test_make_it_secret_takes_off_only_whom_it_asked_about(self) -> None:
+        held = (
+            await self.relate(self.bob, "enemy_of", self.hero, status=CONFIRMED, secret=True)
+        ).value[0]
+        spy = await self.add("Vex", type="character", status=CONFIRMED)
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, "connection", held.id, {self.hero: 1.0, spy: 0.6}, source=DM,
+            dm_chose_secret=True,
+        )  # fmt: skip
+        self.now += 5
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, "connection", held.id, {spy: 0.6}, source=DM, dm_chose_secret=False
+        )
+        (q,) = await self.waiting()
+        await self.memory.answer_secret_question(GUILD_A, self.c, q.id, True, source=DM)
+        knows = await self.memory.statement_knowers(GUILD_A, self.c, "connection", [held.id])
+        self.assertEqual(knows.get(held.id), [spy])
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT confidence FROM memory_knowers WHERE relation_id = %s", (held.id,)
+            )
+            self.assertEqual([r["confidence"] for r in await cur.fetchall()], [0.6])
+
+    async def test_make_it_secret_keeps_the_dms_own_rules(self) -> None:
+        async with self.memory._write(GUILD_A, self.c, DM) as w:
+            await secret_questions.ask(
+                w, secret_questions.NARROW, "memory_entities", self.hero,
+                {"hidden_from_players": True},
+            )  # fmt: skip
+        (q,) = await self.waiting()
+        with self.assertRaises(MemoryRuleError):  # (a player's character is never hidden)
+            await self.memory.answer_secret_question(GUILD_A, self.c, q.id, True, source=DM)
+        self.assertEqual([x.id for x in await self.waiting()], [q.id])  # (still waiting)
+
+    async def test_a_merge_never_unhides_what_only_some_know(self) -> None:
+        shady = await self.add("Shady", status=CONFIRMED)
+        other = await self.add("Other", status=CONFIRMED)
+        for e in (shady, other):
+            await self.memory.set_hidden_from_players(
+                GUILD_A, self.c, e, True, source=DM, dm_chose_secret=True
+            )
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, "entry", other, [self.hero], source=DM, dm_chose_secret=True
+        )
+        kept = await self.memory.merge(GUILD_A, self.c, shady, other, source=DM, dm_said_same=True)
+        self.assertTrue(kept.value.hidden_from_players)
+        self.assertEqual(await self.waiting(), [])
+        knows = await self.memory.statement_knowers(GUILD_A, self.c, "entry", [shady])
+        self.assertEqual(knows.get(shady), [self.hero])  # (Ilsa still knows)
+
+    async def test_a_public_name_folded_into_a_secret_twin_stays_public(self) -> None:
+        mask = await self.add("Mask", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, mask, "Shade", kind="nickname", source=DM, status=CONFIRMED,
+            secret=True, dm_chose_secret=True,
+        )  # fmt: skip
+        await self.memory.add_alias(
+            GUILD_A, self.c, self.bob, "Shade", kind="nickname", source=DM, status=CONFIRMED
+        )
+        secret_copy = await self.memory.add_alias(
+            GUILD_A, self.c, self.bob, "Shadow", kind="nickname", source=DM, status=CONFIRMED,
+            secret=True, dm_chose_secret=True,
+        )  # fmt: skip
+        await self.memory.add_alias(
+            GUILD_A, self.c, mask, "Shadow", kind="nickname", source=DM, status=CONFIRMED,
+            secret=True, dm_chose_secret=True,
+        )  # fmt: skip
+        await self.memory.set_alias_knowers(
+            GUILD_A, self.c, secret_copy.value.id, [self.hero], source=DM, dm_chose_secret=True
+        )  # (Ilsa knows the copy that goes, on the older per-name list too)
+        await self.memory.merge(GUILD_A, self.c, mask, self.bob, source=DM, dm_said_same=True)
+        names = await self.memory.aliases(GUILD_A, self.c, entity_id=mask, include_secret=True)
+        (shade,) = [a for a in names if a.text == "Shade"]
+        self.assertFalse(shade.secret)
+        (q,) = await self.waiting()
+        self.assertEqual((q.item_id, q.change), (shade.id, {"secret": True}))
+        (shadow,) = [a for a in names if a.text == "Shadow"]
+        knows = await self.memory.alias_knowers(GUILD_A, self.c, [shadow.id])
+        self.assertEqual(knows.get(shadow.id), [self.hero])  # (and still knows the twin)
+
+    async def test_a_guess_is_marked_across_a_clock_tick(self) -> None:
+        made = (await self.relate(self.bob, "enemy_of", self.hero, status=CONFIRMED)).value[0]
+        start = self.now
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, "connection", made.id, [self.hero], source=DM, dm_chose_secret=True
+        )
+        self.now += 2  # (the keep and the mark are two writes: the clock may move between)
+        changed = await self.memory.mark_guess(
+            GUILD_A, self.c, "connection", [made.id], lore_knowledge.GUESS_CERTAINTY, source=DM,
+            made_since=start,
+        )  # fmt: skip
+        self.assertEqual(changed, 1)
+        unchanged = await self.memory.mark_guess(
+            GUILD_A, self.c, "connection", [made.id], 0.1, source=DM, made_since=self.now
+        )
+        self.assertEqual(unchanged, 0)  # (a row known before the keep stays as sure as it was)
+
+    async def test_a_question_cites_the_upload_that_asked_it(self) -> None:
+        with secret_questions.evidence("Ilsa's backstory, 24 Oct"):
+            await self.memory.update_relation(GUILD_A, self.c, self.tie.id, secret=True, source=DM)
+        (q,) = await self.waiting()
+        self.assertEqual(q.label, "Ilsa's backstory, 24 Oct")
 
     async def test_a_question_quoting_someone_who_stops_recording_goes(self) -> None:
         async with self.memory._write(GUILD_A, self.c, DM) as w:
@@ -150,8 +315,9 @@ class ThePublicStaysPublic(MemoryTest):
 
 
 class EveryCallerThatChoseSecret(unittest.TestCase):
-    """Ruling A: every caller passing `dm_chose_secret=True` is listed here, so a new one shows up
-    in review. Each must be the DM's own 👁️ / 🤫 / Who knows button or Make it secret."""
+    """Ruling A: every caller that may pass `dm_chose_secret` as anything but False is listed here,
+    so a new one shows up in review. Each must be the DM's own 👁️ / 🤫 / Who knows button, the
+    card's own hide, or Make it secret. Passing the caller's own argument on is not a choice."""
 
     def test_the_list_of_callers(self) -> None:
         found: set[str] = set()
@@ -161,23 +327,33 @@ class EveryCallerThatChoseSecret(unittest.TestCase):
                     continue
                 for node in ast.walk(fn):
                     if isinstance(node, ast.Call) and any(
-                        k.arg == "dm_chose_secret"
-                        and isinstance(k.value, ast.Constant)
-                        and k.value.value is True
+                        k.arg == "dm_chose_secret" and not _passed_on_or_false(k.value)
                         for k in node.keywords
                     ):
                         found.add(f"{path.relative_to(SRC).as_posix()}:{fn.name}")
         self.assertEqual(
             found,
             {
+                "dmbot/memory/backstory_keep.py:keep_all",  # the card's Players: hide
                 "dmbot/memory/link_edits.py:set_secret",  # 🤫 on a connection
                 "dmbot/memory/link_edits.py:set_who_knows",  # Who knows this connection
                 "dmbot/memory/name_edits.py:set_who_knows",  # Who knows this name
+                "dmbot/memory/store.py:_apply_secret",  # Make it secret / End the old one
                 "dmbot/memory/web_actions.py:_do",  # the website's hide and secret buttons
                 "dmbot/ui/clue_audience.py:_remove",  # a clue's audience: take one off
                 "dmbot/ui/clue_audience.py:_switch",  # a clue's audience: only some know
+                "dmbot/ui/name_background.py:_answer",  # the card's 🤫 or "not said yet"
                 "dmbot/ui/name_card.py:_flip_hidden",  # 👁️ Hide from players
                 "dmbot/ui/name_card.py:on_submit",  # a secret spelling the DM types
                 "dmbot/ui/names.py:save_name",  # a secret spelling the DM types
             },
         )
+
+
+def _passed_on_or_false(value: ast.expr) -> bool:
+    """False, or the caller's own `dm_chose_secret` (or `w.dm_chose_secret`) passed on."""
+    if isinstance(value, ast.Constant):
+        return value.value is False
+    if isinstance(value, ast.Name):
+        return value.id == "dm_chose_secret"
+    return isinstance(value, ast.Attribute) and value.attr == "dm_chose_secret"
