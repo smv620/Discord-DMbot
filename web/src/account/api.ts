@@ -2082,6 +2082,8 @@ export interface ThreadCardPart {
   id: string;
   kind: string;
   words: string;
+  /** A dated time limit's countdown in Discord's words ("3 days left (due Day 10)"); "" when it has no date (#4503). */
+  dateWords: string;
   state: string;
   underId: string | null;
   who: { id: string; name: string } | null;
@@ -2104,6 +2106,7 @@ export type ThreadPartsChange =
   | { action: "state"; part: string; state: string }
   | { action: "show"; part: string; shown: boolean }
   | { action: "remove"; part: string }
+  | { action: "date"; part: string; days: number | null }
   | { action: "undo"; batch: string };
 
 /** A story thread DMbot found in an upload, waiting for the DM (#4482, #4457): a quest or a hook to keep, rename or turn down. DM only. */
@@ -2667,6 +2670,7 @@ export type ApiErrorKind =
   | "bad-file" // a sent map is not a PNG, JPEG or WebP picture the page can use, or is too big (#4347)
   | "uploads-off" // sending a map is not set up on the server yet (#4347)
   | "undo-late" // an upload older than 7 days cannot be undone (#3879)
+  | "no-clock" // a date was asked for, but the campaign has no game clock to count it on (#4503)
   | "undo-done" // an upload that was already undone (#3879)
   | "unavailable" // a player character's icon picture that is not there any more (#3621, #3622)
   | "ambiguous" // two people could be the one a new name is for, so nothing was changed (#2803)
@@ -3484,6 +3488,7 @@ export const fixErrorKinds: Record<string, ApiErrorKind> = {
 
 export const errorKinds: Record<string, ApiErrorKind> = {
   plan: "plan-needed",
+  no_clock: "no-clock", // a date asked for with no game clock (#4503)
   no_rules: "no-rules",
   not_owner: "not-owner",
   full: "full",

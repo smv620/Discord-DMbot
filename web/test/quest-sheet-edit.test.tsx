@@ -27,7 +27,7 @@ afterEach(() => {
 const DM = "100.cmp1";
 const part = (id: string, kind: string, words: string, state: string, extra: Partial<ThreadCardPart> = {}): ThreadCardPart => ({
   id, kind, words, state, underId: null, who: null, about: null, amount: null, unit: "", owed: null, due: "",
-  terms: "", limitKind: "", dated: false, fromRead: false, tableKnows: false, ...extra,
+  terms: "", limitKind: "", dated: false, dateWords: "", fromRead: false, tableKnows: false, ...extra,
 });
 const card = (parts: ThreadCardPart[] = [part("p4", "objective", "Find the heir", "done"), part("p5", "objective", "Cross the pass", "to_do")]): ThreadCard => ({
   thread: { id: "t1", name: "Bring the heir home", kind: "Quest", state: "active", stateWords: "Happening now", description: "" },
@@ -167,6 +167,76 @@ describe("the quest sheet's edit controls", () => {
     release();
     await screen.findByText("✅ Done: Cross the pass.");
     expect(change).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("a time limit's date (#4583)", () => {
+  const limit = (dated: boolean, dateWords = "") => card([part("p6", "time_limit", "Before the new moon", "running", { dated, dateWords })]);
+
+  it("a time limit with no date offers Set a date and not Clear", () => {
+    edit(limit(false));
+    expect(screen.getByRole("button", { name: w.setDate })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.clearDate })).toBeNull();
+  });
+
+  it("a dated one offers Change the date and Clear the date", () => {
+    edit(limit(true, "3 days left (due Day 10)"));
+    expect(screen.getByRole("button", { name: w.changeDate })).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.clearDate })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.setDate })).toBeNull();
+  });
+
+  it("a step has neither", () => {
+    edit(card());
+    expect(screen.queryByRole("button", { name: w.setDate })).toBeNull();
+    expect(screen.queryByRole("button", { name: w.clearDate })).toBeNull();
+  });
+
+  it("Tomorrow, In 3 days and In a week send 1, 3 and 7 days", async () => {
+    const { change } = edit(limit(false));
+    fireEvent.click(screen.getByRole("button", { name: w.setDate }));
+    fireEvent.click(screen.getByRole("button", { name: "Tomorrow" }));
+    await waitFor(() => expect(change).toHaveBeenLastCalledWith(DM, "t1", { action: "date", part: "p6", days: 1 }));
+    fireEvent.click(screen.getByRole("button", { name: "In 3 days" }));
+    await waitFor(() => expect(change).toHaveBeenLastCalledWith(DM, "t1", { action: "date", part: "p6", days: 3 }));
+    fireEvent.click(screen.getByRole("button", { name: "In a week" }));
+    await waitFor(() => expect(change).toHaveBeenLastCalledWith(DM, "t1", { action: "date", part: "p6", days: 7 }));
+  });
+
+  it("the number field sends its whole number, and Set the date is off for 0, 3651, 2.5 and empty", async () => {
+    const { change } = edit(limit(false));
+    fireEvent.click(screen.getByRole("button", { name: w.setDate }));
+    fireEvent.click(screen.getByRole("button", { name: w.otherDays }));
+    const field = screen.getByLabelText(w.numberOfDays) as HTMLInputElement;
+    const set = () => screen.getByRole("button", { name: w.setTheDate }) as HTMLButtonElement;
+    expect(set().disabled).toBe(true);
+    for (const bad of ["0", "3651", "2.5"]) {
+      fireEvent.input(field, { target: { value: bad } });
+      expect(set().disabled, bad).toBe(true);
+    }
+    fireEvent.input(field, { target: { value: "12" } });
+    expect(set().disabled).toBe(false);
+    fireEvent.click(set());
+    await waitFor(() => expect(change).toHaveBeenLastCalledWith(DM, "t1", { action: "date", part: "p6", days: 12 }));
+  });
+
+  it("Clear the date sends days null and says the date was cleared", async () => {
+    const { change } = edit(limit(true, "3 days left (due Day 10)"));
+    fireEvent.click(screen.getByRole("button", { name: w.clearDate }));
+    expect(await screen.findByText("✅ Date cleared: Before the new moon. No countdown now.")).toBeTruthy();
+    expect(change).toHaveBeenCalledWith(DM, "t1", { action: "date", part: "p6", days: null });
+  });
+
+  it("no clock says so as an alert and nothing else", async () => {
+    const change = vi.fn(async () => {
+      throw new ApiError("no-clock");
+    });
+    edit(limit(false), change);
+    fireEvent.click(screen.getByRole("button", { name: w.setDate }));
+    fireEvent.click(screen.getByRole("button", { name: "Tomorrow" }));
+    const line = await screen.findByText(w.noClock);
+    expect(line.getAttribute("role")).toBe("alert");
+    expect(screen.queryByText(w.failed)).toBeNull();
   });
 });
 
