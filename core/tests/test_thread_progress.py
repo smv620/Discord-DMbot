@@ -30,6 +30,15 @@ class ThePureCheck(unittest.TestCase):
         made = tp.check(tp.Change(tp.PART, parts.HELP, "two dog  sleds", state="nonsense"))
         assert made is not None
         self.assertEqual((made.words, made.state), ("two dog sleds", "to_keep"))  # (its first)
+        done = tp.check(tp.Change(tp.PART, parts.OBJECTIVE, "find him", state="done"))
+        assert done is not None
+        self.assertEqual(done.state, "to_do")  # (a new part starts where the DM's would)
+        lent = tp.check(tp.Change(tp.PART, parts.HELP, "the sleds", state="lent"))
+        assert lent is not None
+        self.assertEqual(lent.state, "lent")
+        when = tp.check(tp.Change(tp.PART, parts.OBJECTIVE, "go", due="by dawn"))
+        assert when is not None
+        self.assertEqual(when.due, "")  # (a "when" is a time limit's only)
 
     def test_the_same_change_has_one_key_whatever_its_spacing(self) -> None:
         a = tp.Change(tp.PART, parts.COMPLICATION, "The bridge is out")
@@ -115,8 +124,42 @@ class TheStore(MemoryTest):
         await self.memory.set_thread_part_state(GUILD_A, self.c, self.goal, "failed", source=DM)
         (line,) = await self.lines()  # (the part it moves is history now)
         written = await self.memory.keep_thread_progress(GUILD_A, self.c, [line.id], source=DM)
-        self.assertEqual(written.value, 0)
+        self.assertEqual((written.value, written.batch), (0, None))  # (no change, no Undo)
         self.assertEqual(await self.lines(), [])
+        self.assertEqual(await self.statuses(), ["turned_down"])  # (never shown as kept)
+
+    async def statuses(self) -> list[str]:
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT status FROM thread_progress WHERE guild_id = %s ORDER BY kind", (GUILD_A,)
+            )
+            return [str(r["status"]) for r in await cur.fetchall()]
+
+    async def test_a_time_limit_is_kept_as_words_and_never_dated(self) -> None:
+        limit = tp.Change(tp.PART, parts.TIME_LIMIT, "before the full moon", due="the full moon")
+        await self.offer(limit)
+        (line,) = await self.lines()
+        self.assertEqual(line.change.due, "the full moon")  # (for the DM's own date, part 3)
+        written = await self.memory.keep_thread_progress(GUILD_A, self.c, [line.id], source=DM)
+        self.assertEqual(written.value, 1)
+        (kept,) = [p for p in await self.kept_parts() if p.kind == parts.TIME_LIMIT]
+        self.assertEqual((kept.words, kept.due_minute), ("before the full moon", None))
+
+    async def test_in_a_mixed_keep_the_ones_that_fit_are_written(self) -> None:
+        await self.offer(self.TRAP, self.done())
+        await self.memory.set_thread_part_state(GUILD_A, self.c, self.goal, "failed", source=DM)
+        ids = [line.id for line in await self.lines()]
+        written = await self.memory.keep_thread_progress(GUILD_A, self.c, ids, source=DM)
+        self.assertEqual(written.value, 1)
+        self.assertEqual(sorted(await self.statuses()), ["kept", "turned_down"])
+
+    async def test_only_the_dm_keeps(self) -> None:
+        from dmbot.memory.models import MemoryRuleError
+
+        await self.offer(self.TRAP)
+        ids = [line.id for line in await self.lines()]
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.keep_thread_progress(GUILD_A, self.c, ids, source="scan")
 
     async def test_a_second_keep_of_the_same_lines_is_refused(self) -> None:
         await self.offer(self.TRAP)
@@ -159,12 +202,21 @@ class TheStore(MemoryTest):
         # (an Undo still takes the part back, but the line never waits again: nobody is quoted)
         await self.memory.undo(GUILD_A, self.c, kept.batch, after=tp.unkeep_in(kept.batch))
         self.assertEqual(await self.lines(), [])
-        _ = going
+        kinds = {(p.kind, p.words) for p in await self.kept_parts()}
+        self.assertNotIn((parts.COMPLICATION, "the cave is trapped"), kinds)
+        self.assertNotIn(going.id, [line.id for line in await self.lines()])
 
     async def test_a_deleted_session_takes_its_waiting_lines(self) -> None:
         await self.offer(self.TRAP)
+        await self.offer(self.GOING_ON)
+        trap = next(line for line in await self.lines() if line.change.kind == tp.PART)
+        kept = await self.memory.keep_thread_progress(GUILD_A, self.c, [trap.id], source=DM)
+        assert kept.batch is not None
         async with self.db.guild(GUILD_A) as conn:
             self.assertEqual(await tp.forget_session(conn, GUILD_A, self.sid), 1)
+        self.assertEqual(await self.lines(), [])
+        # (the kept one stays the DM's, without its lines, and an Undo never makes it wait)
+        await self.memory.undo(GUILD_A, self.c, kept.batch, after=tp.unkeep_in(kept.batch))
         self.assertEqual(await self.lines(), [])
 
     async def test_a_kia_who_never_agreed_is_still_swept(self) -> None:

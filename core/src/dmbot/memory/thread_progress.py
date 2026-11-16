@@ -61,15 +61,16 @@ class Change:
     words: str = ""
     state: str = ""
     part_id: str | None = None
-    due: str = ""  # a time limit's words, never a date
+    due: str = ""  # a time limit's "when" in words, for the DM's own date (never parsed here)
 
     def key(self, thread_id: str) -> str:
         """The change in a fixed form, hashed: offered once on each thread."""
+        # (a new part is its words; a state change is the same change however it was put)
+        words = " ".join(self.words.lower().split()) if self.kind == PART else ""
         fixed = json.dumps(
-            [thread_id, self.kind, self.part_kind, " ".join(self.words.lower().split()),
-             self.state, self.part_id or ""],
+            [thread_id, self.kind, self.part_kind, words, self.state, self.part_id or ""],
             separators=(",", ":"),
-        )  # fmt: skip
+        )
         return hashlib.sha256(fixed.encode()).hexdigest()
 
 
@@ -96,9 +97,14 @@ def check(change: Change) -> Change | None:
     if change.kind == PART:
         if change.part_kind not in PART_KINDS or not words:
             return None
-        states = thread_parts.STATES[change.part_kind]
-        state = change.state if change.state in states else states[0]
-        return Change(PART, change.part_kind, words, state, None, due)
+        # (only a state a new part may start in, `thread_parts.add`'s own rule: an objective
+        # read as already done starts "to do", and its being done is the DM's to say)
+        starts = thread_parts.START_STATES.get(
+            change.part_kind, thread_parts.STATES[change.part_kind][:1]
+        )
+        state = change.state if change.state in starts else starts[0]
+        when = due if change.part_kind == thread_parts.TIME_LIMIT else ""
+        return Change(PART, change.part_kind, words, state, None, when)
     if change.kind == PART_STATE:
         if not change.part_id or not change.state or len(change.state) > STATE_MAX:
             return None
@@ -151,6 +157,20 @@ async def mark_kept(w: Any, line_ids: Sequence[str], batch: int | None) -> int:
         "UPDATE thread_progress SET status = 'kept', kept_batch = %s WHERE guild_id = %s"
         " AND campaign_id = %s AND id = ANY(%s) AND status = 'waiting'",
         (batch, w.guild_id, w.campaign_id, sorted(set(line_ids))),
+    )
+    return int(cur.rowcount or 0)
+
+
+async def mark_unfit(w: Any, line_ids: Sequence[str]) -> int:
+    """Inside the keep's own write: lines that no longer fit their thread (it or the part is
+    gone or changed since) are answered as turned down, so the card never shows them as kept and
+    they are never offered again. An Undo of the keep leaves them so."""
+    if not line_ids:
+        return 0
+    cur = await w.conn.execute(
+        "UPDATE thread_progress SET status = 'turned_down' WHERE guild_id = %s"
+        " AND campaign_id = %s AND id = ANY(%s) AND status = 'waiting'",
+        (w.guild_id, w.campaign_id, sorted(set(line_ids))),
     )
     return int(cur.rowcount or 0)
 
@@ -228,19 +248,25 @@ class ThreadProgressStore:
         async with self._db.guild(guild_id) as conn:
             for thread_id, raw, starts, speakers in lines:
                 change = check(raw)
-                if change is None or not speakers:
+                if change is None or not speakers or not starts:
                     continue
+                # (a thread or part gone since the read is skipped, never failing the others)
                 cur = await conn.execute(
                     "INSERT INTO thread_progress (guild_id, campaign_id, id, thread_id, kind,"
                     " part_kind, part_id, words, state, due, change_key, session_id, session_at,"
-                    " line_starts, speaker_ids, created_at) VALUES (%s, %s, %s, %s, %s, %s, %s,"
-                    " %s, %s, %s, %s, %s, %s, %s, %s, %s) ON CONFLICT DO NOTHING",
+                    " line_starts, speaker_ids, created_at) SELECT %s, %s, %s, %s, %s, %s, %s,"
+                    " %s, %s, %s, %s, %s, %s, %s, %s, %s WHERE EXISTS (SELECT 1 FROM"
+                    " memory_entities WHERE guild_id = %s AND campaign_id = %s AND id = %s)"
+                    " AND (%s::text IS NULL OR EXISTS (SELECT 1 FROM memory_thread_parts"
+                    " WHERE guild_id = %s AND campaign_id = %s AND id = %s))"
+                    " ON CONFLICT DO NOTHING",
                     (
                         guild_id, campaign_id, new_id(), thread_id, change.kind, change.part_kind,
                         change.part_id, change.words, change.state, change.due,
                         change.key(thread_id), session_id, session_at,
                         sorted({int(n) for n in starts}), sorted({int(n) for n in speakers}),
-                        max(now, 1),
+                        max(now, 1), guild_id, campaign_id, thread_id,
+                        change.part_id, guild_id, campaign_id, change.part_id,
                     ),
                 )  # fmt: skip
                 new += int(cur.rowcount or 0)
@@ -330,6 +356,7 @@ __all__ = [
     "forget",
     "forget_session",
     "mark_kept",
+    "mark_unfit",
     "unkeep_in",
     "waiting_in",
 ]

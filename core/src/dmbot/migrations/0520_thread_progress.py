@@ -15,7 +15,8 @@ from dmbot.migrations._shared import _isolate
 # - `kind`: what the line changes.
 #   - 'part': a new part of the thread (`part_kind`: an objective, a complication, a reward given,
 #     help, or a time limit's words; `words` the reader's short words, `state` its state, `due`
-#     a time limit's words, offered only: a date is never set from them, as slice 4c);
+#     a time limit's "when" in words, only for a time limit and never made a date here: the DM
+#     gives the date, as slice 4c's offer);
 #   - 'part_state': a part the thread has moves on (`part_id`, `state`: an objective done or
 #     failed, a complication overcome, help returned, a reward settled or turned down);
 #   - 'thread_state': the thread's own state (`state`: a hook taken up is "Happening now").
@@ -27,7 +28,9 @@ from dmbot.migrations._shared import _isolate
 #   the DM's answer and stays, without that person's id and its lines.
 # - `kept_batch`: the change the keep made (one change for every line kept together, one Undo),
 #   so an Undo puts the lines back to waiting.
-# It goes with its thread (`ON DELETE CASCADE`) and with a part it moves, and follows a campaign
+# It goes with its thread (`ON DELETE CASCADE`) and with a part it moves, answered or not (an Undo
+# that deletes the part's row takes the line, and its change may then be offered again), and
+# follows a campaign
 # moved to another server (`ON UPDATE CASCADE`, #2550). Per campaign with forced row-level
 # security. Left out of backups as a wait (`campaigns/tables.py`): a re-read rebuilds it. No
 # existing row changes.
@@ -62,9 +65,13 @@ SQL = r"""
         created_at   BIGINT NOT NULL CHECK (created_at > 0),
         PRIMARY KEY (guild_id, campaign_id, id),
         CHECK ((kind = 'part') = (part_kind <> '' AND words <> '')),
+        CHECK (part_kind IN ('', 'objective', 'complication', 'reward_given', 'help',
+                             'time_limit')),
+        CHECK (due = '' OR part_kind = 'time_limit'),
         CHECK ((kind = 'part_state') = (part_id IS NOT NULL)),
         CHECK (kind = 'part' OR state <> ''),
-        CHECK (status <> 'waiting' OR cardinality(speaker_ids) >= 1)
+        CHECK (status <> 'waiting'
+               OR (cardinality(speaker_ids) >= 1 AND cardinality(line_starts) >= 1))
     );
     -- the same change on the same thread is offered once, whatever became of it
     CREATE UNIQUE INDEX thread_progress_once
