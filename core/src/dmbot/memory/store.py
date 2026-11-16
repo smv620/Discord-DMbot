@@ -2415,14 +2415,15 @@ class MemoryStore:
         new_name: str = "",
         false_lead: bool = False,
         source: str,
-    ) -> Written[Relation]:
+    ) -> Written[tuple[Relation, bool]]:
         """The DM ties a clue to a kept story thread (#4624, quests slice 6a; design §3, §7): a
         clue entry they picked, or one by its name (the campaign's clue of that name, else a new
         one), in ONE change with one Undo. "points to
         it" unless they say "false lead". The tie is the DM's alone: always secret, never known by
         a player (`Changes._dm_only_check`). A new clue is kept and known by nobody yet: the table
         finds it when a character comes to know it, so it starts hidden from the players (a clue
-        they are shown is one the whole table has). Refused when it is tied already."""
+        they are shown is one the whole table has). Refused when it is tied already. Returns the
+        tie, and whether the clue was made new (the DM is told it is hidden, the ux-critic)."""
         if source != DM:
             raise MemoryRuleError("Only the DM can do that.")
         async with self._write(guild_id, campaign_id, source) as w:
@@ -2440,7 +2441,8 @@ class MemoryStore:
                     [name],
                 )
                 clue_id = str(have[0]["id"]) if have else ""
-            if new_name.strip() and not clue_id:
+            made_new = bool(new_name.strip()) and not clue_id
+            if made_new:
                 made = await w.insert(
                     ENTITIES,
                     {
@@ -2464,7 +2466,7 @@ class MemoryStore:
                 w, clue_id, clues_mod.CLUE_TO, thread_id, confidence=1.0, status=CONFIRMED,
                 detail=word, by_hand=True,
             )  # fmt: skip
-            return Written(fact, w.batch)
+            return Written((fact, made_new), w.batch)
 
     async def set_clue_word(
         self,

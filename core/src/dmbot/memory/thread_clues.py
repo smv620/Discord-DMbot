@@ -27,7 +27,7 @@ DM_ONLY_PREDICATES: frozenset[str] = frozenset({CLUE_TO})
 DM_ONLY_TIE = "Which clues a story thread has is for the DM alone: players never see it."
 NOT_A_CLUE_WORD = 'A clue either "points to it" or is a "false lead".'
 ONLY_CLUES = "Only a clue or secret can be a clue to a story thread."
-ALREADY_TIED = "That clue is already tied to this story thread."
+ALREADY_TIED = "That clue is already on this thread."
 NOT_TIED = "That clue isn't tied to this story thread any more."
 
 

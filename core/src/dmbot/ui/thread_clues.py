@@ -35,14 +35,14 @@ from dmbot.ui.thread_parts import BACK, UNDO, _dm, _Form, _open_form
 from dmbot.ui.thread_parts import _said as _part_said
 
 CLUES_BUTTON = "🔎 Clues"
-ADD_CLUE = "🔎 Add a clue"
+ADD_CLUE = "➕ Add a clue"
 PICK_CLUE = "Pick a clue to change…"
 FALSE_LEAD_BUTTON = "Mark as false lead"
-POINTS_BUTTON = "It points to it"
-UNTIE = "Not a clue to this"
-NONE_YET = "No clues yet. Tap 🔎 Add a clue to tie one."
+POINTS_BUTTON = "Not a false lead"  # (the stored word stays "points to it")
+UNTIE = "Take off this thread"
+NONE_YET = "No clues on this thread yet. Tap ➕ Add a clue."
 FOUND, NOT_FOUND = "found", "not found yet"
-HOW = "Found means a player character knows it. Players never see this list or its marks."
+HOW = "Found: a player character knows it. Only you see this list."
 CLUES_SHOWN = 25  # a menu holds 25
 # (the store's clue refusals are already in the DM's words; the rest as the 📋 screen says them)
 _OWN_WORDS = frozenset({tc.ALREADY_TIED, tc.NOT_TIED, tc.ONLY_CLUES, tc.DM_ONLY_TIE})
@@ -141,9 +141,11 @@ class ClueScreen(_Menu):
         if clue is None:
             await open_clues(interaction, self.campaign_id, self.thread_id)
             return
+        said = FOUND if clue.found else NOT_FOUND
+        lead = f" · {tc.FALSE_LEAD}" if clue.false_lead else ""
         await _replace(
             interaction,
-            clue_line(clue),
+            f"🔎 **{_md(clue.name)}**: {said}{lead}\nPick what to change.",
             ClueMenu(self.campaign_id, self.thread_id, clue),
         )
 
@@ -198,11 +200,13 @@ class ClueMenu(_Menu):
             await open_clues(interaction, self.campaign_id, self.thread_id, note=_said(exc))
             return
         changed(interaction, campaign)
-        said = "a false lead" if lead else "pointing to it"
-        await open_clues(
-            interaction, self.campaign_id, self.thread_id,
-            note=f"✅ **{_md(self.clue.name)}** is now marked {said}.", undo=done.batch,
-        )  # fmt: skip
+        name = _md(self.clue.name)
+        said = (
+            f"✅ **{name}** is now marked a false lead."
+            if lead
+            else (f"✅ **{name}** is no longer a false lead.")
+        )
+        await open_clues(interaction, self.campaign_id, self.thread_id, note=said, undo=done.batch)
 
     async def _untie(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -221,7 +225,7 @@ class ClueMenu(_Menu):
         changed(interaction, campaign)
         await open_clues(
             interaction, self.campaign_id, self.thread_id,
-            note=f"🗑️ **{_md(self.clue.name)}** is no longer a clue to this. It stays a clue.",
+            note=f"🗑️ Took **{_md(self.clue.name)}** off this thread. It's still in your clues.",
             undo=done.batch,
         )  # fmt: skip
 
@@ -236,7 +240,7 @@ class ClueForm(_Form, title="Add a clue"):
         super().__init__(timeout=VIEW_TIMEOUT_S)
         self.campaign_id, self.thread_id = campaign_id, thread_id
         self.name: discord.ui.TextInput[ClueForm] = discord.ui.TextInput(
-            label="The clue", placeholder="A bloody glove", max_length=100
+            label="Clue name", placeholder="A bloody glove", max_length=100
         )
         self.add_item(self.name)
 
@@ -260,10 +264,14 @@ class ClueForm(_Form, title="Add a clue"):
             await open_clues(interaction, self.campaign_id, self.thread_id, note=_said(exc))
             return
         changed(interaction, campaign)
-        await open_clues(
-            interaction, self.campaign_id, self.thread_id,
-            note=f"✅ Tied **{_md(self.name.value.strip())}** to this thread.", undo=done.batch,
-        )  # fmt: skip
+        name = _md(self.name.value.strip())
+        _tie, made = done.value
+        said = (
+            f"✅ Added **{name}** as a new clue. Players won't see it until a character finds it."
+            if made
+            else f"✅ **{name}** is now a clue to this thread."
+        )
+        await open_clues(interaction, self.campaign_id, self.thread_id, note=said, undo=done.batch)
 
 
 __all__ = [

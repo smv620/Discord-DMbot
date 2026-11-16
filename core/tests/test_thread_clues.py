@@ -73,7 +73,7 @@ class TheClues(MemoryTest):
             source=DM,
             **kw,  # type: ignore[arg-type]
         )
-        return written.value.id
+        return written.value[0].id
 
     async def test_a_tie_is_secret_with_its_word_and_one_undo(self) -> None:
         rel = await self.tie(clue_id=self.glove)
@@ -227,7 +227,7 @@ class TheScreen(TheClues):
         form = screen.ClueForm(self.c, self.thread)
         form.name._value = "A bloody glove"  # (the campaign's clue of that name, never a twin)
         (said,) = await self.press(form._submit)
-        self.assertIn("Tied **A bloody glove**", said["note"])
+        self.assertEqual(said["note"], "✅ **A bloody glove** is now a clue to this thread.")
         (only,) = await self.dm_clues()
         self.assertEqual(only.clue_id, self.glove)
         (said,) = await self.press(screen.ClueMenu(self.c, self.thread, only)._mark)
