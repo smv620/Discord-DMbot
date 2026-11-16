@@ -21,6 +21,7 @@ ALLOWED = {
     "migrations/0511_thread_card_door.py": "the DM-only read door for the website card",
     "migrations/0512_thread_sheet_door.py": "the same door, with the sheet (a count of waiting)",
     "migrations/0508_time_limit_told.py": "a foreign key to a limit's first row (#4448)",
+    "migrations/0520_thread_progress.py": "a foreign key to the part a progress line moves (#4522)",
 }
 NAMES = re.compile(r"memory_thread_parts|\bTHREAD_PARTS\b")
 

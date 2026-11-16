@@ -2230,6 +2230,64 @@ class MemoryStore:
                     )  # fmt: skip
             return Written(_entity(row), w.batch)
 
+    async def keep_thread_progress(
+        self, guild_id: int, campaign_id: str, line_ids: Sequence[str], *, source: str
+    ) -> Written[int]:
+        """The DM keeps progress lines the session reader offered on threads the campaign has
+        (#4522, quests slice 5b; `thread_progress`): every line left on, in ONE change, so one
+        Undo takes them all back (`thread_progress.unkeep_in`). A new part is kept as the DM's
+        keep with its source 'session' (§9.6), a part's new state as the story moving on
+        (`thread_parts.set_state`), a thread's state as its condition from that session. A line
+        that no longer fits (its thread or part gone or changed since, the same part already
+        there) is left out, never failing the keep, and still marked answered. Returns how many
+        were written; raises when none of them still waited."""
+        if source != DM:
+            raise MemoryRuleError(thread_parts.ONLY_DM)
+        from dmbot.memory import thread_progress as tp
+
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            lines = await tp.waiting_in(w, line_ids)
+            if not lines:
+                raise MemoryRuleError(tp.GONE)
+            written = 0
+            for line in lines:
+                written += await self._keep_progress_line(w, onto, line)
+            await tp.mark_kept(w, [line.id for line in lines], w.batch)
+            return Written(written, w.batch)
+
+    async def _keep_progress_line(self, w: Changes, onto: Ontology, line: Any) -> int:
+        """One progress line inside `keep_thread_progress`'s write: 1 when it wrote, 0 when it no
+        longer fits."""
+        from dmbot.memory import thread_progress as tp
+
+        thread = await w.get(ENTITIES, line.thread_id)
+        if (
+            thread is None
+            or thread["status"] != CONFIRMED
+            or not onto.is_a(str(thread["type"]), "thread")
+        ):
+            return 0
+        change = line.change
+        try:
+            if change.kind == tp.PART:
+                await thread_parts.add(
+                    w, onto, line.thread_id, change.part_kind, change.words,
+                    state=change.state or None, due=change.due, source=thread_parts.SESSION,
+                )  # fmt: skip
+            elif change.kind == tp.PART_STATE:
+                await thread_parts.set_state_in_thread(
+                    w, line.thread_id, str(change.part_id), change.state
+                )
+            else:
+                await states.set_condition(
+                    w, onto, thread, change.state, from_session_at=line.session_at
+                )
+        except (MemoryRuleError, ValueError) as exc:
+            log.info("A progress line no longer fits (%s)", type(exc).__name__)
+            return 0
+        return 1
+
     async def _new_thread_in(
         self,
         w: Changes,
