@@ -110,7 +110,7 @@ class TheDoor(Web):
     async def test_an_other_name_is_asked_of_the_name_it_belongs_to(self) -> None:
         made = await self.memory.add_alias(
             self.g, self.one.id, self.keep, "the old fort", kind="nickname",
-            source=DM_SOURCE, status="confirmed", secret=True,
+            source=DM_SOURCE, status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         alias = made.value.id
         body = {"action": "alias-who", "alias": alias, "who": "some", "characters": [self.npc]}
@@ -139,7 +139,7 @@ class TheDoor(Web):
         )
         made = await self.memory.add_alias(
             self.g, self.one.id, self.keep, "the old fort", kind="nickname",
-            source=DM_SOURCE, status="confirmed", secret=True,
+            source=DM_SOURCE, status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         body = {"action": "alias-who", "alias": made.value.id, "who": "some"}
         with self.assertRaises(RecapError) as bad:  # a character the campaign does not have
@@ -232,7 +232,7 @@ class TheBotAppliesIt(Editing):
     async def test_a_secret_other_name(self) -> None:
         made = await self.memory.add_alias(
             self.g, self.one.id, self.keep, "the old fort", kind="nickname",
-            source=DM_SOURCE, status="confirmed", secret=True,
+            source=DM_SOURCE, status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         alias = made.value.id
         body = {"action": "alias-who", "alias": alias, "who": "some", "characters": [self.rook]}
@@ -274,7 +274,7 @@ class TheBotAppliesIt(Editing):
     async def secret_name(self, *, secret: bool = True) -> str:
         made = await self.memory.add_alias(
             self.g, self.one.id, self.keep, "the old fort", kind="nickname",
-            source=DM_SOURCE, status="confirmed", secret=secret,
+            source=DM_SOURCE, status="confirmed", secret=secret, dm_chose_secret=True,
         )  # fmt: skip
         return made.value.id
 
@@ -307,6 +307,22 @@ class TheBotAppliesIt(Editing):
         await self.alias_who(alias, who="some", characters=[self.rook])
         self.assertEqual([(o.error, o.batches) for o in await self.apply_all()], [("", ())])
         self.assertEqual(await self.memory.version(self.g, self.one.id), before)
+
+    async def test_the_websites_answer_on_a_common_name_takes_common_knowledge_back(self) -> None:
+        """#4537 slice 1b: the website's 🤫 / 👥 / 👁️ use the same calls, so a name a World upload
+        made common knowledge stops being common, and the page's Undo puts all of it back."""
+        alias = await self.secret_name(secret=False)
+        await self.memory.add_common_knowledge(
+            self.g, self.one.id, "alias", [alias], source=DM_SOURCE
+        )
+        await self.alias_who(alias, who="dm")
+        (done,) = await self.apply_all()
+        self.assertEqual((done.error, len(done.batches)), ("", 2))  # (common taken back, hidden)
+        common = self.memory.common_knowledge
+        self.assertEqual(await common(self.g, self.one.id, "alias", [alias]), set())
+        for batch in reversed(done.batches):
+            await self.memory.undo(self.g, self.one.id, batch)
+        self.assertEqual(await common(self.g, self.one.id, "alias", [alias]), {alias})
 
     async def test_a_name_from_a_non_dm_sender_is_refused(self) -> None:
         alias = await self.secret_name()

@@ -169,7 +169,14 @@ class TheUndoLogAndOldFiles(ConfirmedMemoryTest):
         lantern = await self.add("Greenlight", type="item")
         grey = await self.add("Kesh", type="character", role="npc")
         await self.memory.add_alias(
-            GUILD_A, self.c, grey, "the Grey Fox", kind="nickname", source="dm", secret=True
+            GUILD_A,
+            self.c,
+            grey,
+            "the Grey Fox",
+            kind="nickname",
+            source="dm",
+            secret=True,
+            dm_chose_secret=True,
         )
         await self.memory.set_players_text(
             GUILD_A, self.c, lantern, "owned by the Grey Fox", source=DM_SOURCE

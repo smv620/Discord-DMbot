@@ -59,9 +59,11 @@ class TableRows(MemoryTest):
         secret = await self.add("Rook", status=CONFIRMED, hidden_from_players=True)
         npc = await self.add("Brisa", status=CONFIRMED, hidden_from_players=True)
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, ENTRY, secret, [first], source="dm"
+            GUILD_A, self.c, ENTRY, secret, [first], source="dm", dm_chose_secret=True
         )
-        await self.memory.set_statement_knowers(GUILD_A, self.c, ENTRY, npc, [npc], source="dm")
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, ENTRY, npc, [npc], source="dm", dm_chose_secret=True
+        )
         await self.pc("Kesh", 1003)
         async with self.memory._read(GUILD_A, self.c, snapshot=True) as scope:
             kesh_sees = (await gate.visible_to(scope, Viewer.player([second]))).entries
@@ -118,7 +120,7 @@ class TableRows(MemoryTest):
         )
         link = str(made.value[0].id)
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, "connection", link, [], source="dm"
+            GUILD_A, self.c, "connection", link, [], source="dm", dm_chose_secret=True
         )
         data = await self.memory.lookup_data(GUILD_A, self.c)
         by_name = {e.name: e for e in data.entities}
@@ -144,7 +146,13 @@ class TableRows(MemoryTest):
         # a group that holds an entry is reach the quick answer does not follow: the full gate
         # answers instead (the lookup falls back)
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, ENTRY, ids["hidden"], [ids["faction"]], source="dm"
+            GUILD_A,
+            self.c,
+            ENTRY,
+            ids["hidden"],
+            [ids["faction"]],
+            source="dm",
+            dm_chose_secret=True,
         )
         async with self.memory._read(GUILD_A, self.c, snapshot=True) as scope:
             self.assertIsNone(await gate.party_entries(scope))

@@ -106,7 +106,9 @@ class Told(NameWho):
         await told_name.ask_take_back(nothing, self.campaign.id, self.bell.id, alias.id, mara.id)
         self.assertIn("told this, so there is nothing to take back", self.said(nothing))
         # a name that is not secret any more cannot be told
-        await self.memory.update_alias(GUILD, self.campaign.id, alias.id, source="dm", secret=False)
+        await self.memory.update_alias(
+            GUILD, self.campaign.id, alias.id, source="dm", secret=False, dm_chose_secret=True
+        )
         public = self.it()
         await told_name.tell(public, self.campaign.id, self.bell.id, alias.id, mara.id)
         self.assertIn("secret, so everyone already knows it", self.said(public))

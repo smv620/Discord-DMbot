@@ -19,7 +19,14 @@ class OnTheRecall(ConfirmedMemoryTest):
         self.ulfgar = await self.add("Ulfgar", type="character", role="npc")
         self.veil = await self.add("Lord Veil", type="character", hidden_from_players=True)
         await self.memory.add_alias(
-            GUILD_A, self.c, self.cerric, "the Grey Fox", kind="nickname", source="dm", secret=True
+            GUILD_A,
+            self.c,
+            self.cerric,
+            "the Grey Fox",
+            kind="nickname",
+            source="dm",
+            secret=True,
+            dm_chose_secret=True,
         )
         await self.link(self.cerric, "associated_with", self.far, detail=LABEL)
 

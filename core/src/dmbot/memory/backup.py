@@ -595,7 +595,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             or any(len(e) > EVIDENCE_ID_MAX for e in raw["evidence_ids"])
         ):
             raise CampaignError(DAMAGED)
-        if table is PERSPECTIVES and (raw["kind"] in ("truth", "party")) != (
+        if table is PERSPECTIVES and (raw["kind"] in ("truth", "party", "everyone")) != (
             raw["entity_id"] is None
         ):
             raise CampaignError(DAMAGED)  # only a character's perspective points at an entry
@@ -674,8 +674,8 @@ def _check_knowers(
     by_tag: dict[str, list[dict[str, Any]]], views: dict[str, dict[str, Any]]
 ) -> None:
     """Every `memory_knowers` row names one statement in the file and a character's point of
-    view in the file (#2995). A backup must hold the whole list or none of it, so damage refuses
-    the file."""
+    view in the file (#2995), or the campaign's "everyone" view (common knowledge, #4537). A
+    backup must hold the whole list or none of it, so damage refuses the file."""
     held = {
         "about_entity_id": {r["id"] for r in by_tag["entity"]},
         "state_id": {r["id"] for r in by_tag["state"]},
@@ -687,7 +687,8 @@ def _check_knowers(
         if len(named) != 1 or k[named[0]] not in held[named[0]]:
             raise CampaignError(DAMAGED)
         view = views.get(k["perspective_id"])
-        if view is None or view["kind"] not in ("pc", "npc"):
+        # (a character's point of view, or common knowledge's, #4537: carried like the others)
+        if view is None or view["kind"] not in ("pc", "npc", "everyone"):
             raise CampaignError(DAMAGED)
 
 

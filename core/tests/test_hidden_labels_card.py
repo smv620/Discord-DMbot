@@ -44,7 +44,14 @@ class OnTheCard(ConfirmedMemoryTest):
     async def test_a_label_naming_a_secret_spelling_is_blanked_too(self) -> None:
         other = await self.add("Kesh")
         await self.memory.add_alias(
-            GUILD_A, self.c, other, "the Grey Fox", kind="nickname", source="dm", secret=True
+            GUILD_A,
+            self.c,
+            other,
+            "the Grey Fox",
+            kind="nickname",
+            source="dm",
+            secret=True,
+            dm_chose_secret=True,
         )
         await self.memory.add_relation(
             GUILD_A, self.c, self.mira, "associated_with", other,

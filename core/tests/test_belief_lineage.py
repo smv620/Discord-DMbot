@@ -32,7 +32,13 @@ class Lineage(MemoryTest):
 
     async def view_for(self, entity: str) -> str:
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, "connection", self.rel, {entity: 1.0}, source="dm"
+            GUILD_A,
+            self.c,
+            "connection",
+            self.rel,
+            {entity: 1.0},
+            source="dm",
+            dm_chose_secret=True,
         )
         found = await self.memory.perspectives(GUILD_A, self.c)
         return next(p.id for p in found if p.entity_id == entity)

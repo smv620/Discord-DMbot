@@ -136,7 +136,7 @@ class TheStore(_StoreBase):
         r = await self.tie("sworn_to", self.cerric, self.wit, secret=True)
         await self.memory.pin(GUILD_A, self.c, r.id, True, source="dm")
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, CONNECTION, r.id, [hero], source="dm"
+            GUILD_A, self.c, CONNECTION, r.id, [hero], source="dm", dm_chose_secret=True
         )
         done = await self.turn(r.id, self.wit)
         new = done.value

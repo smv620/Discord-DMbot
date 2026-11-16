@@ -258,7 +258,9 @@ class AfterTheReview(MemoryTest):
     async def test_keep_never_shows_a_place_someone_else_hid(self) -> None:
         faerun = await self.add("Faerûn", type="place", status=CONFIRMED)
         await self.memory.set_place_level(GUILD_A, self.c, faerun, "world", source=BY_DM)
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, faerun, True, source=BY_DM)
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, faerun, True, source=BY_DM, dm_chose_secret=True
+        )
         await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
         kept = await self.memory.keep_setting(GUILD_A, self.c, faerun, source=BY_DM)
         self.assertTrue(kept.value.hidden_from_players)
@@ -382,7 +384,7 @@ class TheNo(MemoryTest):
         made = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
         assert made.value is not None
         await self.memory.set_hidden_from_players(
-            GUILD_A, self.c, made.value.id, False, source=BY_DM
+            GUILD_A, self.c, made.value.id, False, source=BY_DM, dm_chose_secret=True
         )
         await self.memory.set_setting(GUILD_A, self.c, None, source=BY_DM)
         kept = await self.memory.entity(GUILD_A, self.c, made.value.id)

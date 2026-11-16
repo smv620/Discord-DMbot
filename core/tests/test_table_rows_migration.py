@@ -85,7 +85,13 @@ class TableRowsMigration(unittest.IsolatedAsyncioTestCase):
         place = await self.add("Greywater", type="place")
         partial = await self.add("Rook", hidden_from_players=True)
         await self.memory.set_statement_knowers(
-            GUILD, self.c, ENTRY, partial, [await self.pc("Orin", 4)], source="dm"
+            GUILD,
+            self.c,
+            ENTRY,
+            partial,
+            [await self.pc("Orin", 4)],
+            source="dm",
+            dm_chose_secret=True,
         )
         late = await self.pc("Kesh", 5)
         await self.joined(late, 1000)
@@ -155,8 +161,12 @@ class TableRowsMigration(unittest.IsolatedAsyncioTestCase):
         await self.joined(mara, -1000)  # both were at the table before the clues were told
         clue_a = await self.add("A private clue", hidden_from_players=True)
         clue_b = await self.add("Another private clue", hidden_from_players=True)
-        await self.memory.set_statement_knowers(GUILD, self.c, ENTRY, clue_a, [tavin], source="dm")
-        await self.memory.set_statement_knowers(GUILD, self.c, ENTRY, clue_b, [mara], source="dm")
+        await self.memory.set_statement_knowers(
+            GUILD, self.c, ENTRY, clue_a, [tavin], source="dm", dm_chose_secret=True
+        )
+        await self.memory.set_statement_knowers(
+            GUILD, self.c, ENTRY, clue_b, [mara], source="dm", dm_chose_secret=True
+        )
         await self.db.migrate(MIGRATIONS)
         self.assertNotIn(clue_a, await self.seen_by(mara))
         self.assertNotIn(clue_b, await self.seen_by(tavin))

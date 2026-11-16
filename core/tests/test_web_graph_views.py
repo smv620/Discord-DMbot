@@ -58,7 +58,7 @@ class TheDm(Views):
             status="confirmed",
         )  # fmt: skip
         await self.memory.set_hidden_from_players(self.g, self.one.id, rook.value.id, False,
-                                                  source="dm")  # fmt: skip
+                                                  source="dm", dm_chose_secret=True)  # fmt: skip
         made = await self.memory.add_relation(
             self.g, self.one.id, self.mira, "knows", rook.value.id, source="dm", confidence=1.0,
             status="confirmed", secret=True, knows_how="met",
@@ -68,7 +68,9 @@ class TheDm(Views):
         self.assertNotIn(link, self.ids(players))
         self.assertFalse(any("knowsHow" in x and x["id"] == link
                              for e in players["edges"] for x in e["links"]))  # fmt: skip
-        await self.memory.update_relation(self.g, self.one.id, link, source="dm", secret=False)
+        await self.memory.update_relation(
+            self.g, self.one.id, link, source="dm", secret=False, dm_chose_secret=True
+        )
         players = await self.graph(self.player, center=self.mira, hops=1)
         shown = [x for e in players["edges"] for x in e["links"] if x["id"] == link]
         self.assertEqual([(x["words"], x["knowsHow"]) for x in shown], [("has met", "met")])

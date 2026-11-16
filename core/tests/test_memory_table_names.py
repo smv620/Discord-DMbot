@@ -22,7 +22,9 @@ class TheTablesNames(NamesTest):
         await self.add("Mira", type="character", role="player_character", played_by=9)
         await self.add("Kell", type="character", role="npc")
         rook = await self.add("Rook", type="character", role="npc")
-        await self.memory.set_hidden_from_players(GUILD, self.campaign.id, rook, True, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD, self.campaign.id, rook, True, source="dm", dm_chose_secret=True
+        )
         names = await self.memory.table_names(GUILD, self.campaign.id)
         self.assertIn("Kell", names)
         self.assertNotIn("Rook", names)

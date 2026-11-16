@@ -39,7 +39,7 @@ class SeeAs(Web):
 
     async def know(self, kind: str, statement: str, who: list[str]) -> None:
         await self.memory.set_statement_knowers(
-            self.g, self.one.id, kind, statement, who, source=DM_SOURCE
+            self.g, self.one.id, kind, statement, who, source=DM_SOURCE, dm_chose_secret=True
         )
 
     async def seen(self, viewer: str, who: Any = None, **kw: Any) -> dict[str, Any]:
@@ -123,6 +123,7 @@ class AMainNameStaysSecret(SeeAs):
         made = await self.memory.add_alias(
             self.g, self.one.id, self.mira, "the ferrywoman",
             kind="nickname", source=DM_SOURCE, status="confirmed", secret=True,
+            dm_chose_secret=True,
         )  # fmt: skip
         alias = made.value.id
         await self.know(ALIAS, alias, [self.rook])
@@ -137,6 +138,7 @@ class NothingSecretInTheWords(SeeAs):
         made = await self.memory.add_alias(
             self.g, self.one.id, self.mira, "the ferrywoman",
             kind="nickname", source=DM_SOURCE, status="confirmed", secret=True,
+            dm_chose_secret=True,
         )  # fmt: skip
         await self.know(ALIAS, made.value.id, [self.rook])
         note = await self.memory.add_relation(
@@ -196,6 +198,7 @@ class NamedAsTheBotNamesThem(SeeAs):
         made = await self.memory.add_alias(
             self.g, self.one.id, self.keep, "the old fort",
             kind="nickname", source=DM_SOURCE, status="confirmed", secret=True,
+            dm_chose_secret=True,
         )  # fmt: skip
         await self.know(ALIAS, made.value.id, [self.rook])
         async with self.db.guild(self.g) as conn:  # a knower put to sleep grants nothing

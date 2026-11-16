@@ -96,7 +96,7 @@ class Hearing(Base):
         self.secret = (
             await self.memory.add_alias(
                 g, self.one.id, kazeth.value.id, "the Grey Voice", kind="title",
-                source=DM_SOURCE, status="confirmed", secret=True,
+                source=DM_SOURCE, status="confirmed", secret=True, dm_chose_secret=True,
             )
         ).value.id  # fmt: skip
         other = await add(g, self.two.id, type="npc", name="Brynwater", source=DM_SOURCE,

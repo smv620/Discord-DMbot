@@ -101,7 +101,9 @@ class Fixing(ConfirmedMemoryTest):
         self.assertEqual([a.answer for a in (await self.answers()).values()], ["fixed"])
 
     async def test_a_secret_flag_marks_nothing(self) -> None:
-        await self.memory.update_relation(GUILD_A, self.c, self.truth, source="dm", secret=True)
+        await self.memory.update_relation(
+            GUILD_A, self.c, self.truth, source="dm", secret=True, dm_chose_secret=True
+        )
         self.assertEqual(await self.answers(), {})
 
     async def test_undoing_the_dms_change_puts_the_item_back(self) -> None:
@@ -141,7 +143,7 @@ class Fixing(ConfirmedMemoryTest):
     async def test_undoing_a_pin_or_a_secret_flag_keeps_the_fix(self) -> None:
         await self.memory.update_relation(GUILD_A, self.c, self.truth, source="dm", status=REJECTED)
         secret = await self.memory.update_relation(
-            GUILD_A, self.c, self.truth, source="dm", secret=True
+            GUILD_A, self.c, self.truth, source="dm", secret=True, dm_chose_secret=True
         )
         assert secret.batch is not None
         await self.memory.undo(GUILD_A, self.c, secret.batch, source="dm")

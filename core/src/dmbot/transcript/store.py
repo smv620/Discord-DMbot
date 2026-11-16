@@ -24,6 +24,7 @@ from dmbot.memory import (
     forget_readings,
     met_store,
     private_scene_store,
+    secret_questions,
     thread_suggestions,
 )
 from dmbot.session_locks import lock_sessions_of
@@ -1477,6 +1478,8 @@ async def _forget_memory_traces(
     await met_store.forget_speaker(conn, guild_id, user_id, campaign_id)
     # the private scenes they spoke in (#2996 rule 5)
     await private_scene_store.forget_speaker(conn, guild_id, user_id, campaign_id)
+    # the 🤫 questions that quote them (#4524)
+    await secret_questions.forget(conn, guild_id, user_id, campaign_id)
     # the story threads read from a session that quote them (#4522)
     await thread_suggestions.forget(conn, guild_id, user_id, campaign_id)
 

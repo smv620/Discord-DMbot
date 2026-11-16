@@ -134,7 +134,9 @@ class Helpers(MemoryTest):
         return str(made.value[0].id)
 
     async def know(self, kind: str, statement: str, who: list[str]) -> None:
-        await self.memory.set_statement_knowers(GUILD_A, self.c, kind, statement, who, source="dm")
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, kind, statement, who, source="dm", dm_chose_secret=True
+        )
 
 
 class Stored(Helpers):
@@ -169,7 +171,13 @@ class Stored(Helpers):
         ids = await self.table()
         with self.assertRaises(MemoryRuleError):
             await self.memory.set_statement_knowers(
-                GUILD_A, self.c, ENTRY, ids["sword"], [ids["mara"]], source="scan"
+                GUILD_A,
+                self.c,
+                ENTRY,
+                ids["sword"],
+                [ids["mara"]],
+                source="scan",
+                dm_chose_secret=True,
             )
         for bad in (ids["sword"], "0" * 32):  # an item, an id from nowhere
             with self.assertRaises(MemoryRuleError):
@@ -180,7 +188,7 @@ class Stored(Helpers):
     async def test_undo_takes_a_change_of_who_knows_back(self) -> None:
         ids = await self.table()
         done = await self.memory.set_statement_knowers(
-            GUILD_A, self.c, ENTRY, ids["sword"], [ids["mara"]], source="dm"
+            GUILD_A, self.c, ENTRY, ids["sword"], [ids["mara"]], source="dm", dm_chose_secret=True
         )
         assert done.batch is not None
         await self.memory.undo(GUILD_A, self.c, done.batch, source="dm")
@@ -390,12 +398,24 @@ class StoredCertainty(Helpers):
         ids = await self.table()
         rel = await self.link(ids["bruno"], ids["shela"])
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, CONNECTION, rel, {ids["bruno"]: 1.0, ids["shela"]: 0.95}, source="dm"
+            GUILD_A,
+            self.c,
+            CONNECTION,
+            rel,
+            {ids["bruno"]: 1.0, ids["shela"]: 0.95},
+            source="dm",
+            dm_chose_secret=True,
         )
         seen = await self.memory.visible_to(GUILD_A, self.c, Viewer.character(ids["shela"]))
         self.assertEqual(seen.how_sure(CONNECTION, rel), 0.95)
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, CONNECTION, rel, {ids["bruno"]: 1.0, ids["shela"]: 0.0}, source="dm"
+            GUILD_A,
+            self.c,
+            CONNECTION,
+            rel,
+            {ids["bruno"]: 1.0, ids["shela"]: 0.0},
+            source="dm",
+            dm_chose_secret=True,
         )
         again = await self.memory.visible_to(GUILD_A, self.c, Viewer.character(ids["shela"]))
         self.assertEqual(again.how_sure(CONNECTION, rel), 0.0)
@@ -403,7 +423,13 @@ class StoredCertainty(Helpers):
         self.assertEqual(len(got[rel]), 2)  # one row each, changed in place
         with self.assertRaises(MemoryRuleError):
             await self.memory.set_statement_knowers(
-                GUILD_A, self.c, CONNECTION, rel, {ids["bruno"]: 1.5}, source="dm"
+                GUILD_A,
+                self.c,
+                CONNECTION,
+                rel,
+                {ids["bruno"]: 1.5},
+                source="dm",
+                dm_chose_secret=True,
             )
 
     async def test_a_group_is_a_knower_and_its_members_follow_it(self) -> None:
@@ -412,14 +438,20 @@ class StoredCertainty(Helpers):
         await self.relate(ids["bruno"], "member_of", guild, status=CONFIRMED)
         rel = await self.link(ids["shela"], ids["sword"])
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, CONNECTION, rel, {guild: 0.7}, source="dm"
+            GUILD_A, self.c, CONNECTION, rel, {guild: 0.7}, source="dm", dm_chose_secret=True
         )
         bruno = await self.memory.visible_to(GUILD_A, self.c, Viewer.character(ids["bruno"]))
         self.assertEqual(bruno.how_sure(CONNECTION, rel), 0.7)
         outsider = await self.memory.visible_to(GUILD_A, self.c, Viewer.character(ids["mara"]))
         self.assertFalse(outsider.knows(CONNECTION, rel))
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, CONNECTION, rel, {guild: 0.7, ids["bruno"]: 0.2}, source="dm"
+            GUILD_A,
+            self.c,
+            CONNECTION,
+            rel,
+            {guild: 0.7, ids["bruno"]: 0.2},
+            source="dm",
+            dm_chose_secret=True,
         )
         own = await self.memory.visible_to(GUILD_A, self.c, Viewer.character(ids["bruno"]))
         self.assertEqual(own.how_sure(CONNECTION, rel), 0.2)  # his own row wins
@@ -427,7 +459,13 @@ class StoredCertainty(Helpers):
     async def test_a_backup_keeps_the_certainties(self) -> None:
         ids = await self.table()
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, ENTRY, ids["sword"], {ids["mara"]: 0.35}, source="dm"
+            GUILD_A,
+            self.c,
+            ENTRY,
+            ids["sword"],
+            {ids["mara"]: 0.35},
+            source="dm",
+            dm_chose_secret=True,
         )
         raw = encode_backup(await self.campaigns.export(GUILD_A, self.c))
         restored = await self.campaigns.import_backup(GUILD_B, decode_backup(raw), 7)
@@ -461,15 +499,21 @@ class FlagsFollow(Helpers):
     async def test_hiding_clears_the_list_and_showing_again_gives_it_to_every_pc(self) -> None:
         ids = await self.table()
         place = await self.add("Greywater", type="place", status=CONFIRMED)
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, place, True, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, place, True, source="dm", dm_chose_secret=True
+        )
         self.assertEqual(await self.known(ENTRY, place), [])
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, place, False, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, place, False, source="dm", dm_chose_secret=True
+        )
         self.assertEqual(await self.known(ENTRY, place), await self.pcs(ids))
 
     async def test_undo_of_hiding_brings_the_list_back(self) -> None:
         ids = await self.table()
         place = await self.add("Greywater", type="place", status=CONFIRMED)
-        hide = await self.memory.set_hidden_from_players(GUILD_A, self.c, place, True, source="dm")
+        hide = await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, place, True, source="dm", dm_chose_secret=True
+        )
         assert hide.batch is not None
         await self.memory.undo(GUILD_A, self.c, hide.batch, source="dm")
         self.assertEqual(await self.known(ENTRY, place), await self.pcs(ids))
@@ -499,9 +543,13 @@ class FlagsFollow(Helpers):
         )  # fmt: skip
         self.assertEqual(await self.known(CONNECTION, str(kept.value[0].id)), [])
         # hiding an entry takes its connections and names with it, showing it brings them back
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, b, True, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, b, True, source="dm", dm_chose_secret=True
+        )
         self.assertEqual(await self.known(CONNECTION, rel), [])
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, b, False, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, b, False, source="dm", dm_chose_secret=True
+        )
         self.assertEqual(await self.known(CONNECTION, rel), await self.pcs(ids))
 
     async def test_a_condition_is_known_with_its_entry(self) -> None:
@@ -515,29 +563,44 @@ class FlagsFollow(Helpers):
         ids = await self.table()
         rel = await self.link(ids["bruno"], ids["shela"])  # secret
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, CONNECTION, rel, {ids["bruno"]: 0.6}, source="dm"
+            GUILD_A, self.c, CONNECTION, rel, {ids["bruno"]: 0.6}, source="dm", dm_chose_secret=True
         )
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, rel, [ids["okthandom"]], source="dm"
+            GUILD_A, self.c, rel, [ids["okthandom"]], source="dm", dm_chose_secret=True
         )
         self.assertEqual(
             await self.known(CONNECTION, rel), [ids["okthandom"]]
         )  # the NPC picked now is added, and the one not picked stops knowing (#3197)
-        await self.memory.set_connection_knowers(GUILD_A, self.c, rel, [], source="dm")
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, rel, [], source="dm", dm_chose_secret=True
+        )
         self.assertEqual(await self.known(CONNECTION, rel), [])
         # a player-characters-only list (the Discord menu) never drops an NPC (#3197)
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, CONNECTION, rel, {ids["bruno"]: 0.6}, source="dm"
+            GUILD_A, self.c, CONNECTION, rel, {ids["bruno"]: 0.6}, source="dm", dm_chose_secret=True
         )
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, rel, [ids["mara"]], source="dm", players_only=True
+            GUILD_A,
+            self.c,
+            rel,
+            [ids["mara"]],
+            source="dm",
+            players_only=True,
+            dm_chose_secret=True,
         )
         self.assertEqual(await self.known(CONNECTION, rel), sorted([ids["bruno"], ids["mara"]]))
         shade = await self.memory.add_alias(
-            GUILD_A, self.c, ids["bruno"], "Shade", kind="title", secret=True, source="dm"
+            GUILD_A,
+            self.c,
+            ids["bruno"],
+            "Shade",
+            kind="title",
+            secret=True,
+            source="dm",
+            dm_chose_secret=True,
         )
         await self.memory.set_alias_knowers(
-            GUILD_A, self.c, shade.value.id, [ids["mara"]], source="dm"
+            GUILD_A, self.c, shade.value.id, [ids["mara"]], source="dm", dm_chose_secret=True
         )
         self.assertEqual(await self.known(ALIAS, shade.value.id), [ids["mara"]])
 
@@ -595,7 +658,8 @@ class FlagsFollow(Helpers):
 
     async def flip(self, relation_id: str, **flags: bool) -> None:
         """Change a connection's flags the way the writers do: through the change log."""
-        async with self.memory._write(GUILD_A, self.c, "dm") as w:
+        # (as the DM's own choice: a public statement held back only by the DM, #4524)
+        async with self.memory._write(GUILD_A, self.c, "dm", dm_chose_secret=True) as w:
             await w.update(RELATIONS, relation_id, flags)
 
     async def shown_link(self, ids: dict[str, str]) -> tuple[str, str, str]:
@@ -613,7 +677,7 @@ class FlagsFollow(Helpers):
         pcs = await self.pcs(ids)
         await self.memory.set_statement_knowers(
             GUILD_A, self.c, CONNECTION, rel, {ids["okthandom"]: 1.0, ids["mara"]: 1.0, tran: 1.0},
-            source="dm",
+            source="dm", dm_chose_secret=True,
         )  # fmt: skip
         self.assertEqual(await self.known(CONNECTION, rel), sorted([*pcs, tran]))
         await self.flip(rel, unrevealed=True)  # held back from the players
@@ -634,11 +698,15 @@ class FlagsFollow(Helpers):
         pcs = await self.pcs(ids)
         await self.memory.set_statement_knowers(
             GUILD_A, self.c, ALIAS, alias, {ids["okthandom"]: 1.0, ids["mara"]: 1.0, guild: 0.8},
-            source="dm",
+            source="dm", dm_chose_secret=True,
         )  # fmt: skip
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, place, True, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, place, True, source="dm", dm_chose_secret=True
+        )
         self.assertEqual(await self.known(ALIAS, alias), [guild])  # the players' rows went
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, place, False, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, place, False, source="dm", dm_chose_secret=True
+        )
         again = await self.known(ALIAS, alias)
         self.assertEqual(again, sorted([*pcs, guild]))  # the players are back, the group once
         self.assertEqual(len(again), len(set(again)))

@@ -213,10 +213,20 @@ class Fixture(NamesTest):
 
     async def sure(self, relation_id: str) -> list[float]:
         """How sure each player character is of a connection (the rows, no ids)."""
+        return await self._sure(relation_id, "pc")
+
+    async def common(self, relation_id: str) -> list[float]:
+        """How sure common knowledge is of a connection (#4537: one row, or none)."""
+        return await self._sure(relation_id, "everyone")
+
+    async def _sure(self, relation_id: str, kind: str) -> list[float]:
         async with self.db.guild(GUILD) as conn:
             cur = await conn.execute(
-                "SELECT confidence FROM memory_knowers WHERE campaign_id = %s AND relation_id = %s",
-                (self.campaign.id, relation_id),
+                "SELECT k.confidence FROM memory_knowers k JOIN memory_perspectives p"
+                " ON p.guild_id = k.guild_id AND p.campaign_id = k.campaign_id"
+                " AND p.id = k.perspective_id"
+                " WHERE k.campaign_id = %s AND k.relation_id = %s AND p.kind = %s",
+                (self.campaign.id, relation_id, kind),
             )
             return [float(r["confidence"]) for r in await cur.fetchall()]
 
@@ -280,6 +290,7 @@ class TheUpload(Fixture):
         self.assertIn(kept.id, {r.id for r in shown})
         self.assertEqual(await self.known("connection", [kept.id]), {kept.id: [self.tavin]})
         self.assertEqual(await self.sure(kept.id), [1.0])
+        self.assertEqual(await self.common(kept.id), [1.0])  # (common knowledge, #4537)
 
     async def test_a_secret_connection_stays_secret_and_unknown_under_world(self) -> None:
         await self.read(lk.WORLD)
@@ -334,7 +345,7 @@ class TheUpload(Fixture):
         )  # fmt: skip
         rid = old.value[0].id
         await self.memory.set_statement_knowers(
-            GUILD, self.campaign.id, "connection", rid, [npc], source="dm"
+            GUILD, self.campaign.id, "connection", rid, [npc], source="dm", dm_chose_secret=True
         )
         await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, [w])
         self.assertEqual((await self.known("connection", [rid])).get(rid), [npc])
@@ -374,7 +385,7 @@ class TheUpload(Fixture):
         # (the other end is a spoiler, so the connection waits: the DM tells the players about it)
         for end in (guessed[0].subject_id, guessed[0].object_id):
             await self.memory.set_hidden_from_players(
-                GUILD, self.campaign.id, end, False, source="dm"
+                GUILD, self.campaign.id, end, False, source="dm", dm_chose_secret=True
             )
         done = await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, guessed[:1])
         (kept,) = await self.mine(guessed[0])
@@ -382,9 +393,11 @@ class TheUpload(Fixture):
         self.assertEqual(
             await self.sure(kept.id), [lk.GUESS_CERTAINTY]
         )  # a guess, not the DM's word
+        self.assertEqual(await self.common(kept.id), [lk.GUESS_CERTAINTY])  # (#4537)
         # Undo takes the connection back, and the guess's rows with it
         await keep.undo_all(self.memory, self.store, GUILD, self.campaign.id, done)
         self.assertEqual(await self.sure(kept.id), [])
+        self.assertEqual(await self.common(kept.id), [])  # (common knowledge goes too, #4537)
         (again,) = [w for w in await self.store.waiting(GUILD, self.campaign.id) if w.world]
         self.assertEqual(again.world, lk.GUESS)
 
@@ -656,7 +669,7 @@ class Rules(Fixture):
         # (both ends are shown to the players, so a world connection between them is too)
         for entity_id in (mara, order):
             await self.memory.set_hidden_from_players(
-                GUILD, self.campaign.id, entity_id, False, source="dm"
+                GUILD, self.campaign.id, entity_id, False, source="dm", dm_chose_secret=True
             )
         await self.store.add(
             GUILD, self.campaign.id, [NewLink(mara, "member_of", order, "q", world=lk.SURE)]

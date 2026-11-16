@@ -124,6 +124,7 @@ match. "In Discord" says where the DM finds it today.
 | Table chat on or off, and which chat | Table chat | Discord-only: the table's chat is a Discord channel |
 | Rules level (how much DMbot says) and Features on or off | Campaign management | Rules level: Campaign settings (`level`). Features: a read-only list (`FEATURES_LIST_LIVE`, #3693, #3718); turning features on or off stays in Discord until filed |
 | Game masters: add, remove | Game masters | Campaign settings: game masters (`CO_DMS_LIVE`) |
+| Who knows what was said: 👥 Some know on the "What was said" page's cards, with DMbot's guess ticked and a "Known to:" line (#4534) | After-session "What was said" page | Not yet: a WebDev issue, filed when the connection card (part 2) lands |
 | The campaign's setting (the world the story is in): see it, keep DMbot's guess (#4291) | ⚙️ Manage DMbot: the Campaign setting line, ✅ Keep it (picking another world follows) | WebDev's half of #4291 (the website's Campaign setting field) |
 | Hand over the campaign: offer, accept, decline, withdraw | Handover buttons | Hand a campaign over (`HANDOVER_LIVE`) |
 | A hand-over offer closed because the Discord accounts on an account changed, and why (#2533 slice 3, #4467) | A notice to both people, and the offer message loses its buttons | Account page: "Offers that were closed", for a week, with the reason (no names, no accounts) |
@@ -161,7 +162,7 @@ match. "In Discord" says where the DM finds it today.
 | Change a connection; its feeling; why (the lore quote, DM only) | connection edit | Story Graph: change a connection; feeling picker and "Why?" (#3607) |
 | Whether two people have met (has met / has heard of / knows) | connection edit ("Have they met?") | Story Graph: on the way, #3882 (the web half of #3881) |
 | Which way a connection reads (A → B, B → A, A ↔ B) and "Cerric and Wit are rivals" for a two-way one; Undo | connection edit ("Which way does it read?", DM only, #4154) | Story Graph: the connection panel's direction toggle and `pairWords`, #4155 (the API and door are in #4154) |
-| Who knows this; tell one character a secret name; take it back | who-knows, told name | Story Graph: who knows, secret names told (`WHO_KNOWS_LIVE`, `TOLD_LIVE`, #3542) |
+| Who knows this (with 🌍 Common knowledge: Discord #4563, website #4559); tell one character a secret name; take it back | who-knows, told name | Story Graph: who knows, secret names told (`WHO_KNOWS_LIVE`, `TOLD_LIVE`, #3542); 🌍 Common knowledge #4559 |
 | Reveal a secret; secret said aloud; revealed report; Recant | reveal cards | Story Graph: peek and reveal (`webPeek`, `webReveal`) (WebDev confirmed) |
 | Places written two ways | name question | Names: places written two ways (`NAME_PLACES_LIVE`, #3533) |
 | How big a place is (a plane down to a room; read from the lore's words, the DM sets it, Not sure clears it) | 📏 Size on a place's name card (DM only, #4173 slice 1) | Names: the API and door are built (`placeLevel` on each name, the `place-size` action, #4173); the page: Names, a place's row → "📏 Size" choice, built, switched off, `PLACE_FACTS_LIVE` (#4187) |

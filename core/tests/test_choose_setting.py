@@ -38,7 +38,9 @@ class Choosing(MemoryTest):
     async def test_a_place_the_dm_hid_stays_hidden(self) -> None:
         own = await self.add("Eberron", type="place", status=CONFIRMED)
         await self.memory.set_place_level(GUILD_A, self.c, own, "world", source=BY_DM)
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, own, True, source=BY_DM)
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, own, True, source=BY_DM, dm_chose_secret=True
+        )
         made = await self.memory.choose_setting(GUILD_A, self.c, "Eberron", source=BY_DM)
         self.assertTrue(made.value.hidden_from_players)
 
@@ -90,7 +92,7 @@ class Choosing(MemoryTest):
         assert guess.value is not None
         await self.memory.keep_setting(GUILD_A, self.c, guess.value.id, source=BY_DM)
         await self.memory.set_hidden_from_players(
-            GUILD_A, self.c, guess.value.id, True, source=BY_DM
+            GUILD_A, self.c, guess.value.id, True, source=BY_DM, dm_chose_secret=True
         )
         await self.memory.choose_setting(GUILD_A, self.c, "Golarion", source=BY_DM)
         kept = await self.memory.entity(GUILD_A, self.c, guess.value.id)
