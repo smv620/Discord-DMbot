@@ -2045,6 +2045,13 @@ names panel nor the speech-to-text hints can be a fixed list.
       map review (#2410). Until then the after-session report points the DM to connections whose names are both
       revealed (Supervisor, 2026-10-22, #2451). The DM can also press **👁️ Reveal
       to players** on a card or in the graph.
+    - **Public never becomes secret by itself** (owner, 2026-11-15, #4524): a name or connection the players
+      already know (revealed, or known to a character, or read from public lore) is never made secret, hidden
+      or narrowed to fewer knowers by DMbot. That holds whatever a later document, backstory or session seems
+      to say. When something DMbot reads looks like a secret but the item is already public, DMbot changes
+      nothing and puts it in the **after-session notes and questions to the DM** ("This sounds like a secret,
+      but the players already know it: Keep it known / Make it secret"). Only the DM's own choice makes a
+      public item secret, as one change with ↩ Undo.
     - **🤫 Secrets said out loud are revealed too, and the DM can recant** (owner, 2026-10-22, replacing "🤫 is
       stronger"): after the session, the **knowledge map review** lists "Secrets exposed" with **↩️ Recant**
       for a slip, a misheard word, or a name the DM will change to keep the mystery. A player's **guess** is

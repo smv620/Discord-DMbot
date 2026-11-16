@@ -5211,8 +5211,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         user_id: int,
         text: str,
         view: discord.ui.View | None = None,
-        *,
-        link_to_itself: bool = False,
     ) -> str:
         """ "sent", "forbidden" (their messages from DMbot are closed) or "failed"."""
         try:
@@ -5224,8 +5222,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 keep = getattr(view, "keep_message", None)  # a view that edits itself later (#2284)
                 if keep is not None:
                     keep(sent)
-                if link_to_itself:  # "Open in Discord" on a question the message itself holds
-                    await dm_links.point_at_itself(sent, view)
         except discord.Forbidden as exc:
             log.info("Couldn't message user %s privately: %s", user_id, exc)
             return "forbidden"
@@ -11830,7 +11826,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         dm_links.DMLinks(),
                     )
                     message = await self._dm_message(user_id, marked, copy)
-                    await dm_links.point_at_itself(message, copy)  # (its own jump link)
                 except Exception:
                     log.exception("Couldn't ask a DM a live question privately")
                     continue
@@ -11997,12 +11992,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 # send that worked (the caller would then also post on the DM screen, asking
                 # twice). "At least one DM got it" is the contract.
                 try:
-                    # ("Open in Discord" opens the message itself, unless the caller gave another)
-                    own = not (links and links.discord_url)
-                    if (
-                        await self.sidebar_send_dm(user_id, text, view, link_to_itself=own)
-                        == "sent"
-                    ):
+                    # ("Open in Discord" only when it points somewhere else: never at the message)
+                    if await self.sidebar_send_dm(user_id, text, view) == "sent":
                         sent = True
                 except Exception:
                     log.exception("Couldn't ask a DM privately")
