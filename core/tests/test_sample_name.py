@@ -99,7 +99,8 @@ class Keeping(unittest.TestCase):
         kept = self.plan([30, 31], 31)
         self.assertEqual(kept.delete, ("id31",))
         self.assertEqual(kept.kept_numbers, (30, 31))
-        self.assertEqual(kept.deleted_numbers, (31,))
+        self.assertEqual(kept.deleted_numbers, ())
+        self.assertTrue(kept.replaced)
 
     def test_nothing_before_it_is_nothing_deleted(self) -> None:
         kept = self.plan([], 1)
