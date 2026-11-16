@@ -21,7 +21,9 @@ def answer(score: int = 4, reason: str = "strong", **kw: tuple[int, str]) -> str
 
 class Client:
     def __init__(self, text: str | Exception) -> None:
-        self.text, self.sent, self.system = text, [], []
+        self.text = text
+        self.sent: list[str] = []
+        self.system: list[str] = []
 
     async def complete(self, system: str, text: str, **kw: object) -> Reply:
         self.sent.append(text)
