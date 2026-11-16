@@ -282,6 +282,7 @@ NEEDS_NO_RULE = {
     "dmbot_web_my_lines": "a person's own lines, only theirs",
     "dmbot_web_my_lines_delete": "a person's own lines, only theirs",
     "dmbot_web_entity_places": "the clean-up page's lines for a DM alone (0384: 'the DM's alone')",
+    "dmbot_web_threads": "a DM's card only (0518): up to 3 lines, all speakers recorded",
 }
 
 
