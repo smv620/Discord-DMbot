@@ -28,7 +28,7 @@ import json
 import re
 import sys
 from collections import Counter
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -162,6 +162,7 @@ class Report:
     # the player characters' verdict (right, leaked, too narrow) and the NPCs' where the key names
     # them. Empty for a key without knowers, so older reports are unchanged.
     knowers: list[key_knowers.Scored] = field(default_factory=list)
+    knowers_scored: bool = False  # (the key says who knows: its lines show, found rows or none)
 
 
 def _live(row: Mapping[str, Any]) -> bool:
@@ -442,6 +443,8 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
     tables = _tables(backup)
     graph = Graph(tables)
     wanted = docs_wanted(key, docs)
+    if not wanted:
+        raise ValueError(f"This key has no documents for --docs {docs} (no backstories?).")
     report = Report()
     nodes = [n for n in key["nodes"] if wanted & set(n.get("docs", ["lore", "session"]))]
     names: dict[str, list[str]] = {n["name"]: [n["name"], *n.get("aliases", [])] for n in nodes}
@@ -547,8 +550,19 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
     report.events_in_backup = sum(
         1 for e in graph.entities.values() if e["type"] in ("event", "deed")
     )
-    if any("knowers" in row for _, row, _ in held):
-        _score_knowers(report, tables, graph, key, names, held)
+    report.knowers_scored = any(
+        "knowers" in row for section in ("nodes", "pairs") for row in key[section]
+    )
+    if report.knowers_scored:
+        # (a knower the scored documents never name is still looked up, by its names in the key)
+        every = {n["name"]: n for n in key["nodes"]}
+        _score_knowers(
+            report, tables, graph, key,
+            lambda n: lookup(n) if n in names else graph.ids(
+                [n, *every.get(n, {}).get("aliases", [])]
+            ),
+            held,
+        )  # fmt: skip
     _score_map_facts(report, graph, key, names)
     _score_threads(report, graph, key, names)
     _score_languages(report, graph, key, names, wanted)
@@ -556,12 +570,15 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
     return report
 
 
+CHARACTER_TYPES = ENTRY_TYPES["person"] | ENTRY_TYPES["creature"] | ENTRY_TYPES["group"]
+
+
 def _score_knowers(
     report: Report,
     tables: Mapping[str, Sequence[Mapping[str, Any]]],
     graph: Graph,
     key: Mapping[str, Any],
-    names: Mapping[str, list[str]],
+    lookup: Callable[[str], set[str]],
     held: Sequence[tuple[str, Mapping[str, Any], set[str]]],
 ) -> None:
     """Who knows each found, confirmed row, against its `knowers` (#4523 slice 2): the player
@@ -572,7 +589,14 @@ def _score_knowers(
     for _, row, _ in held:
         if isinstance(row.get("knowers"), list):
             asked.update(row["knowers"])
-    characters = {name: graph.ids(names.get(name, [name])) for name in sorted(asked)}
+    # Who each knower is: a player character only as a stored player character, an NPC only as a
+    # character or group, so a key's other name ("Norro") stored as its own entry, a place say,
+    # never lends its rows; a key entry the story never names only by its description (`lookup`).
+    pcs = {i for i, e in graph.entities.items() if e.get("role") == "player_character"}
+    people = {i for i, e in graph.entities.items() if e["type"] in CHARACTER_TYPES}
+    characters = {
+        name: lookup(name) & (pcs if name in players else people) for name in sorted(asked)
+    }
     knowers = key_knowers.Knowers(tables, characters, players)
     for section, row, ids in held:
         if "knowers" not in row:
@@ -580,6 +604,8 @@ def _score_knowers(
         report.knowers.append(
             knowers.score(
                 section,
+                # (a tie's id is the key's own; an entry's is its key name, which the counts-only
+                # report never prints)
                 str(row["id"] if section == "tie" else row["name"]),
                 row["knowers"],
                 gate.CONNECTION if section == "tie" else gate.ENTRY,
@@ -876,7 +902,7 @@ def summarize(report: Report) -> dict[str, Any]:
         **({"thread_parts": dict(report.thread_parts)} if report.thread_parts else {}),
         **({"languages": dict(report.languages)} if report.languages else {}),
         **({"route_lengths": dict(report.route_lengths)} if report.route_lengths else {}),
-        **({"knowers": _knower_counts(report.knowers)} if report.knowers else {}),
+        **({"knowers": _knower_counts(report.knowers)} if report.knowers_scored else {}),
     }
 
 
@@ -956,7 +982,7 @@ def render(report: Report, counts_only: bool = False) -> str:
     if report.route_lengths:  # (#4255: a road's length, a property of the road, not a tie)
         c = report.route_lengths
         lines.append(f"Road lengths: found {c['found']}, missed {c['missed']}, extra {c['extra']}")
-    if report.knowers:  # (#4523 slice 2: who knows each found row; a leak is a failure)
+    if report.knowers_scored:  # (#4523 slice 2: who knows each found row; a leak is a failure)
         c = _knower_counts(report.knowers)
         for label, part in (("entries", c["entries"]), ("ties", c["ties"])):
             lines.append(
@@ -971,11 +997,11 @@ def render(report: Report, counts_only: bool = False) -> str:
             f"leaked {c['checked'].get(key_knowers.LEAKED, 0)}, "
             f"too narrow {c['checked'].get(key_knowers.NARROW, 0)}"
         )
-        for label, verdict in (
+        for label, said in (
             ("Leaks (a player character knows what the key keeps from them)", key_knowers.LEAKED),
             ("Known too narrowly", key_knowers.NARROW),
         ):
-            off = [x for x in report.knowers if x.verdict == verdict]
+            off = [x for x in report.knowers if x.verdict == said]
             lines.append(f"{label}: {len(off)}")
             for x in off:
                 # (a tie's id is the key's; an entry's id is its key name, shown only with words)

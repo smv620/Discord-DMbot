@@ -19,13 +19,23 @@ from __future__ import annotations
 
 from collections.abc import Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from dmbot.memory import gate
 
-RIGHT, LEAKED, NARROW = "right", "leaked", "too narrow"
-NPC_RIGHT, NPC_WRONG = "right", "wrong"
+Verdict = Literal["right", "leaked", "too narrow"]
+NpcVerdict = Literal["", "npc right", "npc wrong"]
+RIGHT: Verdict = "right"
+LEAKED: Verdict = "leaked"
+NARROW: Verdict = "too narrow"
+NPC_RIGHT: NpcVerdict = "npc right"
+NPC_WRONG: NpcVerdict = "npc wrong"
 WHOLE_PARTY = frozenset({"party", "everyone"})
+NOBODY = "dm"
+# (an entry or tie is "known" by a character in the products' own sense: a row of its own for that
+# character, or a group's. An entry is known by its own name only: knowing a connection, a property
+# or another name (a disguise) makes the gate count its entries as known of, but the key's entry
+# `knowers` say who knows the name, as `gate.display_name` reads it, so a cover name never leaks.)
 
 
 @dataclass(frozen=True, slots=True)
@@ -34,8 +44,8 @@ class Scored:
 
     section: str  # "entry" or "tie"
     id: str
-    verdict: str  # RIGHT, LEAKED or NARROW (the player characters)
-    npc: str = ""  # NPC_RIGHT or NPC_WRONG where the key lists names; "" where it doesn't judge
+    verdict: Verdict  # the player characters'
+    npc: NpcVerdict = ""  # where the key lists names (or says "dm"); "" where it doesn't judge
     check: bool = False  # the key marks this row's knowers as the owner's to check
 
 
@@ -130,9 +140,13 @@ class Knowers:
     def who(self, kind: str, statement_ids: Collection[str], among: Iterable[str]) -> set[str]:
         """The characters in `among` who know any of `statement_ids` (one key row can be held by
         more than one stored row; any of them known is known)."""
-        return {
-            name for name in among if any(self.seen[name].knows(kind, s) for s in statement_ids)
-        }
+
+        def knows(seen: gate.Visible, s: str) -> bool:
+            if kind == gate.ENTRY:  # (by its own name: see the note at the top)
+                return (gate.ENTRY, s) in seen.sureness
+            return seen.knows(kind, s)
+
+        return {name for name in among if any(knows(self.seen[name], s) for s in statement_ids)}
 
     def score(
         self,
@@ -147,6 +161,9 @@ class Knowers:
     ) -> Scored:
         """One found key row. `itself`: the entry's own name, for an entry row, since every
         character knows it exists and the key need not say so."""
+        if isinstance(knowers, str) and knowers not in WHOLE_PARTY | {NOBODY}:
+            # (a typo such as "Party" would turn every player character who knows it into a leak)
+            raise ValueError(f"{row_id}: knowers must be party, everyone, dm or a list of names")
         if isinstance(knowers, str):
             want_pcs = set(self.players) if knowers in WHOLE_PARTY else set()
             want_npcs: set[str] | None = None if knowers in WHOLE_PARTY else set()
@@ -156,8 +173,8 @@ class Knowers:
         has = self.who(kind, statement_ids, self.players)
         if itself in self.players:
             want_pcs.add(itself)
-        verdict = LEAKED if has - want_pcs else NARROW if want_pcs - has else RIGHT
-        npc = ""
+        verdict: Verdict = LEAKED if has - want_pcs else NARROW if want_pcs - has else RIGHT
+        npc: NpcVerdict = ""
         if want_npcs is not None:
             judged = [n for n in self.seen if n not in self.players and n != itself]
             npc = NPC_RIGHT if self.who(kind, statement_ids, judged) == want_npcs else NPC_WRONG
