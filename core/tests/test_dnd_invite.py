@@ -424,7 +424,7 @@ def sheet_interaction(*, found: list[PlayerCharacter] | None = None) -> Any:
         campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
         lookup=None,
         sheets_changed=MagicMock(),
-        post_message=AsyncMock(),
+        tell_dms_with_pointer=AsyncMock(),  # (names: the DMs privately, #3874)
         get_guild=MagicMock(return_value=MagicMock(get_member=MagicMock(return_value=MagicMock()))),
     )
     it = MagicMock()
@@ -494,14 +494,12 @@ class FromTheSheet(unittest.IsolatedAsyncioTestCase):
         bot.sheets.link.assert_awaited_once_with(GUILD, CAMPAIGN, ENTITY, 42, player=PLAYER)
         bot.sheets.save.assert_awaited_once()
         self.assertIn("added", said(it))
-        # One line for the DM, with the card's button.
-        channel_id, text, view = bot.post_message.await_args.args
-        self.assertEqual(channel_id, 555)
-        self.assertEqual(
-            text,
-            ui.DM_ADDED.format(name="Test Character"),
-        )
-        [button] = view.children
+        # One line for the DMs (privately, with a pointer without the name), with the card's button.
+        _campaign, text, pointer, make = bot.tell_dms_with_pointer.await_args.args
+        self.assertEqual(text, ui.DM_ADDED.format(name="Test Character"))
+        self.assertEqual(pointer, ui.SHEET_POINTER)
+        self.assertNotIn("Test Character", pointer)
+        [button] = make().children
         self.assertEqual(button.item.custom_id, f"dmbot:namecard:{CAMPAIGN}:{ENTITY}")
 
     async def test_a_sheet_it_cannot_read_makes_nothing(self) -> None:
@@ -514,7 +512,7 @@ class FromTheSheet(unittest.IsolatedAsyncioTestCase):
                 await ui.add_from_sheet(it, GUILD, CAMPAIGN, 42)
             it.client.memory.add_entity.assert_not_awaited()
             it.client.sheets.link.assert_not_awaited()
-            it.client.post_message.assert_not_awaited()
+            it.client.tell_dms_with_pointer.assert_not_awaited()
             self.assertIn(expect, said(it))
             self.assertIn("Nothing was added", said(it))
 
@@ -526,7 +524,7 @@ class FromTheSheet(unittest.IsolatedAsyncioTestCase):
             await ui.add_from_sheet(it, GUILD, CAMPAIGN, 43)
         it.client.memory.add_entity.assert_not_awaited()  # linked to the one it knows
         it.client.sheets.link.assert_awaited_once_with(GUILD, CAMPAIGN, ENTITY, 43, player=PLAYER)
-        it.client.post_message.assert_not_awaited()
+        it.client.tell_dms_with_pointer.assert_not_awaited()
 
     async def test_two_links_at_once_make_one_character(self) -> None:
         import asyncio
@@ -572,7 +570,7 @@ class FromTheSheet(unittest.IsolatedAsyncioTestCase):
         with fetched, self.assertRaises(RuntimeError):
             await ui.add_from_sheet(it, GUILD, CAMPAIGN, 42)
         it.client.sheets_changed.assert_called()
-        it.client.post_message.assert_awaited_once()  # the DM still hears of the character
+        it.client.tell_dms_with_pointer.assert_awaited_once()  # the DM still hears of the character
         self.assertEqual(ui._adding, {})  # no lock kept for a player who is done
 
     async def test_a_link_that_is_not_a_character_link_does_nothing(self) -> None:

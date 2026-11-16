@@ -723,6 +723,31 @@ class WhenKept(NamesTest):
         self.assertEqual([w.upload for w in left], ["Other file, 2 Jan"])  # never kept unseen
         self.assertEqual(len(await self.relations()), 2)
 
+    async def test_card_scope_is_last_small_line(self) -> None:
+        # #4529: the Keep all line goes last, as small text, after the Players line.
+        await self.read()
+        await self.confirm_all()
+        await self.memory.add_names(
+            GUILD,
+            self.campaign.id,
+            [NewName("Edda", "npc", "confirmed"), NewName("Holt", "npc", "confirmed")],
+            source="dm",
+        )
+        ids = {e.name: e.id for e in await self.memory.entities(GUILD, self.campaign.id)}
+        self.store._clock = lambda: time.time() + 100
+        await self.store.add(
+            GUILD,
+            self.campaign.id,
+            [NewLink(ids["Edda"], "kin_of", ids["Holt"], "Edda and Holt", upload="Other file")],
+        )
+        it, _ = await self.offer()
+        sent = it.followup.send.await_args
+        text = sent.args[0] if sent.args else sent.kwargs.get("content", "")
+        lines = text.splitlines()
+        self.assertTrue(lines[-1].startswith("-# ✅ Keep all 2 keeps the 2 from"), lines[-1])
+        self.assertTrue(lines[1].startswith("🙋❓ **PROPOSED:**"), lines[1])
+        self.assertEqual(sum(1 for line in lines if "Keep all" in line), 1)
+
     async def test_the_card_says_what_keep_all_leaves_for_you(self) -> None:
         """The owner's test (2026-11-10): "Connection 1 of 9" beside "Keep all 3" must say what
         happens to the rest."""
@@ -745,11 +770,11 @@ class WhenKept(NamesTest):
         sent = it.followup.send.await_args
         text = sent.args[0] if sent.args else sent.kwargs.get("content", "")
         self.assertIn("Connection 1 of 3", text)
-        self.assertIn("Keep all 2 keeps just the 2 from", text)
+        self.assertIn("-# ✅ Keep all 2 keeps the 2 from", text)
         self.assertIn("The other one you check on its own: 1 from another file.", text)
-        # (right under the counter, so "of 3" and "Keep all 2" are read together, #4320)
+        # (the last line, as small text, so the proposal reads first, #4529)
         self.assertLess(text.index("Connection 1 of 3"), text.index("Keep all 2 keeps"))
-        self.assertLess(text.index("Keep all 2 keeps"), text.index("From your text"))
+        self.assertTrue(text.splitlines()[-1].startswith("-# ✅ Keep all 2 keeps the 2 from"))
 
     async def test_the_card_says_how_many_are_from_other_files_and_how_many_dmbot_guessed(
         self,
@@ -779,7 +804,7 @@ class WhenKept(NamesTest):
         sent = it.followup.send.await_args
         text = sent.args[0] if sent.args else sent.kwargs.get("content", "")
         self.assertIn(
-            "The other 3 you check one at a time: 2 from other files and 1 DMbot guessed.",
+            "The other 3 you check one at a time: 2 from other files, 1 DMbot guessed.",
             text,
         )
 
