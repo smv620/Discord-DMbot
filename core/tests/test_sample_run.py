@@ -245,14 +245,10 @@ class Steps(DatabaseTest):
         async def sleep(_s: float) -> None:
             return None
 
-        ticks = iter(range(0, 10_000, 50))
-        with (
-            mock.patch.object(steps, "busy_count", always),
-            mock.patch.object(steps.time, "monotonic", lambda: float(next(ticks))),
-        ):
+        with mock.patch.object(steps, "busy_count", always):
             await steps.fresh_campaign(
                 self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say, sleep=sleep,
-                settle_s=100.0,
+                settle_s=0.0,
             )  # fmt: skip
         self.assertIsNone(await self.campaigns.get(GUILD, old.id))
         self.assertIn(

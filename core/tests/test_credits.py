@@ -358,7 +358,7 @@ class Ledger(DatabaseTest):
         self,
     ) -> None:
         bad = self.waiting_charge(self.a.id, "a" * 32)
-        object.__setattr__(bad, "credits", 2**40)  # (out of range for the column)
+        object.__setattr__(bad, "credits", -5)  # (the column only takes positive credits)
         credits._waiting.append(bad)
         credits._waiting.append(self.waiting_charge(self.a.id, "b" * 32))
         with (
