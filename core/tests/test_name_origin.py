@@ -40,7 +40,7 @@ async def ask(mem: Any, *, transcripts: Any = None, lore: str = "", **kw: Any) -
     client = SimpleNamespace(
         transcripts=transcripts, consent=SimpleNamespace(consenting=AsyncMock(return_value={7}))
     )
-    asked = SimpleNamespace(client=client, guild=None)
+    asked: Any = SimpleNamespace(client=client, guild=None)
     with patch.object(name_origin, "ThreadSuggestionStore", Threads):
         return await name_origin.where_entry(
             asked,
@@ -50,7 +50,7 @@ async def ask(mem: Any, *, transcripts: Any = None, lore: str = "", **kw: Any) -
             ["Keegan"],
             lore=lore,
             lore_source="Notes",
-            **kw,  # type: ignore[arg-type]
+            **kw,
         )
 
 
