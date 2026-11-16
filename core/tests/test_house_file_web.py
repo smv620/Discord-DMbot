@@ -55,6 +55,8 @@ class Requests(DatabaseTest):
             house_file_links=self.links,
             house_syncs=hs.Pendings(),
             post_message=post_message,
+            ask_privately=AsyncMock(return_value=False),  # (no DM reachable: the screen, #3874)
+            post=AsyncMock(),
         )
         self.queue = HouseFileQueue(self.db)
 

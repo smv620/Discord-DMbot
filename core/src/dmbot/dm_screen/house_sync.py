@@ -41,6 +41,13 @@ from dmbot.rules.house_file_sync import Applied, Item
 
 log = logging.getLogger(__name__)
 
+# What the DM Bot channel is told when the linked house-rules file differs (#3874): a count of
+# nothing but the fact. The differences themselves are house-rule text, sent privately.
+HOUSE_FILE_POINTER = (
+    "📄 The linked house-rules file differs from your campaign's house rules. The details are in "
+    "your private message."
+)
+
 MAX_PENDING = 20
 TEXT_MAX = MESSAGE_MAX - 100  # margin kept from before: room for the words a sender adds around it
 READ_MAX_BYTES = 4 * house_file.MAX_FILE_CHARS  # as bytes: UTF-8 is up to 4 per character
@@ -400,7 +407,10 @@ async def press(
 ) -> None:
     """What a button does. The offer, the campaign and the person are checked every time."""
     bot: Any = interaction.client
-    pending: Pending | None = bot.house_syncs.get(key) if interaction.guild_id == guild_id else None
+    # From the DM's private chat (where the offer goes first, #3874) a press has no server; the
+    # offer, its campaign and the DM check below still decide.
+    in_place = interaction.guild_id in (None, guild_id)
+    pending: Pending | None = bot.house_syncs.get(key) if in_place else None
     if pending is None or pending.guild_id != guild_id:
         await interaction.response.send_message(CLOSED, ephemeral=True)
         return
