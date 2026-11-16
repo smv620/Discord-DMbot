@@ -25,6 +25,7 @@ from dmbot.memory import (
     met_store,
     private_scene_store,
     secret_questions,
+    thread_progress,
     thread_suggestions,
 )
 from dmbot.session_locks import lock_sessions_of
@@ -1318,6 +1319,7 @@ class TranscriptStore:
             await private_scene_store.forget_session(conn, guild_id, session_id)
             # (the story threads read from its lines that still wait, #4522)
             await thread_suggestions.forget_session(conn, guild_id, session_id)
+            await thread_progress.forget_session(conn, guild_id, session_id)  # (#4522 5b)
             await conn.execute(
                 "DELETE FROM transcript_respells WHERE guild_id = %s AND session_id = %s",
                 (guild_id, session_id),
@@ -1482,6 +1484,8 @@ async def _forget_memory_traces(
     await secret_questions.forget(conn, guild_id, user_id, campaign_id)
     # the story threads read from a session that quote them (#4522)
     await thread_suggestions.forget(conn, guild_id, user_id, campaign_id)
+    # the progress on story threads read from a session that quotes them (#4522 5b)
+    await thread_progress.forget(conn, guild_id, user_id, campaign_id)
 
 
 async def _drop_log_rows(

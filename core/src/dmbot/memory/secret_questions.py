@@ -48,12 +48,16 @@ log = logging.getLogger(__name__)
 NARROW, REPLACE, REVEAL = "narrow", "replace", "reveal"
 WAITING, KEPT_KNOWN, MADE_SECRET = "waiting", "kept_known", "made_secret"
 LABEL_MAX = 200
+# A 🌍 World read's reveal, asked instead of made (#4590 C), and a secret other name it gave on
+# its own, asked as "the same person?" (#4590 A). Answered by `world_reveal.answer`.
+COMMON: dict[str, Any] = {"common": True}
+LONE: dict[str, Any] = {"common": True, "lone": True}
 GONE = "That question was already answered."
 
 
 # The evidence a run's questions carry when its writes don't set their own (`Changes.evidence`):
 # an upload's label, or a session's label, line starts and speakers (never words).
-_EVIDENCE: contextvars.ContextVar[Mapping[str, Any] | None] = contextvars.ContextVar(
+_EVIDENCE: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
     "secret_question_evidence", default=None
 )
 
@@ -65,17 +69,39 @@ def evidence(
     session_id: str | None = None,
     line_starts: Sequence[int] = (),
     speaker_ids: Sequence[int] = (),
-) -> Iterator[None]:
+) -> Iterator[list[str]]:
     """Every 🤫 question asked inside this block cites this evidence (an upload's run, a session's
-    read). From a session only line starts and speakers: 5a's consent rule."""
+    read). From a session only line starts and speakers: 5a's consent rule. Yields the ids of the
+    new questions asked inside it, filled as they are asked, so the run's own note can count them
+    (#4524 slice 2). A block opened inside another (`backstory_keep.keep_all` within an upload's
+    read) cites its own evidence but fills the outer run's list, so the run counts them all. The
+    list may hold a question taken back since (a refused write, an Undo in the same run): the
+    caller counts the ones still waiting (`MemoryStore.secret_questions_still_waiting`)."""
+    outer = _EVIDENCE.get()
+    asked: list[str] = outer["asked"] if outer is not None else []
+    run = str(outer["run"]) if outer is not None else new_id()
     token = _EVIDENCE.set(
         {"label": label, "session_id": session_id, "line_starts": list(line_starts),
-         "speaker_ids": list(speaker_ids)}
+         "speaker_ids": list(speaker_ids), "asked": asked, "run": run}
     )  # fmt: skip
     try:
-        yield
+        yield asked
     finally:
         _EVIDENCE.reset(token)
+
+
+# Left out of `change_key`: when it would happen ("at"), and which run asked (`RUN`), so the same
+# change is asked once whichever upload asks it.
+RUN = "run"
+_NOT_THE_CHANGE = frozenset({"at", RUN})
+
+
+def current_run() -> str | None:
+    """The id of the run asking now (an upload's read, a session's), or None outside one: a 🌍
+    question carries it, so "Same for all" answers one upload's questions and never another
+    upload's, even one with the same name and day (#4590)."""
+    found = _EVIDENCE.get()
+    return str(found["run"]) if found is not None else None
 
 
 def change_key(change: Mapping[str, Any]) -> str:
@@ -83,7 +109,9 @@ def change_key(change: Mapping[str, Any]) -> str:
     time) is left out, so a later upload asking to end the same connection for the same new one is
     the same question."""
     fixed = json.dumps(
-        {k: v for k, v in change.items() if k != "at"}, sort_keys=True, separators=(",", ":")
+        {k: v for k, v in change.items() if k not in _NOT_THE_CHANGE},
+        sort_keys=True,
+        separators=(",", ":"),
     )
     return hashlib.sha256(fixed.encode()).hexdigest()
 
@@ -120,6 +148,9 @@ async def ask(
         return False
     w.held_back += 1
     w.asked.append(question_id)
+    run = _EVIDENCE.get()
+    if run is not None:
+        run["asked"].append(question_id)
     log.info("Public stays public: a %s question was asked instead", kind)
     return True
 
@@ -217,8 +248,10 @@ async def forget(conn: Any, guild_id: int, user_id: int, campaign_id: str | None
 
 
 __all__ = [
+    "COMMON",
     "GONE",
     "KEPT_KNOWN",
+    "LONE",
     "MADE_SECRET",
     "NARROW",
     "REPLACE",
@@ -229,6 +262,7 @@ __all__ = [
     "ask_reveal",
     "change_key",
     "count",
+    "current_run",
     "evidence",
     "forget",
     "undo",

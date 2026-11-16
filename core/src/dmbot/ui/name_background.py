@@ -16,7 +16,7 @@ import re
 import time
 from collections import Counter
 from collections.abc import Callable, Collection, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 from functools import partial
 from typing import Any, cast
@@ -48,6 +48,7 @@ from dmbot.memory import (
     traits_read,
     who_ask,
     who_resolve,
+    world_reveal,
 )
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory import spellings as place_spellings_mod
@@ -79,6 +80,7 @@ from dmbot.memory.models import (
     PROPOSED,
     REJECTED,
     SPECIES,
+    Alias,
     MemoryRuleError,
     MoreNames,
     NewName,
@@ -92,6 +94,7 @@ from dmbot.memory.store import MemoryStore, refusal_for_log
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
 from dmbot.mentions import NO_PINGS
 from dmbot.ui import logic, split_words
+from dmbot.ui import secret_questions as secret_questions_ui
 from dmbot.ui.check_everything import add_stop, next_part, progress
 from dmbot.ui.dmbot_commands import VIEW_TIMEOUT_S, _bot, _Button, _Menu, _send, _tell
 from dmbot.ui.name_lists import (
@@ -671,6 +674,7 @@ class BackgroundOffer(_Menu):
                     knowledge_note=done.knowledge_note
                     + trait_questions_line(done.trait_questions)
                     + thread_suggestions_line(done.thread_suggestions, done.threads_short)
+                    + secret_questions_ui.count_line(done.secret_questions)
                     + picture_held_line(len(done.picture_held)),
                     held=done.picture_held,
                 )
@@ -745,6 +749,11 @@ class BackgroundRead:
     # Story threads the lore holds (#4453): how many new suggestions wait in ❓ Questions for you
     thread_suggestions: int = 0
     threads_short: str = ""  # why the story threads weren't read in full, a `THREADS_SHORT` key
+    # What the players know that the read would have made secret (#4524): how many 🤫 questions
+    # it asked instead, answered on the 🤫 Known or secret? card, privately
+    secret_questions: int = 0
+    # What a World read revealed by itself, in words, for the DMs privately (#4590 B)
+    revealed_lines: tuple[str, ...] = field(default=(), repr=False)  # (never in a log line)
 
 
 async def read_background(
@@ -766,9 +775,9 @@ async def read_background(
     Oct")."""
     with (
         credits.preparing(campaign.guild_id, campaign.id, "lore"),
-        secret_questions.evidence(upload_label(upload.label, time.time())),
+        secret_questions.evidence(upload_label(upload.label, time.time())) as asked,
     ):
-        return await _read_background(
+        done = await _read_background(
             bot,
             campaign,
             upload,
@@ -779,6 +788,17 @@ async def read_background(
             progress=progress,
             choice=choice,
         )
+    # (its 🤫 questions are counted on its note and open from its button: slice 2)
+    memory = bot.memory
+    if asked and memory is not None:
+        try:
+            n = await memory.secret_questions_still_waiting(campaign.guild_id, campaign.id, asked)
+        except Exception as exc:  # (the read is done: a count it can't make is left off its note)
+            log.warning("Secret questions: couldn't count an upload's (%s)", type(exc).__name__)
+            n = 0
+        done.secret_questions = n
+        done.questions_left += n
+    return done
 
 
 async def _read_background(
@@ -1006,6 +1026,9 @@ async def _read_background(
     questions: list[str] = []
     keys: set[tuple[str, str, str]] = set()
     made_unnamed: list[str] = []
+    # What this text states that the campaign keeps from the players (#4524 slice 1b): filled by a
+    # World read only, and revealed below as one of the upload's own changes.
+    revealable: list[Relation] | None = [] if everyone and not speaker else None
     # Which NPCs and groups know each name and connection, DMbot's guess (#2959 slice 3): the
     # names' wait for their yes, the connections' ride on their waiting rows. Off by default.
     link_guesses: dict[tuple[str, str, str], dict[str, float]] = {}
@@ -1044,6 +1067,7 @@ async def _read_background(
         made_unnamed=made_unnamed,
         npc_guesses=link_guesses,
         owner_of=owner_of,
+        revealable=revealable,
     )
     # (the people the read could not name, made while queueing: the same upload, #3675)
     await _record_sources(memory, campaign, {"unnamed": made_unnamed}, upload, label)
@@ -1088,19 +1112,56 @@ async def _read_background(
         read.stats.dropped, questions, suggested, note,
         picture_held=frozenset(held_ids),
     )  # fmt: skip
+    items: _WorldItems | None = None
+    if revealable is not None:  # (a World read: what it states plainly, #4524 slice 1b)
+        try:
+            items = await _world_items(memory, campaign, read, revealable)
+        except Exception as exc:  # the read is kept whatever happens to this
+            log.warning("A World read's hidden things weren't matched (%s)", type(exc).__name__)
+    # (reveals by itself only where the upload's notice can be kept: its ↩️ Undo is what takes a
+    # reveal back; otherwise, and for a lone secret name always, it asks: #4590)
+    by_itself = (
+        items is not None
+        and not campaign.ask_before_adding
+        and not read.cut
+        and getattr(bot, "upload_notices", None) is not None
+    )
+    if items is not None:
+        await _ask_world(memory, campaign, items, everything=not by_itself)
     if not campaign.ask_before_adding and not read.cut:
         # (a read that was cut off is not finished: nothing is added until the DM has seen it)
         from dmbot.ui.upload_notice import add_sure
 
+        shown = (
+            await _reveal_world(memory, campaign, items)
+            if by_itself and items is not None
+            else world_reveal.Revealed()
+        )
         added = await add_sure(
             bot,
             campaign,
             not_held(stored, held_ids),
             label,
             source=("lore", upload.source_id) if upload.source_id else None,
+            earlier=shown.batches,
+            revealed=shown.total,
         )
+        if added is None and shown.batches and items is not None:
+            # no notice, so no Undo for the reveals: they are taken back now (ruling C on #4524),
+            # and asked instead (#4590 C)
+            await world_reveal.take_back(memory, campaign.guild_id, campaign.id, shown.batches)
+            await _ask_world(memory, campaign, items, everything=True)
         if added is not None:
             done.notice, done.questions_left = added
+            if shown.total:  # (which ones: to the DMs privately, #4590 B)
+                try:
+                    done.revealed_lines = tuple(
+                        await secret_questions_ui.revealed_names(
+                            memory, campaign.guild_id, campaign.id, shown
+                        )
+                    )
+                except Exception as exc:  # (the count on the notice stands)
+                    log.warning("Revealed names weren't read (%s)", type(exc).__name__)
     if trait_offers:
         notice_id = done.notice.id if done.notice is not None else None
         done.trait_questions = await ask_traits(memory, campaign, trait_offers, label, notice_id)
@@ -1120,6 +1181,98 @@ async def _read_background(
         bot, campaign, upload.text, label, read_ai, progress, until=started + THREADS_UNTIL_S
     )
     return done
+
+
+@dataclass
+class _WorldItems:
+    """What a World read states plainly about hidden things (#4524 slice 1b, #4590): the entries
+    it names word for word, the connections it states, the secret other names it gives with
+    their person, and the secret other names it gives on their own (`lone`, #4590 A)."""
+
+    entries: list[str] = field(default_factory=list)
+    links: list[Relation] = field(default_factory=list)
+    aliases: list[Alias] = field(default_factory=list)
+    lone: list[str] = field(default_factory=list)
+
+
+async def _world_items(
+    memory: MemoryStore,
+    campaign: Campaign,
+    read: lore_read.LoreRead,
+    links: Sequence[Relation],
+) -> _WorldItems:
+    """`_WorldItems` for a World read (`links` from `queue_links`). A name line whose name is only
+    one person's secret other name, with nothing on it giving that person's own name, is `lone`:
+    it may be someone else, so it is only ever asked about."""
+    lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+
+    def public(name: str) -> str | None:
+        ids = {
+            e.entity_id
+            for e in lookup.by_key.get(name_key(name), ())
+            if not e.secret and not e.person
+        }
+        return next(iter(ids)) if len(ids) == 1 else None
+
+    out = _WorldItems(links=list(links))
+    out.entries = [i for i in map(public, read.known_named) if i is not None]
+    wanted: dict[str, set[str]] = {}  # entry -> its secret names the text gives with it
+    for main, spellings in read.known_spellings.items():
+        owner = public(main)
+        if owner is None:
+            continue
+        for sp in spellings:
+            for e in lookup.by_key.get(name_key(sp), ()):
+                if e.secret and e.entity_id == owner:
+                    wanted.setdefault(owner, set()).add(e.alias_id)
+    given = {a for ids in wanted.values() for a in ids}
+    for name in read.known_named:
+        hits = list(lookup.by_key.get(name_key(name), ()))
+        secret = {e.alias_id for e in hits if e.secret and e.alias_id}
+        if hits and len(secret) == 1 and all(e.secret for e in hits) and not secret & given:
+            out.lone.extend(secret - set(out.lone))
+    out.aliases = [
+        a
+        for owner, ids in wanted.items()
+        for a in await memory.aliases(
+            campaign.guild_id, campaign.id, entity_id=owner, include_secret=True
+        )
+        if a.id in ids
+    ]
+    return out
+
+
+async def _reveal_world(
+    memory: MemoryStore, campaign: Campaign, items: _WorldItems
+) -> world_reveal.Revealed:
+    """What a World read reveals by itself (#4524 slice 1b, `world_reveal`). Never stops the
+    read: a failure is logged and nothing is revealed."""
+    try:
+        return await world_reveal.reveal(
+            memory, campaign.guild_id, campaign.id,
+            entries=items.entries, links=items.links, aliases=items.aliases,
+        )  # fmt: skip
+    except Exception as exc:  # the read is kept whatever happens to this
+        log.warning("A World read's reveals were not made (%s)", type(exc).__name__)
+        return world_reveal.Revealed()
+
+
+async def _ask_world(
+    memory: MemoryStore, campaign: Campaign, items: _WorldItems, *, everything: bool
+) -> None:
+    """Ask instead of revealing (#4590): `everything` when this read may not reveal by itself
+    (C), else only the lone secret names (A). Each is a 🤫 question in the upload's own evidence,
+    counted on its note. Never stops the read."""
+    try:
+        await memory.ask_world_reveals(
+            campaign.guild_id, campaign.id,
+            entries=items.entries if everything else (),
+            links=[r.id for r in items.links] if everything else (),
+            aliases=[a.id for a in items.aliases] if everything else (),
+            lone=items.lone,
+        )  # fmt: skip
+    except Exception as exc:
+        log.warning("A World read's questions were not asked (%s)", type(exc).__name__)
 
 
 def not_held(stored: Mapping[str, Sequence[str]], held: Collection[str]) -> dict[str, list[str]]:
@@ -2458,8 +2611,13 @@ async def announce(
         from dmbot.ui.thread_questions import ThreadQuestionsButton
 
         asks.append(partial(ThreadQuestionsButton, campaign.id))
+    if done.secret_questions:  # (the card opens privately, for a DM: #4524)
+        from dmbot.ui.secret_questions import SecretQuestionsButton
+
+        asks.append(partial(SecretQuestionsButton, campaign.id))
+    private = secret_questions_ui.revealed_text(list(done.revealed_lines))
     posted: discord.Message | None = await bot.post_upload_notice(
-        campaign, notice, done.questions_left, asks
+        campaign, notice, done.questions_left, asks, private=private
     )
     text = notice_text(notice.label, notice.counts, done.questions_left)
     if posted is not None:
@@ -2470,6 +2628,8 @@ async def announce(
         view = notice_view(notice, site_url=bot.settings.site_url, asks=[m() for m in asks])
     if done.knowledge_note:
         card += done.knowledge_note
+    if interaction.user.id in campaign.dm_user_ids:  # (a manager who isn't a DM: counts only)
+        card += private
     with contextlib.suppress(discord.HTTPException):
         await interaction.edit_original_response(content=card, view=view, allowed_mentions=NO_PINGS)
     return posted
@@ -2572,6 +2732,7 @@ async def queue_links(
     made_unnamed: list[str] | None = None,
     npc_guesses: Mapping[tuple[str, str, str], Mapping[str, float]] | None = None,
     text: str = "",
+    revealable: list[Relation] | None = None,
 ) -> int:
     """Keep the reading's connections for later (`BackstoryLinks`), as entry IDs. An end is a
     name of this reading or a confirmed public name of the campaign; a pair the campaign has
@@ -2592,7 +2753,9 @@ async def queue_links(
     `world_links` (#2959): the connections (their two names' keys and the kind) the players know
     once kept, by the upload's choice; `world_all`: all of them (the DM said everything is known),
     which also covers the ones made from a settled pronoun, a "Which one?" question and an unnamed
-    person. `world_level`: how they are known (`lore_knowledge.SURE`, or `GUESS` for the AI's)."""
+    person. `world_level`: how they are known (`lore_knowledge.SURE`, or `GUESS` for the AI's).
+    `revealable` (#4524 slice 1b): with `world_all`, filled with the connections the campaign keeps
+    from the players that this text states itself, for the read to reveal."""
     store = getattr(bot, "backstory_links", None)
     # (an upload with places and no connections still has a chain of where the story is: #4173)
     if store is None or not (any(answers) or unsettled or unnamed or text):
@@ -2653,21 +2816,44 @@ async def queue_links(
         if r.predicate == "knows" and r.to_session_at is None
     }
 
+    by_triple = {(r.subject_id, r.predicate, r.object_id): r for r in live if not r.assumed}
+    to_reveal: set[str] = set()
+
+    def note_reveal(c: bg.Connection, triple: tuple[str, str, str]) -> None:
+        """A World read that states a connection the campaign keeps from the players reveals it
+        (#4524 slice 1b): only one it states itself (never DMbot's inference), never one it writes
+        through a secret name (`c.secret`: that would tie the disguise to the person in public),
+        and only when its kept words are the text's own or there are none: the reveal shows no
+        more than the text says (a "knows" the text says with no word keeps a stored feeling)."""
+        if revealable is None or not world_all or c.inferred or c.secret:
+            return
+        r = by_triple.get(triple)
+        if r is None or not (r.secret or r.unrevealed) or r.id in to_reveal:
+            return
+        if r.detail and name_key(r.detail) != name_key(c.words):
+            return
+        to_reveal.add(r.id)
+        revealable.append(r)
+
     def known(c: bg.Connection) -> bool:
         a, b = entry(c.a), entry(c.b)
         if a is None or b is None:
             return True  # an end that is no entry of the campaign (a name that was refused)
         if c.how == "knows" and (a, "knows", b) in have:
             # the same way round: known only when it says the same about the feeling (#3175)
-            return feeling_words.sign_of(knows_feeling.get((a, b), "")) == feeling_words.sign_of(
+            same = feeling_words.sign_of(knows_feeling.get((a, b), "")) == feeling_words.sign_of(
                 c.words
             )
+            if same:
+                note_reveal(c, (a, "knows", b))
+            return same
         how = (
             f"{c.how}:{route_words.canonical(c.words)}"
             if c.how == route_words.ROUTE_TO and route_words.canonical(c.words)
             else c.how
         )
         if (a, how, b) in have or (c.how in symmetric and (b, how, a) in have):
+            note_reveal(c, (a, how, b) if (a, how, b) in have else (b, how, a))
             return True
         # A friendship or enmity stored the old way (ally_of, enemy_of) is the same fact as
         # "knows" with the feeling that matches it (#3175): not offered a second time.

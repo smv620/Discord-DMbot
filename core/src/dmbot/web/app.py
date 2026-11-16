@@ -63,6 +63,7 @@ from dmbot.web import (
     house_file,
     import_clock,
     imports,
+    languages,
     line_fixes,
     lore,
     maps_upload,
@@ -2743,13 +2744,41 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/names/{entity}/languages")
+    async def me_campaign_languages(ref: str, entity: str, signed: Signed) -> dict[str, Any]:
+        """A character's languages (#4271): DM only, nothing for anyone else."""
+        session, _token = signed
+        try:
+            return await languages.read(db, session, ref, entity)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/names/{entity}/languages/change", status_code=202)
+    async def me_campaign_languages_change(
+        ref: str, entity: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """One change to a character's languages (#4271); polled at `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await languages.change(db, session, ref, entity, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/threads")
     async def me_campaign_threads(ref: str, signed: Signed) -> dict[str, Any]:
         """The story threads DMbot found in an upload, waiting for the DM (#4457): DM only,
         nothing for anyone else."""
         session, _token = signed
         try:
-            return await thread_suggestions.read(db, session, ref)
+            return await thread_suggestions.read(
+                db, session, ref, outside_engine=settings.outside_engine
+            )
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

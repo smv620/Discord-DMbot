@@ -41,8 +41,9 @@ export default function QuestSheetEdit({
       const made = await api.changeThreadParts(refId, threadId, change);
       setSaid({ ok: true, text: done(made.batch), batch: made.batch });
     } catch (error) {
-      const gone = error instanceof ApiError && error.kind === "gone";
-      setSaid({ ok: false, text: gone ? w.gone : w.failed, batch: null });
+      const kind = error instanceof ApiError ? error.kind : "";
+      const text = kind === "gone" ? w.gone : kind === "no-clock" ? w.noClock : w.failed;
+      setSaid({ ok: false, text, batch: null });
     } finally {
       flight.current = false;
       setBusy(false);
@@ -85,6 +86,9 @@ export default function QuestSheetEdit({
           onRemove={() => void press({ action: "remove", part: p.id }, () => w.removedSaid(partLabel(p)))}
           onFix={(value, storyChanged) =>
             void press({ action: "fix", part: p.id, field: storyChanged ? "words_story" : "words", value }, () => w.fixedSaid(value))
+          }
+          onDate={(days) =>
+            void press({ action: "date", part: p.id, days }, () => (days === null ? w.dateCleared(partLabel(p)) : w.dateSet(partLabel(p))))
           }
         />
       ))}
@@ -173,6 +177,7 @@ function PartControls({
   onShow,
   onRemove,
   onFix,
+  onDate,
 }: {
   p: ThreadCardPart;
   busy: boolean;
@@ -181,9 +186,17 @@ function PartControls({
   onShow: (shown: boolean) => void;
   onRemove: () => void;
   onFix: (value: string, storyChanged: boolean) => void;
+  /** Sets or changes a time limit's date (N game days from now), or clears it with null (#4583). */
+  onDate: (days: number | null) => void;
 }) {
   const [text, setText] = useState(p.words);
   const [storyChanged, setStoryChanged] = useState(false);
+  const [dateOpen, setDateOpen] = useState(false);
+  const [otherOpen, setOtherOpen] = useState(false);
+  const [days, setDays] = useState("");
+  // A whole number of game days from 1 to 3650: anything else (0, 2.5, empty) is not sent.
+  const daysOk = /^\d+$/.test(days) && Number(days) >= 1 && Number(days) <= 3650;
+  const isTime = p.kind === "time_limit";
   const fixOk = text.trim().length > 0 && text.trim().length <= 200 && text.trim() !== p.words;
   const hasStates = p.kind !== "reward_given" && stateChoices.length > 0;
   return (
@@ -205,6 +218,41 @@ function PartControls({
         )}
         <button type="button" class="button secondary" disabled={busy} onClick={onRemove}>{w.takeItOff}</button>
       </p>
+      {isTime && (
+        <div class="stack">
+          <p class="row">
+            {p.dated ? (
+              <>
+                <button type="button" class="button secondary" disabled={busy} onClick={() => setDateOpen(!dateOpen)}>{w.changeDate}</button>
+                <button type="button" class="button secondary" disabled={busy} onClick={() => onDate(null)}>{w.clearDate}</button>
+              </>
+            ) : (
+              <button type="button" class="button secondary" disabled={busy} onClick={() => setDateOpen(!dateOpen)}>{w.setDate}</button>
+            )}
+          </p>
+          {dateOpen && (
+            <div class="stack">
+              <p class="row">
+                {w.dateChoices.map((choice) => (
+                  <button key={choice.days} type="button" class="button secondary" disabled={busy} onClick={() => onDate(choice.days)}>
+                    {choice.label}
+                  </button>
+                ))}
+                <button type="button" class="link" disabled={busy} onClick={() => setOtherOpen(true)}>{w.otherDays}</button>
+              </p>
+              {otherOpen && (
+                <p class="row">
+                  <label class="field">
+                    {w.numberOfDays}
+                    <input type="number" min={1} max={3650} step={1} value={days} disabled={busy} onInput={(e) => setDays((e.target as HTMLInputElement).value)} />
+                  </label>
+                  <button type="button" class="button secondary" disabled={busy || !daysOk} onClick={() => onDate(Number(days))}>{w.setTheDate}</button>
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      )}
       <div class="stack">
         <label class="field">
           {w.newWords}

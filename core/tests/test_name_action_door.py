@@ -39,6 +39,7 @@ EVERY_ACTION = (
     "maps-add",  # a map sent from the website (#4347, slice B)
     "part-add", "part-fix", "part-state", "part-show", "part-remove",  # a thread's parts (#4476)
     "branch-move", "branch-not", "part-undo", "part-date",
+    "lang-add", "lang-remove", "lang-check", "lang-undo",  # a character's languages (#4271)
     "thread-keep", "thread-not", "thread-undo",  # story threads DMbot found (#4457)
 )  # fmt: skip
 

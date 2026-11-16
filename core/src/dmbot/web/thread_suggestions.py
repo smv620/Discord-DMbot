@@ -11,6 +11,7 @@ from __future__ import annotations
 import re
 from typing import Any
 
+from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
 from dmbot.memory.thread_read import ReadBranch, ReadPart
 from dmbot.web import relationships
@@ -62,6 +63,7 @@ def _line(r: dict[str, Any]) -> dict[str, Any]:
 
 
 def _suggestion(r: dict[str, Any], lines: list[dict[str, Any]]) -> dict[str, Any]:
+    heard = [" ".join(str(t).split()) for t in r.get("heard") or []]
     return {
         "id": str(r["id"]),
         "kind": str(r["kind"]),
@@ -69,6 +71,10 @@ def _suggestion(r: dict[str, Any], lines: list[dict[str, Any]]) -> dict[str, Any
         "aim": str(r.get("aim") or ""),
         "quote": str(r.get("quote") or ""),
         "upload": str(r.get("upload") or ""),
+        # read from a session, not from lore: where it was heard, up to three of the lines it
+        # points at, the DM's own transcript (a line deleted or unreadable since is not here)
+        "session": bool(r.get("session")),
+        "heard": [t for t in heard if t],
         "people": [
             {"index": int(p["index"]), "role": str(p["role"]), "name": str(p["name"])}
             for p in r.get("people") or []
@@ -78,14 +84,22 @@ def _suggestion(r: dict[str, Any], lines: list[dict[str, Any]]) -> dict[str, Any
     }
 
 
-async def read(db: Database, session: Session, ref: str) -> dict[str, Any]:
+async def read(
+    db: Database, session: Session, ref: str, *, outside_engine: str | None = None
+) -> dict[str, Any]:
     """`{suggestions: [...]}`, the cards of Discord's 📜 Story threads, oldest first.
-    `not_allowed` for anyone who is not a DM of the campaign."""
+    `not_allowed` for anyone who is not a DM of the campaign. A suggestion read from a session is
+    listed only while every one of its speakers is recorded now: under the current wording and,
+    while an outside company hears the voices, for that company (`outside_engine`), the bot's
+    rule (#4526)."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     async with db.user(session.user_id, session=session.id_hash) as conn:
         await _scoped(conn, guild_id)
-        cur = await conn.execute("SELECT dmbot_web_threads(%s, %s) AS r", (guild_id, campaign_id))
+        cur = await conn.execute(
+            "SELECT dmbot_web_threads(%s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, TERMS_VERSION, outside_engine),
+        )
         found = await cur.fetchone()
         cur = await conn.execute(
             "SELECT dmbot_web_thread_lines(%s, %s) AS r", (guild_id, campaign_id)

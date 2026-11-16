@@ -303,12 +303,39 @@ class TheProgress(FinishTest):
         await self.queue()
         self.slow_reader()
         seen = await self.watch()
-        with patch.object(wizard_finish, "LORE_POLL_S", 0.02):  # (polls every 20 ms, cap 1 s)
-            await wizard_finish.run_round(self.bot, GUILD)
+        # The writer's clock is held still: whatever the runner's speed, no second passes, so the
+        # one-a-second rule allows exactly one counted write (it used to read the wall clock, and
+        # a slow runner let the read run past a second, #4593).
+        with patch.object(wizard_finish, "LORE_POLL_S", 0.02):
+            await wizard_finish.run_round(self.bot, GUILD, clock=lambda: NOW)
         self.worker and self.worker.cancel()
         self.watcher.cancel()
         counted = {row for row in seen if row[1] > 0}
-        self.assertLessEqual(len(counted), 1)  # (the whole read took under a second)
+        self.assertLessEqual(len(counted), 1)
+
+    async def test_the_one_write_a_second_rule_lets_the_next_second_through(self) -> None:
+        """The rule itself, on a clock the test moves: a second count within a second is dropped,
+        and one a whole second later is written (so holding the clock still above proves the
+        limit, not a broken writer)."""
+        await self.draft(docs=(("lore", "l.txt", "Words."),))
+        await self.queue()
+        ticks = [float(NOW)]
+        runs = wizard_finish.WizardFinishes(self.db, clock=lambda: ticks[0])
+        run = await runs.claim_next(GUILD)
+        assert run is not None
+
+        async def done_count() -> int:
+            [row] = await self.sql("SELECT pass_done FROM wizard_finishes WHERE id = %s", RUN)
+            return int(row["pass_done"])
+
+        await runs.progress(GUILD, run, ("first_read", 10, 120, 2, 1))
+        self.assertEqual(await done_count(), 10)
+        ticks[0] += 0.9
+        await runs.progress(GUILD, run, ("first_read", 60, 120, 5, 1))
+        self.assertEqual(await done_count(), 10)  # (within the second: dropped)
+        ticks[0] += 0.1
+        await runs.progress(GUILD, run, ("first_read", 60, 120, 5, 1))
+        self.assertEqual(await done_count(), 60)  # (a whole second later: written)
 
     async def test_the_state_door_sends_the_counts_and_the_stage_word_and_only_a_word_fits(
         self,
