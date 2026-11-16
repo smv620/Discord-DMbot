@@ -75,7 +75,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { WorldLanguageNote, WorldPlaceNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint } from "./api";
+import type { ThreadCardPart, WorldLanguageNote, WorldPlaceNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
@@ -687,6 +687,8 @@ function startWeb(big: boolean, lonely = false): WebState {
     nodes.push(...extra);
     links.push({ id: "lp1", a: "pair-brask", b: "pair-ford", words: "lives at", secret: false, direction: "a-b" });
   }
+  // A kept story thread for the quest sheet (#4547): its id is the mock threadCard's.
+  nodes.push({ id: "thread-heir", name: "Bring the heir home", kind: "thread", secret: false });
   return { nodes, links, nextLink: links.length + 1 };
 }
 
@@ -2705,6 +2707,34 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const named = memory.find((n) => n.id === placeId);
       if (!named || named.kind !== "place") throw new ApiError("not-found");
       return { level: worldLevel(named.name), form: null, rows: (worldRows.get(placeId) ?? []).map((r) => ({ ...r })), groups: worldGroups.map((g) => ({ ...g })) };
+    },
+    // The quest sheet of the mock's kept thread (#4547): the example the spec gives, for its one thread node.
+    async threadCard(ref, thread) {
+      calls.push(`threadCard:${ref}:${thread}`);
+      if (thread !== "thread-heir") throw new ApiError("not-found");
+      const part = (id: string, kind: string, words: string, state: string, extra: Partial<ThreadCardPart> = {}): ThreadCardPart => ({
+        id, kind, words, state, underId: null, who: null, about: null, amount: null, unit: "", owed: null, due: "",
+        terms: "", limitKind: "", dated: false, fromRead: false, tableKnows: false, ...extra,
+      });
+      return {
+        thread: { id: thread, name: "Bring the heir home", kind: "Quest", state: "active", stateWords: "Happening now", description: "Bring the heir home." },
+        people: [
+          { id: "n-keegan", name: "Keegan Velryn", role: "quest giver" },
+          { id: "n-garret", name: "Garret Velryn", role: "target" },
+        ],
+        waiting: 2,
+        done: 1,
+        of: 2,
+        parts: [
+          part("p1", "reward", "50 gold", "owed", { amount: 50, unit: "gold", owed: 0, due: "up_front" }),
+          part("p2", "reward", "A route map", "owed"),
+          part("p3", "help", "A team of sleds", "to_keep"),
+          part("p4", "objective", "Find the heir", "done"),
+          part("p5", "objective", "Cross the pass", "to_do"),
+        ],
+        bigger: null,
+        branches: [],
+      };
     },
     async worldNotes(ref) {
       calls.push(`worldNotes:${ref}`);
