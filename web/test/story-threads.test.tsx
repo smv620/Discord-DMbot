@@ -31,10 +31,56 @@ describe("the story threads card", () => {
     expect(screen.getByText("Garret needs his heir brought back by the new moon.")).toBeTruthy();
   });
 
+  it("a session suggestion has its own heading", async () => {
+    const api = mockApi("table");
+    api.storyThreads = async () => ({
+      suggestions: [{ id: HOOK, kind: "hook", name: "Keegan's cap", aim: "Where the cap went.", quote: "", upload: "the session of 14 Nov 2026", people: [], lines: [], session: true, heard: ["Keegan wrings his cap."] }],
+    });
+    show(api);
+    expect(await screen.findByText(w.heardHeading)).toBeTruthy();
+    expect(screen.queryByText(w.cardHeading)).toBeNull();
+  });
+
+  it("a session suggestion shows Heard in with its lines joined in one quote", async () => {
+    const api = mockApi("table");
+    api.storyThreads = async () => ({
+      suggestions: [{ id: HOOK, kind: "hook", name: "Keegan's cap", aim: "x", quote: "", upload: "the session of 14 Nov 2026", people: [], lines: [], session: true, heard: ["Keegan wrings his cap.", "We'll find him."] }],
+    });
+    show(api);
+    expect(await screen.findByText("Heard in the session of 14 Nov 2026:")).toBeTruthy();
+    expect(screen.getByText("Keegan wrings his cap. … We'll find him.")).toBeTruthy();
+  });
+
+  it("a session suggestion with no lines readable says Heard in with a full stop and no quote", async () => {
+    const api = mockApi("table");
+    api.storyThreads = async () => ({
+      suggestions: [{ id: HOOK, kind: "hook", name: "Keegan's cap", aim: "x", quote: "", upload: "the session of 14 Nov 2026", people: [], lines: [], session: true, heard: [] }],
+    });
+    show(api);
+    expect(await screen.findByText("Heard in the session of 14 Nov 2026.")).toBeTruthy();
+    expect(screen.queryByRole("blockquote")).toBeNull();
+  });
+
+  it("a session suggestion with no label says Heard in a session", async () => {
+    const api = mockApi("table");
+    api.storyThreads = async () => ({
+      suggestions: [{ id: HOOK, kind: "hook", name: "Keegan's cap", aim: "x", quote: "", upload: "", people: [], lines: [], session: true, heard: [] }],
+    });
+    show(api);
+    expect(await screen.findByText("Heard in a session.")).toBeTruthy();
+  });
+
+  it("a lore suggestion is unchanged and has no Heard in", async () => {
+    show(mockApi("table"));
+    expect(await screen.findByText(w.cardHeading)).toBeTruthy();
+    expect(screen.queryByText(/Heard in/)).toBeNull();
+    expect(screen.getByText("From Notes, 9 Nov:")).toBeTruthy();
+  });
+
   it("a hook says it is a hook, not started", async () => {
     const api = mockApi("table");
     api.storyThreads = async () => ({
-      suggestions: [{ id: HOOK, kind: "hook", name: "Ask about the bell", aim: "A lead nobody has taken up yet.", quote: "", upload: "Notes", people: [], lines: [] }],
+      suggestions: [{ id: HOOK, kind: "hook", name: "Ask about the bell", aim: "A lead nobody has taken up yet.", quote: "", upload: "Notes", people: [], lines: [], session: false, heard: [] }],
     });
     show(api);
     expect(await screen.findByText(/a hook: a lead nobody has taken up yet, not started/)).toBeTruthy();
@@ -143,7 +189,7 @@ describe("the story threads card", () => {
   it("a suggestion with no lines shows no heading and sends lines []", async () => {
     const api = mockApi("table");
     api.storyThreads = async () => ({
-      suggestions: [{ id: QUEST, kind: "quest", name: "Find the heir", aim: "x", quote: "", upload: "Notes", people: [], lines: [] } as StoryThreadSuggestion],
+      suggestions: [{ id: QUEST, kind: "quest", name: "Find the heir", aim: "x", quote: "", upload: "Notes", people: [], lines: [], session: false, heard: [] } as StoryThreadSuggestion],
     });
     show(api);
     await screen.findByText(w.cardHeading);

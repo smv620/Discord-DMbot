@@ -121,7 +121,7 @@ export default function StoryThreads({ api, refId, onSignedOut }: { api: Account
       {!s && <p class="muted">{w.none}</p>}
       {s && (
         <div class="stack">
-          <h3 class="small">{w.cardHeading}</h3>
+          <h3 class="small">{s.session ? w.heardHeading : w.cardHeading}</h3>
           <p>
             <strong>{name(s)}</strong> · {s.kind === "quest" ? w.questKind : w.hookKind}
           </p>
@@ -158,11 +158,23 @@ export default function StoryThreads({ api, refId, onSignedOut }: { api: Account
               <p class="small muted">{w.untickLines}</p>
             </>
           )}
-          {s.quote !== "" && (
-            <>
-              <p class="small">{w.from(s.upload)}</p>
-              <blockquote class="small">{s.quote}</blockquote>
-            </>
+          {s.session ? (
+            // A session suggestion says where it was heard, with its lines as text in one quote (#4526).
+            s.heard.length > 0 ? (
+              <>
+                <p class="small">{`${s.upload !== "" ? w.heardIn(s.upload) : w.heardInSession}:`}</p>
+                <blockquote class="small">{s.heard.join(" … ")}</blockquote>
+              </>
+            ) : (
+              <p class="small">{`${s.upload !== "" ? w.heardIn(s.upload) : w.heardInSession}.`}</p>
+            )
+          ) : (
+            s.quote !== "" && (
+              <>
+                <p class="small">{w.from(s.upload)}</p>
+                <blockquote class="small">{s.quote}</blockquote>
+              </>
+            )
           )}
           <p class="small muted">{w.keepHint}</p>
           {renaming && (

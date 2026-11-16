@@ -1057,11 +1057,20 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       quote: "Garret needs his heir brought back by the new moon.", upload: "Notes, 9 Nov",
       people: [{ index: 0, role: "quest giver", name: "Keegan Velryn" }, { index: 1, role: "target", name: "Garret Velryn" }],
       lines: [{ words: "Find the heir", what: "a step", branch: false }, { words: "The old pass", what: "a branch", branch: true }],
+      session: false,
+      heard: [],
     },
     {
       id: "b2".repeat(16), kind: "hook", name: "Ask about the bell", aim: "A lead nobody has taken up yet.",
       quote: "", upload: "Notes, 9 Nov", people: [],
       lines: [{ words: "Ask the sexton", what: "a step", branch: false }, { words: "The bell tower", what: "a branch", branch: true }],
+      session: false,
+      heard: [],
+    },
+    {
+      id: "c3".repeat(16), kind: "hook", name: "Keegan's cap", aim: "Where the cap went.",
+      quote: "", upload: "the session of 14 Nov 2026", people: [{ index: 0, role: "quest giver", name: "Keegan Velryn" }],
+      lines: [], session: true, heard: ["Keegan wrings his cap.", "We'll find him."],
     },
   ];
   const storyThreadBatches = new Map<number, StoryThreadSuggestion>();
