@@ -80,13 +80,15 @@ async def reveal(
     if by_itself:
         kept = await memory.kept_secret_by_the_dm(
             guild_id, campaign_id,
-            [*entries, *(r.id for r in links), *(a.id for a in aliases)],
+            [*(("memory_entities", e) for e in entries),
+             *(("memory_relations", r.id) for r in links),
+             *(("memory_aliases", a.id) for a in aliases)],
         )  # fmt: skip
         if kept:
             log.info("A World read left %d item(s) the DM kept secret", len(kept))
-            entries = [e for e in entries if e not in kept]
-            links = [r for r in links if r.id not in kept]
-            aliases = [a for a in aliases if a.id not in kept]
+            entries = [e for e in entries if ("memory_entities", e) not in kept]
+            links = [r for r in links if ("memory_relations", r.id) not in kept]
+            aliases = [a for a in aliases if ("memory_aliases", a.id) not in kept]
     # (the store's own rule for showing what was kept back, the one used when the table says a
     # name: never a clue only some know, the party, a player's character or a person at the table)
     shown = await memory.reveal_said(guild_id, campaign_id, list(dict.fromkeys(entries)))

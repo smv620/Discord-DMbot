@@ -3470,27 +3470,30 @@ class MemoryStore:
             return new
 
     async def kept_secret_by_the_dm(
-        self, guild_id: int, campaign_id: str, items: Collection[str]
-    ) -> set[str]:
+        self, guild_id: int, campaign_id: str, items: Collection[tuple[str, str]]
+    ) -> set[tuple[str, str]]:
         """The items (entries, connections, other names) whose 🌍 question the DM answered "Keep it
         secret" (#4590, Supervisor's ruling 2 on #4605): a later World read never reveals them by
-        itself. The DM can still show one on Who knows this?."""
+        itself. The DM can still show one on Who knows this?. By (table, id), as the question
+        holds them."""
         if not items:
             return set()
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT DISTINCT item_id FROM secret_questions WHERE guild_id = %s"
+                "SELECT DISTINCT item_table, item_id FROM secret_questions WHERE guild_id = %s"
                 " AND campaign_id = %s AND item_id = ANY(%s) AND kind = %s AND status = %s"
                 " AND change ? 'common'",
                 (
                     guild_id,
                     campaign_id,
-                    sorted(set(items)),
+                    sorted({i for _, i in items}),
                     secret_questions_mod.REVEAL,
                     secret_questions_mod.MADE_SECRET,
                 ),
             )
-            return {str(r["item_id"]) for r in await cur.fetchall()}
+            wanted = set(items)
+            found = {(str(r["item_table"]), str(r["item_id"])) for r in await cur.fetchall()}
+            return found & wanted
 
     async def claim_secret_questions(
         self, guild_id: int, campaign_id: str, question_ids: Sequence[str]
