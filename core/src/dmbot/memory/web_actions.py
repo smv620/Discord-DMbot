@@ -18,7 +18,7 @@ import logging
 import time
 from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass, replace
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from dmbot.db import Database
 from dmbot.memory import backstory_keep as keep
@@ -147,6 +147,12 @@ WORLD_ACTIONS = ("world-keep", "world-not", "world-undo")
 # The story threads DMbot found in an upload (#4457, quests slice 1): the same store calls as
 # Discord's 📜 card, so each keep is one change and one Undo.
 THREAD_ACTIONS = ("thread-keep", "thread-not", "thread-undo")
+# The changes to a kept thread's parts and branches (#4476, quests slice 2): the same store calls as
+# Discord's 🧵 "📋 Steps, rewards and more", each one change and one Undo.
+PART_ACTIONS = (
+    "part-add", "part-fix", "part-state", "part-show", "part-remove", "branch-move", "branch-not",
+    "part-undo",
+)  # fmt: skip
 # The Maps page's presses (#4347): a DM's yes or no to using a map (`<map id> yes|no`), Show to
 # the table or Hide (`<map id> shown|hidden`), Remove (`<map id>`), a poster's Take it back
 # (`<map id>`), and ↩ Undo of one of those (the text is its change number). Filed under no name.
@@ -437,6 +443,26 @@ class ActionStore:
             )
             return await cur.fetchone() is not None
 
+    async def part_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int
+    ) -> bool:
+        """Whether `batch` is the change this DM's own done part or branch action made from the
+        website (#4476), so the page's Undo can only take back what they did themselves."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action = ANY(%s) AND state = 'done'"
+                " AND %s = ANY (result_batches) LIMIT 1",
+                (
+                    guild_id,
+                    campaign_id,
+                    user_id,
+                    [a for a in PART_ACTIONS if a != "part-undo"],
+                    batch,
+                ),
+            )
+            return await cur.fetchone() is not None
+
     async def map_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, batch: int, *, own_only: bool = False
     ) -> bool:
@@ -591,6 +617,10 @@ async def apply(
         if actions is None and action.action == "world-undo":
             return _failed(FAILED)
         return await _world(memory, actions, guild_id, cid, action)
+    if action.action in PART_ACTIONS:
+        if actions is None and action.action == "part-undo":
+            return _failed(FAILED)
+        return await _parts(memory, actions, guild_id, cid, action)
     if action.action in THREAD_ACTIONS:
         if actions is None and action.action == "thread-undo":
             return _failed(FAILED)
@@ -971,6 +1001,84 @@ async def _world(
         done = await memory.turn_down_world_note(guild_id, cid, a.text, source=DM)
     except MemoryRuleError:
         return _failed(GONE)
+    return Outcome(batches=(done.batch,) if done.batch is not None else ())
+
+
+def _none(word: str) -> str | None:
+    """A `-` in a part action's text is "none" or "clear"."""
+    return None if word == "-" else word
+
+
+async def _parts(
+    memory: MemoryStore, actions: ActionStore | None, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """A change to a kept thread's parts or branches from the page (#4476), through the same store
+    calls as Discord's 🧵 card (`add_thread_part`, `correct_thread_part`, `set_thread_part_state`,
+    `show_thread_part`, `remove_thread_part`, `branch_of`, `not_a_branch`), so each is one change
+    and one Undo. The door checked the text's shape; the store checks the rest again, so a part or
+    thread gone meanwhile is `gone`, and a refusal by the rules (a loop of branches, a name that is
+    not allowed) is `bad_target`. ↩ Undo takes back only a change this DM's own done part action
+    made, read again here."""
+    from dmbot.memory import thread_parts as tp
+
+    try:
+        if a.action == "part-undo":
+            assert actions is not None  # (checked by the caller)
+            batch = int(a.text)
+            if not await actions.part_batch_made(guild_id, cid, a.user_id, batch):
+                return _failed(GONE)
+            await memory.undo(guild_id, cid, batch)
+            return Outcome()
+        words = a.text.split(" ")
+        if a.action == "part-add":
+            thread, kind, state, due, limit, who, about, under = words[:8]
+            made = await memory.add_thread_part(
+                guild_id, cid, thread, kind, " ".join(words[8:]), source=DM, state=_none(state),
+                due=_none(due) or "", limit_kind=_none(limit) or "", who_id=_none(who),
+                about_id=_none(about), under_id=_none(under),
+            )  # fmt: skip
+            return Outcome(
+                result_id=made.value.id, batches=(made.batch,) if made.batch is not None else ()
+            )
+        if a.action == "part-fix":
+            part, field, value = a.text.split(" ", 2)
+            changes: dict[str, Any] = {}
+            if field in ("words", "words_story"):
+                changes["words"] = value
+            elif field == "terms":
+                changes["terms"] = "" if value == "-" else value
+            elif field == "due":
+                changes["due"] = _none(value) or ""
+            elif field == "limit":
+                changes["limit_kind"] = _none(value) or ""
+            else:  # who, about, under
+                changes[f"{field}_id"] = _none(value)
+            done = await memory.correct_thread_part(
+                guild_id, cid, part, source=DM, in_story=field == "words_story", **changes
+            )
+            return Outcome(batches=(done.batch,) if done.batch is not None else ())
+        if a.action == "part-state":
+            done = await memory.set_thread_part_state(guild_id, cid, words[0], words[1], source=DM)
+        elif a.action == "part-show":
+            done = await memory.show_thread_part(
+                guild_id, cid, words[0], words[1] == "1", source=DM
+            )
+        elif a.action == "part-remove":
+            done = await memory.remove_thread_part(guild_id, cid, words[0], source=DM)
+        elif a.action == "branch-move":
+            done = await memory.branch_of(
+                guild_id, cid, words[0], words[1], source=DM, move=words[-1] == "move"
+            )
+        else:  # branch-not
+            done = await memory.not_a_branch(guild_id, cid, words[0], source=DM)
+    except MemoryRuleError as exc:  # (TooLateToUndo is one: something done since is in the way)
+        if str(exc) == ALREADY_UNDONE:
+            return Outcome()  # (a second Undo of the same change: done, as a retry is)
+        if a.action == "part-undo":
+            return _failed(CHANGED)
+        return _failed(GONE if str(exc) == tp.GONE else BAD_TARGET)
+    except ValueError:  # (a kind or state the store does not know)
+        return _failed(BAD_TARGET)
     return Outcome(batches=(done.batch,) if done.batch is not None else ())
 
 
