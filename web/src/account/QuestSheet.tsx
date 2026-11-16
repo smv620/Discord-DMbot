@@ -59,7 +59,7 @@ export default function QuestSheet({
 
   const personLine = (p: { id: string; name: string; role: string }) => {
     if (p.role === "quest giver") return <>{w.giver("")}<Name id={p.id} name={p.name} onSelect={onSelect} /></>;
-    if (p.role === "takes it on") return <>{w.takesOn("")}<Name id={p.id} name={p.name} onSelect={onSelect} /></>;
+    if (p.role === "takes it on") return <>{w.takesOnLead}<Name id={p.id} name={p.name} onSelect={onSelect} />{w.takesOnTail}</>;
     if (p.role === "target") return <>{w.target("")}<Name id={p.id} name={p.name} onSelect={onSelect} /></>;
     if (p.role === "") return <Name id={p.id} name={p.name} onSelect={onSelect} />;
     return <>{w.otherRole(p.role, "")}<Name id={p.id} name={p.name} onSelect={onSelect} /></>;

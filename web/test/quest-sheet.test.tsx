@@ -75,6 +75,12 @@ describe("the quest sheet", () => {
     expect(link.getAttribute("href")).toBe(`/account/names/${DM}#said=${encodeURIComponent("Bring the heir home")}`);
   });
 
+  it("a character who takes it on reads \"🙋 Taken on by: Cerric (their own)\"", async () => {
+    sheet(card({ people: [{ id: "pc-cerric", name: "Cerric", role: "takes it on" }] }));
+    const name = await screen.findByRole("button", { name: "Cerric" });
+    expect(name.closest("li")!.textContent).toBe("🙋 Taken on by: Cerric (their own)");
+  });
+
   it("a person's name selects that node", async () => {
     const onSelect = vi.fn();
     sheet(card(), onSelect);
