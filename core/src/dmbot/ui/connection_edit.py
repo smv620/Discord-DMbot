@@ -485,6 +485,8 @@ class OneConnection(_Menu):
             feeling=True,
             knows_how=stored.knows_how,
             route_state=stored.route_state,
+            # (an old sighting reads "was in", #4569; only a place tie can be one)
+            ended=stored.predicate == "located_in" and stored.to_session_at is not None,
         )
         return f"{subject.name if subject else '?'} {words} {other.name if other else '?'}"
 

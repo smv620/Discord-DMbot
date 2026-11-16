@@ -72,6 +72,92 @@ class TheQuestion(unittest.TestCase):
         self.assertTrue(claims_review.question_text(claim("lives in")).startswith("**the party"))
 
 
+class TheCards(unittest.IsolatedAsyncioTestCase):
+    """#4569: an upload's waiting visit asks about the visit, with the file it came from; an
+    ended old sighting reads "was in" on the connection card (words only)."""
+
+    def card(self, detail: str, upload: str = "Bram's backstory, 3 Nov") -> str:
+        from dmbot.memory.backstory_links import Waiting
+        from dmbot.ui import name_background as ui_bg
+
+        view = ui_bg.ConnectionOffer("c1")
+        view.current = Waiting(
+            subject_id="a" * 32, predicate="located_in", object_id="b" * 32, quote="He went.",
+            secret=False, subject="Bram", object="Veldmoor", ready=True, detail=detail,
+            upload=upload,
+        )  # fmt: skip
+        view.total = 1
+        return view._card()
+
+    async def test_an_uploads_visit_asks_with_its_file(self) -> None:
+        text = self.card("went to")
+        self.assertIn("🗺️ **Bram** went to **Veldmoor**: in Bram's backstory, 3 Nov?", text)
+        self.assertNotIn("last seen", text)
+
+    async def test_with_no_file_it_asks_at_some_point(self) -> None:
+        self.assertIn("**Bram** was in **Veldmoor** at some point?", self.card("went to", ""))
+
+    async def test_a_home_is_asked_as_before(self) -> None:
+        self.assertIn("**Bram** lives in **Veldmoor**", self.card("lives in"))
+
+    def test_an_ended_sighting_reads_was_in(self) -> None:
+        from dmbot.memory.link_words import link_words
+
+        self.assertEqual(link_words("located_in", "was last seen in", ended=True), "was in")
+        self.assertEqual(link_words("located_in", "was last seen in", subject_kind="character"),
+                         "was last seen in")  # fmt: skip
+        self.assertEqual(link_words("located_in", "lives in", ended=True), "lives in")
+        # an old row with no word on something that moves is a sighting too; an item's is kept
+        self.assertEqual(
+            link_words("located_in", "", subject_kind="character", ended=True), "was in"
+        )
+        self.assertEqual(
+            link_words("located_in", "was last seen in", subject_kind="item", ended=True),
+            "is kept in",
+        )
+
+    def test_from_the_places_side_an_old_sighting_reads_was_once(self) -> None:
+        from dmbot.memory.link_words import back_after, back_words
+
+        old = ("located_in", "was last seen in", False, "character")
+        self.assertEqual(back_words(*old), "is where")
+        self.assertEqual(back_after(*old), "was last seen")  # (current: as before)
+        self.assertEqual(back_after(*old, ended=True), "was once")
+
+    async def test_a_visit_beside_a_tie_already_kept_is_still_asked_as_a_visit(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.memory.backstory_links import Waiting
+        from dmbot.ui import name_background as ui_bg
+
+        view = ui_bg.ConnectionOffer("c1")
+        view.current = Waiting(
+            subject_id="a" * 32, predicate="located_in", object_id="b" * 32, quote="He went.",
+            secret=False, subject="Bram", object="Veldmoor", ready=True, detail="went to",
+            upload="Bram's backstory, 3 Nov",
+        )  # fmt: skip
+        view.total = 1
+        home: Any = SimpleNamespace(
+            subject_id="a" * 32, object_id="b" * 32, predicate="located_in", detail="lives in",
+            directional=False, knows_how="", secret=False, unrevealed=False,
+        )  # fmt: skip
+        view.changes = {("a" * 32, "located_in", "b" * 32): [home]}
+        text = view._card()
+        self.assertIn("**PROPOSED:** 🗺️ **Bram** went to **Veldmoor**: in Bram's backstory", text)
+        self.assertNotIn("last seen", text)
+
+    def test_the_connection_card_says_was_in_for_an_old_sighting(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.ui.name_card import fact_words
+
+        old: Any = SimpleNamespace(
+            predicate="located_in", detail="was last seen in", directional=False, knows_how="",
+            route_state="", to_session_at=900,
+        )  # fmt: skip
+        self.assertEqual(fact_words(old, "character"), "was in")
+
+
 class InTheStore(ConfirmedMemoryTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
