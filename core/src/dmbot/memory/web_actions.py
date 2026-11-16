@@ -15,6 +15,7 @@ whatever happened, and a claimed row that stalled is picked up again.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass, replace
@@ -149,6 +150,7 @@ WORLD_ACTIONS = ("world-keep", "world-not", "world-undo")
 # The story threads DMbot found in an upload (#4457, quests slice 1): the same store calls as
 # Discord's 📜 card, so each keep is one change and one Undo.
 THREAD_ACTIONS = ("thread-keep", "thread-not", "thread-undo")
+LINES_WORD = re.compile(r"\+(-|[0-9]{1,2}(,[0-9]{1,2}){0,49})")  # (a keep's lines left on, #4501)
 # The changes to a kept thread's parts and branches (#4476, quests slice 2): the same store calls as
 # Discord's 🧵 "📋 Steps, rewards and more", each one change and one Undo.
 PART_ACTIONS = (
@@ -1148,14 +1150,20 @@ async def _thread(
             return _failed(GONE)
         on_text, _, renamed = rest.partition(" ")
         on = set() if on_text == "-" else {int(i) for i in on_text.split(",")}
+        # The lines left on come as `+<n,n,...>` (or `+-`) between the people and the name; a keep
+        # without it (an older page) keeps none of the lines (#4501)
+        lines_on: set[int] = set()
+        first, _, after = renamed.partition(" ")
+        if LINES_WORD.fullmatch(first):
+            lines_on = set() if first == "+-" else {int(i) for i in first[1:].split(",")}
+            renamed = after
         done = await memory.keep_thread(
             guild_id, cid, " ".join(renamed.split()) or shown.name, shown.kind, shown.state,
             aim=shown.aim, parts=[p for i, p in enumerate(shown.parts) if i in on],
             source=DM, suggestion_id=shown.id,
-            # (the website doesn't show a suggestion's steps, rewards and branches yet: a keep
-            # there keeps none of them, as nothing the DM didn't see is kept, §9.6; #4500's web
-            # half shows them)
-            leave_off=range(len(shown.lines)),
+            # (only the lines the page showed and the DM left on are kept; nothing the DM didn't
+            # see is kept, §9.6, so a keep that names no lines keeps none)
+            leave_off=[i for i in range(len(shown.lines)) if i not in lines_on],
         )  # fmt: skip
     except MemoryRuleError as exc:  # (TooLateToUndo is one: a name was changed since)
         if str(exc) == ALREADY_UNDONE:

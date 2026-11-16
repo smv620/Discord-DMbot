@@ -27,6 +27,7 @@ from dmbot.memory import lore_read
 from dmbot.memory.lore_queue import Claim, LoreQueue
 from dmbot.ui.name_background import BackgroundRead, characters, read_background
 from dmbot.ui.name_lists import (
+    AI_READS_PER_DAY,
     BUSY,
     LIMIT,
     LINK_BUSY,
@@ -206,6 +207,7 @@ async def _read(
         time.time(),
         claim.campaign_id,
         int(getattr(bot.settings, "server_jobs_at_once", 2)),
+        int(getattr(bot.settings, "lore_reads_per_day", AI_READS_PER_DAY)),
     )
     if why_not == BUSY:
         await queue.release(guild_id, claim)  # not an answer: the next pass takes it again

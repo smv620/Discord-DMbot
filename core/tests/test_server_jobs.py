@@ -59,3 +59,11 @@ class ReadsAtOnce(unittest.TestCase):
         self.assertFalse(nl.link_is_busy(G, "b"))
         self.assertFalse(nl.link_is_busy(G))
         nl._link_busy.clear()
+
+    def test_a_server_at_the_set_limit_gets_limit_and_a_higher_limit_lets_more_in(self) -> None:
+        """(#4582: the day's limit is a setting, shared by Discord's button and the website)"""
+        for n in range(3):
+            self.assertIsNone(nl.start_ai_read(G, NOW, f"c{n}", 5, 3))
+            nl.end_ai_read(G, f"c{n}")
+        self.assertEqual(nl.start_ai_read(G, NOW, "x", 5, 3), nl.LIMIT)
+        self.assertIsNone(nl.start_ai_read(G, NOW, "x", 5, 60))  # (a higher limit: room again)
