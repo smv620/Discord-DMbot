@@ -15,6 +15,7 @@ import contextlib
 import io
 import math
 import os
+import sys
 import time
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from pathlib import Path
@@ -607,6 +608,7 @@ async def write_recap(
     *,
     run: Callable[[list[str]], Awaitable[int]] | None = None,
     spent: list[CostLine] | None = None,
+    why: list[str] | None = None,
 ) -> int:
     """The recap, with no audio, by the same code as `recap_run --session ... --yes`. Its report
     holds the recap's words, so it is swallowed: only the exit code comes back (0: made). `spent`
@@ -619,9 +621,20 @@ async def write_recap(
             return await rr.main_async(rr.parse_args(argv))
 
     argv = ["--session", str(guild), campaign_id, str(session_at), "--yes"]
-    swallowed = io.StringIO()
-    with contextlib.redirect_stdout(swallowed):
-        code = await run(argv)
+    swallowed, complaints = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(swallowed), contextlib.redirect_stderr(complaints):
+            code = await run(argv)
+    finally:
+        # The tool's own "recap_run: ..." lines say why and hold none of the recap's words (the
+        # stdout report does, which is why it is swallowed): pass them on (#4543). Anything else
+        # on stderr (a warning, a traceback) shows as it did before.
+        for said in complaints.getvalue().splitlines():
+            if said.startswith("recap_run:"):
+                if why is not None:
+                    why.append(said.strip())
+            else:
+                print(said, file=sys.stderr)
     if spent is not None and (line := recap_line(swallowed.getvalue())) is not None:
         spent.append(line)
     return code

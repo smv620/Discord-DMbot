@@ -424,9 +424,11 @@ async def run(
             return {**got, "players not on Discord": len(roles)}
 
         async def recap_step() -> Mapping[str, int | str]:
-            code = await steps.write_recap(gid, cid, started, spent=spent)
+            why: list[str] = []
+            code = await steps.write_recap(gid, cid, started, spent=spent, why=why)
             if code != 0:
-                raise SampleError(f"the recap was not made (recap_run exit {code})")
+                reason = f": {why[-1]}" if why else " (and no reason was printed)"
+                raise SampleError(f"the recap was not made (recap_run exit {code}){reason}")
             return {"made": 1}
 
         if args.accept_all:  # the old way (#3544), for comparison
@@ -644,8 +646,13 @@ async def run_many(args: argparse.Namespace, **kw: Any) -> int:
             break
     if kept and not failed:
         say("=== recap of the kept run (no audio) ===")
-        code = await steps.write_recap(kept["guild"], kept["campaign"], kept["started"])
-        say("recap: made" if code == 0 else f"recap: not made (recap_run exit {code})")
+        why: list[str] = []
+        code = await steps.write_recap(kept["guild"], kept["campaign"], kept["started"], why=why)
+        if code == 0:
+            say("recap: made")
+        else:
+            reason = why[-1] if why else "no reason was printed"
+            say(f"recap: not made (recap_run exit {code}); {reason}")
         if args.map is not None:
             await _map_on(args, kept, folder, say)
     stats = spread.summarize(runs)
