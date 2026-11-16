@@ -318,6 +318,42 @@ class TheSessions(Threads):
         )  # fmt: skip
         self.assertEqual((await self.listed())["Heard Heir"]["heard"], ["Keegan wrings his cap."])
 
+    async def confirmed(self, user: int, *, removed: bool = False) -> None:
+        await self.sql(
+            "INSERT INTO import_consents (guild_id, campaign_id, id, import_id, user_id, basis,"
+            " confirmed_by, confirmed_at, terms_version, removed_at)"
+            " VALUES (%s, %s, %s, 'imp', %s, 'uploader_confirmed', 1, 0, %s, %s)",
+            self.g, self.one.id, f"{user:032x}", user, TERMS_VERSION, 5 if removed else None,
+        )  # fmt: skip
+
+    async def test_an_import_confirmed_speaker_with_no_consent_row_counts(self) -> None:
+        await self.sql("DELETE FROM consent WHERE guild_id = %s AND user_id = %s", self.g, ALSO)
+        self.assertNotIn("Heard Heir", await self.listed())
+        await self.confirmed(ALSO)
+        self.assertIn("Heard Heir", await self.listed())
+
+    async def test_a_taken_back_or_refused_confirmation_does_not_count(self) -> None:
+        await self.sql("DELETE FROM consent WHERE guild_id = %s AND user_id = %s", self.g, ALSO)
+        await self.confirmed(ALSO, removed=True)
+        self.assertNotIn("Heard Heir", await self.listed())
+        await self.sql(
+            "UPDATE import_consents SET removed_at = NULL WHERE guild_id = %s", self.g
+        )  # fmt: skip
+        await self.sql(
+            "INSERT INTO consent_refusals (guild_id, user_id, kind, refused_at)"
+            " VALUES (%s, %s, 'stopped', 1)",
+            self.g, ALSO,
+        )  # fmt: skip
+        self.assertNotIn("Heard Heir", await self.listed())
+
+    async def test_a_speaker_without_discord_never_blocks_a_suggestion(self) -> None:
+        await self.sql(
+            "UPDATE thread_suggestions SET speaker_ids = speaker_ids || %s::bigint[]"
+            " WHERE guild_id = %s AND name = %s",
+            [-1], self.g, "Heard Heir",
+        )  # fmt: skip
+        self.assertIn("Heard Heir", await self.listed())
+
     async def test_a_session_of_another_campaign_is_never_read(self) -> None:
         other = await self.transcripts.open_session(self.g, self.two.id, 1_700_000_500)
         await self.transcripts.add_lines(self.g, other, [Heard(LINE_MS, SAY, "x", "Not here.")])

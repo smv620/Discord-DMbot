@@ -11,15 +11,15 @@ from __future__ import annotations
 # proposal is that it is shown only while all its speakers are recorded (Supervisor's ruling B on
 # #4522; Discord does it with `ThreadSuggestionStore.waiting(opted_in=…)`). The same repair as 0341
 # made for the waiting list: a session's suggestion is listed only when every speaker is recorded
-# now by the rule `consent._select` has: a consent row under the current wording (`terms`) and,
-# while an outside company hears the voices, for that company (`outside`). Both arrive as arguments
-# because the database cannot know them, so the door has a new signature and the old one goes. It
-# is narrower than Discord's `recorded_in` on purpose, as 0341's is for the waiting list: it leaves
-# out the people an import's uploader confirmed and speakers without Discord (they have no consent
-# row), so such a suggestion waits for Discord until the door learns them; it hides too much,
-# never too little (follow-up #4595). A pause (off the record for the moment) lives in the bot's
-# memory and a door cannot see it, as for 0341. A suggestion read from lore has no speakers and is
-# listed as before.
+# now, by the rule `consent.still_recorded` has: someone with Discord counts while they have a
+# consent row under the current wording (`terms`) and, while an outside company hears the voices,
+# for that company (`outside`), or (for this campaign's imported sessions) an import confirmation
+# not taken back and no "no" on record; a speaker without Discord (a negative number) is never in
+# `consent`, so a missing row never reads as a stop for them. That is Discord's `recorded_in` less
+# the two things only the running bot knows: a stop not yet saved and an off-the-record pause (a
+# door cannot see them; Supervisor accepted that gap for 0341 on #3464). `terms` and `outside`
+# arrive as arguments because the database cannot know them, so the door has a new signature and
+# the old one goes. A suggestion read from lore has no speakers and is listed as before.
 #
 # The door also says where a suggestion was heard: `session` (true for one read from a session) and
 # `heard`, up to three of the lines it points at (`line_starts`), read now from the transcript of
@@ -34,9 +34,13 @@ from __future__ import annotations
 # its answer to the suggestions this door lists, so a hidden suggestion's lines never leave.
 # No row is changed.
 _RECORDED = (
-    "s.speaker_ids <@ ARRAY(SELECT n.user_id FROM consent n "
-    "WHERE n.guild_id = g AND n.terms_version = terms "
-    "AND (outside IS NULL OR n.outside_to = outside))"
+    "NOT EXISTS (SELECT 1 FROM unnest(s.speaker_ids) AS u(id) WHERE u.id > 0 AND NOT ("
+    "EXISTS (SELECT 1 FROM consent n WHERE n.guild_id = g AND n.user_id = u.id "
+    "AND n.terms_version = terms AND (outside IS NULL OR n.outside_to = outside)) "
+    "OR (EXISTS (SELECT 1 FROM import_consents i WHERE i.guild_id = g AND i.campaign_id = c "
+    "AND i.user_id = u.id AND i.removed_at IS NULL) "
+    "AND NOT EXISTS (SELECT 1 FROM consent_refusals r "
+    "WHERE r.guild_id = g AND r.user_id = u.id))))"
 )
 _WHERE = "WHERE s.guild_id = g AND s.campaign_id = c AND s.status = 'waiting'),"
 _WHERE_NEW = (
