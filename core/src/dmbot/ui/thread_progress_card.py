@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from dmbot.discord_limits import fit_message
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory import thread_progress as prog
 from dmbot.ui import logic
 from dmbot.ui.names import _md
@@ -33,7 +33,7 @@ LINE_MAX = 90
 SHOWN = 25  # lines on one card: a menu holds 25, and a press answers only what the DM sees
 # (room under Discord's 2,000 for what the card adds in front: "✅ Kept … on **name**", as the
 # first stage's `CARD_MAX`; past it the last lines fold into "…and N more", the help kept)
-CARD_MAX = 1_700
+CARD_MAX = MESSAGE_MAX - 300
 
 
 def line_text(change: prog.Change, part_words: Mapping[str, str], kind: str = "") -> str:
