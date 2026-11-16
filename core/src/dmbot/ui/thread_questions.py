@@ -211,14 +211,25 @@ def session_label(started_at: int) -> str:
     return f"the session of {date_label(started_at)}"
 
 
-def threads_found_text(made: int, stopped: bool, label: str) -> str:
+def threads_found_text(made: int, stopped: bool, label: str, changes: int = 0) -> str:
     """The one counts line in the DM Bot channel after a session (#4522, #3874): counts only, no
     thread's name (the channel is the campaign's people's), and the session by its date (an
-    import may be an old one, so never "the last session"). Its 📜 button is for a DM."""
+    import may be an old one, so never "the last session"). `changes`: progress lines on threads
+    the campaign has (5b, ruling D). Its 📜 button is for a DM."""
     many = "possible story thread" if made == 1 else "possible story threads"
-    if made:
+    moved = (
+        "change to a story thread you have"
+        if changes == 1
+        else ("changes to story threads you have")
+    )
+    found = " and ".join(
+        part
+        for part in (f"{made} {many}" if made else "", f"{changes} {moved}" if changes else "")
+        if part
+    )
+    if found:
         line = (
-            f"📜 DMbot heard {made} {many} in {label}. A DM can keep or turn down each one: "
+            f"📜 DMbot heard {found} in {label}. A DM can keep or turn down each one: "
             f"press {LABEL}."
         )
         return line + (" It stopped early, so it may have missed some." if stopped else "")
