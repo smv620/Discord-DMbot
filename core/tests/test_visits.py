@@ -55,6 +55,16 @@ class TheQuestion(unittest.TestCase):
         asked = place_words.visit_question("Bram", "Veldmoor", "", "in the March notes")
         self.assertEqual(asked, "🗺️ **Bram** went to **Veldmoor**: in the March notes?")
 
+    def test_the_lore_reader_is_offered_went_to_never_last_seen_or_was_in(self) -> None:
+        self.assertIn("went to", place_words.WORDS_OFFERED)
+        self.assertNotIn("was last seen in", place_words.WORDS_OFFERED)
+        self.assertNotIn("was in", place_words.WORDS_OFFERED)
+
+    def test_was_in_is_a_visit_word_only_for_something_that_moves(self) -> None:
+        self.assertEqual(place_words.forward("was in", "event"), "took place in")
+        self.assertEqual(place_words.forward("was in", "place"), "is in")
+        self.assertEqual(place_words.forward("was in", "character"), "was in")
+
     def test_other_place_words_are_not_visits(self) -> None:
         for words in ("lives in", "works in", "comes from", "was in", "carries"):
             with self.subTest(words):
@@ -120,7 +130,8 @@ class InTheStore(ConfirmedMemoryTest):
         self.assertEqual(await self.places(), before)
 
     async def test_two_visits_are_never_flagged_for_the_dm(self) -> None:
-        for place, line in (("Veldmoor", "1"), ("Chapel", "3")):
+        # (the same line: nothing orders them, the case the ruling's B is about)
+        for place, line in (("Veldmoor", "1"), ("Chapel", "1")):
             await self.claims.confirm(GUILD_A, self.c, (await self.visit(place, line)).id,
                                       opted_in={7})  # fmt: skip
         self.assertEqual(await self.memory.flags(GUILD_A, self.c), [])

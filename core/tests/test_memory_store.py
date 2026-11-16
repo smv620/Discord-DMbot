@@ -615,6 +615,12 @@ class Merging(MemoryTest):
 
 
 class Rules(MemoryTest):
+    async def relate(self, a: str, pred: str, b: str, **kw: Any) -> Written[Any]:
+        # (the clashes here are two homes: two sightings are two visits, never flagged, #4530)
+        if pred == "located_in":
+            kw.setdefault("detail", "lives in")
+        return await super().relate(a, pred, b, **kw)
+
     async def test_two_birthplaces_are_flagged_not_refused(self) -> None:
         await self.memory.add_predicate(
             GUILD_A,
@@ -670,8 +676,10 @@ class Rules(MemoryTest):
             await self.add("Brynwater", type="place"),
             await self.add("Thornewick", type="place"),
         )
-        first = await self.relate(cerric, "located_in", p1)
-        clash = await self.relate(cerric, "located_in", p2, source="cleaner", confidence=0.5)
+        first = await self.relate(cerric, "located_in", p1, detail="lives in")  # (homes, #4530)
+        clash = await self.relate(
+            cerric, "located_in", p2, source="cleaner", confidence=0.5, detail="lives in"
+        )
         fireball = await self.add("Fireball", type="concept")
         wrong = await self.relate(cerric, "member_of", fireball, source="cleaner", confidence=0.4)
         self.assertEqual([f.kind for f in clash.value[1]], [TOO_MANY])
@@ -695,8 +703,10 @@ class Rules(MemoryTest):
         cerric = await self.add("Cerric")
         town = await self.add("Bryn Shander", type="place")
         same_town = await self.add("Bryn", type="place")
-        await self.relate(cerric, "located_in", town)
-        await self.relate(cerric, "located_in", same_town, source="cleaner", confidence=0.5)
+        await self.relate(cerric, "located_in", town, detail="lives in")  # (homes, #4530)
+        await self.relate(
+            cerric, "located_in", same_town, source="cleaner", confidence=0.5, detail="lives in"
+        )
         fireball = await self.add("Fireball", type="concept")
         await self.relate(cerric, "member_of", fireball, source="cleaner", confidence=0.4)
         await self.memory.merge(GUILD_A, self.c, town, same_town, source="dm")
@@ -713,8 +723,10 @@ class Rules(MemoryTest):
             await self.add("Brynwater", type="place"),
             await self.add("Thornewick", type="place"),
         )
-        own = await self.relate(cerric, "located_in", p1)
-        await self.relate(twin, "located_in", p2, source="cleaner", confidence=0.5)
+        own = await self.relate(cerric, "located_in", p1, detail="lives in")  # (homes, #4530)
+        await self.relate(
+            twin, "located_in", p2, source="cleaner", confidence=0.5, detail="lives in"
+        )
         merged = await self.memory.merge(GUILD_A, self.c, cerric, twin, source="dm")
         self.assertEqual([f.kind for f in await self.memory.flags(GUILD_A, self.c)], [TOO_MANY])
         await self.memory.update_relation(  # the other fact, not one the merge moved
@@ -790,10 +802,24 @@ class Rules(MemoryTest):
             p1 = await self.add("Brynwater", type="place", campaign=campaign)
             p2 = await self.add("Thornewick", type="place", campaign=campaign)
             first = await self.memory.add_relation(
-                GUILD_A, campaign, cerric, "located_in", p1, source="dm", confidence=1.0
+                GUILD_A,
+                campaign,
+                cerric,
+                "located_in",
+                p1,
+                source="dm",
+                confidence=1.0,
+                detail="lives in",
             )
             await self.memory.add_relation(
-                GUILD_A, campaign, cerric, "located_in", p2, source="cleaner", confidence=0.5
+                GUILD_A,
+                campaign,
+                cerric,
+                "located_in",
+                p2,
+                source="cleaner",
+                confidence=0.5,
+                detail="lives in",
             )
             await self.memory.update_relation(
                 GUILD_A, campaign, first.value[0].id, status=REJECTED, source="dm"
@@ -929,10 +955,24 @@ class Rules(MemoryTest):
             await self.memory.add_entity(GUILD_A, other, type="place", name="Inn", source="dm")
         ).value.id
         first = await self.memory.add_relation(
-            GUILD_A, other, a, "located_in", town, source="dm", confidence=1.0
+            GUILD_A,
+            other,
+            a,
+            "located_in",
+            town,
+            source="dm",
+            confidence=1.0,
+            detail="lives in",
         )
         await self.memory.add_relation(
-            GUILD_A, other, a, "located_in", inn, source="cleaner", confidence=0.5
+            GUILD_A,
+            other,
+            a,
+            "located_in",
+            inn,
+            source="cleaner",
+            confidence=0.5,
+            detail="lives in",
         )
         await self.memory.update_relation(
             GUILD_A, other, first.value[0].id, status=REJECTED, source="dm"

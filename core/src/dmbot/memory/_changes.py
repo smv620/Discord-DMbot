@@ -540,9 +540,9 @@ class Changes(Scope):
         # Rows this write brought back from turned down (#4524): the players saw none of them
         # before, so holding one back in the same write takes nothing from them (`public_guard`).
         self.revived: set[tuple[str, str]] = set()
-        # The first transcript line of the claim this write keeps (#4530): its fact has no claim
-        # pointing at it yet when its visit is settled, so the line comes this way.
-        self.said_line: int | None = None
+        # The session and first transcript line of the claim this write keeps (#4530): its fact
+        # has no claim pointing at it yet when its visit is settled, so the line comes this way.
+        self.said_line: tuple[int, int] | None = None
         # True while a "same person" join moves an unnamed person's statements onto the named one
         # (`MemoryStore` join): what it makes secret keeps the players from learning who the
         # stranger was, which takes nothing from them, so the guard lets it through

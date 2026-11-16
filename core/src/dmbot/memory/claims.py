@@ -2270,20 +2270,27 @@ class ClaimStore:
                     else None
                 )
                 numbers = [int(n) for n in claim.lines if str(n).isdigit()]
-                w.said_line = min(numbers) if numbers else None  # (to order visits, #4530)
-                relation, flags = await self._store.add_relation_in(
-                    w, subject_id, term.key, object_id, confidence=1.0, status=CONFIRMED,
-                    detail=label or self._detail(term.key, claim, subject_kind),
-                    from_session_at=claim.session_started_at,
-                    secret=secret,
-                    unrevealed=hold or in_scene is not None,
-                    # whether they've met, from the reader's own words for it (#3881)
-                    knows_how=knows_how.how_from(
-                        claim.relationship, claim.details, a=claim.subject, b=claim.object
-                    )
-                    if term.key == KNOWS_PREDICATE
-                    else "",
-                )  # fmt: skip
+                w.said_line = (  # (to order this claim's visit, #4530; cleared right after)
+                    (claim.session_started_at, min(numbers))
+                    if numbers and claim.session_started_at is not None
+                    else None
+                )
+                try:
+                    relation, flags = await self._store.add_relation_in(
+                        w, subject_id, term.key, object_id, confidence=1.0, status=CONFIRMED,
+                        detail=label or self._detail(term.key, claim, subject_kind),
+                        from_session_at=claim.session_started_at,
+                        secret=secret,
+                        unrevealed=hold or in_scene is not None,
+                        # whether they've met, from the reader's own words for it (#3881)
+                        knows_how=knows_how.how_from(
+                            claim.relationship, claim.details, a=claim.subject, b=claim.object
+                        )
+                        if term.key == KNOWS_PREDICATE
+                        else "",
+                    )  # fmt: skip
+                finally:
+                    w.said_line = None
                 fact_id = relation.id
                 if relation.id in live:
                     if not live[relation.id]:  # (False: it is already shown to the players)

@@ -78,7 +78,15 @@ _MOBILE = frozenset({
 
 
 # The wordings a reader is told to use (the keys of `_FORWARD`, present and past, no repeats).
-WORDS_OFFERED = tuple(dict.fromkeys(w for pair in _FORWARD.values() for w in pair))
+# The words the lore reader is offered, chosen on purpose: a visit is "went to" (#4530), never
+# "was last seen in" (where someone is now) or "was in" (history is worked out, never read).
+WORDS_OFFERED = (
+    "lives in", "lived in", "works in", "worked in", "is kept in", "was kept in", "comes from",
+    "went to",
+)  # fmt: skip
+# Visit words new with #4530: they are a place word only for something that moves (a shrine "was
+# in" Old Town is a place inside a place, a battle "was in" Phandalin an event's place).
+_VISIT_ONLY = frozenset({"went to", "was seen in", "was in"})
 
 
 def is_mobile(kind: str) -> bool:
@@ -93,12 +101,18 @@ def way_for(detail: str, kind: str) -> Way | None:
     way = way_of(detail)
     if kind in _ITEM_KINDS:
         return Way(KEPT, way.past if way is not None else False)
+    if way is not None and kind and not is_mobile(kind) and _plain(detail) in _VISIT_ONLY:
+        return None  # (not a visit: a place's or an event's own place, as before #4530)
     return way
 
 
 def way_of(detail: str) -> Way | None:
     """The way a connection's detail says, or None when it says none."""
-    return _WAYS.get(" ".join(detail.replace("_", " ").split()).casefold())
+    return _WAYS.get(_plain(detail))
+
+
+def _plain(detail: str) -> str:
+    return " ".join(detail.replace("_", " ").split()).casefold()
 
 
 def slot(detail: str, kind: str = "") -> tuple[str, bool]:

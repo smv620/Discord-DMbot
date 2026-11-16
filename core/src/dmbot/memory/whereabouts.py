@@ -7,7 +7,9 @@ only: a fact the DM adds by hand is the newest thing the table knows, so it ends
 is never made history itself (the DM decides). An older fact read late never
 ends a newer one: it becomes history itself. Ownership is a different tie and is never ended.
 A hidden fact (secret, or not yet shown) never ends or rewrites a fact the players can see, so
-the history cannot give it away. Pure: no database, so the rules are tested alone."""
+the history cannot give it away. A mover's visits are events (#4530): the newest is where they
+were last seen, every older one is "was in", worked out and never asked (`_settle_visit`). Pure:
+no database, so the rules are tested alone."""
 
 from __future__ import annotations
 
@@ -102,7 +104,7 @@ MOVED = "moved"
 def _visit_cmp(a: Relation, b: Relation, line_of: Callable[[str], int | None]) -> int:
     """Which of two visits happened later (#4530): 1 if `a`, -1 if `b`, 0 when nothing orders
     them. By session; in one session by the first line said (unknown: no order); an upload's visit
-    (no session) by when it was read, against a session's start."""
+    (no session) by when it was kept (the row's `created_at`), against a session's start."""
     when_a = a.from_session_at if a.from_session_at is not None else a.created_at
     when_b = b.from_session_at if b.from_session_at is not None else b.created_at
     if not when_a or not when_b:
@@ -129,19 +131,20 @@ def _settle_visit(
 ) -> Settled:
     """A visit is an event, and stays true (#4530, Supervisor's ruling): the newest confirmed visit
     is where they were last seen, and every older one is history ("was in"). Never asked: by the
-    session, then the later line in it; an upload's visits by when it was read. Two visits nothing
+    session, then the later line in it; an upload's visits by when it was kept. Two visits nothing
     orders (one upload's, or one session's with no lines) are both history and neither is the
     newest (the ruling's A); the next ordered visit is. A visit confirmed late that is older than
     one kept goes straight to history and never moves the mover back. A hidden visit never turns
     a visible one into history, and a place inside the other is one place (as `_settle_mover`)."""
     ends: dict[str, dict[str, Any]] = {}
-    new_changes: dict[str, Any] = {}
+    history: list[tuple[int, bool]] = []  # (when this visit ends, whether it is a move)
     for r in others:
         if r.id == new.id or r.predicate != LOCATED or r.subject_id != new.subject_id:
             continue
-        if not _live(r) or r.object_id == new.object_id:
+        if r.status != CONFIRMED or r.object_id == new.object_id:
             continue
-        if place_words.slot(r.detail, kind) != (place_words.LAST_SEEN, False):
+        word, past = place_words.slot(r.detail, kind)
+        if word != place_words.LAST_SEEN:
             continue
         how = relation(r.object_id, new.object_id) if relation is not None else RIVALS
         if how == ONE:
@@ -149,17 +152,26 @@ def _settle_visit(
         order = _visit_cmp(new, r, line_of)
         later = by_hand or order > 0
         earlier = not by_hand and order < 0
-        # newer, or nothing orders the two: the other visit is history ("was in")
-        if not earlier and _can_touch(new, r):
+        live = _live(r) and not past
+        # newer, or nothing orders the two: the other live visit is history ("was in")
+        if live and not earlier and _can_touch(new, r):
             at = max(new.from_session_at or now, r.from_session_at or 0, 1)
             ends[r.id] = _ended(r, at, place_words.LAST_SEEN, MOVED if how == MOVE else None)
-        # older, or no order: this visit is history too (a hidden newer one never makes a visible
-        # one history: that would say they moved)
-        if not later and (not _hidden(r) or _hidden(new)):
+        # older than any visit, live or already history, or no order with a live one: this visit
+        # is history too, so a late, older visit never moves the mover back. (A hidden newer one
+        # never makes a visible one history: that would say they moved.)
+        if (earlier or (live and not later)) and (not _hidden(r) or _hidden(new)):
             at = max(r.from_session_at or now, new.from_session_at or 0, 1)
-            new_changes = {"to_session_at": at, "detail": _PAST_WORD[place_words.LAST_SEEN]}
-            if how == MOVE:
-                new_changes["end_reason"] = MOVED
+            history.append((at, how == MOVE))
+    if not history:
+        return Settled(ends, {})
+    # (the earliest end, as `_settle_mover` keeps it; moved when any newer visit was a move)
+    new_changes: dict[str, Any] = {
+        "to_session_at": min(at for at, _ in history),
+        "detail": _PAST_WORD[place_words.LAST_SEEN],
+    }
+    if any(moved for _, moved in history):
+        new_changes["end_reason"] = MOVED
     return Settled(ends, new_changes)
 
 
@@ -174,17 +186,18 @@ def _settle_mover(
     relation: Callable[[str, str], str] | None = None,
     line_of: Callable[[str], int | None] | None = None,
 ) -> Settled:
-    """A new present place of one kind ("lives in", "works in", "was last seen in") ends the older
-    present place of the SAME kind (never another kind), by when it happened, not when it was
-    read: a later session ends an earlier one; an earlier one read late becomes history itself;
-    with no order (a date missing on either side, or the same session) both stay and the
-    one-at-a-time flag asks the DM, as before. A place the DM added by hand is the newest. Only a
-    confirmed fact does this: a newer place that is still only proposed ends nothing until the DM
-    confirms it (`settle` is run again then). A hidden fact never changes what players see: it
-    ends nothing they can see, and a visible fact never turns into history because of it. A place
-    inside the other (the inn and its town) is one place and ends nothing. For a group only the
-    sighting is replaced (a guild based in two towns is the DM's to settle). The ended fact stays,
-    as history, with its end; the DM's Undo brings it back."""
+    """A new present place of one kind ("lives in", "works in") ends the older present place of the
+    SAME kind (never another kind), by when it happened, not when it was read: a later session
+    ends an earlier one; an earlier one read late becomes history itself; with no order (a date
+    missing on either side, or the same session) both stay and the one-at-a-time flag asks the
+    DM, as before. A sighting is a visit and goes to `_settle_visit` (#4530). A place the DM
+    added by hand is the newest. Only a confirmed fact does this: a newer place that is still
+    only proposed ends nothing until the DM confirms it (`settle` is run again then). A hidden
+    fact never changes what players see: it ends nothing they can see, and a visible fact never
+    turns into history because of it. A place inside the other (the inn and its town) is one
+    place and ends nothing. For a group only the sighting is replaced (a guild based in two
+    towns is the DM's to settle). The ended fact stays, as history, with its end; the DM's Undo
+    brings it back."""
     word, past = place_words.slot(new.detail, kind)
     if past or word in _NEVER_ENDS or (kind == "faction" and word != place_words.LAST_SEEN):
         return Settled()

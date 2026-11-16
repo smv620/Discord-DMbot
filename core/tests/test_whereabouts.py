@@ -153,6 +153,29 @@ class Movers(unittest.TestCase):
         self.assertEqual(set(same_session.ends), {"1" * 32})
         self.assertEqual(same_session.new_changes["detail"], "was in")
 
+    def test_a_late_older_visit_never_moves_them_back_past_visits_already_history(self) -> None:
+        """#4530 (the reviewer's case): two visits nothing orders are both history; a visit from
+        an earlier session confirmed after them is older than both, so it is history too."""
+        chapel = rel(PARTY, "located_in", TOWN_A, "was in", rid="1" * 32, start=500, end=500)
+        inn = rel(PARTY, "located_in", "c" * 32, "was in", rid="3" * 32, start=500, end=500)
+        got = whereabouts.settle(
+            seen(TOWN_B, "2" * 32, start=300), "faction", "place", [chapel, inn]
+        )
+        self.assertEqual(dict(got.ends), {})  # (history stays history)
+        self.assertEqual(dict(got.new_changes), {"to_session_at": 500, "detail": "was in"})
+        newer = whereabouts.settle(
+            seen(TOWN_B, "4" * 32, start=900), "faction", "place", [chapel, inn]
+        )
+        self.assertEqual((dict(newer.ends), dict(newer.new_changes)), ({}, {}))  # (the newest)
+
+    def test_the_earliest_end_is_kept_and_a_move_says_so(self) -> None:
+        older = seen(TOWN_A, "1" * 32, start=300)
+        newest = seen("c" * 32, "3" * 32, start=900)
+        got = whereabouts.settle(
+            seen(TOWN_B, "2" * 32, start=100), "faction", "place", [newest, older]
+        )
+        self.assertEqual(got.new_changes["to_session_at"], 300)
+
     def test_in_one_session_the_later_line_is_the_newer_visit(self) -> None:
         old = seen(TOWN_A, "1" * 32, start=100)
         new = seen(TOWN_B, "2" * 32, start=100)
