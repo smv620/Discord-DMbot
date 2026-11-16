@@ -656,6 +656,7 @@ from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 from dmbot.ui.secret_aloud import (
     SecretAloudButton,
 )
+from dmbot.ui.secret_questions import SecretQuestionsButton
 from dmbot.ui.secret_reveal import RevealButton, reveal_view
 from dmbot.ui.secret_reveal import question_text as reveal_question
 from dmbot.ui.sheets import MySheetButton, OpenCardButton
@@ -1957,6 +1958,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             TraitQuestionsButton,  # 🧬 Lineage and class (#3926)
             WorldNotesButton,  # 🌍 World notes (#4285)
             ThreadQuestionsButton,  # 📜 Story threads (#4453)
+            SecretQuestionsButton,  # 🤫 Known or secret? (#4524)
         )  # the Questions message and the card's button (#3435)
         self.question_round = questions_discord.build_round(self)
         self.question_notices = (
@@ -9784,45 +9786,55 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # session's events: the lines the stored split labels so are left out. A session with
             # no split yet is read as all play.
             recap_lines = await self._recap_lines(gid, sid)
-            # (a character's first name said alone is their short name before the claims are
-            # matched to names, so "Claude" is Claude Ambere and not a new name: #3880)
-            agreed = await consenting()
-            await self.add_short_names(gid, cid, extractor.heard_texts(lines, agreed, recap_lines))
-            report = await extractor.run(
-                self.extractor_ai,
-                ClaimStore(self.memory),
-                lines,
-                guild_id=gid,
-                campaign_id=cid,
-                dm_ids=dm_ids,
-                consenting=consenting,
-                model=lambda: self.extractor_ai.model if self.extractor_ai else "",
-                session_started_at=session.started_at,
-                recap_lines=recap_lines,
-                tally=tally,
-                max_calls=allowed,
-                skip=skip,
-                after_ms=after_ms,
-                readings=self.settings.story_readings_on,
-                deeds=self.settings.story_deeds_on,
-                deed_store=DeedProposals(self.memory)
-                if self.settings.story_deeds_on and self.memory is not None
-                else None,
-                reveals=self.settings.story_reveals_on,
-                reveals_precheck=self.settings.story_reveals_precheck,
-                reveal_store=RevealProposals(self.memory)
-                if self.settings.story_reveals_on and self.memory is not None
-                else None,
-                met=self.settings.met_unnamed_on,
-                met_store=MetStore(self.memory._db)
-                if self.settings.met_unnamed_on and self.memory is not None
-                else None,
-                session_id=sid,
-                family_only=self.settings.story_family_only,
-                imported=await transcripts.is_import(gid, sid),
-                count_call=count_call,
-                progress=progress,
-            )
+            # (a 🤫 question the read asks cites this session, never its words, and is counted on
+            # the after-session line: #4524; the short names too, which can ask one)
+            from dmbot.memory import secret_questions
+            from dmbot.ui.thread_questions import session_label
+
+            with secret_questions.evidence(
+                session_label(session.started_at), session_id=sid
+            ) as asked:
+                # (a character's first name said alone is their short name before the claims
+                # are matched to names, so "Claude" is Claude Ambere and not a new name: #3880)
+                agreed = await consenting()
+                await self.add_short_names(
+                    gid, cid, extractor.heard_texts(lines, agreed, recap_lines)
+                )
+                report = await extractor.run(
+                    self.extractor_ai,
+                    ClaimStore(self.memory),
+                    lines,
+                    guild_id=gid,
+                    campaign_id=cid,
+                    dm_ids=dm_ids,
+                    consenting=consenting,
+                    model=lambda: self.extractor_ai.model if self.extractor_ai else "",
+                    session_started_at=session.started_at,
+                    recap_lines=recap_lines,
+                    tally=tally,
+                    max_calls=allowed,
+                    skip=skip,
+                    after_ms=after_ms,
+                    readings=self.settings.story_readings_on,
+                    deeds=self.settings.story_deeds_on,
+                    deed_store=DeedProposals(self.memory)
+                    if self.settings.story_deeds_on and self.memory is not None
+                    else None,
+                    reveals=self.settings.story_reveals_on,
+                    reveals_precheck=self.settings.story_reveals_precheck,
+                    reveal_store=RevealProposals(self.memory)
+                    if self.settings.story_reveals_on and self.memory is not None
+                    else None,
+                    met=self.settings.met_unnamed_on,
+                    met_store=MetStore(self.memory._db)
+                    if self.settings.met_unnamed_on and self.memory is not None
+                    else None,
+                    session_id=sid,
+                    family_only=self.settings.story_family_only,
+                    imported=await transcripts.is_import(gid, sid),
+                    count_call=count_call,
+                    progress=progress,
+                )
             log.info(report.line())
             if report.recap_lines and notice_channel is not None:
                 # Said once, with the way back, before anything else is relied on (#3298): counts
@@ -9846,6 +9858,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 await self.post(
                     notice_channel, held_back_text(report.new_names), view=review_view(cid)
                 )
+            if asked and notice_channel is not None:  # (#4524: counts only)
+                from dmbot.ui import secret_questions as secret_questions_ui
+
+                try:
+                    left = await self.memory.secret_questions_still_waiting(gid, cid, asked)
+                    if left:
+                        await self.post(
+                            notice_channel,
+                            secret_questions_ui.count_line(left).strip(),
+                            view=secret_questions_ui.notice_view(cid),
+                        )
+                except Exception as exc:
+                    log.warning("Secret questions: no note (%s)", type(exc).__name__)
             if report.met_made and notice_channel is not None:  # (#4045: counts only)
                 try:
                     await self.post(

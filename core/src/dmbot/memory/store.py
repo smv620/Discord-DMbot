@@ -3153,6 +3153,22 @@ class MemoryStore:
         async with self._db.guild(guild_id) as conn:
             return await secret_questions_mod.count(conn, guild_id, campaign_id)
 
+    async def secret_questions_still_waiting(
+        self, guild_id: int, campaign_id: str, ids: Collection[str]
+    ) -> int:
+        """How many of these 🤫 questions still wait: a run's count for its note, leaving out one a
+        refused write or an Undo in the same run took back (#4524 slice 2)."""
+        if not ids:
+            return 0
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM secret_questions WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = ANY(%s) AND status = 'waiting'",
+                (guild_id, campaign_id, sorted(set(ids))),
+            )
+            row = await cur.fetchone()
+        return int(row["n"]) if row is not None else 0
+
     async def secret_questions_asked_in(
         self, guild_id: int, campaign_id: str, batches: Collection[int | None]
     ) -> int:

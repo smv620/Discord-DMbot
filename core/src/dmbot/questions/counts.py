@@ -211,6 +211,14 @@ async def _threads(src: Sources, g: int, c: str) -> Counted:
     return Counted(await ThreadSuggestionStore(src.db).count(g, c, opted_in=opted_in))
 
 
+async def _secrets(src: Sources, g: int, c: str) -> Counted:
+    """What the players know that sounded like a secret (#4524): the 🤫 questions the card shows
+    (`MemoryStore.secret_questions_waiting`)."""
+    if src.memory is None:
+        return Counted(0)
+    return Counted(await src.memory.secret_questions_count(g, c))
+
+
 async def _maps(src: Sources, g: int, c: str) -> Counted:
     """Maps a player kept that no DM has answered yet (`MapStore.waiting_for_a_dm`)."""
     if src.maps is None:
@@ -229,6 +237,7 @@ _COUNTERS: dict[str, Callable[[Sources, int, str], Awaitable[Counted]]] = {
     kinds.TRAITS: _traits,
     kinds.WORLD: _world,
     kinds.THREADS: _threads,
+    kinds.SECRETS: _secrets,
     kinds.MAPS: _maps,
     kinds.CLAIMS: _claims,
     kinds.READINGS: _readings,
