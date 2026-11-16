@@ -55,6 +55,7 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | The names waiting for a check; the recap's name checks | `/account/questions`, recap page | built, switched off | `QUESTIONS_LIVE`, `RECAP_NAME_CHECKS_LIVE` |
 | Confirm kinds of names; places written two ways | Names, Story Graph | built, switched off | `CONFIRM_KINDS_LIVE`, `NAME_PLACES_LIVE` |
 | Story Graph: view, details panel, settings, centre on a name | `/account/web` | live | none |
+| A quest's sheet: what it's about, who gave it, the reward, its state and steps (#4540) | the 🧵 card | Story Graph detail pane (DM only): built, switched off, `QUEST_SHEET_LIVE` (#4547) | `QUEST_SHEET_LIVE` |
 | Story Graph: waiting connections (answer, All true / All secret / Undo all) | `/account/web` | live | none |
 | Story Graph: what people believe (readings); who knows a connection; secret names told; peek and reveal | `/account/web` | readings live; others switched off | `WHO_KNOWS_LIVE`, `TOLD_LIVE` |
 | Story Graph: change a connection, its feeling | `/account/web` | change live; feeling picker is in an open PR, switched off | `knows-feeling-switch` |
