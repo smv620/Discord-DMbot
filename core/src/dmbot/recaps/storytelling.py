@@ -15,6 +15,7 @@ import json
 from collections.abc import Sequence
 from typing import Any
 
+from dmbot.ai import OUTPUT_FLOOR
 from dmbot.memory.extractor import quoted
 from dmbot.recaps.draft import _no_brackets
 
@@ -72,7 +73,7 @@ SCHEMA: dict[str, Any] = {
     "additionalProperties": False,
 }
 
-ROOM = 800  # a few small objects; a cut answer is simply an unreadable one
+ROOM = OUTPUT_FLOOR  # the tier's floor (CLAUDE.md): a cut answer is only an unreadable one
 
 
 def message(examples: Sequence[str], sentences: Sequence[str]) -> str:
@@ -103,7 +104,12 @@ def parse(raw: str) -> dict[str, tuple[int, str]] | None:
         if not isinstance(item, dict):
             continue
         score, reason = item.get("score"), item.get("reason")
-        if type(score) is int and SCORE_MIN <= score <= SCORE_MAX and reason in REASONS:
+        if (
+            type(score) is int
+            and SCORE_MIN <= score <= SCORE_MAX
+            and isinstance(reason, str)
+            and reason in REASONS
+        ):
             out[point] = (score, str(reason))
     return out
 
@@ -127,5 +133,6 @@ def lines(found: dict[str, tuple[int, str]] | None, *, examples: int) -> list[st
             out.append(f"  {LABELS[point]}: {score} ({REASONS[reason]})")
         else:
             out.append(f"  {LABELS[point]}: unread")
-    out.append(f"  average: {mean if mean is not None else 'none read'}")
+    of = f" (only {len(found)} of {len(POINTS)} points read)" if len(found) < len(POINTS) else ""
+    out.append(f"  average: {mean if mean is not None else 'none read'}{of}")
     return out

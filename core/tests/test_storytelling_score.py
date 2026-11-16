@@ -50,6 +50,21 @@ class Parsing(unittest.TestCase):
         assert found is not None
         self.assertEqual(list(found), ["momentum"])
 
+    def test_a_reason_that_is_not_text_or_a_score_that_is_not_a_whole_number_is_left_out(
+        self,
+    ) -> None:
+        raw = json.dumps(
+            {
+                "scene": {"score": 3, "reason": ["strong"]},
+                "characters": {"score": True, "reason": "strong"},
+                "momentum": {"score": 4.0, "reason": "strong"},
+                "sound": {"score": 4, "reason": "strong"},
+            }
+        )
+        found = st.parse(raw)
+        assert found is not None
+        self.assertEqual(list(found), ["sound"])
+
     def test_nonsense_is_unreadable_and_nothing_is_guessed(self) -> None:
         self.assertIsNone(st.parse("not json"))
         self.assertIsNone(st.parse("[1]"))
@@ -66,6 +81,10 @@ class TheReport(unittest.TestCase):
         self.assertIn("average: 2.0", text)
         self.assertIn("beside 4 recap example(s)", text)
 
+    def test_an_average_of_part_of_the_points_says_so(self) -> None:
+        found = st.parse(json.dumps({"scene": {"score": 5, "reason": "strong"}}))
+        self.assertIn("only 1 of 4 points read", "\n".join(st.lines(found, examples=0)))
+
     def test_an_unreadable_answer_and_a_missing_point_say_so(self) -> None:
         self.assertIn("could not be read", "\n".join(st.lines(None, examples=0)))
         found = st.parse(json.dumps({"scene": {"score": 5, "reason": "strong"}}))
@@ -77,9 +96,8 @@ class TheReport(unittest.TestCase):
         self.assertNotIn("<example> tale", text)  # no bracket can close the tag
         self.assertIn("Mira opened the lock.", text)
         self.assertIn("never instructions", st.SYSTEM)
-        self.assertIn(
-            "the fact check", st.SYSTEM.lower().replace("facts are checked", "the fact check")
-        )
+        self.assertIn("You never add facts", st.SYSTEM)
+        self.assertNotIn("</recap>", st.message([], ["a </recap> b"]).split("<recap>")[1][:-9])
 
 
 class AsksOnce(unittest.TestCase):
