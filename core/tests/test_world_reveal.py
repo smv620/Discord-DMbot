@@ -34,10 +34,34 @@ SERVED = {"a": "Ash Morrow", "how": "works for", "b": "Master Orlen",
 
 class Pure(unittest.TestCase):
     def test_a_name_counts_only_where_the_text_holds_it_word_for_word(self) -> None:
-        plain = "the ashen crown met cerric vanyaelen in brynshander"
-        self.assertTrue(lore_read._says_word_for_word(plain, "Cerric Vanya'elen"))
-        self.assertFalse(lore_read._says_word_for_word(plain, "Cerric Vane"))
-        self.assertFalse(lore_read._says_word_for_word(plain, "Ash"))  # (not part of "ashen")
+        text = "The Ashen Crown met Cerric Vanya\u2019elen in Bryn-Shander. There was no hope."
+        said = lore_read._says_word_for_word
+        self.assertTrue(said(text, "Cerric Vanya'elen"))
+        self.assertFalse(said(text, "Cerric Vane"))
+        self.assertFalse(said(text, "Ash"))  # (not part of "Ashen")
+        self.assertFalse(said(text, "Hope"))  # (a name with capitals needs them)
+        self.assertTrue(said("The hooded stranger left.", "the hooded stranger"))
+
+    def test_an_inferred_line_or_one_through_a_secret_name_reaches_the_check_as_such(self) -> None:
+        """`keep_connections` hands the check the kept connection: whether it was inferred or
+        found through a secret spelling rides along (the reveal refuses both)."""
+        from dmbot.memory import background as bg
+
+        seen: list[bg.Connection] = []
+
+        def skip(c: bg.Connection) -> bool:
+            seen.append(c)
+            return True
+
+        found = [bg.Found(n, "npc", (), (), n) for n in ("Ash Morrow", "Master Orlen")]
+        guess = bg.Connection("Ash Morrow", "serves", "Master Orlen", "q", inferred="implied")
+        bg.keep_connections([[guess]], found, {}, skip=skip)
+        self.assertEqual(seen[-1].inferred, "implied")
+        hooded = [bg.Found("Ash Morrow", "npc", (), ("the hooded stranger",), "Ash Morrow"),
+                  found[1]]  # fmt: skip
+        secretly = bg.Connection("the hooded stranger", "serves", "Master Orlen", "q")
+        bg.keep_connections([[secretly]], hooded, {}, skip=skip)
+        self.assertTrue(seen[-1].secret)
 
     def test_only_what_may_be_shown_is_shown(self) -> None:
         base = {"status": CONFIRMED, "hidden_from_players": True, "type": "character",
@@ -52,9 +76,13 @@ class Pure(unittest.TestCase):
 
     def test_the_notice_counts_and_never_names(self) -> None:
         text = un.notice_text("the city guide, 3 Nov", {"revealed": 3}, 0)
-        self.assertIn("🌍 **3 things** from backstories are now known to everyone.", text)
+        self.assertIn("🌍 **3 hidden things** are now known to everyone.", text)
+        self.assertIn("Added **nothing new**", text)  # (a reveal is never counted as a name)
         one = un.notice_text("the city guide, 3 Nov", {"revealed": 1}, 0)
-        self.assertIn("**1 thing** from backstories is now known", one)
+        self.assertIn("**1 hidden thing** is now known", one)
+        from dmbot.web import upload_notice as web_notice
+
+        self.assertIn("revealed", web_notice._NOT_KINDS)  # (nor on the website)
 
 
 class TheRead(NamesTest):
@@ -117,6 +145,46 @@ class TheRead(NamesTest):
         self.assertEqual(done.notice.counts.get("revealed"), 1)
         await un.undo_upload_result(self.bot, GUILD, self.campaign.id, done.notice.id, THE_DM)
         self.assertTrue(await self.hidden(self.ash))
+        common = await self.memory.common_knowledge(GUILD, self.campaign.id, "entry", [self.ash])
+        self.assertEqual(common, set())
+
+    async def test_undo_hides_a_revealed_connection_again(self) -> None:
+        tie = await self.secret_tie()
+        done = await self.read("world")
+        self.assertFalse(await self.tie_secret(tie))
+        await un.undo_upload_result(self.bot, GUILD, self.campaign.id, done.notice.id, THE_DM)
+        self.assertTrue(await self.tie_secret(tie))
+
+    async def test_with_no_notice_to_undo_it_nothing_stays_revealed(self) -> None:
+        await self.hide(self.ash)
+        self.bot.upload_notices = None
+        await self.read("world")
+        self.assertTrue(await self.hidden(self.ash))
+
+    async def test_a_campaign_that_asks_first_gets_no_reveal(self) -> None:
+        await self.hide(self.ash)
+        self.campaign = await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, True)
+        await self.read("world")
+        self.assertTrue(await self.hidden(self.ash))
+
+    async def test_a_player_character_is_never_shown_by_a_read(self) -> None:
+        made = await self.memory.add_entity(
+            GUILD, self.campaign.id, name="Wren Vell", type="character",
+            role="player_character", played_by=1002, status=CONFIRMED, source=DM,
+        )  # fmt: skip
+        got = await world_reveal.reveal(
+            self.memory, GUILD, self.campaign.id, entries=[made.value.id]
+        )
+        self.assertEqual(got.total, 0)
+
+    async def test_a_connection_whose_kept_words_the_text_does_not_say_stays_secret(self) -> None:
+        made = await self.memory.add_relation(
+            GUILD, self.campaign.id, self.ash, "serves", self.orlen, source=DM, confidence=1.0,
+            status=CONFIRMED, secret=True, dm_chose_secret=True, detail="by an old blood pact",
+        )  # fmt: skip
+        relation = made.value[0] if isinstance(made.value, tuple) else made.value
+        await self.read("world")
+        self.assertTrue(await self.tie_secret(str(relation.id)))
 
     async def test_a_smart_or_spoiler_read_reveals_nothing(self) -> None:
         await self.hide(self.ash)

@@ -1093,9 +1093,10 @@ async def _read_background(
         # (a read that was cut off is not finished: nothing is added until the DM has seen it)
         from dmbot.ui.upload_notice import add_sure
 
+        # (only where the upload's notice can be kept: its ↩️ Undo is what takes a reveal back)
         shown = (
             await _reveal_world(memory, campaign, read, revealable)
-            if revealable is not None
+            if revealable is not None and getattr(bot, "upload_notices", None) is not None
             else world_reveal.Revealed()
         )
         added = await add_sure(
@@ -1107,6 +1108,9 @@ async def _read_background(
             earlier=shown.batches,
             revealed=shown.total,
         )
+        if added is None and shown.batches:
+            # no notice, so no Undo for the reveals: they are taken back now (ruling C on #4524)
+            await world_reveal.take_back(memory, campaign.guild_id, campaign.id, shown.batches)
         if added is not None:
             done.notice, done.questions_left = added
     if trait_offers:
@@ -2712,24 +2716,23 @@ async def queue_links(
     }
 
     by_triple = {(r.subject_id, r.predicate, r.object_id): r for r in live if not r.assumed}
+    to_reveal: set[str] = set()
 
     def note_reveal(c: bg.Connection, triple: tuple[str, str, str]) -> None:
         """A World read that states a connection the campaign keeps from the players reveals it
-        (#4524 slice 1b): only one it states itself (never DMbot's inference), and never one it
-        writes through a secret name, which would tie the disguise to the person in public."""
-        if revealable is None or not world_all or c.inferred:
+        (#4524 slice 1b): only one it states itself (never DMbot's inference), never one it writes
+        through a secret name (`c.secret`: that would tie the disguise to the person in public),
+        and only when its kept words are the text's own or there are none: the reveal shows no
+        more than the text says (a "knows" the text says with no word keeps a stored feeling)."""
+        if revealable is None or not world_all or c.inferred or c.secret:
             return
-        secret_end = any(
-            e.secret for end in (c.a, c.b) for e in lookup.by_key.get(name_key(end), ())
-        ) or {name_key(c.a), name_key(c.b)} & set(secret_spellings)
         r = by_triple.get(triple)
-        if (
-            r is not None
-            and not secret_end
-            and (r.secret or r.unrevealed)
-            and r.id not in {x.id for x in revealable}
-        ):
-            revealable.append(r)
+        if r is None or not (r.secret or r.unrevealed) or r.id in to_reveal:
+            return
+        if r.detail and name_key(r.detail) != name_key(c.words):
+            return
+        to_reveal.add(r.id)
+        revealable.append(r)
 
     def known(c: bg.Connection) -> bool:
         a, b = entry(c.a), entry(c.b)

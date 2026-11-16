@@ -115,7 +115,7 @@ def notice_text(label: str, counts: Mapping[str, int], questions: int) -> str:
     if revealed:  # (a World read named what backstories kept hidden, #4524 slice 1b)
         one = revealed == 1
         text += (
-            f"\n🌍 **{revealed} thing{'' if one else 's'}** from backstories "
+            f"\n🌍 **{revealed} hidden thing{'' if one else 's'}** "
             f"{'is' if one else 'are'} now known to everyone."
         )
     if names_split := split_words.for_many(

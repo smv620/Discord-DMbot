@@ -10,7 +10,8 @@ Now a **🌍 Common knowledge** (World) read reveals the hidden items it names o
   where showing it is allowed at all (never a clue only some know, the party, a player's own
   character or a person at the table: `reveal_said`'s rule);
 - a connection it states itself, never DMbot's inference and never through a secret name
-  (`queue_links`'s `revealable`), with its words as they are kept;
+  (`queue_links`'s `revealable`), and only where its kept words are the text's own or there are
+  none, so the reveal shows no more than the text says;
 - a secret other name only where the text uses that very name for that same person: the line
   about the person's own name lists it (`known_spellings`). A matching name the text gives on its
   own may be another person, so it stays hidden.
@@ -18,7 +19,8 @@ Now a **🌍 Common knowledge** (World) read reveals the hidden items it names o
 Each is made 🌍 Common knowledge exactly as the DM's own answer on "Who knows this?" does
 (`link_edits.with_common`): shown to the players first, then known to every character, now or later.
 A smart or spoiler read reveals nothing. Every change is one of the upload's own, so its
-↩️ Undo takes them back. The notice says how many, never which.
+↩️ Undo takes them back; with no notice to hold them (no store, or it failed), they are taken back
+at once. The notice says how many, never which.
 """
 
 from __future__ import annotations
@@ -107,7 +109,23 @@ async def reveal(
         )
         if common.batch is not None:
             out.batches.append(common.batch)
-    for link in {r.id: r for r in links}.values():
+    # (read again just before: a DM may have chosen who knows one meanwhile, and a reveal never
+    # overrides a newer choice)
+    now = {
+        r.id: r
+        for r in await memory.relations(guild_id, campaign_id, include_secret=True)
+        if r.id in {x.id for x in links}
+    }
+    for old in {r.id: r for r in links}.values():
+        link = now.get(old.id)
+        if (
+            link is None
+            or link.to_session_at is not None
+            or not (link.secret or link.unrevealed)
+            or (link.secret, link.unrevealed, link.detail)
+            != (old.secret, old.unrevealed, old.detail)
+        ):
+            continue
         made: list[int] = []
         try:
             await link_edits.set_who_knows(
@@ -134,3 +152,16 @@ async def reveal(
             out.batches.extend(made)
             out.names += 1
     return out
+
+
+async def take_back(
+    memory: MemoryStore, guild_id: int, campaign_id: str, batches: Sequence[int]
+) -> None:
+    """Undo these reveals, newest first, when the upload's notice (and so its ↩️ Undo) could not be
+    kept: a reveal is only ever made as one of the upload's own changes. One that something since
+    depends on is left, and logged."""
+    for batch in reversed(batches):
+        try:
+            await memory.undo(guild_id, campaign_id, batch)
+        except Exception as exc:
+            log.warning("A World read's reveal could not be taken back (%s)", type(exc).__name__)

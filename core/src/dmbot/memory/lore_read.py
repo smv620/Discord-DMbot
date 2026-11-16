@@ -1114,11 +1114,17 @@ def fold_names(
     return out
 
 
-def _says_word_for_word(plain_text: str, name: str) -> bool:
-    """Whether the text (as `name_key` writes it) holds this name as whole words: what a World read
-    may reveal is only what the text states, never a name the AI listed from nowhere (#4524)."""
+def _says_word_for_word(text: str, name: str) -> bool:
+    """Whether the text holds this name as whole words: what a World read may reveal is only what
+    the text states, never a name the AI listed from nowhere (#4524). A name with capitals must be
+    there with them ("no hope" never names an NPC called Hope); one written all in small letters
+    ("the hooded stranger") is matched as `name_key` writes both."""
+    if name != name.lower():
+        flat = " ".join(text.replace("\u2019", "'").split())
+        said = " ".join(name.replace("\u2019", "'").split())
+        return bool(said) and re.search(rf"(?<!\w){re.escape(said)}(?!\w)", flat) is not None
     key = name_key(name)
-    return bool(key) and re.search(rf"(?<!\w){re.escape(key)}(?!\w)", plain_text) is not None
+    return bool(key) and re.search(rf"(?<!\w){re.escape(key)}(?!\w)", name_key(text)) is not None
 
 
 def line_name(line: str) -> str:
@@ -1242,12 +1248,11 @@ async def _read_lore(
         # A name the campaign already has is not offered again, but a line that gives it new
         # spellings stays for shaping: a relationship may be written with one (#2841). Those
         # spellings come back in `known_spellings`; the name itself is still not offered.
-        plain = name_key(text)
         known_named = tuple(
             dict.fromkeys(
                 line_name(n)
                 for n in listed.names
-                if skip_name(line_name(n)) and _says_word_for_word(plain, line_name(n))
+                if skip_name(line_name(n)) and _says_word_for_word(text, line_name(n))
             )
         )
         listed.names = [

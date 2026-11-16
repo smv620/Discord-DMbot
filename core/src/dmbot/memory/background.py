@@ -1593,7 +1593,9 @@ def keep_connections(
                         role = ""
                         kin_held[pair] = (None, "", (ka, kb))
                         break
-            if skip is not None and skip(Connection(a, c.how, b, c.quote, words=c.words)):
+            # (the kept connection with the text's own words: whether it was inferred or found
+            # through a secret spelling rides along, for a World read's reveal, #4524 slice 1b)
+            if skip is not None and skip(replace(made, words=c.words)):
                 lost["already_have"] += 1
                 continue  # the campaign has it already, or an end is no name it has
             if len(out) >= cap:
