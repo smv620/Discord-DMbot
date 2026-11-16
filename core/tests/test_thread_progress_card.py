@@ -8,7 +8,7 @@ from __future__ import annotations
 import unittest
 from types import SimpleNamespace
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from dmbot.memory import thread_parts as parts
 from dmbot.memory import thread_progress as tp
@@ -219,6 +219,40 @@ class TheCard(MemoryTest):
         self.assertEqual(await self.state(), OPEN)
         await view._undo(it)
         self.assertEqual(len(await self.store.waiting(GUILD_A, self.c)), 2)
+
+    async def test_the_sample_run_keeps_every_line_for_the_score(self) -> None:
+        """#4522 5c: `accept_all.keep_progress` keeps each thread's lines as the DM's Keep does,
+        so the sample's backup holds what the reader moved."""
+        from dmbot.devtools import accept_all
+
+        other = (await self.memory.new_thread(GUILD_A, self.c, "Guard the caravan", "quest", OPEN,
+                                              source=DM)).value.id  # fmt: skip
+        broken = (await self.memory.new_thread(GUILD_A, self.c, "A third", "quest", OPEN,
+                                               source=DM)).value.id  # fmt: skip
+        await self.store.offer(
+            GUILD_A, self.c, self.sid, 1_700_000_000,
+            [(other, tp.Change(tp.THREAD_STATE, state=GOING), (LINE_MS,), (BEL,)),
+             (broken, tp.Change(tp.THREAD_STATE, state=GOING), (LINE_MS,), (BEL,))],
+            now=1_700_000_300,
+        )  # fmt: skip
+        self.assertEqual(await accept_all.progress_waiting(self.db, GUILD_A, self.c), 4)
+        real = self.memory.keep_thread_progress
+        broken_ids = {x.id for x in await self.store.waiting(GUILD_A, self.c)
+                      if x.thread_id == broken}  # fmt: skip
+
+        async def keep(g: int, c: str, ids: Any, **kw: Any) -> Any:
+            if set(ids) & broken_ids:  # (one thread's keep fails: the others are still kept)
+                raise RuntimeError("boom")
+            return await real(g, c, ids, **kw)
+
+        with patch.object(self.memory, "keep_thread_progress", keep):
+            kept = await accept_all.keep_progress(self.db, self.memory, GUILD_A, self.c)
+        self.assertEqual(kept, 3)
+        await self.store.turn_down(GUILD_A, self.c, list(broken_ids))
+        self.assertEqual(await self.state(), GOING)
+        self.assertIn(parts.COMPLICATION, await self.kinds_kept())
+        self.assertEqual(await self.store.waiting(GUILD_A, self.c), [])
+        self.assertEqual(await accept_all.keep_progress(self.db, self.memory, GUILD_A, self.c), 0)
 
     async def test_the_board_counts_them_with_the_new_threads(self) -> None:
         got = await counts._COUNTERS[kinds.THREADS](

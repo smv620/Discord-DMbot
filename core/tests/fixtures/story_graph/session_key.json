@@ -727,6 +727,6 @@
   }
  ],
  "threads": [
-  {"id": "sq01", "kind": "quest", "name": "Find Garret Velryn", "giver": "Keegan Velryn", "target": "Garret Velryn", "taker": "", "missing": [], "in_danger": [], "must_find": false, "hint": false, "lines": [135], "note": "an ask and a taker; replaces s015; a good find until quests slice 5 (the session reader); must-find from then (the session reader)"}
+  {"id": "sq01", "kind": "quest", "name": "Find Garret Velryn", "giver": "Keegan Velryn", "target": "Garret Velryn", "taker": "", "missing": [], "in_danger": [], "must_find": true, "hint": false, "lines": [135], "note": "an ask and a taker; replaces s015; must-find since quests slice 5 (the session reader reads new threads, #4522)"}
  ]
 }
