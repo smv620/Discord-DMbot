@@ -126,9 +126,10 @@ DM_BOT_CHANNEL_NEEDED = (
 
 async def busy_count(db: Database, guild: int, campaign_id: str) -> int:
     """How many pieces of background work the campaign has running or queued: lore uploads and
-    imported sessions that are waiting or working, and recap jobs not yet ready or failed. A
-    number only. Deleting a campaign while these still run makes their AI charges find no campaign
-    (#4542)."""
+    imported sessions that are waiting or working, recap requests waiting or working, and recap
+    jobs not yet ready or failed. A number only. Deleting a campaign while these still run makes
+    their AI charges find no campaign (#4542); a check and a delete are not atomic, so new work
+    can still start in between (this is a test tool)."""
     async with db.guild(guild, snapshot=True) as conn:
         total = 0
         for sql in (
@@ -138,6 +139,8 @@ async def busy_count(db: Database, guild: int, campaign_id: str) -> int:
             " AND state IN ('waiting', 'working')",
             "SELECT count(*) AS n FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
             " AND state NOT IN ('ready', 'failed')",
+            "SELECT count(*) AS n FROM recap_requests WHERE guild_id = %s AND campaign_id = %s"
+            " AND state IN ('waiting', 'working')",
         ):
             cur = await conn.execute(sql, (guild, campaign_id))
             total += int((await cur.fetchone() or {}).get("n", 0))

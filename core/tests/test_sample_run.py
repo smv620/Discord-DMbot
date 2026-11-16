@@ -256,9 +256,30 @@ class Steps(DatabaseTest):
             self.said,
         )
 
-    async def test_busy_count_counts_the_three_kinds_of_work(self) -> None:
+    async def test_an_idle_campaign_has_no_background_work(self) -> None:
         old = await self.made(name=sample_name.name_for(5))
         self.assertEqual(await steps.busy_count(self.db, GUILD, old.id), 0)
+
+    async def test_a_waiting_recap_request_is_work_and_a_finished_or_other_ones_is_not(
+        self,
+    ) -> None:
+        old = await self.made(name=sample_name.name_for(5))
+        other = await self.made(name=sample_name.name_for(6))
+
+        async def add(campaign_id: str, n: int, state: str) -> None:
+            async with self.db.guild(GUILD) as conn:
+                await conn.execute(
+                    "INSERT INTO recap_requests (guild_id, campaign_id, id, session_at, user_id,"
+                    " kind, body, state, created_at) VALUES (%s, %s, %s, 1, 7, 'instructions',"
+                    " 'x', %s, 1)",
+                    (GUILD, campaign_id, f"{n:032x}", state),
+                )
+
+        await add(old.id, 1, "waiting")
+        await add(old.id, 2, "done")
+        await add(other.id, 3, "working")
+        self.assertEqual(await steps.busy_count(self.db, GUILD, old.id), 1)
+        self.assertEqual(await steps.busy_count(self.db, GUILD, other.id), 1)
 
     async def test_a_look_alike_name_is_never_deleted(self) -> None:
         keep = [

@@ -296,8 +296,10 @@ async def _attempt(db: Database, charge: Charge) -> str:
         await asyncio.wait_for(asyncio.shield(_write(db, charge)), WRITE_TIMEOUT_S)
     except pg_errors.ForeignKeyViolation:
         # The ledger's only foreign key is the campaign: it was deleted (a sample the run replaced,
-        # or a campaign its DM deleted) while its background work was still being charged. The AI
-        # call really ran, so the count says so, but a vanished campaign is not an error (#4542).
+        # or a campaign its DM deleted) while its background work was still being charged, or it
+        # moved to another server (the key is on its server too). The AI call really ran, so the
+        # count says so, but a vanished campaign is not an error (#4542). The write is one
+        # transaction, so the owner's month total is not charged either.
         return "gone"
     except _PERMANENT as exc:
         log.error("AI credits: a charge can never be written (%s)", type(exc).__name__)
@@ -342,8 +344,8 @@ async def _flush(db: Database) -> None:
         if outcome == "gone":
             written_off += 1
             log.info(
-                "AI credits: 1 charge of %d credits for a deleted campaign written off, %d since "
-                "the start",
+                "AI credits: 1 charge of %d credits for a deleted campaign written off (deleted or "
+                "moved), %d since the start",
                 charge.credits,
                 written_off,
             )
