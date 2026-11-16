@@ -22,6 +22,6 @@ async def check_all(bot: Any, campaign: Campaign, screen_id: int) -> None:
         except Exception:
             log.exception("A shared-rules check failed")
     try:
-        await shared_update.post(bot, campaign.id, screen_id, found)
+        await shared_update.post(bot, campaign, found)
     except Exception:
         log.exception("Couldn't post the shared-rules note")

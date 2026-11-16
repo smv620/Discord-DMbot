@@ -3352,15 +3352,15 @@ def players_view(
     if change:
         after = now_hidden if choice is None else choice
         if not now_hidden and not after:
-            line = "👁️ Players can see it now, and will still see it after the update."
+            line = "👁️ Players see it now and after."
             return PlayersView(line, HIDE_PLAYERS, False, False, False, False)
         if now_hidden and after:
-            line = "🤫 Hidden from players now, and still will be after the update."
+            line = "🤫 Hidden from players now and after."
             return PlayersView(line, SHOW_PLAYERS, now_secret, not now_secret, False, True)
         if after:
-            line = "🤫 Players can see it now. After the update it will be hidden."
+            line = "🤫 Players see it now. After: hidden."
             return PlayersView(line, SHOW_PLAYERS, True, None, False, True)
-        line = "👁️ Hidden from players now. After the update they will see it."
+        line = "👁️ Hidden now. After: players see it."
         return PlayersView(line, HIDE_PLAYERS, False, False, True, False)
     if choice is True:
         return PlayersView("🤫 Hidden from players.", SHOW_PLAYERS, True, None, False, True)
@@ -3587,32 +3587,33 @@ class ConnectionOffer(_Menu):
         )
         checked = who_resolve.checked_line(c.decided)
         n = self.kept + self.left_out + 1
+        # The Keep all line goes last, as small text, so the proposal reads first (#4529).
+        scope = self._scope(c).rstrip("\n")
+        scope_line = f"\n{scope}" if scope else ""
         if self._pair_old(c):
             old = ", ".join(self._reads(r) for r in self._pair_old(c))
             now = f"{_md(c.subject)} {_md(old)} {_md(c.object)}"
             proposed = bold_what_changed(now, f"{_md(c.subject)} {how} {_md(c.object)}")
             return (
-                f"📜 **Connection {n} of {self.total}:** update it?\n"
-                + self._scope(c)
+                f"📜 **Connection {n} of {self.total}**\n"
+                + f"🙋❓ **PROPOSED:** {proposed}{handed[0]}\n"
                 + f"Now: {now}\n"
-                + f"Proposed: {proposed}{handed[0]}\n"
                 + mine
                 + source
                 + checked
                 + extra
-                + f"{view.line}\n"
-                + "Nothing changes unless you press ✅ Update it."
+                + f"{view.line}"
+                + scope_line
             )
         return (
-            f"📜 **Connection {n} of {self.total}:** add it?\n"
-            + self._scope(c)
-            + f"Proposed: **{_md(c.subject)}** {how} **{_md(c.object)}**{handed[0]}\n"
+            f"📜 **Connection {n} of {self.total}**\n"
+            + f"🙋❓ **PROPOSED:** **{_md(c.subject)}** {how} **{_md(c.object)}**{handed[0]}\n"
             + mine
             + source
             + checked
             + extra
-            + f"{view.line}\n"
-            + "Nothing is added unless you press ✅ Add it."
+            + f"{view.line}"
+            + scope_line
         )
 
     def _scope(self, c: Waiting) -> str:
@@ -3640,8 +3641,8 @@ class ConnectionOffer(_Menu):
         if moved:  # (#4115: keeping one changes who has an item, so each is seen first)
             left.append(f"{moved} where an item changes hands")
         if not left:
-            return f"✅ Keep all keeps these {len(mine)} from {_md(c.upload)}.\n"
-        decide = left[0] if len(left) == 1 else ", ".join(left[:-1]) + " and " + left[-1]
+            return f"-# ✅ Keep all keeps these {len(mine)} from {_md(c.upload)}.\n"
+        decide = ", ".join(left)
         # (the counter above counts every one waiting; this says which the button covers and
         # which the DM checks, so the two numbers are never read as one, #4320)
         rest = len(self.shown) - len(mine)
@@ -3651,7 +3652,7 @@ class ConnectionOffer(_Menu):
             else (f"The other {rest} you check one at a time")
         )
         return (
-            f"✅ Keep all {len(mine)} keeps just the {len(mine)} from {_md(c.upload)}. "
+            f"-# ✅ Keep all {len(mine)} keeps the {len(mine)} from {_md(c.upload)}. "
             f"{others}: {decide}.\n"
         )
 

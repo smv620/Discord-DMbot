@@ -34,12 +34,13 @@ from pathlib import Path
 from typing import Any
 
 from dmbot.campaigns.store import decode_backup
+from dmbot.devtools import sample_name
 from dmbot.memory.models import name_key
 
 DEFAULT_KEY = (
     Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "story_graph" / "map_key.json"
 )
-SAMPLE_CAMPAIGN = "test of the frostmaiden (sample)"
+SAMPLE_CAMPAIGN = sample_name.OLD_NAME  # (numbered names pass `sample_name.is_sample`, #4538)
 FOUND, MISSING, NOT_STORED = "found", "missing", "not stored yet"
 # How a key's "where it sits" word is kept by the close read (`images.LINK_KINDS`); a compass word
 # needs two positions on the map, which nothing keeps yet
@@ -211,8 +212,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not isinstance(backup, dict):
             raise ValueError("That file is not a campaign backup.")
         campaign = backup.get("campaign")
-        if not isinstance(campaign, dict) or campaign.get("name") != SAMPLE_CAMPAIGN:
-            raise ValueError(f'This campaign is not "{SAMPLE_CAMPAIGN}"; the check is only for it.')
+        found = campaign.get("name") if isinstance(campaign, dict) else None
+        if not isinstance(found, str) or not sample_name.is_sample(found):
+            raise ValueError(
+                'This campaign is not "test of the frostmaiden (sample N)"; the check is only '
+                "for it."
+            )
         report = check(backup, key)
     except OSError as exc:  # (the kind only: its message holds the file's path)
         sys.stderr.write(f"The file could not be read ({type(exc).__name__}).\n")
