@@ -516,22 +516,29 @@ NO_AI_FOR_DOCUMENTS = (
     "DMbot can't read documents or links here (its AI isn't switched on). Copy the names "
     "into the template instead: 📥 Add many > 📄 Get the template."
 )
-_link_busy: set[int] = set()  # servers opening a link right now
+# (server, campaign) opening a link right now. Discord's paths use campaign "" so they stay one at
+# a time per server; the website's reads key by campaign so reads in two campaigns go side by side
+# (#4551).
+_link_busy: set[tuple[int, str]] = set()
 LINK_BUSY = (
     "DMbot is already opening another link for this server. Wait a few seconds and try again."
 )
 
 
-async def read_link_once(guild_id: int, link: str) -> tuple[Upload | None, str | None]:
+async def read_link_once(
+    guild_id: int, link: str, campaign_id: str = ""
+) -> tuple[Upload | None, str | None]:
     """read_link, one link at a time per server: every way in (🔗 Paste a link, a link
-    pasted as a list, `/dmbot names link:`) goes through here."""
-    if guild_id in _link_busy:
+    pasted as a list, `/dmbot names link:`) goes through here. The website's reads pass their
+    campaign, so each campaign has its own one at a time (#4551)."""
+    key = (guild_id, campaign_id)
+    if key in _link_busy:
         return None, LINK_BUSY
-    _link_busy.add(guild_id)
+    _link_busy.add(key)
     try:
         return await read_link(link)
     finally:
-        _link_busy.discard(guild_id)
+        _link_busy.discard(key)
 
 
 async def take_link(interaction: discord.Interaction, campaign_id: str, link: str) -> None:
@@ -547,7 +554,7 @@ async def take_link(interaction: discord.Interaction, campaign_id: str, link: st
     if _bot(interaction).background_ai is None:
         await _tell(interaction, NO_AI_FOR_DOCUMENTS)
         return
-    if campaign.guild_id in _link_busy:
+    if (campaign.guild_id, "") in _link_busy:
         await _tell(interaction, LINK_BUSY)
         return
     await interaction.response.defer(ephemeral=True, thinking=True)
@@ -628,7 +635,10 @@ def read_upload(raw: bytes) -> tuple[str | None, str | None]:
 ONLY_DM_SECRETS = "only the campaign's DM can add secret names"
 AI_READS_PER_DAY = 20  # per server, for the operator's bill (bring-your-own keys: #50)
 AI_TIME_LIMIT_S = 600  # well inside Discord's 15 minutes to answer
-_ai_busy: set[int] = set()  # servers with an AI read running
+# server -> the campaigns with an AI read running there ("" for a Discord read). Discord's button
+# takes the whole server (one at a time); the website's reads take one campaign each, up to the
+# server's `server_jobs_at_once` (#4551).
+_ai_busy: dict[int, set[str]] = {}
 _ai_reads: dict[tuple[int, str], int] = {}  # (server, day) → reads
 
 
@@ -636,30 +646,38 @@ AI_AT_ONCE = asyncio.Semaphore(3)  # AI requests running at once, across all ser
 BUSY, LIMIT = "busy", "limit"  # why `start_ai_read` said no
 
 
-def start_ai_read(guild_id: int, now: float) -> str | None:
-    """Take one of the server's document reads for the day and mark the server as reading, or say
-    why not: BUSY (one is running; try again soon) or LIMIT (today's are used). The Discord button
-    and the website's Upload lore (#3022) share this, so they share one allowance. The caller ends
-    it with `end_ai_read`."""
+def start_ai_read(guild_id: int, now: float, campaign_id: str = "", at_once: int = 1) -> str | None:
+    """Take one of the server's document reads for the day and mark it as reading, or say why not:
+    BUSY (the campaign already has one running, or the server has `at_once` running; try again
+    soon) or LIMIT (today's are used). The Discord button (the defaults: one on the server) and the
+    website's Upload lore (#3022; its campaign and the server's cap, #4551) share this, so they
+    share one allowance. The caller ends it with `end_ai_read`."""
     day = datetime.fromtimestamp(now, UTC).strftime("%Y-%m-%d")
-    if guild_id in _ai_busy:
+    running = _ai_busy.get(guild_id, set())
+    if campaign_id in running or len(running) >= at_once:
         return BUSY
     if _ai_reads.get((guild_id, day), 0) >= AI_READS_PER_DAY:
         return LIMIT
-    _ai_busy.add(guild_id)
+    _ai_busy.setdefault(guild_id, set()).add(campaign_id)
     for old in [k for k in _ai_reads if k[1] != day]:
         del _ai_reads[old]
     _ai_reads[(guild_id, day)] = _ai_reads.get((guild_id, day), 0) + 1
     return None
 
 
-def link_is_busy(guild_id: int) -> bool:
-    """A link is being opened for this server right now (one at a time)."""
-    return guild_id in _link_busy
+def link_is_busy(guild_id: int, campaign_id: str = "") -> bool:
+    """A link is being opened for this server (or this campaign's read) right now."""
+    return (guild_id, campaign_id) in _link_busy
 
 
-def end_ai_read(guild_id: int) -> None:
-    _ai_busy.discard(guild_id)
+def end_ai_read(guild_id: int, campaign_id: str = "") -> None:
+    """The read ends: only its own campaign's mark goes, so another read on the server stays."""
+    running = _ai_busy.get(guild_id)
+    if running is None:
+        return
+    running.discard(campaign_id)
+    if not running:
+        del _ai_busy[guild_id]
 
 
 async def take_list(interaction: discord.Interaction, campaign_id: str, upload: Upload) -> None:
