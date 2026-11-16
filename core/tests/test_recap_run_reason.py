@@ -53,7 +53,7 @@ class PassedOn(unittest.IsolatedAsyncioTestCase):
             print("THE RECAP'S OWN WORDS")
             print(
                 "recap_run: the recap did not finish (state failed): no progress",
-                file=__import__("sys").stderr,
+                file=sys.stderr,
             )
             return 1
 
