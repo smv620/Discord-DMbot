@@ -1219,7 +1219,7 @@ async def _world_items(
         hits = list(lookup.by_key.get(name_key(name), ()))
         secret = {e.alias_id for e in hits if e.secret and e.alias_id}
         if hits and len(secret) == 1 and all(e.secret for e in hits) and not secret & given:
-            out.lone.append(next(iter(secret)))
+            out.lone.extend(secret - set(out.lone))
     out.aliases = [
         a
         for owner, ids in wanted.items()

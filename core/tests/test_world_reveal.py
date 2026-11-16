@@ -31,6 +31,11 @@ SERVED = {"a": "Ash Morrow", "how": "works for", "b": "Master Orlen",
           "quote": "Ash Morrow served Master Orlen"}  # fmt: skip
 
 
+def plain(change: dict[str, Any]) -> dict[str, Any]:
+    """A question's change without the run that asked it."""
+    return {k: v for k, v in change.items() if k != "run"}
+
+
 class Pure(unittest.TestCase):
     def test_a_name_counts_only_where_the_text_holds_it_word_for_word(self) -> None:
         text = "The Ashen Crown met Cerric Vanya\u2019elen in Bryn-Shander. There was no hope."
@@ -245,7 +250,10 @@ class TheRead(NamesTest):
         self.campaign = await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, True)
         done = await self.read("world", links=())
         (q,) = await self.waiting()
-        self.assertEqual((q.kind, q.item_id, q.change), ("reveal", self.ash, {"common": True}))
+        self.assertEqual(
+            (q.kind, q.item_id, plain(q.change)), ("reveal", self.ash, {"common": True})
+        )
+        self.assertTrue(q.change.get("run"))  # (the upload that asked, for "Same for all")
         self.assertEqual(done.secret_questions, 1)  # (counted on its note)
         made = await world_reveal.answer(self.memory, GUILD, self.campaign.id, [q.id])
         assert made is not None
@@ -275,7 +283,10 @@ class TheRead(NamesTest):
                   "quote": "Tamsin Vell"}]  # fmt: skip
         await self.read("world", names=alone, links=(), text="Tamsin Vell fled north.")
         (q,) = await self.waiting()
-        self.assertEqual((q.item_id, q.change), (made.value.id, {"common": True, "lone": True}))
+        self.assertEqual(
+            (q.item_id, plain(q.change)), (made.value.id, {"common": True, "lone": True})
+        )
+        self.assertTrue(await self.hidden(self.ash))  # (nothing shown before the DM's answer)
         await world_reveal.answer(self.memory, GUILD, self.campaign.id, [q.id])
         names = await self.memory.aliases(
             GUILD, self.campaign.id, entity_id=self.ash, include_secret=True
@@ -293,7 +304,9 @@ class TheRead(NamesTest):
         self.assertEqual(await self.waiting(), [])
         self.assertTrue(await self.hidden(self.ash))
 
-    async def test_let_them_all_know_reveals_only_that_uploads_questions(self) -> None:
+    async def two_uploads(self) -> tuple[str, Any, Any, list[str]]:
+        """The city guide names Ash and Orlen, the harbour notes Wren, all three hidden, in a
+        campaign that asks first: a card on the city guide's first question, and what it said."""
         from types import SimpleNamespace
         from unittest.mock import MagicMock
 
@@ -306,8 +319,9 @@ class TheRead(NamesTest):
         await self.read("world", links=(), label="the city guide")
         wren_line = [{"name": "Wren Hale", "kind": "person", "also": [], "secret": [],
                       "quote": "Wren Hale"}]  # fmt: skip
-        await self.read("world", names=wren_line, links=(), text="Wren Hale walked.",
-                        label="the harbour notes")  # fmt: skip
+        await self.read(
+            "world", names=wren_line, links=(), text="Wren Hale walked.", label="the city guide"
+        )  # fmt: skip (the same name, the same day)
         waiting = await self.waiting()
         first = next(q for q in waiting if q.item_id == self.ash)
         it = MagicMock()
@@ -325,17 +339,77 @@ class TheRead(NamesTest):
         view = card.SecretQuestions(self.campaign.id, GUILD)
         shown = await card.describe(self.memory, GUILD, self.campaign.id, first)
         view.current = card.Shown(first, shown.item, shown.what, from_upload=2)
-        self.assertIn(card.LET_UPLOAD, card.card_text(view.current, 3))
+        return wren, view, it, sent
+
+    async def test_let_them_all_know_reveals_only_that_uploads_questions(self) -> None:
+        from dmbot.ui import secret_questions as card
+
+        wren, view, it, sent = await self.two_uploads()
+        self.assertIn(card.same_for_all(2), card.card_text(view.current, 3))
+        self.assertIn(card.keep_all(2), card.card_text(view.current, 3))
         await view._all(it)
         self.assertFalse(await self.hidden(self.ash))
         self.assertFalse(await self.hidden(self.orlen))
         self.assertTrue(await self.hidden(wren))  # (another upload's: untouched)
         self.assertEqual([q.item_id for q in await self.waiting()], [wren])
-        self.assertIn("everyone knows all 2 now", sent[-1])
+        self.assertIn("can see all 2 from this upload now", sent[-1])
         await view._undo(it)
         self.assertTrue(await self.hidden(self.ash))
         self.assertTrue(await self.hidden(self.orlen))
         self.assertEqual(len(await self.waiting()), 3)
+
+    async def test_a_reveal_that_cannot_be_shown_yet_waits_again(self) -> None:
+        await self.hide(self.orlen)
+        tie = await self.secret_tie()
+        self.campaign = await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, True)
+        await self.read("world")
+        q = next(x for x in await self.waiting() if x.item_id == tie)
+        made = await world_reveal.answer(self.memory, GUILD, self.campaign.id, [q.id])
+        assert made is not None
+        self.assertEqual((made.answered, made.refused), (0, 1))  # (Orlen is still hidden)
+        self.assertTrue(await self.tie_secret(tie))
+        self.assertIn(q.id, [x.id for x in await self.waiting()])
+
+    async def test_a_world_question_is_never_answered_as_an_old_reveal(self) -> None:
+        from dmbot.memory.models import MemoryRuleError
+
+        await self.hide(self.ash)
+        self.campaign = await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, True)
+        await self.read("world", links=())
+        (q,) = await self.waiting()
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.answer_secret_question(
+                GUILD, self.campaign.id, q.id, False, source=DM
+            )
+        self.assertEqual([x.id for x in await self.waiting()], [q.id])
+
+    async def test_a_notice_that_fails_takes_the_reveals_back_and_asks(self) -> None:
+        from unittest.mock import patch
+
+        await self.hide(self.ash)
+        with patch("dmbot.ui.upload_notice.add_sure", AsyncMock(return_value=None)):
+            await self.read("world", links=())
+        self.assertTrue(await self.hidden(self.ash))
+        self.assertEqual([q.item_id for q in await self.waiting()], [self.ash])
+
+    async def test_a_secret_name_two_people_share_is_not_asked_as_the_same_person(self) -> None:
+        for entry in (self.ash, self.orlen):
+            await self.memory.add_alias(
+                GUILD, self.campaign.id, entry, "the Grey Hand", kind="title", secret=True,
+                status=CONFIRMED, source=DM, dm_chose_secret=True,
+            )  # fmt: skip
+        alone = [{"name": "the Grey Hand", "kind": "person", "also": [], "secret": [],
+                  "quote": "the Grey Hand"}]  # fmt: skip
+        await self.read("world", names=alone, links=(), text="The Grey Hand struck at dawn.")
+        self.assertEqual(await self.waiting(), [])
+
+    async def test_keep_all_secret_keeps_only_that_uploads_questions(self) -> None:
+        wren, view, it, sent = await self.two_uploads()
+        await view._keep_all(it)
+        self.assertIn("Kept all 2 secret", sent[-1])
+        self.assertEqual([q.item_id for q in await self.waiting()], [wren])
+        for entry in (self.ash, self.orlen, wren):
+            self.assertTrue(await self.hidden(entry))
 
 
 if __name__ == "__main__":
