@@ -70,10 +70,12 @@ class TheRead(NamesTest):
             await add("Hold", "place"),
             await add("Port", "place"),
         )
-        for place in (hold, port):  # (no dates: no order, so both stay current)
+        # (homes, with no dates: no order, so both stay current; two sightings with no order are
+        # both history since #4530)
+        for place in (hold, port):
             await self.memory.add_relation(
                 GUILD, self.campaign.id, mira, "located_in", place,
-                source="dm", confidence=1.0, status=CONFIRMED,
+                source="dm", confidence=1.0, status=CONFIRMED, detail="lives in",
             )  # fmt: skip
         rows = await mc.read_rows(self.db, GUILD, self.campaign.id)
         got = mc.count_movers(rows)
@@ -93,6 +95,7 @@ class TheRead(NamesTest):
         maybe = await add("Maybe", "place", None, "proposed")
 
         async def tie(place: str, **kw: object) -> str:
+            kw.setdefault("detail", "lives in")  # (homes: sightings are visits since #4530)
             made = await self.memory.add_relation(
                 GUILD, self.campaign.id, mira, "located_in", place, source="dm", confidence=1.0,
                 **kw,  # type: ignore[arg-type]

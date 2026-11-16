@@ -222,8 +222,11 @@ class Finding(ConfirmedMemoryTest):
     ) -> None:
         one = await self.add("Harrowmere", type="place")
         two = await self.add("Stonebridge", type="place")
-        await self.relate(self.bram, "located_in", one, status="confirmed")
-        later = await self.relate(self.bram, "located_in", two, status="confirmed")
+        # (homes: two sightings are two visits and never flagged since #4530)
+        await self.relate(self.bram, "located_in", one, status="confirmed", detail="lives in")
+        later = await self.relate(
+            self.bram, "located_in", two, status="confirmed", detail="lives in"
+        )
         truth, party = await self.view("truth"), await self.view("party")
         await self.anchor()
         await self.believe(truth, later.value[0].id, 0.0, "false_evidence", session_at=0)
