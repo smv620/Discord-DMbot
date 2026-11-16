@@ -202,6 +202,7 @@ def predicate_for_either(words: str) -> tuple[str, str, bool]:
 
 # How an ended sighting reads (#4569): where someone was, never where they were last seen
 VISIT_PAST = "was in"
+SIGHTING = "was last seen in"  # (`place_words.forward`'s words for where something was last seen)
 
 
 def link_words(
@@ -234,9 +235,10 @@ def link_words(
         else "knows"
     )
     if predicate == "located_in":
-        if ended and place_words.is_visit(detail):
-            return VISIT_PAST  # (history, #4569: the words only, the row is as kept)
-        return place_words.forward(detail, subject_kind)
+        words = place_words.forward(detail, subject_kind)
+        # (history, #4569: the words only, the row is as kept; the subject's kind decides what a
+        # sighting is, so an item stays "was kept in" and an old row with no word still changes)
+        return VISIT_PAST if ended and words == SIGHTING else words
     if predicate == "next_to":
         return next_words.forward(detail)
     if predicate == "route_to":  # (a journey or a plan by its state, #4173 6d)
@@ -271,12 +273,27 @@ def quoted(detail: str) -> str:
     return f"\u201c{detail}\u201d"
 
 
+def _place_detail(detail: str, ended: bool, subject_kind: str) -> str:
+    """An ended sighting's words are the past visit's ("was in", #4569): read the same from either
+    side, "Aldmoor is where Tavin was once"."""
+    sighting = place_words.forward(detail, subject_kind) == SIGHTING
+    return VISIT_PAST if ended and sighting else detail
+
+
 def back_after(
-    predicate: str, detail: str, directional: bool = False, subject_kind: str = ""
+    predicate: str,
+    detail: str,
+    directional: bool = False,
+    subject_kind: str = "",
+    *,
+    ended: bool = False,
 ) -> str:
     """The words that follow the name when a connection reads from its second name ("was last
-    seen" in "Aldmoor is where Tavin was last seen"); empty for every other connection."""
-    return place_words.backward_after(detail, subject_kind) if predicate == "located_in" else ""
+    seen" in "Aldmoor is where Tavin was last seen"); empty for every other connection.
+    `ended`: as for `link_words`."""
+    if predicate != "located_in":
+        return ""
+    return place_words.backward_after(_place_detail(detail, ended, subject_kind), subject_kind)
 
 
 def campaign_back(predicate: str) -> str | None:
@@ -296,6 +313,7 @@ def back_words(
     knows_how: str | None = None,
     both_ways: bool | None = None,
     route_state: str = "",
+    ended: bool = False,
 ) -> str | None:
     """How a connection reads from its second name, when that differs from `link_words`: "has a
     niece". None for one that reads the same either way, or has no fixed reading back.
@@ -312,7 +330,7 @@ def back_words(
     if predicate == "knows" and knows_how:
         return KNOWS_HOW_BACK.get(knows_how) or CONNECTION_BACK.get(predicate)
     if predicate == "located_in":
-        return place_words.backward(detail, subject_kind)
+        return place_words.backward(_place_detail(detail, ended, subject_kind), subject_kind)
     if predicate == KIN and directional and kin.directional(detail):
         return kin.backward(kin.role_of(detail) or "")
     return CONNECTION_BACK.get(predicate) or campaign_back(predicate)

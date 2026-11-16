@@ -3632,10 +3632,18 @@ class ConnectionOffer(_Menu):
         # The Keep all line goes last, as small text, so the proposal reads first (#4529).
         scope = self._scope(c).rstrip("\n")
         scope_line = f"\n{scope}" if scope else ""
+        visit = ""
+        if c.predicate == "located_in" and place_words.is_visit(c.detail):
+            # a visit asks whether it happened, with when: never where someone is now (#4530,
+            # #4569); an upload's "when" is the file it came from
+            when = f"in {_md(c.upload)}" if c.upload else ""
+            visit = place_words.visit_question(_md(c.subject), _md(c.object), "", when)
+        proposal = visit or f"**{_md(c.subject)}** {how} **{_md(c.object)}**"
         if self._pair_old(c):
             old = ", ".join(self._reads(r) for r in self._pair_old(c))
             now = f"{_md(c.subject)} {_md(old)} {_md(c.object)}"
-            proposed = bold_what_changed(now, f"{_md(c.subject)} {how} {_md(c.object)}")
+            # (a visit adds a tie and replaces none: it is asked as the visit, not marked up)
+            proposed = visit or bold_what_changed(now, f"{_md(c.subject)} {how} {_md(c.object)}")
             return (
                 f"📜 **Connection {n} of {self.total}**\n"
                 + f"🙋❓ **PROPOSED:** {proposed}{handed[0]}\n"
@@ -3647,12 +3655,6 @@ class ConnectionOffer(_Menu):
                 + f"{view.line}"
                 + scope_line
             )
-        proposal = f"**{_md(c.subject)}** {how} **{_md(c.object)}**"
-        if c.predicate == "located_in" and place_words.is_visit(c.detail):
-            # a visit asks whether it happened, with when: never where someone is now (#4530,
-            # #4569); an upload's "when" is the file it came from
-            when = f"in {_md(c.upload)}" if c.upload else ""
-            proposal = place_words.visit_question(_md(c.subject), _md(c.object), "", when)
         return (
             f"📜 **Connection {n} of {self.total}**\n"
             + f"🙋❓ **PROPOSED:** {proposal}{handed[0]}\n"

@@ -107,6 +107,44 @@ class TheCards(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(link_words("located_in", "was last seen in", subject_kind="character"),
                          "was last seen in")  # fmt: skip
         self.assertEqual(link_words("located_in", "lives in", ended=True), "lives in")
+        # an old row with no word on something that moves is a sighting too; an item's is kept
+        self.assertEqual(
+            link_words("located_in", "", subject_kind="character", ended=True), "was in"
+        )
+        self.assertEqual(
+            link_words("located_in", "was last seen in", subject_kind="item", ended=True),
+            "is kept in",
+        )
+
+    def test_from_the_places_side_an_old_sighting_reads_was_once(self) -> None:
+        from dmbot.memory.link_words import back_after, back_words
+
+        old = ("located_in", "was last seen in", False, "character")
+        self.assertEqual(back_words(*old), "is where")
+        self.assertEqual(back_after(*old), "was last seen")  # (current: as before)
+        self.assertEqual(back_after(*old, ended=True), "was once")
+
+    async def test_a_visit_beside_a_tie_already_kept_is_still_asked_as_a_visit(self) -> None:
+        from types import SimpleNamespace
+
+        from dmbot.memory.backstory_links import Waiting
+        from dmbot.ui import name_background as ui_bg
+
+        view = ui_bg.ConnectionOffer("c1")
+        view.current = Waiting(
+            subject_id="a" * 32, predicate="located_in", object_id="b" * 32, quote="He went.",
+            secret=False, subject="Bram", object="Veldmoor", ready=True, detail="went to",
+            upload="Bram's backstory, 3 Nov",
+        )  # fmt: skip
+        view.total = 1
+        home: Any = SimpleNamespace(
+            subject_id="a" * 32, object_id="b" * 32, predicate="located_in", detail="lives in",
+            directional=False, knows_how="", secret=False, unrevealed=False,
+        )  # fmt: skip
+        view.changes = {("a" * 32, "located_in", "b" * 32): [home]}
+        text = view._card()
+        self.assertIn("**PROPOSED:** 🗺️ **Bram** went to **Veldmoor**: in Bram's backstory", text)
+        self.assertNotIn("last seen", text)
 
     def test_the_connection_card_says_was_in_for_an_old_sighting(self) -> None:
         from types import SimpleNamespace

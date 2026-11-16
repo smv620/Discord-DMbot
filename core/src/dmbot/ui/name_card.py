@@ -410,6 +410,8 @@ def _rows(
                             subject_kind,
                             both_ways=r.both_ways,
                             route_state=r.route_state,
+                            # (an old sighting: "is where Bram was once", #4569)
+                            ended=r.predicate == "located_in" and r.to_session_at is not None,
                         )
                         or "is connected to"
                     )
@@ -429,7 +431,13 @@ def _rows(
         after = (
             ""
             if ahead or r.predicate != "located_in"
-            else back_after(r.predicate, r.detail, r.directional, subject_kind)
+            else back_after(
+                r.predicate,
+                r.detail,
+                r.directional,
+                subject_kind,
+                ended=r.to_session_at is not None,  # (an old sighting, #4569)
+            )
         )
         if not secrets and r.length_from != "dm":
             # (a route's length DMbot only read is the DM's until kept: a player never sees it,
