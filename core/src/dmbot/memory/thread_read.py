@@ -584,21 +584,31 @@ STOPPED, FAILED = "stopped", "failed"  # how a read ended short (said to the DM,
 
 
 async def read_threads(
-    ai: Any, text: str, *, max_tokens: int, instructions: str = INSTRUCTIONS
+    ai: Any,
+    text: str,
+    *,
+    max_tokens: int,
+    instructions: str = INSTRUCTIONS,
+    schema: Mapping[str, Any] = SCHEMA,
+    raw: list[str] | None = None,
 ) -> tuple[list[Said], str]:
     """The one AI call: the text in, the threads it states out, words only; with "" when the
     answer is whole, STOPPED when it was cut off at its limit, FAILED on an AI error. A cut answer
     is reported as stopped early, never as "nothing found" (CLAUDE.md, AI output limits); what
-    could be parsed of it is still used. Out of funds is raised for the caller."""
+    could be parsed of it is still used. Out of funds is raised for the caller. The session
+    reader asks for its progress lines in the same call (`schema`, #4522 5b) and reads them from
+    the answer's text, handed back in `raw`."""
     from dmbot.ai import AIError, AIOutOfFunds
 
     try:
-        reply = await ai.complete(instructions, text, max_tokens=max_tokens, schema=SCHEMA)
+        reply = await ai.complete(instructions, text, max_tokens=max_tokens, schema=dict(schema))
     except AIOutOfFunds:
         raise
     except AIError as exc:
         log.warning("Story threads couldn't be read (%s)", type(exc).__name__)
         return [], FAILED
     said = parse(reply.text)
+    if raw is not None:
+        raw.append(reply.text)
     log.info("Story threads read: %d listed%s", len(said), " (cut)" if reply.cut else "")
     return said, STOPPED if reply.cut else ""
