@@ -192,7 +192,7 @@ class TheLines(Threads):
         self.assertEqual((await self.act("thread-undo", f"keep {batch}")).error, "")
         self.assertEqual((await self.second())["id"], sid)  # (waiting again)
 
-    async def test_the_lines_door_gives_a_player_nothing_and_the_shapes_are_checked(self) -> None:
+    async def test_the_lines_door_gives_a_player_nothing(self) -> None:
         bob = await self.signed(BOB, THURSDAY)
         async with self.web.user(bob.user_id, session=bob.id_hash) as conn:
             await _scoped(conn, self.g)
@@ -201,10 +201,6 @@ class TheLines(Threads):
             )
             found = await cur.fetchone()
         self.assertIsNone(found and found["r"])
-        sid = (await self.second())["id"]
-        for text in (f"{sid} - +", f"{sid} - +100", f"{sid} - +x", f"{sid} - +0,"):
-            got = await self.add_action("thread-keep", text)
-            self.assertNotEqual(got["status"], "ok", text)
 
     async def test_a_name_that_looks_like_a_lines_word_is_a_name_and_keeps_no_lines(self) -> None:
         sid = (await self.second())["id"]

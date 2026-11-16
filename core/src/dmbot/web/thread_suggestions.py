@@ -17,6 +17,7 @@ from dmbot.web import relationships
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
+from dmbot.web.thread_line_words import line_words
 
 SUGGESTION_ID = re.compile(r"^[0-9a-f]{32}$")
 _BATCH = re.compile(r"^[0-9]{1,15}$")
@@ -26,11 +27,9 @@ LINES_MAX = 50  # the lines of one suggestion a keep may leave on (the door's sh
 
 
 def _line(r: dict[str, Any]) -> dict[str, Any]:
-    """One line of a suggestion as Discord's card words it (`ui/thread_questions.line_for`), by the
-    names the door gave: `{words, what, branch}`. No entry id is ever here: the names are stood in
-    for by throwaway keys, so the card's own wording is used and not copied."""
-    from dmbot.ui.thread_questions import line_for
-
+    """One line of a suggestion as Discord's card words it (`web/thread_line_words.py`, held equal
+    to Discord's by a test), by the names the door gave: `{words, what, branch}`. No entry id is
+    ever here: the names are stood in for by throwaway keys."""
     names: dict[str, str] = {}
     waiting: set[str] = set()
 
@@ -58,7 +57,7 @@ def _line(r: dict[str, Any]) -> dict[str, Any]:
             stand_in("w", r.get("who")), str(r.get("due") or ""), str(r.get("terms") or ""),
             str(r.get("limit") or ""),
         )  # fmt: skip
-    words, what = line_for(line, names, frozenset(waiting))
+    words, what = line_words(line, names, frozenset(waiting))
     return {"words": words, "what": what, "branch": bool(r.get("branch"))}
 
 
