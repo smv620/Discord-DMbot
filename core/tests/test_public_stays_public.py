@@ -16,9 +16,11 @@ from __future__ import annotations
 import ast
 import pathlib
 import unittest
+from typing import Any
 
 from dmbot.memory import backstory_keep, knowers, lore_knowledge, secret_questions
 from dmbot.memory._changes import KNOWERS
+from dmbot.memory.gate import ALIAS, Viewer
 from dmbot.memory.models import CONFIRMED, DM, REJECTED, MemoryRuleError
 from tests.test_memory_store import GUILD_A, MemoryTest
 
@@ -251,35 +253,76 @@ class ThePublicStaysPublic(MemoryTest):
         knows = await self.memory.statement_knowers(GUILD_A, self.c, "entry", [shady])
         self.assertEqual(knows.get(shady), [self.hero])  # (Ilsa still knows)
 
-    async def test_a_secret_twin_stays_the_dms_secret_and_who_knew_still_knows(self) -> None:
+    async def disguise(self) -> tuple[str, str]:
+        """Mask has the DM's secret name "Shade"; the players know Bob by "Shade" too, and Ilsa
+        knows that name of Bob's. Returns (Mask, Bob's "Shade")."""
         mask = await self.add("Mask", status=CONFIRMED)
         await self.memory.add_alias(
             GUILD_A, self.c, mask, "Shade", kind="nickname", source=DM, status=CONFIRMED,
             secret=True, dm_chose_secret=True,
         )  # fmt: skip
-        await self.memory.add_alias(
+        shade = await self.memory.add_alias(
             GUILD_A, self.c, self.bob, "Shade", kind="nickname", source=DM, status=CONFIRMED
         )
-        secret_copy = await self.memory.add_alias(
-            GUILD_A, self.c, self.bob, "Shadow", kind="nickname", source=DM, status=CONFIRMED,
-            secret=True, dm_chose_secret=True,
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, "alias", shade.value.id, [self.hero], source=DM,
+            dm_chose_secret=True,
         )  # fmt: skip
-        await self.memory.add_alias(
-            GUILD_A, self.c, mask, "Shadow", kind="nickname", source=DM, status=CONFIRMED,
-            secret=True, dm_chose_secret=True,
-        )  # fmt: skip
-        await self.memory.set_alias_knowers(
-            GUILD_A, self.c, secret_copy.value.id, [self.hero], source=DM, dm_chose_secret=True
-        )  # (Ilsa knows the copy that goes, on the older per-name list too)
-        await self.memory.merge(GUILD_A, self.c, mask, self.bob, source=DM, dm_said_same=True)
+        return mask, shade.value.id
+
+    async def twin(self, mask: str) -> Any:
         names = await self.memory.aliases(GUILD_A, self.c, entity_id=mask, include_secret=True)
-        (shade,) = [a for a in names if a.text == "Shade"]
-        # (the DM's own secret name: showing it would tell the players who Bob was, #4524)
+        return next(a for a in names if a.text == "Shade")
+
+    async def hero_knows(self, alias_id: str) -> bool:
+        seen = await self.memory.visible_to(GUILD_A, self.c, Viewer.character(self.hero))
+        return seen.knows(ALIAS, alias_id)
+
+    async def test_a_merge_keeps_the_dms_secret_name_and_asks_once(self) -> None:
+        mask, _ = await self.disguise()
+        await self.memory.merge(GUILD_A, self.c, mask, self.bob, source=DM, dm_said_same=True)
+        shade = await self.twin(mask)
+        self.assertTrue(shade.secret)  # (the DM's own secret: showing it would spoil who Mask is)
+        (q,) = await self.waiting()
+        self.assertEqual((q.kind, q.item_id, q.change), ("reveal", shade.id, {"secret": False}))
+
+    async def test_who_knew_the_name_on_the_merged_entry_does_not_see_it_while_it_waits(
+        self,
+    ) -> None:
+        mask, bobs = await self.disguise()
+        self.assertTrue(await self.hero_knows(bobs))
+        await self.memory.merge(GUILD_A, self.c, mask, self.bob, source=DM, dm_said_same=True)
+        self.assertFalse(await self.hero_knows((await self.twin(mask)).id))
+
+    async def test_let_them_know_shows_it_and_wakes_the_rows_and_undo_reverses_it(self) -> None:
+        mask, _ = await self.disguise()
+        await self.memory.merge(GUILD_A, self.c, mask, self.bob, source=DM, dm_said_same=True)
+        (q,) = await self.waiting()
+        made = await self.memory.answer_secret_question(GUILD_A, self.c, q.id, False, source=DM)
+        shade = await self.twin(mask)
+        self.assertFalse(shade.secret)
+        self.assertTrue(await self.hero_knows(shade.id))
+        assert made.batch is not None
+        await self.memory.undo(GUILD_A, self.c, made.batch, source=DM)
+        shade = await self.twin(mask)
         self.assertTrue(shade.secret)
+        self.assertFalse(await self.hero_knows(shade.id))
+        self.assertEqual([x.id for x in await self.waiting()], [q.id])  # (waiting again)
+
+    async def test_keep_it_secret_stays_secret_and_is_never_asked_again(self) -> None:
+        mask, _ = await self.disguise()
+        await self.memory.merge(GUILD_A, self.c, mask, self.bob, source=DM, dm_said_same=True)
+        (q,) = await self.waiting()
+        kept = await self.memory.answer_secret_question(GUILD_A, self.c, q.id, True, source=DM)
+        self.assertIsNone(kept.batch)  # (nothing changed: the secret was already kept)
+        self.assertTrue((await self.twin(mask)).secret)
+        other = await self.add("Shady", status=CONFIRMED)
+        await self.memory.add_alias(
+            GUILD_A, self.c, other, "Shade", kind="nickname", source=DM, status=CONFIRMED
+        )
+        await self.memory.merge(GUILD_A, self.c, mask, other, source=DM, dm_said_same=True)
         self.assertEqual(await self.waiting(), [])
-        (shadow,) = [a for a in names if a.text == "Shadow"]
-        knows = await self.memory.alias_knowers(GUILD_A, self.c, [shadow.id])
-        self.assertEqual(knows.get(shadow.id), [self.hero])  # (and still knows the twin)
+        self.assertTrue((await self.twin(mask)).secret)
 
     async def test_a_guess_is_marked_across_a_clock_tick(self) -> None:
         made = (await self.relate(self.bob, "enemy_of", self.hero, status=CONFIRMED)).value[0]

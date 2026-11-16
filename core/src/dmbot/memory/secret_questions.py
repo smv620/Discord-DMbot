@@ -9,6 +9,12 @@ Two kinds, one board kind so the DM has one place to look:
   would end a public one (`backstory_keep.end_replaced`), asked once the new one is kept. `change`
   is `{"end": true, "by": <the new connection>, "at": <when the old one would end>}`.
 
+- **reveal:** "Your players knew this name, but it is also a secret name of <entry>: Keep it
+  secret / Let them know", when a merge keeps the DM's own secret name though the players knew it
+  on the entry that went (Supervisor's review of #4545). The secret stays until the DM answers; the
+  who-knows rows that came with the folded name sleep under the question's id meanwhile, so no
+  player character sees it on the kept entry. `change` is `{"secret": false}`.
+
 A question is asked once for each item and change (its `change_key`, a hash without "at"),
 whatever became of the first (Keep it known is remembered: the ruling's point 2). It is not in the
 change log: it carries the asking write's batch, and an Undo of that batch takes back the ones
@@ -39,7 +45,7 @@ if TYPE_CHECKING:
 
 log = logging.getLogger(__name__)
 
-NARROW, REPLACE = "narrow", "replace"
+NARROW, REPLACE, REVEAL = "narrow", "replace", "reveal"
 WAITING, KEPT_KNOWN, MADE_SECRET = "waiting", "kept_known", "made_secret"
 LABEL_MAX = 200
 GONE = "That question was already answered."
@@ -116,6 +122,22 @@ async def ask(
     w.asked.append(question_id)
     log.info("Public stays public: a %s question was asked instead", kind)
     return True
+
+
+async def ask_reveal(w: Changes, alias_id: str) -> str:
+    """A merge kept the DM's secret name `alias_id` though the players knew it on the entry that
+    went: the "Keep it secret / Let them know" question (`REVEAL`). Asked once; returns its id
+    (the earlier one's when it was asked before), which the carried who-knows rows sleep under."""
+    change = {"secret": False}
+    if await ask(w, REVEAL, "memory_aliases", alias_id, change):
+        return w.asked[-1]
+    cur = await w.conn.execute(
+        "SELECT id FROM secret_questions WHERE guild_id = %s AND campaign_id = %s"
+        " AND item_table = 'memory_aliases' AND item_id = %s AND change_key = %s",
+        (*w.ids, alias_id, change_key(change)),
+    )
+    row = await cur.fetchone()
+    return str(row["id"]) if row is not None else ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,9 +222,11 @@ __all__ = [
     "MADE_SECRET",
     "NARROW",
     "REPLACE",
+    "REVEAL",
     "WAITING",
     "Question",
     "ask",
+    "ask_reveal",
     "change_key",
     "count",
     "evidence",
