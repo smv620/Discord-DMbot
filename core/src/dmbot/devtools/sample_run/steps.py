@@ -10,6 +10,7 @@ the session is printed or logged.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import io
 import math
@@ -43,6 +44,7 @@ LORE_CHOICES = ("world", "spoilers", "smart")
 POLL_S = 5.0
 LORE_WAIT_S = 45 * 60
 IMPORT_WAIT_S = 90 * 60
+SETTLE_WAIT_S = 10 * 60  # how long an old sample's background work is waited for before deleting
 
 
 def campaign_store(db: Database) -> CampaignStore:
@@ -122,6 +124,47 @@ DM_BOT_CHANNEL_NEEDED = (
 )
 
 
+async def busy_count(db: Database, guild: int, campaign_id: str) -> int:
+    """How many pieces of background work the campaign has running or queued: lore uploads and
+    imported sessions that are waiting or working, and recap jobs not yet ready or failed. A
+    number only. Deleting a campaign while these still run makes their AI charges find no campaign
+    (#4542)."""
+    async with db.guild(guild, snapshot=True) as conn:
+        total = 0
+        for sql in (
+            "SELECT count(*) AS n FROM lore_uploads WHERE guild_id = %s AND campaign_id = %s"
+            " AND state IN ('waiting', 'working')",
+            "SELECT count(*) AS n FROM session_imports WHERE guild_id = %s AND campaign_id = %s"
+            " AND state IN ('waiting', 'working')",
+            "SELECT count(*) AS n FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
+            " AND state NOT IN ('ready', 'failed')",
+        ):
+            cur = await conn.execute(sql, (guild, campaign_id))
+            total += int((await cur.fetchone() or {}).get("n", 0))
+    return total
+
+
+async def wait_settled(
+    db: Database,
+    guild: int,
+    campaign_id: str,
+    *,
+    sleep: Sleep,
+    clock: Callable[[], float] = time.monotonic,
+    limit_s: float = SETTLE_WAIT_S,
+    poll_s: float = POLL_S,
+) -> bool:
+    """Wait until the campaign has no background work (`busy_count` is 0), up to `limit_s`. True
+    when it settled, False when the wait ran out (the caller says so and deletes anyway: a
+    forgotten, stuck job must not block the next deploy's run)."""
+    began = clock()
+    while await busy_count(db, guild, campaign_id):
+        if clock() - began > limit_s:
+            return False
+        await sleep(poll_s)
+    return True
+
+
 async def fresh_campaign(
     db: Database,
     campaigns: CampaignStore,
@@ -131,6 +174,8 @@ async def fresh_campaign(
     deploy: int,
     say: Say,
     found: list[Existing] | None = None,
+    sleep: Sleep | None = None,
+    settle_s: float = SETTLE_WAIT_S,
 ) -> Campaign:
     """Make this deploy's sample campaign, "test of the frostmaiden (sample N)" (#4538), paid
     because the DM owns it, and keep the newest `sample_name.KEEP`: the same N again is deleted
@@ -145,8 +190,15 @@ async def fresh_campaign(
         deploy,
     )
     deleted = 0
+    timed_out = 0
     try:
         for campaign_id in kept.delete:
+            # Its background AI work is still being charged: wait for it, so the charge finds the
+            # campaign (#4542). A job that never settles is not waited on for ever.
+            if not await wait_settled(
+                db, guild, campaign_id, sleep=sleep or asyncio.sleep, limit_s=settle_s
+            ):
+                timed_out += 1
             await campaigns.delete(guild, campaign_id, only_if_owner=dm)
             deleted += 1
     except CampaignError:  # (a hand-over just now: the store refuses under its lock)
@@ -161,6 +213,8 @@ async def fresh_campaign(
             "the sample campaign could not be made (a campaign with a look-alike name exists)"
         ) from exc
     say(sample_name.counts_line(kept))
+    if timed_out:
+        say(f"{timed_out} old sample campaign(s) still had background work after the wait: deleted")
     # This tool has no Discord client, so it cannot make or delete a channel (#4112). The new
     # campaign has no DM Bot channel yet: the bot makes it the way it does for any campaign made
     # before the channel existed, when the DM presses ⚙️ Manage DMbot. A deleted campaign's channel

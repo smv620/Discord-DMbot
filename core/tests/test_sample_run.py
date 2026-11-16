@@ -209,6 +209,61 @@ class Steps(DatabaseTest):
         for c in (theirs, mine):
             self.assertIsNotNone(await self.campaigns.get(GUILD, c.id))
 
+    async def test_an_old_sample_is_deleted_only_after_its_background_work_settled(self) -> None:
+        from unittest import mock
+
+        old = await self.made(name=sample_name.name_for(5))
+        for n in (6, 7):
+            await self.made(name=sample_name.name_for(n))
+        seen: list[bool] = []
+
+        async def busy(db: Any, guild: int, campaign_id: str) -> int:
+            seen.append(await self.campaigns.get(GUILD, old.id) is not None)  # (still there)
+            return 1 if len(seen) < 3 else 0
+
+        async def sleep(_s: float) -> None:
+            return None
+
+        with mock.patch.object(steps, "busy_count", busy):
+            await steps.fresh_campaign(
+                self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say, sleep=sleep
+            )
+        self.assertEqual(seen, [True, True, True])  # asked until it settled, never deleted early
+        self.assertIsNone(await self.campaigns.get(GUILD, old.id))
+        self.assertFalse(any("background work" in line for line in self.said))
+
+    async def test_work_that_never_settles_is_said_and_the_campaign_is_deleted_anyway(self) -> None:
+        from unittest import mock
+
+        old = await self.made(name=sample_name.name_for(5))
+        for n in (6, 7):
+            await self.made(name=sample_name.name_for(n))
+
+        async def always(db: Any, guild: int, campaign_id: str) -> int:
+            return 1
+
+        async def sleep(_s: float) -> None:
+            return None
+
+        ticks = iter(range(0, 10_000, 50))
+        with (
+            mock.patch.object(steps, "busy_count", always),
+            mock.patch.object(steps.time, "monotonic", lambda: float(next(ticks))),
+        ):
+            await steps.fresh_campaign(
+                self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say, sleep=sleep,
+                settle_s=100.0,
+            )  # fmt: skip
+        self.assertIsNone(await self.campaigns.get(GUILD, old.id))
+        self.assertIn(
+            "1 old sample campaign(s) still had background work after the wait: deleted",
+            self.said,
+        )
+
+    async def test_busy_count_counts_the_three_kinds_of_work(self) -> None:
+        old = await self.made(name=sample_name.name_for(5))
+        self.assertEqual(await steps.busy_count(self.db, GUILD, old.id), 0)
+
     async def test_a_look_alike_name_is_never_deleted(self) -> None:
         keep = [
             await self.made(name=f"{sample_name.name_for(5)} copy"),

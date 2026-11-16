@@ -159,3 +159,49 @@ class EveryGuard(unittest.TestCase):
                 self.assertIn(refusal, self.run_tool(tool, f"{N(31)} copy"))
                 self.assertNotIn(refusal, self.run_tool(tool, N(31)))
                 self.assertNotIn(refusal, self.run_tool(tool, sample_name.OLD_NAME))
+
+
+class WaitingBeforeDeleting(unittest.IsolatedAsyncioTestCase):
+    """sample_run waits for an old sample's background work before deleting it (#4542), so its AI
+    charges still find the campaign. The check is stood in for: no database."""
+
+    async def settle(
+        self, counts: list[int], *, limit_s: float = 600.0
+    ) -> tuple[bool, list[float]]:
+        from unittest.mock import AsyncMock, patch
+
+        from dmbot.devtools.sample_run import steps
+
+        slept: list[float] = []
+        now = [0.0]
+
+        async def sleep(seconds: float) -> None:
+            slept.append(seconds)
+            now[0] += seconds
+
+        with patch.object(steps, "busy_count", AsyncMock(side_effect=counts)):
+            done = await steps.wait_settled(
+                None,  # type: ignore[arg-type]
+                1,
+                "c" * 32,
+                sleep=sleep,
+                clock=lambda: now[0],
+                limit_s=limit_s,
+                poll_s=5.0,
+            )
+        return done, slept
+
+    async def test_it_waits_until_the_work_is_done(self) -> None:
+        done, slept = await self.settle([2, 1, 0])
+        self.assertTrue(done)
+        self.assertEqual(slept, [5.0, 5.0])
+
+    async def test_nothing_running_is_no_wait(self) -> None:
+        done, slept = await self.settle([0])
+        self.assertTrue(done)
+        self.assertEqual(slept, [])
+
+    async def test_work_that_never_ends_is_given_up_on_at_the_limit(self) -> None:
+        done, slept = await self.settle([1] * 100, limit_s=20.0)
+        self.assertFalse(done)
+        self.assertLessEqual(sum(slept), 25.0)
