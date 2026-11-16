@@ -1004,7 +1004,7 @@ async def _world(
     return Outcome(batches=(done.batch,) if done.batch is not None else ())
 
 
-def _batch_of(batch: int | None) -> Outcome:
+def _changed(batch: int | None) -> Outcome:
     """The change a website action made, for the page's Undo (none when nothing changed)."""
     return Outcome(batches=(batch,) if batch is not None else ())
 
@@ -1064,22 +1064,22 @@ async def _parts(
             return Outcome(batches=(done.batch,) if done.batch is not None else ())
         if a.action == "part-state":
             state = await memory.set_thread_part_state(guild_id, cid, words[0], words[1], source=DM)
-            return _batch_of(state.batch)
+            return _changed(state.batch)
         if a.action == "part-show":
             shown = await memory.show_thread_part(
                 guild_id, cid, words[0], words[1] == "1", source=DM
             )
-            return _batch_of(shown.batch)
+            return _changed(shown.batch)
         if a.action == "part-remove":
             removed = await memory.remove_thread_part(guild_id, cid, words[0], source=DM)
-            return _batch_of(removed.batch)
+            return _changed(removed.batch)
         if a.action == "branch-move":
             moved = await memory.branch_of(
                 guild_id, cid, words[0], words[1], source=DM, move=words[-1] == "move"
             )
-            return _batch_of(moved.batch)
+            return _changed(moved.batch)
         off = await memory.not_a_branch(guild_id, cid, words[0], source=DM)  # branch-not
-        return _batch_of(off.batch)
+        return _changed(off.batch)
     except MemoryRuleError as exc:  # (TooLateToUndo is one: something done since is in the way)
         if str(exc) == ALREADY_UNDONE:
             return Outcome()  # (a second Undo of the same change: done, as a retry is)
