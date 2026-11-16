@@ -586,8 +586,10 @@ class Changes(Scope):
     ) -> None:
         """A story thread's clues are the DM's alone (#4624, Supervisor's condition): a `clue_to`
         connection is always stored secret, and nobody but The truth may ever know it, so no
-        player's view, list, door or graph can hold it or its "false lead" word. Checked here, the
-        one write layer every writer goes through, so no path can add one."""
+        player's view, list, door or graph can hold it or its "false lead" word. Checked on every
+        single-row insert and update, which every knower and belief writer of a connection uses;
+        the bulk writers (`insert_many`, `update_rows`, a restore) only ever copy rows that passed
+        here, and the gate leaves such a connection out on read too (`gate.load`)."""
         from dmbot.memory.thread_clues import DM_ONLY_PREDICATES, DM_ONLY_TIE
 
         if table is RELATIONS:

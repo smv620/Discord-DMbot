@@ -24,6 +24,7 @@ from dmbot.memory import gate, hand_over
 from dmbot.memory.link_words import for_reader
 from dmbot.memory.models import CONFIRMED
 from dmbot.memory.ontology import FALLBACK_PREDICATE
+from dmbot.memory.thread_clues import DM_ONLY_PREDICATES
 
 ALIAS = "alias:"  # the id of a node that stands for a secret other name
 
@@ -103,6 +104,9 @@ def build(src: dict[str, Any], kn: dict[str, Any], viewer: gate.Viewer) -> Graph
             if not link["ended"]
             and not link["plan"]
             and seen.knows(gate.CONNECTION, str(link["id"]))
+            # (a clue's tie to a story thread, and its "false lead" word, are the DM's alone
+            # whatever a row says, #4624; `gate.load` drops it the same way for the bot)
+            and (viewer.dm or link["predicate"] not in DM_ONLY_PREDICATES)
         ],
         kn["aliasRows"],
     )

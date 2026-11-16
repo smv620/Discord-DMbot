@@ -455,7 +455,7 @@ CORE_PREDICATES: tuple[PredicateTerm, ...] = (
         ),
         examples=("The bloody glove is a clue to Who killed the Speaker?",),
         inverse_label="has the clue",
-        synonyms=("evidence_for", "lead_to"),
+        synonyms=("evidence_for",),  # (never "lead_to": a misspelt "led_to" must not become one)
     ),
     PredicateTerm(
         "of_people",

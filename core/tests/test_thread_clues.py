@@ -65,6 +65,9 @@ class TheClues(MemoryTest):
             status="confirmed",
         )  # fmt: skip
 
+    async def listed(self) -> list[tc.ThreadClue]:
+        return await self.memory.thread_clues(GUILD_A, self.c, self.thread, gate.Viewer.the_dm())
+
     async def tie(self, **kw: object) -> str:
         written = await self.memory.tie_clue(
             GUILD_A,
@@ -141,6 +144,47 @@ class TheClues(MemoryTest):
             [(c.name, c.false_lead, c.relation_id) for c in mine], [("A bloody glove", False, "")]
         )
 
+    async def test_only_the_dms_own_tie_and_one_per_clue_whatever_its_word(self) -> None:
+        with self.assertRaises(MemoryRuleError):  # (a kept claim or any other path: refused)
+            await self.memory.add_relation(
+                GUILD_A, self.c, self.glove, tc.CLUE_TO, self.thread, source=DM, confidence=1.0,
+                status="confirmed",
+            )  # fmt: skip
+        await self.tie(clue_id=self.glove)
+        with self.assertRaises(MemoryRuleError):
+            await self.tie(clue_id=self.glove, false_lead=True)
+        self.assertEqual(
+            len(await self.memory.thread_clues(GUILD_A, self.c, self.thread, gate.Viewer.the_dm())),
+            1,
+        )
+
+    async def test_a_tie_by_a_new_name_undone_takes_the_clue_too(self) -> None:
+        written = await self.memory.tie_clue(
+            GUILD_A, self.c, self.thread, new_name="A torn letter", source=DM
+        )
+        self.assertTrue(written.value[1])  # (made new)
+        assert written.batch is not None
+        await self.memory.undo(GUILD_A, self.c, written.batch, source=DM)
+        self.assertEqual(
+            await self.memory.thread_clues(GUILD_A, self.c, self.thread, gate.Viewer.the_dm()), []
+        )
+        again = await self.memory.tie_clue(
+            GUILD_A, self.c, self.thread, new_name="A bloody glove", source=DM
+        )
+        self.assertFalse(again.value[1])  # (the campaign's clue of that name)
+
+    async def test_saying_both_names_aloud_shows_the_players_nothing(self) -> None:
+        """B3 of the review: the after-session exposures never pick up a tie, and a reveal of one
+        writes nothing (the recap's stricter guard still sees it)."""
+        from dmbot.memory.exposures import secret_connections
+
+        rel = await self.tie(clue_id=self.glove)
+        self.assertEqual(await secret_connections(self.memory, GUILD_A, self.c), [])
+        found = await secret_connections(self.memory, GUILD_A, self.c, dm_only=True)
+        self.assertEqual([c.relation_id for c in found], [rel])
+        done = await self.memory.reveal_exposed(GUILD_A, self.c, spellings=[], relation_ids=[rel])
+        self.assertEqual(done.value, (0, 0))
+
     async def test_nobody_but_the_dm_can_ever_know_a_tie(self) -> None:
         """Supervisor's condition on #4624: every path that would let a player know the tie is
         refused at the write layer, and a row put in behind its back grants nothing."""
@@ -183,6 +227,23 @@ class TheClues(MemoryTest):
             party_seen = await gate.visible_to(scope, gate.Viewer.the_party())
         self.assertFalse(seen.knows(gate.CONNECTION, rel))
         self.assertFalse(party_seen.knows(gate.CONNECTION, rel))
+
+
+class NeverFromAReader(unittest.TestCase):
+    def test_a_readers_words_never_make_a_tie(self) -> None:
+        """B4 of the review: "is a clue to" from a text falls back to the catch-all, its words kept;
+        "lead to" (a misspelt "led to") is no word of a tie."""
+        from dmbot.memory.claims import resolve_relationship
+        from dmbot.memory.ontology import Ontology
+
+        onto = Ontology.build()
+        for words in ("is a clue to", "clue to", "clue_to", "evidence for", "has the clue"):
+            with self.subTest(words):
+                found = resolve_relationship(onto, words)
+                self.assertTrue(found is None or found[0].key != tc.CLUE_TO)
+        self.assertNotIn(
+            "lead_to", next(p for p in onto.predicates.values() if p.key == tc.CLUE_TO).synonyms
+        )
 
 
 class TheScreenWords(unittest.TestCase):
@@ -246,6 +307,27 @@ class TheScreen(TheClues):
         form.name._value = "A bloody glove"
         (said,) = await self.press(form._submit)
         self.assertEqual(said["note"], f"⚠️ {tc.ALREADY_TIED}")
+
+
+class TheWebsiteGraph(unittest.TestCase):
+    """B2 of the review: the website builds its own gate input, so a knower row on a tie (the kind
+    the write layer refuses) must still draw nothing for a player, the party or someone seen as."""
+
+    def test_a_player_is_never_drawn_a_tie_even_with_a_row(self) -> None:
+        from dmbot.web import graph_view
+        from tests.test_node_summary_run import KESH, MIRA, PC, world
+
+        src, kn = world([("l1", MIRA, KESH, tc.CLUE_TO)], {"l1": [PC]})
+        src["links"][0]["detail"] = tc.FALSE_LEAD
+        for viewer in (
+            gate.Viewer.player([PC]),
+            gate.Viewer.the_party(),
+            gate.Viewer.character(PC),
+        ):
+            graph = graph_view.build(src, kn, viewer)
+            self.assertNotIn("l1", [e["id"] for e in graph.edges])
+        dm = graph_view.build(src, kn, gate.Viewer.the_dm())
+        self.assertIn("l1", [e["id"] for e in dm.edges])
 
 
 if __name__ == "__main__":

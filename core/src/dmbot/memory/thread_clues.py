@@ -3,10 +3,11 @@ the `clue_to` connection's words and the pure rules of the "clues found" count.
 
 A clue is tied to a thread by the DM (`clue_to`, clue → thread), with one of two words: "points to
 it" (the default) or "false lead". Both the tie and its word are the DM's alone (Supervisor's
-condition on #4624): the connection is always stored secret, no knower or belief may ever be written
-on it (`refused_knower`, called from the one write layer), and the gate leaves it out of every
-player's view. A player sees only the clues their own characters know, never a count and never
-the false-lead mark.
+condition on #4624): only the DM's own tie makes one (never a reader's claim), it is always stored
+secret, `Changes.insert` and `Changes.update` refuse any knower or player belief on it
+(`Changes._dm_only_check`; the bulk writers carry none, as nothing upstream ever makes one), and the
+gate and the website's graph leave it out of every player's view. A player sees only the clues
+their own characters know, never a count and never the false-lead mark.
 
 "Solved so far" is worked out when shown and never stored (§7): a count of the tied clues that a
 player character (or the party) knows, with a total only while the DM has tied clues the table has

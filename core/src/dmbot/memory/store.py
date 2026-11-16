@@ -2519,6 +2519,8 @@ class MemoryStore:
                 " AND object_id = %s",
                 [thread_id],
             )
+            if not ties:  # (no read of who knows what: the 📋 screen and card open quickly)
+                return []
             ids = sorted({str(r["subject_id"]) for r in ties})
             rows = {
                 str(r["id"]): r
@@ -2530,10 +2532,14 @@ class MemoryStore:
             anyone = gate.Viewer(mode="any", party=True)
             seen = await gate.visible_to(scope, anyone if viewer.dm else viewer)
         out = []
+        listed: set[str] = set()
+        if not viewer.dm and not seen.knows(gate.ENTRY, thread_id):
+            return []  # (a thread the player can't see has no clues for them, §10.2)
         for r in ties:
             clue = rows.get(str(r["subject_id"]))
-            if clue is None:
+            if clue is None or str(clue["id"]) in listed:  # (once each, whatever came before)
                 continue
+            listed.add(str(clue["id"]))
             known = seen.knows(gate.ENTRY, str(clue["id"]))
             if not viewer.dm and not known:
                 continue
@@ -5795,6 +5801,8 @@ class MemoryStore:
                     row["secret"]
                     and row["status"] == CONFIRMED
                     and row["predicate"] != threads_mod.LED_TO
+                    # (a clue's tie to a thread stays the DM's, whatever was said aloud: #4624)
+                    and row["predicate"] not in clues_mod.DM_ONLY_PREDICATES
                 ):
                     await w.update(RELATIONS, row["id"], {"secret": False})
                     shown += 1
@@ -7467,9 +7475,13 @@ class MemoryStore:
             secret = True
             await _check_led_to_live(w, None, subject_id, object_id)
         if pred.key == clues_mod.CLUE_TO:
-            # (#4624) whatever the path, the DM's alone: always secret, and its word one of two
-            if source != DM:
+            # (#4624) whatever the path, the DM's alone: only their own tie (`tie_clue`, by hand;
+            # never a reader's claim kept), always secret, one of two words, one live tie per clue
+            # and thread whatever its word
+            if source != DM or not by_hand:
                 raise MemoryRuleError(ONLY_DM_SAYS)
+            if await _live_clue_tie(w, subject_id, object_id):
+                raise MemoryRuleError(clues_mod.ALREADY_TIED)
             secret = True
             if detail.strip() and detail.strip().lower() not in clues_mod.WORDS:
                 raise MemoryRuleError(clues_mod.NOT_A_CLUE_WORD)
