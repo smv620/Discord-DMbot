@@ -166,11 +166,23 @@ class WhatCanBeLearned(Base):
 
     async def test_a_guess_can_still_be_confirmed(self) -> None:
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, CONNECTION, self.rel, {self.tran: 0.3}, source="dm"
+            GUILD_A,
+            self.c,
+            CONNECTION,
+            self.rel,
+            {self.tran: 0.3},
+            source="dm",
+            dm_chose_secret=True,
         )
         self.assertEqual((await self.put((check(), (DM_ID,)))).stored, 1)
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, CONNECTION, self.rel, {self.clyde: 1.0}, source="dm"
+            GUILD_A,
+            self.c,
+            CONNECTION,
+            self.rel,
+            {self.clyde: 1.0},
+            source="dm",
+            dm_chose_secret=True,
         )
         got = await self.put((check(who="Clyde"), (DM_ID,)))
         self.assertEqual((got.stored, got.counts["reveal_known"]), (0, 1))
@@ -185,7 +197,7 @@ class WhatCanBeLearned(Base):
         await self.memory.link_party(GUILD_A, self.c, {1, 2})
         await self.memory.set_statement_knowers(
             GUILD_A, self.c, CONNECTION, self.rel,
-            [self.ids["okthandom"], self.ids["mara"]], source="dm",
+            [self.ids["okthandom"], self.ids["mara"]], source="dm", dm_chose_secret=True,
         )  # fmt: skip
         got = await self.put((check(who="Okthandom"), (DM_ID,)), (tell(teller="Mara"), (DM_ID,)))
         self.assertEqual((got.stored, got.counts["reveal_known"]), (1, 1))  # (Mara tells Tran)
@@ -308,7 +320,7 @@ class Answering(Base):
     async def test_a_player_character_and_a_guess_are_said(self) -> None:
         pc = self.ids["okthandom"]
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, CONNECTION, self.rel, {pc: 0.3}, source="dm"
+            GUILD_A, self.c, CONNECTION, self.rel, {pc: 0.3}, source="dm", dm_chose_secret=True
         )
         waiting = await self.one((check(who="Okthandom"), (DM_ID,)))
         shown = await self.reveals.describe(GUILD_A, self.c, waiting)

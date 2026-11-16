@@ -23,7 +23,9 @@ class Lies(moved.MergeMovesConnections):
         self.views = views
 
     async def pc_view(self) -> str:
-        await self.memory.set_connection_knowers(GUILD_A, self.c, self.rel, [self.pc], source="dm")
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, self.rel, [self.pc], source="dm", dm_chose_secret=True
+        )
         found = await self.memory.perspectives(GUILD_A, self.c)
         return next(p.id for p in found if p.entity_id == self.pc)
 
@@ -127,9 +129,17 @@ class MoreRules(Lies):
         self.assertEqual(await self.memory.lies(GUILD_A, self.c, source="dm"), [])
 
     async def test_an_npcs_point_of_view_can_hold_a_lie(self) -> None:
-        await self.memory.set_connection_knowers(GUILD_A, self.c, self.rel, [self.pc], source="dm")
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, self.rel, [self.pc], source="dm", dm_chose_secret=True
+        )
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, "connection", self.rel, {self.captain: 1.0}, source="dm"
+            GUILD_A,
+            self.c,
+            "connection",
+            self.rel,
+            {self.captain: 1.0},
+            source="dm",
+            dm_chose_secret=True,
         )
         view = next(
             p.id for p in await self.memory.perspectives(GUILD_A, self.c)
@@ -239,13 +249,17 @@ class ReadingLies(Lies):
     async def test_a_lie_about_a_liar_the_player_may_not_know_is_not_shown(self) -> None:
         view = await self.pc_view()
         await self.think(view, "suspected_lie", 0.5, [self.valyra])
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.valyra, True, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, self.valyra, True, source="dm", dm_chose_secret=True
+        )
         self.assertEqual(await self.memory.lies_my_characters_think(GUILD_A, self.c, 1), [])
 
     async def test_a_lie_about_a_connection_the_player_may_not_know_is_not_shown(self) -> None:
         view = await self.pc_view()
         await self.think(view, "suspected_lie", 0.5, [self.valyra])
-        await self.memory.set_connection_knowers(GUILD_A, self.c, self.rel, [], source="dm")
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, self.rel, [], source="dm", dm_chose_secret=True
+        )
         self.assertEqual(await self.memory.lies_my_characters_think(GUILD_A, self.c, 1), [])
 
 

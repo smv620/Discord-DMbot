@@ -193,7 +193,7 @@ class TheStore(moved.MergeMovesConnections):
         relation = (await self.disguise(jax, valyra)).value[0]
         self.assertNotIn(relation.id, await self.mine())
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, relation.id, [self.pc], source="dm"
+            GUILD_A, self.c, relation.id, [self.pc], source="dm", dm_chose_secret=True
         )
         self.assertIn(relation.id, await self.mine())
 

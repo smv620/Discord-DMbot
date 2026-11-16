@@ -203,7 +203,7 @@ class TheStore(MemoryTest):
         player = gate.Viewer.player([pc])
         for place in (self.dale, self.council):
             await self.memory.set_statement_knowers(
-                GUILD_A, self.c, gate.ENTRY, place, [pc], source=BY_DM
+                GUILD_A, self.c, gate.ENTRY, place, [pc], source=BY_DM, dm_chose_secret=True
             )
         await self.memory.add_read_map_facts(
             GUILD_A, self.c, [Read(self.dale, mf.TERRAIN, "arctic", session_at=5)],
@@ -224,7 +224,7 @@ class TheStore(MemoryTest):
         self.assertEqual(len(await self.facts(self.bryn, player)), 1)
         lair = await self.add("Hidden Keep", type="place", status=CONFIRMED)
         await self.memory.set_hidden_from_players(  # (a place only the DM knows of)
-            GUILD_A, self.c, lair, True, source=BY_DM
+            GUILD_A, self.c, lair, True, source=BY_DM, dm_chose_secret=True
         )
         await self.memory.set_map_fact(
             GUILD_A, self.c, lair, mf.CONTROL, self.council, how="rules", source=BY_DM
@@ -347,7 +347,9 @@ class AfterTheReview(TheStore):
         await self.memory.show_map_facts(GUILD_A, self.c, self.dale, True, source=BY_DM)
         held = await self.memory.map_facts_up(GUILD_A, self.c, self.bryn, gate.Viewer.player([pc]))
         self.assertEqual(held[mf.CLIMATE].from_id, self.dale)
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.towns, True, source=BY_DM)
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, self.towns, True, source=BY_DM, dm_chose_secret=True
+        )
         hidden = await self.memory.map_facts_up(
             GUILD_A, self.c, self.bryn, gate.Viewer.player([pc]), shown={self.bryn, self.dale}
         )

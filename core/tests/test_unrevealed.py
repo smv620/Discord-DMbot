@@ -68,7 +68,9 @@ class TheConnection(Held):
             await self.memory.update_relation(
                 self.g, self.one.id, made.value[0].id, source=DM, unrevealed=False
             )
-        await self.memory.set_hidden_from_players(self.g, self.one.id, other, False, source=DM)
+        await self.memory.set_hidden_from_players(
+            self.g, self.one.id, other, False, source=DM, dm_chose_secret=True
+        )
         await self.memory.update_relation(
             self.g, self.one.id, made.value[0].id, source=DM, unrevealed=False
         )
@@ -122,7 +124,9 @@ class TheConnection(Held):
         link = made.value[0]
         with self.assertRaises(MemoryRuleError):  # a name is still hidden
             await link_edits.set_secret(self.memory, self.g, self.one.id, link, False)
-        await self.memory.set_hidden_from_players(self.g, self.one.id, other, False, source=DM)
+        await self.memory.set_hidden_from_players(
+            self.g, self.one.id, other, False, source=DM, dm_chose_secret=True
+        )
         await link_edits.set_secret(self.memory, self.g, self.one.id, link, False)
         self.assertIn(link.id, await self.seen(self.player))
 
@@ -150,7 +154,7 @@ class TheNames(Held):
         mine = names(await self.graph(center=self.mira, hops=1, view="full"))
         self.assertFalse(mine[fresh]["revealed"])
         shown = await self.memory.set_hidden_from_players(
-            self.g, self.one.id, fresh, False, source=DM
+            self.g, self.one.id, fresh, False, source=DM, dm_chose_secret=True
         )
         theirs = names(await self.graph(self.player, center=self.mira, hops=1))
         self.assertTrue(theirs[fresh]["revealed"])
@@ -194,7 +198,9 @@ class TheListeners(Held):
         fresh = await self.add("Orla Finch", "npc", hidden_from_players=True)
         clue = await self.add("The Map", "clue")
         await self.link("knows", self.mira, clue, "knows-clue")
-        await self.memory.set_audience_limited(self.g, self.one.id, clue, True, source=DM)
+        await self.memory.set_audience_limited(
+            self.g, self.one.id, clue, True, source=DM, dm_chose_secret=True
+        )
         secret = await self.add("Lord Veil", "npc")
         await self.alias(secret, "The Stranger", secret=True)
         lookup = CampaignLookup.build(await self.memory.lookup_data(self.g, self.one.id))

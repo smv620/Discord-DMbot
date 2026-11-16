@@ -2176,7 +2176,12 @@ async def _secret_names_known_by(
             continue
         try:
             await memory.set_alias_knowers(
-                campaign.guild_id, campaign.id, alias.id, [known_by], source=DM
+                campaign.guild_id,
+                campaign.id,
+                alias.id,
+                [known_by],
+                source=DM,
+                dm_chose_secret=False,
             )
         except MemoryRuleError:
             log.info("A secret name's first knowers were refused")
@@ -3746,6 +3751,8 @@ class ConnectionOffer(_Menu):
                         else keep.kept_unrevealed(c, secret or c.secret, shown)
                     )
                     and not view.reveal),
+                    # (the DM's own 🤫 or "not said yet" on this card: their choice, #4524)
+                    dm_chose_secret=secret or bool(view.unrevealed),
                 )  # fmt: skip
                 kept = await memory.add_relation(
                     campaign.guild_id, campaign.id, c.subject_id, c.predicate, c.object_id,

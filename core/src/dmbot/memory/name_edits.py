@@ -53,18 +53,32 @@ async def set_who_knows(
             keep_batch(
                 log,
                 await memory.set_alias_knowers(
-                    guild_id, campaign_id, alias.id, [], source=DM, players_only=players_only
+                    guild_id,
+                    campaign_id,
+                    alias.id,
+                    [],
+                    source=DM,
+                    players_only=players_only,
+                    dm_chose_secret=True,
                 ),
             )
         try:
             return keep_batch(
                 log,
-                await memory.update_alias(guild_id, campaign_id, alias.id, secret=False, source=DM),
+                await memory.update_alias(
+                    guild_id, campaign_id, alias.id, secret=False, source=DM, dm_chose_secret=True
+                ),
             )
         except MemoryRuleError:
             if before:
                 await memory.set_alias_knowers(
-                    guild_id, campaign_id, alias.id, before, source=DM, players_only=players_only
+                    guild_id,
+                    campaign_id,
+                    alias.id,
+                    before,
+                    source=DM,
+                    players_only=players_only,
+                    dm_chose_secret=True,
                 )
             raise
     chosen = list(characters) if who == SOME_CHARACTERS else []
@@ -73,12 +87,20 @@ async def set_who_knows(
     if not alias.secret:
         hidden = keep_batch(
             log,
-            await memory.update_alias(guild_id, campaign_id, alias.id, secret=True, source=DM),
+            await memory.update_alias(
+                guild_id, campaign_id, alias.id, secret=True, source=DM, dm_chose_secret=True
+            ),
         )
     knew = keep_batch(
         log,
         await memory.set_alias_knowers(
-            guild_id, campaign_id, alias.id, chosen, source=DM, players_only=players_only
+            guild_id,
+            campaign_id,
+            alias.id,
+            chosen,
+            source=DM,
+            players_only=players_only,
+            dm_chose_secret=True,
         ),
     )
     # (keeping it secret with no one to know it is the only change: Undo takes that back, #4159)

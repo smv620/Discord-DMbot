@@ -203,7 +203,9 @@ class AnAssumedParent(Stored):
     async def test_the_dms_reveal_says_its_right(self) -> None:
         guess = await self.assume(self.inn, self.town)
         for e in (self.inn, self.town):
-            await self.memory.set_hidden_from_players(GUILD_A, self.c, e, False, source=BY_DM)
+            await self.memory.set_hidden_from_players(
+                GUILD_A, self.c, e, False, source=BY_DM, dm_chose_secret=True
+            )
         await self.memory.update_relation(GUILD_A, self.c, guess, source=BY_DM, unrevealed=False)
         r = await self.row(guess)
         self.assertEqual((r.assumed, r.unrevealed), (False, False))
@@ -217,7 +219,7 @@ class AnAssumedParent(Stored):
             )
         # the DM's own "who knows" list is their word on it: the mark goes
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, CONNECTION, guess, [hero], source=BY_DM
+            GUILD_A, self.c, CONNECTION, guess, [hero], source=BY_DM, dm_chose_secret=True
         )
         self.assertFalse((await self.row(guess)).assumed)
 
@@ -298,7 +300,9 @@ class OnTheCard(NamesTest):
                 g, c, name=name, type="place", source=BY_DM, status=CONFIRMED
             )
             await self.memory.set_place_level(g, c, made.value.id, level, source=BY_DM)
-            await self.memory.set_hidden_from_players(g, c, made.value.id, False, source=BY_DM)
+            await self.memory.set_hidden_from_players(
+                g, c, made.value.id, False, source=BY_DM, dm_chose_secret=True
+            )
             ids.append(made.value.id)
         self.town, self.inn = ids
         written = await self.memory.add_relation(
@@ -440,7 +444,9 @@ class AfterTheReview(Stored):
     async def test_undo_of_the_dms_reveal_puts_the_guess_back(self) -> None:
         guess = await self.assume(self.inn, self.town)
         for e in (self.inn, self.town):
-            await self.memory.set_hidden_from_players(GUILD_A, self.c, e, False, source=BY_DM)
+            await self.memory.set_hidden_from_players(
+                GUILD_A, self.c, e, False, source=BY_DM, dm_chose_secret=True
+            )
         shown = await self.memory.update_relation(
             GUILD_A, self.c, guess, source=BY_DM, unrevealed=False
         )

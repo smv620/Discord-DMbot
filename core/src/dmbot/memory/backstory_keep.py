@@ -223,17 +223,28 @@ async def end_replaced(
     *,
     link: Waiting | None = None,
     hidden: bool = False,
+    dm_chose_secret: bool = False,
 ) -> None:
     """End these connections as of `start` (never deleted, so the history and the timeline keep
     them). Each one's batch is appended to `ended` as it is done, so a caller whose later step
     fails can take back exactly what was ended (`undo_batches`). A hand-over's (`link`, #4115)
     end with its reason; when what is kept is `hidden` (secret, or not said at the table yet), a
     hand-over never ends a tie the players can see: that would tell them the item moved
-    (`whereabouts`' rule, Supervisor on #4123)."""
+    (`whereabouts`' rule, Supervisor on #4123).
+
+    Public never becomes secret by itself (#4524, ruling E): when what is kept is `hidden` and an
+    old connection is one the players can see, it is not ended; the DM is asked "Did this change?
+    Keep both / End the old one" instead (`MemoryStore.ask_replace`, with the link's upload as
+    its evidence). The DM's own hide on the card (`dm_chose_secret`: 🤫, or Players: hide) ends
+    it as before."""
     handed = {r.id for r in hand_over_ties(link, old)} if link is not None else set()
     for r in old:
         reason = link.hand_over if link is not None and r.id in handed else None
         if r.id in handed and hidden and not _hidden(r):
+            continue
+        if hidden and not _hidden(r) and not dm_chose_secret:
+            label = link.upload if link is not None else ""
+            await memory.ask_replace(guild_id, campaign_id, r.id, end_at=start, label=label)
             continue
         written = await memory.update_relation(
             guild_id, campaign_id, r.id, source=DM, to_session_at=start, end_reason=reason
@@ -333,7 +344,7 @@ async def keep_all(
         try:
             await end_replaced(
                 memory, guild_id, campaign_id, old, start, ended, link=c,
-                hidden=secret or unrevealed,
+                hidden=secret or unrevealed, dm_chose_secret=players == "hide",
             )  # fmt: skip
             written = await memory.add_relation(
                 guild_id, campaign_id, c.subject_id, c.predicate, c.object_id,

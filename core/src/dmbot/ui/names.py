@@ -944,7 +944,15 @@ async def save_name(
         )
     for disguise in secret:
         await memory.add_alias(
-            gid, cid, entity.id, disguise, kind="title", source=DM, status=CONFIRMED, secret=True
+            gid,
+            cid,
+            entity.id,
+            disguise,
+            kind="title",
+            source=DM,
+            status=CONFIRMED,
+            secret=True,
+            dm_chose_secret=True,
         )
     return entity
 

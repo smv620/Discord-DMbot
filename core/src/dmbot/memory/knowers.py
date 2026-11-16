@@ -77,6 +77,48 @@ _COLUMNS = {
 }
 
 
+_GUARDED_TABLE = {  # the statements the owner's rule covers (#4524): names and connections
+    "entry": "memory_entities",
+    "connection": "memory_relations",
+    "alias": "memory_aliases",
+}
+
+
+async def _players_kept(
+    w: Changes, kind: str, item_id: str, chosen: Collection[str]
+) -> tuple[set[str], set[str]]:
+    """The player characters a setter would take off this item who knew it before this write
+    (#4524: public never becomes secret by itself), as (their entry ids, their points of view),
+    each kept and asked as one 🤫 question; none when the DM chose it (`dm_chose_secret`), for an
+    Undo, or for a kind the rule doesn't cover. A row this same write made was not known before
+    it (an upload setting its own new name's knowers), so it is never kept."""
+    if w.dm_chose_secret or w.undoes is not None or w.joining or kind not in _GUARDED_TABLE:
+        return set(), set()
+    column, _ = _COLUMNS[kind]
+    pcs = {
+        str(r["id"]): str(r["entity_id"])
+        for r in await w.select(PERSPECTIVES, " AND kind = %s", [PC_VIEW])
+        if r["entity_id"] is not None
+    }
+    if not pcs:
+        return set(), set()
+    rows = await w.select(KNOWERS, f" AND {column} = %s AND created_at < %s", [item_id, w.now])
+    if kind == "alias":
+        rows += await w.select(
+            ALIAS_KNOWERS, " AND alias_id = %s AND created_at < %s", [item_id, w.now]
+        )
+    before = {pcs[str(r["perspective_id"])] for r in rows if str(r["perspective_id"]) in pcs}
+    if kind == "connection":  # (the old lists: a player character's belief in it)
+        before |= set((await connection_knowers(w, [item_id])).get(item_id, [])) & set(pcs.values())
+    dropping = before - set(chosen)
+    if not dropping:
+        return set(), set()
+    from dmbot.memory import public_guard
+
+    await public_guard.ask_knowers(w, _GUARDED_TABLE[kind], item_id, dropping)
+    return dropping, {view for view, entity in pcs.items() if entity in dropping}
+
+
 async def _known_characters(w: Scope, character_ids: Sequence[str]) -> dict[str, bool]:
     """The confirmed characters among these ids, player characters and NPCs, each with whether it
     is a player's (§9b: a point of view for each character). Anything else (another campaign's
@@ -156,8 +198,9 @@ async def set_statement_knowers(
             )  # fmt: skip
         elif have[view_id]["confidence"] != sure[entity_id]:
             await w.update(KNOWERS, have[view_id]["id"], {"confidence": sure[entity_id]})
+    _kept, kept_views = await _players_kept(w, kind, statement_id, list(chosen))
     for view_id, row in have.items():
-        if view_id not in views.values():
+        if view_id not in views.values() and view_id not in kept_views:
             await w.delete(KNOWERS, row["id"])
     return list(chosen)
 
@@ -332,6 +375,12 @@ async def mark_guess(w: Changes, kind: str, statement_ids: Sequence[str], certai
         f" AND {column} = ANY(%s) AND perspective_id = ANY(%s) AND confidence > %s",
         [list(statement_ids), views, certainty],
     )
+    if not w.dm_chose_secret:
+        # (only rows this write made: a player character already sure of it stays sure, #4524;
+        # making someone less sure is never asked about, it is simply not done)
+        made_now = [r for r in rows if r["created_at"] >= w.now]
+        w.held_back += len(rows) - len(made_now)
+        rows = made_now
     for row in rows:
         await w.update(KNOWERS, row["id"], {"confidence": certainty})
     return len(rows)
@@ -373,6 +422,8 @@ async def set_connection_knowers(
     if not (relation["secret"] or relation["unrevealed"]):
         raise MemoryRuleError(NOT_HIDDEN)
     known = await _known_characters(w, character_ids)
+    for entity_id in (await _players_kept(w, "connection", relation_id, list(known)))[0]:
+        known[entity_id] = True  # (a player character who knew it keeps knowing: #4524)
     chosen = list(known)
     now = await connection_knowers(w, [relation_id])
     current = set(now.get(relation_id, []))
@@ -402,6 +453,8 @@ async def set_alias_knowers(
     if alias is None or alias["status"] == "rejected" or not alias["secret"]:
         raise MemoryRuleError(NOT_SECRET)
     known = await _known_characters(w, character_ids)
+    for entity_id in (await _players_kept(w, "alias", alias_id, list(known)))[0]:
+        known[entity_id] = True  # (a player character who knew it keeps knowing: #4524)
     chosen = list(known)
     views = {
         entity_id: await _view_for(w, entity_id, player) for entity_id, player in known.items()

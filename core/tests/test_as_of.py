@@ -83,7 +83,9 @@ class AsOf(lies_t.Lies):
     async def test_a_connection_the_player_may_not_know_is_not_in_it(self) -> None:
         view = await self.pc_view()
         await self.held(view, 0.4, 10 * DAY)
-        await self.memory.set_connection_knowers(GUILD_A, self.c, self.rel, [], source="dm")
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, self.rel, [], source="dm", dm_chose_secret=True
+        )
         self.assertEqual(
             await self.memory.my_characters_believed_at(GUILD_A, self.c, 1, 12 * DAY), []
         )

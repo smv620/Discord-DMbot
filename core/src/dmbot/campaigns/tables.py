@@ -212,6 +212,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "thread_suggestions": _WAIT,  # (the lore reader's story threads, #4453: a re-read rebuilds it)
     "time_limit_told": _WAIT,  # (#4448: which messages were said; a restore tells afresh)
     "secret_exposures": _WAIT,
+    # (the 🤫 questions waiting for the DM, #4524: point at items by id, and quote people whose
+    # consent a backup doesn't carry; what the DM answered is in the items themselves)
+    "secret_questions": _WAIT,
     "name_actions": _WAIT,
     "setting_actions": _WAIT,
     "said_as_listens": _WAIT,  # a DM's clip while it becomes letters, gone in an hour (#2316)

@@ -276,7 +276,9 @@ class ThePastTranscripts(NamesTest):
             await add(GUILD, cid, type="character", name="Mira", source="dm", status="confirmed")
         ).value
         await self.memory.add_knower(GUILD, cid, clue.id, mira.id, source="dm", from_session_at=100)
-        await self.memory.set_audience_limited(GUILD, cid, clue.id, True, source="dm")
+        await self.memory.set_audience_limited(
+            GUILD, cid, clue.id, True, source="dm", dm_chose_secret=True
+        )
         await self.transcripts.add_lines(
             GUILD, self.session, [Line(MS + 8000, PLAYER, "x", "Brannoch's deed and Branok's deed")]
         )

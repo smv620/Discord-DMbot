@@ -220,15 +220,21 @@ class Players(_Thread):
         party = gate.Viewer.player([pc])
         # (a thread made in Discord starts hidden from players, and so does this giver)
         for hide in (self.quest, self.hlin):
-            await self.memory.set_hidden_from_players(GUILD_A, self.c, hide, True, source=DM)
+            await self.memory.set_hidden_from_players(
+                GUILD_A, self.c, hide, True, source=DM, dm_chose_secret=True
+            )
         reward = await self.put(tp.REWARD, "100 gold", who_id=self.hlin)
         await self.memory.show_thread_part(GUILD_A, self.c, reward.id, True, source=DM)
         self.assertEqual(await self.standing(party), [])  # (the thread is hidden from them)
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.quest, False, source=DM)
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, self.quest, False, source=DM, dm_chose_secret=True
+        )
         hidden = await self.put(tp.COMPLICATION, "Sephek is no mortal")
         (seen,) = await self.standing(party)  # (the DM's own typing starts hidden)
         self.assertEqual((seen.id, seen.who_id), (reward.id, None))  # (Hlin isn't shown to them)
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.hlin, False, source=DM)
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, self.hlin, False, source=DM, dm_chose_secret=True
+        )
         (seen,) = await self.standing(party)
         self.assertEqual(seen.who_id, self.hlin)
         await self.memory.show_thread_part(GUILD_A, self.c, hidden.id, True, source=DM)

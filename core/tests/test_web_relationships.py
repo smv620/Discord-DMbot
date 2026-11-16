@@ -77,7 +77,7 @@ class Web(Listing):
             for i in ids:
                 await self.memory.set_statement_knowers(
                     self.g, self.one.id, kind, i, sorted({*known.get(i, []), hero}),
-                    source=DM_SOURCE,
+                    source=DM_SOURCE, dm_chose_secret=True,
                 )  # fmt: skip
 
     async def keep_from_bob(self, entry: str) -> None:
@@ -102,6 +102,7 @@ class Web(Listing):
                 await self.memory.set_statement_knowers(
                     self.g, self.one.id, kind, i,
                     sorted(set(known.get(i, [])) - {self.hero}), source=DM_SOURCE,
+                    dm_chose_secret=True,
                 )  # fmt: skip
 
     async def keep_link_from_bob(self, link: str) -> None:
@@ -110,7 +111,7 @@ class Web(Listing):
         known = await self.memory.statement_knowers(self.g, self.one.id, CONNECTION, [link])
         await self.memory.set_statement_knowers(
             self.g, self.one.id, CONNECTION, link,
-            sorted(set(known.get(link, [])) - {self.hero}), source=DM_SOURCE,
+            sorted(set(known.get(link, [])) - {self.hero}), source=DM_SOURCE, dm_chose_secret=True,
         )  # fmt: skip
 
     async def link(self, predicate: str, a: str, b: str, tag: str, *, secret: bool = False) -> str:

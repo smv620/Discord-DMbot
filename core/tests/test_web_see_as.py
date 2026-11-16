@@ -39,7 +39,7 @@ class SeeAs(Web):
 
     async def know(self, kind: str, statement: str, who: list[str]) -> None:
         await self.memory.set_statement_knowers(
-            self.g, self.one.id, kind, statement, who, source=DM_SOURCE
+            self.g, self.one.id, kind, statement, who, source=DM_SOURCE, dm_chose_secret=True
         )
 
     async def seen(self, viewer: str, who: Any = None, **kw: Any) -> dict[str, Any]:

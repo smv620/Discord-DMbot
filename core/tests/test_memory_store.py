@@ -191,7 +191,9 @@ class Isolation(MemoryTest):
             prompt_version="deeds-1", model="m",
         )  # fmt: skip
         # and a character who knows an entry exists (#2995)
-        await self.memory.set_statement_knowers(GUILD_A, self.c, "entry", b, [view], source="dm")
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, "entry", b, [view], source="dm", dm_chose_secret=True
+        )
         await self.relate(a, "located_in", b)  # flagged: Cerric isn't a place
         known = await self.relate(a, "knows", b, status="confirmed")  # and its beliefs (#2409)
         # and the upload a kept connection came from (#2946)

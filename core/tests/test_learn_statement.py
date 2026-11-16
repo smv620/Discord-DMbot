@@ -60,7 +60,13 @@ class Learning(Helpers):
         self.assertFalse(await self.learn(self.tran))
         self.assertEqual(await self.knowers(), [self.tran])
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, CONNECTION, self.rel, {self.clyde: 0.4}, source="dm"
+            GUILD_A,
+            self.c,
+            CONNECTION,
+            self.rel,
+            {self.clyde: 0.4},
+            source="dm",
+            dm_chose_secret=True,
         )
         self.assertTrue(await self.learn(self.clyde))  # (raised to sure)
         seen = await self.memory.visible_to(GUILD_A, self.c, Viewer.character(self.clyde))
@@ -114,7 +120,7 @@ class Learning(Helpers):
         menu = await self.memory.connection_knowers(GUILD_A, self.c, [self.rel])
         self.assertEqual(menu[self.rel], [pc])  # (the old reader sees it too)
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, self.rel, [*menu[self.rel], mara], source="dm"
+            GUILD_A, self.c, self.rel, [*menu[self.rel], mara], source="dm", dm_chose_secret=True
         )  # (the DM adds Mara from the menu, which was pre-filled with what it read)
         self.assertEqual(await self.knowers(), sorted([pc, mara]))
         self.assertFalse(await self.learn(pc))  # (sure in every table: nothing to change)
@@ -136,8 +142,12 @@ class Learning(Helpers):
         pc, mara = self.ids["okthandom"], self.ids["mara"]  # (a hide sleeps the players' rows)
         arlo = await self.add("Arlo", type="character", role="npc", status=CONFIRMED)
         self.rel = await self.link(arlo, self.ids["shela"])  # (an end the players can see)
-        await self.memory.set_connection_knowers(GUILD_A, self.c, self.rel, [pc, mara], source="dm")
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, arlo, True, source="dm")
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, self.rel, [pc, mara], source="dm", dm_chose_secret=True
+        )
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, arlo, True, source="dm", dm_chose_secret=True
+        )
         asleep = await self.rows()
         self.assertTrue(asleep[pc]["hidden_by"] and asleep[mara]["hidden_by"])
         done = await self.memory.learn_statement(

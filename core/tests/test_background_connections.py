@@ -867,7 +867,7 @@ class ThePath(NamesTest):
         ids = await self.ids()
         for name in (shown.subject, shown.object):  # one end becomes a name the players don't know
             await self.memory.set_hidden_from_players(
-                GUILD, self.campaign.id, ids[name], True, source="dm"
+                GUILD, self.campaign.id, ids[name], True, source="dm", dm_chose_secret=True
             )
         await self.button(view, "✅ Add it").callback(self.it())
         (rel,) = await self.relations()
@@ -1441,7 +1441,7 @@ class TheStore(NamesTest):
         # A name the players don't know yet is not a secret one (#2404): the kept connection is
         # unrevealed instead, and waits for both names.
         await self.memory.set_hidden_from_players(
-            GUILD, self.campaign.id, self.oakmere, True, source="dm"
+            GUILD, self.campaign.id, self.oakmere, True, source="dm", dm_chose_secret=True
         )
         (unseen,) = await self.store.waiting(GUILD, self.campaign.id)
         self.assertFalse(unseen.secret)

@@ -69,7 +69,9 @@ class Clues(ConfirmedMemoryTest):
             await self.memory.add_knower(
                 GUILD_A, self.c, self.secret, person, source=DM_SOURCE, from_session_at=EARLIER
             )  # (dated, so the story has a session to count)
-        await self.memory.set_audience_limited(GUILD_A, self.c, self.secret, True, source=DM_SOURCE)
+        await self.memory.set_audience_limited(
+            GUILD_A, self.c, self.secret, True, source=DM_SOURCE, dm_chose_secret=True
+        )
 
     async def claim(self, *found: Extracted) -> None:
         await self.claims.propose(
@@ -95,21 +97,21 @@ class Clues(ConfirmedMemoryTest):
     async def test_the_switch_needs_a_person_first_and_only_the_dm_and_only_a_clue(self) -> None:
         with self.assertRaises(MemoryRuleError) as nobody:
             await self.memory.set_audience_limited(
-                GUILD_A, self.c, self.secret, True, source=DM_SOURCE
+                GUILD_A, self.c, self.secret, True, source=DM_SOURCE, dm_chose_secret=True
             )
         self.assertEqual(str(nobody.exception), NEEDS_SOMEONE)
         await self.memory.add_knower(GUILD_A, self.c, self.secret, self.cerric, source=DM_SOURCE)
         with self.assertRaises(MemoryRuleError):
             await self.memory.set_audience_limited(
-                GUILD_A, self.c, self.secret, True, source="extractor"
+                GUILD_A, self.c, self.secret, True, source="extractor", dm_chose_secret=True
             )
         with self.assertRaises(MemoryRuleError) as not_a_clue:
             await self.memory.set_audience_limited(
-                GUILD_A, self.c, self.sword, True, source=DM_SOURCE
+                GUILD_A, self.c, self.sword, True, source=DM_SOURCE, dm_chose_secret=True
             )
         self.assertEqual(str(not_a_clue.exception), ONLY_CLUES)
         written = await self.memory.set_audience_limited(
-            GUILD_A, self.c, self.secret, True, source=DM_SOURCE
+            GUILD_A, self.c, self.secret, True, source=DM_SOURCE, dm_chose_secret=True
         )
         self.assertTrue(written.value.audience_limited)
 
@@ -129,19 +131,19 @@ class Clues(ConfirmedMemoryTest):
         await self.limit(self.cerric, self.kesh)
         self.assertEqual(await self.audience(), ["Cerric", "Kesh"])
         first = await self.memory.remove_knower(
-            GUILD_A, self.c, self.secret, self.kesh, source=DM_SOURCE
+            GUILD_A, self.c, self.secret, self.kesh, source=DM_SOURCE, dm_chose_secret=True
         )
         self.assertEqual(first.value[1], False)
         self.assertEqual(await self.audience(), ["Cerric"])
         last = await self.memory.remove_knower(
-            GUILD_A, self.c, self.secret, self.cerric, source=DM_SOURCE
+            GUILD_A, self.c, self.secret, self.cerric, source=DM_SOURCE, dm_chose_secret=True
         )
         clue, turned_off = last.value
         self.assertEqual((clue.audience_limited, turned_off), (False, True))
         self.assertEqual(await self.audience(), [])
         with self.assertRaises(MemoryRuleError):  # not on the list any more
             await self.memory.remove_knower(
-                GUILD_A, self.c, self.secret, self.cerric, source=DM_SOURCE
+                GUILD_A, self.c, self.secret, self.cerric, source=DM_SOURCE, dm_chose_secret=True
             )
 
     async def test_a_clue_made_another_kind_loses_its_switch(self) -> None:

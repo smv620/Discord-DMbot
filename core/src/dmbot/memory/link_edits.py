@@ -24,7 +24,13 @@ async def set_secret(
     "players can see it" switch, refused until both its names are shown."""
     reveal = False if link.unrevealed and not secret else None
     return await memory.update_relation(
-        guild_id, campaign_id, link.id, source=DM, secret=secret, unrevealed=reveal
+        guild_id,
+        campaign_id,
+        link.id,
+        source=DM,
+        secret=secret,
+        unrevealed=reveal,
+        dm_chose_secret=True,
     )
 
 
@@ -74,7 +80,13 @@ async def set_who_knows(
             keep_batch(
                 log,
                 await memory.set_connection_knowers(
-                    guild_id, campaign_id, link.id, [], source=DM, players_only=players_only
+                    guild_id,
+                    campaign_id,
+                    link.id,
+                    [],
+                    source=DM,
+                    players_only=players_only,
+                    dm_chose_secret=True,
                 ),
             )
         try:
@@ -82,7 +94,13 @@ async def set_who_knows(
         except MemoryRuleError:  # (refused until its names are shown): put who knew it back
             if before:
                 await memory.set_connection_knowers(
-                    guild_id, campaign_id, link.id, before, source=DM, players_only=players_only
+                    guild_id,
+                    campaign_id,
+                    link.id,
+                    before,
+                    source=DM,
+                    players_only=players_only,
+                    dm_chose_secret=True,
                 )
             raise
     chosen = list(characters) if who == SOME_CHARACTERS else []
@@ -93,7 +111,13 @@ async def set_who_knows(
     knew = keep_batch(
         log,
         await memory.set_connection_knowers(
-            guild_id, campaign_id, link.id, chosen, source=DM, players_only=players_only
+            guild_id,
+            campaign_id,
+            link.id,
+            chosen,
+            source=DM,
+            players_only=players_only,
+            dm_chose_secret=True,
         ),
     )
     # (hiding it with no one to know it is the only change: that one is what Undo takes back, #4159)

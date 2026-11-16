@@ -144,7 +144,9 @@ class TheNameEachViewerSees(JoinBase):
         stranger = await self.add(
             "Zara", type="character", role="player_character", played_by=3, status=CONFIRMED
         )
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.ken, True, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, self.ken, True, source="dm", dm_chose_secret=True
+        )
         self.assertIsNone(await self.name_for(Viewer.character(stranger)))
 
     async def test_the_dm_sees_the_main_name(self) -> None:
@@ -152,7 +154,9 @@ class TheNameEachViewerSees(JoinBase):
         self.assertEqual(await self.name_for(Viewer.the_dm()), "Ken")
 
     async def test_a_public_place_never_says_ken_while_ken_is_hidden(self) -> None:
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.ken, True, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, self.ken, True, source="dm", dm_chose_secret=True
+        )
         await self.join()
         self.assertEqual(await self.name_for(Viewer.the_party(), public=True), "someone")
 
@@ -239,7 +243,9 @@ class TheProbes(JoinBase):
         self.assertIn("the gatekeeper", [a.text for a in secret])
 
     async def test_who_knew_ken_still_knows_ken_after_joining_a_hidden_guard(self) -> None:
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.guard, True, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, self.guard, True, source="dm", dm_chose_secret=True
+        )
         await self.join()
         seen = await self.view(self.sees_ken)
         self.assertTrue(seen.knows(ENTRY, self.ken))  # type: ignore[attr-defined]

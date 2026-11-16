@@ -162,7 +162,7 @@ class TheStore(DatabaseTest):
         council = await self.entry("Tower Council", "faction")
         mirelle = await self.entry("Mirelle Dane")
         await self.memory.set_statement_knowers(
-            GUILD, cid, "entry", mirelle, {council: 1.0}, source=DM_SOURCE
+            GUILD, cid, "entry", mirelle, {council: 1.0}, source=DM_SOURCE, dm_chose_secret=True
         )
         written = await self.memory.add_guessed_knowers(
             GUILD, cid, "entry", mirelle, {council: 0.6, tavin: 0.9}, source=DM_SOURCE
