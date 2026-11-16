@@ -2638,13 +2638,13 @@ class Lists(NamesTest):
             got = await name_lists.read_link_once(GUILD, "https://example.com/b")
         self.assertEqual(got, (None, name_lists.LINK_BUSY))
         fetched.assert_not_called()
+        # The place is freed even when reading fails.
+        name_lists._link_busy.discard((GUILD, ""))
         # A website read of another campaign does not hold Discord's place, nor another campaign's.
         name_lists._link_busy.add((GUILD, "a"))
         self.assertFalse(name_lists.link_is_busy(GUILD))
         self.assertFalse(name_lists.link_is_busy(GUILD, "b"))
         name_lists._link_busy.discard((GUILD, "a"))
-        # The place is freed even when reading fails.
-        name_lists._link_busy.discard((GUILD, ""))
         with (
             patch("dmbot.fetch.fetch", AsyncMock(side_effect=RuntimeError("boom"))),
             self.assertRaises(RuntimeError),
