@@ -5,12 +5,12 @@
   "speaker": "Cerric Vanya'elen",
   "how_to_read": {
     "speaker": "the player character whose secret backstory this is: the upload's speaker",
-    "knowers": "who knows the row before anything public names it: a list of names (player characters, or an NPC with a point of view), \"party\" (all four player characters), \"everyone\" (common knowledge) or \"dm\" (nobody: a real secret, not even the speaker). A row with no knowers field is known to the speaker alone. An event between two characters is known to both ends (#4523 ruling C)",
+    "knowers": "who knows the row before anything public names it. With no knowers field: the speaker, and every person or creature on the row (a pair's two ends, an event's who), since what happens between two is known to both (#4523 ruling C). Otherwise a list of names (the only knowers), \"party\" (all four player characters), \"everyone\" (common knowledge) or \"dm\" (nobody: a real secret, not even the speaker). A node with no knowers is known to the speaker and to itself if it is a person",
     "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted as a fact)",
     "must_find": "false = a good find if present, not a miss if absent",
     "current": "false = history: it was true and is not now",
     "line": "the line of the document's plain-text export that supports it (blank lines count)",
-    "revealed": "which public lore rows (lore_key.json) state the same thing; listed there too, under reveals",
+    "reveals": "lore_key.json's reveals lists, by id, the rows of this key the public lore states; judged by what the lore says, row by row, never by matching ends alone",
     "threads": "kind quest, hook or mystery; taker = whose own pursuit it is; same_as = the lore key's thread for the same story",
     "relation": "as lore_key.json"
   },
@@ -25,7 +25,7 @@
         "Spellweave"
       ],
       "knowers": "party",
-      "note": "Player character; Norro Fa'ertenya is his birth name, Cerric Vanya'elen the one he took in Neverwinter (line 52). The node is the party's; the old name is his secret until the lore names it"
+      "note": "Player character. Norro Fa'ertenya is his birth name (line 52); the party knows him, the old name stays secret until the lore says it"
     },
     {
       "name": "Roceran",
@@ -84,7 +84,7 @@
     {
       "name": "Wit",
       "kind": "person",
-      "note": "an apprentice; came back fatally wounded (line 34)"
+      "note": "an apprentice; came back badly hurt (line 34); her fate is open"
     },
     {
       "name": "Danneth",
@@ -99,6 +99,7 @@
         "Khelben"
       ],
       "must_find": false,
+      "knowers": "everyone",
       "note": "the previous Blackstaff; only a marble bust of him is in the story"
     },
     {
@@ -111,7 +112,8 @@
       "kind": "group",
       "aliases": [
         "Lords' Alliance"
-      ]
+      ],
+      "knowers": "everyone"
     },
     {
       "name": "Council of the Blackstaff",
@@ -129,25 +131,30 @@
         "Harpers"
       ],
       "must_find": false,
+      "knowers": "everyone",
       "note": "Khelben founded them; mentioned once"
     },
     {
       "name": "Lathander",
       "kind": "deity",
       "must_find": false,
+      "knowers": "everyone",
       "note": "the temple Cerric hides in is his"
     },
     {
       "name": "Waterdeep",
-      "kind": "place"
+      "kind": "place",
+      "knowers": "everyone"
     },
     {
       "name": "Temple of the Seldarine",
-      "kind": "place"
+      "kind": "place",
+      "knowers": "everyone"
     },
     {
       "name": "Castle Ward",
-      "kind": "place"
+      "kind": "place",
+      "knowers": "everyone"
     },
     {
       "name": "Sparkwalker Spire",
@@ -155,38 +162,45 @@
     },
     {
       "name": "Blackstaff Tower",
-      "kind": "place"
+      "kind": "place",
+      "knowers": "everyone"
     },
     {
       "name": "Spires of the Morning",
       "kind": "place",
+      "knowers": "everyone",
       "note": "a temple to Lathander where he hid"
     },
     {
       "name": "The Sapphire House",
       "kind": "place",
       "must_find": false,
+      "knowers": "everyone",
       "note": "an inn he thought of and passed by"
     },
     {
       "name": "The Font of Knowledge",
       "kind": "place",
       "must_find": false,
+      "knowers": "everyone",
       "note": "a place he thought of and passed by"
     },
     {
       "name": "Sword Street",
       "kind": "place",
-      "must_find": false
+      "must_find": false,
+      "knowers": "everyone"
     },
     {
       "name": "Calamastyr Lane",
       "kind": "place",
-      "must_find": false
+      "must_find": false,
+      "knowers": "everyone"
     },
     {
       "name": "Neverwinter",
-      "kind": "place"
+      "kind": "place",
+      "knowers": "everyone"
     },
     {
       "name": "Easthaven",
@@ -194,21 +208,24 @@
       "aliases": [
         "East Haven",
         "Eashaven"
-      ]
+      ],
+      "knowers": "everyone"
     },
     {
       "name": "Ten-Towns",
       "kind": "place",
       "aliases": [
         "Ten Towns"
-      ]
+      ],
+      "knowers": "everyone"
     },
     {
       "name": "Icewind Dale",
       "kind": "place",
       "aliases": [
         "the Dale"
-      ]
+      ],
+      "knowers": "everyone"
     },
     {
       "name": "Azure tome",
@@ -250,9 +267,10 @@
       "a": "Roceran",
       "relation": "parent_of",
       "b": "Valyra",
-      "tier": "stated",
+      "tier": "inferred",
       "must_find": true,
-      "line": 1
+      "line": 1,
+      "note": "the same parents: implied"
     },
     {
       "id": "c004",
@@ -387,10 +405,6 @@
       "tier": "stated",
       "must_find": true,
       "line": 28,
-      "knowers": [
-        "Cerric Vanya'elen",
-        "Emmerich Ravenstride"
-      ],
       "note": "from both sides as told: Emmerich antagonized him (line 25)"
     },
     {
@@ -402,11 +416,7 @@
       "must_find": true,
       "line": 28,
       "detail": "respect",
-      "knowers": [
-        "Cerric Vanya'elen",
-        "Wit"
-      ],
-      "note": "mutual respect: an event between the two (ruling C)"
+      "note": "mutual respect. The lore calls her his rival (l018): the two disagree, the DM decides"
     },
     {
       "id": "c019",
@@ -464,7 +474,7 @@
       "b": "Azure tome",
       "tier": "stated",
       "must_find": true,
-      "line": 37
+      "line": 34
     },
     {
       "id": "c025",
@@ -493,7 +503,7 @@
       "b": "Blackstaff Tower",
       "tier": "stated",
       "must_find": false,
-      "line": 39,
+      "line": 37,
       "current": false,
       "note": "the tower's garden, by the rune"
     },
@@ -565,11 +575,7 @@
       "tier": "stated",
       "must_find": false,
       "line": 34,
-      "current": false,
-      "knowers": [
-        "Cerric Vanya'elen",
-        "Wit"
-      ]
+      "current": false
     },
     {
       "id": "c035",
@@ -591,51 +597,116 @@
       "must_find": false,
       "line": 64,
       "note": "he knows only the name"
+    },
+    {
+      "id": "c037",
+      "a": "Qinric",
+      "relation": "associate",
+      "b": "Syllar Sparkwalker",
+      "tier": "stated",
+      "must_find": true,
+      "line": 16,
+      "note": "Syllar is one of his associates"
+    },
+    {
+      "id": "c038",
+      "a": "Cerric's paternal grandfather",
+      "relation": "parent_of",
+      "b": "Roceran",
+      "tier": "stated",
+      "must_find": true,
+      "line": 16,
+      "note": "his father's father"
+    },
+    {
+      "id": "c039",
+      "a": "Syllar Sparkwalker",
+      "relation": "works_in",
+      "b": "Sparkwalker Spire",
+      "tier": "stated",
+      "must_find": true,
+      "line": 22
+    },
+    {
+      "id": "c040",
+      "a": "The Brotherhood",
+      "relation": "knows",
+      "b": "Danneth",
+      "tier": "inferred",
+      "must_find": false,
+      "line": 60,
+      "note": "the note warns they know who he is"
     }
   ],
   "events": [
     {
       "id": "ce01",
       "what": "Valyra leaves for her apprenticeship and the siblings stop meeting",
-      "who": "Cerric, Valyra",
-      "line": 13,
-      "knowers": [
+      "who": [
         "Cerric Vanya'elen",
         "Valyra"
-      ]
+      ],
+      "line": 13
     },
     {
       "id": "ce02",
       "what": "The grandfather dies in a storm; Qinric visits and Cerric becomes the spire's steward",
-      "who": "Cerric, Qinric",
+      "who": [
+        "Cerric Vanya'elen",
+        "Qinric"
+      ],
       "line": 16
     },
     {
       "id": "ce03",
-      "what": "Master Sparkwalker disappears; Emmerich, then Wit, leave to find him",
-      "who": "Syllar Sparkwalker, Emmerich, Wit",
+      "what": "Master Sparkwalker disappears",
+      "who": [
+        "Cerric Vanya'elen",
+        "Syllar Sparkwalker"
+      ],
+      "line": 31
+    },
+    {
+      "id": "ce07",
+      "what": "Emmerich, then Wit, leave to look for the master",
+      "who": [
+        "Cerric Vanya'elen",
+        "Emmerich Ravenstride",
+        "Wit"
+      ],
       "line": 31
     },
     {
       "id": "ce04",
-      "what": "Wit returns fatally wounded and tells Cerric to save the tome",
-      "who": "Cerric, Wit",
-      "line": 34,
-      "knowers": [
+      "what": "Wit returns badly hurt and tells Cerric to save the tome",
+      "who": [
         "Cerric Vanya'elen",
         "Wit"
-      ]
+      ],
+      "line": 34
     },
     {
       "id": "ce05",
-      "what": "Cerric breaks the lock, takes the tome and escapes by the rune as someone enters",
-      "who": "Cerric",
+      "what": "Cerric takes the master's tome and escapes by the rune",
+      "who": [
+        "Cerric Vanya'elen"
+      ],
+      "line": 37
+    },
+    {
+      "id": "ce08",
+      "what": "He breaks the lock with the bust, and a figure enters as he leaves",
+      "who": [
+        "Cerric Vanya'elen"
+      ],
       "line": 37
     },
     {
       "id": "ce06",
       "what": "In Neverwinter he takes the name Cerric Vanya'elen and unlocks the tome",
-      "who": "Cerric",
+      "who": [
+        "Cerric Vanya'elen"
+      ],
       "line": 52
     }
   ],
@@ -650,6 +721,7 @@
       ],
       "in_danger": [],
       "same_as": "lq01",
+      "line": 64,
       "parts": [
         {
           "kind": "objective",
@@ -681,6 +753,19 @@
       "in_danger": [],
       "line": 46,
       "must_find": false
+    },
+    {
+      "id": "bc04",
+      "kind": "mystery",
+      "name": "What happened to Wit",
+      "taker": "Cerric Vanya'elen",
+      "missing": [
+        "Wit"
+      ],
+      "in_danger": [],
+      "line": 46,
+      "must_find": false,
+      "same_as": "lq02"
     }
   ],
   "languages": [

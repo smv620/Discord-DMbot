@@ -1,9 +1,10 @@
 """The four secret backstory keys and the lore key's knowers (#4523 slice 1a): the answer keys the
 two-stage sample run scores against hang together. Every row says who knows it, every name a row
 uses is one of the key's own entries, ids never repeat, and what the public lore reveals points
-at rows that exist. The repo is public, so a key holds names, kinds, ties and knowers, never a
-sentence of the owner's documents (Supervisor's ruling on #4523): no field is long enough to be
-one. No database or network."""
+at rows that exist and say the same thing. The repo is public, so a key holds names, kinds, ties
+and knowers, never a sentence of the owner's documents (Supervisor's ruling on #4523). The word
+cap here only keeps notes short: the proof that nothing is quoted is the review's comparison with
+the documents, which are not in the repo. No database or network."""
 
 from __future__ import annotations
 
@@ -11,6 +12,8 @@ import json
 import unittest
 from pathlib import Path
 from typing import Any
+
+from dmbot.devtools import graph_key_check as gkc
 
 FIXTURES = Path(__file__).parent / "fixtures" / "story_graph"
 BACKSTORIES = ("cerric", "okthandom", "claude", "belleros")
@@ -23,12 +26,20 @@ SPEAKERS = {
     "belleros": "Belleros Stormgrace",
 }
 ROWS = ("pairs", "events", "threads")
-TEXT_MAX = 300  # (a note is a short paraphrase; a sentence lifted from a document is longer)
+WORDS_MAX = 25  # (a note or an event is a short paraphrase, never a passage)
+TIERS = {"stated", "inferred"}
 
 
 def load(name: str) -> dict[str, Any]:
     with (FIXTURES / name).open(encoding="utf-8") as f:
         return dict(json.load(f))
+
+
+def default_knowers(key: dict[str, Any], row: dict[str, Any]) -> set[str]:
+    """Who knows a row with no knowers field: the speaker and every person or creature on it."""
+    people = {n["name"] for n in key["nodes"] if n["kind"] in {"person", "creature"}}
+    on_row = {row.get("a"), row.get("b"), *row.get("who", ())}
+    return {key["speaker"]} | (on_row & people)
 
 
 def names_of(key: dict[str, Any]) -> set[str]:
@@ -88,12 +99,45 @@ class TheBackstoryKeys(unittest.TestCase):
                             self.assertLessEqual(set(knowers), people)
 
     def test_the_owners_ruling_c_cases_are_in_the_keys(self) -> None:
-        """An event between two is known to both; something nobody knows, not even the speaker,
-        is the DM's alone (Claude doesn't remember what he made himself forget)."""
-        cerric = {r["id"]: r for r in self.keys["cerric"]["events"]}
-        self.assertEqual(set(cerric["ce04"]["knowers"]), {"Cerric Vanya'elen", "Wit"})
+        """An event between two is known to both (the default reads every name on it); something
+        nobody knows, not even the speaker, is the DM's alone (Claude doesn't remember what he made
+        himself forget); and a death only Claude saw is Claude's."""
+        cerric = self.keys["cerric"]
+        ce04 = next(r for r in cerric["events"] if r["id"] == "ce04")
+        self.assertNotIn("knowers", ce04)
+        self.assertEqual(default_knowers(cerric, ce04), {"Cerric Vanya'elen", "Wit"})
         claude = {r["id"]: r for r in self.keys["claude"]["events"]}
         self.assertEqual(claude["ae01"]["knowers"], "dm")
+        self.assertEqual(claude["ae04"]["knowers"], ["Claude Ambere"])
+
+    def test_every_event_names_the_keys_own_entries(self) -> None:
+        for slug, key in self.keys.items():
+            names = names_of(key)
+            for event in key["events"]:
+                with self.subTest(f"{slug} {event['id']}"):
+                    self.assertTrue(event["who"])
+                    self.assertLessEqual(set(event["who"]), names)
+
+    def test_rows_use_the_checks_words(self) -> None:
+        """So graph_key_check can score these keys as it scores the others."""
+        for slug, key in self.keys.items():
+            for pair in key["pairs"]:
+                with self.subTest(f"{slug} {pair['id']}"):
+                    self.assertIn(pair["relation"], gkc.GROUPS)
+                    self.assertIn(pair["tier"], TIERS)
+            for node in key["nodes"]:
+                with self.subTest(f"{slug} {node['name']}"):
+                    self.assertIn(node["kind"], gkc.ENTRY_TYPES)
+
+    def test_a_row_everyone_knows_joins_entries_everyone_knows(self) -> None:
+        """Or a scorer would call a right "everyone knows Waterdeep" a leak of a secret."""
+        for slug, key in self.keys.items():
+            nodes = {n["name"]: n for n in key["nodes"]}
+            for pair in key["pairs"]:
+                if pair.get("knowers") == "everyone":
+                    with self.subTest(f"{slug} {pair['id']}"):
+                        for end in (pair["a"], pair["b"]):
+                            self.assertEqual(nodes[end].get("knowers"), "everyone", end)
 
     def test_no_row_is_long_enough_to_be_a_quote(self) -> None:
         def strings(value: Any) -> list[str]:
@@ -109,7 +153,7 @@ class TheBackstoryKeys(unittest.TestCase):
             for section in ("nodes", *ROWS, "languages", "must_not_find"):
                 for text in strings(key[section]):
                     with self.subTest(f"{slug} {text[:40]}"):
-                        self.assertLessEqual(len(text), TEXT_MAX)
+                        self.assertLessEqual(len(text.split()), WORDS_MAX)
 
     def test_threads_the_lore_also_tells_point_at_its_threads(self) -> None:
         lore_threads = {t["id"] for t in self.lore["threads"]}
@@ -146,6 +190,35 @@ class TheLoreKeysKnowers(unittest.TestCase):
         self.assertEqual(nodes["Auril the Frostmaiden"]["knowers"], "everyone")
         self.assertEqual(nodes["Roceran"]["knowers"], "party")
 
+    def test_a_revealed_pair_says_what_its_lore_pair_says(self) -> None:
+        """Judged row by row: the same two entries and the same tie, after aliases."""
+        canon: dict[str, str] = {}
+        for slug in BACKSTORIES:
+            for node in load(f"backstory_{slug}.json")["nodes"]:
+                for name in (node["name"], *node.get("aliases", ())):
+                    canon[name] = node["name"]
+        for node in self.lore["nodes"]:
+            for name in (node["name"], *node.get("aliases", ())):
+                canon.setdefault(name, canon.get(node["name"], node["name"]))
+        lore_pairs = {p["id"]: p for p in self.lore["pairs"]}
+
+        def triple(p: dict[str, Any]) -> tuple[str, str, str]:
+            return (canon.get(p["a"], p["a"]), p["relation"], canon.get(p["b"], p["b"]))
+
+        revealed_pairs = set()
+        for by, ids in self.lore["reveals"].items():
+            for revealed in ids:
+                row = self.rows[revealed]
+                if by in lore_pairs and "relation" in row:
+                    revealed_pairs.add(revealed)
+                    with self.subTest(f"{by} {revealed}"):
+                        self.assertEqual(triple(row), triple(lore_pairs[by]))
+        lore_triples = {triple(p) for p in lore_pairs.values()}
+        for revealed, row in self.rows.items():
+            if "relation" in row and triple(row) in lore_triples:
+                with self.subTest(revealed):
+                    self.assertIn(revealed, revealed_pairs, "the lore says it: list it in reveals")
+
     def test_every_reveal_is_a_lore_row_and_a_backstory_row(self) -> None:
         lore_ids = {
             row["id"] for section in ("pairs", "events", "threads") for row in self.lore[section]
@@ -161,6 +234,8 @@ class TheLoreKeysKnowers(unittest.TestCase):
         revealed = {i for ids in self.lore["reveals"].values() for i in ids}
         self.assertNotIn("bb02", revealed)
         self.assertNotIn("c018", revealed)  # (Wit's respect: Cerric and Wit only)
+        self.assertNotIn("ae04", revealed)  # (the ringmaster's death: the lore never says it)
+        self.assertNotIn("a003", revealed)
         self.assertIn("c001", revealed)
 
 
