@@ -3469,12 +3469,35 @@ class MemoryStore:
                     )
             return new
 
+    async def kept_secret_by_the_dm(
+        self, guild_id: int, campaign_id: str, items: Collection[str]
+    ) -> set[str]:
+        """The items (entries, connections, other names) whose 🌍 question the DM answered "Keep it
+        secret" (#4590, Supervisor's ruling 2 on #4605): a later World read never reveals them by
+        itself. The DM can still show one on Who knows this?."""
+        if not items:
+            return set()
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT DISTINCT item_id FROM secret_questions WHERE guild_id = %s"
+                " AND campaign_id = %s AND item_id = ANY(%s) AND kind = %s AND status = %s"
+                " AND change ? 'common'",
+                (
+                    guild_id,
+                    campaign_id,
+                    sorted(set(items)),
+                    secret_questions_mod.REVEAL,
+                    secret_questions_mod.MADE_SECRET,
+                ),
+            )
+            return {str(r["item_id"]) for r in await cur.fetchall()}
+
     async def claim_secret_questions(
         self, guild_id: int, campaign_id: str, question_ids: Sequence[str]
     ) -> list[secret_questions_mod.Question]:
         """Mark these waiting 🌍 reveal questions answered before their reveal is made (#4590), so
         a second press or another DM can't answer them twice. Returns the ones it took; give them
-        back with `unclaim_secret_questions` if the reveal fails, and record the reveal's last
+        back with `unclaim_secret_questions` if the reveal fails, and record the reveal's first
         batch with `secret_questions_answered` so its Undo puts them back to waiting."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(

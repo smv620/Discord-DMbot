@@ -66,12 +66,27 @@ async def reveal(
     entries: Sequence[str] = (),
     links: Sequence[Relation] = (),
     aliases: Sequence[Alias] = (),
+    by_itself: bool = True,
 ) -> Revealed:
     """Make these entries, connections and other names 🌍 Common knowledge, entries first (a
     connection is shown only once both its names are). One that can't be shown (an end still kept
     from the players) or that changed meanwhile is left as it is: the read goes on. Never raises
-    for one item; each change's batch is kept for the upload's Undo."""
+    for one item; each change's batch is kept for the upload's Undo.
+
+    `by_itself` (a read revealing without the DM's press): an item whose 🌍 question the DM
+    answered "Keep it secret" is left as it is (#4590, Supervisor's ruling 2 on #4605: a reveal by
+    itself never overrides the DM's own answer). The DM's own answer (`answer`) passes False."""
     out = Revealed()
+    if by_itself:
+        kept = await memory.kept_secret_by_the_dm(
+            guild_id, campaign_id,
+            [*entries, *(r.id for r in links), *(a.id for a in aliases)],
+        )  # fmt: skip
+        if kept:
+            log.info("A World read left %d item(s) the DM kept secret", len(kept))
+            entries = [e for e in entries if e not in kept]
+            links = [r for r in links if r.id not in kept]
+            aliases = [a for a in aliases if a.id not in kept]
     # (the store's own rule for showing what was kept back, the one used when the table says a
     # name: never a clue only some know, the party, a player's character or a person at the table)
     shown = await memory.reveal_said(guild_id, campaign_id, list(dict.fromkeys(entries)))
@@ -163,8 +178,9 @@ async def answer(
         lone = {q.item_id for q in taken if q.change.get("lone")}
         entries += [a.entity_id for a in aliases if a.id in lone]
         out = await reveal(
-            memory, guild_id, campaign_id, entries=entries, links=links, aliases=aliases
-        )
+            memory, guild_id, campaign_id, entries=entries, links=links, aliases=aliases,
+            by_itself=False,
+        )  # fmt: skip
         still = await _still_hidden(memory, guild_id, campaign_id, taken)
     except Exception:
         await memory.unclaim_secret_questions(guild_id, campaign_id, ids)

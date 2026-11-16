@@ -403,6 +403,25 @@ class TheRead(NamesTest):
         await self.read("world", names=alone, links=(), text="The Grey Hand struck at dawn.")
         self.assertEqual(await self.waiting(), [])
 
+    async def test_keep_it_secret_holds_against_a_later_reveal_by_itself(self) -> None:
+        """Supervisor's ruling 2 on #4605: a reveal by itself never overrides the DM's answer."""
+        await self.hide(self.ash)
+        tie = await self.secret_tie()
+        self.campaign = await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, True)
+        await self.read("world")
+        for q in await self.waiting():
+            await self.memory.answer_secret_question(GUILD, self.campaign.id, q.id, True, source=DM)
+        self.campaign = await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, False)
+        done = await self.read("world")
+        self.assertTrue(await self.hidden(self.ash))
+        self.assertTrue(await self.tie_secret(tie))
+        self.assertFalse(done.notice.counts.get("revealed"))
+        self.assertEqual(await self.waiting(), [])  # (and never asked again)
+        await self.memory.set_hidden_from_players(
+            GUILD, self.campaign.id, self.ash, False, source=DM, dm_chose_secret=False
+        )  # (the DM can still show it themselves)
+        self.assertFalse(await self.hidden(self.ash))
+
     async def test_keep_all_secret_keeps_only_that_uploads_questions(self) -> None:
         wren, view, it, sent = await self.two_uploads()
         await view._keep_all(it)
