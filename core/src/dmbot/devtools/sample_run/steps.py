@@ -18,6 +18,7 @@ import os
 import sys
 import time
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -189,13 +190,22 @@ async def clear_for_deploy(
     found: list[Existing] | None = None,
     sleep: Sleep | None = None,
     settle_s: float = SETTLE_WAIT_S,
-) -> sample_name.Kept:
+    need: int | None = None,
+    free: int | None = None,
+) -> tuple[sample_name.Kept, int]:
     """Make room for this deploy's sample campaign(s) (#4538, #4551): every campaign of the same N
     is deleted first (a re-run never leaves two of one number, runs of a parallel deploy
     included), the oldest deploys beyond the newest `sample_name.KEEP` go with all their runs, and
     old unnumbered ones always go. `found`: what `check_existing` returned (every one already
     passed the guard `plan.can_replace`); asked again when not given. Each delete waits for the
-    campaign's background work and re-checks ownership under its lock (`only_if_owner`)."""
+    campaign's background work and re-checks ownership under its lock (`only_if_owner`).
+
+    `need`, `free` (#4551): the runs about to be made and the DM's free paid slots (None: no
+    limit). The slots are counted before anything is deleted: while they are short after the
+    deletions above, the oldest kept deploys go with all their runs (each through `can_replace`),
+    never the newest kept deploy, and the counts line says which. Returns what is deleted and how
+    many runs there is room for (`need`, or fewer); none is a `SampleError`, with nothing
+    deleted."""
     found = found if found is not None else await check_existing(db, campaigns, guild, dm, deploy)
     names = {c.id: c.name for c in await campaigns.list_campaigns(guild)}
     have = [(old.campaign_id, names[old.campaign_id]) for old in found if old.campaign_id in names]
@@ -213,6 +223,27 @@ async def clear_for_deploy(
             raise SampleError(why)
         refused.add(campaign_id)
     kept = sample_name.plan_keep(have, deploy, protected=refused)
+    allowed = need if need is not None else 1
+    if need is not None:
+        extra, dropped, allowed = sample_name.slot_drops(
+            have,
+            kept,
+            need,
+            free,
+            lambda cid: can_replace(by_id[cid], dm) is None,
+        )
+        if allowed == 0:
+            raise SampleError(
+                "no free paid campaign slot for even one run, and no older sample to make room "
+                "from: nothing was changed"
+            )
+        if extra:
+            kept = replace(
+                kept,
+                delete=(*kept.delete, *extra),
+                keep=tuple(c for c in kept.keep if c not in set(extra)),
+                slot_dropped=dropped,
+            )
     deleted = 0
     timed_out = 0
     try:
@@ -229,11 +260,26 @@ async def clear_for_deploy(
         say(f"stopped after deleting {deleted} of {len(kept.delete)} old sample campaign(s)")
         raise
     say(sample_name.counts_line(kept))
+    if kept.slot_dropped:
+        say(sample_name.slot_line(kept.slot_dropped))
     if timed_out:
         say(f"{timed_out} old sample campaign(s) still had background work after the wait: deleted")
     if kept.delete:
         say(f"{len(kept.delete)} old campaign channel(s) to delete by hand")
-    return kept
+    return kept, allowed
+
+
+async def free_slots(db: Database, dm: int, now: int, guild: int) -> int | None:
+    """The DM's free paid campaign slots, counted the way the plan counts them
+    (`campaign_cap.room`): the plan's cap less the campaigns they own, none when there is no cap or
+    the server is on the free list (its campaigns take no slot, #3792)."""
+    from dmbot import campaign_cap, entitlements
+
+    if guild in entitlements.free_guilds():
+        return None
+    async with db.user(dm) as conn:
+        room = await campaign_cap.room(conn, dm, now)
+    return None if room.cap is None else max(0, room.cap - room.owned)
 
 
 async def make_campaign(
@@ -283,7 +329,7 @@ async def fresh_campaign(
 ) -> Campaign:
     """Make this deploy's sample campaign, "test of the frostmaiden (sample N)" (#4538): room is
     made first (`clear_for_deploy`), then the campaign."""
-    kept = await clear_for_deploy(
+    kept, _allowed = await clear_for_deploy(
         db,
         campaigns,
         guild,

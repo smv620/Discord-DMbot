@@ -9,14 +9,14 @@ database and no Discord here.
 from __future__ import annotations
 
 import re
-from collections.abc import Collection, Iterable
+from collections.abc import Callable, Collection, Iterable
 from dataclasses import dataclass
 
 OLD_NAME = "test of the frostmaiden (sample)"  # before #4538: still accepted, counted as oldest
 PREFIX = "test of the frostmaiden (sample "
 # "(sample 31)" is the deploy's one campaign; "(sample 31.2)" is run 2 of a parallel deploy (#4551)
 _NAMED = re.compile(
-    r"^test of the frostmaiden \(sample (?P<n>[0-9]{1,4})(?:\.(?P<k>[0-9]{1,2}))?\)$"
+    r"^test of the frostmaiden \(sample (?P<n>[0-9]{1,4})(?:\.(?P<k>[1-9][0-9]?))?\)$"
 )
 RUN_MAX = 99
 KEEP = 3  # the newest campaigns kept alive, so the owner can compare their story graphs
@@ -68,6 +68,9 @@ class Kept:
     not_deleted: int = 0  # candidates the guard refused: left alone, counted
     deploy: int = 0  # the deploy being made now
     replaced: bool = False  # this deploy's own campaign was there and is made again
+    # Older kept deploys dropped, with all their runs, so the new runs have paid slots (#4551):
+    # their campaign names, oldest first.
+    slot_dropped: tuple[str, ...] = ()
 
 
 def plan_keep(
@@ -120,3 +123,59 @@ def counts_line(kept: Kept) -> str:
     refused = f" Not deleted, not the tool's: {kept.not_deleted}." if kept.not_deleted else ""
     deleted = ", ".join(gone) if gone else "none"
     return f"Sample campaigns kept: {keep}. Deleted: {deleted}.{replaced}{refused}"
+
+
+def slot_drops(
+    existing: Iterable[tuple[str, str]],
+    kept: Kept,
+    need: int,
+    free: int | None,
+    deletable: Callable[[str], bool] = lambda _cid: True,
+) -> tuple[tuple[str, ...], tuple[str, ...], int]:
+    """The paid slots the new runs need, counted before anything is deleted or made (#4551): `free`
+    is the DM's free slots now (None: no limit), `kept.delete` is already going. While the slots
+    after those deletions are fewer than `need`, the oldest kept deploy goes with all its runs,
+    never the newest kept deploy (a deploy any of whose campaigns `deletable` refuses is left
+    alone). Returns the extra campaign ids to delete, their names (oldest deploy first), and how
+    many runs there is room for (`need`, or fewer; 0 means none)."""
+    if free is None:
+        return (), (), need
+    room = free + len(kept.delete)
+    staying = set(kept.keep)
+    by_deploy: dict[int, list[tuple[str, str]]] = {}
+    for cid, name in existing:
+        n = deploy_of(name)
+        if n is not None and cid in staying:
+            by_deploy.setdefault(n, []).append((cid, name))
+    order = sorted(by_deploy)  # oldest first
+    extra_ids: list[str] = []
+    extra_names: list[str] = []
+    for n in order[:-1]:  # (the newest kept deploy is never touched)
+        if room >= need:
+            break
+        runs = by_deploy[n]
+        if not all(deletable(cid) for cid, _ in runs):
+            continue
+        extra_ids += [cid for cid, _ in runs]
+        extra_names += [name for _, name in sorted(runs, key=lambda r: run_of(r[1]) or 0)]
+        room += len(runs)
+    return tuple(extra_ids), tuple(extra_names), max(0, min(need, room))
+
+
+def slot_line(names: Iterable[str]) -> str:
+    """ "Not kept for lack of slots: 29.2 to 29.5, 28." from the dropped campaigns' names."""
+    runs: dict[int, list[int]] = {}
+    for name in names:
+        n = deploy_of(name)
+        if n is not None:
+            runs.setdefault(n, []).append(run_of(name) or 0)
+    parts = []
+    for n in sorted(runs, reverse=True):
+        ks = sorted(runs[n])
+        if ks == [0]:
+            parts.append(str(n))
+        elif len(ks) == 1:
+            parts.append(f"{n}.{ks[0]}")
+        else:
+            parts.append(f"{n}.{ks[0]}\u2013{n}.{ks[-1]}")
+    return "Not kept for lack of slots: " + ", ".join(parts) + "." if parts else ""

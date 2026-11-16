@@ -684,7 +684,9 @@ def fit_parallel(budget: float, run_usd: float, wanted: int) -> int:
     return max(0, min(wanted, int(budget // run_usd)))
 
 
-async def _make_room(args: argparse.Namespace, deploy: int, say: Callable[[str], None]) -> None:
+async def _make_room(
+    args: argparse.Namespace, deploy: int, say: Callable[[str], None], need: int = 1
+) -> int:
     """Once, before the runs of a parallel deploy start (#4551): the plan check, and every sample
     campaign of this deploy (a re-run) and the oldest beyond the newest three deleted, as a single
     run does. The runs then each make their own campaign, "sample N.k"."""
@@ -708,9 +710,12 @@ async def _make_room(args: argparse.Namespace, deploy: int, say: Callable[[str],
         campaigns = steps.campaign_store(db)
         await steps.require_paid(db, args.dm, int(time.time()), guild_id=args.guild)
         found = await steps.check_existing(db, campaigns, args.guild, args.dm, deploy)
-        await steps.clear_for_deploy(
-            db, campaigns, args.guild, args.dm, deploy=deploy, say=say, found=found
-        )
+        free = await steps.free_slots(db, args.dm, int(time.time()), args.guild)
+        _kept, allowed = await steps.clear_for_deploy(
+            db, campaigns, args.guild, args.dm, deploy=deploy, say=say, found=found,
+            need=need, free=free,
+        )  # fmt: skip
+        return allowed
     finally:
         await db.close()
 
@@ -744,7 +749,12 @@ async def run_parallel(args: argparse.Namespace, n: int, **kw: Any) -> int:
             f"going {width} at a time."
         )
     deploy = deploy_number(args.deploy)
-    await _make_room(args, deploy, say)
+    # The paid slots are counted before anything is deleted or made, like the money: older kept
+    # deploys go (all their runs, never the newest) until the runs fit, or fewer runs are made.
+    allowed = await _make_room(args, deploy, say, n)
+    if allowed < n:
+        say(f"Only {allowed} of {n} runs have a paid campaign slot: running {allowed}.")
+        n = allowed
     runs: list[dict[str, float]] = []
     kept_by_run: dict[int, dict[str, Any]] = {}
     spent = dearest = 0.0

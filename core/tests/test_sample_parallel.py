@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import tempfile
 import unittest
-from typing import Any
+from typing import Any, ClassVar
 from unittest import mock
 
 from dmbot.devtools import sample_name as sn
@@ -28,12 +28,18 @@ class Names(unittest.TestCase):
         self.assertEqual((sn.deploy_of(sn.name_for(31, 2)), sn.run_of(sn.name_for(31, 2))), (31, 2))
         self.assertEqual((sn.deploy_of(sn.name_for(31)), sn.run_of(sn.name_for(31))), (31, None))
         self.assertTrue(sn.is_sample(sn.name_for(31, 5)))
+        for good in (sn.name_for(31, 1), sn.name_for(31, 10), sn.name_for(31, 99)):
+            self.assertTrue(sn.is_sample(good), good)
+        with self.assertRaises(ValueError):
+            sn.name_for(31, 100)
         bad_names = (
             "test of the frostmaiden (sample 31.)",
             "test of the frostmaiden (sample 31.2.3)",
             "Test of the frostmaiden (sample 31.2)",
             "test of the frostmaiden (sample .2)",
             "test of the frostmaiden (sample 31.100)",
+            "test of the frostmaiden (sample 31.0)",
+            "test of the frostmaiden (sample 31.01)",
         )
         for bad in bad_names:
             self.assertFalse(sn.is_sample(bad), bad)
@@ -60,6 +66,48 @@ class Names(unittest.TestCase):
         self.assertTrue(plan.replaced)
 
 
+class Slots(unittest.TestCase):
+    """(#4551, Supervisor's ruling: the paid slots are counted before anything is made)"""
+
+    HAVE: ClassVar[list[tuple[str, str]]] = [
+        ("a1", sn.name_for(28, 1)), ("a2", sn.name_for(28, 2)),
+        ("b1", sn.name_for(29, 1)), ("b2", sn.name_for(29, 2)),
+        ("b3", sn.name_for(29, 3)), ("b4", sn.name_for(29, 4)),
+        ("c1", sn.name_for(30)),
+    ]  # fmt: skip
+
+    def test_short_slots_drop_the_oldest_kept_deploys_runs_and_never_the_newest(self) -> None:
+        plan = sn.plan_keep(self.HAVE, 31)  # (28 goes by keep-3; 29 and 30 stay)
+        self.assertEqual(set(plan.keep), {"b1", "b2", "b3", "b4", "c1"})
+        ids, names, room = sn.slot_drops(self.HAVE, plan, need=5, free=0)
+        # 28's two runs already go (keep-3), dropping 29's four makes room for 6: five are needed
+        self.assertEqual((len(plan.delete), room), (2, 5))
+        self.assertNotIn("c1", ids)  # (the newest kept deploy stays whole)
+        self.assertEqual(set(ids), {"b1", "b2", "b3", "b4"})
+        self.assertEqual(sn.slot_line(names), "Not kept for lack of slots: 29.1\u201329.4.")
+
+    def test_enough_slots_drop_nothing(self) -> None:
+        plan = sn.plan_keep(self.HAVE, 31)
+        self.assertEqual(sn.slot_drops(self.HAVE, plan, need=2, free=3), ((), (), 2))
+
+    def test_no_limit_drops_nothing(self) -> None:
+        plan = sn.plan_keep(self.HAVE, 31)
+        self.assertEqual(sn.slot_drops(self.HAVE, plan, need=5, free=None), ((), (), 5))
+
+    def test_with_nothing_left_to_drop_fewer_runs_or_none(self) -> None:
+        only = [("c1", sn.name_for(30))]
+        plan = sn.plan_keep(only, 31)
+        self.assertEqual(sn.slot_drops(only, plan, need=5, free=2), ((), (), 2))
+        self.assertEqual(sn.slot_drops(only, plan, need=5, free=0), ((), (), 0))
+
+    def test_a_deploy_the_guard_refuses_is_left_alone(self) -> None:
+        plan = sn.plan_keep(self.HAVE, 31)
+        ids, _names, _room = sn.slot_drops(
+            self.HAVE, plan, need=5, free=0, deletable=lambda cid: cid != "b2"
+        )
+        self.assertEqual(ids, ())  # (29 has a run it may not delete: all of 29 stays)
+
+
 class Fit(unittest.TestCase):
     def test_the_money_for_all_the_runs_at_once_is_set_aside_or_fewer_go(self) -> None:
         self.assertEqual(cli.fit_parallel(10.0, 3.0, 5), 3)
@@ -76,6 +124,7 @@ class Parallel(unittest.TestCase):
         *extra: str,
         fail: frozenset[int] = frozenset(),
         cost: float = 0.5,
+        slots: int | None = None,
     ) -> tuple[list[int], list[str], int, dict[str, Any]]:
         started: list[int] = []
         said: list[str] = []
@@ -95,8 +144,10 @@ class Parallel(unittest.TestCase):
                 raise RuntimeError("stand-in")
             return 0
 
-        async def room(args: Any, deploy: int, say: Any) -> None:
+        async def room(args: Any, deploy: int, say: Any, need: int = 1) -> int:
             finished["room"] = deploy
+            finished["need"] = need
+            return min(need, slots) if slots is not None else need
 
         async def finish(args: Any, say: Any, kept: Any, failed: Any, runs: Any, *rest: Any) -> int:
             finished.update(kept=dict(kept), failed=failed, runs=len(runs))
@@ -157,3 +208,11 @@ class Parallel(unittest.TestCase):
                 d, "--repeat", "5", "--parallel", "5", "--max-usd", "8", "--run-usd", "2", cost=0.0
             )
             self.assertEqual((len(started), code, done["runs"]), (5, 0, 5))
+
+    def test_runs_the_slots_cannot_hold_are_not_made(self) -> None:
+        with tempfile.TemporaryDirectory() as d:
+            started, said, code, done = self.go(
+                d, "--repeat", "5", "--parallel", "5", "--max-usd", "100", slots=3
+            )
+            self.assertEqual((sorted(started), code, done["need"]), ([1, 2, 3], 0, 5))
+            self.assertIn("Only 3 of 5 runs have a paid campaign slot", "\n".join(said))
