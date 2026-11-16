@@ -58,13 +58,18 @@ class TheWords(unittest.TestCase):
         text = card.card_text(old, 1)
         self.assertIn("Did this change? Your players know **A** serves **B**.", text)
         self.assertIn("Now: **A** serves **C**.", text)
-        self.assertEqual(card._buttons(sq.REPLACE), (card.KEEP_BOTH, card.END_OLD))
+        self.assertEqual(
+            card._buttons(question(sq.REPLACE, end=True, by="r2")), (card.KEEP_BOTH, card.END_OLD)
+        )
         name = card.Shown(question(sq.REVEAL, "memory_aliases", secret=False), "**Tamsin**",
                           "other name", owner="**Ash**")  # fmt: skip
         text = card.card_text(name, 1)
         self.assertIn("Your players know the name **Tamsin**. Only you know it is **Ash**.", text)
         self.assertIn("👁️ Let them know: your players learn that **Tamsin** is **Ash**.", text)
-        self.assertEqual(card._buttons(sq.REVEAL), (card.KEEP_SECRET, card.LET_KNOW))
+        self.assertEqual(
+            card._buttons(question(sq.REVEAL, "memory_aliases", secret=False)),
+            (card.KEEP_SECRET, card.LET_KNOW),
+        )
 
     def test_the_count_line_counts_and_never_names(self) -> None:
         self.assertEqual(card.count_line(0), "")

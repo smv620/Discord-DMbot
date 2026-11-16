@@ -36,6 +36,7 @@ from dmbot.memory.models import (
     MemoryRuleError,
     Relation,
 )
+from dmbot.memory.secret_questions import Question
 from dmbot.memory.store import MemoryStore
 
 log = logging.getLogger(__name__)
@@ -49,6 +50,8 @@ class Revealed:
     entries: int = 0
     connections: int = 0
     names: int = 0
+    answered: int = 0  # 🌍 questions it answered (`answer`)
+    refused: int = 0  # 🌍 questions given back: their item could not be shown yet
 
     @property
     def total(self) -> int:
@@ -124,6 +127,84 @@ async def reveal(
         if made:
             out.batches.extend(made)
             out.names += 1
+    return out
+
+
+async def answer(
+    memory: MemoryStore, guild_id: int, campaign_id: str, question_ids: Sequence[str]
+) -> Revealed | None:
+    """The DM's "Let them know" on 🌍 World read questions (#4590): the reveals the read would
+    have made by itself, made now as the DM's answer, exactly as `reveal` makes them. A lone
+    secret other name (A) is "the same person", so its person is shown with it.
+
+    Every question is taken first, so none is answered twice. One whose item is still not shown
+    afterwards (refused: an end still kept from the players, a person who can't be shown) is
+    given back to wait, counted in `refused`, never used up. The others are answered by the
+    reveal's first change, which an Undo of the whole reveal (newest first) reaches last, so they
+    wait again only once all of it is taken back. None when none was still waiting."""
+    taken = await memory.claim_secret_questions(guild_id, campaign_id, question_ids)
+    if not taken:
+        return None
+    ids = [q.id for q in taken]
+    try:
+        entries = [q.item_id for q in taken if q.item_table == "memory_entities"]
+        links = [
+            r
+            for q in taken
+            if q.item_table == "memory_relations"
+            and (r := await memory.relation(guild_id, campaign_id, q.item_id)) is not None
+        ]
+        alias_ids = {q.item_id for q in taken if q.item_table == "memory_aliases"}
+        aliases = (
+            [a for a in await memory.aliases(guild_id, campaign_id, include_secret=True)
+             if a.id in alias_ids]
+            if alias_ids else []
+        )  # fmt: skip
+        lone = {q.item_id for q in taken if q.change.get("lone")}
+        entries += [a.entity_id for a in aliases if a.id in lone]
+        out = await reveal(
+            memory, guild_id, campaign_id, entries=entries, links=links, aliases=aliases
+        )
+        still = await _still_hidden(memory, guild_id, campaign_id, taken)
+    except Exception:
+        await memory.unclaim_secret_questions(guild_id, campaign_id, ids)
+        raise
+    if still:
+        await memory.unclaim_secret_questions(guild_id, campaign_id, sorted(still))
+        out.refused = len(still)
+    done = [i for i in ids if i not in still]
+    out.answered = len(done)
+    if out.batches and done:
+        try:
+            await memory.secret_questions_answered(guild_id, campaign_id, done, out.batches[0])
+        except Exception as exc:  # (the reveal stands; its Undo still takes it back)
+            log.warning("A World reveal's questions weren't linked (%s)", type(exc).__name__)
+    return out
+
+
+async def _still_hidden(
+    memory: MemoryStore, guild_id: int, campaign_id: str, taken: Sequence[Question]
+) -> set[str]:
+    """The questions whose item is still not shown to the players after their reveal."""
+    entries = [q.item_id for q in taken if q.item_table == "memory_entities"]
+    shown = await memory.entries_shown(guild_id, campaign_id, entries) if entries else set()
+    alias_ids = {q.item_id for q in taken if q.item_table == "memory_aliases"}
+    secret = (
+        {a.id for a in await memory.aliases(guild_id, campaign_id, include_secret=True)
+         if a.id in alias_ids and a.secret}
+        if alias_ids else set()
+    )  # fmt: skip
+    out: set[str] = set()
+    for q in taken:
+        if q.item_table == "memory_entities":
+            hidden = q.item_id not in shown
+        elif q.item_table == "memory_aliases":
+            hidden = q.item_id in secret
+        else:
+            r = await memory.relation(guild_id, campaign_id, q.item_id)
+            hidden = r is not None and (r.secret or r.unrevealed)
+        if hidden:
+            out.add(q.id)
     return out
 
 

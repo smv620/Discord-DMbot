@@ -48,6 +48,10 @@ log = logging.getLogger(__name__)
 NARROW, REPLACE, REVEAL = "narrow", "replace", "reveal"
 WAITING, KEPT_KNOWN, MADE_SECRET = "waiting", "kept_known", "made_secret"
 LABEL_MAX = 200
+# A 🌍 World read's reveal, asked instead of made (#4590 C), and a secret other name it gave on
+# its own, asked as "the same person?" (#4590 A). Answered by `world_reveal.answer`.
+COMMON: dict[str, Any] = {"common": True}
+LONE: dict[str, Any] = {"common": True, "lone": True}
 GONE = "That question was already answered."
 
 
@@ -75,9 +79,10 @@ def evidence(
     caller counts the ones still waiting (`MemoryStore.secret_questions_still_waiting`)."""
     outer = _EVIDENCE.get()
     asked: list[str] = outer["asked"] if outer is not None else []
+    run = str(outer["run"]) if outer is not None else new_id()
     token = _EVIDENCE.set(
         {"label": label, "session_id": session_id, "line_starts": list(line_starts),
-         "speaker_ids": list(speaker_ids), "asked": asked}
+         "speaker_ids": list(speaker_ids), "asked": asked, "run": run}
     )  # fmt: skip
     try:
         yield asked
@@ -85,12 +90,28 @@ def evidence(
         _EVIDENCE.reset(token)
 
 
+# Left out of `change_key`: when it would happen ("at"), and which run asked (`RUN`), so the same
+# change is asked once whichever upload asks it.
+RUN = "run"
+_NOT_THE_CHANGE = frozenset({"at", RUN})
+
+
+def current_run() -> str | None:
+    """The id of the run asking now (an upload's read, a session's), or None outside one: a 🌍
+    question carries it, so "Same for all" answers one upload's questions and never another
+    upload's, even one with the same name and day (#4590)."""
+    found = _EVIDENCE.get()
+    return str(found["run"]) if found is not None else None
+
+
 def change_key(change: Mapping[str, Any]) -> str:
     """The change in a fixed form, hashed: the same change on the same item is asked once. "at" (a
     time) is left out, so a later upload asking to end the same connection for the same new one is
     the same question."""
     fixed = json.dumps(
-        {k: v for k, v in change.items() if k != "at"}, sort_keys=True, separators=(",", ":")
+        {k: v for k, v in change.items() if k not in _NOT_THE_CHANGE},
+        sort_keys=True,
+        separators=(",", ":"),
     )
     return hashlib.sha256(fixed.encode()).hexdigest()
 
@@ -227,8 +248,10 @@ async def forget(conn: Any, guild_id: int, user_id: int, campaign_id: str | None
 
 
 __all__ = [
+    "COMMON",
     "GONE",
     "KEPT_KNOWN",
+    "LONE",
     "MADE_SECRET",
     "NARROW",
     "REPLACE",
@@ -239,6 +262,7 @@ __all__ = [
     "ask_reveal",
     "change_key",
     "count",
+    "current_run",
     "evidence",
     "forget",
     "undo",
