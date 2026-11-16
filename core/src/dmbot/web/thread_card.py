@@ -15,6 +15,7 @@ from dmbot.db import Database
 from dmbot.memory import thread_parts as tp
 from dmbot.memory import threads
 from dmbot.memory.models import CONFIRMED
+from dmbot.memory.time_limits import MOST_DAYS
 from dmbot.web import relationships
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -213,6 +214,16 @@ async def change(db: Database, session: Session, ref: str, thread_id: str, body:
         else:
             text = part
         name = f"part-{action}"
+    elif action == "date":
+        # N game days from now (the bot counts them on the clock), or null to clear the date
+        part, days = data.get("part"), data.get("days")
+        if not isinstance(part, str) or not _ID.fullmatch(part):
+            raise RecapError("bad_action")
+        if days is not None and not (
+            isinstance(days, int) and not isinstance(days, bool) and 1 <= days <= MOST_DAYS
+        ):
+            raise RecapError("bad_action")
+        text, name = f"{part} {'-' if days is None else days}", "part-date"
     elif action == "branch-move":
         bigger = data.get("bigger")
         if not isinstance(bigger, str) or not _ID.fullmatch(bigger) or bigger == thread_id:
