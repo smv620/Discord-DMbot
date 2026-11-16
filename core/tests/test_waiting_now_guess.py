@@ -180,7 +180,11 @@ class TheNowLine(NowAndGuess):
             r for r in await self.memory.relations(self.g, self.one.id, include_secret=True)
             if r.predicate == "ally_of" and {r.subject_id, r.object_id} == {self.mira, self.keep}
         ]  # fmt: skip
-        self.assertTrue(ended and all(r.to_session_at is not None for r in ended))  # (as said)
+        # (#4524, ruling E: the kept one waits to be said at the table, so the public one is not
+        # ended by itself; the DM is asked "Did this change?" instead)
+        self.assertTrue(ended and all(r.to_session_at is None for r in ended))
+        (q,) = await self.memory.secret_questions_waiting(self.g, self.one.id)
+        self.assertEqual((q.kind, q.item_id), ("replace", ended[0].id))
 
     async def test_a_changed_held_connection_is_read_again_on_the_next_look(self) -> None:
         await self.link("ally_of", self.mira, self.keep, "alliance")

@@ -403,7 +403,9 @@ async def keep_all(
             try:
                 await end_replaced(
                     memory, guild_id, campaign_id, old, start, ended, held=held, link=c,
-                    hidden=secret or unrevealed, dm_chose_secret=players == "hide",
+                    hidden=secret or unrevealed,
+                # (the same choice as the keep's own below: 🤫 Keep as secret, or Players: hide)
+                dm_chose_secret=not keep_flags or players == "hide",
                 )  # fmt: skip
                 written = await memory.add_relation(
                     guild_id, campaign_id, c.subject_id, c.predicate, c.object_id,
