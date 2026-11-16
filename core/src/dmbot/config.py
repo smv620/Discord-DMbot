@@ -290,6 +290,9 @@ class Settings:
     continuity: Levels = field(default_factory=Levels)
     # A story thread (#1662) is stalled when this many sessions have started since it last moved.
     thread_stalled_sessions: int = 3
+    # Website lore reads at the same time on one server, one a campaign (#4551). 2 for real
+    # servers until a measurement shows more is safe; dev1 sets 5 on the test server only.
+    server_jobs_at_once: int = 2
     # Settle open pronouns in a lore read with the AI (#2790); off until the calibration run.
     who_is_it: bool = False
     # The most characters of story the recall service hands one helper (#1350).
@@ -391,6 +394,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if not (stalled_raw.isascii() and stalled_raw.isdigit() and int(stalled_raw) >= 1):
         raise ConfigError(
             f'DMBOT_THREAD_STALLED_SESSIONS must be a whole number from 1 up, got "{stalled_raw}".'
+        )
+    jobs_raw = get("DMBOT_SERVER_JOBS_AT_ONCE") or "2"
+    if not (jobs_raw.isascii() and jobs_raw.isdigit() and 1 <= int(jobs_raw) <= 20):
+        raise ConfigError(
+            f'DMBOT_SERVER_JOBS_AT_ONCE must be a whole number from 1 to 20, got "{jobs_raw}".'
         )
     who_raw = (get("DMBOT_WHO_IS_IT") or "0").lower()
     if who_raw not in ("0", "1", "true", "false", "on", "off"):
@@ -792,6 +800,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         cleaner_rank_max=int(rank_raw),
         continuity=continuity,
         thread_stalled_sessions=int(stalled_raw),
+        server_jobs_at_once=int(jobs_raw),
         who_is_it=who_raw in ("1", "true", "on"),
         recall_budget=recall_budget,
         sidebar_recall=sidebar_recall_raw in ("1", "true", "on"),

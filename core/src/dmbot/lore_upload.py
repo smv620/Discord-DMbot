@@ -197,11 +197,16 @@ async def _read(
     if len(claim.text) > TEXT_MAX or len(claim.link) > TEXT_MAX:
         return q.TOO_LONG, 0, 0
     # (a link still being opened for the server waits before it takes a read of the day's allowance)
-    if claim.source == "link" and link_is_busy(guild_id):
+    if claim.source == "link" and link_is_busy(guild_id, claim.campaign_id):
         await queue.release(guild_id, claim)
         return _RELEASED, 0, 0
     # One reader at a time per server and the day's allowance, shared with Discord's button.
-    why_not = start_ai_read(guild_id, time.time())
+    why_not = start_ai_read(
+        guild_id,
+        time.time(),
+        claim.campaign_id,
+        int(getattr(bot.settings, "server_jobs_at_once", 2)),
+    )
     if why_not == BUSY:
         await queue.release(guild_id, claim)  # not an answer: the next pass takes it again
         return _RELEASED, 0, 0
@@ -213,7 +218,7 @@ async def _read(
             # The same reader as Discord's link upload: https only, public addresses only (checked
             # after DNS and on every redirect), no credentials in the address, at most three
             # redirects, one page fetched once.
-            got, problem = await read_link_once(guild_id, claim.link)
+            got, problem = await read_link_once(guild_id, claim.link, claim.campaign_id)
             if got is None:
                 if problem == LINK_BUSY:
                     await queue.release(guild_id, claim)
@@ -263,7 +268,7 @@ async def _read(
         found.update({kind: list(ids) for kind, ids in done.stored.items()})
         return _outcome(done)
     finally:
-        end_ai_read(guild_id)
+        end_ai_read(guild_id, claim.campaign_id)
 
 
 async def _speaker(memory: Any, campaign: Any, entry_id: str) -> tuple[str | None, str]:

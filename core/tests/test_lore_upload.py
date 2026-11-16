@@ -195,6 +195,14 @@ class TheWorker(NamesTest):
         await self.work()
         self.assertEqual((await self.row(uid))["error"], q.NO_AI)
 
+    async def test_a_campaign_with_a_read_running_is_skipped_and_others_are_not(self) -> None:
+        """(#4551: several reads on one server, one a campaign)"""
+        await self.add()
+        self.assertIsNone(await self.queue.claim_next(GUILD, not_campaigns=[self.campaign.id]))
+        claim = await self.queue.claim_next(GUILD, not_campaigns=["f" * 32])
+        assert claim is not None
+        self.assertEqual(claim.campaign_id, self.campaign.id)
+
     async def test_a_claim_taken_again_is_not_read_twice(self) -> None:
         uid = await self.add()
         first = await self.queue.claim_next(GUILD)
