@@ -19,7 +19,7 @@ from typing import Any, cast
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.memory.lookalikes import Name, by_use, look_alike
+from dmbot.memory.lookalikes import Name, by_use, family_of, look_alike
 from dmbot.memory.models import DM, MemoryRuleError, days
 from dmbot.memory.store import MemoryStore
 from dmbot.ui import logic, name_places, split_words
@@ -564,10 +564,17 @@ async def show_merge_several(
     if names is None:
         await _tell(interaction, NOT_AVAILABLE)
         return
-    # Look-alikes of this name first, then A to Z, so the DM rarely needs the search.
-    pool = sorted(
-        candidates(names, entity_id), key=lambda c: (not look_alike(name, c[1]), c[1].casefold())
-    )
+    # Look-alikes of this name first, then A to Z, so the DM rarely needs the search. Only a name of
+    # its own family counts as a look-alike (#4553): a quest's card never puts the people in its
+    # name first, as `lookalikes.find` never groups them.
+    mine = family_of(names.entities[entity_id].type) if entity_id in names.entities else ""
+
+    def alike(c: tuple[str, str]) -> bool:
+        other = names.entities.get(c[0])
+        same = other is not None and family_of(other.type) == mine
+        return same and look_alike(name, c[1])
+
+    pool = sorted(candidates(names, entity_id), key=lambda c: (not alike(c), c[1].casefold()))
     wanted = typed.strip().casefold()
     if wanted:
         pool = [c for c in pool if wanted in c[1].casefold()]
