@@ -55,6 +55,7 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | The names waiting for a check; the recap's name checks | `/account/questions`, recap page | built, switched off | `QUESTIONS_LIVE`, `RECAP_NAME_CHECKS_LIVE` |
 | Confirm kinds of names; places written two ways | Names, Story Graph | built, switched off | `CONFIRM_KINDS_LIVE`, `NAME_PLACES_LIVE` |
 | Story Graph: view, details panel, settings, centre on a name | `/account/web` | live | none |
+| A quest's sheet: what it's about, who gave it, the reward, its state and steps (#4540) | the 🧵 card | Story Graph detail pane (DM only): built, switched off, `QUEST_SHEET_LIVE` (#4547) | `QUEST_SHEET_LIVE` |
 | Story Graph: waiting connections (answer, All true / All secret / Undo all) | `/account/web` | live | none |
 | Story Graph: what people believe (readings); who knows a connection; secret names told; peek and reveal | `/account/web` | readings live; others switched off | `WHO_KNOWS_LIVE`, `TOLD_LIVE` |
 | Story Graph: change a connection, its feeling | `/account/web` | change live; feeling picker is in an open PR, switched off | `knows-feeling-switch` |
@@ -123,6 +124,7 @@ match. "In Discord" says where the DM finds it today.
 | Table chat on or off, and which chat | Table chat | Discord-only: the table's chat is a Discord channel |
 | Rules level (how much DMbot says) and Features on or off | Campaign management | Rules level: Campaign settings (`level`). Features: a read-only list (`FEATURES_LIST_LIVE`, #3693, #3718); turning features on or off stays in Discord until filed |
 | Game masters: add, remove | Game masters | Campaign settings: game masters (`CO_DMS_LIVE`) |
+| Who knows what was said: 👥 Some know on the "What was said" page's cards, with DMbot's guess ticked and a "Known to:" line (#4534) | After-session "What was said" page | Not yet: a WebDev issue, filed when the connection card (part 2) lands |
 | The campaign's setting (the world the story is in): see it, keep DMbot's guess (#4291) | ⚙️ Manage DMbot: the Campaign setting line, ✅ Keep it (picking another world follows) | WebDev's half of #4291 (the website's Campaign setting field) |
 | Hand over the campaign: offer, accept, decline, withdraw | Handover buttons | Hand a campaign over (`HANDOVER_LIVE`) |
 | A hand-over offer closed because the Discord accounts on an account changed, and why (#2533 slice 3, #4467) | A notice to both people, and the offer message loses its buttons | Account page: "Offers that were closed", for a week, with the reason (no names, no accounts) |

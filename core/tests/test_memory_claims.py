@@ -816,6 +816,152 @@ class Stored(ConfirmedMemoryTest):
         knows = await self.memory.statement_knowers(GUILD_A, self.c, "connection", [rel])
         self.assertNotIn(wren, knows.get(rel, []))
 
+    async def two_characters(self) -> tuple[str, str]:
+        made = []
+        for name, player in (("Wren", 7), ("Ash", 8)):
+            pc = await self.memory.add_entity(
+                GUILD_A, self.c, name=name, type="character", role="player_character",
+                played_by=player, status="confirmed", source="dm",
+            )  # fmt: skip
+            made.append(pc.value.id)
+        return made[0], made[1]
+
+    async def confirm_for(self, knowers: list[str] | None, *, secret: bool = False) -> Any:
+        await self.propose(said("Bram", "is in", "Veldmoor", "dm_said", "3"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        return await self.claims.confirm(
+            GUILD_A, self.c, waiting.id, opted_in={7}, knowers=knowers, secret=secret
+        )
+
+    async def test_the_dms_pick_of_who_knows_holds_it_back_and_one_undo_takes_it_back(self) -> None:
+        """#4534 (👥 Some know): the connection happened and only the ticked characters know it:
+        written held back, never shown to everyone, in the claim's own change."""
+        await self.session_lines()
+        wren, ash = await self.two_characters()
+        done = await self.confirm_for([wren])
+        rel = await self.relation(done.claim.fact_id)
+        self.assertTrue(rel.unrevealed)
+        self.assertEqual((done.shown, done.split, done.scene), (False, True, 1))
+        knows = await self.memory.statement_knowers(GUILD_A, self.c, "connection", [rel.id])
+        self.assertEqual(knows.get(rel.id), [wren])
+        self.assertNotIn(ash, knows.get(rel.id, []))
+        assert done.batch is not None
+        await self.memory.undo(GUILD_A, self.c, done.batch)  # (one Undo: the fact and who knows)
+        self.assertIsNone(
+            next(
+                (
+                    r
+                    for r in await self.memory.statement_knowers(
+                        GUILD_A, self.c, "connection", [rel.id]
+                    )
+                    if r
+                ),
+                None,
+            )
+        )
+
+    async def test_no_pick_is_as_before(self) -> None:
+        await self.session_lines()
+        await self.two_characters()
+        plain = await self.confirm_for(None)
+        self.assertEqual((plain.split, plain.scene), (False, 0))
+        self.assertFalse((await self.relation(plain.claim.fact_id)).unrevealed)
+
+    async def test_a_secret_answer_with_a_pick_is_refused(self) -> None:
+        await self.session_lines()
+        wren, _ash = await self.two_characters()
+        with self.assertRaises(MemoryRuleError):
+            await self.confirm_for([wren], secret=True)
+        self.assertEqual(len(await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)), 1)
+
+    async def test_a_pick_of_nobody_is_refused_in_plain_words(self) -> None:
+        await self.session_lines()
+        await self.two_characters()
+        with self.assertRaises(MemoryRuleError) as err:
+            await self.confirm_for([])
+        self.assertIn("Tick at least one", str(err.exception))
+        self.assertEqual(len(await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)), 1)
+
+    async def test_only_characters_of_this_campaign_can_be_ticked(self) -> None:
+        await self.session_lines()
+        wren, _ash = await self.two_characters()
+        for bad in ([self.town], [wren, "f" * 32], [wren, self.town]):
+            with self.assertRaises(MemoryRuleError) as err:
+                await self.confirm_for(bad)
+            self.assertIn("Only characters in this campaign", str(err.exception))
+        # nothing was written: the question still waits
+        self.assertEqual(len(await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)), 1)
+
+    async def test_an_npc_with_a_point_of_view_learns_it_beside_a_player_character(self) -> None:
+        """#4534, party-knowledge design section 10: the picker's others are NPCs too."""
+        await self.session_lines()
+        wren, _ash = await self.two_characters()
+        npc = await self.memory.add_entity(
+            GUILD_A, self.c, name="Wit", type="character", role="npc",
+            status="confirmed", source="dm",
+        )  # fmt: skip
+        done = await self.confirm_for([wren, npc.value.id])
+        self.assertEqual(done.scene, 2)
+        knows = await self.memory.statement_knowers(
+            GUILD_A, self.c, "connection", [done.claim.fact_id]
+        )
+        self.assertCountEqual(knows.get(done.claim.fact_id, []), [wren, npc.value.id])
+
+    async def test_a_name_ticked_twice_counts_once(self) -> None:
+        await self.session_lines()
+        wren, _ash = await self.two_characters()
+        done = await self.confirm_for([wren, wren])
+        self.assertEqual(done.scene, 1)
+
+    async def test_the_pick_replaces_the_split_partys_guess(self) -> None:
+        """The split party's guess was Wren's group; the DM says Ash knew it."""
+        await self.session_lines()
+        wren, ash = await self.split_into_groups()
+        done = await self.confirm_for([ash])
+        rel = await self.relation(done.claim.fact_id)
+        knows = await self.memory.statement_knowers(GUILD_A, self.c, "connection", [rel.id])
+        self.assertEqual(knows.get(rel.id), [ash])
+        self.assertNotIn(wren, knows.get(rel.id, []))
+
+    async def test_a_pick_on_a_state_is_refused(self) -> None:
+        await self.session_lines()
+        wren, _ash = await self.two_characters()
+        await self.propose(said("Bram", "is", "dead", "dm_said", "3"))
+        (waiting,) = await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)
+        with self.assertRaises(MemoryRuleError) as err:
+            await self.claims.confirm(GUILD_A, self.c, waiting.id, opted_in={7}, knowers=[wren])
+        self.assertIn("no audience", str(err.exception))
+
+    async def test_a_pick_with_a_hidden_end_is_refused_not_quietly_nobody(self) -> None:
+        await self.session_lines()
+        wren, _ash = await self.two_characters()
+        await self.held_back(end_hidden=True)
+        with self.assertRaises(MemoryRuleError) as err:
+            await self.confirm_for([wren])
+        self.assertIn("hidden from your players", str(err.exception))
+        self.assertEqual(len(await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)), 1)
+
+    async def test_a_pick_on_a_connection_already_shown_is_refused(self) -> None:
+        await self.session_lines()
+        wren, _ash = await self.two_characters()
+        await self.memory.add_relation(
+            GUILD_A, self.c, self.bram, "located_in", self.town, source="dm",
+            status="confirmed", confidence=1.0,
+        )  # fmt: skip
+        with self.assertRaises(MemoryRuleError) as err:
+            await self.confirm_for([wren])
+        self.assertIn("can already see this", str(err.exception))
+        self.assertEqual(len(await self.claims.waiting(GUILD_A, self.c, opted_in=EVERYONE)), 1)
+
+    async def test_a_pick_on_a_connection_held_back_already_is_applied(self) -> None:
+        await self.session_lines()
+        wren, _ash = await self.two_characters()
+        rel = await self.held_back()
+        done = await self.confirm_for([wren])
+        self.assertEqual((done.claim.fact_id, done.scene), (rel, 1))
+        knows = await self.memory.statement_knowers(GUILD_A, self.c, "connection", [rel])
+        self.assertEqual(knows.get(rel), [wren])
+
     async def test_a_new_connection_said_in_one_groups_scene_is_held_for_that_group(self) -> None:
         await self.session_lines()
         wren, _ash = await self.split_into_groups()

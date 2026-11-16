@@ -160,6 +160,7 @@ class Ledger(DatabaseTest):
         credits._waiting.clear()
         self.addCleanup(credits._waiting.clear)
         credits.lost = 0
+        credits.written_off = 0
 
     async def rows(self, guild: int) -> list[dict[str, object]]:
         async with self.db.guild(guild) as conn:
@@ -332,10 +333,33 @@ class Ledger(DatabaseTest):
         self.assertEqual(len(rows), 4 + 3)  # (each waiting one once, and the three new ones)
         self.assertEqual(await self.month_total(OWNER), sum(cast(int, r["credits"]) for r in rows))
 
-    async def test_a_charge_that_can_never_be_written_does_not_block_the_ones_behind_it(
+    async def test_a_charge_for_a_deleted_campaign_is_written_off_at_info_not_error(self) -> None:
+        """#4542: a sample the run replaced is deleted while its background work is still being
+        charged. The AI call ran, so the count is kept in the log, but it is not an error, and the
+        charges behind it are still written."""
+        credits._waiting.append(self.waiting_charge("f" * 32, "a" * 32))  # (no such campaign)
+        credits._waiting.append(self.waiting_charge(self.a.id, "b" * 32))
+        before = credits.written_off
+        with (
+            credits.preparing(GUILD_A, self.a.id, "lore"),
+            self.assertLogs("dmbot.credits", level="INFO") as logged,
+        ):
+            await credits.record(reply(), "names")
+        self.assertEqual(credits.written_off, before + 1)
+        self.assertEqual(credits.lost, 0)  # (not a lost charge: its campaign is gone)
+        self.assertEqual(credits.waiting(), 0)
+        self.assertEqual(len(await self.rows(GUILD_A)), 2)  # (the good one and the new one)
+        wrote_off = [m for m in logged.output if "deleted campaign written off" in m]
+        self.assertEqual(len(wrote_off), 1)
+        self.assertTrue(wrote_off[0].startswith("INFO:"))
+        self.assertFalse([m for m in logged.output if m.startswith("ERROR:")])
+
+    async def test_a_charge_that_can_never_be_written_for_another_reason_stays_an_error(
         self,
     ) -> None:
-        credits._waiting.append(self.waiting_charge("f" * 32, "a" * 32))  # (no such campaign)
+        bad = self.waiting_charge(self.a.id, "a" * 32)
+        object.__setattr__(bad, "credits", -5)  # (the column only takes positive credits)
+        credits._waiting.append(bad)
         credits._waiting.append(self.waiting_charge(self.a.id, "b" * 32))
         with (
             credits.preparing(GUILD_A, self.a.id, "lore"),
@@ -344,8 +368,7 @@ class Ledger(DatabaseTest):
             await credits.record(reply(), "names")
         self.assertEqual(credits.lost, 1)
         self.assertEqual(credits.waiting(), 0)
-        self.assertEqual(len(await self.rows(GUILD_A)), 2)  # (the good one and the new one)
-        self.assertIn("can never be written (ForeignKeyViolation)", logged.output[0])
+        self.assertIn("can never be written", logged.output[0])
 
     async def test_each_servers_rows_are_its_own(self) -> None:
         with credits.preparing(GUILD_B, self.b.id, "lore"):

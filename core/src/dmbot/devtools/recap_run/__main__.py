@@ -415,6 +415,28 @@ def names_a_secret_anywhere(job: Job, inputs: pl.Inputs) -> bool:
     return names_a_secret(text, inputs.secret_names, inputs.allowed_names)
 
 
+WHY_MAX = 160  # characters of the reason a stopped run says on stderr
+
+
+def why_stopped(out: Outcome) -> str:
+    """One line for stderr when a run did not finish (#4543): the state, the stage's reason and
+    nothing of the session. The report says the same on stdout, which a caller (the sample run)
+    swallows because it holds the recap's words; this line holds none of them, so it shows.
+    `last_error` and `stopped` are fixed words today (the pipeline's own sentences, the check kinds
+    and the allowance line): they must stay that way, or this line would carry story words."""
+    said = out.stopped or out.job.last_error or "no reason recorded"
+    reason = " ".join(said.split())[:WHY_MAX]
+    return f"recap_run: the recap did not finish (state {out.job.state}): {reason}"
+
+
+def exit_code(out: Outcome) -> int:
+    """0 for a recap that is ready, else 1 after saying why on stderr (#4543)."""
+    if out.job.state == "ready":
+        return 0
+    print(why_stopped(out), file=sys.stderr)
+    return 1
+
+
 def report(out: Outcome, prices: dict[str, tuple[float, float]], *, show: bool = True) -> list[str]:
     """The terminal report. A recap that names a secret is refused, not printed."""
     job = out.job
@@ -870,6 +892,8 @@ async def _main_async(args: argparse.Namespace) -> int:
             return 0
         rows, clean = await run_golden(fast, careful, models, prices)
         print("\n".join(rows))
+        if not clean:
+            print("recap_run: the golden set had a failure: see the rows above", file=sys.stderr)
         return 0 if clean else 1
     if args.transcript:
         return await _transcript(args, fast, careful, models, prices)
@@ -1087,6 +1111,7 @@ async def _session(
         lines = report(out, prices)
         if lines == [REFUSED]:
             print(REFUSED)
+            print("recap_run: the recap named a secret and was not printed", file=sys.stderr)
             return 3
         print("\n".join(lines))  # the paid text report first: nothing below can lose it
         if args.score:
@@ -1111,7 +1136,7 @@ async def _session(
                 if made
                 else "A recap of that session already exists; not changed."
             )
-        return 0 if out.job.state == "ready" else 1
+        return exit_code(out)
     finally:
         await db.close()
 
@@ -1245,7 +1270,7 @@ async def _transcript(
     except EOFError:  # nobody is there to answer (a pipe, a scheduled run): that is a no
         answer = ""
     if not tf.consent_given(answer):
-        print("recap_run: stopped. Nothing was sent to any service.")
+        print("recap_run: stopped. Nothing was sent to any service.", file=sys.stderr)
         return 4
     folder = Path(args.out) if args.out else None
     if folder is not None and folder.is_dir():
@@ -1259,6 +1284,7 @@ async def _transcript(
     lines = report(out, prices)
     if lines == [REFUSED]:
         print(REFUSED)
+        print("recap_run: the recap named a secret and was not printed", file=sys.stderr)
         return 3
     print("\n".join(lines))  # the paid text report first: nothing below can lose it
     if args.score:
@@ -1280,7 +1306,7 @@ async def _transcript(
     if folder is not None:
         save_text(folder, out, printed, names_given=bool(names))
         print(f"\nReview page: {rv.write_page(folder)} (open it in a browser).")
-    return 0 if out.job.state == "ready" else 1
+    return exit_code(out)
 
 
 def _length_line(args: argparse.Namespace, transcript: tf.Transcript, inputs: pl.Inputs) -> str:
