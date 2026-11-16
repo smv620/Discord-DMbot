@@ -144,6 +144,18 @@ NAME_REJECTED_REASON = "the DM said a name in it isn't a name"
 NOT_A_NAME_REASON = "a number, time, address or plain word in it is no name"  # #3394
 SECRET_NAME_REASON = "a name in it is one only the DM may use"
 NAME_FIRST = "Say what the new name is first (in Check new names)."
+# The DM's 👥 Some know (#4534): refused in plain words, nothing written, never quietly different.
+SOME_KNOW_NONE = "Tick at least one character who knows it, or use 🤫 for nobody."
+SOME_KNOW_WHO = "Only player characters in this campaign can be ticked."
+SOME_KNOW_STATE = "A state (like 'is dead') has no audience: choose ✅ or ❌."
+SOME_KNOW_SHOWN = (
+    "Your players can see this already. Hide it first (open either name, ✏️ Edit a connection…, "
+    "👁️ Who knows this?), then choose who knows it."
+)
+SOME_KNOW_HIDDEN = (
+    "A name in it, or the connection itself, is hidden from your players, so choosing who knows "
+    "it can't work yet. Use 🤫 to keep it secret, or show the name first."
+)
 # A claim whose name was past the session's limit is kept, waiting for its name to be proposed in
 # a later session (#1367). It is a proposed claim with this as its `reason`, which no claim that
 # is asked or dropped carries.
@@ -1015,8 +1027,8 @@ async def _learn_in_scene(w: Changes, relation_id: str, characters: Sequence[str
     learned = 0
     for character_id in characters:
         try:
-            await knowers.learn(w, "connection", relation_id, character_id)
-            learned += 1
+            if await knowers.learn(w, "connection", relation_id, character_id):
+                learned += 1
         except MemoryRuleError:
             continue
     return learned
@@ -2110,6 +2122,15 @@ class ClaimStore:
         wording = Extracted(
             claim.subject, claim.relationship, claim.object, claim.details, claim.lines, claim.how
         )
+        picked: list[str] | None = None  # the DM's 👥 pick, checked before anything is written
+        if knowers is not None:
+            if isinstance(knowers, str) or secret:
+                raise MemoryRuleError(SOME_KNOW_WHO)
+            picked = list(dict.fromkeys(knowers))
+            if not picked:
+                raise MemoryRuleError(SOME_KNOW_NONE)
+            if condition_of(wording) is not None:
+                raise MemoryRuleError(SOME_KNOW_STATE)
         if claim.how == HOW_PLAN:
             raise MemoryRuleError(PLAN_REASON)
         if injection_like(wording):
@@ -2191,6 +2212,14 @@ class ClaimStore:
                 other = made.get(other[0], other)
             if before is not None:
                 await before(w)
+            if picked is not None:  # each must be a confirmed player character of this campaign
+                real = await w.select(
+                    ENTITIES,
+                    " AND id = ANY(%s) AND status = %s AND type = 'character' AND role = %s",
+                    [picked, CONFIRMED, PLAYER_CHARACTER],
+                )
+                if len(real) != len(picked):
+                    raise MemoryRuleError(SOME_KNOW_WHO)
             shown = held = split = False
             scene = 0
             if condition is not None:
@@ -2216,12 +2245,14 @@ class ClaimStore:
                 # back from the start, so nothing a shown row sets off (a "met" upgrade, an item's
                 # whereabouts ended) reaches the other group (the reviewer).
                 in_scene = (
-                    await split_scene(w, claim.session_started_at, claim.lines, claim.speaker_ids)
+                    tuple(picked)  # the DM's own pick, over any guess (#4534)
+                    if picked is not None
+                    else await split_scene(
+                        w, claim.session_started_at, claim.lines, claim.speaker_ids
+                    )
                     if not secret and not hold
                     else None
                 )
-                if knowers is not None and not secret and not hold:
-                    in_scene = tuple(knowers)  # the DM's own pick, over any guess (#4534)
                 relation, flags = await self._store.add_relation_in(
                     w, subject_id, term.key, object_id, confidence=1.0, status=CONFIRMED,
                     detail=label or self._detail(term.key, claim, subject_kind),
@@ -2237,7 +2268,9 @@ class ClaimStore:
                 )  # fmt: skip
                 fact_id = relation.id
                 if relation.id in live:
-                    if not live[relation.id]:
+                    if picked is not None and live[relation.id]:
+                        raise MemoryRuleError(SOME_KNOW_SHOWN)  # (never quietly left shown)
+                    if not live[relation.id] and picked is None:
                         in_scene = None  # (one already shown stays as it is: nothing to learn)
                     elif in_scene is None and not secret:
                         # (the table said a connection the story holds back: the party's now,
@@ -2254,6 +2287,8 @@ class ClaimStore:
                     # group, or a connection the together rule wouldn't show either (a secret one,
                     # an end the players haven't been shown): nobody, and the DM decides.
                     split = True
+                    if picked is not None and not await learnable_in_scene(w, relation.id):
+                        raise MemoryRuleError(SOME_KNOW_HIDDEN)  # (the DM's word is not dropped)
                     if in_scene and await learnable_in_scene(w, relation.id):
                         scene = await _learn_in_scene(w, relation.id, in_scene)
                 # (a secret one is the DM's own choice, and says so already)
