@@ -446,6 +446,17 @@ async def set_state(w: Changes, part_id: str, state: str) -> dict[str, Any]:
     return await _story_change(w, row, {"state": state})
 
 
+async def set_state_in_thread(
+    w: Changes, thread_id: str, part_id: str, state: str
+) -> dict[str, Any]:
+    """`set_state` for a part a caller names with its thread (a progress line kept from a session,
+    #4522 5b): refused when the part is no longer one of that thread's standing parts."""
+    row = await _open_part(w, part_id)
+    if str(row["thread_id"]) != thread_id:
+        raise MemoryRuleError(GONE)
+    return await set_state(w, part_id, state)
+
+
 async def _move_under(w: Changes, old_id: str, new_id_: str | None) -> None:
     """What stands under one row (sub-steps, rewards given) moves to another, or to the top, where
     a sub-step goes to the end of the list."""
