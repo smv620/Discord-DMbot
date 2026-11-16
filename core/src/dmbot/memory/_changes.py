@@ -537,6 +537,9 @@ class Changes(Scope):
         self.dm_chose_secret = dm_chose_secret
         self.held_back = 0
         self.asked: list[str] = []  # the 🤫 questions this write asked, for their batch
+        # Rows this write brought back from turned down (#4524): the players saw none of them
+        # before, so holding one back in the same write takes nothing from them (`public_guard`).
+        self.revived: set[tuple[str, str]] = set()
         # True while a "same person" join moves an unnamed person's statements onto the named one
         # (`MemoryStore` join): what it makes secret keeps the players from learning who the
         # stranger was, which takes nothing from them, so the guard lets it through
@@ -610,6 +613,8 @@ class Changes(Scope):
             changes = await public_guard.hold(self, table, before, changes)
         if not changes:
             return before
+        if before.get("status") == "rejected" and changes.get("status", "rejected") != "rejected":
+            self.revived.add((table.name, row_id))
         if table.key in changes:
             raise ValueError(f"{table.name}.{table.key} can't change")
         query = sql.SQL(

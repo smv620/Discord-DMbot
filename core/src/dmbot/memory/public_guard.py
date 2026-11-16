@@ -82,9 +82,13 @@ async def known_to_players(w: Changes, table: str, item_id: str) -> bool:
 
 
 async def is_public(w: Changes, table: Table, row: dict[str, Any]) -> bool:
-    """Shown to the players by its flags, or known to a player character (the ruling's D)."""
+    """Shown to the players by its flags, or known to a player character (the ruling's D). A row
+    the DM turned down (rejected) is neither: no reader shows it to anyone, and the who-knows rows
+    it kept are dead with it, so bringing it back held back takes nothing from the players."""
     from dmbot.memory import knowers
 
+    if row.get("status") == "rejected":
+        return False
     if table.name == "memory_entities":
         shown = knowers.entry_shown(row)
     elif table.name == "memory_aliases":
@@ -107,6 +111,8 @@ async def hold(
     """`changes` without what would take a public item away from the players, unless the DM
     chose it; what is held back becomes a 🤫 question (asked once for each item and change)."""
     if w.dm_chose_secret or w.undoes is not None or w.joining:
+        return changes
+    if (table.name, before[table.key]) in w.revived:  # (brought back in this write: never seen)
         return changes
     taking = {c: v for c, v in changes.items() if narrows(table.name, (c, v)) and not before.get(c)}
     if not taking or not await is_public(w, table, before):
