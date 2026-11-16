@@ -157,6 +157,9 @@ PART_ACTIONS = (
     "part-add", "part-fix", "part-state", "part-show", "part-remove", "branch-move", "branch-not",
     "part-undo", "part-date",
 )  # fmt: skip
+# A character's languages from the website (#4271, #4229 slice 1b): the same store calls as
+# Discord's 🗣️ Languages screen, each one change and one Undo.
+LANG_ACTIONS = ("lang-add", "lang-remove", "lang-check", "lang-undo")
 # The Maps page's presses (#4347): a DM's yes or no to using a map (`<map id> yes|no`), Show to
 # the table or Hide (`<map id> shown|hidden`), Remove (`<map id>`), a poster's Take it back
 # (`<map id>`), and ↩ Undo of one of those (the text is its change number). Filed under no name.
@@ -467,6 +470,26 @@ class ActionStore:
             )
             return await cur.fetchone() is not None
 
+    async def lang_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int
+    ) -> bool:
+        """Whether `batch` is the change this DM's own done language action made from the website
+        (#4271), so the page's Undo can only take back what they did themselves."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action = ANY(%s) AND state = 'done'"
+                " AND %s = ANY (result_batches) LIMIT 1",
+                (
+                    guild_id,
+                    campaign_id,
+                    user_id,
+                    [a for a in LANG_ACTIONS if a != "lang-undo"],
+                    batch,
+                ),
+            )
+            return await cur.fetchone() is not None
+
     async def map_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, batch: int, *, own_only: bool = False
     ) -> bool:
@@ -626,6 +649,10 @@ async def apply(
         if actions is None and action.action == "part-undo":
             return _failed(FAILED)
         return await _parts(memory, actions, guild_id, cid, action, game_now)
+    if action.action in LANG_ACTIONS:
+        if actions is None and action.action == "lang-undo":
+            return _failed(FAILED)
+        return await _languages(memory, actions, guild_id, cid, action)
     if action.action in THREAD_ACTIONS:
         if actions is None and action.action == "thread-undo":
             return _failed(FAILED)
@@ -1111,6 +1138,43 @@ async def _parts(
         return _failed(GONE if str(exc) == tp.GONE else BAD_TARGET)
     except ValueError:  # (a kind or state the store does not know)
         return _failed(BAD_TARGET)
+
+
+async def _languages(
+    memory: MemoryStore, actions: ActionStore | None, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """A change to a character's languages from the page (#4271), through the store calls Discord's
+    🗣️ Languages screen makes (`add_story_language`, `remove_story_language`,
+    `check_story_languages`), so each is one change and one Undo. The door checked the text's shape;
+    the store checks the rest again: a character or language gone meanwhile is `gone`, a rule (not
+    a character, or one with a sheet: its languages are the sheet's) is `bad_target`. ↩ Undo takes
+    back only a change this DM's own done language action made, read again here. Words and ids
+    only; the language's name is the DM's own and is never logged."""
+    from dmbot.memory import language_rows
+
+    try:
+        if a.action == "lang-undo":
+            assert actions is not None  # (checked by the caller)
+            batch = int(a.text)
+            if not await actions.lang_batch_made(guild_id, cid, a.user_id, batch):
+                return _failed(GONE)
+            await memory.undo(guild_id, cid, batch)
+            return Outcome()
+        if a.action == "lang-add":
+            entity, _, name = a.text.partition(" ")
+            added = await memory.add_story_language(guild_id, cid, entity, name, source=DM)
+            return _changed(added.batch)
+        if a.action == "lang-remove":
+            removed = await memory.remove_story_language(guild_id, cid, a.text, source=DM)
+            return _changed(removed.batch)
+        checked = await memory.check_story_languages(guild_id, cid, a.text, source=DM)
+        return _changed(checked.batch)
+    except MemoryRuleError as exc:  # (TooLateToUndo is one: something done since is in the way)
+        if str(exc) == ALREADY_UNDONE:
+            return Outcome()  # (a second Undo of the same change: done, as a retry is)
+        if a.action == "lang-undo":
+            return _failed(CHANGED)
+        return _failed(GONE if str(exc) in (STORE_NOT_FOUND, language_rows.GONE) else BAD_TARGET)
 
 
 async def _thread(
