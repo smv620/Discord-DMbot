@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Callable, Iterable, Mapping, Sequence
+from collections.abc import Callable, Collection, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -100,6 +100,7 @@ class KnownThread:
     id: str
     name: str
     parts: tuple[KnownPart, ...] = ()
+    state: str = ""  # its condition now, so "happening now" is never offered for one that is
 
 
 @dataclass(frozen=True, slots=True)
@@ -119,7 +120,8 @@ def known_block(known: Sequence[KnownThread]) -> str:
     data (`extractor.quoted`)."""
     lines: list[str] = []
     for i, t in enumerate(known[:KNOWN_MAX], start=1):
-        lines.append(f"T{i}. {quoted(t.name)}")
+        now = f" ({t.state})" if t.state else ""
+        lines.append(f"T{i}. {quoted(t.name)}{now}")
         for j, p in enumerate(t.parts[:PARTS_SHOWN], start=1):
             lines.append(f"  T{i}.P{j} {p.kind}: {quoted(p.words)} ({p.state})")
     return "\n".join(lines) or "(none)"
@@ -176,7 +178,7 @@ def _change(
         )
     if said.change == THREAD_MOVES:
         state = THREAD_WORDS.get(said.state)
-        if state is None:
+        if state is None or state == thread.state:
             return "not_a_state"
         return prog.check(prog.Change(prog.THREAD_STATE, "", said.words, state)) or "not_a_state"
     return "not_a_change"
@@ -188,16 +190,19 @@ def check(
     known: Sequence[KnownThread],
     *,
     where: Callable[[str, Sequence[Line]], tuple[int, ...]],
-    seen: set[tuple[str, str]],
+    seen: Collection[tuple[str, str]],
 ) -> tuple[list[tuple[str, prog.Change, tuple[int, ...], tuple[int, ...]]], dict[str, int]]:
     """One window's progress lines checked by code: (thread id, change, line starts, speakers)
     for each that holds, with counts of what was dropped and why. `where` finds a quote's lines
-    in the window (`session_threads.where`); `seen` holds the (thread, change key) pairs kept so
-    far this run, so a later window never offers the same line again."""
+    in the window (`session_threads.where`); `seen` holds the (thread, change key) pairs the run
+    kept from earlier windows. It is only read here: the run adds a line's pair once the line
+    passes the consent re-check, so a line dropped for consent never blocks the same change
+    said again by someone who agrees."""
     threads, parts = labels(known)
     by_number = {s.number: s for s in window}
     out: list[tuple[str, prog.Change, tuple[int, ...], tuple[int, ...]]] = []
     dropped: dict[str, int] = {}
+    here: set[tuple[str, str]] = set()  # (this window's own doubles)
 
     def drop(why: str) -> None:
         dropped[why] = dropped.get(why, 0) + 1
@@ -216,10 +221,10 @@ def check(
             drop(change)
             continue
         key = (thread.id, change.key(thread.id))
-        if key in seen:
+        if key in seen or key in here:
             drop("double")
             continue
-        seen.add(key)
+        here.add(key)
         speakers = tuple(sorted({by_number[n].user_id for n in numbers}))
         starts = tuple(sorted({by_number[n].started_ms for n in numbers}))
         out.append((thread.id, change, starts, speakers))

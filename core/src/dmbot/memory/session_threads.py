@@ -30,7 +30,7 @@ from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping, 
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from dmbot.memory import session_progress, thread_read
+from dmbot.memory import session_progress, thread_progress, thread_read
 from dmbot.memory.extractor import Said as Line
 from dmbot.memory.extractor import quoted, transcript_of
 from dmbot.memory.models import name_key
@@ -169,7 +169,7 @@ class Report:
     dropped: dict[str, int] = field(default_factory=dict)
     # Progress on the known threads (#4522 5b): (thread id, change, line starts, speakers). Ids and
     # the reader's few words only, never in the log line.
-    progress: list[tuple[str, Any, tuple[int, ...], tuple[int, ...]]] = field(
+    progress: list[tuple[str, thread_progress.Change, tuple[int, ...], tuple[int, ...]]] = field(
         default_factory=list, repr=False
     )
 
@@ -254,7 +254,7 @@ async def run(
         found, dropped = check_window(said, window, entries, names, have=seen)
         for k, v in dropped.items():
             report.dropped[k] = report.dropped.get(k, 0) + v
-        lines_moved: list[tuple[str, Any, tuple[int, ...], tuple[int, ...]]] = []
+        lines_moved: list[tuple[str, thread_progress.Change, tuple[int, ...], tuple[int, ...]]] = []
         if progress and raw:
             lines_moved, why = session_progress.check(
                 session_progress.parse(raw[0]), window, progress, where=where, seen=moved
@@ -274,6 +274,7 @@ async def run(
             )
         out.extend(kept)
         report.progress.extend(moves)
+        moved.update((m[0], m[1].key(m[0])) for m in moves)  # (only what passed consent)
     report.found = len(out)
     log.info(report.line())
     return out, report

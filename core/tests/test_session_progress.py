@@ -86,11 +86,40 @@ class TheChecks(unittest.TestCase):
     def test_a_line_said_twice_is_one(self) -> None:
         self.assertEqual(len(check(said(), said(words="found him"))[0]), 1)
 
+    def test_the_run_decides_what_was_kept_before(self) -> None:
+        """`seen` is only read: a line dropped for consent after the call never blocks the same
+        change said later by someone who agrees (the run adds what passed)."""
+        seen: set[tuple[str, str]] = set()
+        first, _ = sp.check([said()], TALK, KNOWN, where=st.where, seen=seen)
+        again, _ = sp.check([said()], TALK, KNOWN, where=st.where, seen=seen)
+        self.assertEqual((len(first), len(again), seen), (1, 1, set()))
+        seen.add((first[0][0], first[0][1].key(first[0][0])))
+        self.assertEqual(sp.check([said()], TALK, KNOWN, where=st.where, seen=seen)[1],
+                         {"double": 1})  # fmt: skip
+
+    def test_happening_now_is_never_offered_for_a_thread_already_happening(self) -> None:
+        going = sp.KnownThread("t1", "Find Garret", GARRET.parts, GOING)
+        move = said(change=sp.THREAD_MOVES, part="", state="happening_now")
+        out, why = sp.check([move], TALK, [going], where=st.where, seen=set())
+        self.assertEqual((out, why), ([], {"not_a_state": 1}))
+        out, _ = sp.check([move], TALK, [GARRET], where=st.where, seen=set())  # (state unknown)
+        self.assertEqual(out[0][1].state, GOING)
+
+    def test_a_cut_answer_gives_no_progress(self) -> None:
+        self.assertEqual(sp.parse('{"threads": [], "progress": ['), [])
+        rows = [{"thread": "T1"}] * (sp.PROGRESS_MAX + 5)
+        self.assertEqual(len(sp.parse(json.dumps({"progress": rows}))), sp.PROGRESS_MAX)
+
     def test_the_prompt_shows_labels_never_ids(self) -> None:
-        block = sp.known_block(KNOWN)
-        self.assertIn("T1. Find Garret", block)
-        self.assertIn("T1.P1 objective: find Garret (to_do)", block)
-        self.assertNotIn("p1", block.replace("P1", ""))
+        thread_id, part_id = "a" * 32, "b" * 32
+        known = [sp.KnownThread(thread_id, "Find Garret",
+                                (sp.KnownPart(part_id, parts.OBJECTIVE, "find Garret", "to_do"),),
+                                GOING)]  # fmt: skip
+        text = st.prompt([("1", "DM", "hello")], [], [], known)
+        self.assertIn("T1. Find Garret (active)", text)
+        self.assertIn("T1.P1 objective: find Garret (to_do)", text)
+        self.assertNotIn(thread_id, text)
+        self.assertNotIn(part_id, text)
         schema = sp.schema(tr.SCHEMA)
         self.assertIn("progress", schema["required"])
         self.assertNotIn("progress", tr.SCHEMA["required"])  # (the lore reader's is untouched)
@@ -100,10 +129,11 @@ class _AI:
     def __init__(self, progress: list[dict[str, str]]) -> None:
         self.progress = progress
         self.system = ""
+        self.schema: dict[str, Any] = {}
 
     async def complete(self, system: str, text: str, **kw: Any) -> Any:
         self.system = system
-        self.schema = kw.get("schema")
+        self.schema = dict(kw.get("schema") or {})
 
         class Reply:
             cut = False
@@ -114,7 +144,13 @@ class _AI:
 
 
 class TheRun(unittest.IsolatedAsyncioTestCase):
-    async def run_with(self, ai: _AI, agreed: list[Collection[int]]) -> st.Report:
+    async def run_with(
+        self,
+        ai: _AI,
+        agreed: list[Collection[int]],
+        progress: list[sp.KnownThread] = KNOWN,
+        said: list[Line] = TALK,
+    ) -> st.Report:
         answers = iter(agreed)
         last: list[Collection[int]] = [agreed[-1]]
 
@@ -123,8 +159,8 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
             return last[0]
 
         _found, report = await st.run(
-            ai, TALK, dm_ids={DM_ID}, entries=ENTRIES, names=NAMES, have=(), known=[],
-            consenting=consenting, max_calls=5, max_tokens=100, progress=KNOWN,
+            ai, said, dm_ids={DM_ID}, entries=ENTRIES, names=NAMES, have=(), known=[],
+            consenting=consenting, max_calls=5, max_tokens=100, progress=progress,
         )  # fmt: skip
         return report
 
@@ -140,6 +176,22 @@ class TheRun(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Also list PROGRESS", ai.system)
         self.assertEqual([(m[0], m[1].state) for m in report.progress], [("t1", "done")])
         self.assertIn("1 progress lines", report.line())
+
+    async def test_with_no_open_thread_the_call_is_5as(self) -> None:
+        ai = _AI([])
+        await self.run_with(ai, [{DM_ID, BEL}], progress=[])
+        self.assertNotIn("Also list PROGRESS", ai.system)
+        self.assertNotIn("progress", ai.schema["properties"])
+        ai = _AI([])
+        await self.run_with(ai, [{DM_ID, BEL}])
+        self.assertIn("progress", ai.schema["properties"])
+
+    async def test_the_same_change_in_two_windows_is_kept_once(self) -> None:
+        many = [Line(n, BEL, "We found him" if n in (5, 250) else f"line {n}", n * 1000)
+                for n in range(1, 301)]  # fmt: skip
+        report = await self.run_with(_AI([self.ROW]), [{BEL}], said=many)
+        self.assertEqual(len(report.progress), 1)
+        self.assertEqual(report.dropped, {"progress_double": 1})
 
     async def test_a_speaker_who_stops_while_it_reads_drops_the_line(self) -> None:
         report = await self.run_with(_AI([self.ROW]), [{DM_ID, BEL}, {DM_ID}])

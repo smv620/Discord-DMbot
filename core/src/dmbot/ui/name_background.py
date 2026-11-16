@@ -1691,7 +1691,10 @@ async def progress_inputs(memory: Any, guild_id: int, campaign_id: str) -> list[
             )
     return [
         session_progress.KnownThread(
-            t.thread.id, t.thread.name, tuple(standing.get(t.thread.id, ()))
+            t.thread.id,
+            t.thread.name,
+            tuple(standing.get(t.thread.id, ())),
+            t.state.condition if t.state is not None else "",
         )
         for t in live
     ]
