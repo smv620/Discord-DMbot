@@ -687,8 +687,6 @@ function startWeb(big: boolean, lonely = false): WebState {
     nodes.push(...extra);
     links.push({ id: "lp1", a: "pair-brask", b: "pair-ford", words: "lives at", secret: false, direction: "a-b" });
   }
-  // A kept story thread for the quest sheet (#4547): its id is the mock threadCard's.
-  nodes.push({ id: "thread-heir", name: "Bring the heir home", kind: "thread", secret: false });
   return { nodes, links, nextLink: links.length + 1 };
 }
 
