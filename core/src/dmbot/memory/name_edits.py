@@ -11,7 +11,15 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from dmbot.memory.link_edits import EVERYONE, ONLY_THE_DM, SOME_CHARACTERS, WHO_KNOWS, keep_batch
+from dmbot.memory.link_edits import (
+    COMMON,
+    EVERYONE,
+    ONLY_THE_DM,
+    PICK_WHO,
+    SOME_CHARACTERS,
+    WHO_KNOWS,
+    keep_batch,
+)
 from dmbot.memory.models import DM, Alias, MemoryRuleError, Written
 from dmbot.memory.store import MemoryStore
 
@@ -26,6 +34,60 @@ def who_knows_now(alias: Alias, knowers: Sequence[str]) -> str:
 
 
 async def set_who_knows(
+    memory: MemoryStore,
+    guild_id: int,
+    campaign_id: str,
+    alias: Alias,
+    who: str,
+    characters: Sequence[str] = (),
+    *,
+    players_only: bool = False,
+    made: list[int] | None = None,
+) -> Written[object]:
+    """ "Who knows this?" with its fourth answer, 🌍 Common knowledge (#4537 slice 1b): every
+    character knows it, NPCs too, and anyone who joins later. It shows the alias to the
+    players first if it is hidden (common knowledge can't be hidden), then writes the common row;
+    any other answer on a common alias takes common knowledge back first. All of it is the
+    DM's own choice, each change's batch in `made`, so one ↩ Undo takes back the whole answer
+    (#4159)."""
+    log = made if made is not None else []
+    if who not in (*WHO_KNOWS, COMMON):
+        raise MemoryRuleError(PICK_WHO)
+    common = alias.id in await memory.common_knowledge(guild_id, campaign_id, "alias", [alias.id])
+    if who == COMMON:
+        if common and not alias.secret:
+            return Written(None, None)  # already common knowledge
+        shown = await _set_flags(
+            memory, guild_id, campaign_id, alias, EVERYONE, players_only=players_only, made=log
+        )
+        if common:
+            return shown
+        return keep_batch(
+            log,
+            await memory.add_common_knowledge(
+                guild_id, campaign_id, "alias", [alias.id], source=DM
+            ),
+        )
+    removed: Written[object] = Written(None, None)
+    if common:
+        removed = keep_batch(
+            log,
+            await memory.remove_common_knowledge(guild_id, campaign_id, "alias", [alias.id]),
+        )
+    try:
+        result = await _set_flags(
+            memory, guild_id, campaign_id, alias, who, characters,
+            players_only=players_only, made=log,
+        )  # fmt: skip
+    except MemoryRuleError:
+        if removed.batch is not None:  # (nothing else changed: put common knowledge back)
+            await memory.undo(guild_id, campaign_id, removed.batch, source=DM)
+            log.remove(removed.batch)
+        raise
+    return result if result.batch is not None else removed
+
+
+async def _set_flags(
     memory: MemoryStore,
     guild_id: int,
     campaign_id: str,

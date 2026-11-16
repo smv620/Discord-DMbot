@@ -6,7 +6,7 @@ from __future__ import annotations
 from typing import Any, cast
 
 from dmbot.memory.models import CONFIRMED
-from dmbot.ui import name_card
+from dmbot.ui import name_card, who_knows
 from dmbot.ui import names as ui
 from tests import test_memory_names as base
 
@@ -138,3 +138,43 @@ class NameWho(base.NamesTest):
         opened = self.it(MANAGER)
         await name_card.OneName(self.campaign.id, self.bell.id, alias, secrets=False)._who(opened)
         self.assertIn("Only the campaign's DMs", opened.response.sent[0][0])
+
+    async def test_common_knowledge_shows_a_secret_name_and_undo_puts_it_back(self) -> None:
+        """🌍 Common knowledge (#4537) on the other name's page, and its ↩ Undo."""
+        alias = await self.alias()
+        _, view = await self.who_page(alias)
+        await view._only_me(self.it())
+        _, view = await self.who_page(await self.current())
+        it = self.it()
+        await view._common(it)
+        text, page = it.response.edited[0]
+        self.assertIn(who_knows.COMMON_DONE_SHOWN, text)
+        now = await self.current()
+        self.assertFalse(now.secret)
+        self.assertEqual(
+            await self.memory.common_knowledge(GUILD, self.campaign.id, "alias", [now.id]),
+            {now.id},
+        )
+        (undo,) = [c for c in page.children if getattr(c, "label", "") == "↩ Undo"]
+        it = self.it()
+        await undo.callback(it)
+        self.assertIn(who_knows.UNDONE, it.response.edited[0][0])
+        self.assertTrue((await self.current()).secret)
+        self.assertEqual(
+            await self.memory.common_knowledge(GUILD, self.campaign.id, "alias", [now.id]), set()
+        )
+
+    async def test_another_answer_takes_a_common_name_back_and_says_so(self) -> None:
+        alias = await self.alias()
+        _, view = await self.who_page(alias)
+        await view._common(self.it())
+        text, view = await self.who_page(await self.current())
+        self.assertIn("Common knowledge", text)
+        it = self.it()
+        await view._only_me(it)
+        self.assertIn(who_knows.NO_LONGER_COMMON, it.response.edited[0][0])
+        now = await self.current()
+        self.assertTrue(now.secret)
+        self.assertEqual(
+            await self.memory.common_knowledge(GUILD, self.campaign.id, "alias", [now.id]), set()
+        )

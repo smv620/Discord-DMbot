@@ -1,6 +1,7 @@
-"""The DM's "Who knows this?" page, shared by a connection and an other name (#2935): the three
-answers (🤫 Only the DM, 👥 Only some characters, 👁️ Everyone at the table), the menu of the
-campaign's player characters, and the words that say where the thing stands now.
+"""The DM's "Who knows this?" page, shared by a connection and an other name (#2935): the four
+answers (🤫 Only the DM, 👥 Only some characters, 👁️ Everyone at the table, and 🌍 Common knowledge:
+every character knows it, NPCs too, and anyone who joins later, #4537), the menu of the campaign's
+player characters, and the words that say where the thing stands now.
 
 The page for each kind of thing (`connection_edit.WhoKnows`, `name_card.WhoKnowsName`) adds what it
 writes and where Back goes; every press there checks the campaign, the DM and the thing again.
@@ -55,7 +56,12 @@ def who_text(
     """The page for "Who knows this?" (#2935): where the connection stands now, first, then the
     connection and how to change it. Players only ever see it if they can see the connection
     (Everyone); "known" here is about what the DM lets players see, not what the story says."""
-    if who == link_edits.EVERYONE:
+    if who == link_edits.COMMON:
+        now = (
+            "**🌍 Common knowledge: every character knows it, NPCs too, and anyone who joins "
+            "later. Players can see it.**\nTo take it back, pick who should know instead."
+        )
+    elif who == link_edits.EVERYONE:
         now = f"**Players can see this {thing}.**"
     elif who == link_edits.SOME_CHARACTERS:
         mine = sorted(names[c] for c in knowing if c in names)
@@ -70,9 +76,30 @@ def who_text(
     how = (
         "To pick characters, choose them in the list, then press 👥 Only some characters."
         if has_characters
-        else "There are no player characters yet, so only 🤫 and 👁️ are offered."
+        else "There are no player characters yet, so 👥 isn't offered."
     )
-    return f"{now}\n{said}\nWho should see it? 🤫 Only the DM · 👁️ Everyone at the table. {how}"
+    return (
+        f"{now}\n{said}\nWho should see it? 🤫 Only the DM · 👁️ Everyone at the table · "
+        f"🌍 Common knowledge (every character, NPCs too). {how}"
+    )
+
+
+# The words after an answer that changes common knowledge (#4537 slice 1b; the ux-critic's).
+COMMON_DONE = (
+    "🌍 Done: this is common knowledge now. Every character knows it, NPCs too, and anyone who "
+    "joins later."
+)
+COMMON_DONE_SHOWN = (
+    "🌍 Done: your players can see this now. It's common knowledge: every character knows it, "
+    "NPCs too, and anyone who joins later."
+)
+NO_LONGER_COMMON = "No longer common knowledge."
+UNDONE = "↩ Put back as it was before."
+
+
+def common_done(was_hidden: bool) -> str:
+    """The line after 🌍 Common knowledge: the reveal first when it showed something hidden."""
+    return COMMON_DONE_SHOWN if was_hidden else COMMON_DONE
 
 
 class WhoKnowsMenu(_Menu):
@@ -80,10 +107,16 @@ class WhoKnowsMenu(_Menu):
     owner of the page says what each answer writes (`_set`) and where Back goes (`_back`)."""
 
     def __init__(
-        self, pcs: Sequence[tuple[str, str]], *, chosen: Sequence[str] = (), now: str = ""
+        self,
+        pcs: Sequence[tuple[str, str]],
+        *,
+        chosen: Sequence[str] = (),
+        now: str = "",
+        undo: Sequence[int] = (),
     ) -> None:
         super().__init__()
         self.now = now
+        self.undo = list(undo)  # (the changes of a 🌍 answer just made: ↩ Undo takes them back)
         self.opened_with = sorted(chosen)  # who knew it when this page opened
         self.names = dict(pcs)
         self.picked: list[str] = list(chosen)
@@ -125,6 +158,14 @@ class WhoKnowsMenu(_Menu):
                 style=green if now == link_edits.EVERYONE else grey,
             )
         )  # fmt: skip
+        self.add_item(
+            _Button(
+                self._common, label="🌍 Common knowledge", row=1,
+                style=green if now == link_edits.COMMON else grey,
+            )
+        )  # fmt: skip
+        if self.undo:
+            self.add_item(_Button(self._undo, label="↩ Undo", style=grey, row=2))
         self.add_item(_Button(self._back, label="Back", style=grey, row=2))
 
     async def _picked(self, interaction: discord.Interaction) -> None:
@@ -143,7 +184,13 @@ class WhoKnowsMenu(_Menu):
     async def _everyone(self, interaction: discord.Interaction) -> None:
         await self._set(interaction, link_edits.EVERYONE)
 
+    async def _common(self, interaction: discord.Interaction) -> None:
+        await self._set(interaction, link_edits.COMMON)
+
     async def _set(self, interaction: discord.Interaction, who: str) -> None:
+        raise NotImplementedError
+
+    async def _undo(self, interaction: discord.Interaction) -> None:
         raise NotImplementedError
 
     async def _back(self, interaction: discord.Interaction) -> None:

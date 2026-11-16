@@ -7673,6 +7673,22 @@ class MemoryStore:
             added = await knowers.add_common(w, kind, statement_ids, certainty)
             return Written(added, w.batch)
 
+    async def remove_common_knowledge(
+        self, guild_id: int, campaign_id: str, kind: str, statement_ids: Sequence[str]
+    ) -> Written[int]:
+        """The DM takes common knowledge back (#4537 slice 1b: another answer on "Who knows this?"):
+        their own choice, one change with its own Undo. Returns how many rows went."""
+        async with self._write(guild_id, campaign_id, DM, dm_chose_secret=True) as w:
+            gone = await knowers.remove_common(w, kind, statement_ids)
+            return Written(gone, w.batch)
+
+    async def common_knowledge(
+        self, guild_id: int, campaign_id: str, kind: str, statement_ids: Sequence[str]
+    ) -> set[str]:
+        """Which of these statements are common knowledge (#4537), for the DM's own page."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await knowers.common_of(scope, kind, statement_ids)
+
     async def mark_guess(
         self,
         guild_id: int,
