@@ -88,8 +88,31 @@ class HeardReview(unittest.IsolatedAsyncioTestCase):
             await view.answer(it, "1")
         bot.answer_waiting_question.assert_awaited_once_with(GUILD, 5, "1", DM, None)
 
+    async def test_an_answer_for_a_campaign_that_is_gone_says_it_failed_and_saves_nothing(
+        self,
+    ) -> None:
+        bot = self.bot()
+        bot.answer_waiting_question = AsyncMock()
+        it = interaction(guild_of=None)
+        it.client = bot
+        bot.campaigns.guild_of = AsyncMock(return_value=None)
+        view = heard_review.HeardReview(CAMPAIGN)
+        view.shown = SimpleNamespace(id=5)  # type: ignore[assignment]
+        tell = AsyncMock()
+        with patch.object(heard_review, "_tell", tell):
+            await view.answer(it, "1")
+        bot.answer_waiting_question.assert_not_awaited()
+        tell.assert_awaited_once()
+
 
 class SaidAsReview(unittest.IsolatedAsyncioTestCase):
+    async def test_a_press_for_a_campaign_that_is_gone_reads_nothing(self) -> None:
+        memory = SimpleNamespace(said_as_suggestions=AsyncMock(return_value=[]))
+        it = interaction(guild_of=None)
+        with patch.object(said_as_review, "_memory", MagicMock(return_value=memory)):
+            self.assertIsNone(await said_as_review.SaidAsReview(CAMPAIGN).current_text(it))
+        memory.said_as_suggestions.assert_not_awaited()
+
     async def test_a_dm_in_a_private_chat_reaches_the_offer_list(self) -> None:
         memory = SimpleNamespace(said_as_suggestions=AsyncMock(return_value=[]))
         it = interaction()
