@@ -2,7 +2,8 @@
 quests and leads a lore upload found, one card at a time, for the DM to keep or turn down as a
 whole. ✅ Keep it puts the thread on the 🧵 Threads list and the Story Graph with its state and the
 people the DM left on, in one change (↩ Undo right after); 🚫 is remembered, so DMbot never
-suggests it again. Nothing is added by itself (§9.6).
+suggests it again. Nothing is added by itself (§9.6). Since slice 3 (#4500) the card also lists
+what's in it (steps, rewards, help, a time limit, branches), each one the DM can untick.
 
 Asked only in the DM's private chat (the card quotes the DM's own lore and may spoil a backstory);
 opened from ❓ Questions for you. Only a DM of the campaign can open it or answer, checked on every
@@ -13,12 +14,15 @@ from __future__ import annotations
 
 import logging
 import re
-from collections.abc import Mapping
+from collections.abc import Collection, Mapping, Sequence
 from typing import Any
 
 import discord
 
-from dmbot.memory.models import DM, MemoryRuleError, TooLateToUndo
+from dmbot.discord_limits import MESSAGE_MAX, fit_message
+from dmbot.memory import thread_parts as tp
+from dmbot.memory.models import DM, HINTED, MemoryRuleError, TooLateToUndo
+from dmbot.memory.thread_read import ReadBranch, ReadPart
 from dmbot.memory.thread_suggestions import ThreadSuggestionStore, Waiting, unkeep_in
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
@@ -39,6 +43,7 @@ log = logging.getLogger(__name__)
 
 LABEL = "📜 Story threads"
 HEADING = "📜 **A story thread DMbot found in your lore**"
+HEADING_HEARD = "📜 **A story thread DMbot heard in a session**"  # (#4522, the ux-critic)
 # (the ux-critic's words on #4453)
 KEEP, RENAME, NOT_ONE, SKIP, UNDO = (
     "✅ Keep it", "✏️ Rename", "🚫 Not a story thread", "Skip ›", "↩ Undo",
@@ -50,13 +55,26 @@ WHO_HEADING = "**Who's involved:**"
 UNTICK = "Untick anyone who doesn't belong in it."
 NOT_KEPT_YET = "name not kept yet, so it's left out: keep the name, then add them on the thread"
 WHO_HOLDER = "Who's involved"
+# Slice 3 (#4500): the thread's steps, rewards, help, time limit and branches, in the 📋 screen's
+# own words (`ui/thread_parts`), each one the DM can untick before keeping
+PARTS_HEADING = "**What's in it:**"
+PARTS_UNTICK = "Untick anything that doesn't belong in it. The rest is kept with it."
+PARTS_HOLDER = "What's in it"
+BRANCH_WORD = "🌿 Branch"
+HINT_SAID = "just a hint: your lore leaves it open"
+NOT_KEPT_SHORT = "name not kept yet, left out"
+# Discord's limit on one message (`MESSAGE_MAX`); a card over it can't be shown, and the queue
+# would stick on it (the reviewer on #4500). Each line is cut short, and past this budget the list's
+# last lines fold into "…and N more" (all of them stay in the menu below).
+CARD_MAX = MESSAGE_MAX - 100  # (room for Discord's own trimming of what we can't count)
+LINE_WORDS_MAX, TERMS_SHOWN = 80, 60
 AFTER = (
     "Keep it, and it goes on your 🧵 Threads list and the website's Story Graph. Players see it "
     "only if your DM screen lets them."
 )
 NOTHING_LEFT = (
-    "📜 **Story threads**: nothing to check. 🎉 If a lore upload finds more, it shows in "
-    "❓ Questions for you."
+    "📜 **Story threads**: nothing to check. 🎉 When DMbot finds more in your lore or a session, "
+    "they show in ❓ Questions for you."
 )
 GONE_NOW = "That one was already answered. Here are the ones still waiting."
 TOO_LATE = "⚠️ Can't undo: it was changed since. Change it in 🧵 Threads."
@@ -79,6 +97,44 @@ def undone_text(name: str) -> str:
     return f"↩ Undone: **{_md(name)}** is waiting again."
 
 
+def line_for(
+    line: ReadPart | ReadBranch,
+    names: Mapping[str, str],
+    waiting: frozenset[str] = frozenset(),
+) -> tuple[str, str]:
+    """One line of what's in a suggestion, as (its words, what it is): "100 gold" / "Reward from
+    Hlin Trollbane, when the job's done". The kinds and states are the 📋 screen's words. A branch
+    names its people, as the thread's own are named above it; a name the DM hasn't kept is said to
+    be left out, as the keep leaves it out (`waiting`)."""
+    from dmbot.ui.thread_parts import DUE_SAID, KIND_WORDS, LIMIT_SAID, STATE_SAID
+
+    def named(entity_id: str | None) -> str:
+        name = names.get(entity_id or "", "")
+        return f"{name} ({NOT_KEPT_SHORT})" if name and entity_id in waiting else name
+
+    words = logic.shorten(line.name if isinstance(line, ReadBranch) else line.words, LINE_WORDS_MAX)
+    if isinstance(line, ReadBranch):
+        what = f"{BRANCH_WORD}, {HINT_SAID}" if line.state == HINTED else BRANCH_WORD
+        people = [f"{named(e)} ({part})" for part, e in line.parts if e in names]
+        return words, what + (f" · {', '.join(people)}" if people else "")
+    who = named(line.who_id)
+    # (lent help and a gift say it the 🧵 card's way: "Lent by …", "Given by …", the ux-critic)
+    if line.kind == tp.HELP and line.state == "lent":
+        what = f"Lent by {who}" if who else "Lent"
+        terms = logic.shorten(line.terms, TERMS_SHOWN)
+        return words, what + (f", to return: {terms}" if terms else ", to give back")
+    if line.kind == tp.REWARD_GIVEN:
+        return words, (f"Given by {who}" if who else "Given") + ", not promised"
+    what = KIND_WORDS[line.kind] + (f" from {who}" if who else "")
+    if line.due:
+        what += f", {DUE_SAID[line.due]}"
+    if line.kind == tp.HELP:
+        what += f", {STATE_SAID[line.state]}"
+    if line.limit_kind:
+        what += f", {LIMIT_SAID[line.limit_kind]}"
+    return words, what
+
+
 def card_text(
     s: Waiting,
     names: Mapping[str, str],
@@ -88,17 +144,20 @@ def card_text(
     name: str = "",
     on: frozenset[int],
     waiting: frozenset[str] = frozenset(),
+    lines_on: frozenset[int] | None = None,
+    heard: Sequence[str] = (),
 ) -> str:
     """The card: the thread's name, kind and the state it is kept with, its aim, who is involved
     (the lines switched on), and the lore it came from with the quote DMbot checked. `on`: which
-    people lines are kept."""
+    people lines are kept. A suggestion from a session (#4522) keeps no quote: `heard` is its
+    lines as the transcript has them now, read when the card is drawn."""
     from dmbot.memory.threads import STATE_WORDS
 
     count = f" ({at} of {of})" if of > 1 else ""
     state = STATE_WORDS.get(s.state, "").lower()
     kind = KIND_WORDS.get(s.kind, s.kind)
     lines = [
-        f"{HEADING}{count}",
+        f"{HEADING if s.session_id is None else HEADING_HEARD}{count}",
         f"**{_md(name or s.name)}** · {kind}, {state} (you can change that after keeping it)",
     ]
     if s.aim:
@@ -115,11 +174,88 @@ def card_text(
                     f"• {_md(who)} ({part})" if i in on else f"• ~~{_md(who)} ({part})~~ (left out)"
                 )
         lines.append(UNTICK)
-    if s.quote:
-        lines.append(f"From **{_md(s.upload)}**:" if s.upload else "From your lore:")
-        lines.append(f"> {_md(logic.shorten(s.quote, QUOTE_SHOWN))}")
-    lines.append(AFTER)
-    return "\n".join(lines)
+    parts: list[str] = []
+    for i, line in enumerate(s.lines):
+        words, what = line_for(line, names, waiting)
+        said = f"{_md(words)} ({_md(what)})"
+        kept = lines_on is None or i in lines_on
+        parts.append(f"• {said}" if kept else f"• ~~{said}~~ (left out)")
+    tail = []
+    if s.session_id is not None:
+        where = f"Heard in **{_md(s.upload)}**" if s.upload else "Heard in a session"
+        tail.append(f"{where}:" if heard else f"{where}.")
+        if heard:
+            tail.append(f"> {_md(logic.shorten(' … '.join(heard), QUOTE_SHOWN))}")
+    elif s.quote:
+        tail.append(f"From **{_md(s.upload)}**:" if s.upload else "From your lore:")
+        tail.append(f"> {_md(logic.shorten(s.quote, QUOTE_SHOWN))}")
+    tail.append(AFTER)
+
+    def joined(shown: list[str]) -> str:
+        middle = [PARTS_HEADING, *shown, PARTS_UNTICK] if shown else []
+        return "\n".join([*lines, *middle, *tail])
+
+    text, shown = joined(parts), list(parts)
+    while len(text) > CARD_MAX and shown:  # (past Discord's limit: the last lines fold)
+        shown = shown[:-1]
+        more = f"• …and {len(parts) - len(shown)} more: see the menu below."
+        text = joined([*shown, more])
+    return fit_message(text)
+
+
+def session_label(started_at: int) -> str:
+    """The card's "Heard in **the session of 14 Nov 2026**" (the session's start, UTC, as the
+    recap list says it)."""
+    from dmbot.ui.recap_again import date_label
+
+    return f"the session of {date_label(started_at)}"
+
+
+def threads_found_text(made: int, stopped: bool, label: str) -> str:
+    """The one counts line in the DM Bot channel after a session (#4522, #3874): counts only, no
+    thread's name (the channel is the campaign's people's), and the session by its date (an
+    import may be an old one, so never "the last session"). Its 📜 button is for a DM."""
+    many = "possible story thread" if made == 1 else "possible story threads"
+    if made:
+        line = (
+            f"📜 DMbot heard {made} {many} in {label}. A DM can keep or turn down each one: "
+            f"press {LABEL}."
+        )
+        return line + (" It stopped early, so it may have missed some." if stopped else "")
+    return f"📜 DMbot stopped early reading {label} for story threads, so it may have missed some."
+
+
+HEARD_MAX = 3  # lines shown under a session suggestion: its evidence, never the scene
+
+
+async def _heard(
+    interaction: discord.Interaction, guild_id: int, s: Waiting, agreed: Collection[int]
+) -> list[str]:
+    """A session suggestion's lines, read from its transcript now (#4522): found by when each
+    began and who said it (never by place: deleting an earlier line moves the places), only lines
+    still there, by one of its speakers who still agrees. Nothing when the transcript can't be
+    read (the card still shows the suggestion; its evidence is only missing)."""
+    transcripts = getattr(interaction.client, "transcripts", None)
+    if s.session_id is None or not s.line_starts or transcripts is None:
+        return []
+    try:
+        lines = await transcripts.lines(guild_id, s.session_id)
+    except Exception as exc:
+        log.warning("Story threads card: couldn't read a session's lines (%s)", type(exc).__name__)
+        return []
+    return heard_lines(lines, s, agreed)
+
+
+def heard_lines(lines: Sequence[Any], s: Waiting, agreed: Collection[int]) -> list[str]:
+    """Pure: the transcript lines a session suggestion points at, at most `HEARD_MAX`."""
+    starts, speakers = set(s.line_starts), set(s.speaker_ids) & set(agreed)
+    out: list[str] = []
+    for line in lines:
+        if line.started_ms in starts and line.user_id in speakers and line.text.strip():
+            out.append(" ".join(line.text.split()))
+            if len(out) >= HEARD_MAX:
+                break
+    return out
 
 
 class ThreadQuestions(_Menu):
@@ -132,6 +268,7 @@ class ThreadQuestions(_Menu):
         self.skipped: set[str] = set()
         self.name = ""  # the DM's own name for the current one, from ✏️ Rename
         self.on: frozenset[int] = frozenset()
+        self.lines_on: frozenset[int] = frozenset()
         self.names: dict[str, str] = {}
         # ("keep", batch, name) or ("no", suggestion, name), for ↩ Undo
         self.undo: tuple[str, int | str, str] | None = None
@@ -141,7 +278,18 @@ class ThreadQuestions(_Menu):
         memory = _memory(interaction)
         if memory is None:
             return None
-        waiting = await ThreadSuggestionStore(memory._db).waiting(self.guild_id, self.campaign_id)
+        # (the consent sweep first: a session suggestion quoting someone who stopped never shows;
+        # who counts is the campaign's `recorded_in`, so a speaker an import's uploader confirmed
+        # counts here as in the reading, the reviewer on #4522)
+        consent = getattr(interaction.client, "consent", None)
+        agreed = (
+            await consent.recorded_in(self.guild_id, self.campaign_id)
+            if consent is not None
+            else None
+        )
+        waiting = await ThreadSuggestionStore(memory._db).waiting(
+            self.guild_id, self.campaign_id, opted_in=agreed
+        )
         left = [w for w in waiting if w.id not in self.skipped] or waiting
         self.clear_items()
         if not left:
@@ -152,9 +300,12 @@ class ThreadQuestions(_Menu):
         s = left[0]
         if self.current is None or self.current.id != s.id:
             self.name, self.on = "", frozenset(range(len(s.parts)))
+            self.lines_on = frozenset(range(len(s.lines)))
         self.current = s
         self.names, self.waiting = {}, frozenset[str]()
-        for _, who in s.parts:
+        givers = [p.who_id for p in s.reads if p.who_id]
+        givers += [e for b in s.branches for _, e in b.parts]
+        for who in [*(w for _, w in s.parts), *givers]:
             e = await memory.entity(self.guild_id, self.campaign_id, who)
             if e is not None:
                 self.names[who] = e.name
@@ -190,13 +341,39 @@ class ThreadQuestions(_Menu):
                 row=1,
             )
             self.add_item(self.who)
+        if s.lines:
+            self.what = _Select(
+                self._lines_picked,
+                placeholder=PARTS_HOLDER,
+                min_values=0,
+                max_values=len(s.lines),
+                options=[
+                    discord.SelectOption(
+                        label=logic.shorten(words, logic.OPTION_LABEL_MAX),
+                        description=logic.shorten(what, logic.DESCRIPTION_MAX),
+                        value=str(i),
+                        default=i in self.lines_on,
+                    )
+                    for i, (words, what) in enumerate(
+                        line_for(x, self.names, self.waiting) for x in s.lines
+                    )
+                ],
+                row=2,
+            )
+            self.add_item(self.what)
         at = waiting.index(s) + 1
+        heard = await _heard(interaction, self.guild_id, s, agreed or ())
         return card_text(
-            s, self.names, at, len(waiting), name=self.name, on=self.on, waiting=self.waiting
-        )
+            s, self.names, at, len(waiting), name=self.name, on=self.on, waiting=self.waiting,
+            lines_on=self.lines_on, heard=heard,
+        )  # fmt: skip
 
     async def _who_picked(self, interaction: discord.Interaction) -> None:
         self.on = frozenset(int(v) for v in self.who.values)
+        await self._show(interaction, "")
+
+    async def _lines_picked(self, interaction: discord.Interaction) -> None:
+        self.lines_on = frozenset(int(v) for v in self.what.values)
         await self._show(interaction, "")
 
     async def _skip(self, interaction: discord.Interaction) -> None:
@@ -254,6 +431,7 @@ class ThreadQuestions(_Menu):
                     g, c, name, s.kind, s.state, aim=s.aim,
                     parts=[p for i, p in enumerate(s.parts) if i in self.on],
                     source=DM, suggestion_id=s.id,
+                    leave_off=[i for i in range(len(s.lines)) if i not in self.lines_on],
                 )  # fmt: skip
                 self.undo = ("keep", kept.batch, name) if kept.batch is not None else None
                 said = kept_text(name)

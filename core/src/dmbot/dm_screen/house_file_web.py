@@ -23,7 +23,8 @@ from typing import Any
 
 import discord
 
-from dmbot.dm_screen import house_sync
+from dmbot.dm_screen import house_sync, pointer_note
+from dmbot.dm_screen.house_sync import HOUSE_FILE_POINTER
 from dmbot.rules import house_file_queue as q
 from dmbot.rules.house import HouseRuleError
 from dmbot.rules.house_file_queue import Claim, Counts, HouseFileQueue
@@ -214,13 +215,12 @@ async def _compare(
         offers: list[bool] = []
 
         async def send(text: str, view: discord.ui.View) -> bool:
-            screen = campaign.dm_screen_channel_id
-            if screen is None:
-                offers.append(False)
-                return False
-            posted = await bot.post_message(screen, text, view if view.children else None)
-            offers.append(posted is not None)
-            return posted is not None
+            # House-rule text: private to the DMs, a pointer in the DM Bot channel, the screen only
+            # if no DM can be reached (#3874).
+            pointer = HOUSE_FILE_POINTER if view.children else None  # (only an offer, not an error)
+            told = await pointer_note.send(bot, campaign, text, lambda: view, pointer)
+            offers.append(told)
+            return told
 
         keep.set(q.FETCHING)
         text: str | None

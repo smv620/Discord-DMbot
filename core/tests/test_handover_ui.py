@@ -608,24 +608,26 @@ class Answering(unittest.IsolatedAsyncioTestCase):
         await AcceptOfferButton(GUILD, OFFER_ID).callback(it)
         self.assertIn("This offer has ended", shown(it))
 
-    async def test_an_accept_is_noted_on_the_dm_screen_and_a_no_thanks_is_not(self) -> None:
-        # The owner's private messages may be off: the #dm-screen says whose plan the
-        # table uses now. A "no thanks" changed nothing for the table (#765 review).
+    async def test_an_accept_is_noted_to_the_dms_and_a_no_thanks_is_not(self) -> None:
+        # The owner's private messages may be off: the DMs hear whose plan the table uses now,
+        # privately (it has names), with a pointer in the DM Bot channel (#3874). A "no thanks"
+        # changed nothing for the table (#765 review).
         screen = dataclasses.replace(campaign(), dm_screen_channel_id=555)
         it = interaction(BUYER, guild=False)
         it.client.campaigns.get.return_value = screen
         it.client.campaigns.accept_handover.return_value = "accepted"
-        it.client.post = AsyncMock(return_value=True)
+        it.client.tell_dms_with_pointer = AsyncMock(return_value=True)
         await AcceptOfferButton(GUILD, OFFER_ID).callback(it)
-        channel, text = it.client.post.await_args.args
-        self.assertEqual(channel, 555)
+        told, text, pointer = it.client.tell_dms_with_pointer.await_args.args
+        self.assertEqual(told, screen)
         self.assertIn("**Mirelle** accepted: **Frost\\*maiden** now uses", text)
+        self.assertNotIn("Mirelle", pointer)
         it = interaction(BUYER, guild=False)
         it.client.campaigns.get.return_value = screen
         it.client.campaigns.decline_handover.return_value = "declined"
-        it.client.post = AsyncMock(return_value=True)
+        it.client.tell_dms_with_pointer = AsyncMock(return_value=True)
         await DeclineOfferButton(GUILD, OFFER_ID).callback(it)
-        it.client.post.assert_not_awaited()
+        it.client.tell_dms_with_pointer.assert_not_awaited()
         self.assertIn("**Mirelle** said no thanks", it.member.send.await_args.args[0])
 
     async def test_only_a_process_serving_the_server_posts_on_its_screen(self) -> None:
@@ -636,9 +638,11 @@ class Answering(unittest.IsolatedAsyncioTestCase):
         it.client.campaigns.accept_handover.return_value = "accepted"
         it.client.get_guild.return_value = None  # another process serves it
         it.client.post = AsyncMock(return_value=True)
+        it.client.tell_dms_with_pointer = AsyncMock(return_value=True)
         await AcceptOfferButton(GUILD, OFFER_ID).callback(it)
         self.assertIn("uses your plan now", shown(it))
         it.client.post.assert_not_awaited()
+        it.client.tell_dms_with_pointer.assert_not_awaited()
 
     async def test_a_dm_screen_that_cant_be_posted_to_changes_nothing(self) -> None:
         screen = dataclasses.replace(campaign(), dm_screen_channel_id=555)

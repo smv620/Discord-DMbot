@@ -1546,6 +1546,42 @@ THREADS_SHORT = {
 }
 
 
+async def thread_inputs(
+    memory: Any, guild_id: int, campaign_id: str
+) -> tuple[list[tuple[str, frozenset[str]]], dict[str, set[str]], dict[str, str], list[str]]:
+    """What both thread readers check against (#4453, #4522): `have`, every suggestion made before
+    and every thread the campaign has, by name key and people (never suggested again); `entries`,
+    a name's key to the campaign's people, groups and places it may point at (never the party's own
+    group, a rejected entry or a thread: design §6); `names`, entry id to name; and the open
+    threads' names, for the session reader's prompt."""
+    from dmbot.memory import thread_read
+    from dmbot.memory.thread_suggestions import ThreadSuggestionStore
+    from dmbot.memory.threads import LIVE_STATES
+
+    lookup = CampaignLookup.build(await memory.lookup_data(guild_id, campaign_id))
+    onto = await memory.ontology(guild_id, campaign_id)
+    have = list(await ThreadSuggestionStore(memory._db).known(guild_id, campaign_id))
+    known: list[str] = []
+    for t in await memory.threads(guild_id, campaign_id):
+        have.append((name_key(t.thread.name), frozenset(i.who.id for i in t.involved)))
+        if t.state in LIVE_STATES:
+            known.append(t.thread.name)
+    rows = []
+    for entry in lookup.names:
+        who = lookup.entities.get(entry.entity_id)
+        if (
+            who is None
+            or who.status == REJECTED
+            or who.party  # (the party is never one of a thread's people: design §6)
+            or onto.is_a(who.type, "thread")
+        ):
+            continue
+        rows.append((who.id, who.type, entry.text))
+    entries = thread_read.entries_by_name(rows)
+    names = {i: e.name for i, e in lookup.entities.items()}
+    return have, entries, names, known
+
+
 async def store_thread_suggestions(
     bot: Any,
     campaign: Campaign,
@@ -1582,25 +1618,8 @@ async def store_thread_suggestions(
     dropped: dict[str, int] = {}
     short, made = "", 0
     try:
-        lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
-        onto = await memory.ontology(campaign.guild_id, campaign.id)
         store = ThreadSuggestionStore(memory._db)
-        have = list(await store.known(campaign.guild_id, campaign.id))
-        for t in await memory.threads(campaign.guild_id, campaign.id):
-            have.append((name_key(t.thread.name), frozenset(i.who.id for i in t.involved)))
-        rows = []
-        for entry in lookup.names:
-            who = lookup.entities.get(entry.entity_id)
-            if (
-                who is None
-                or who.status == REJECTED
-                or who.party  # (the party is never one of a thread's people: design §6)
-                or onto.is_a(who.type, "thread")
-            ):
-                continue
-            rows.append((who.id, who.type, entry.text))
-        entries = thread_read.entries_by_name(rows)
-        names = {i: e.name for i, e in lookup.entities.items()}
+        have, entries, names, _known = await thread_inputs(memory, campaign.guild_id, campaign.id)
         reading = thread_read.read_threads(ai, text, max_tokens=OUTPUT_FLOOR)
         said, short = await (reading if left is None else asyncio.wait_for(reading, left))
         found, dropped = thread_read.check(said, text, entries, names, have=have)
@@ -3363,15 +3382,15 @@ def players_view(
     if change:
         after = now_hidden if choice is None else choice
         if not now_hidden and not after:
-            line = "👁️ Players can see it now, and will still see it after the update."
+            line = "👁️ Players see it now and after."
             return PlayersView(line, HIDE_PLAYERS, False, False, False, False)
         if now_hidden and after:
-            line = "🤫 Hidden from players now, and still will be after the update."
+            line = "🤫 Hidden from players now and after."
             return PlayersView(line, SHOW_PLAYERS, now_secret, not now_secret, False, True)
         if after:
-            line = "🤫 Players can see it now. After the update it will be hidden."
+            line = "🤫 Players see it now. After: hidden."
             return PlayersView(line, SHOW_PLAYERS, True, None, False, True)
-        line = "👁️ Hidden from players now. After the update they will see it."
+        line = "👁️ Hidden now. After: players see it."
         return PlayersView(line, HIDE_PLAYERS, False, False, True, False)
     if choice is True:
         return PlayersView("🤫 Hidden from players.", SHOW_PLAYERS, True, None, False, True)
@@ -3598,32 +3617,33 @@ class ConnectionOffer(_Menu):
         )
         checked = who_resolve.checked_line(c.decided)
         n = self.kept + self.left_out + 1
+        # The Keep all line goes last, as small text, so the proposal reads first (#4529).
+        scope = self._scope(c).rstrip("\n")
+        scope_line = f"\n{scope}" if scope else ""
         if self._pair_old(c):
             old = ", ".join(self._reads(r) for r in self._pair_old(c))
             now = f"{_md(c.subject)} {_md(old)} {_md(c.object)}"
             proposed = bold_what_changed(now, f"{_md(c.subject)} {how} {_md(c.object)}")
             return (
-                f"📜 **Connection {n} of {self.total}:** update it?\n"
-                + self._scope(c)
+                f"📜 **Connection {n} of {self.total}**\n"
+                + f"🙋❓ **PROPOSED:** {proposed}{handed[0]}\n"
                 + f"Now: {now}\n"
-                + f"Proposed: {proposed}{handed[0]}\n"
                 + mine
                 + source
                 + checked
                 + extra
-                + f"{view.line}\n"
-                + "Nothing changes unless you press ✅ Update it."
+                + f"{view.line}"
+                + scope_line
             )
         return (
-            f"📜 **Connection {n} of {self.total}:** add it?\n"
-            + self._scope(c)
-            + f"Proposed: **{_md(c.subject)}** {how} **{_md(c.object)}**{handed[0]}\n"
+            f"📜 **Connection {n} of {self.total}**\n"
+            + f"🙋❓ **PROPOSED:** **{_md(c.subject)}** {how} **{_md(c.object)}**{handed[0]}\n"
             + mine
             + source
             + checked
             + extra
-            + f"{view.line}\n"
-            + "Nothing is added unless you press ✅ Add it."
+            + f"{view.line}"
+            + scope_line
         )
 
     def _scope(self, c: Waiting) -> str:
@@ -3651,8 +3671,8 @@ class ConnectionOffer(_Menu):
         if moved:  # (#4115: keeping one changes who has an item, so each is seen first)
             left.append(f"{moved} where an item changes hands")
         if not left:
-            return f"✅ Keep all keeps these {len(mine)} from {_md(c.upload)}.\n"
-        decide = left[0] if len(left) == 1 else ", ".join(left[:-1]) + " and " + left[-1]
+            return f"-# ✅ Keep all keeps these {len(mine)} from {_md(c.upload)}.\n"
+        decide = ", ".join(left)
         # (the counter above counts every one waiting; this says which the button covers and
         # which the DM checks, so the two numbers are never read as one, #4320)
         rest = len(self.shown) - len(mine)
@@ -3662,7 +3682,7 @@ class ConnectionOffer(_Menu):
             else (f"The other {rest} you check one at a time")
         )
         return (
-            f"✅ Keep all {len(mine)} keeps just the {len(mine)} from {_md(c.upload)}. "
+            f"-# ✅ Keep all {len(mine)} keeps the {len(mine)} from {_md(c.upload)}. "
             f"{others}: {decide}.\n"
         )
 

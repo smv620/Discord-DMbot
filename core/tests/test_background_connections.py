@@ -536,7 +536,7 @@ class ThePath(NamesTest):
             for it in pressed
             for c in it.followup.send.await_args_list
         ]
-        self.assertTrue(any("add it?" in text for text in said), said)
+        self.assertTrue(any("🙋❓ **PROPOSED:**" in text for text in said), said)
 
     async def test_the_end_of_check_new_names_offers_them(self) -> None:
         await self.read()
@@ -546,7 +546,7 @@ class ThePath(NamesTest):
         offered = it.followup.send.await_args
         self.assertIsNotNone(offered)
         self.assertIn(
-            "add it?",
+            "🙋❓ **PROPOSED:**",
             offered.args[0] if offered.args else offered.kwargs.get("content", ""),
         )
 
@@ -830,7 +830,7 @@ class ThePath(NamesTest):
         await names_ui.start_review(it, self.campaign.id)
         asked = it.followup.send.await_args
         self.assertIsNotNone(asked)
-        self.assertIn("add it?", asked.args[0])
+        self.assertIn("🙋❓ **PROPOSED:**", asked.args[0])
 
     async def test_the_names_card_carries_a_lasting_button_while_any_wait(self) -> None:
         from dmbot.memory.lookup import LookupCache
@@ -847,7 +847,7 @@ class ThePath(NamesTest):
         await next(
             b for b in view.children if getattr(b, "label", "") == "📜 Check the connections (3)"
         ).callback(pressed)
-        self.assertIn("add it?", pressed.followup.send.await_args.args[0])
+        self.assertIn("🙋❓ **PROPOSED:**", pressed.followup.send.await_args.args[0])
 
     async def test_the_names_card_has_no_such_button_when_none_wait(self) -> None:
         from dmbot.memory.lookup import LookupCache

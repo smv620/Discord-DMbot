@@ -93,6 +93,7 @@ from dmbot.web import (
     strays,
     support,
     theatre_script,
+    thread_card,
     thread_suggestions,
     timeline,
     tokens,
@@ -2710,6 +2711,17 @@ def create_app(
         session, _token = signed
         try:
             return {"answer": await world_notes.queue_undo(db, session, ref, batch)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/threads/{thread}/card")
+    async def me_campaign_thread_card(ref: str, thread: str, signed: Signed) -> dict[str, Any]:
+        """A kept story thread's steps, rewards and more (#4476): DM only, nothing for anyone
+        else."""
+        session, _token = signed
+        try:
+            return await thread_card.read(db, session, ref, thread)
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

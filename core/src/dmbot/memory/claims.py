@@ -1955,6 +1955,7 @@ class ClaimStore:
             private_scene_store,
             reveal_proposals,
             secret_questions,
+            thread_suggestions,
         )
 
         async with self._store._db.guild(guild_id) as conn:
@@ -1974,6 +1975,8 @@ class ClaimStore:
             readings += await graph_review.forget(conn, guild_id, user_id)
             # (the 🤫 questions that quote them, #4524)
             readings += await secret_questions.forget(conn, guild_id, user_id)
+            # (the story threads read from a session that quote them, #4522)
+            readings += await thread_suggestions.forget(conn, guild_id, user_id)
             answers = await who_answers.forget(conn, guild_id, user_id)
             cur = await conn.execute(
                 "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"

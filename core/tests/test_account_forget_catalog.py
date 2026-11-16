@@ -54,6 +54,7 @@ TRANSCRIPTS: Rules = {
         "fightbot_players", "campaign_channel_people",
         "map_notes",  # (a person's words put into a picture: gone with their own words, #2450)
         "secret_questions",  # (a 🤫 question's speakers: `secret_questions.forget`, #4524)
+        "thread_suggestions",  # (a session's story threads: `thread_suggestions.forget`, #4522)
     )
 }  # fmt: skip
 TRANSCRIPTS.update(
@@ -115,6 +116,7 @@ NAME_NOT_A_PERSON: Rules = {  # a name of something else, with the reason
     "session_imports": ("file_name",),  # an imported file's name
     "trait_answers": ("name_key",),  # the key of a trait name
     "secret_questions": ("label",),  # an upload's or a session's label, never a person's name
+    "thread_suggestions": ("name", "name_key"),  # a story thread's name, built from its parts
     "web_delete_notices": ("campaign_name",),  # the deleted campaign's name
     "support_replies": ("who",),  # only 'customer', 'ai' or 'person': who wrote, never a name
 }

@@ -46,6 +46,8 @@ class Sources:
     rule_sets: Any | None = None  # RuleSetStore
     packs: Any | None = None  # PackUpdateStore
     agreed: Callable[[int], Awaitable[Collection[int]]] | None = None  # who agreed to be recorded
+    # who counts as recorded in one campaign's stored sessions (`ConsentStore.recorded_in`)
+    recorded: Callable[[int, str], Awaitable[Collection[int]]] | None = None
 
 
 async def count_kinds(
@@ -198,13 +200,15 @@ async def _world(src: Sources, g: int, c: str) -> Counted:
 
 
 async def _threads(src: Sources, g: int, c: str) -> Counted:
-    """The story threads the lore reader suggested and the DM hasn't answered (#4453): the ones
-    the 📜 card shows (`ThreadSuggestionStore.waiting`)."""
+    """The story threads the lore and session readers suggested and the DM hasn't answered (#4453,
+    #4522): the ones the 📜 card shows (`ThreadSuggestionStore.waiting`), never one quoting someone
+    no longer recorded."""
     from dmbot.memory.thread_suggestions import ThreadSuggestionStore
 
     if src.memory is None:
         return Counted(0)
-    return Counted(await ThreadSuggestionStore(src.db).count(g, c))
+    opted_in = await src.recorded(g, c) if src.recorded is not None else None
+    return Counted(await ThreadSuggestionStore(src.db).count(g, c, opted_in=opted_in))
 
 
 async def _maps(src: Sources, g: int, c: str) -> Counted:

@@ -231,6 +231,12 @@ class PlanChecksSetting(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_REVEALS_PRECHECK must be 1"):
             load_settings({**BASE, "DMBOT_STORY_REVEALS_PRECHECK": "maybe"})
 
+    def test_session_story_threads_are_off_by_default(self) -> None:  # (#4522)
+        self.assertFalse(load_settings(BASE).story_threads_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_STORY_THREADS": "1"}).story_threads_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_THREADS must be 1"):
+            load_settings({**BASE, "DMBOT_STORY_THREADS": "maybe"})
+
     def test_grading_contradictions_is_off_unless_asked(self) -> None:
         self.assertFalse(load_settings(BASE).story_contradictions_on)
         self.assertTrue(

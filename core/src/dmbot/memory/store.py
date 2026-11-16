@@ -62,6 +62,7 @@ from dmbot.memory import (
     standing,
     states,
     thread_parts,
+    thread_read,
     told,
     whereabouts,
     world_notes,
@@ -2180,46 +2181,95 @@ class MemoryStore:
         parts: Sequence[tuple[str, str]],
         source: str,
         suggestion_id: str = "",
+        leave_off: Collection[int] = (),
     ) -> Written[Entity]:
         """The DM keeps a story thread DMbot suggested (#4453, quests slice 1): the thread, its
         state and the people the DM left on, in ONE change, so one Undo takes it all back. A person
         merged since is followed to the entry it became; one gone since is skipped. The suggestion's
-        row is marked kept in the same transaction, with the change's number for ↩ Undo."""
+        row is marked kept in the same transaction, with the change's number for ↩ Undo.
+
+        Slice 3 (#4500): the suggestion's own parts and branches (read from its row here, never
+        from the screen) are kept with it, except the lines in `leave_off` (positions in
+        `Waiting.lines`): each part as the DM's keep with its source 'lore' (§9.6), each branch as a
+        thread of its own with its people and its `branch_of` link (§6a). A part that no longer
+        fits (the same words already there, its giver no longer a person or group) is kept without
+        what doesn't fit, or left out, never failing the keep."""
         if source != DM:
             raise MemoryRuleError("Only the DM can do that.")
         check_named(subtype, name)
         name = clean_text(name)
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
-            if subtype not in onto.types or not onto.is_a(subtype, "thread"):
-                raise MemoryRuleError(THREAD_KINDS_ONLY)
-            onto.active_type(subtype)
-            row = await w.insert(
-                ENTITIES,
-                {
-                    "id": new_id(), "type": subtype, "name": name,
-                    "description": clean_text(aim)[:DESCRIPTION_MAX] if aim else "",
-                    "status": CONFIRMED, "merged_into": None, "source": source,
-                    "created_at": w.now, "played_by": None, "role": None, "needs_look": False,
-                    "unique_item": None, "audience_limited": False, "party": False,
-                },
-            )  # fmt: skip
-            await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", CONFIRMED, False, None))
-            await states.set_condition(w, onto, row, state, from_session_at=None)
-            for role, who in parts:
-                live = await _followed(w, who)
-                if live is None:
-                    continue  # (gone since the suggestion was made)
-                await self.add_relation_in(
-                    w, live, "in_thread", str(row["id"]), confidence=1.0, status=CONFIRMED,
-                    detail=clean_text(role),
-                )  # fmt: skip
-            if suggestion_id:
-                from dmbot.memory import thread_suggestions
+            began: int | None = None
+            from dmbot.memory import thread_suggestions
 
+            if suggestion_id:  # (one read from a session starts at that session, #4522)
+                began = await thread_suggestions.session_at_in(w, suggestion_id)
+            row = await self._new_thread_in(
+                w, onto, name, subtype, state, aim, parts, source, from_session_at=began
+            )
+            if suggestion_id:
+                reads, branches = await thread_suggestions.lines_in(w, suggestion_id)
                 if not await thread_suggestions.mark_kept(w, suggestion_id, w.batch):
                     raise MemoryRuleError(thread_suggestions.GONE)
+                off = set(leave_off)
+                for i, part in enumerate(reads):
+                    if i not in off:
+                        await _keep_read_part(w, onto, str(row["id"]), part)
+                for i, branch in enumerate(branches, len(reads)):
+                    if i in off:
+                        continue
+                    made = await self._new_thread_in(
+                        w, onto, branch.name, branch.kind, branch.state, branch.aim,
+                        branch.parts, source,
+                    )  # fmt: skip
+                    await self.add_relation_in(
+                        w, str(made["id"]), threads_mod.BRANCH_OF, str(row["id"]),
+                        confidence=1.0, status=CONFIRMED,
+                    )  # fmt: skip
             return Written(_entity(row), w.batch)
+
+    async def _new_thread_in(
+        self,
+        w: Changes,
+        onto: Ontology,
+        name: str,
+        subtype: str,
+        state: str,
+        aim: str,
+        parts: Sequence[tuple[str, str]],
+        source: str,
+        *,
+        from_session_at: int | None = None,
+    ) -> dict[str, Any]:
+        """A kept thread inside the caller's write: the entry, its name, its state and its people
+        (merged ones followed, gone ones skipped). For `keep_thread`, its thread and branches;
+        `from_session_at` is the session it was read from, if any."""
+        if subtype not in onto.types or not onto.is_a(subtype, "thread"):
+            raise MemoryRuleError(THREAD_KINDS_ONLY)
+        onto.active_type(subtype)
+        name = clean_text(name)
+        row = await w.insert(
+            ENTITIES,
+            {
+                "id": new_id(), "type": subtype, "name": name,
+                "description": clean_text(aim)[:DESCRIPTION_MAX] if aim else "",
+                "status": CONFIRMED, "merged_into": None, "source": source,
+                "created_at": w.now, "played_by": None, "role": None, "needs_look": False,
+                "unique_item": None, "audience_limited": False, "party": False,
+            },
+        )  # fmt: skip
+        await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", CONFIRMED, False, None))
+        await states.set_condition(w, onto, row, state, from_session_at=from_session_at)
+        for role, who in parts:
+            live = await _followed(w, who)
+            if live is None:
+                continue  # (gone since the suggestion was made)
+            await self.add_relation_in(
+                w, live, "in_thread", str(row["id"]), confidence=1.0, status=CONFIRMED,
+                detail=clean_text(role),
+            )  # fmt: skip
+        return row
 
     async def involve(
         self,
@@ -10100,6 +10150,34 @@ async def _move_aliases(
             [confirming],
         )
     await w.update_where(ALIASES, {"used_by": keep_id}, " AND used_by = %s", [gone_id])
+
+
+async def _keep_read_part(
+    w: Changes, onto: Ontology, thread_id: str, part: thread_read.ReadPart
+) -> None:
+    """One of a kept suggestion's parts (#4500), written as the DM's keep with its source 'lore'.
+    Its giver is followed through a merge, and dropped when gone, not kept yet, or no longer a
+    person or group; a part the thread already has, or one that no longer fits a part's rules, is
+    left out (counted in the log), so one stale line never fails the DM's keep. Catching here is
+    safe inside the write: `thread_parts.add` checks everything before its one insert, so a refusal
+    leaves nothing half written (keep it that way)."""
+    who = await _followed(w, part.who_id) if part.who_id else None
+    for attempt in (who, None) if who else (None,):
+        try:
+            await thread_parts.add(
+                w, onto, thread_id, part.kind, part.words, state=part.state, who_id=attempt,
+                due=part.due, terms=part.terms, limit_kind=part.limit_kind,
+                source=thread_parts.LORE,
+            )  # fmt: skip
+            return
+        except (MemoryRuleError, ValueError) as exc:
+            if str(exc) == thread_parts.SAME_PART:
+                return  # (the thread has it already)
+            if attempt is None:
+                log.info(
+                    "A read story-thread part was left out on keeping (%s)", type(exc).__name__
+                )
+                return
 
 
 async def _guess_place_goes(w: Changes, row: Mapping[str, Any]) -> dict[str, Any]:
