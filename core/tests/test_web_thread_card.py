@@ -205,6 +205,12 @@ class TheChanges(Card):
         self.assertNotEqual((await self.act("part-date", f"{step['id']} 3")).error, "")
         self.assertEqual((await self.act("part-date", f"{'a' * 32} 3")).error, wa.GONE)
 
+    async def test_more_days_than_the_bot_takes_is_refused_not_written(self) -> None:
+        await self.act("part-add", f"{self.thread} time_limit - - - - - - By the thaw")
+        (limit,) = await self.parts()
+        self.assertEqual((await self.act("part-date", f"{limit['id']} 5000")).error, wa.BAD_TARGET)
+        self.assertFalse((await self.parts())[0]["dated"])
+
     async def test_the_dates_shape_is_checked_by_the_door(self) -> None:
         for text in (f"{'a' * 32} 0", f"{'a' * 32} 10000", f"{'a' * 32} x", f"{'a' * 32}", "5 3"):
             got = await self.queue_part("part-date", text)
