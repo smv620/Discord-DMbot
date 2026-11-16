@@ -4786,6 +4786,16 @@ class MemoryStore:
         """(upload key, label) of each upload one entry was read from, earliest first, including
         what was read into entries merged into it (a merge leaves their rows where they were, so
         its Undo needs nothing here). A DM-only reader: the label can name a private backstory."""
+        return [
+            (k, label)
+            for k, label, _at in await self.name_uploads(guild_id, campaign_id, entity_id)
+        ]
+
+    async def name_uploads(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> list[tuple[str, str, int]]:
+        """`name_sources` with the time each upload was first read for this entry, for "where was
+        it said?" when the sentence itself is gone (#4554). Same DM-only rule."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "WITH RECURSIVE family(id) AS ("
@@ -4798,7 +4808,9 @@ class MemoryStore:
                 " GROUP BY s.upload_key ORDER BY at, s.upload_key",
                 (entity_id, guild_id, campaign_id, guild_id, campaign_id),
             )
-            return [(str(r["upload_key"]), str(r["label"])) for r in await cur.fetchall()]
+            return [
+                (str(r["upload_key"]), str(r["label"]), int(r["at"])) for r in await cur.fetchall()
+            ]
 
     async def link_source(
         self, guild_id: int, campaign_id: str, relation_id: str

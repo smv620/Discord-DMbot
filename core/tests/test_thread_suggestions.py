@@ -67,6 +67,18 @@ class Suggestions(MemoryTest):
         self.assertEqual(t.state.condition, "open")
         self.assertEqual([i.who.id for i in t.involved], [self.pell])
 
+    async def test_a_kept_thread_says_where_it_came_from_and_unkeeping_forgets_it(self) -> None:
+        """(#4554: the entry's own change links it, so a kept quest can say where it was read)"""
+        await self.store.offer(GUILD_A, self.c, [self.job()], "Winter plot", 5)
+        batch = await self.keep()
+        (t,) = await self.memory.threads(GUILD_A, self.c)
+        got = await self.store.kept_from(GUILD_A, self.c, t.thread.id)
+        assert got is not None
+        self.assertEqual((got.upload, got.session_id), ("Winter plot", None))
+        self.assertIsNone(await self.store.kept_from(GUILD_A, self.c, self.pell))
+        self.assertTrue(await self.store.unkeep(GUILD_A, self.c, batch))  # (↩ on the card)
+        self.assertIsNone(await self.store.kept_from(GUILD_A, self.c, t.thread.id))
+
     async def test_turned_down_never_comes_back_and_a_second_answer_is_refused(self) -> None:
         await self.store.offer(GUILD_A, self.c, [self.job()], "", 5)
         (s,) = await self.store.waiting(GUILD_A, self.c)
