@@ -13,6 +13,12 @@ The rules, all in `visible` (pure, so they are tested without a database):
 - **The party** is never a knower: seeing as the party, or anything read to the whole table, is only
   what **every** player character in play knows.
 - A group grants nothing by itself: what Tran knows, Clyde does not.
+- **Common knowledge** (#4537, docs/design/party_knowledge.md §4): a row held by the "everyone"
+  point of view is known to every character, player character or NPC, now or later, unless they have
+  a row of their own. Until the readers leave the flags (that design's slice 5), it counts only
+  while the statement's own flags show it to the players: a suggestion counts once the DM confirms
+  it, and the DM's hide masks it without deleting it (so common knowledge never loses its row by
+  itself, #4524).
 - Learning a statement includes learning that the entries it names exist (§9b item 4), so a known
   connection, property or other name makes its entries known.
 """
@@ -134,6 +140,11 @@ class Visible:
             ALIAS: self.aliases,
         }[kind]
         return statement_id in held
+
+
+# The key a common-knowledge row is held under in `Statements.knowers` (never an entry id: those are
+# 32 hex characters).
+COMMON = "@everyone"
 
 
 SOMEONE = "someone"  # what a public place says when no name is open to every player
@@ -265,6 +276,8 @@ def reach(
     if character in listed:
         return listed[character]
     found = [listed[g] for g in groups.get(character, ()) if g in listed]
+    if COMMON in listed:  # (common knowledge: everyone's group, #4537)
+        found.append(listed[COMMON])
     return max(found) if found else None
 
 
@@ -328,8 +341,10 @@ def visible(viewer: Viewer, data: Statements) -> Visible:
 async def load(scope: Scope) -> Statements:
     """Read the campaign's knowledge lists and what each statement names, in one pass."""
     views = {
-        r["id"]: r["entity_id"]
-        for r in await scope.select(PERSPECTIVES, " AND entity_id IS NOT NULL")
+        r["id"]: r["entity_id"] if r["entity_id"] is not None else COMMON
+        for r in await scope.select(
+            PERSPECTIVES, " AND (entity_id IS NOT NULL OR kind = 'everyone')"
+        )
     }
     knowers: dict[tuple[str, str], dict[str, float]] = {}
     for row in await scope.select(KNOWERS):
@@ -387,6 +402,7 @@ async def load(scope: Scope) -> Statements:
         for r in members:
             if r["object_id"] not in party:
                 groups.setdefault(r["subject_id"], set()).add(r["object_id"])
+    await _common_while_shown(scope, knowers, relations, aliases)
     kept = {
         key: value
         for key, value in knowers.items()
@@ -408,6 +424,59 @@ async def load(scope: Scope) -> Statements:
         player_characters=pcs,
         told={a: frozenset(c) for a, c in told.items()},
     )
+
+
+async def _common_while_shown(
+    scope: Scope,
+    knowers: dict[tuple[str, str], dict[str, float]],
+    relations: Mapping[str, tuple[str, str]],
+    aliases: Mapping[str, tuple[str, ...]],
+) -> None:
+    """Take the common-knowledge rows off the statements the players are not shown now (#4537): a
+    suggestion not yet confirmed, or what the DM hid. The rows stay stored; only this read leaves
+    them out. One read of the rows involved, and none when no statement holds a common row."""
+    from dmbot.memory import knowers as lists  # (knowers imports this module)
+
+    common = [key for key, who in knowers.items() if COMMON in who]
+    if not common:
+        return
+    ids = {k: [i for kind, i in common if kind == k] for k in KINDS}
+    rel_rows = {r["id"]: r for r in await _by_id(scope, RELATIONS, ids[CONNECTION])}
+    alias_rows = {r["id"]: r for r in await _by_id(scope, ALIASES, ids[ALIAS])}
+    state_rows = {r["id"]: r for r in await _by_id(scope, STATES, ids[PROPERTY])}
+    wanted = set(ids[ENTRY])
+    wanted.update(e for r in rel_rows.values() for e in (r["subject_id"], r["object_id"]))
+    wanted.update(r["entity_id"] for r in alias_rows.values())
+    wanted.update(r["entity_id"] for r in state_rows.values())
+    entities = {r["id"]: r for r in await _by_id(scope, ENTITIES, sorted(wanted))}
+
+    def entry_ok(entity_id: str) -> bool:
+        return entity_id in entities and lists.entry_shown(entities[entity_id])
+
+    def shown(kind: str, statement_id: str) -> bool:
+        if kind == ENTRY:
+            return entry_ok(statement_id)
+        if kind == PROPERTY:
+            row = state_rows.get(statement_id)
+            return row is not None and entry_ok(row["entity_id"])
+        if kind == ALIAS:
+            row = alias_rows.get(statement_id)
+            return row is not None and lists.alias_shown(row) and entry_ok(row["entity_id"])
+        row = rel_rows.get(statement_id)
+        return (
+            row is not None
+            and lists.relation_shown(row)
+            and all(
+                e in entities and lists.entry_shown_end(entities[e])
+                for e in relations.get(statement_id, (row["subject_id"], row["object_id"]))
+            )
+        )
+
+    for key in common:
+        if not shown(*key):
+            del knowers[key][COMMON]
+            if not knowers[key]:
+                del knowers[key]
 
 
 async def _by_id(
@@ -432,6 +501,9 @@ def knowers_of(data: Statements) -> Callable[[str, str], set[str]]:
 
     def who(kind: str, statement: str) -> set[str]:
         found = set(_sure(data.knowers.get((kind, statement), {})))
+        if COMMON in found:  # (common knowledge: every player character knows it, #4537)
+            found.discard(COMMON)
+            found.update(data.player_characters)
         for group in tuple(found):
             found.update(members_of.get(group, ()))
         return found
@@ -444,7 +516,8 @@ async def party_entries(scope: Scope) -> frozenset[str] | None:
     `visible(Viewer.the_party()).sureness`), without reading every list row: the lookup asks this
     on each rebuild, and reading a campaign's whole `memory_knowers` costs hundreds of
     milliseconds (#2995). One aggregate over the entry rows of the player characters' views.
-    None when there is no player character (no party to ask). Exact for lists held by characters;
+    None when there is no player character (no party to ask). Exact for lists held by characters
+    and for common knowledge (#4537);
     a list held by a group (a faction as a knower) is reach the aggregate does not follow, so then
     the full gate answers."""
     pcs = {
@@ -496,6 +569,21 @@ async def party_entries(scope: Scope) -> frozenset[str] | None:
             seen.add(entry)
     if len(everyone) == 1:  # a lone player character knows its own entry whatever the lists say
         seen.update(views)
+    # Common knowledge (#4537): an entry "everyone" holds is in the party's view while it is shown
+    # (as `_common_while_shown` reads it), whatever the characters' own rows say: even a 0.0 row of
+    # their own is knowing of it. One more aggregate, the usual case handled here, not by the gate.
+    cur = await scope.conn.execute(
+        "SELECT k.about_entity_id FROM memory_knowers k"
+        " JOIN memory_perspectives p ON p.guild_id = k.guild_id AND p.campaign_id = k.campaign_id"
+        "  AND p.id = k.perspective_id AND p.kind = 'everyone'"
+        " JOIN memory_entities e ON e.guild_id = k.guild_id AND e.campaign_id = k.campaign_id"
+        "  AND e.id = k.about_entity_id"
+        " WHERE k.guild_id = %s AND k.campaign_id = %s AND k.about_entity_id IS NOT NULL"
+        " AND cardinality(k.hidden_by) = 0 AND e.status = 'confirmed'"
+        " AND NOT (e.hidden_from_players OR e.audience_limited OR e.unnamed)",
+        scope.ids,
+    )
+    seen.update(str(r["about_entity_id"]) for r in await cur.fetchall())
     return frozenset(seen)
 
 

@@ -7557,6 +7557,23 @@ class MemoryStore:
             await told.take_back(w, alias_id, character_id)
             return Written(True, w.batch)
 
+    async def add_common_knowledge(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        kind: str,
+        statement_ids: Sequence[str],
+        certainty: float = 1.0,
+        *,
+        source: str,
+    ) -> Written[int]:
+        """Common knowledge (#4537): these statements are known to every character, now or later
+        (`knowers.add_common`). Written by a World read and a smart guess's "world" statements;
+        only adds, one change with its own Undo. Returns how many rows it added or raised."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            added = await knowers.add_common(w, kind, statement_ids, certainty)
+            return Written(added, w.batch)
+
     async def mark_guess(
         self,
         guild_id: int,

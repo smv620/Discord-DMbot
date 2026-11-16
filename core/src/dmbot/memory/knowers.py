@@ -156,6 +156,53 @@ async def take_off(w: Changes, kind: str, item_id: str, entity_ids: Collection[s
                 await beliefs.add_belief(w, view_id, item_id, 0.0, SECRET_PLOT)
 
 
+async def add_common(
+    w: Changes, kind: str, statement_ids: Sequence[str], certainty: float = KNOWN
+) -> int:
+    """Common knowledge (#4537, docs/design/party_knowledge.md §4): these statements are known to
+    every character, now or later, as one row each for the campaign's "everyone" point of view. For
+    a World read's statements (a smart guess's "world" ones at its guess certainty) and, in slice
+    1b, the DM's "Everyone knows this". Only adds: a row already there keeps its certainty unless
+    this one is surer. The gate counts it while the statement's own flags show it. Returns how many
+    rows were added or raised."""
+    from dmbot.memory import beliefs as views_of
+
+    if kind not in _COLUMNS:
+        raise MemoryRuleError(NO_SUCH_STATEMENT)
+    if not 0.0 < certainty <= KNOWN:
+        raise MemoryRuleError(BAD_CERTAINTY)
+    ids = sorted(set(statement_ids))
+    if not ids:
+        return 0
+    column, table = _COLUMNS[kind]
+    live = {
+        str(r["id"])
+        for r in await w.select(table, " AND id = ANY(%s)", [ids])
+        if r.get("status") not in ("rejected", "merged")
+    }
+    view = await views_of.everyone_id(w)
+    have = {
+        str(r[column]): r
+        for r in await w.select(
+            KNOWERS, f" AND {column} = ANY(%s) AND perspective_id = %s", [ids, view], dormant=True
+        )
+    }
+    changed = 0
+    for statement_id in ids:
+        if statement_id not in live:
+            continue
+        row = have.get(statement_id)
+        if row is None:
+            await w.insert(
+                KNOWERS, {**_row(column, statement_id, view, w.now), "confidence": certainty}
+            )
+            changed += 1
+        elif float(row["confidence"]) < certainty:
+            await w.update(KNOWERS, row["id"], {"confidence": certainty})
+            changed += 1
+    return changed
+
+
 async def _known_characters(w: Scope, character_ids: Sequence[str]) -> dict[str, bool]:
     """The confirmed characters among these ids, player characters and NPCs, each with whether it
     is a player's (§9b: a point of view for each character). Anything else (another campaign's
@@ -236,8 +283,11 @@ async def set_statement_knowers(
         elif have[view_id]["confidence"] != sure[entity_id]:
             await w.update(KNOWERS, have[view_id]["id"], {"confidence": sure[entity_id]})
     _kept, kept_views = await _players_kept(w, kind, statement_id, list(chosen))
+    # (common knowledge is not a character on the list: Who knows this never takes it off, #4537;
+    # the DM's own "Everyone knows this" switch does)
+    common = {str(r["id"]) for r in await w.select(PERSPECTIVES, " AND kind = 'everyone'")}
     for view_id, row in have.items():
-        if view_id not in views.values() and view_id not in kept_views:
+        if view_id not in views.values() and view_id not in kept_views and view_id not in common:
             await w.delete(KNOWERS, row["id"])
     return list(chosen)
 

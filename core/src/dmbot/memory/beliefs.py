@@ -97,6 +97,22 @@ async def perspective_ids(w: Changes) -> dict[str, str]:
     return w.perspectives
 
 
+async def everyone_id(w: Scope) -> str:
+    """The id of the campaign's "everyone" point of view, common knowledge (#4537): made the first
+    time it is needed, with a plain statement the change log does not see (like The truth and The
+    party, never inside a change a DM could undo), since migration 0513 gave one to every campaign
+    that existed and a newer one has none until a write needs it."""
+    found = await w.select(PERSPECTIVES, " AND kind = 'everyone'")
+    if found:
+        return str(found[0]["id"])
+    await w.conn.execute(
+        "INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind, created_at)"
+        " VALUES (%s, %s, %s, 'everyone', %s) ON CONFLICT DO NOTHING",
+        (*w.ids, new_id(), int(time.time())),
+    )
+    return str((await w.select(PERSPECTIVES, " AND kind = 'everyone'"))[0]["id"])
+
+
 async def _newest(
     scope: Scope, relation_ids: Sequence[str]
 ) -> dict[tuple[str, str], dict[str, Any]]:

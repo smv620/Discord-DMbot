@@ -215,6 +215,26 @@ async def mark_guess(
         log.exception("A guess could not be recorded as a guess")
 
 
+async def common_connection(
+    memory: MemoryStore, guild_id: int, campaign_id: str, c: Waiting, made: Relation
+) -> int | None:
+    """A kept connection the upload calls world knowledge (a World read, or a smart guess's
+    "world" statement) is common knowledge (#4537): known to every character, now or later, at the
+    guess's certainty for a guess. Only one the players are shown (the gate counts it only while
+    its flags show it). Its batch, for the keep's Undo; never a reason to lose the connection."""
+    if c.world not in (lore_knowledge.SURE, lore_knowledge.GUESS) or made.secret or made.unrevealed:
+        return None
+    sure = 1.0 if c.world == lore_knowledge.SURE else lore_knowledge.GUESS_CERTAINTY
+    try:
+        written = await memory.add_common_knowledge(
+            guild_id, campaign_id, "connection", [made.id], sure, source=DM
+        )
+    except Exception as exc:
+        log.warning("A kept connection was not made common knowledge (%s)", type(exc).__name__)
+        return None
+    return written.batch
+
+
 def change_start(old: Sequence[Relation], now: int) -> int:
     """When a change takes hold: now, or just after the latest start among the connections it
     ends (one that began later than now would end before it began). The old ones end and the new
@@ -478,6 +498,7 @@ async def keep_all(
                 await mark_guess(
                     memory, guild_id, campaign_id, "connection", [made.id], made_since=now
                 )
+            on_top.append(await common_connection(memory, guild_id, campaign_id, c, made))
             if c.truth and not c.inferred:  # (DMbot's inference is never pinned as 100% truth)
                 try:
                     await memory.pin(guild_id, campaign_id, written.value[0].id, True, source=DM)

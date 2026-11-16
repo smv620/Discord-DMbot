@@ -700,7 +700,10 @@ MERGE_MANY_MAX = 50
 # ---- beliefs: who believes a connection, and how strongly (#2409; STORY_MEMORY section 9) ----
 
 TRUTH, PARTY, PC_VIEW, NPC_VIEW = "truth", "party", "pc", "npc"
-PERSPECTIVE_KINDS = (TRUTH, PARTY, PC_VIEW, NPC_VIEW)
+# Common knowledge (#4537, docs/design/party_knowledge.md §4): what any inhabitant would know. One
+# per campaign, with no entry of its own; a row it holds is known to every character, now or later.
+EVERYONE = "everyone"
+PERSPECTIVE_KINDS = (TRUTH, PARTY, PC_VIEW, NPC_VIEW, EVERYONE)
 THEORY, ACCUSATION, REVEALED_FACT = "theory", "accusation", "revealed_fact"
 FALSE_EVIDENCE, SECRET_PLOT = "false_evidence", "secret_plot"
 MAGICALLY_VERIFIED, EVASION_UNDER_MAGIC = "magically_verified", "evasion_under_magic"

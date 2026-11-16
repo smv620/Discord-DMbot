@@ -960,6 +960,17 @@ async def _read_background(
         traits=traits,
         made=made_ids,
     )
+    # The names the upload calls world knowledge (a World read, or a smart guess's "world" ones)
+    # are common knowledge (#4537): known to every character, now or later. Written as the names
+    # are stored; the gate counts them once the DM confirms each (a suggestion is shown to nobody).
+    if choice in (lore_knowledge.WORLD, lore_knowledge.SMART) and world_names:
+        common = sorted({made_ids[k] for k in world_names if k in made_ids})
+        try:
+            await memory.add_common_knowledge(
+                campaign.guild_id, campaign.id, "entry", common, source=DM
+            )
+        except Exception as exc:  # the read is kept whatever happens to this
+            log.warning("World names were not made common knowledge (%s)", type(exc).__name__)
     # A name read from a picture that the text didn't plainly resolve (#4003): stored on its own,
     # after the text's names, with its note; never added by itself, and never in an "Add all".
     held_ids = await _store_held(memory, campaign, pictures, known, found, stored, upload.label)
@@ -3826,6 +3837,7 @@ class ConnectionOffer(_Menu):
                 await keep.mark_guess(
                     memory, campaign.guild_id, campaign.id, "connection", [made.id], made_since=now
                 )
+            await keep.common_connection(memory, campaign.guild_id, campaign.id, c, made)
             if c.truth and not c.inferred:  # the DM called this upload 100% truth (#2447)
                 try:
                     await memory.pin(

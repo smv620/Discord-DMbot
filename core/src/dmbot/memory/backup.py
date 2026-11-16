@@ -595,7 +595,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             or any(len(e) > EVIDENCE_ID_MAX for e in raw["evidence_ids"])
         ):
             raise CampaignError(DAMAGED)
-        if table is PERSPECTIVES and (raw["kind"] in ("truth", "party")) != (
+        if table is PERSPECTIVES and (raw["kind"] in ("truth", "party", "everyone")) != (
             raw["entity_id"] is None
         ):
             raise CampaignError(DAMAGED)  # only a character's perspective points at an entry
