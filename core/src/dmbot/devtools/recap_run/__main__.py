@@ -1353,7 +1353,12 @@ async def _score(out: Outcome, careful: Client) -> list[str]:
         return ["", "Must-haves: nothing to score, the run did not finish."]
     sheet = out.job.beats if isinstance(out.job.beats, list) else None  # what it was written from
     return await sc.score(
-        out.job.summary, sheet, out.inputs.musts, final_checks(out.job, out.inputs), careful
+        out.job.summary,
+        sheet,
+        out.inputs.musts,
+        final_checks(out.job, out.inputs),
+        careful,
+        examples=list(out.inputs.style),
     )
 
 

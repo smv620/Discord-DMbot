@@ -2726,6 +2726,23 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.post("/me/campaigns/{ref}/threads/{thread}/change", status_code=202)
+    async def me_campaign_thread_change(
+        ref: str, thread: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """One change to a kept thread's parts or branches (#4476); polled at
+        `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await thread_card.change(db, session, ref, thread, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/threads")
     async def me_campaign_threads(ref: str, signed: Signed) -> dict[str, Any]:
         """The story threads DMbot found in an upload, waiting for the DM (#4457): DM only,

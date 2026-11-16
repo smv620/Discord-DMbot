@@ -49,6 +49,13 @@ class TheStore(DatabaseTest):
         self.assertEqual((added, again), (1, 0))
         self.assertEqual(await self.memory.name_sources(GUILD, cid, self.tran), [("up1", LORE)])
 
+    async def test_the_time_of_each_upload_comes_with_it(self) -> None:
+        cid = self.campaign.id
+        await self.memory.record_name_sources(GUILD, cid, [self.tran], upload_key="up1", label=LORE)
+        ((key, label, at),) = await self.memory.name_uploads(GUILD, cid, self.tran)
+        self.assertEqual((key, label), ("up1", LORE))
+        self.assertGreater(at, 0)
+
     async def test_no_key_uses_the_label_and_a_gone_entry_is_left_out(self) -> None:
         cid = self.campaign.id
         n = await self.memory.record_name_sources(

@@ -239,6 +239,7 @@ async def where_said(
     *,
     lore: str = "",
     lore_source: str = "",
+    extra: Sequence[str] = (),
 ) -> str:
     """The answer to "Where was it said?": up to three places, newest first, each with a line
     either side; a line that is gone says so. A sentence from the DM's lore comes with the
@@ -284,6 +285,7 @@ async def where_said(
         source = f" ({_plain(lore_source)})" if lore_source else ""
         shown = discord.utils.escape_markdown(lore, ignore_links=False)
         parts.append(f"_From your lore{source}_\n> “{shown}”")
+    parts.extend(extra)  # where the entry came from when no sentence is kept (#4554)
     if not parts:
         return NOTHING_KEPT
     if len(pointers) > SHOWN_BEHIND_BUTTON:  # first, so a long message never cuts it off
