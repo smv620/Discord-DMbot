@@ -2734,6 +2734,13 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         branches: [],
       };
     },
+    // The quest sheet's edit controls (#4562): each press is recorded, and an Undo gives back no batch.
+    async changeThreadParts(ref, thread, change) {
+      calls.push(`changeThreadParts:${ref}:${thread}:${JSON.stringify(change)}`);
+      if (thread !== "thread-heir") throw new ApiError("not-found");
+      if (change.action === "undo") return { batch: null };
+      return { batch: 1 };
+    },
     async worldNotes(ref) {
       calls.push(`worldNotes:${ref}`);
       return { places: worldNotes.places.map((n) => ({ ...n })), languages: worldNotes.languages.map((n) => ({ ...n })) };
