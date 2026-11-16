@@ -162,9 +162,17 @@ def knows(count: int) -> str:
 
 
 def party_names(party: list[Entity], ids: list[str]) -> str:
-    """ "Cerric, Belleros": the characters' names, in the party list's order. Names only."""
+    """ "Cerric", "Cerric and Belleros", "Cerric, Belleros and Okthandom": the characters' names,
+    in the party list's order. Names only."""
     wanted = set(ids)
-    return ", ".join(_md(e.name) for e in party if e.id in wanted)
+    names = [_md(e.name) for e in party if e.id in wanted]
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def knower_icon(count: int) -> str:
+    """The owner's icon rule for what a line says about who knows: 👤 for one, 👥 for two or more.
+    (The button stays 👥: it picks any number.)"""
+    return "👤" if count == 1 else SOME
 
 
 def guess_for(claim: Claim, party: list[Entity]) -> list[str]:
@@ -373,7 +381,8 @@ class ClaimsReview(_Menu):
             guessed = guess_for(claim, self.party)
             if guessed:
                 who = party_names(self.party, guessed)
-                out[claim.id] = f"{SOME} DMbot thinks only {who} {knows(len(guessed))} this."
+                icon = knower_icon(len(guessed))
+                out[claim.id] = f"{icon} DMbot thinks only {who} {knows(len(guessed))} this."
         return out
 
     def _render(self) -> str:
@@ -535,7 +544,7 @@ class ClaimsReview(_Menu):
                     self.undoable[claim_id] = result.batch
                 if knowers is not None:
                     done = (
-                        f"{SOME} Remembered: {saying}. "
+                        f"{knower_icon(len(knowers))} Remembered: {saying}. "
                         f"Known to: {party_names(self.party, knowers)}."
                     )
                 elif secret:
@@ -613,8 +622,9 @@ class KnowersPicker(_Menu):
 
     def text(self) -> str:
         who = (
-            f"DMbot thinks only {party_names(self.review.party, self.chosen)} "
-            f"{knows(len(self.chosen))} this: it is ticked. "
+            f"{knower_icon(len(self.chosen))} DMbot thinks only "
+            f"{party_names(self.review.party, self.chosen)} "
+            f"{knows(len(self.chosen))} this: it is ticked.\n"
             if self.guessed
             else ""
         )

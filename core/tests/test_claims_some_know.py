@@ -105,7 +105,7 @@ class SomeKnow(ConfirmedMemoryTest):
     async def test_the_card_says_who_dmbot_thinks_knows_it_before_the_dm_answers(self) -> None:
         await self.both()
         _, _, text = await self.page(said("Bram", "is in", "Veldmoor"))
-        self.assertIn("👥 DMbot thinks only Wren knows this.", text)
+        self.assertIn("👤 DMbot thinks only Wren knows this.", text)
 
     async def test_the_picker_opens_with_the_guess_ticked_and_changes_nothing(self) -> None:
         await self.both()
@@ -130,7 +130,7 @@ class SomeKnow(ConfirmedMemoryTest):
         await picker._save(it)
         text = it.sent[-1][0]
         self.assertIn(
-            f"👥 Remembered: {claims_review.statement(claim)}. Known to: Ash, Wren.", text
+            f"👥 Remembered: {claims_review.statement(claim)}. Known to: Ash and Wren.", text
         )
         (rel,) = await self.facts()
         self.assertTrue(rel.unrevealed)
@@ -140,6 +140,33 @@ class SomeKnow(ConfirmedMemoryTest):
         await view._take_back(it, claim.id)
         knows = await self.memory.statement_knowers(GUILD_A, self.c, "connection", [rel.id])
         self.assertEqual(knows.get(rel.id, []), [])
+
+    async def test_one_knower_has_the_one_person_icon_and_two_or_more_the_two_people(self) -> None:
+        await self.both()
+        it, view, _ = await self.page(
+            said("Bram", "is in", "Veldmoor"), said("Bram", "carries", "Heartseeker")
+        )
+        first, second = view.page
+        await view._pick(it, first.id)
+        picker = it.sent[-1][1]
+        self.assertIn("👤 DMbot thinks only Wren knows this: it is ticked.", it.sent[-1][0])
+        picker.chosen = [self.wren]
+        await picker._save(it)
+        self.assertIn("👤 Remembered:", it.sent[-1][0])
+        self.assertIn("Known to: Wren.", it.sent[-1][0])
+        await view._pick(it, second.id)
+        picker = it.sent[-1][1]
+        picker.chosen = [self.wren, self.ash]
+        await picker._save(it)
+        self.assertIn("👥 Remembered:", it.sent[-1][0])
+        self.assertIn("Known to: Ash and Wren.", it.sent[-1][0])
+
+    def test_names_are_joined_with_and(self) -> None:
+        party = [SimpleNamespace(id=str(n), name=name) for n, name in enumerate("ABC")]
+        join = claims_review.party_names
+        self.assertEqual(join(party, ["0"]), "A")  # type: ignore[arg-type]
+        self.assertEqual(join(party, ["0", "2"]), "A and C")  # type: ignore[arg-type]
+        self.assertEqual(join(party, ["0", "1", "2"]), "A, B and C")  # type: ignore[arg-type]
 
     async def test_a_refusal_keeps_the_picker_and_says_why(self) -> None:
         await self.both()
