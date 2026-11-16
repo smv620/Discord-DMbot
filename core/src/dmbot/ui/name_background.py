@@ -565,7 +565,11 @@ class BackgroundOffer(_Menu):
             f"🤖 Reading {_md(self.upload.label)}… this can take a few minutes for a long "
             "background."
         )
-        why_not = start_ai_read(guild, time.time())
+        why_not = start_ai_read(
+            guild,
+            time.time(),
+            per_day=int(getattr(_bot(interaction).settings, "lore_reads_per_day", 20)),
+        )
         if why_not == BUSY:
             await _tell(interaction, "DMbot is already reading a document for this server. "
                         "Try again when it's done.")  # fmt: skip
