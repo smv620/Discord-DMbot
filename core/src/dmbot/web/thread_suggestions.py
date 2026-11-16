@@ -127,7 +127,9 @@ async def queue_keep(db: Database, session: Session, ref: str, body: object) -> 
     ):
         raise RecapError("bad_action")
     text = f"{sid} {','.join(str(i) for i in sorted(on)) if on else '-'}"
-    if lines is not None:  # (a page that shows the lines says which are left on; none says `-`)
+    # The lines word goes in whenever a name follows, so a name that itself looks like one
+    # ("+3") can never be read as the lines left on: a page that shows no lines leaves none on
+    if lines is not None or name:
         text += f" +{','.join(str(i) for i in sorted(lines)) if lines else '-'}"
     if name is not None:
         if not isinstance(name, str):

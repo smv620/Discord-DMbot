@@ -206,6 +206,21 @@ class TheLines(Threads):
             got = await self.add_action("thread-keep", text)
             self.assertNotEqual(got["status"], "ok", text)
 
+    async def test_a_name_that_looks_like_a_lines_word_is_a_name_and_keeps_no_lines(self) -> None:
+        sid = (await self.second())["id"]
+        await web_threads.queue_keep(
+            self.web, self.session, self.cref, {"id": sid, "on": [], "name": "+1 Sword Quest"}
+        )
+        claimed = await self.actions.claim_next(self.g)
+        assert claimed is not None
+        done = await wa.apply(self.memory, self.g, {ALICE.id}, claimed, actions=self.actions)
+        await self.actions.finish(self.g, claimed, error=done.error, result_batches=done.batches)
+        self.assertEqual(done.error, "")
+        thread = await self.memory.entity(self.g, self.one.id, done.result_id)
+        self.assertEqual(thread.name if thread else "", "+1 Sword Quest")
+        parts, _, _, branches = await self.memory.thread_card(self.g, self.one.id, done.result_id)
+        self.assertEqual((parts, branches), ([], []))
+
     async def test_the_page_names_for_lines_are_checked_before_anything_is_queued(self) -> None:
         for lines in ("0", [True], [0, 0], [100], [-1], list(range(51))):
             with self.assertRaises(RecapError, msg=str(lines)):
