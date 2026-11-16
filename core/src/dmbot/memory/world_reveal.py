@@ -151,6 +151,23 @@ async def reveal(
             out.batches.extend(made)
             out.names += 1
             out.alias_ids.append(alias.id)
+    if by_itself and out.batches:
+        # (a 🌍 question still waiting about something this read showed is out of date: it is
+        # answered by the read's first change, so an Undo of the whole read asks it again;
+        # Supervisor's ruling (b) on #4606. A failure here leaves a stale question, never a
+        # reveal without its Undo, so it is logged and the read goes on)
+        try:
+            await memory.answer_waiting_world_questions(
+                guild_id, campaign_id,
+                [*(("memory_entities", e) for e in out.entry_ids),
+                 *(("memory_relations", r) for r in out.link_ids),
+                 *(("memory_aliases", a) for a in out.alias_ids)],
+                out.batches[0],
+            )  # fmt: skip
+        except Exception as exc:
+            log.warning(
+                "A World read's waiting questions weren't answered (%s)", type(exc).__name__
+            )
     return out
 
 
