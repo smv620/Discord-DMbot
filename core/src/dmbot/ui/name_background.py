@@ -312,12 +312,12 @@ async def offer(interaction: discord.Interaction, campaign_id: str, upload: Uplo
 
 KNOWS_LABELS = {
     lore_knowledge.SPOILERS: "Players: don't know",
-    lore_knowledge.WORLD: "Players: all know it",
+    lore_knowledge.WORLD: "🌍 Common knowledge",  # (the owner's words everywhere, #4537)
     lore_knowledge.SMART: "Players: DMbot sorts",
 }
 KNOWS_TEXT = {
     lore_knowledge.SPOILERS: "**Players don't know it yet.** They find it out in play.",
-    lore_knowledge.WORLD: "**Everyone knows it.** Every character knows all of it. (Default)",
+    lore_knowledge.WORLD: "**🌍 Common knowledge.** Everyone in the world knows this. (Default)",
     lore_knowledge.SMART: "**DMbot sorts it.** It guesses what everyone would know. If unsure, "
     "players don't know it yet.",
 }
