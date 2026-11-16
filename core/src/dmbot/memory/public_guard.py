@@ -17,7 +17,7 @@ or known to a player character, an awake who-knows row at any certainty (a guess
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Mapping
 from typing import TYPE_CHECKING, Any
 
 from dmbot.memory._changes import ALIAS_KNOWERS, ENTITIES, KNOWERS, PERSPECTIVES, Table
@@ -37,6 +37,12 @@ _KNOWN_COLUMN = {
     "memory_aliases": "alias_id",
     "memory_relations": "relation_id",
 }
+
+
+def limits_audience(change: Mapping[str, Any]) -> bool:
+    """Whether a held-back change would make a clue known only to some (its card's own words,
+    #4524 slice 2): read here, beside the flags, so the card names no flag itself (#2995)."""
+    return bool(change.get("audience_limited"))
 
 
 def narrows(table: str, change: tuple[str, Any]) -> bool:

@@ -22,7 +22,7 @@ from typing import Any
 
 import discord
 
-from dmbot.memory import link_words
+from dmbot.memory import link_words, public_guard
 from dmbot.memory import secret_questions as sq
 from dmbot.memory.models import DM, MemoryRuleError, TooLateToUndo
 from dmbot.memory.store import MemoryStore
@@ -97,7 +97,7 @@ def _make_secret_says(s: Shown) -> str:
     if "knowers_off" in change:
         who = _names(s.knowers) if s.knowers else "some player characters"
         return f"DMbot stops showing {who} as knowing it."
-    if change.get("audience_limited"):
+    if public_guard.limits_audience(change):
         return "only the players this clue was meant for see it."
     return f"this {s.what} is hidden from your players in DMbot."
 
