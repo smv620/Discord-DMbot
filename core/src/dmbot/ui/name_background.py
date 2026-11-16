@@ -753,7 +753,7 @@ class BackgroundRead:
     # it asked instead, answered on the 🤫 Known or secret? card, privately
     secret_questions: int = 0
     # What a World read revealed by itself, in words, for the DMs privately (#4590 B)
-    revealed_lines: tuple[str, ...] = ()
+    revealed_lines: tuple[str, ...] = field(default=(), repr=False)  # (never in a log line)
 
 
 async def read_background(

@@ -22,6 +22,7 @@ from typing import Any
 
 import discord
 
+from dmbot.discord_limits import shorten
 from dmbot.memory import link_words, public_guard, world_reveal
 from dmbot.memory import secret_questions as sq
 from dmbot.memory.models import DM, MemoryRuleError, TooLateToUndo
@@ -29,6 +30,7 @@ from dmbot.memory.store import MemoryStore
 from dmbot.ui.dmbot_commands import _answer_first, _Button, _Menu, _replace, _send, _tell
 from dmbot.ui.family_ties import _dm_campaign
 from dmbot.ui.names import _md, _memory
+from dmbot.upload_notices import UNDO_DAYS
 
 log = logging.getLogger(__name__)
 
@@ -257,12 +259,19 @@ def _same_upload(q: sq.Question, waiting: list[sq.Question]) -> list[sq.Question
 UNDONE = "Undone. The question is back, so you can answer it again."
 
 
-async def _entry_name(memory: MemoryStore, g: int, c: str, entity_id: str) -> tuple[str, str]:
-    """An entry's name for the card, bold and safe, and its kind; a gone one is said so."""
+async def _entry_name(
+    memory: MemoryStore, g: int, c: str, entity_id: str, cut: int | None = None
+) -> tuple[str, str]:
+    """An entry's name for the card, bold and safe (cut to `cut` characters before escaping,
+    where a list must fit one message), and its kind; a gone one is said so."""
     e = await memory.entity(g, c, entity_id)
     if e is None:
         return GONE_ITEM, ""
-    return f"**{_md(e.name)}**", e.type
+    return f"**{_md(_cut(e.name, cut))}**", e.type
+
+
+def _cut(text: str, limit: int | None) -> str:
+    return text if limit is None else shorten(text, limit)
 
 
 async def describe(memory: MemoryStore, g: int, c: str, q: sq.Question) -> Shown:
@@ -294,15 +303,17 @@ async def describe(memory: MemoryStore, g: int, c: str, q: sq.Question) -> Shown
     return Shown(q, item, "connection", knowers=knowers, new=new)
 
 
-async def _connection(memory: MemoryStore, g: int, c: str, relation_id: str) -> str:
+async def _connection(
+    memory: MemoryStore, g: int, c: str, relation_id: str, cut: int | None = None
+) -> str:
     """A connection in words, "**Ash Morrow** works for **Master Orlen**"."""
     r = await memory.relation(g, c, relation_id)
     if r is None:
         return GONE_ITEM
-    a, kind = await _entry_name(memory, g, c, r.subject_id)
-    b, _ = await _entry_name(memory, g, c, r.object_id)
+    a, kind = await _entry_name(memory, g, c, r.subject_id, cut)
+    b, _ = await _entry_name(memory, g, c, r.object_id, cut)
     words = link_words.link_words(r.predicate, r.detail, True, kind, feeling=True)
-    return f"{a} {_md(words)} {b}"
+    return f"{a} {_md(_cut(words, cut))} {b}"
 
 
 def _buttons(q: sq.Question) -> tuple[str, str]:
@@ -518,7 +529,13 @@ def count_line(n: int) -> str:
     )
 
 
-REVEALED_SHOWN = 10  # names a private list gives; the rest are counted (Supervisor's ruling B)
+UNDO_UPLOAD = "↩️ **Undo this upload**"
+REVEALED_SHOWN = 10
+# The list stays well inside one Discord message with the notice above it (2,000 characters):
+# each name and connection's words cut to `NAME_CUT`, the lines to `REVEALED_BUDGET` in all, and
+# what doesn't fit is counted in "and N more" (as `look_alikes.MESSAGE_BUDGET` does)
+NAME_CUT = 40
+REVEALED_BUDGET = 900  # names a private list gives; the rest are counted (Supervisor's ruling B)
 
 
 async def revealed_names(
@@ -527,30 +544,40 @@ async def revealed_names(
     """What a World read revealed by itself, in words, for the DMs only (#4590 B): each entry's
     name, each connection ("**Ash** works for **Orlen**") and each other name with its person.
     Built only for a private message and never logged."""
-    lines = [(await _entry_name(memory, g, c, e))[0] for e in revealed.entry_ids]
-    lines += [await _connection(memory, g, c, r) for r in revealed.link_ids]
+    cut = NAME_CUT
+    lines = [(await _entry_name(memory, g, c, e, cut))[0] for e in revealed.entry_ids]
+    lines += [await _connection(memory, g, c, r, cut) for r in revealed.link_ids]
     if revealed.alias_ids:
         wanted = set(revealed.alias_ids)
         for a in await memory.aliases(g, c, include_secret=True):
             if a.id in wanted:
-                owner, _ = await _entry_name(memory, g, c, a.entity_id)
-                lines.append(f"**{_md(a.text)}**, another name of {owner}")
+                owner, _ = await _entry_name(memory, g, c, a.entity_id, cut)
+                lines.append(f"{owner} is also called **{_md(_cut(a.text, cut))}**")
     return [line for line in lines if line != GONE_ITEM]
 
 
 def revealed_text(lines: list[str]) -> str:
-    """The private line under an upload's notice: which hidden things are now known to everyone,
-    at most `REVEALED_SHOWN`, then how many more. "" for none. Never for a shared channel."""
+    """The private lines under an upload's notice (#4590 B): which hidden things the players can
+    now see, one per line, at most `REVEALED_SHOWN`, then how many more, and how to keep one
+    secret. "" for none. Never for a shared channel."""
     if not lines:
         return ""
-    shown = lines[:REVEALED_SHOWN]
+    one = len(lines) == 1
+    shown: list[str] = []
+    used = 0
+    for line in lines[:REVEALED_SHOWN]:
+        if shown and used + len(line) > REVEALED_BUDGET:
+            break
+        shown.append(line)
+        used += len(line) + 3
     more = len(lines) - len(shown)
-    tail = f", and {more} more" if more else ""
     return (
-        "\n🌍 _Only you see this:_ now known to everyone: "
-        + "; ".join(shown)
-        + tail
-        + f". ↩️ Undo this upload takes {'it' if len(lines) == 1 else 'them'} back."
+        f"\n🌍 _Only you see this._ Your players can now see {'this' if one else 'these'} in "
+        f"DMbot, and their characters know {'it' if one else 'them'}:\n"
+        + "\n".join(f"• {line}" for line in shown)
+        + (f"\n…and {more} more." if more else "")
+        + f"\nShould {'it' if one else 'one'} stay secret? Open its name card and hide it, or "
+        f"{UNDO_UPLOAD} takes back the whole upload (within {UNDO_DAYS} days)."
     )
 
 
