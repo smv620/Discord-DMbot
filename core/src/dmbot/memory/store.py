@@ -119,6 +119,7 @@ from dmbot.memory.clues import CLUE, KNOWS, NEEDS_SOMEONE, ONLY_CHARACTERS, ONLY
 from dmbot.memory.importance_rank import MET_IN_PLAY
 from dmbot.memory.list_names import split_list
 from dmbot.memory.lookalikes import Name as LookAlikeName
+from dmbot.memory.lookalikes import family_of
 from dmbot.memory.lookalikes import find as find_look_alikes
 from dmbot.memory.lookalikes import pair as not_same_pair
 from dmbot.memory.lookup import LookupData
@@ -5444,7 +5445,7 @@ class MemoryStore:
             row = await cur.fetchone()
             version = int(row["memory_version"]) if row else -1
             cur = await scope.conn.execute(
-                "SELECT e.id, e.name, (SELECT count(*) FROM memory_mentions m"
+                "SELECT e.id, e.name, e.type, (SELECT count(*) FROM memory_mentions m"
                 " WHERE m.guild_id = e.guild_id AND m.campaign_id = e.campaign_id"
                 " AND m.entity_id = e.id) AS heard FROM memory_entities e"
                 " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.status = 'confirmed'"
@@ -5452,7 +5453,9 @@ class MemoryStore:
                 (*scope.ids, PERSON),
             )
             names = [
-                LookAlikeName(str(r["id"]), str(r["name"]), int(r["heard"]))
+                LookAlikeName(
+                    str(r["id"]), str(r["name"]), int(r["heard"]), family_of(str(r["type"]))
+                )  # (a story thread or deed is compared only within its own family, #4553)
                 for r in await cur.fetchall()
             ]
             cur = await scope.conn.execute(

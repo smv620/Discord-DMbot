@@ -138,5 +138,48 @@ class WhatLooksAlike(unittest.TestCase):
         self.assertEqual(groups("Belleros", "Belleros"), [["Belleros", "Belleros"]])
 
 
+class FamiliesApart(unittest.TestCase):
+    """#4553 (the owner's report): a story thread is compared only with threads, a deed only
+    with deeds; the people, groups and items in a quest's name are never its spellings."""
+
+    def ids(self, *named: tuple[str, str]) -> list[list[str]]:
+        names = [
+            Name(f"{i:032x}", text, 0, la.family_of(kind)) for i, (text, kind) in enumerate(named)
+        ]
+        return [sorted(n.name for n in g) for g in la.find(names)]
+
+    def test_an_npc_inside_a_quests_name_is_not_grouped_with_it(self) -> None:
+        self.assertEqual(
+            self.ids(("Garret Velryn", "character"), ("Find Garret Velryn", "quest")), []
+        )
+
+    def test_two_npcs_in_one_quests_name_are_not_grouped_through_it(self) -> None:
+        found = self.ids(
+            ("Garret Velryn", "character"),
+            ("Keegan Velryn", "character"),
+            ("Keegan Velryn's job: Garret Velryn", "quest"),
+        )
+        self.assertEqual(found, [])
+
+    def test_two_look_alike_quests_are_still_grouped(self) -> None:
+        found = self.ids(
+            ("Find Garret", "quest"), ("Find Garret Velryn", "quest"), ("Garret", "character")
+        )
+        self.assertEqual(found, [["Find Garret", "Find Garret Velryn"]])
+
+    def test_a_name_inside_one_name_of_its_own_family_still_joins_it(self) -> None:
+        # (a quest holding "Garret" is not counted when "Garret" is a hub among the people)
+        found = self.ids(
+            ("Garret", "character"),
+            ("Garret Velryn", "character"),
+            ("Find Garret Velryn", "quest"),
+        )
+        self.assertEqual(found, [["Garret", "Garret Velryn"]])
+
+    def test_a_deed_is_not_grouped_with_an_npc(self) -> None:
+        self.assertEqual(self.ids(("Belleros", "character"), ("Belleros the Brave", "deed")), [])
+        self.assertEqual(la.family_of("deed"), la.DEEDS)
+
+
 if __name__ == "__main__":
     unittest.main()
