@@ -8,8 +8,9 @@ keeps it, so no names list, count of names, "Add all" or players' view reads it.
 the upload call it. ✅ Keep goes through `MemoryStore.keep_thread`: the thread, its state and the
 chosen people in one change, with this row marked kept in the same transaction (`mark_kept`), so
 one Undo takes it all back and ↩ on the card puts the suggestion back (`unkeep`). 🚫 marks it
-turned down; its name key stops it coming back, and so do its people (`known`). Counts only in the
-log, never names."""
+turned down; its name key stops it coming back, and so do its people (`known`). Since slice 3
+(#4500, migration 0507) a suggestion also holds the parts and branches read with it (`extra`); the
+keep writes those the DM left on. Counts only in the log, never names."""
 
 from __future__ import annotations
 
@@ -19,8 +20,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from dmbot.memory._changes import Changes
 from dmbot.memory.models import name_key, new_id
-from dmbot.memory.thread_read import Suggestion
+from dmbot.memory.thread_read import ReadBranch, ReadPart, Suggestion
 
 log = logging.getLogger(__name__)
 
@@ -41,6 +43,14 @@ class Waiting:
     parts: tuple[tuple[str, str], ...]
     upload: str
     created_at: int
+    reads: tuple[ReadPart, ...] = ()  # (slice 3, #4500: its parts, then its branches)
+    branches: tuple[ReadBranch, ...] = ()
+
+    @property
+    def lines(self) -> tuple[ReadPart | ReadBranch, ...]:
+        """What the DM can switch off before keeping, in the card's order: the parts, then the
+        branches. `keep_thread`'s `leave_off` counts in this order."""
+        return (*self.reads, *self.branches)
 
     @property
     def state(self) -> str:
@@ -54,6 +64,79 @@ def _parts(raw: Any) -> tuple[tuple[str, str], ...]:
     return tuple(
         (str(p[0]), str(p[1])) for p in rows if isinstance(p, (list, tuple)) and len(p) == 2
     )
+
+
+def extra_json(s: Suggestion) -> str:
+    """The suggestion's parts and branches as stored (0507): entry ids only, never free names."""
+    return json.dumps(
+        {
+            "reads": [
+                {
+                    "kind": p.kind, "words": p.words, "state": p.state, "quote": p.quote,
+                    "who": p.who_id, "due": p.due, "terms": p.terms, "limit_kind": p.limit_kind,
+                }
+                for p in s.reads
+            ],
+            "branches": [
+                {
+                    "kind": b.kind, "name": b.name, "aim": b.aim, "quote": b.quote,
+                    "state": b.state, "parts": [list(x) for x in b.parts],
+                }
+                for b in s.branches
+            ],
+        }
+    )  # fmt: skip
+
+
+def _text(row: dict[str, Any], key: str) -> str:
+    v = row.get(key)
+    return v if isinstance(v, str) else ""
+
+
+def from_extra(raw: Any) -> tuple[tuple[ReadPart, ...], tuple[ReadBranch, ...]]:
+    """The stored parts and branches; a row from before 0507 (or anything unreadable) has none,
+    and keeps as it did. Never raises: one bad row must not hide the whole 📜 list."""
+    try:
+        data = raw if isinstance(raw, dict) else json.loads(raw or "{}")
+    except (TypeError, ValueError):
+        return (), ()
+    if not isinstance(data, dict):
+        return (), ()
+    raw_reads, raw_branches = data.get("reads"), data.get("branches")
+    if not isinstance(raw_reads, list):
+        raw_reads = []
+    if not isinstance(raw_branches, list):
+        raw_branches = []
+    reads = tuple(
+        ReadPart(
+            _text(r, "kind"), _text(r, "words"), _text(r, "state"), _text(r, "quote"),
+            r["who"] if isinstance(r.get("who"), str) else None, _text(r, "due"),
+            _text(r, "terms"), _text(r, "limit_kind"),
+        )
+        for r in raw_reads if isinstance(r, dict)
+    )  # fmt: skip
+    branches = tuple(
+        ReadBranch(
+            _text(b, "kind"), _text(b, "name"), _text(b, "aim"), _text(b, "quote"),
+            _text(b, "state"), _parts(b.get("parts", [])),
+        )
+        for b in raw_branches if isinstance(b, dict)
+    )  # fmt: skip
+    return reads, branches
+
+
+async def lines_in(
+    w: Changes, suggestion_id: str
+) -> tuple[tuple[ReadPart, ...], tuple[ReadBranch, ...]]:
+    """Inside the keep's own write (`MemoryStore.keep_thread`): the waiting suggestion's parts and
+    branches, so what is kept is what was suggested, never what a screen sent."""
+    cur = await w.conn.execute(
+        "SELECT extra FROM thread_suggestions"
+        " WHERE guild_id = %s AND campaign_id = %s AND id = %s AND status = 'waiting'",
+        (w.guild_id, w.campaign_id, suggestion_id),
+    )
+    row = await cur.fetchone()
+    return from_extra(row["extra"]) if row is not None else ((), ())
 
 
 async def mark_kept(w: Any, suggestion_id: str, batch: int | None) -> bool:
@@ -91,12 +174,18 @@ class ThreadSuggestionStore:
         suggests one again (`thread_read.check`'s `have`)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT name_key, parts FROM thread_suggestions"
+                "SELECT name_key, parts, extra FROM thread_suggestions"
                 " WHERE guild_id = %s AND campaign_id = %s",
                 (guild_id, campaign_id),
             )
             rows = await cur.fetchall()
-        return [(str(r["name_key"]), frozenset(e for _, e in _parts(r["parts"]))) for r in rows]
+        known = [(str(r["name_key"]), frozenset(e for _, e in _parts(r["parts"]))) for r in rows]
+        # (a branch waiting inside another suggestion counts too, so a later upload never suggests
+        # "Who killed Wit?" again as a thread of its own: the reviewer on #4500)
+        for r in rows:
+            for b in from_extra(r["extra"])[1]:
+                known.append((name_key(b.name), frozenset()))
+        return known
 
     async def offer(
         self, guild_id: int, campaign_id: str, found: Sequence[Suggestion], upload: str, now: int
@@ -108,13 +197,14 @@ class ThreadSuggestionStore:
             for s in found:
                 cur = await conn.execute(
                     "INSERT INTO thread_suggestions (guild_id, campaign_id, id, kind, name,"
-                    " name_key, aim, quote, parts, upload, status, created_at)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'waiting', %s)"
+                    " name_key, aim, quote, parts, upload, status, created_at, extra)"
+                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'waiting', %s, %s)"
                     " ON CONFLICT (guild_id, campaign_id, name_key) DO NOTHING",
                     (
                         guild_id, campaign_id, new_id(), s.kind, s.name[:120],
                         name_key(s.name)[:120] or s.kind, s.aim[:240], s.quote[:400],
                         json.dumps([list(p) for p in s.parts]), upload[:UPLOAD_MAX], max(now, 1),
+                        extra_json(s),
                     ),
                 )  # fmt: skip
                 made += cur.rowcount
@@ -126,7 +216,7 @@ class ThreadSuggestionStore:
         """The suggestions waiting for the DM, oldest first."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT id, kind, name, aim, quote, parts, upload, created_at"
+                "SELECT id, kind, name, aim, quote, parts, upload, created_at, extra"
                 " FROM thread_suggestions WHERE guild_id = %s AND campaign_id = %s"
                 " AND status = 'waiting' ORDER BY created_at, id",
                 (guild_id, campaign_id),
@@ -136,6 +226,7 @@ class ThreadSuggestionStore:
             Waiting(
                 str(r["id"]), str(r["kind"]), str(r["name"]), str(r["aim"]), str(r["quote"]),
                 _parts(r["parts"]), str(r["upload"]), int(r["created_at"]),
+                *from_extra(r["extra"]),
             )
             for r in rows
         ]  # fmt: skip

@@ -250,9 +250,14 @@ async def add(
     due: str = "",
     terms: str = "",
     limit_kind: str = "",
+    source: str = DM_SOURCE,
 ) -> dict[str, Any]:
     """The DM adds a part to a kept thread: confirmed, hidden from players until the DM shows it
-    (§10.2: false for the DM's own typing). An objective goes to the end of its list."""
+    (§10.2: false for the DM's own typing). An objective goes to the end of its list. `source`
+    LORE: a part the lore reader found, kept by the DM with its thread (#4500): the DM's keep, so
+    confirmed too, and its source says where the words came from."""
+    if source not in (DM_SOURCE, LORE, SESSION):
+        raise ValueError(f"Not a source: {source}")
     if kind not in KINDS:
         raise ValueError(f"Not a kind of part: {kind}")
     text = _clean(words, WORDS_MAX)
@@ -293,7 +298,7 @@ async def add(
             "terms": _clean(terms, TERMS_MAX), "limit_kind": limit_kind, "due_minute": None,
             "due_from": "", "from_session_at": await story_now(w), "to_session_at": None,
             "from_game_time": None, "to_game_time": None, "status": CONFIRMED,
-            "source": DM_SOURCE, "table_knows": False, "created_at": w.now,
+            "source": source, "table_knows": False, "created_at": w.now,
         },
     )  # fmt: skip
 

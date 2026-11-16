@@ -1015,6 +1015,10 @@ async def _thread(
             guild_id, cid, " ".join(renamed.split()) or shown.name, shown.kind, shown.state,
             aim=shown.aim, parts=[p for i, p in enumerate(shown.parts) if i in on],
             source=DM, suggestion_id=shown.id,
+            # (the website doesn't show a suggestion's steps, rewards and branches yet: a keep
+            # there keeps none of them, as nothing the DM didn't see is kept, §9.6; #4500's web
+            # half shows them)
+            leave_off=range(len(shown.lines)),
         )  # fmt: skip
     except MemoryRuleError as exc:  # (TooLateToUndo is one: a name was changed since)
         if str(exc) == ALREADY_UNDONE:
