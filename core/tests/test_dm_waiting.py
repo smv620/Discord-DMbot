@@ -129,7 +129,9 @@ class TheMessage(WithImports):
         self.assertTrue(await me.tell_dm_waiting(GUILD, cid, "lore:1", where="your upload"))
         self.assertTrue(await me.tell_dm_waiting(GUILD, cid, "lore:2", where="your upload"))
         text = me.ask_privately.await_args_list[0].args[2]
-        self.assertIn("2 questions** about your upload:", text)
+        self.assertIn(
+            "2 things to check** from your upload:", text
+        )  # (the walk button's total, #4528)
 
     async def test_a_send_that_raises_gives_the_key_back(self) -> None:
         me = fake_bot(self, [WaitingChecks(names=1)] * 2)

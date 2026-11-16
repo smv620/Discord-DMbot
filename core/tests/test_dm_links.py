@@ -160,41 +160,26 @@ class EveryPageIsServed(unittest.TestCase):
                 self.assertIn(f"/account/{page}/*", redirects, f"{page}: no rewrite for its ref")
 
 
-class PointAtItself(unittest.IsolatedAsyncioTestCase):
-    async def test_the_sent_message_is_edited_once_with_discord_first_and_the_button_comes_off(
-        self,
-    ) -> None:
-        from unittest.mock import AsyncMock
+class NoLinkToItself(unittest.TestCase):
+    """No private message links to itself (#4528, ruling on #3663): "Open in Discord" appears only
+    when the caller gives somewhere else (the DM-screen card, an item's own message)."""
 
-        view = dl.add_links(None, site_url="https://s/x")
+    def test_the_helper_that_edited_a_message_to_point_at_itself_is_gone(self) -> None:
+        self.assertFalse(hasattr(dl, "point_at_itself"))
+
+    def test_a_private_message_has_the_website_button_only(self) -> None:
+        view = dl.for_campaign(None, "https://s/x", 1, "c" * 32, dl.DMLinks())
         assert view is not None
-        view.add_item(discord.ui.Button(label="Answer", custom_id="a"))
-        shown: list[list[str]] = []
+        self.assertEqual([getattr(c, "label", "") for c in view.children], ["Open on the website"])
 
-        async def edit(*, view: discord.ui.View) -> None:
-            shown.append([getattr(c, "label", "") for c in view.children])
-
-        message = SimpleNamespace(
-            jump_url="https://discord.com/channels/@me/2/3", edit=AsyncMock(side_effect=edit)
-        )
-        await dl.point_at_itself(message, view)  # type: ignore[arg-type]
-        self.assertEqual(shown, [["Answer", "Open in Discord", "Open on the website"]])
-        # taken off again, so the next DM's copy gets its own address
+    def test_a_link_to_somewhere_else_still_gets_its_button_first(self) -> None:
+        links = dl.DMLinks(discord_url="https://discord.com/channels/1/2/3")
+        view = dl.for_campaign(None, "https://s/x", 1, "c" * 32, links)
+        assert view is not None
         self.assertEqual(
-            [getattr(c, "label", "") for c in view.children], ["Answer", "Open on the website"]
+            [getattr(c, "label", "") for c in view.children],
+            ["Open in Discord", "Open on the website"],
         )
-
-    async def test_a_failed_edit_is_never_fatal(self) -> None:
-        from unittest.mock import AsyncMock
-
-        view = dl.add_links(None, site_url="https://s/x")
-        message = SimpleNamespace(
-            jump_url="https://discord.com/channels/@me/2/3",
-            edit=AsyncMock(side_effect=RuntimeError),
-        )
-        await dl.point_at_itself(message, view)  # type: ignore[arg-type]
-        await dl.point_at_itself(None, view)
-        await dl.point_at_itself(SimpleNamespace(jump_url="", edit=AsyncMock()), view)  # type: ignore[arg-type]
 
 
 class TheQuestionsPage(unittest.TestCase):

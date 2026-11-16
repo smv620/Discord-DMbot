@@ -102,6 +102,16 @@ class Keeping(unittest.TestCase):
         self.assertEqual(kept.deleted_numbers, ())
         self.assertTrue(kept.replaced)
 
+    def test_a_protected_candidate_is_left_alone_and_counted_not_reported_deleted(self) -> None:
+        have = [(f"id{n}", N(n)) for n in (29, 30, 31, 32)]
+        kept = sample_name.plan_keep(have, 33, protected={"id29"})
+        self.assertEqual(kept.delete, ("id30",))
+        self.assertEqual(kept.not_deleted, 1)
+        self.assertEqual(
+            sample_name.counts_line(kept),
+            "Sample campaigns kept: 31, 32, 33. Deleted: 30. Not deleted, not the tool's: 1.",
+        )
+
     def test_nothing_before_it_is_nothing_deleted(self) -> None:
         kept = self.plan([], 1)
         self.assertEqual(kept.delete, ())

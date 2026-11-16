@@ -106,15 +106,21 @@ async def existing_samples(db: Database, campaigns: CampaignStore, guild: int) -
 
 
 async def check_existing(
-    db: Database, campaigns: CampaignStore, guild: int, dm: int
+    db: Database, campaigns: CampaignStore, guild: int, dm: int, deploy: int | None = None
 ) -> list[Existing]:
-    """The earlier sample campaigns, every one checked (`plan.can_replace`) before anything is
-    changed. A refusal here changes nothing, which is why the run does it before it spends."""
+    """The earlier sample campaigns. Only this deploy's own (the same N, which the run replaces)
+    must pass `plan.can_replace`: if it cannot be deleted, the run cannot make a second one with
+    that name, so it stops here, before it spends and before anything is changed (#4538). Any
+    other campaign the guard refuses is left alone later and counted, so a kept sample someone
+    played in never blocks a run."""
     found = await existing_samples(db, campaigns, guild)
-    for old in found:
-        why = can_replace(old, dm)
-        if why:
-            raise SampleError(why)
+    if deploy is not None:
+        mine = sample_name.name_for(deploy)
+        own = {c.id for c in await campaigns.list_campaigns(guild) if c.name == mine}
+        for old in found:
+            why = can_replace(old, dm) if old.campaign_id in own else None
+            if why:
+                raise SampleError(why)
     return found
 
 
@@ -186,12 +192,23 @@ async def fresh_campaign(
     ones always go. `found`: what `check_existing` returned (every one already passed the guard
     `plan.can_replace`); asked again when not given. Each delete re-checks ownership under the
     campaign's lock (`only_if_owner`)."""
-    found = found if found is not None else await check_existing(db, campaigns, guild, dm)
+    found = found if found is not None else await check_existing(db, campaigns, guild, dm, deploy)
     names = {c.id: c.name for c in await campaigns.list_campaigns(guild)}
-    kept = sample_name.plan_keep(
-        [(old.campaign_id, names[old.campaign_id]) for old in found if old.campaign_id in names],
-        deploy,
-    )
+    have = [(old.campaign_id, names[old.campaign_id]) for old in found if old.campaign_id in names]
+    by_id = {old.campaign_id: old for old in found}
+    # Only what the run would delete is checked: a kept sample is never touched. A refusal on
+    # this deploy's own campaign stops the run (it cannot be made again); on any other it is
+    # left alone and counted in the line.
+    first = sample_name.plan_keep(have, deploy)
+    refused: set[str] = set()
+    for campaign_id in first.delete:
+        why = can_replace(by_id[campaign_id], dm)
+        if why is None:
+            continue
+        if names.get(campaign_id) == sample_name.name_for(deploy):
+            raise SampleError(why)
+        refused.add(campaign_id)
+    kept = sample_name.plan_keep(have, deploy, protected=refused)
     deleted = 0
     timed_out = 0
     try:
