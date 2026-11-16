@@ -9,7 +9,7 @@ database and no Discord here.
 from __future__ import annotations
 
 import re
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 
 OLD_NAME = "test of the frostmaiden (sample)"  # before #4538: still accepted, counted as oldest
@@ -49,16 +49,20 @@ class Kept:
     kept_numbers: tuple[int, ...]
     deleted_numbers: tuple[int, ...]
     deleted_old: int  # how many unnumbered ones go (always, as they count as oldest)
+    not_deleted: int = 0  # candidates the guard refused: left alone, counted
     deploy: int = 0  # the deploy being made now
     replaced: bool = False  # this deploy's own campaign was there and is made again
 
 
-def plan_keep(existing: Iterable[tuple[str, str]], deploy: int) -> Kept:
+def plan_keep(
+    existing: Iterable[tuple[str, str]], deploy: int, protected: Collection[str] = ()
+) -> Kept:
     """From (campaign id, name) of this DM's sample campaigns, and the deploy being made now: the
     campaign for `deploy` itself is deleted first (a re-run makes it again, never two of one
     number), then the newest `KEEP - 1` others stay beside the new one and the rest go. An old
-    unnumbered name counts as older than any number. Names that are not samples are not here:
-    callers pass only `is_sample` names."""
+    unnumbered name counts as older than any number. `protected`: campaigns the guard refuses to
+    delete: they are left alone and counted, never reported as deleted. Names that are not
+    samples are not here: callers pass only `is_sample` names."""
     numbered: list[tuple[int, str]] = []
     old: list[str] = []
     for campaign_id, name in existing:
@@ -70,13 +74,18 @@ def plan_keep(existing: Iterable[tuple[str, str]], deploy: int) -> Kept:
     same = [cid for n, cid in numbered if n == deploy]
     others = sorted(((n, cid) for n, cid in numbered if n != deploy), reverse=True)
     stay = others[: KEEP - 1]
-    go = others[KEEP - 1 :]
+    go = [(n, cid) for n, cid in others[KEEP - 1 :] if cid not in protected]
+    old_go = [cid for cid in old if cid not in protected]
+    refused = sum(1 for _, cid in others[KEEP - 1 :] if cid in protected) + sum(
+        1 for cid in old if cid in protected
+    )
     return Kept(
         keep=tuple(cid for _, cid in stay),
-        delete=tuple([*same, *old, *(cid for _, cid in go)]),
+        delete=tuple([*same, *old_go, *(cid for _, cid in go)]),
         kept_numbers=tuple(sorted([n for n, _ in stay] + [deploy])),
         deleted_numbers=tuple(sorted(n for n, _ in go)),
-        deleted_old=len(old),
+        deleted_old=len(old_go),
+        not_deleted=refused,
         deploy=deploy,
         replaced=bool(same),
     )
@@ -89,6 +98,6 @@ def counts_line(kept: Kept) -> str:
     if kept.deleted_old:
         gone.append(f"{kept.deleted_old} unnumbered")
     replaced = f" Replaced: {kept.deploy}." if kept.replaced else ""
-    return (
-        f"Sample campaigns kept: {keep}. Deleted: {', '.join(gone) if gone else 'none'}.{replaced}"
-    )
+    refused = f" Not deleted, not the tool's: {kept.not_deleted}." if kept.not_deleted else ""
+    deleted = ", ".join(gone) if gone else "none"
+    return f"Sample campaigns kept: {keep}. Deleted: {deleted}.{replaced}{refused}"

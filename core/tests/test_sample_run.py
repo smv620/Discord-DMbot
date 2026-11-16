@@ -201,13 +201,55 @@ class Steps(DatabaseTest):
         self.assertIn("stopped after deleting 2 of 2 old sample campaign(s)", self.said)
         self.assertIsNotNone(await self.campaigns.get(GUILD, like.id))
 
-    async def test_a_numbered_sample_that_is_another_dms_stops_the_run_untouched(self) -> None:
-        theirs = await self.made(owner=ELSE, name=sample_name.name_for(5))
-        mine = await self.made(name=sample_name.name_for(4))
+    async def played(self, n: int) -> Any:
+        """A numbered sample someone played a session in: the guard refuses to delete it."""
+        made = await self.made(name=sample_name.name_for(n))
+        await self.transcripts.open_session(GUILD, made.id, NOW - 1000)  # (not an import)
+        return made
+
+    async def test_a_played_in_sample_that_would_be_deleted_is_skipped_and_counted(self) -> None:
+        stuck = await self.played(29)
+        old = await self.made(name=sample_name.name_for(30))
+        for n in (31, 32):
+            await self.made(name=sample_name.name_for(n))
+        await steps.fresh_campaign(self.db, self.campaigns, GUILD, DM, deploy=33, say=self.say)
+        self.assertIsNotNone(await self.campaigns.get(GUILD, stuck.id))  # (left alone)
+        self.assertIsNone(await self.campaigns.get(GUILD, old.id))  # (the run goes on)
+        self.assertIn(
+            "Sample campaigns kept: 31, 32, 33. Deleted: 30. Not deleted, not the tool's: 1.",
+            self.said,
+        )
+
+    async def test_a_played_in_campaign_for_the_same_deploy_stops_the_run_before_anything(
+        self,
+    ) -> None:
+        own = await self.played(33)
+        old = await self.made(name=sample_name.name_for(30))
+        for n in (31, 32):
+            await self.made(name=sample_name.name_for(n))
         with self.assertRaises(SampleError):
-            await steps.fresh_campaign(self.db, self.campaigns, GUILD, DM, deploy=31, say=self.say)
-        for c in (theirs, mine):
-            self.assertIsNotNone(await self.campaigns.get(GUILD, c.id))
+            await steps.check_existing(self.db, self.campaigns, GUILD, DM, 33)
+        with self.assertRaises(SampleError):
+            await steps.fresh_campaign(self.db, self.campaigns, GUILD, DM, deploy=33, say=self.say)
+        self.assertIsNotNone(await self.campaigns.get(GUILD, own.id))
+        self.assertIsNotNone(await self.campaigns.get(GUILD, old.id))  # (nothing changed)
+
+    async def test_a_played_in_kept_sample_is_not_checked_and_blocks_nothing(self) -> None:
+        kept = await self.played(32)
+        old = await self.made(name=sample_name.name_for(30))
+        await self.made(name=sample_name.name_for(31))
+        await steps.check_existing(self.db, self.campaigns, GUILD, DM, 33)  # (no refusal)
+        await steps.fresh_campaign(self.db, self.campaigns, GUILD, DM, deploy=33, say=self.say)
+        self.assertIsNotNone(await self.campaigns.get(GUILD, kept.id))
+        self.assertIsNone(await self.campaigns.get(GUILD, old.id))
+
+    async def test_another_dms_old_sample_is_skipped_too(self) -> None:
+        theirs = await self.made(owner=ELSE, name=sample_name.name_for(5))
+        for n in (30, 31, 32):
+            await self.made(name=sample_name.name_for(n))
+        await steps.fresh_campaign(self.db, self.campaigns, GUILD, DM, deploy=33, say=self.say)
+        self.assertIsNotNone(await self.campaigns.get(GUILD, theirs.id))
+        self.assertIn("Not deleted, not the tool's: 1", " ".join(self.said))
 
     async def test_a_look_alike_name_is_never_deleted(self) -> None:
         keep = [

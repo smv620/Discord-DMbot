@@ -279,7 +279,7 @@ async def run(
         gid, dm = args.guild, args.dm
         # The checks that need the database, still before anything is changed or spent.
         await steps.require_paid(db, dm, now, guild_id=gid)
-        found = await steps.check_existing(db, campaigns, gid, dm)
+        found = await steps.check_existing(db, campaigns, gid, dm, deploy)
         ids = set(players.values()) if not off else {dm}
         agreed = await ConsentStore(db).consenting(gid)
         refused = await steps.refused_accounts(db, gid, ids)
