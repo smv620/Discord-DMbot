@@ -9503,18 +9503,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     gid, cid, found, label, int(time.time()),
                     session_id=sid, session_at=session.started_at,
                 )  # fmt: skip
+                moved = 0
                 try:  # (its own try: a failure here never loses the new threads' count)
-                    await ThreadProgressStore(memory._db).offer(
+                    moved = await ThreadProgressStore(memory._db).offer(
                         gid, cid, sid, session.started_at,
                         [m for m in report.progress if set(m[3]) <= agreed],
                         now=int(time.time()),
                     )  # fmt: skip
                 except Exception as exc:
                     log.warning("Session threads: progress not kept (%s)", type(exc).__name__)
-                # (the progress lines are stored but not announced yet: the 📜 card shows them in
-                # 5b part 3, which adds their count here; a count with nowhere to answer would
-                # send the DM to an empty card)
-                await self._tell_threads(campaign, made, report.stopped, label)
+                # (one counts line for both, ruling D; the 📜 card shows the progress after the new
+                # threads, #4522 5b part 3)
+                await self._tell_threads(campaign, made, report.stopped, label, moved)
             except Exception as exc:  # the type only: never fatal, never a word of the story
                 log.warning("Session threads: the reading failed (%s)", type(exc).__name__)
 
