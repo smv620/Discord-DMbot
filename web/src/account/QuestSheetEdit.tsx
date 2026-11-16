@@ -187,7 +187,9 @@ function PartControls({
   const fixOk = text.trim().length > 0 && text.trim().length <= 200 && text.trim() !== p.words;
   const hasStates = p.kind !== "reward_given" && stateChoices.length > 0;
   return (
-    <details>
+    <div class="stack">
+      <p class="small">{p.words}</p>
+      <details>
       <summary>{w.change}</summary>
       <p class="row">
         {hasStates &&
@@ -214,6 +216,7 @@ function PartControls({
         </label>
         <button type="button" class="button secondary" disabled={busy || !fixOk} onClick={() => onFix(text.trim(), storyChanged)}>{w.save}</button>
       </div>
-    </details>
+      </details>
+    </div>
   );
 }

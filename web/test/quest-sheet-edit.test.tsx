@@ -54,6 +54,14 @@ describe("the quest sheet's edit controls", () => {
     expect(reload).toHaveBeenCalled();
   });
 
+  it("each part's words sit next to its own Change block", () => {
+    edit(card([part("p4", "objective", "Find the heir", "done"), part("p5", "objective", "Cross the pass", "to_do")]));
+    const blocks = screen.getAllByText(w.change, { selector: "summary" });
+    expect(blocks).toHaveLength(2);
+    expect(blocks[0]!.closest("details")!.parentElement!.querySelector("p")!.textContent).toBe("Find the heir");
+    expect(blocks[1]!.closest("details")!.parentElement!.querySelector("p")!.textContent).toBe("Cross the pass");
+  });
+
   it("the current state has no button", () => {
     edit(card([part("p4", "objective", "Find the heir", "done")]));
     expect(screen.queryByRole("button", { name: "☑ Done" })).toBeNull();
