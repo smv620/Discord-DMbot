@@ -55,6 +55,7 @@ TRANSCRIPTS: Rules = {
         "map_notes",  # (a person's words put into a picture: gone with their own words, #2450)
         "secret_questions",  # (a 🤫 question's speakers: `secret_questions.forget`, #4524)
         "thread_suggestions",  # (a session's story threads: `thread_suggestions.forget`, #4522)
+        "thread_progress",  # (a session's progress on threads: `thread_progress.forget`, #4522)
     )
 }  # fmt: skip
 TRANSCRIPTS.update(
