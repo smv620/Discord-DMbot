@@ -1,0 +1,370 @@
+{
+  "campaign": "test of the frostmaiden (sample)",
+  "source": "Okthandom Korran's secret backstory (backstory 2 in the README's list; the plain-text export)",
+  "version": 1,
+  "speaker": "Okthandom Korran",
+  "how_to_read": {
+    "speaker": "the player character whose secret backstory this is: the upload's speaker",
+    "knowers": "who knows the row before anything public names it, written out on every row: a list of names (the speaker, and every person or creature on the row, since what happens between two is known to both: #4523 ruling C, NPCs included), \"party\" (all four player characters), \"everyone\" (common knowledge) or \"dm\" (nobody: a real secret, not even the speaker)",
+    "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted as a fact)",
+    "must_find": "false = a good find if present, not a miss if absent",
+    "current": "false = history: it was true and is not now",
+    "line": "the line of the document's plain-text export that supports it (blank lines count)",
+    "reveals": "lore_key.json's reveals lists, by id, the rows of this key the public lore states; judged by what the lore says, row by row, never by matching ends alone",
+    "threads": "kind quest, hook or mystery; taker = whose own pursuit it is; same_as = the lore key's thread for the same story",
+    "relation": "as lore_key.json",
+    "check": "true = the owner should check the knowers: one may not really know it (dead, vanished, unknowable) or the row is only implied"
+  },
+  "nodes": [
+    {
+      "name": "Okthandom Korran",
+      "kind": "person",
+      "aliases": [
+        "Okthandom",
+        "Oktandom"
+      ],
+      "knowers": "party",
+      "note": "Player character"
+    },
+    {
+      "name": "Vaelrith Korran",
+      "kind": "person",
+      "aliases": [
+        "Vaelrith"
+      ],
+      "note": "elder brother; vanished at 105, a month ago",
+      "knowers": [
+        "Okthandom Korran",
+        "Vaelrith Korran"
+      ],
+      "check": true
+    },
+    {
+      "name": "Nyssara Korran",
+      "kind": "person",
+      "aliases": [
+        "Nyssara"
+      ],
+      "note": "younger sister, 80",
+      "knowers": [
+        "Okthandom Korran",
+        "Nyssara Korran"
+      ]
+    },
+    {
+      "name": "Okthandom's child",
+      "kind": "person",
+      "aliases": [
+        "Okthandom Korran's child (name unknown)"
+      ],
+      "note": "named only as his child",
+      "knowers": [
+        "Okthandom Korran",
+        "Okthandom's child"
+      ]
+    },
+    {
+      "name": "Okthandom's father",
+      "kind": "person",
+      "must_find": false,
+      "note": "named only in the journal's line of ancestors",
+      "knowers": [
+        "Okthandom Korran",
+        "Okthandom's father"
+      ],
+      "check": true
+    },
+    {
+      "name": "Lady Martha",
+      "kind": "person",
+      "note": "listed under his enemies; a servant mentioned her at a feast",
+      "knowers": [
+        "Okthandom Korran",
+        "Lady Martha"
+      ],
+      "check": true
+    },
+    {
+      "name": "The apparition",
+      "kind": "creature",
+      "aliases": [
+        "the haunting",
+        "faceless figure"
+      ],
+      "note": "what haunts the family; its nature is open",
+      "knowers": [
+        "Okthandom Korran",
+        "The apparition"
+      ],
+      "check": true
+    },
+    {
+      "name": "Ancestral journal",
+      "kind": "item",
+      "aliases": [
+        "family journal",
+        "the journal"
+      ],
+      "knowers": [
+        "Okthandom Korran"
+      ]
+    },
+    {
+      "name": "Family talisman",
+      "kind": "item",
+      "must_find": false,
+      "note": "shattered, left at Vaelrith's campsite",
+      "knowers": [
+        "Okthandom Korran"
+      ]
+    },
+    {
+      "name": "Icewind Dale",
+      "kind": "place",
+      "knowers": "everyone"
+    }
+  ],
+  "pairs": [
+    {
+      "id": "o001",
+      "a": "Okthandom Korran",
+      "relation": "sibling",
+      "b": "Vaelrith Korran",
+      "tier": "stated",
+      "must_find": true,
+      "line": 10,
+      "knowers": [
+        "Okthandom Korran",
+        "Vaelrith Korran"
+      ],
+      "check": true
+    },
+    {
+      "id": "o002",
+      "a": "Okthandom Korran",
+      "relation": "sibling",
+      "b": "Nyssara Korran",
+      "tier": "stated",
+      "must_find": true,
+      "line": 13,
+      "knowers": [
+        "Okthandom Korran",
+        "Nyssara Korran"
+      ]
+    },
+    {
+      "id": "o003",
+      "a": "Vaelrith Korran",
+      "relation": "sibling",
+      "b": "Nyssara Korran",
+      "tier": "stated",
+      "must_find": true,
+      "line": 13,
+      "knowers": [
+        "Okthandom Korran",
+        "Nyssara Korran",
+        "Vaelrith Korran"
+      ],
+      "check": true
+    },
+    {
+      "id": "o004",
+      "a": "Okthandom Korran",
+      "relation": "parent_of",
+      "b": "Okthandom's child",
+      "tier": "stated",
+      "must_find": true,
+      "line": 16,
+      "knowers": [
+        "Okthandom Korran",
+        "Okthandom's child"
+      ]
+    },
+    {
+      "id": "o005",
+      "a": "Okthandom's father",
+      "relation": "parent_of",
+      "b": "Okthandom Korran",
+      "tier": "stated",
+      "must_find": false,
+      "line": 7,
+      "knowers": [
+        "Okthandom Korran",
+        "Okthandom's father"
+      ],
+      "check": true
+    },
+    {
+      "id": "o006",
+      "a": "Okthandom Korran",
+      "relation": "owns",
+      "b": "Ancestral journal",
+      "tier": "inferred",
+      "must_find": true,
+      "line": 7,
+      "note": "he reads the family journal",
+      "knowers": [
+        "Okthandom Korran"
+      ],
+      "check": true
+    },
+    {
+      "id": "o007",
+      "a": "The apparition",
+      "relation": "associate",
+      "b": "Okthandom Korran",
+      "tier": "stated",
+      "must_find": true,
+      "line": 4,
+      "note": "it haunts him",
+      "knowers": [
+        "Okthandom Korran",
+        "The apparition"
+      ],
+      "check": true
+    },
+    {
+      "id": "o008",
+      "a": "The apparition",
+      "relation": "associate",
+      "b": "Nyssara Korran",
+      "tier": "inferred",
+      "must_find": true,
+      "line": 13,
+      "note": "she confessed it to him: an event between the two",
+      "knowers": [
+        "Okthandom Korran",
+        "Nyssara Korran",
+        "The apparition"
+      ],
+      "check": true
+    },
+    {
+      "id": "o009",
+      "a": "Lady Martha",
+      "relation": "enemy_of",
+      "b": "Okthandom Korran",
+      "tier": "inferred",
+      "must_find": false,
+      "line": 2,
+      "knowers": [
+        "Okthandom Korran",
+        "Lady Martha"
+      ],
+      "check": true
+    },
+    {
+      "id": "o010",
+      "a": "Okthandom Korran",
+      "relation": "associate",
+      "b": "Icewind Dale",
+      "tier": "stated",
+      "must_find": true,
+      "line": 16,
+      "knowers": [
+        "Okthandom Korran"
+      ]
+    },
+    {
+      "id": "o012",
+      "a": "The apparition",
+      "relation": "associate",
+      "b": "Vaelrith Korran",
+      "tier": "inferred",
+      "must_find": true,
+      "line": 10,
+      "note": "it took him, as the family fears",
+      "knowers": [
+        "Okthandom Korran",
+        "The apparition",
+        "Vaelrith Korran"
+      ],
+      "check": true
+    },
+    {
+      "id": "o011",
+      "a": "Vaelrith Korran",
+      "relation": "owns",
+      "b": "Ancestral journal",
+      "tier": "inferred",
+      "must_find": false,
+      "line": 10,
+      "current": false,
+      "note": "wrote its last entry",
+      "knowers": [
+        "Okthandom Korran",
+        "Vaelrith Korran"
+      ],
+      "check": true
+    }
+  ],
+  "events": [
+    {
+      "id": "oe01",
+      "what": "Vaelrith vanishes at 105, leaving a bloodied campsite",
+      "who": [
+        "Okthandom Korran",
+        "Nyssara Korran",
+        "Vaelrith Korran"
+      ],
+      "line": 10,
+      "knowers": [
+        "Okthandom Korran",
+        "Nyssara Korran",
+        "Vaelrith Korran"
+      ],
+      "check": true
+    },
+    {
+      "id": "oe03",
+      "what": "A shattered family talisman is left at his campsite",
+      "who": [
+        "Okthandom Korran",
+        "Nyssara Korran"
+      ],
+      "line": 10,
+      "knowers": [
+        "Okthandom Korran",
+        "Nyssara Korran"
+      ]
+    },
+    {
+      "id": "oe02",
+      "what": "Nyssara confesses the whispers have started for her",
+      "who": [
+        "Okthandom Korran",
+        "Nyssara Korran"
+      ],
+      "line": 13,
+      "knowers": [
+        "Okthandom Korran",
+        "Nyssara Korran"
+      ]
+    }
+  ],
+  "threads": [
+    {
+      "id": "bo01",
+      "kind": "quest",
+      "name": "What is haunting the Korran bloodline, and how to end it",
+      "taker": "Okthandom Korran",
+      "missing": [
+        "Vaelrith Korran"
+      ],
+      "in_danger": [
+        "Nyssara Korran",
+        "Okthandom's child",
+        "Okthandom Korran"
+      ],
+      "same_as": "lq03",
+      "line": 16,
+      "knowers": [
+        "Okthandom Korran"
+      ]
+    }
+  ],
+  "languages": [],
+  "must_not_find": [
+    "the kinds of thing it might be (spirit, ghost, devil, demon, trickster god) are not entries"
+  ]
+}

@@ -1,0 +1,457 @@
+{
+  "campaign": "test of the frostmaiden (sample)",
+  "source": "Belleros Stormgrace's secret backstory (backstory 4 in the README's list; the plain-text export)",
+  "version": 1,
+  "speaker": "Belleros Stormgrace",
+  "how_to_read": {
+    "speaker": "the player character whose secret backstory this is: the upload's speaker",
+    "knowers": "who knows the row before anything public names it, written out on every row: a list of names (the speaker, and every person or creature on the row, since what happens between two is known to both: #4523 ruling C, NPCs included), \"party\" (all four player characters), \"everyone\" (common knowledge) or \"dm\" (nobody: a real secret, not even the speaker)",
+    "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted as a fact)",
+    "must_find": "false = a good find if present, not a miss if absent",
+    "current": "false = history: it was true and is not now",
+    "line": "the line of the document's plain-text export that supports it (blank lines count)",
+    "reveals": "lore_key.json's reveals lists, by id, the rows of this key the public lore states; judged by what the lore says, row by row, never by matching ends alone",
+    "threads": "kind quest, hook or mystery; taker = whose own pursuit it is; same_as = the lore key's thread for the same story",
+    "relation": "as lore_key.json",
+    "check": "true = the owner should check the knowers: one may not really know it (dead, vanished, unknowable) or the row is only implied"
+  },
+  "nodes": [
+    {
+      "name": "Belleros Stormgrace",
+      "kind": "person",
+      "aliases": [
+        "Belleros"
+      ],
+      "knowers": "party",
+      "note": "Player character"
+    },
+    {
+      "name": "Explorer's League",
+      "kind": "group",
+      "aliases": [
+        "Explorers League",
+        "the League"
+      ],
+      "knowers": "everyone"
+    },
+    {
+      "name": "Wardens of the Wilds",
+      "kind": "group",
+      "aliases": [
+        "the Ward",
+        "rangers of the Ward"
+      ],
+      "knowers": [
+        "Belleros Stormgrace"
+      ]
+    },
+    {
+      "name": "Clan Battlehammer",
+      "kind": "group",
+      "knowers": "everyone"
+    },
+    {
+      "name": "Bruenor Battlehammer",
+      "kind": "person",
+      "aliases": [
+        "Bruenor"
+      ],
+      "knowers": "everyone",
+      "note": "a famous king: world knowledge"
+    },
+    {
+      "name": "Gandalug Battlehammer",
+      "kind": "person",
+      "aliases": [
+        "Gandalug"
+      ],
+      "knowers": "everyone",
+      "note": "listed under his enemies; the last king before the fall"
+    },
+    {
+      "name": "Shimmergloom",
+      "kind": "creature",
+      "knowers": "everyone",
+      "note": "the dragon that destroyed his home"
+    },
+    {
+      "name": "Thrain Coppervein",
+      "kind": "person",
+      "aliases": [
+        "Thrain"
+      ],
+      "note": "the old explorer who taught him",
+      "knowers": [
+        "Belleros Stormgrace",
+        "Thrain Coppervein"
+      ]
+    },
+    {
+      "name": "Belleros's parents",
+      "kind": "person",
+      "must_find": false,
+      "knowers": [
+        "Belleros Stormgrace",
+        "Belleros's parents"
+      ]
+    },
+    {
+      "name": "Mithral Hall",
+      "kind": "place",
+      "knowers": "everyone"
+    },
+    {
+      "name": "Kelvin's Cairn",
+      "kind": "place",
+      "aliases": [
+        "Kalvin's Cairn"
+      ],
+      "knowers": "everyone"
+    },
+    {
+      "name": "Dwarven Valley",
+      "kind": "place",
+      "knowers": "everyone"
+    },
+    {
+      "name": "Ten-Towns",
+      "kind": "place",
+      "aliases": [
+        "Ten Towns"
+      ],
+      "knowers": "everyone"
+    },
+    {
+      "name": "Icewind Dale",
+      "kind": "place",
+      "knowers": "everyone"
+    },
+    {
+      "name": "Brass compass",
+      "kind": "item",
+      "aliases": [
+        "Thrain's brass compass"
+      ],
+      "knowers": [
+        "Belleros Stormgrace"
+      ]
+    },
+    {
+      "name": "Grand Map",
+      "kind": "item",
+      "aliases": [
+        "Me Grand Map"
+      ],
+      "knowers": [
+        "Belleros Stormgrace"
+      ]
+    }
+  ],
+  "pairs": [
+    {
+      "id": "b001",
+      "a": "Belleros Stormgrace",
+      "relation": "member",
+      "b": "Explorer's League",
+      "tier": "stated",
+      "must_find": true,
+      "line": 26,
+      "knowers": [
+        "Belleros Stormgrace"
+      ]
+    },
+    {
+      "id": "b002",
+      "a": "Belleros Stormgrace",
+      "relation": "member",
+      "b": "Wardens of the Wilds",
+      "tier": "stated",
+      "must_find": true,
+      "line": 64,
+      "knowers": [
+        "Belleros Stormgrace"
+      ]
+    },
+    {
+      "id": "b003",
+      "a": "Bruenor Battlehammer",
+      "relation": "member",
+      "b": "Clan Battlehammer",
+      "tier": "stated",
+      "must_find": true,
+      "line": 43,
+      "knowers": "everyone"
+    },
+    {
+      "id": "b004",
+      "a": "Bruenor Battlehammer",
+      "relation": "leads",
+      "b": "Kelvin's Cairn",
+      "tier": "stated",
+      "must_find": true,
+      "line": 43,
+      "knowers": "everyone"
+    },
+    {
+      "id": "b005",
+      "a": "Kelvin's Cairn",
+      "relation": "in",
+      "b": "Dwarven Valley",
+      "tier": "stated",
+      "must_find": true,
+      "line": 43,
+      "knowers": "everyone"
+    },
+    {
+      "id": "b006",
+      "a": "Belleros Stormgrace",
+      "relation": "member",
+      "b": "Clan Battlehammer",
+      "tier": "inferred",
+      "must_find": false,
+      "line": 46,
+      "note": "can take refuge with the clan",
+      "knowers": [
+        "Belleros Stormgrace"
+      ],
+      "check": true
+    },
+    {
+      "id": "b007",
+      "a": "Gandalug Battlehammer",
+      "relation": "enemy_of",
+      "b": "Belleros Stormgrace",
+      "tier": "inferred",
+      "must_find": true,
+      "line": 69,
+      "note": "under the Enemies heading",
+      "knowers": [
+        "Belleros Stormgrace",
+        "Gandalug Battlehammer"
+      ],
+      "check": true
+    },
+    {
+      "id": "b008",
+      "a": "Gandalug Battlehammer",
+      "relation": "leads",
+      "b": "Mithral Hall",
+      "tier": "stated",
+      "must_find": true,
+      "line": 69,
+      "current": false,
+      "knowers": "everyone"
+    },
+    {
+      "id": "b009",
+      "a": "Shimmergloom",
+      "relation": "enemy_of",
+      "b": "Belleros Stormgrace",
+      "tier": "stated",
+      "must_find": true,
+      "line": 89,
+      "knowers": [
+        "Belleros Stormgrace",
+        "Shimmergloom"
+      ],
+      "check": true
+    },
+    {
+      "id": "b010",
+      "a": "Shimmergloom",
+      "relation": "associate",
+      "b": "Mithral Hall",
+      "tier": "stated",
+      "must_find": true,
+      "line": 69,
+      "knowers": "everyone",
+      "note": "the hall fell to it"
+    },
+    {
+      "id": "b011",
+      "a": "Belleros Stormgrace",
+      "relation": "comes_from",
+      "b": "Mithral Hall",
+      "tier": "stated",
+      "must_find": true,
+      "line": 74,
+      "knowers": [
+        "Belleros Stormgrace"
+      ]
+    },
+    {
+      "id": "b012",
+      "a": "Thrain Coppervein",
+      "relation": "mentor_of",
+      "b": "Belleros Stormgrace",
+      "tier": "stated",
+      "must_find": true,
+      "line": 83,
+      "knowers": [
+        "Belleros Stormgrace",
+        "Thrain Coppervein"
+      ]
+    },
+    {
+      "id": "b013",
+      "a": "Thrain Coppervein",
+      "relation": "owns",
+      "b": "Brass compass",
+      "tier": "stated",
+      "must_find": true,
+      "line": 114,
+      "current": false,
+      "knowers": [
+        "Belleros Stormgrace",
+        "Thrain Coppervein"
+      ]
+    },
+    {
+      "id": "b014",
+      "a": "Belleros Stormgrace",
+      "relation": "carries",
+      "b": "Brass compass",
+      "tier": "stated",
+      "must_find": true,
+      "line": 114,
+      "knowers": [
+        "Belleros Stormgrace"
+      ]
+    },
+    {
+      "id": "b015",
+      "a": "Belleros Stormgrace",
+      "relation": "owns",
+      "b": "Grand Map",
+      "tier": "stated",
+      "must_find": true,
+      "line": 120,
+      "knowers": [
+        "Belleros Stormgrace"
+      ]
+    },
+    {
+      "id": "b016",
+      "a": "Belleros Stormgrace",
+      "relation": "last_seen_in",
+      "b": "Ten-Towns",
+      "tier": "stated",
+      "must_find": true,
+      "line": 91,
+      "knowers": [
+        "Belleros Stormgrace"
+      ]
+    },
+    {
+      "id": "b017",
+      "a": "Ten-Towns",
+      "relation": "in",
+      "b": "Icewind Dale",
+      "tier": "stated",
+      "must_find": true,
+      "line": 91,
+      "knowers": "everyone"
+    },
+    {
+      "id": "b019",
+      "a": "Gandalug Battlehammer",
+      "relation": "member",
+      "b": "Clan Battlehammer",
+      "tier": "inferred",
+      "must_find": true,
+      "line": 69,
+      "knowers": "everyone"
+    },
+    {
+      "id": "b018",
+      "a": "Belleros's parents",
+      "relation": "parent_of",
+      "b": "Belleros Stormgrace",
+      "tier": "stated",
+      "must_find": false,
+      "line": 80,
+      "knowers": [
+        "Belleros Stormgrace",
+        "Belleros's parents"
+      ]
+    }
+  ],
+  "events": [
+    {
+      "id": "be01",
+      "what": "He swears the Explorer's Oath",
+      "who": [
+        "Belleros Stormgrace"
+      ],
+      "line": 32,
+      "knowers": [
+        "Belleros Stormgrace"
+      ]
+    },
+    {
+      "id": "be02",
+      "what": "After a narrow escape from a ruin he trains as a ranger of the Ward",
+      "who": [
+        "Belleros Stormgrace"
+      ],
+      "line": 64,
+      "knowers": [
+        "Belleros Stormgrace"
+      ]
+    },
+    {
+      "id": "be03",
+      "what": "Shimmergloom destroys Mithral Hall and scatters his people",
+      "who": [
+        "Belleros Stormgrace",
+        "Shimmergloom"
+      ],
+      "line": 89,
+      "knowers": "everyone"
+    }
+  ],
+  "threads": [
+    {
+      "id": "bb01",
+      "kind": "quest",
+      "name": "Find a way to kill Shimmergloom",
+      "taker": "Belleros Stormgrace",
+      "missing": [],
+      "in_danger": [],
+      "line": 89,
+      "knowers": [
+        "Belleros Stormgrace"
+      ]
+    },
+    {
+      "id": "bb02",
+      "kind": "mystery",
+      "name": "Belleros's shadow moves wrongly",
+      "taker": "Belleros Stormgrace",
+      "missing": [],
+      "in_danger": [],
+      "line": 123,
+      "note": "told to no one: must stay his alone through every stage",
+      "knowers": [
+        "Belleros Stormgrace"
+      ]
+    },
+    {
+      "id": "bb03",
+      "kind": "hook",
+      "name": "Map Icewind Dale for the League",
+      "taker": "Belleros Stormgrace",
+      "missing": [],
+      "in_danger": [],
+      "line": 106,
+      "must_find": false,
+      "knowers": [
+        "Belleros Stormgrace"
+      ]
+    }
+  ],
+  "languages": [],
+  "must_not_find": [
+    "the oath's words and the background feature are not entries or ties"
+  ]
+}

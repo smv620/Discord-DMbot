@@ -1,0 +1,167 @@
+# Backstory answer keys (sample campaign)
+
+What the graph should hold after each player character's secret backstory is read (#4523, stage 1a), and who may know each row. The documents are linked in the [README](README.md), not copied; these keys give names, kinds, ties and knowers only. **Knows** is who knows the row before anything public names it: the names (the speaker and every person on the row, NPCs too), `party`, `everyone` or `dm` (nobody, not even the speaker). **(check)**: the owner should check it (a knower who may not really know: dead, vanished or unknowable, or the row is only implied). **Lore** is the sample lore's row that later makes it the party's (`lore_key.json` `reveals`); a row with none stays its knowers' secret.
+
+## Cerric Vanya'elen
+
+**Entries:** Cerric Vanya'elen; Roceran; Shafina; Valyra; Kelfir Ama'Kiir; Cerric's paternal grandfather; Qinric; Syllar Sparkwalker; Emmerich Ravenstride; Wit; Danneth; Khelben Arunsun (good find); The Brotherhood; Lord's Alliance; Council of the Blackstaff; The Harpers (good find); Lathander (good find); Waterdeep; Temple of the Seldarine; Castle Ward; Sparkwalker Spire; Blackstaff Tower; Spires of the Morning; The Sapphire House (good find); The Font of Knowledge (good find); Sword Street (good find); Calamastyr Lane (good find); Neverwinter; Easthaven; Ten-Towns; Icewind Dale; Azure tome; Marble bust of Khelben (good find)
+
+| id | from | tie | to | tier | must find | current | line | knows | lore |
+|---|---|---|---|---|---|---|---|---|---|
+| c001 | Roceran | parent_of | Cerric Vanya'elen | stated | yes | yes | 1 | Cerric Vanya'elen, Roceran | l001 |
+| c002 | Shafina | parent_of | Cerric Vanya'elen | stated | yes | yes | 1 | Cerric Vanya'elen, Shafina | l002 |
+| c003 | Roceran | parent_of | Valyra | inferred | yes | yes | 1 | Cerric Vanya'elen, Roceran, Valyra (check) | l003 |
+| c004 | Shafina | parent_of | Valyra | inferred | yes | yes | 1 | Cerric Vanya'elen, Shafina, Valyra (check) | l004 |
+| c005 | Cerric Vanya'elen | sibling | Valyra | stated | yes | yes | 1 | Cerric Vanya'elen, Valyra | l005 |
+| c006 | Cerric's paternal grandfather | grandparent_of | Cerric Vanya'elen | stated | yes | yes | 16 | Cerric Vanya'elen, Cerric's paternal grandfather (check) | l006 |
+| c007 | Qinric | sibling | Roceran | stated | yes | yes | 16 | Cerric Vanya'elen, Qinric, Roceran | l007 |
+| c008 | Qinric | uncle_of | Cerric Vanya'elen | stated | yes | yes | 16 | Cerric Vanya'elen, Qinric | l008 |
+| c009 | Qinric | member | Lord's Alliance | stated | yes | yes | 16 | Cerric Vanya'elen, Qinric | l009 |
+| c010 | Valyra | apprentice_of | Kelfir Ama'Kiir | stated | yes | yes | 13 | Cerric Vanya'elen, Kelfir Ama'Kiir, Valyra | l010 |
+| c011 | Cerric Vanya'elen | works_for | Syllar Sparkwalker | stated | yes | no | 16 | Cerric Vanya'elen, Syllar Sparkwalker | l011 |
+| c012 | Cerric Vanya'elen | leads | Sparkwalker Spire | stated | no | no | 19 | Cerric Vanya'elen | l012 |
+| c013 | Cerric Vanya'elen | works_in | Sparkwalker Spire | stated | yes | no | 19 | Cerric Vanya'elen | l013 |
+| c014 | Syllar Sparkwalker | member | Council of the Blackstaff | stated | yes | yes | 16 | Cerric Vanya'elen, Syllar Sparkwalker |  |
+| c015 | Syllar Sparkwalker | mentor_of | Emmerich Ravenstride | stated | yes | yes | 25 | Cerric Vanya'elen, Emmerich Ravenstride, Syllar Sparkwalker | l015 |
+| c016 | Syllar Sparkwalker | mentor_of | Wit | stated | yes | yes | 25 | Cerric Vanya'elen, Syllar Sparkwalker, Wit | l016 |
+| c017 | Emmerich Ravenstride | rival_of | Cerric Vanya'elen | stated | yes | yes | 28 | Cerric Vanya'elen, Emmerich Ravenstride | l017 |
+| c018 | Wit | knows (respect) | Cerric Vanya'elen | stated | yes | yes | 28 | Cerric Vanya'elen, Wit |  |
+| c019 | Cerric Vanya'elen | comes_from | Waterdeep | stated | yes | yes | 1 | Cerric Vanya'elen | l019 |
+| c020 | Temple of the Seldarine | in | Waterdeep | stated | yes | yes | 1 | everyone | l020 |
+| c021 | Cerric Vanya'elen | lived_in | Castle Ward | stated | yes | no | 4 | Cerric Vanya'elen | l021 |
+| c022 | Castle Ward | in | Waterdeep | inferred | yes | yes | 4 | everyone | l022 |
+| c023 | Cerric Vanya'elen | carries | Azure tome | stated | yes | yes | 37 | Cerric Vanya'elen | l023 |
+| c024 | Syllar Sparkwalker | owns | Azure tome | stated | yes | yes | 34 | Cerric Vanya'elen, Syllar Sparkwalker | l024 |
+| c025 | Cerric Vanya'elen | last_seen_in | Neverwinter | stated | yes | yes | 52 | Cerric Vanya'elen | l025 |
+| c026 | Cerric Vanya'elen | last_seen_in | Spires of the Morning | stated | no | no | 43 | Cerric Vanya'elen |  |
+| c027 | Cerric Vanya'elen | last_seen_in | Blackstaff Tower | stated | no | no | 37 | Cerric Vanya'elen |  |
+| c028 | Danneth | last_seen_in | Easthaven | inferred | yes | yes | 59 | Cerric Vanya'elen, Danneth (check) | l027 |
+| c029 | Syllar Sparkwalker | knows | Danneth | inferred | yes | yes | 59 | Cerric Vanya'elen, Danneth, Syllar Sparkwalker (check) | l028 |
+| c030 | Easthaven | in | Ten-Towns | stated | yes | yes | 70 | everyone | l046 |
+| c031 | Ten-Towns | in | Icewind Dale | stated | yes | yes | 70 | everyone | l053 |
+| c032 | Spires of the Morning | associate | Lathander | stated | no | yes | 40 | everyone |  |
+| c033 | Syllar Sparkwalker | works_in | Blackstaff Tower | inferred | yes | yes | 37 | Cerric Vanya'elen, Syllar Sparkwalker (check) | l014 |
+| c034 | Wit | last_seen_in | Sparkwalker Spire | stated | no | no | 34 | Cerric Vanya'elen, Wit |  |
+| c035 | Khelben Arunsun | leads | The Harpers | stated | no | yes | 37 | everyone |  |
+| c036 | Cerric Vanya'elen | knows | The Brotherhood | inferred | no | yes | 64 | Cerric Vanya'elen (check) | e01 |
+| c037 | Qinric | associate | Syllar Sparkwalker | stated | yes | yes | 16 | Cerric Vanya'elen, Qinric, Syllar Sparkwalker |  |
+| c038 | Cerric's paternal grandfather | parent_of | Roceran | stated | yes | yes | 16 | Cerric Vanya'elen, Cerric's paternal grandfather, Roceran (check) |  |
+| c039 | Syllar Sparkwalker | works_in | Sparkwalker Spire | stated | yes | yes | 22 | Cerric Vanya'elen, Syllar Sparkwalker |  |
+| c040 | The Brotherhood | knows | Danneth | inferred | no | yes | 60 | Cerric Vanya'elen, Danneth (check) |  |
+
+**Events:**
+
+- ce01 (line 13): Valyra leaves for her apprenticeship and the siblings stop meeting. Knows: Cerric Vanya'elen, Valyra. Lore: l010
+- ce02 (line 16): The grandfather dies in a storm; Qinric visits and Cerric becomes the spire's steward. Knows: Cerric Vanya'elen, Qinric. Lore: l006
+- ce03 (line 31): Master Sparkwalker disappears. Knows: Cerric Vanya'elen, Syllar Sparkwalker. Lore: e01
+- ce07 (line 31): Emmerich, then Wit, leave to look for the master. Knows: Cerric Vanya'elen, Emmerich Ravenstride, Wit. Lore: none
+- ce04 (line 34): Wit returns badly hurt and tells Cerric to save the tome. Knows: Cerric Vanya'elen, Wit. Lore: e01
+- ce05 (line 37): Cerric takes the master's tome and escapes by the rune. Knows: Cerric Vanya'elen. Lore: e01
+- ce08 (line 37): He breaks the lock with the bust, and a figure enters as he leaves. Knows: Cerric Vanya'elen. Lore: none
+- ce06 (line 52): In Neverwinter he takes the name Cerric Vanya'elen and unlocks the tome. Knows: Cerric Vanya'elen. Lore: e01
+
+**Threads:**
+
+- bc01 quest: What happened to Master Sparkwalker (taker Cerric, same as lq01). Lore: lq01
+- bc02 mystery: Who are the Brotherhood, and who came for the tome (taker Cerric). Lore: lq01
+- bc03 mystery: What became of Emmerich (taker Cerric). Lore: none
+- bc04 mystery: What happened to Wit (taker Cerric, same as lq02). Lore: none
+
+**Languages:** Elvish, Draconic
+
+**Must not find:** the teleport command word is not an entry; Azuth appears only in an exclamation: no entry needed (a good find if kept as a deity, not a miss)
+
+## Okthandom Korran
+
+**Entries:** Okthandom Korran; Vaelrith Korran; Nyssara Korran; Okthandom's child; Okthandom's father (good find); Lady Martha; The apparition; Ancestral journal; Family talisman (good find); Icewind Dale
+
+| id | from | tie | to | tier | must find | current | line | knows | lore |
+|---|---|---|---|---|---|---|---|---|---|
+| o001 | Okthandom Korran | sibling | Vaelrith Korran | stated | yes | yes | 10 | Okthandom Korran, Vaelrith Korran (check) | l031 |
+| o002 | Okthandom Korran | sibling | Nyssara Korran | stated | yes | yes | 13 | Okthandom Korran, Nyssara Korran | l032 |
+| o003 | Vaelrith Korran | sibling | Nyssara Korran | stated | yes | yes | 13 | Okthandom Korran, Nyssara Korran, Vaelrith Korran (check) | l033 |
+| o004 | Okthandom Korran | parent_of | Okthandom's child | stated | yes | yes | 16 | Okthandom Korran, Okthandom's child | l034 |
+| o005 | Okthandom's father | parent_of | Okthandom Korran | stated | no | yes | 7 | Okthandom Korran, Okthandom's father (check) |  |
+| o006 | Okthandom Korran | owns | Ancestral journal | inferred | yes | yes | 7 | Okthandom Korran (check) | l036 |
+| o007 | The apparition | associate | Okthandom Korran | stated | yes | yes | 4 | Okthandom Korran, The apparition (check) | lq03 |
+| o008 | The apparition | associate | Nyssara Korran | inferred | yes | yes | 13 | Okthandom Korran, Nyssara Korran, The apparition (check) | lq03 |
+| o009 | Lady Martha | enemy_of | Okthandom Korran | inferred | no | yes | 2 | Okthandom Korran, Lady Martha (check) |  |
+| o010 | Okthandom Korran | associate | Icewind Dale | stated | yes | yes | 16 | Okthandom Korran | l123 |
+| o012 | The apparition | associate | Vaelrith Korran | inferred | yes | yes | 10 | Okthandom Korran, The apparition, Vaelrith Korran (check) |  |
+| o011 | Vaelrith Korran | owns | Ancestral journal | inferred | no | no | 10 | Okthandom Korran, Vaelrith Korran (check) |  |
+
+**Events:**
+
+- oe01 (line 10): Vaelrith vanishes at 105, leaving a bloodied campsite. Knows: Okthandom Korran, Nyssara Korran, Vaelrith Korran (check). Lore: e02
+- oe03 (line 10): A shattered family talisman is left at his campsite. Knows: Okthandom Korran, Nyssara Korran. Lore: none
+- oe02 (line 13): Nyssara confesses the whispers have started for her. Knows: Okthandom Korran, Nyssara Korran. Lore: lq03
+
+**Threads:**
+
+- bo01 quest: What is haunting the Korran bloodline, and how to end it (taker Okthandom, same as lq03). Lore: lq03
+
+**Must not find:** the kinds of thing it might be (spirit, ghost, devil, demon, trickster god) are not entries
+
+## Claude Ambere
+
+**Entries:** Claude Ambere; The circus; The ringmaster (good find); The party
+
+| id | from | tie | to | tier | must find | current | line | knows | lore |
+|---|---|---|---|---|---|---|---|---|---|
+| a001 | Claude Ambere | held_captive_by | The circus | stated | yes | no | 28 | Claude Ambere | l040 |
+| a002 | The ringmaster | leads | The circus | inferred | no | yes | 28 | Claude Ambere, The ringmaster (check) |  |
+| a003 | The ringmaster | enemy_of | Claude Ambere | inferred | no | no | 28 | Claude Ambere, The ringmaster (check) |  |
+| a004 | Claude Ambere | member | The party | stated | yes | yes | 37 | party | l086 |
+
+**Events:**
+
+- ae01 (line 25): Claude erased his own memories with magic to forget something terrible. Knows: dm. Lore: e03
+- ae02 (line 28): The circus captures him and trains him by cruelty. Knows: Claude Ambere. Lore: e03
+- ae03 (line 31): Claude escapes the circus into the forest. Knows: Claude Ambere. Lore: e03
+- ae04 (line 31): The ringmaster dies in Claude's cage. Knows: Claude Ambere. Lore: none
+
+**Threads:**
+
+- ba01 mystery: What Claude made himself forget (taker Claude). Lore: e03
+
+**Must not find:** Ursine (bear-folk) is his kind, not an entry; his four guesses are not events
+
+## Belleros Stormgrace
+
+**Entries:** Belleros Stormgrace; Explorer's League; Wardens of the Wilds; Clan Battlehammer; Bruenor Battlehammer; Gandalug Battlehammer; Shimmergloom; Thrain Coppervein; Belleros's parents (good find); Mithral Hall; Kelvin's Cairn; Dwarven Valley; Ten-Towns; Icewind Dale; Brass compass; Grand Map
+
+| id | from | tie | to | tier | must find | current | line | knows | lore |
+|---|---|---|---|---|---|---|---|---|---|
+| b001 | Belleros Stormgrace | member | Explorer's League | stated | yes | yes | 26 | Belleros Stormgrace | l037 |
+| b002 | Belleros Stormgrace | member | Wardens of the Wilds | stated | yes | yes | 64 | Belleros Stormgrace |  |
+| b003 | Bruenor Battlehammer | member | Clan Battlehammer | stated | yes | yes | 43 | everyone |  |
+| b004 | Bruenor Battlehammer | leads | Kelvin's Cairn | stated | yes | yes | 43 | everyone |  |
+| b005 | Kelvin's Cairn | in | Dwarven Valley | stated | yes | yes | 43 | everyone |  |
+| b006 | Belleros Stormgrace | member | Clan Battlehammer | inferred | no | yes | 46 | Belleros Stormgrace (check) |  |
+| b007 | Gandalug Battlehammer | enemy_of | Belleros Stormgrace | inferred | yes | yes | 69 | Belleros Stormgrace, Gandalug Battlehammer (check) |  |
+| b008 | Gandalug Battlehammer | leads | Mithral Hall | stated | yes | no | 69 | everyone |  |
+| b009 | Shimmergloom | enemy_of | Belleros Stormgrace | stated | yes | yes | 89 | Belleros Stormgrace, Shimmergloom (check) |  |
+| b010 | Shimmergloom | associate | Mithral Hall | stated | yes | yes | 69 | everyone |  |
+| b011 | Belleros Stormgrace | comes_from | Mithral Hall | stated | yes | yes | 74 | Belleros Stormgrace |  |
+| b012 | Thrain Coppervein | mentor_of | Belleros Stormgrace | stated | yes | yes | 83 | Belleros Stormgrace, Thrain Coppervein |  |
+| b013 | Thrain Coppervein | owns | Brass compass | stated | yes | no | 114 | Belleros Stormgrace, Thrain Coppervein |  |
+| b014 | Belleros Stormgrace | carries | Brass compass | stated | yes | yes | 114 | Belleros Stormgrace |  |
+| b015 | Belleros Stormgrace | owns | Grand Map | stated | yes | yes | 120 | Belleros Stormgrace |  |
+| b016 | Belleros Stormgrace | last_seen_in | Ten-Towns | stated | yes | yes | 91 | Belleros Stormgrace |  |
+| b017 | Ten-Towns | in | Icewind Dale | stated | yes | yes | 91 | everyone | l053 |
+| b019 | Gandalug Battlehammer | member | Clan Battlehammer | inferred | yes | yes | 69 | everyone |  |
+| b018 | Belleros's parents | parent_of | Belleros Stormgrace | stated | no | yes | 80 | Belleros Stormgrace, Belleros's parents |  |
+
+**Events:**
+
+- be01 (line 32): He swears the Explorer's Oath. Knows: Belleros Stormgrace. Lore: none
+- be02 (line 64): After a narrow escape from a ruin he trains as a ranger of the Ward. Knows: Belleros Stormgrace. Lore: none
+- be03 (line 89): Shimmergloom destroys Mithral Hall and scatters his people. Knows: everyone. Lore: none
+
+**Threads:**
+
+- bb01 quest: Find a way to kill Shimmergloom (taker Belleros). Lore: none
+- bb02 mystery: Belleros's shadow moves wrongly (taker Belleros). Lore: none
+- bb03 hook: Map Icewind Dale for the League (taker Belleros). Lore: none
+
+**Must not find:** the oath's words and the background feature are not entries or ties

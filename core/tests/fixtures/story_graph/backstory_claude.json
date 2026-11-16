@@ -1,0 +1,181 @@
+{
+  "campaign": "test of the frostmaiden (sample)",
+  "source": "Claude Ambere's secret backstory (backstory 3 in the README's list; the plain-text export)",
+  "version": 1,
+  "speaker": "Claude Ambere",
+  "how_to_read": {
+    "speaker": "the player character whose secret backstory this is: the upload's speaker",
+    "knowers": "who knows the row before anything public names it, written out on every row: a list of names (the speaker, and every person or creature on the row, since what happens between two is known to both: #4523 ruling C, NPCs included), \"party\" (all four player characters), \"everyone\" (common knowledge) or \"dm\" (nobody: a real secret, not even the speaker)",
+    "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted as a fact)",
+    "must_find": "false = a good find if present, not a miss if absent",
+    "current": "false = history: it was true and is not now",
+    "line": "the line of the document's plain-text export that supports it (blank lines count)",
+    "reveals": "lore_key.json's reveals lists, by id, the rows of this key the public lore states; judged by what the lore says, row by row, never by matching ends alone",
+    "threads": "kind quest, hook or mystery; taker = whose own pursuit it is; same_as = the lore key's thread for the same story",
+    "relation": "as lore_key.json",
+    "check": "true = the owner should check the knowers: one may not really know it (dead, vanished, unknowable) or the row is only implied"
+  },
+  "nodes": [
+    {
+      "name": "Claude Ambere",
+      "kind": "person",
+      "aliases": [
+        "Claude",
+        "Claude Ambère",
+        "Claud",
+        "The Bear-Man of the Black Pines"
+      ],
+      "knowers": "party",
+      "note": "Player character; the circus's stage name is an alias"
+    },
+    {
+      "name": "The circus",
+      "kind": "group",
+      "aliases": [
+        "traveling circus"
+      ],
+      "knowers": [
+        "Claude Ambere"
+      ]
+    },
+    {
+      "name": "The ringmaster",
+      "kind": "person",
+      "must_find": false,
+      "note": "the circus's cruel ringmaster; Claude killed him",
+      "knowers": [
+        "Claude Ambere",
+        "The ringmaster"
+      ],
+      "check": true
+    },
+    {
+      "name": "The party",
+      "kind": "group",
+      "aliases": [
+        "a small band of adventurers"
+      ],
+      "knowers": "party"
+    }
+  ],
+  "pairs": [
+    {
+      "id": "a001",
+      "a": "Claude Ambere",
+      "relation": "held_captive_by",
+      "b": "The circus",
+      "tier": "stated",
+      "must_find": true,
+      "line": 28,
+      "current": false,
+      "knowers": [
+        "Claude Ambere"
+      ]
+    },
+    {
+      "id": "a002",
+      "a": "The ringmaster",
+      "relation": "leads",
+      "b": "The circus",
+      "tier": "inferred",
+      "must_find": false,
+      "line": 28,
+      "knowers": [
+        "Claude Ambere",
+        "The ringmaster"
+      ],
+      "check": true
+    },
+    {
+      "id": "a003",
+      "a": "The ringmaster",
+      "relation": "enemy_of",
+      "b": "Claude Ambere",
+      "tier": "inferred",
+      "must_find": false,
+      "line": 28,
+      "current": false,
+      "note": "dead (line 31)",
+      "knowers": [
+        "Claude Ambere",
+        "The ringmaster"
+      ],
+      "check": true
+    },
+    {
+      "id": "a004",
+      "a": "Claude Ambere",
+      "relation": "member",
+      "b": "The party",
+      "tier": "stated",
+      "must_find": true,
+      "line": 37,
+      "knowers": "party"
+    }
+  ],
+  "events": [
+    {
+      "id": "ae01",
+      "what": "Claude erased his own memories with magic to forget something terrible",
+      "who": [
+        "Claude Ambere"
+      ],
+      "line": 25,
+      "knowers": "dm"
+    },
+    {
+      "id": "ae02",
+      "what": "The circus captures him and trains him by cruelty",
+      "who": [
+        "Claude Ambere"
+      ],
+      "line": 28,
+      "knowers": [
+        "Claude Ambere"
+      ]
+    },
+    {
+      "id": "ae03",
+      "what": "Claude escapes the circus into the forest",
+      "who": [
+        "Claude Ambere"
+      ],
+      "line": 31,
+      "knowers": [
+        "Claude Ambere"
+      ]
+    },
+    {
+      "id": "ae04",
+      "what": "The ringmaster dies in Claude's cage",
+      "who": [
+        "Claude Ambere",
+        "The ringmaster"
+      ],
+      "line": 31,
+      "knowers": [
+        "Claude Ambere"
+      ]
+    }
+  ],
+  "threads": [
+    {
+      "id": "ba01",
+      "kind": "mystery",
+      "name": "What Claude made himself forget",
+      "taker": "Claude Ambere",
+      "missing": [],
+      "in_danger": [],
+      "line": 52,
+      "hint": "a tragedy, a crime, a secret or a truth: the text leaves it open",
+      "knowers": [
+        "Claude Ambere"
+      ]
+    }
+  ],
+  "languages": [],
+  "must_not_find": [
+    "Ursine (bear-folk) is his kind, not an entry",
+    "his four guesses are not events"
+  ]
+}

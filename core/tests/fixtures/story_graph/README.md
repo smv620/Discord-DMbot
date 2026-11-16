@@ -9,6 +9,13 @@ The documents themselves are linked, not copied.
 - Sample lore (**the one the lore key follows**, the small test bed, about 2,200 words): <https://docs.google.com/document/d/1zbt7g3r6uFfiSYr3fl_gyaxARhwJPizauI0jmiEa2aw/edit?usp=sharing>
 - A longer lore document, also public (about 13,500 words, with session recaps, DM prep notes and an entities tab). **No key follows it yet**: <https://docs.google.com/document/d/1lHeFJAheOyz-suXZS644R86dLMt_d5VX7ib6Ig4Ox6Y/edit?usp=sharing>
 - Sample session (**the one the session key follows**, read together with the small lore): <https://docs.google.com/document/d/1BtHZ4O75886WHOoTq0FCPst2hdg7YLnsaCiI-kNsv-E/edit?usp=sharing>
+- The four secret backstories (#4523, the two-stage run's stage 1a: each is uploaded as its owner's backstory, in this order, before the sample lore). Each key gives names, kinds, ties and who knows them, never their text ([backstory_keys.md](backstory_keys.md)):
+  1. Cerric Vanya'elen ([backstory_cerric.json](backstory_cerric.json)): <https://docs.google.com/document/d/1uB4aCJOclqG6xvCQE6MtNQeey1Rb-Tv1t0v_3fQEUWs/edit?usp=sharing>
+  2. Okthandom Korran ([backstory_okthandom.json](backstory_okthandom.json)): <https://docs.google.com/document/d/1Orz9NxXG55nnQaB7VVjaf-GGSeET_0cwIHm4lkLutmk/edit?usp=sharing>
+  3. Claude Ambere ([backstory_claude.json](backstory_claude.json)): <https://docs.google.com/document/d/1zuF5_Gja3SjxmKrbdg-BI6xKgGuuyDHbSpauLrcDLLM/edit?usp=sharing>
+  4. Belleros Stormgrace ([backstory_belleros.json](backstory_belleros.json)): <https://docs.google.com/document/d/1gL6Dbz8njhJdUwwTa0OvqLbYMaTvvtLSdA1dohzDbZQ/edit?usp=sharing>
+
+  The sample lore is read after them (stage 1b) and makes some of their rows known to the party: `lore_key.json`'s `reveals`. Every lore row says who knows it (`knowers`: `everyone` for the world, `party` for the party's own story).
 
 ## The test players
 
