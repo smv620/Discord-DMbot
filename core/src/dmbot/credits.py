@@ -231,6 +231,7 @@ class Charge:
 MAX_WAITING = 200
 _waiting: deque[Charge] = deque()
 lost = 0  # charges dropped for good since the bot started (a count, shown in the log)
+written_off = 0  # charges of a deleted campaign, written off at info since the bot started (#4542)
 
 
 def waiting() -> int:
@@ -289,11 +290,19 @@ _PERMANENT = (pg_errors.IntegrityError, pg_errors.DataError)  # a retry can neve
 async def _attempt(db: Database, charge: Charge) -> str:
     """Write one charge. Shielded, so a cancelled job does not lose it half way, and bounded, so a
     hung database costs one warning instead of stalling the answer. "ok", "retry" (the database or
-    the network: try again later) or "drop" (it can never be written: the campaign is gone or was
-    moved, a value is out of range). A write that timed out may still land; the id makes a second
-    write of it a no-op, and the flush stops at the first failure, so these do not pile up."""
+    the network: try again later), "gone" (its campaign was deleted: counted and logged at info)
+    or "drop" (it can never be written: a value is out of range). A write that timed out may
+    still land; the id makes a second write of it a no-op, and the flush stops at the first
+    failure, so these do not pile up."""
     try:
         await asyncio.wait_for(asyncio.shield(_write(db, charge)), WRITE_TIMEOUT_S)
+    except pg_errors.ForeignKeyViolation:
+        # The ledger's only foreign key is the campaign: it was deleted (a sample the run replaced,
+        # or a campaign its DM deleted) while its background work was still being charged, or it
+        # moved to another server (the key is on its server too). The AI call really ran, so the
+        # count says so, but a vanished campaign is not an error (#4542). The write is one
+        # transaction, so the owner's month total is not charged either.
+        return "gone"
     except _PERMANENT as exc:
         log.error("AI credits: a charge can never be written (%s)", type(exc).__name__)
         return "drop"
@@ -322,7 +331,7 @@ async def _flush(db: Database) -> None:
     same one. One that fails for a lasting reason is dropped and counted, so it cannot block the
     ones behind it; one that fails for the moment goes back to the front and stops the flush (the
     database is down: the next charge tries again)."""
-    global lost
+    global lost, written_off
     deadline = time.monotonic() + WRITE_TIMEOUT_S
     while _waiting and time.monotonic() < deadline:
         charge = _waiting.popleft()
@@ -334,6 +343,15 @@ async def _flush(db: Database) -> None:
         if outcome == "retry":
             _waiting.appendleft(charge)
             return
+        if outcome == "gone":
+            written_off += 1
+            log.info(
+                "AI credits: 1 charge of %d credits for a deleted campaign written off (deleted or "
+                "moved), %d since the start",
+                charge.credits,
+                written_off,
+            )
+            continue
         if outcome == "drop":
             lost += 1
             log.error(
