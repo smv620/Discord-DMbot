@@ -162,7 +162,7 @@ match. "In Discord" says where the DM finds it today.
 | Change a connection; its feeling; why (the lore quote, DM only) | connection edit | Story Graph: change a connection; feeling picker and "Why?" (#3607) |
 | Whether two people have met (has met / has heard of / knows) | connection edit ("Have they met?") | Story Graph: on the way, #3882 (the web half of #3881) |
 | Which way a connection reads (A → B, B → A, A ↔ B) and "Cerric and Wit are rivals" for a two-way one; Undo | connection edit ("Which way does it read?", DM only, #4154) | Story Graph: the connection panel's direction toggle and `pairWords`, #4155 (the API and door are in #4154) |
-| Who knows this; tell one character a secret name; take it back | who-knows, told name | Story Graph: who knows, secret names told (`WHO_KNOWS_LIVE`, `TOLD_LIVE`, #3542) |
+| Who knows this (with 🌍 Common knowledge: Discord #4563, website #4559); tell one character a secret name; take it back | who-knows, told name | Story Graph: who knows, secret names told (`WHO_KNOWS_LIVE`, `TOLD_LIVE`, #3542); 🌍 Common knowledge #4559 |
 | Reveal a secret; secret said aloud; revealed report; Recant | reveal cards | Story Graph: peek and reveal (`webPeek`, `webReveal`) (WebDev confirmed) |
 | Places written two ways | name question | Names: places written two ways (`NAME_PLACES_LIVE`, #3533) |
 | How big a place is (a plane down to a room; read from the lore's words, the DM sets it, Not sure clears it) | 📏 Size on a place's name card (DM only, #4173 slice 1) | Names: the API and door are built (`placeLevel` on each name, the `place-size` action, #4173); the page: Names, a place's row → "📏 Size" choice, built, switched off, `PLACE_FACTS_LIVE` (#4187) |
