@@ -245,6 +245,7 @@ async def make_campaign(
     run: int | None = None,
     say: Say,
     deleted: int = 0,
+    of: int | None = None,
 ) -> Campaign:
     """Make the sample campaign for this deploy, or for run k of it (#4551), paid because the DM
     owns it. A refusal (no free paid slot, or a campaign with a look-alike name) is one plain
@@ -253,7 +254,8 @@ async def make_campaign(
         made = await campaigns.create(guild, sample_name.name_for(deploy, run), dm)
     except CampaignError as exc:  # no free paid slot, or a name that differs only in capitals
         # Deleting comes first because it frees the paid slot: say how far it got (a count only).
-        say(f"stopped after deleting {deleted} old sample campaign(s)")
+        total = deleted if of is None else of
+        say(f"stopped after deleting {deleted} of {total} old sample campaign(s)")
         raise SampleError(
             "the sample campaign could not be made (no free paid campaign slot, or a campaign "
             "with a look-alike name exists)"
@@ -293,7 +295,7 @@ async def fresh_campaign(
         settle_s=settle_s,
     )
     return await make_campaign(
-        campaigns, guild, dm, deploy=deploy, say=say, deleted=len(kept.delete)
+        campaigns, guild, dm, deploy=deploy, say=say, deleted=len(kept.delete), of=len(kept.delete)
     )
 
 
