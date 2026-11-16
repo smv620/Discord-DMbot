@@ -30,6 +30,7 @@ ALLOWED = {
     "migrations/0448_story_languages.py": "creates the table",
     "migrations/0451_language_questions.py": "only names the table in a comment",
     "migrations/0484_language_not.py": "adds 'not' to the allowed values",
+    "migrations/0519_character_languages.py": "the website's DM-only door: skips given_by 'not'",
     # (on #4378's branch until it merges: its SQL lists only given_by = 'read')
     "migrations/0481_world_notes_door.py": "World notes' website door: only given_by 'read'",
 }
