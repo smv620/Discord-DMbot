@@ -833,7 +833,11 @@ class Cards(base.NamesTest):
         page = await self.page_of_relation(secret.id)
         await page._new_words(self.it(), "enemy_of", "")
         mine = await self.relations()
-        self.assertEqual([(r.predicate, r.secret) for r in mine], [("enemy_of", True)])
+        # (the players already know "enemy of": public stays public, and the DM is asked instead,
+        # #4524; nothing secret became public, as the secret words were folded into known ones)
+        self.assertEqual([(r.predicate, r.secret) for r in mine], [("enemy_of", False)])
+        (asked,) = await self.memory.secret_questions_waiting(GUILD, self.campaign.id)
+        self.assertEqual((asked.item_id, asked.change), (mine[0].id, {"secret": True}))
 
     async def test_only_the_capitals_changed_keeps_the_connection(self) -> None:
         await self.know("Kesh")
