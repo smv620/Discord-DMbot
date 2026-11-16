@@ -92,6 +92,7 @@ from dmbot.memory.store import MemoryStore, refusal_for_log
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
 from dmbot.mentions import NO_PINGS
 from dmbot.ui import logic, split_words
+from dmbot.ui import secret_questions as secret_questions_ui
 from dmbot.ui.check_everything import add_stop, next_part, progress
 from dmbot.ui.dmbot_commands import VIEW_TIMEOUT_S, _bot, _Button, _Menu, _send, _tell
 from dmbot.ui.name_lists import (
@@ -671,6 +672,7 @@ class BackgroundOffer(_Menu):
                     knowledge_note=done.knowledge_note
                     + trait_questions_line(done.trait_questions)
                     + thread_suggestions_line(done.thread_suggestions, done.threads_short)
+                    + secret_questions_ui.count_line(done.secret_questions)
                     + picture_held_line(len(done.picture_held)),
                     held=done.picture_held,
                 )
@@ -745,6 +747,9 @@ class BackgroundRead:
     # Story threads the lore holds (#4453): how many new suggestions wait in ❓ Questions for you
     thread_suggestions: int = 0
     threads_short: str = ""  # why the story threads weren't read in full, a `THREADS_SHORT` key
+    # What the players know that the read would have made secret (#4524): how many 🤫 questions
+    # it asked instead, asked only in the DM's private chat ("🤫 Secrets to check")
+    secret_questions: int = 0
 
 
 async def read_background(
@@ -766,9 +771,9 @@ async def read_background(
     Oct")."""
     with (
         credits.preparing(campaign.guild_id, campaign.id, "lore"),
-        secret_questions.evidence(upload_label(upload.label, time.time())),
+        secret_questions.evidence(upload_label(upload.label, time.time())) as asked,
     ):
-        return await _read_background(
+        done = await _read_background(
             bot,
             campaign,
             upload,
@@ -779,6 +784,10 @@ async def read_background(
             progress=progress,
             choice=choice,
         )
+    # (its 🤫 questions are counted on its note and open from its button: slice 2)
+    done.secret_questions = len(asked)
+    done.questions_left += len(asked)
+    return done
 
 
 async def _read_background(
@@ -2458,6 +2467,10 @@ async def announce(
         from dmbot.ui.thread_questions import ThreadQuestionsButton
 
         asks.append(partial(ThreadQuestionsButton, campaign.id))
+    if done.secret_questions:  # (the card opens privately, for a DM: #4524)
+        from dmbot.ui.secret_questions import SecretQuestionsButton
+
+        asks.append(partial(SecretQuestionsButton, campaign.id))
     posted: discord.Message | None = await bot.post_upload_notice(
         campaign, notice, done.questions_left, asks
     )

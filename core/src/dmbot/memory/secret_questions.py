@@ -53,7 +53,7 @@ GONE = "That question was already answered."
 
 # The evidence a run's questions carry when its writes don't set their own (`Changes.evidence`):
 # an upload's label, or a session's label, line starts and speakers (never words).
-_EVIDENCE: contextvars.ContextVar[Mapping[str, Any] | None] = contextvars.ContextVar(
+_EVIDENCE: contextvars.ContextVar[dict[str, Any] | None] = contextvars.ContextVar(
     "secret_question_evidence", default=None
 )
 
@@ -65,15 +65,18 @@ def evidence(
     session_id: str | None = None,
     line_starts: Sequence[int] = (),
     speaker_ids: Sequence[int] = (),
-) -> Iterator[None]:
+) -> Iterator[list[str]]:
     """Every 🤫 question asked inside this block cites this evidence (an upload's run, a session's
-    read). From a session only line starts and speakers: 5a's consent rule."""
+    read). From a session only line starts and speakers: 5a's consent rule. Yields the ids of the
+    new questions asked inside it, filled as they are asked, so the run's own note can count them
+    (#4524 slice 2)."""
+    asked: list[str] = []
     token = _EVIDENCE.set(
         {"label": label, "session_id": session_id, "line_starts": list(line_starts),
-         "speaker_ids": list(speaker_ids)}
+         "speaker_ids": list(speaker_ids), "asked": asked}
     )  # fmt: skip
     try:
-        yield
+        yield asked
     finally:
         _EVIDENCE.reset(token)
 
@@ -120,6 +123,9 @@ async def ask(
         return False
     w.held_back += 1
     w.asked.append(question_id)
+    run = _EVIDENCE.get()
+    if run is not None:
+        run["asked"].append(question_id)
     log.info("Public stays public: a %s question was asked instead", kind)
     return True
 

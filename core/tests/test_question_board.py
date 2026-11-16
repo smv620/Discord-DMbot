@@ -93,9 +93,11 @@ class TheButtons(unittest.TestCase):
         self.assertEqual(ids(board.view(GUILD, CAMPAIGN, found(names=0))), [])
         self.assertEqual(ids(board.view(GUILD, CAMPAIGN, found(plot=3, rules=1))), [])
 
-    def test_the_most_buttons_fit_two_rows(self) -> None:
+    def test_the_most_buttons_fit_three_rows(self) -> None:
+        """Three rows of five since 🤫 Secrets to check (#4524), with room left under Discord's
+        five for the website link `dm_links.add_links` puts on its own row."""
         everything = found(**{k: 1 for k in kinds.ORDER})
-        self.assertLessEqual(len(board.view(GUILD, CAMPAIGN, everything).children), 10)
+        self.assertLessEqual(len(board.view(GUILD, CAMPAIGN, everything).children), 15)
 
     def test_the_look_alikes_button_carries_the_campaign_for_a_restart(self) -> None:
         item = board.LookAlikesButton(CAMPAIGN)

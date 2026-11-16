@@ -64,6 +64,8 @@ export const questionsPage = {
     world_notes: { label: "World notes", how: "discord" },
     // Story threads the lore holds, to keep or turn down (#4453): in Discord until the website's card.
     threads: { label: "Story threads to check", how: "discord" },
+    // What the players know that sounded like a secret (#4524): answered in Discord until the website's card.
+    secrets: { label: "Secrets to check", how: "discord" },
     // A map a player kept, waiting for a DM's yes (#4344): asked in Discord until the Maps page (#4347).
     maps: { label: "Maps waiting for your yes", how: "discord" },
     claims: { label: "Facts to check", how: "here", to: "graph", link: "Open the Story Graph" },
