@@ -498,16 +498,30 @@ class ImportJob:
             return await self.recorded(guild_id, campaign_id)
         return await self.consenting(guild_id)
 
-    async def run_round(self, guild_id: int) -> int:
+    async def run_round(self, guild_id: int, at_once: int = 1) -> int:
         """Clean the waiting imports of one server (first taking back any a stopped bot left
-        half done). How many were done."""
+        half done). One campaign's sessions go one after another; up to `at_once` campaigns go
+        side by side (#4551: the sample run's parallel campaigns, the server's cap
+        `DMBOT_SERVER_JOBS_AT_ONCE`). How many were done."""
         await self.store.resume(guild_id)
-        done = 0
+        by_campaign: dict[str, list[str]] = {}
         for cid, sid in await self.store.waiting(guild_id):
-            if await self.store.claim(guild_id, sid):
-                await self.run(guild_id, cid, sid)
-                done += 1
-        return done
+            by_campaign.setdefault(cid, []).append(sid)
+        gate = asyncio.Semaphore(max(1, at_once))
+
+        async def one_campaign(cid: str, sessions: list[str]) -> int:
+            made = 0
+            async with gate:
+                for sid in sessions:
+                    if await self.store.claim(guild_id, sid):
+                        await self.run(guild_id, cid, sid)
+                        made += 1
+            return made
+
+        results = await asyncio.gather(
+            *(one_campaign(cid, sids) for cid, sids in by_campaign.items())
+        )
+        return sum(results)
 
     async def run(self, guild_id: int, campaign_id: str, session_id: str) -> None:
         """Clean one claimed session. Whatever goes wrong, it never stays `working`: it fails with
