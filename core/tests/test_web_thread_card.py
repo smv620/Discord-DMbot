@@ -8,12 +8,13 @@ from __future__ import annotations
 
 from typing import Any
 
+from dmbot.memory import web_actions as wa
 from dmbot.memory.models import DM
 from dmbot.memory.thread_read import STATE
 from dmbot.web import thread_card
 from dmbot.web.recaps import RecapError, _scoped
 from tests.test_recap_web import BOB
-from tests.test_web_api import GORRAK, THURSDAY
+from tests.test_web_api import ALICE, GORRAK, THURSDAY
 from tests.test_web_name_actions import Acting
 
 
@@ -117,3 +118,166 @@ class TheSheet(Card):
     async def test_a_thread_with_no_description_gives_an_empty_one_and_no_people(self) -> None:
         card = await thread_card.read(self.web, self.session, self.cref, self.thread)
         self.assertEqual((card["thread"]["description"], card["people"]), ("", []))
+
+
+class TheChanges(Card):
+    """The website's changes to a thread's parts and branches (#4476, migration 0514): each queued
+    on the door, applied by the bot through the store's own calls, each one change and one Undo."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.actions = wa.ActionStore(self.db)
+
+    async def queue_part(self, action: str, text: str) -> Any:
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await _scoped(conn, self.g)
+            cur = await conn.execute(
+                "SELECT dmbot_web_name_action_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
+                (self.g, self.one.id, None, action, "", "", text, False),
+            )
+            found = await cur.fetchone()
+        return found["r"] if found else None
+
+    async def act(self, action: str, text: str) -> wa.Outcome:
+        got = await self.queue_part(action, text)
+        self.assertEqual(got["status"], "ok", got)
+        claimed = await self.actions.claim_next(self.g)
+        assert claimed is not None
+        outcome = await wa.apply(self.memory, self.g, {ALICE.id}, claimed, actions=self.actions)
+        await self.actions.finish(
+            self.g, claimed, error=outcome.error, result_batches=outcome.batches
+        )
+        return outcome
+
+    async def parts(self) -> list[dict[str, Any]]:
+        card = await thread_card.read(self.web, self.session, self.cref, self.thread)
+        parts: list[dict[str, Any]] = card["parts"]
+        return parts
+
+    async def test_adding_a_step_shows_on_the_card_and_undo_takes_it_off(self) -> None:
+        made = await self.act("part-add", f"{self.thread} objective - - - - - - Find the heir")
+        self.assertEqual(made.error, "")
+        (part,) = await self.parts()
+        self.assertEqual(
+            (part["kind"], part["words"], part["state"]), ("objective", "Find the heir", "to_do")
+        )
+        (batch,) = made.batches
+        self.assertEqual((await self.act("part-undo", str(batch))).error, "")
+        self.assertEqual(await self.parts(), [])
+        self.assertEqual((await self.act("part-undo", str(batch))).error, "")  # (a retry is done)
+
+    async def test_a_state_a_show_and_a_remove(self) -> None:
+        made = await self.act("part-add", f"{self.thread} objective - - - - - - Cross the pass")
+        self.assertEqual(made.error, "")
+        part_id = await self._id()
+        self.assertEqual((await self.act("part-state", f"{part_id} done")).error, "")
+        # (a state change is a change in the story: the part stands as a new row with a new id)
+        part_id = await self._id()
+        card = await thread_card.read(self.web, self.session, self.cref, self.thread)
+        self.assertEqual((card["done"], card["of"]), (1, 1))
+        self.assertEqual((await self.act("part-show", f"{part_id} 1")).error, "")
+        part_id = await self._id()
+        self.assertTrue((await self.parts())[0]["tableKnows"])
+        removed = await self.act("part-remove", part_id)
+        self.assertEqual(removed.error, "")
+        self.assertEqual(await self.parts(), [])
+        (batch,) = removed.batches
+        self.assertEqual((await self.act("part-undo", str(batch))).error, "")
+        self.assertEqual(len(await self.parts()), 1)
+
+    async def test_a_fix_in_place_and_a_change_in_the_story(self) -> None:
+        await self.act("part-add", f"{self.thread} reward - - - - - - 100 gold")
+        part_id = (await self.parts())[0]["id"]
+        self.assertEqual((await self.act("part-fix", f"{part_id} words 100 gold coins")).error, "")
+        self.assertEqual((await self.parts())[0]["words"], "100 gold coins")
+        self.assertEqual((await self.act("part-fix", f"{part_id} due up_front")).error, "")
+        self.assertEqual((await self.parts())[0]["due"], "up_front")
+        story = await self.act("part-fix", f"{await self._id()} words_story 150 gold coins")
+        self.assertEqual(story.error, "")
+        (now,) = await self.parts()  # (the old words are history: one standing part)
+        self.assertEqual(now["words"], "150 gold coins")
+
+    async def _id(self) -> str:
+        return str((await self.parts())[0]["id"])
+
+    async def test_a_branch_is_made_moved_off_and_a_loop_is_refused(self) -> None:
+        other = await self.memory.keep_thread(
+            self.g, self.one.id, "The Frozen Pass", "quest", STATE["quest"], aim="", parts=[],
+            source=DM,
+        )  # fmt: skip
+        side = other.value.id
+        self.assertEqual((await self.act("branch-move", f"{side} {self.thread}")).error, "")
+        card = await thread_card.read(self.web, self.session, self.cref, self.thread)
+        self.assertEqual([b["name"] for b in card["branches"]], ["The Frozen Pass"])
+        loop = await self.act("branch-move", f"{self.thread} {side}")
+        self.assertEqual(
+            loop.error, wa.BAD_TARGET
+        )  # (a thread cannot be a branch of its own branch)
+        self.assertEqual((await self.act("branch-not", side)).error, "")
+        card = await thread_card.read(self.web, self.session, self.cref, self.thread)
+        self.assertEqual(card["branches"], [])
+
+    async def test_a_part_that_is_gone_is_gone_and_an_undo_takes_back_only_this_dms_own_part_change(
+        self,
+    ) -> None:
+        self.assertEqual((await self.act("part-state", f"{'a' * 32} done")).error, wa.GONE)
+        self.assertEqual((await self.act("part-undo", "999999")).error, wa.GONE)
+        # (a batch the bot made itself, outside the website's part actions)
+        direct = await self.memory.add_thread_part(
+            self.g, self.one.id, self.thread, "objective", "Made in Discord", source=DM
+        )
+        self.assertEqual((await self.act("part-undo", str(direct.batch))).error, wa.GONE)
+        # (another DM's change, and the Undo's own batch)
+        mine = await self.act("part-add", f"{self.thread} objective - - - - - - Find the heir")
+        (batch,) = mine.batches
+        await self.sql(
+            "UPDATE name_actions SET user_id = %s WHERE guild_id = %s"
+            " AND %s = ANY (result_batches)",
+            BOB.id, self.g, batch,
+        )  # fmt: skip
+        self.assertEqual((await self.act("part-undo", str(batch))).error, wa.GONE)
+
+    async def test_a_player_cannot_queue_a_part_change(self) -> None:
+        bob = await self.signed(BOB, THURSDAY)
+        async with self.web.user(bob.user_id, session=bob.id_hash) as conn:
+            await _scoped(conn, self.g)
+            cur = await conn.execute(
+                "SELECT dmbot_web_name_action_add(%s, %s, %s, %s, %s, %s, %s, %s) AS r",
+                (self.g, self.one.id, None, "part-remove", "", "", "a" * 32, False),
+            )
+            found = await cur.fetchone()
+        self.assertIsNone(found and found["r"])  # (the door answers NULL: a DM only)
+
+    async def test_only_the_action_shapes_are_taken(self) -> None:
+        t = self.thread
+        for action, text in (
+            ("part-add", f"{t} dragon - - - - - - Words"),  # (not a kind)
+            ("part-add", f"{t} objective - - - - - -"),  # (no words)
+            ("part-fix", f"{'a' * 32} colour red"),
+            ("part-show", f"{'a' * 32} 2"),
+            ("part-state", "x done"),
+            ("branch-move", f"{t}"),
+            ("part-undo", "x"),
+        ):
+            got = await self.queue_part(action, text)
+            self.assertNotEqual(got["status"], "ok", (action, text))
+
+    async def test_the_web_module_checks_before_anything_is_queued(self) -> None:
+        for body in (
+            {},
+            {"action": "add", "kind": "dragon", "words": "x"},
+            {"action": "add", "kind": "objective", "words": ""},
+            {"action": "add", "kind": "objective", "words": "x", "who": "nope"},
+            {"action": "fix", "part": "a" * 32, "field": "colour", "value": "red"},
+            {"action": "state", "part": "a" * 32},
+            {"action": "show", "part": "a" * 32, "shown": "yes"},
+            {"action": "branch-move", "bigger": self.thread},
+            {"action": "undo", "batch": "-1"},
+        ):
+            with self.assertRaises(RecapError, msg=str(body)):
+                await thread_card.change(self.web, self.session, self.cref, self.thread, body)
+        answer = await thread_card.change(
+            self.web, self.session, self.cref, self.thread,
+            {"action": "add", "kind": "objective", "words": "Find the heir"},
+        )  # fmt: skip
+        self.assertTrue(answer)
