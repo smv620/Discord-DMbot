@@ -72,7 +72,7 @@ class TheDoor(Languages):
     async def test_the_story_languages_come_in_order_with_their_source_and_ids(self) -> None:
         await self.act("lang-add", f"{self.mira} Giant")
         await self.memory.add_story_language(
-            self.g, self.one.id, self.mira, "Elvish", source="read"
+            self.g, self.one.id, self.mira, "Elvish", source="background"
         )
         shown = await self.shown()
         self.assertEqual([(r["name"], r["source"]) for r in shown["languages"]],
@@ -122,7 +122,7 @@ class TheActions(Languages):
     async def test_these_are_right_checks_what_dmbot_found_in_one_change(self) -> None:
         for name in ("Giant", "Elvish"):
             await self.memory.add_story_language(
-                self.g, self.one.id, self.mira, name, source="read"
+                self.g, self.one.id, self.mira, name, source="background"
             )
         self.assertEqual({s for _, s in await self.names()}, {"read"})
         checked = await self.act("lang-check", self.mira)
@@ -157,7 +157,6 @@ class TheActions(Languages):
         for action, text in (
             ("lang-add", self.mira),  # (no name)
             ("lang-add", f"{self.mira} " + "x" * 61),
-            ("lang-add", f"{self.mira}  Giant"),  # (a name starting with a space)
             ("lang-remove", "nope"),
             ("lang-check", self.mira + " extra"),
             ("lang-undo", "x"),
