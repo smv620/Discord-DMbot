@@ -3500,7 +3500,9 @@ class MemoryStore:
     ) -> int:
         """A World read showed these items by itself: the 🌍 questions still waiting about them
         are answered by its change `batch` (#4590, ruling (b) on #4606), so the card stops
-        offering them, and an Undo of that change asks them again. Returns how many."""
+        offering them, and an Undo of that change asks them again; a lone name's "same person?"
+        too, once a read gives that name with its person. Only an Undo of the whole read (newest
+        first, as the upload's Undo does) reaches `batch`. Returns how many it answered."""
         if not items:
             return 0
         wanted = set(items)
@@ -3522,20 +3524,21 @@ class MemoryStore:
                 for r in await cur.fetchall()
                 if (str(r["item_table"]), str(r["item_id"])) in wanted
             ]
-            if ids:
-                await conn.execute(
-                    "UPDATE secret_questions SET status = %s, answered_batch = %s"
-                    " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s) AND status = %s",
-                    (
-                        secret_questions_mod.KEPT_KNOWN,
-                        batch,
-                        guild_id,
-                        campaign_id,
-                        ids,
-                        secret_questions_mod.WAITING,
-                    ),
-                )
-        return len(ids)
+            if not ids:
+                return 0
+            cur = await conn.execute(
+                "UPDATE secret_questions SET status = %s, answered_batch = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s) AND status = %s",
+                (
+                    secret_questions_mod.KEPT_KNOWN,
+                    batch,
+                    guild_id,
+                    campaign_id,
+                    ids,
+                    secret_questions_mod.WAITING,
+                ),
+            )
+            return int(cur.rowcount or 0)
 
     async def claim_secret_questions(
         self, guild_id: int, campaign_id: str, question_ids: Sequence[str]

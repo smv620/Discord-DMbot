@@ -525,6 +525,27 @@ class TheRead(NamesTest):
         )  # (the DM can still show it themselves: what "Who knows this?" does for an entry)
         self.assertFalse(await self.hidden(self.ash))
 
+    async def test_a_reveal_by_itself_answers_a_waiting_connection_question(self) -> None:
+        tie = await self.secret_tie()
+        self.campaign = await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, True)
+        await self.read("world")
+        self.assertIn(tie, [q.item_id for q in await self.waiting()])
+        self.campaign = await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, False)
+        await self.read("world")
+        self.assertFalse(await self.tie_secret(tie))
+        self.assertNotIn(tie, [q.item_id for q in await self.waiting()])
+
+    async def test_if_answering_the_questions_fails_the_reveal_keeps_its_undo(self) -> None:
+        from unittest.mock import patch
+
+        await self.hide(self.ash)
+        broken = AsyncMock(side_effect=RuntimeError("down"))
+        with patch.object(self.memory, "answer_waiting_world_questions", broken):
+            done = await self.read("world", links=())
+        self.assertFalse(await self.hidden(self.ash))
+        await un.undo_upload_result(self.bot, GUILD, self.campaign.id, done.notice.id, THE_DM)
+        self.assertTrue(await self.hidden(self.ash))
+
     async def test_a_question_still_waiting_does_not_block(self) -> None:
         """Only "Keep it secret" holds: one still waiting does not stop a later reveal."""
         await self.hide(self.ash)
