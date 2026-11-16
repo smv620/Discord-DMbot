@@ -334,9 +334,9 @@ class TheCardButtonsPress(unittest.IsolatedAsyncioTestCase):
 
 
 class TheLinks(unittest.IsolatedAsyncioTestCase):
-    """The Questions list message carries both link buttons (#3663)."""
+    """The Questions list message carries the website button, never a link to itself (#4528)."""
 
-    async def test_an_existing_list_gets_its_own_address_and_the_questions_page_in_the_same_edit(
+    async def test_an_existing_list_gets_the_questions_page_and_no_link_to_itself(
         self,
     ) -> None:
         from types import SimpleNamespace
@@ -354,7 +354,4 @@ class TheLinks(unittest.IsolatedAsyncioTestCase):
         await DiscordSender(bot).board(7, campaign, {}, 5, create=False)  # type: ignore[arg-type]
         view = kept.edit.await_args.kwargs["view"]
         urls = [getattr(c, "url", None) for c in view.children if getattr(c, "url", None)]
-        self.assertEqual(
-            urls,
-            ["https://discord.com/channels/@me/2/3", "https://dmbot.example.com/account/questions"],
-        )
+        self.assertEqual(urls, ["https://dmbot.example.com/account/questions"])

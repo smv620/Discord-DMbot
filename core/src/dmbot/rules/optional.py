@@ -126,14 +126,14 @@ def is_on(rule_id: str, overrides: Mapping[str, bool], default: bool) -> bool:
 # Said after a saved optional rule when the DM screen could not be told. One text for Discord's
 # menu and the website's Settings tab, so the two never drift apart.
 NO_SCREEN_NOTE = (
-    "DMbot couldn't post this to your DM screen. Make sure DMbot can still see that "
-    "channel; `/dmbot start` sets it up again next session."
+    "DMbot couldn't post this note to your DM Bot channel (or your DM screen). Make sure DMbot "
+    "can still see it; `/dmbot start` sets it up again next session."
 )
 
 
 def screen_line(rule: OptionalRule, turn_on: bool, by: str) -> str:
-    """The DM screen's record of a rule switched on or off. `by` is the mention of whoever chose
-    it (the DM screen's own posts never ping)."""
+    """The record, in the DM Bot channel (the DM screen if there is none), of a rule switched on or
+    off. `by` is the mention of whoever chose it (these posts never ping)."""
     mark, word = ("✅", "on") if turn_on else ("⬜", "off")
     return f"{mark} Optional rule turned {word}: **{rule.name}** (by {by})"
 

@@ -122,6 +122,16 @@ def harptos(day_number: int, start: DayOne) -> str:
     raise AssertionError("unreachable")  # (count is under the year's length, so a span holds it)
 
 
+def day_number_of(year: int, name: str, day: int | None, start: DayOne) -> int:
+    """The game day (Day 1 is `start`) of a Harptos date: the other way round from `harptos`. Raises
+    ValueError for a date the calendar has not got (`day_one`'s checks) or one before Day 1."""
+    target = day_one(year, name, day)
+    if (target.year, target.ordinal) < (start.year, start.ordinal):
+        raise ValueError("before day one")
+    days = sum(year_days(y) for y in range(start.year, target.year))
+    return days + target.ordinal - start.ordinal + 1
+
+
 def date_words(minute: int, kind: str = DAYS, start: DayOne | None = None) -> str:
     """The date of this game minute in the campaign's calendar. Plain "Day N" when the campaign
     has no Harptos setting (or no Day 1 date), so a missing setting never hides the time. A

@@ -15,7 +15,7 @@ from __future__ import annotations
 import logging
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Any, Protocol
 
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.models import GOING
@@ -37,6 +37,10 @@ QUIET_NAMES = 3  # thread names on the quiet-threads line, then "+N more"
 DUE_PREFIX = "🤝 Due soon: "
 MORE_DUE = "🤝 +"
 DUE_LINES = 2  # promises the DM marked Due soon that get a line, then "+N more" (#1680)
+# Time limits (quests slice 4, §8.4): ⏰, Supervisor's ruling (⏳ stays "gone quiet"); the nearest
+# dated ones first, then the ones in words only, as a reminder
+LIMITS_PREFIX = "⏰ Time limits: "
+LIMIT_NAMES = 3
 CONDITION_LINES = 3
 RECALL_BUDGET = 1500  # characters one recall may hold
 # What a condition reads as. Only the ones worth remembering: "alive" and "intact" are the
@@ -96,6 +100,7 @@ class Facts:
     waiting: int = 0
     quiet_threads: Sequence[str] = ()  # names of the threads gone quiet, longest quiet first
     due_soon: Sequence[Due] = ()  # promises marked Due soon, longest quiet first
+    time_limits: Sequence[str] = ()  # "<thread>: 1 day left (due Day 12)", nearest first
 
 
 def _clip(text: str, limit: int = LINE_CHARS) -> str:
@@ -154,6 +159,11 @@ def compose(facts: Facts) -> Note | None:
     if due_lines and len(facts.due_soon) > DUE_LINES:
         due_lines.append(f"🤝 +{len(facts.due_soon) - DUE_LINES} more promises due soon")
     lines.extend(due_lines)  # in-game content: the DM screen only (#1680)
+    if facts.time_limits:  # (slice 4; in-game content: the DM screen only, as Due soon)
+        shown = [_plain(n) for n in facts.time_limits[:LIMIT_NAMES]]
+        more = len(facts.time_limits) - len(shown)
+        tail = f" (+{more} more)" if more > 0 else ""
+        lines.append(_clip(f"{LIMITS_PREFIX}{'; '.join(shown)}{tail}"))
     lines = lines[:MAX_LINES]
     if not lines:
         return None
@@ -190,11 +200,13 @@ class PreSession:
         recall: RecallService,
         claims: ClaimStore,
         recaps: RecapBridge | None = None,
+        clocks: Any = None,
     ) -> None:
         self._memory = memory
         self._recall = recall
         self._claims = claims
         self._recaps = recaps
+        self._clocks = clocks  # (a `timebot.store.ClockStore`: time limits are counted on it)
 
     async def note(
         self,
@@ -270,6 +282,7 @@ class PreSession:
         # the line, never the note.
         quiet: list[str] = []
         due: list[Due] = []
+        limits: list[str] = []
         if has_threads:
             try:
                 every = await self._memory.threads(
@@ -298,6 +311,51 @@ class PreSession:
                     )
                     for t in soon
                 ]
+                limits = await self._time_limits(guild_id, campaign_id, every)
             except Exception:
                 log.warning("Couldn't read the threads for the pre-session note", exc_info=True)
-        return compose(Facts(title, day, sentences, conditions, waiting, quiet, due))
+        return compose(Facts(title, day, sentences, conditions, waiting, quiet, due, limits))
+
+    async def _time_limits(
+        self, guild_id: int, campaign_id: str, every: Sequence[Any]
+    ) -> list[str]:
+        """The live threads' running time limits (slice 4, §8.4): "<thread>: 1 day left (due Day
+        12)" for a dated one, nearest first, then "<thread>: <its words>" for one in words only.
+        Counted on the clock's group furthest ahead; with no clock, words only."""
+        from dmbot.memory import thread_parts as tp
+        from dmbot.memory import time_limits as tl
+        from dmbot.memory.gate import Viewer
+        from dmbot.timebot.calendar import Calendar
+
+        live = {
+            t.thread.id: t.thread.name
+            for t in every
+            if t.state and t.state.condition in LIVE_STATES
+        }
+        if not live:
+            return []
+        parts = await self._memory.parts_of_threads(
+            guild_id, campaign_id, list(live), Viewer.the_dm()
+        )
+        # (kept ones only: a read DMbot suggested is never shown as the DM's own)
+        limits = [
+            p
+            for p in parts
+            if p.kind == tp.TIME_LIMIT and p.state == "running" and p.status == "confirmed"
+        ]
+        if not limits:
+            return []
+        clock = await tl.clock_now(self._clocks, guild_id, campaign_id)
+        now, calendar = clock if clock is not None else (None, Calendar())
+        dated = sorted(
+            (p for p in limits if p.due_minute is not None and now is not None),
+            key=lambda p: (p.due_minute or 0, live[p.thread_id]),
+        )
+        worded = sorted(
+            (p for p in limits if p not in dated), key=lambda p: (live[p.thread_id], p.words)
+        )
+        out = [
+            f"{live[p.thread_id]}: {tl.left_said(p.due_minute or 0, now or 0, calendar)}"
+            for p in dated
+        ]
+        return out + [f"{live[p.thread_id]}: {p.words}" for p in worded]

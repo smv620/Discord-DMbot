@@ -614,7 +614,7 @@ export default function WebMap({
             secret: l.secret,
             ...(l.knowWord ? { knowWord: l.knowWord } : {}),
             belief: l.belief,
-            text: words.linkText(byId.get(x.a)?.name ?? "", byId.get(x.b)?.name ?? "", l.words, l.direction),
+            text: words.linkText(byId.get(x.a)?.name ?? "", byId.get(x.b)?.name ?? "", l.words, l.direction, l.pairWords),
           })),
         )
     : [];
@@ -717,7 +717,7 @@ export default function WebMap({
             const tip =
               edge.links.length > 1
                 ? [
-                    ...ordered.slice(0, TIP_LINKS).map((l, i) => `${theory && i === 0 ? `${words.theoryMark} ` : ""}${words.linkText(aName, bName, l.words, l.direction)}`),
+                    ...ordered.slice(0, TIP_LINKS).map((l, i) => `${theory && i === 0 ? `${words.theoryMark} ` : ""}${words.linkText(aName, bName, l.words, l.direction, l.pairWords)}`),
                     ...(ordered.length > TIP_LINKS ? [words.plusMore(ordered.length - TIP_LINKS)] : []),
                   ].join("\n")
                 : text;
