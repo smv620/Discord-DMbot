@@ -117,6 +117,7 @@ class TheActions(Languages):
         self.assertEqual((await self.act("lang-undo", str(batch))).error, "")
         self.assertEqual(await self.names(), [])
         self.assertEqual((await self.act("lang-undo", str(batch))).error, "")  # (a retry is done)
+        self.assertEqual(await self.names(), [])
 
     async def test_these_are_right_checks_what_dmbot_found_in_one_change(self) -> None:
         for name in ("Giant", "Elvish"):

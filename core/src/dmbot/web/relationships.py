@@ -1140,6 +1140,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "thread-",
             "part-",
             "branch-",
+            "lang-",
         )
     ):
         raise RecapError("not_found")
