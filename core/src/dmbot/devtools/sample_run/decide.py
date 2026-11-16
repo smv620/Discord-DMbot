@@ -19,7 +19,7 @@ Kinds, in the order asked (names first: the rest hang on them):
 - look-alikes: an unnamed person who may be a named one (a yes joins them; a wrong one is counted
   apart, as "merged two the key keeps apart").
 
-Only `sample_run` calls this, only on the campaign named "test of the frostmaiden (sample)" and
+Only `sample_run` calls this, only on a campaign named "test of the frostmaiden (sample N)" and
 only with `--yes`: the caller checks the name first, and so does `run` here, with no override.
 """
 
