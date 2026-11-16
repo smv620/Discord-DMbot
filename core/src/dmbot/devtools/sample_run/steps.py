@@ -275,7 +275,10 @@ async def queue_lore(
     the right to use them confirmed by the DM now (recorded as this run), the choice stored.
     `speaker`: a player character's entry id, for a backstory read as that character's own (the
     page's "Whose backstory is this?", #4523): the worker checks it against the campaign's own
-    characters, as it does the website's."""
+    characters, as it does the website's. (This insert skips the door's own checks, `bad_speaker`,
+    `busy` and `too_soon`: the run stands in for them by reading the owners from the campaign's
+    confirmed player characters, `characters.ids_by_name`, and by waiting out each upload before
+    queuing the next.)"""
     check_lore(text, choice)
     async with db.guild(guild) as conn:
         cur = await conn.execute(

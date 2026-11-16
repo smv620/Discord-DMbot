@@ -243,6 +243,8 @@ async def run(
             raise SampleError("--stages 2 scores the AI DM's decisions: it can't --accept-all")
         if args.cap < 0:
             raise SampleError("--cap is a whole number, 0 or more")
+        if args.max_decisions != decide_mod.DEFAULT_MAX_DECISIONS:
+            raise SampleError("with --stages 2 each stage has its own cap: use --cap")
         for slug, path in plan.parse_backstories(args.backstory).items():
             backstories[slug] = read_text(Path(path), f"{slug} backstory")
             steps.check_lore(backstories[slug], BACKSTORY_CHOICE)
@@ -250,6 +252,8 @@ async def run(
             steps.built_key(name)
     elif args.backstory:
         raise SampleError("--backstory needs --stages 2")
+    elif args.cap != plan.DEFAULT_STAGE_CAP:
+        raise SampleError("--cap is for --stages 2; a one-stage run uses --max-decisions")
     started = session_start(args.date, now)
     from dmbot.transcript import importer
 
@@ -344,7 +348,15 @@ async def run(
 
         async def lore_step() -> Mapping[str, int | str]:
             upload = await steps.queue_lore(
-                db, gid, cid, dm, lore_text, choice=args.lore_choice, now=now
+                # (stamped now, not at the run's start: with --stages 2 it waits behind four
+                # backstory reads, and the queue fails a row left waiting over half an hour)
+                db,
+                gid,
+                cid,
+                dm,
+                lore_text,
+                choice=args.lore_choice,
+                now=int(time.time()),
             )
             return await steps.wait_lore(db, gid, upload, say=say, sleep=sleep)
 
@@ -352,8 +364,9 @@ async def run(
             return await accept(db, gid, cid)
 
         docs = (*backstories.values(), lore_text, session_text)  # (the excerpts' sources)
-        # One asker for the whole run (#3900): the cap, the counts and the cost add up across the
-        # lore and session stages, and the record is this run's own file (stamped, owner-only).
+        # One asker for the whole run (#3900): the counts and the cost add up across the stages,
+        # and so does the cap, except with --stages 2, where each stage has its own (#4523, ruling
+        # E); the record is this run's own file (stamped, owner-only).
         record = folder / f"decisions-{dt.datetime.now(dt.UTC).strftime('%Y%m%d-%H%M%S')}.jsonl"
 
         async def sure_step() -> Mapping[str, int | str]:
@@ -442,7 +455,9 @@ async def run(
         async def backstory_step(slug: str) -> Mapping[str, int | str]:
             """One backstory, queued as its owner's own (the page's "Whose backstory is this?"),
             read by the running bot before the next is queued."""
-            owners = await characters.ids_by_name(db, memory, gid, cid)
+            if not owners:  # (read once, right after the four are set: a backstory read may
+                # propose a look-alike of a later owner's name, which must not stop the run)
+                owners.update(await characters.ids_by_name(db, memory, gid, cid))
             speaker = owners[dict(plan.BACKSTORIES)[slug]]
             upload = await steps.queue_lore(
                 db, gid, cid, dm, backstories[slug], choice=BACKSTORY_CHOICE,
@@ -459,6 +474,7 @@ async def run(
         player_names = sorted({shown[label] for label in roles})
 
         made: dict[str, int] = {}  # the players' speaker numbers, by the name the import reads
+        owners: dict[str, str] = {}  # (--stages 2: the four characters' entries, by name)
 
         async def speakers_step() -> Mapping[str, int | str]:
             """The four players are made as speakers without Discord, by the import's own door,
@@ -474,6 +490,8 @@ async def run(
             if off:  # label key (ist...) -> the speaker's negative number
                 who = {roles[label]: made[shown[label]] for label in roles}
             got = await characters.correct_player_characters(db, memory, gid, cid, who)
+            if two:
+                owners.update(await characters.ids_by_name(db, memory, gid, cid))
             return {"corrected": got.corrected, "of those made": got.made}
 
         async def import_step() -> Mapping[str, int | str]:

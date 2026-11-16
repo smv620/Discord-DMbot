@@ -30,6 +30,17 @@ class ThePlan(unittest.TestCase):
                 key = json.loads((build_keys.KEYS / f"backstory_{slug}.json").read_text())
                 self.assertEqual(key["speaker"], owner)
         self.assertEqual(set(SLUGS), set(build_keys.BACKSTORIES))
+        owners = {owner for _, owner in plan.BACKSTORIES}
+        self.assertEqual(owners, {name for name, _ in plan.PLAYER_CHARACTERS})
+
+    def test_the_sure_steps_inputs_are_steps_of_the_run(self) -> None:
+        """So `--repeat`'s "the sure step varied" check runs for the two stages too."""
+        from dmbot.devtools.sample_run import spread
+
+        for step in ("sure (stage 1)", "sure (stage 2)"):
+            with self.subTest(step):
+                self.assertIn(step, plan.STEPS_TWO)
+                self.assertLessEqual(set(spread.SURE_INPUTS[step]), set(plan.STEPS_TWO))
 
     def test_the_order_is_characters_backstories_lore_then_the_session(self) -> None:
         order = plan.STEPS_TWO.index
@@ -84,6 +95,8 @@ class TheCommand(unittest.IsolatedAsyncioTestCase):
                 [*base[: base.index("--backstory")], "--stages", "2"],  # (none of the four)
                 [*base, "--stages", "2", "--backstory", f"cerric={tmp}/cerric.txt"],  # (twice)
                 [*base, "--stages", "2", "--accept-all"],
+                [*base, "--stages", "2", "--max-decisions", "9"],  # (each stage has --cap)
+                [*base[: base.index("--backstory")], "--cap", "9"],  # (--cap needs two stages)
                 [*base],  # (backstories without --stages 2)
             ):
                 with self.subTest(argv[-2:]), self.assertRaises(SampleError):
@@ -111,7 +124,8 @@ class TheStageScore(unittest.TestCase):
         self.assertIn("Tiers, every key row and extra:", text)
         self.assertIn("Who knows found entries", text)
         total = json.loads(key.read_text())
-        self.assertEqual(numbers["entries missing"], len(total["nodes"]) - 3)  # (by design, 3)
+        by_design = sum(1 for n in total["nodes"] if n.get("by_design"))
+        self.assertEqual(numbers["entries missing"], len(total["nodes"]) - by_design)
 
 
 class TheOwners(DatabaseTest):

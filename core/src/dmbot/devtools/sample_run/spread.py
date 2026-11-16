@@ -19,6 +19,8 @@ from collections.abc import Mapping, Sequence
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from dmbot.devtools.sample_run import plan
+
 Metrics = Mapping[str, float]
 
 # A step's own name starts each measure ("sure (lore): accepted"); these are the sure steps and
@@ -28,6 +30,12 @@ Metrics = Mapping[str, float]
 SURE_INPUTS = {
     "sure (lore)": ("lore read",),
     "sure (session)": ("lore read", "sure (lore)", "AI decides (lore)", "session import"),
+    # (--stages 2, #4523: stage 1's sure step is fed by the four backstory reads and the lore)
+    "sure (stage 1)": (
+        *(f"backstory read ({slug})" for slug, _ in plan.BACKSTORIES),
+        "lore read",
+    ),
+    "sure (stage 2)": ("lore read", "sure (stage 1)", "AI decides (stage 1)", "session import"),
 }
 _MONEY = re.compile(r"^\$(\d+(?:\.\d+)?)$")
 

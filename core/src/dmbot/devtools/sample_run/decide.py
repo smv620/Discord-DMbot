@@ -84,7 +84,7 @@ class Client(Protocol):
 class Decision:
     """One line of the decision record (kept on the server only, so it may say which item)."""
 
-    stage: str  # lore or session
+    stage: str  # lore or session; stage 1 or stage 2 with --stages 2
     kind: str
     item: str  # the entry, question, claim or connection's id, so the owner can look it up
     decision: str  # yes, no or not sure; "not decided" for an item left at the cap
@@ -111,8 +111,8 @@ NOT_DECIDED = "not decided"  # (a record line for an item left at the cap: score
 
 @dataclass
 class Budget:
-    """The calls left for the whole run (`--max-decisions`), shared by the lore and session
-    stages."""
+    """The calls left (`--max-decisions`), shared by the lore and session stages; with --stages 2
+    each stage gets a new one (`--cap`, #4523 ruling E)."""
 
     left: int
 
@@ -229,7 +229,8 @@ def open_record(path: Path) -> None:
 @dataclass
 class Asker:
     """Asks the model about one item, acts on the answer and records it. One for the whole run, so
-    the cap, the counts and the cost add up across the lore and session stages."""
+    the counts and the cost add up across the stages (and the cap too, unless each stage is given
+    its own budget, as --stages 2 does)."""
 
     ai: Client
     model: str
