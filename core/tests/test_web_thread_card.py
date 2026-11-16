@@ -192,6 +192,113 @@ class TheChanges(Card):
         self.assertEqual(cleared.error, "")
         self.assertFalse((await self.parts())[0]["dated"])
 
+    async def put_clock(self, minute: int) -> None:
+        await self.sql(
+            "INSERT INTO game_clocks (guild_id, campaign_id, minute, last_long_rest, updated_at)"
+            " VALUES (%s, %s, %s, 0, 1)",
+            self.g, self.one.id, minute,
+        )  # fmt: skip
+
+    async def test_a_dated_limit_reads_as_the_cards_own_countdown_words(self) -> None:
+        await self.put_clock(10_000)
+        await self.act("part-add", f"{self.thread} time_limit - - hard - - - Before the new moon")
+        (limit,) = await self.parts()
+        self.assertEqual(limit["dateWords"], "")  # (no date yet)
+        await self.act("part-date", f"{limit['id']} 3")
+        (limit,) = await self.parts()
+        self.assertEqual(limit["dateWords"], "3 days left (due Day 10)")
+        self.assertNotIn("10000", str(limit))  # (the minute never leaves)
+        await self.sql(
+            "UPDATE game_clocks SET minute = %s WHERE guild_id = %s AND campaign_id = %s",
+            20_000, self.g, self.one.id,
+        )  # fmt: skip
+        (limit,) = await self.parts()
+        self.assertEqual(limit["dateWords"], "time's up (was due Day 10)")
+
+    async def test_a_split_party_counts_on_the_group_furthest_ahead(self) -> None:
+        await self.put_clock(10_000)
+        await self.act("part-add", f"{self.thread} time_limit - - - - - - By the thaw")
+        (limit,) = await self.parts()
+        await self.act("part-date", f"{limit['id']} 3")
+        await self.sql(
+            "INSERT INTO game_clock_groups (guild_id, campaign_id, position, name, minute,"
+            " last_long_rest) VALUES (%s, %s, 1, 'North', %s, 0)",
+            self.g, self.one.id, 14_320 - 60,
+        )  # fmt: skip
+        (limit,) = await self.parts()
+        self.assertEqual(limit["dateWords"], "1 hour left (due Day 10)")
+
+    async def test_a_dated_limit_with_the_clock_gone_says_it_cannot_count(self) -> None:
+        await self.put_clock(10_000)
+        await self.act("part-add", f"{self.thread} time_limit - - - - - - By the thaw")
+        (limit,) = await self.parts()
+        await self.act("part-date", f"{limit['id']} 3")
+        await self.sql("DELETE FROM game_clocks WHERE guild_id = %s", self.g)
+        (limit,) = await self.parts()
+        self.assertEqual(limit["dateWords"], thread_card.NO_CLOCK)
+
+    async def test_a_harptos_calendar_words_the_date_and_a_bad_one_falls_back_to_day_n(
+        self,
+    ) -> None:
+        await self.put_clock(10_000)
+        await self.sql(
+            "UPDATE game_clocks SET calendar_kind = 'harptos', calendar_year = 1492,"
+            " calendar_ordinal = 100 WHERE guild_id = %s",
+            self.g,
+        )  # fmt: skip
+        await self.act("part-add", f"{self.thread} time_limit - - - - - - By the thaw")
+        (limit,) = await self.parts()
+        await self.act("part-date", f"{limit['id']} 3")
+        (limit,) = await self.parts()
+        self.assertRegex(limit["dateWords"], r"^3 days left \(due .*1492 DR\)$")
+        # (a leap day in a common year is a date the calendar has not got: Day N, as Discord says)
+        await self.sql(
+            "UPDATE game_clocks SET calendar_year = 1493, calendar_ordinal = 365"
+            " WHERE guild_id = %s",
+            self.g,
+        )  # fmt: skip
+        (limit,) = await self.parts()
+        self.assertEqual(limit["dateWords"], "3 days left (due Day 10)")
+
+    async def test_the_no_clock_words_are_discords(self) -> None:
+        from dmbot.ui import thread_parts
+
+        self.assertEqual(thread_card.NO_CLOCK, thread_parts.NO_CLOCK)
+
+    async def test_the_clock_door_has_nothing_for_no_clock_or_another_guild(self) -> None:
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await _scoped(conn, self.g)
+            cur = await conn.execute(
+                "SELECT dmbot_web_game_clock(%s, %s) AS r", (self.g, self.one.id)
+            )
+            none = await cur.fetchone()
+            cur = await conn.execute(
+                "SELECT dmbot_web_game_clock(%s, %s) AS r", (self.g + 1, self.one.id)
+            )
+            other = await cur.fetchone()
+        assert none is not None
+        self.assertEqual(none["r"], {})
+        self.assertIsNone(other and other["r"])
+
+    async def test_the_clock_door_answers_a_dm_and_nobody_else(self) -> None:
+        await self.put_clock(10_000)
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await _scoped(conn, self.g)
+            cur = await conn.execute(
+                "SELECT dmbot_web_game_clock(%s, %s) AS r", (self.g, self.one.id)
+            )
+            found = await cur.fetchone()
+        assert found is not None
+        self.assertEqual(found["r"]["minute"], 10_000)
+        bob = await self.signed(BOB, THURSDAY)
+        async with self.web.user(bob.user_id, session=bob.id_hash) as conn:
+            await _scoped(conn, self.g)
+            cur = await conn.execute(
+                "SELECT dmbot_web_game_clock(%s, %s) AS r", (self.g, self.one.id)
+            )
+            found = await cur.fetchone()
+        self.assertIsNone(found and found["r"])
+
     async def test_with_no_game_clock_nothing_is_dated_and_it_says_so(self) -> None:
         await self.act("part-add", f"{self.thread} time_limit - - - - - - By the thaw")
         (limit,) = await self.parts()
