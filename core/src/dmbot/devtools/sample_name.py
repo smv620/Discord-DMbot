@@ -14,23 +14,39 @@ from dataclasses import dataclass
 
 OLD_NAME = "test of the frostmaiden (sample)"  # before #4538: still accepted, counted as oldest
 PREFIX = "test of the frostmaiden (sample "
-_NAMED = re.compile(r"^test of the frostmaiden \(sample (?P<n>[0-9]{1,4})\)$")
+# "(sample 31)" is the deploy's one campaign; "(sample 31.2)" is run 2 of a parallel deploy (#4551)
+_NAMED = re.compile(
+    r"^test of the frostmaiden \(sample (?P<n>[0-9]{1,4})(?:\.(?P<k>[0-9]{1,2}))?\)$"
+)
+RUN_MAX = 99
 KEEP = 3  # the newest campaigns kept alive, so the owner can compare their story graphs
 DEPLOY_MAX = 9999
 SAY_WHICH = "Say which deploy this is: --deploy N"
 
 
-def name_for(deploy: int) -> str:
-    """The campaign's name for deploy N (a whole number, 1 to 9999)."""
+def name_for(deploy: int, run: int | None = None) -> str:
+    """The campaign's name for deploy N (a whole number, 1 to 9999), or for run k of it when the
+    deploy's runs go side by side ("sample 31.2", k from 1 to 99)."""
     if not isinstance(deploy, int) or isinstance(deploy, bool) or not 1 <= deploy <= DEPLOY_MAX:
         raise ValueError(f"the deploy is a whole number from 1 to {DEPLOY_MAX}")
-    return f"{PREFIX}{deploy})"
+    if run is None:
+        return f"{PREFIX}{deploy})"
+    if not isinstance(run, int) or isinstance(run, bool) or not 1 <= run <= RUN_MAX:
+        raise ValueError(f"the run is a whole number from 1 to {RUN_MAX}")
+    return f"{PREFIX}{deploy}.{run})"
 
 
 def deploy_of(name: str) -> int | None:
-    """N for "…(sample N)"; None for any other name, the old unnumbered one included."""
+    """N for "…(sample N)" and "…(sample N.k)"; None for any other name, the old unnumbered one
+    included."""
     found = _NAMED.fullmatch(name)
     return int(found["n"]) if found else None
+
+
+def run_of(name: str) -> int | None:
+    """k for "…(sample N.k)"; None for the plain deploy name and any other name."""
+    found = _NAMED.fullmatch(name)
+    return int(found["k"]) if found and found["k"] else None
 
 
 def is_sample(name: str) -> bool:
@@ -71,19 +87,22 @@ def plan_keep(
             old.append(campaign_id)
         else:
             numbered.append((n, campaign_id))
-    same = [cid for n, cid in numbered if n == deploy]
-    others = sorted(((n, cid) for n, cid in numbered if n != deploy), reverse=True)
-    stay = others[: KEEP - 1]
-    go = [(n, cid) for n, cid in others[KEEP - 1 :] if cid not in protected]
+    same = [cid for n, cid in numbered if n == deploy]  # (every run of this deploy, if re-run)
+    # A deploy counts once however many runs it has: the newest deploys stay with all their runs.
+    deploys = sorted({n for n, _ in numbered if n != deploy}, reverse=True)
+    stay_deploys = set(deploys[: KEEP - 1])
+    stay = [(n, cid) for n, cid in numbered if n in stay_deploys]
+    others = [(n, cid) for n, cid in numbered if n != deploy and n not in stay_deploys]
+    go = [(n, cid) for n, cid in others if cid not in protected]
     old_go = [cid for cid in old if cid not in protected]
-    refused = sum(1 for _, cid in others[KEEP - 1 :] if cid in protected) + sum(
+    refused = sum(1 for _, cid in others if cid in protected) + sum(
         1 for cid in old if cid in protected
     )
     return Kept(
         keep=tuple(cid for _, cid in stay),
         delete=tuple([*same, *old_go, *(cid for _, cid in go)]),
-        kept_numbers=tuple(sorted([n for n, _ in stay] + [deploy])),
-        deleted_numbers=tuple(sorted(n for n, _ in go)),
+        kept_numbers=tuple(sorted(stay_deploys | {deploy})),
+        deleted_numbers=tuple(sorted({n for n, _ in go})),
         deleted_old=len(old_go),
         not_deleted=refused,
         deploy=deploy,

@@ -60,6 +60,7 @@ MAX_USD = 5.0  # the cap a deploy, the same ruling
 USD_PER_CREDIT = 0.001  # `credits.MICRO_PER_CREDIT`: 1 credit = 1,000 micro-dollars
 # Set aside for the kept run's recap before any run starts: the recap writer is not on the bot's
 # credit ledger, so its cost is never measured here; runs 16 and 17 on #3545 cost $0.40 to $0.60
+RUN_USD = 3.0  # what one run may cost, set aside for each of the runs that go together (#4551)
 RECAP_RESERVE_USD = 0.75
 # And for the sample map's one close read (#4423): one careful-model look at one picture
 MAP_RESERVE_USD = 0.10
@@ -84,6 +85,20 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         default=DEFAULT_REPEAT,
         help=f"fresh sample campaigns to run, back to back (default {DEFAULT_REPEAT}, #3545): "
         "each count is then shown as its median, range and spread; the last one is kept",
+    )
+    parser.add_argument(
+        "--parallel",
+        type=int,
+        default=1,
+        help="how many of the --repeat runs go at the same time (default 1, #4551): each run is "
+        'its own campaign, "sample N.k"; the budget for all of them is set aside first',
+    )
+    parser.add_argument(
+        "--run-usd",
+        type=float,
+        default=RUN_USD,
+        help=f"the most one run may cost (default ${RUN_USD:g}), set aside for each run that goes "
+        "at the same time before any starts",
     )
     parser.add_argument(
         "--max-usd",
@@ -188,11 +203,14 @@ async def run(
     metrics: dict[str, float] | None = None,
     snapshot: Path | None = None,
     kept: dict[str, Any] | None = None,
+    run_k: int | None = None,
 ) -> int:
     """One sample run. `recap`: write the recap (only the kept run does, #3545). `metrics`: filled
     with the run's numeric counts, scores, questions waiting and spend, for `--repeat`. `snapshot`:
     where the questions still waiting at the end are written for `--part2`. `kept`: filled with
-    the campaign and the session's start, so `--repeat` can write the kept run's recap after."""
+    the campaign and the session's start, so `--repeat` can write the kept run's recap after.
+    `run_k`: this is run k of a parallel deploy (#4551): the deploy's room was made once by the
+    caller, and the campaign is "sample N.k"."""
     say = say or (lambda line: print(line, flush=True))
     if args.lore is None or args.session is None:
         raise SampleError("--lore and --session are needed for a run")
@@ -279,7 +297,7 @@ async def run(
         gid, dm = args.guild, args.dm
         # The checks that need the database, still before anything is changed or spent.
         await steps.require_paid(db, dm, now, guild_id=gid)
-        found = await steps.check_existing(db, campaigns, gid, dm, deploy)
+        found = await steps.check_existing(db, campaigns, gid, dm, None if run_k else deploy)
         ids = set(players.values()) if not off else {dm}
         agreed = await ConsentStore(db).consenting(gid)
         refused = await steps.refused_accounts(db, gid, ids)
@@ -292,9 +310,14 @@ async def run(
                 gid, players, session_text, agreed, refused, started_at=started
             )
 
-        campaign = await steps.fresh_campaign(
-            db, campaigns, gid, dm, deploy=deploy, say=say, found=found
-        )
+        if run_k is not None:  # (a sibling's campaign is no reason to stop: no replacing here)
+            campaign = await steps.make_campaign(
+                campaigns, gid, dm, deploy=deploy, run=run_k, say=say
+            )
+        else:
+            campaign = await steps.fresh_campaign(
+                db, campaigns, gid, dm, deploy=deploy, say=say, found=found
+            )
         cid = campaign.id
         where.append(cid)
         if kept is not None:
@@ -609,12 +632,13 @@ async def run_many(args: argparse.Namespace, **kw: Any) -> int:
     is then started only while what was spent plus the dearest run so far still fits `--max-usd`.
     A run that fails stops the runs; the summary of those done is still printed and saved."""
     from dmbot.devtools import common
-    from dmbot.devtools.sample_run import spread
 
     say: Callable[[str], None] = kw.get("say") or (lambda line: print(line, flush=True))
     n = max(1, args.repeat)
     if not args.yes or n == 1:
         return await run(args, **kw)
+    if args.parallel > 1:
+        return await run_parallel(args, n, **kw)
     folder = steps.keep_folder(args.backup_dir)
     commit = common.commit(args.commit, tool="sample_run")  # (before any money is spent)
     stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%d-%H%M%S")
@@ -644,6 +668,144 @@ async def run_many(args: argparse.Namespace, **kw: Any) -> int:
             say(f"run {i}: about ${_cost(metrics):.2f}; ${spent:.2f} so far")
         if failed:
             break
+    return await _finish(args, say, kept, failed, runs, spent, folder, stamp, commit)
+
+
+def fit_parallel(budget: float, run_usd: float, wanted: int) -> int:
+    """How many runs may go at the same time: `wanted`, or fewer when the money set aside for each
+    (`run_usd`, the most one run may cost) for all of them does not fit `budget` (#4551). 0 when
+    not even one fits."""
+    if run_usd <= 0:
+        raise SampleError("--run-usd must be more than 0")
+    return max(0, min(wanted, int(budget // run_usd)))
+
+
+async def _make_room(args: argparse.Namespace, deploy: int, say: Callable[[str], None]) -> None:
+    """Once, before the runs of a parallel deploy start (#4551): the plan check, and every sample
+    campaign of this deploy (a re-run) and the oldest beyond the newest three deleted, as a single
+    run does. The runs then each make their own campaign, "sample N.k"."""
+    from dmbot import entitlements
+    from dmbot.db import Database
+
+    url = os.environ.get("DATABASE_URL", "")
+    if not url:
+        raise SampleError("DATABASE_URL isn't set")
+    try:
+        entitlements.configure_free_users(
+            entitlements.parse_free_users(os.environ.get("DMBOT_FREE_USERS", ""))
+        )
+        entitlements.configure_free_guilds(
+            entitlements.parse_free_guilds(os.environ.get("DMBOT_FREE_GUILDS", ""))
+        )
+    except ValueError as exc:
+        raise SampleError(str(exc)) from exc
+    db = await Database.open(url, migrate=False, max_size=2)
+    try:
+        campaigns = steps.campaign_store(db)
+        await steps.require_paid(db, args.dm, int(time.time()), guild_id=args.guild)
+        found = await steps.check_existing(db, campaigns, args.guild, args.dm, deploy)
+        await steps.clear_for_deploy(
+            db, campaigns, args.guild, args.dm, deploy=deploy, say=say, found=found
+        )
+    finally:
+        await db.close()
+
+
+async def run_parallel(args: argparse.Namespace, n: int, **kw: Any) -> int:
+    """`--repeat N --parallel K` (#4551): the runs go K at a time, each its own campaign
+    ("sample N.k"), all of them kept (a deploy counts once toward the newest three, with all its
+    runs). The money is set aside up front: K runs go together only when K times `--run-usd` fits
+    what `--max-usd` leaves after the recap; otherwise as many as fit, said in a line. Each next
+    batch is sized from the dearest run so far. A run that fails is counted and its siblings carry
+    on; no new batch starts after a failure. Nothing is renamed or deleted after scoring."""
+    from dmbot.devtools import common
+
+    say: Callable[[str], None] = kw.pop("say", None) or (lambda line: print(line, flush=True))
+    folder = steps.keep_folder(args.backup_dir)
+    commit = common.commit(args.commit, tool="sample_run")  # (before any money is spent)
+    stamp = dt.datetime.now(dt.UTC).strftime("%Y%m%d-%H%M%S")
+    budget = args.max_usd - RECAP_RESERVE_USD - (MAP_RESERVE_USD if args.map else 0.0)
+    if budget <= 0:
+        raise SampleError(f"--max-usd must leave room for the recap (${RECAP_RESERVE_USD:g})")
+    wanted = min(args.parallel, n)
+    width = fit_parallel(budget, args.run_usd, wanted)
+    if width == 0:
+        raise SampleError(
+            f"--max-usd leaves ${budget:.2f} after the recap: not enough for one run "
+            f"(${args.run_usd:g} set aside each, --run-usd)"
+        )
+    if width < wanted:
+        say(
+            f"Only {width} of {wanted} runs fit at once within ${args.max_usd:g}: "
+            f"going {width} at a time."
+        )
+    deploy = deploy_number(args.deploy)
+    await _make_room(args, deploy, say)
+    runs: list[dict[str, float]] = []
+    kept_by_run: dict[int, dict[str, Any]] = {}
+    spent = dearest = 0.0
+    failures: list[str] = []
+    todo = list(range(1, n + 1))
+
+    async def one(k: int) -> tuple[int, dict[str, float], str | None]:
+        metrics: dict[str, float] = {}
+        kept_k: dict[str, Any] = {}
+        kept_by_run[k] = kept_k
+
+        def prefixed(line: str) -> None:
+            say(f"[run {k}] {line}")
+
+        try:
+            await run(
+                args, recap=False, metrics=metrics, kept=kept_k, run_k=k, say=prefixed,
+                snapshot=folder / f"questions-{stamp}-{k}.json", **kw,
+            )  # fmt: skip
+        except Exception as exc:  # (the kind only; the other runs go on)
+            why = type(exc).__name__ if not isinstance(exc, SampleError) else str(exc)
+            prefixed(f"stopped: {why}")
+            return k, metrics, why
+        return k, metrics, None
+
+    while todo and not failures:
+        size = width
+        if runs:  # (sized from the dearest run so far, not the allowance)
+            size = fit_parallel(budget - spent, dearest, width)
+            if size == 0:
+                say(f"Stopped after {len(runs)} runs: another would pass ${args.max_usd:g}.")
+                break
+        batch, todo = todo[:size], todo[size:]
+        say(f"=== runs {', '.join(str(k) for k in batch)} of {n}, together ===")
+        for k, metrics, why in await asyncio.gather(*(one(k) for k in batch)):
+            if metrics:
+                runs.append(metrics)
+                spent += _cost(metrics)
+                dearest = max(dearest, _cost(metrics))
+                say(f"run {k}: about ${_cost(metrics):.2f}; ${spent:.2f} so far")
+            if why:
+                failures.append(why)
+    if failures:
+        say(f"{len(failures)} run(s) stopped; the summary of the {len(runs)} done follows.")
+    first = next((kd for _, kd in sorted(kept_by_run.items()) if kd.get("campaign")), {})
+    return await _finish(
+        args, say, first, failures[0] if failures else None, runs, spent, folder, stamp, commit
+    )
+
+
+async def _finish(
+    args: argparse.Namespace,
+    say: Callable[[str], None],
+    kept: Mapping[str, Any],
+    failed: str | None,
+    runs: list[dict[str, float]],
+    spent: float,
+    folder: Path,
+    stamp: str,
+    commit: str,
+) -> int:
+    """After the runs: the kept run's recap and map, then the one summary (`--repeat`, with or
+    without `--parallel`)."""
+    from dmbot.devtools.sample_run import spread
+
     if kept and not failed:
         say("=== recap of the kept run (no audio) ===")
         why: list[str] = []

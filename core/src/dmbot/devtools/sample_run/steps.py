@@ -116,8 +116,11 @@ async def check_existing(
     played in never blocks a run."""
     found = await existing_samples(db, campaigns, guild)
     if deploy is not None:
-        mine = sample_name.name_for(deploy)
-        own = {c.id for c in await campaigns.list_campaigns(guild) if c.name == mine}
+        own = {
+            c.id
+            for c in await campaigns.list_campaigns(guild)
+            if sample_name.deploy_of(c.name) == deploy  # (any run of this deploy)
+        }
         for old in found:
             why = can_replace(old, dm) if old.campaign_id in own else None
             if why:
@@ -175,7 +178,7 @@ async def wait_settled(
     return True
 
 
-async def fresh_campaign(
+async def clear_for_deploy(
     db: Database,
     campaigns: CampaignStore,
     guild: int,
@@ -186,13 +189,13 @@ async def fresh_campaign(
     found: list[Existing] | None = None,
     sleep: Sleep | None = None,
     settle_s: float = SETTLE_WAIT_S,
-) -> Campaign:
-    """Make this deploy's sample campaign, "test of the frostmaiden (sample N)" (#4538), paid
-    because the DM owns it, and keep the newest `sample_name.KEEP`: the same N again is deleted
-    first (never two of one number), the oldest beyond the newest three go, and old unnumbered
-    ones always go. `found`: what `check_existing` returned (every one already passed the guard
-    `plan.can_replace`); asked again when not given. Each delete re-checks ownership under the
-    campaign's lock (`only_if_owner`)."""
+) -> sample_name.Kept:
+    """Make room for this deploy's sample campaign(s) (#4538, #4551): every campaign of the same N
+    is deleted first (a re-run never leaves two of one number, runs of a parallel deploy
+    included), the oldest deploys beyond the newest `sample_name.KEEP` go with all their runs, and
+    old unnumbered ones always go. `found`: what `check_existing` returned (every one already
+    passed the guard `plan.can_replace`); asked again when not given. Each delete waits for the
+    campaign's background work and re-checks ownership under its lock (`only_if_owner`)."""
     found = found if found is not None else await check_existing(db, campaigns, guild, dm, deploy)
     names = {c.id: c.name for c in await campaigns.list_campaigns(guild)}
     have = [(old.campaign_id, names[old.campaign_id]) for old in found if old.campaign_id in names]
@@ -206,7 +209,7 @@ async def fresh_campaign(
         why = can_replace(by_id[campaign_id], dm)
         if why is None:
             continue
-        if names.get(campaign_id) == sample_name.name_for(deploy):
+        if sample_name.deploy_of(names.get(campaign_id, "")) == deploy:
             raise SampleError(why)
         refused.add(campaign_id)
     kept = sample_name.plan_keep(have, deploy, protected=refused)
@@ -225,26 +228,73 @@ async def fresh_campaign(
     except CampaignError:  # (a hand-over just now: the store refuses under its lock)
         say(f"stopped after deleting {deleted} of {len(kept.delete)} old sample campaign(s)")
         raise
-    try:
-        made = await campaigns.create(guild, sample_name.name_for(deploy), dm)
-    except CampaignError as exc:  # e.g. a campaign whose name differs only in capitals
-        # Deleting comes first because it frees the paid slot: say how far it got (a count only).
-        say(f"stopped after deleting {deleted} of {len(kept.delete)} old sample campaign(s)")
-        raise SampleError(
-            "the sample campaign could not be made (a campaign with a look-alike name exists)"
-        ) from exc
     say(sample_name.counts_line(kept))
     if timed_out:
         say(f"{timed_out} old sample campaign(s) still had background work after the wait: deleted")
+    if kept.delete:
+        say(f"{len(kept.delete)} old campaign channel(s) to delete by hand")
+    return kept
+
+
+async def make_campaign(
+    campaigns: CampaignStore,
+    guild: int,
+    dm: int,
+    *,
+    deploy: int,
+    run: int | None = None,
+    say: Say,
+    deleted: int = 0,
+) -> Campaign:
+    """Make the sample campaign for this deploy, or for run k of it (#4551), paid because the DM
+    owns it. A refusal (no free paid slot, or a campaign with a look-alike name) is one plain
+    `SampleError`. `deleted`: how many old ones were deleted just before, for the stop line."""
+    try:
+        made = await campaigns.create(guild, sample_name.name_for(deploy, run), dm)
+    except CampaignError as exc:  # no free paid slot, or a name that differs only in capitals
+        # Deleting comes first because it frees the paid slot: say how far it got (a count only).
+        say(f"stopped after deleting {deleted} old sample campaign(s)")
+        raise SampleError(
+            "the sample campaign could not be made (no free paid campaign slot, or a campaign "
+            "with a look-alike name exists)"
+        ) from exc
     # This tool has no Discord client, so it cannot make or delete a channel (#4112). The new
     # campaign has no DM Bot channel yet: the bot makes it the way it does for any campaign made
     # before the channel existed, when the DM presses ⚙️ Manage DMbot. A deleted campaign's channel
     # stays in the server and is deleted by hand; its buttons say it cannot find the campaign.
     # Said as one counts-only line, so dev1 does it before checking the main menu.
     say(DM_BOT_CHANNEL_NEEDED)
-    if kept.delete:
-        say(f"{len(kept.delete)} old campaign channel(s) to delete by hand")
     return made
+
+
+async def fresh_campaign(
+    db: Database,
+    campaigns: CampaignStore,
+    guild: int,
+    dm: int,
+    *,
+    deploy: int,
+    say: Say,
+    found: list[Existing] | None = None,
+    sleep: Sleep | None = None,
+    settle_s: float = SETTLE_WAIT_S,
+) -> Campaign:
+    """Make this deploy's sample campaign, "test of the frostmaiden (sample N)" (#4538): room is
+    made first (`clear_for_deploy`), then the campaign."""
+    kept = await clear_for_deploy(
+        db,
+        campaigns,
+        guild,
+        dm,
+        deploy=deploy,
+        say=say,
+        found=found,
+        sleep=sleep,
+        settle_s=settle_s,
+    )
+    return await make_campaign(
+        campaigns, guild, dm, deploy=deploy, say=say, deleted=len(kept.delete)
+    )
 
 
 def check_lore(text: str, choice: str) -> None:
