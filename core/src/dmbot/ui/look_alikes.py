@@ -14,7 +14,6 @@ secret ones included, and the merge moves a secret name as a secret name.
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
 
 import discord
 
@@ -22,7 +21,7 @@ from dmbot.campaigns import Campaign
 from dmbot.memory.lookalikes import Name, by_use, family_of, look_alike
 from dmbot.memory.models import DM, MemoryRuleError, days
 from dmbot.memory.store import MemoryStore
-from dmbot.ui import logic, name_places, split_words
+from dmbot.ui import logic, name_origin, name_places, split_words
 from dmbot.ui.dmbot_commands import (
     _answer_first,
     _Button,
@@ -385,25 +384,17 @@ class WhichName(_Menu):
         await _answer_first(interaction)
         name = self.names.get(self.pick.values[0])
         memory = _memory(interaction)
-        transcripts = getattr(interaction.client, "transcripts", None)
-        if name is None or memory is None or transcripts is None:
+        if name is None or memory is None:
             await interaction.followup.send(name_places.NOTHING_KEPT, ephemeral=True)
             return
-        refs: list[tuple[str, int | None]] = []
-        try:
-            refs = list(await memory.mentions(campaign.guild_id, campaign.id, name.id))
-            text = await name_places.where_said(
-                interaction.guild,
-                transcripts,
-                campaign.guild_id,
-                refs,
-                [name.name],
-                await cast(Any, interaction.client).consent.consenting(campaign.guild_id),
-            )
-        except Exception:
-            log.exception("Couldn't show where a name was said")
-            text = name_places.TRY_AGAIN
-        log.info("Showed where a look-alike name was said: %d places kept", len(refs))
+        held = getattr(interaction.client, "lore_context", None)
+        lore = source = ""
+        if held is not None:  # (the DM only, checked above)
+            lore = str(held.get(campaign.guild_id, name.id))
+            source = str(held.source(campaign.guild_id, name.id))
+        text = await name_origin.where_entry(
+            interaction, campaign, memory, name.id, [name.name], lore=lore, lore_source=source
+        )
         await interaction.followup.send(
             text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none()
         )

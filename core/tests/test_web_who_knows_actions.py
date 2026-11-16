@@ -308,6 +308,22 @@ class TheBotAppliesIt(Editing):
         self.assertEqual([(o.error, o.batches) for o in await self.apply_all()], [("", ())])
         self.assertEqual(await self.memory.version(self.g, self.one.id), before)
 
+    async def test_the_websites_answer_on_a_common_name_takes_common_knowledge_back(self) -> None:
+        """#4537 slice 1b: the website's 🤫 / 👥 / 👁️ use the same calls, so a name a World upload
+        made common knowledge stops being common, and the page's Undo puts all of it back."""
+        alias = await self.secret_name(secret=False)
+        await self.memory.add_common_knowledge(
+            self.g, self.one.id, "alias", [alias], source=DM_SOURCE
+        )
+        await self.alias_who(alias, who="dm")
+        (done,) = await self.apply_all()
+        self.assertEqual((done.error, len(done.batches)), ("", 2))  # (common taken back, hidden)
+        common = self.memory.common_knowledge
+        self.assertEqual(await common(self.g, self.one.id, "alias", [alias]), set())
+        for batch in reversed(done.batches):
+            await self.memory.undo(self.g, self.one.id, batch)
+        self.assertEqual(await common(self.g, self.one.id, "alias", [alias]), {alias})
+
     async def test_a_name_from_a_non_dm_sender_is_refused(self) -> None:
         alias = await self.secret_name()
         await self.alias_who(alias, who="dm")

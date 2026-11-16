@@ -106,5 +106,15 @@ coverage, and the page labels them "How your recaps should sound".
   before and after: for each must-have the session gave, covered or missed, plus the fact-check
   result. A change that covers fewer must-haves, or adds unsupported sentences, doesn't merge without
   a reason.
+- **How it reads (owner, 2026-11-16, #4556).** A recap can cover every must-have and still read as a
+  list of events. `recap_run --score` also gives a **storytelling** score: a careful-model judge rates
+  the recap 1 to 5, beside the campaign's recap examples (the built-in four when it has none), on
+  four fixed points: **scene and stakes**, **characters** (each acts and speaks like themself, with
+  the session's own lines where the session gave them), **momentum** (a story, not a list) and
+  **sound** (the examples' tone and rhythm). Its reasons are fixed words, so no story words reach
+  GitHub. It only flags: it never adds facts, and the fact check wins over every point. The before
+  and after table of a recap-writer change gains this column, and a change that lowers the average
+  on the fixed set needs a stated reason, as for must-haves. The owner's eye is the final judge:
+  when the score and the owner disagree, the judge's rubric changes.
 - **Isolation.** Each campaign's list is its own. It goes in that campaign's backup and is never
   shared with another campaign.

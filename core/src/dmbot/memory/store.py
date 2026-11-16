@@ -4786,6 +4786,16 @@ class MemoryStore:
         """(upload key, label) of each upload one entry was read from, earliest first, including
         what was read into entries merged into it (a merge leaves their rows where they were, so
         its Undo needs nothing here). A DM-only reader: the label can name a private backstory."""
+        return [
+            (k, label)
+            for k, label, _at in await self.name_uploads(guild_id, campaign_id, entity_id)
+        ]
+
+    async def name_uploads(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> list[tuple[str, str, int]]:
+        """`name_sources` with the time each upload was first read for this entry, for "where was
+        it said?" when the sentence itself is gone (#4554). Same DM-only rule."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "WITH RECURSIVE family(id) AS ("
@@ -4798,7 +4808,9 @@ class MemoryStore:
                 " GROUP BY s.upload_key ORDER BY at, s.upload_key",
                 (entity_id, guild_id, campaign_id, guild_id, campaign_id),
             )
-            return [(str(r["upload_key"]), str(r["label"])) for r in await cur.fetchall()]
+            return [
+                (str(r["upload_key"]), str(r["label"]), int(r["at"])) for r in await cur.fetchall()
+            ]
 
     async def link_source(
         self, guild_id: int, campaign_id: str, relation_id: str
@@ -7658,6 +7670,50 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, source) as w:
             await told.take_back(w, alias_id, character_id)
             return Written(True, w.batch)
+
+    async def add_common_knowledge(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        kind: str,
+        statement_ids: Sequence[str],
+        certainty: float = 1.0,
+        *,
+        source: str,
+    ) -> Written[int]:
+        """Common knowledge (#4537): these statements are known to every character, now or later
+        (`knowers.add_common`). Written by a World read and a smart guess's "world" statements;
+        only adds, one change with its own Undo. Returns how many rows it added or raised."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            added = await knowers.add_common(w, kind, statement_ids, certainty)
+            return Written(added, w.batch)
+
+    async def remove_common_knowledge(
+        self, guild_id: int, campaign_id: str, kind: str, statement_ids: Sequence[str]
+    ) -> Written[int]:
+        """The DM takes common knowledge back (#4537 slice 1b: another answer on "Who knows this?"):
+        their own choice, one change with its own Undo. Returns how many rows went."""
+        async with self._write(guild_id, campaign_id, DM, dm_chose_secret=True) as w:
+            gone = await knowers.remove_common(w, kind, statement_ids)
+            return Written(gone, w.batch)
+
+    async def common_knowledge(
+        self, guild_id: int, campaign_id: str, kind: str, statement_ids: Sequence[str]
+    ) -> set[str]:
+        """Which of these statements are common knowledge (#4537), for the DM's own page."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await knowers.common_of(scope, kind, statement_ids)
+
+    async def entries_shown(
+        self, guild_id: int, campaign_id: str, entity_ids: Sequence[str]
+    ) -> set[str]:
+        """Which of these entries the players are shown (`knowers.entry_shown`, the gate's rule):
+        🌍 Common knowledge is refused for anything that hangs off one they aren't (#4537)."""
+        if not entity_ids:
+            return set()
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            rows = await scope.select(ENTITIES, " AND id = ANY(%s)", [list(entity_ids)])
+        return {str(r["id"]) for r in rows if knowers.entry_shown(r)}
 
     async def mark_guess(
         self,

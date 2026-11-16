@@ -36,6 +36,7 @@ from dmbot.memory import (
     route_words,
     tags,
 )
+from dmbot.memory.backstory_keep import undo_batches
 from dmbot.memory.gate import NameGuard, safe_label
 from dmbot.memory.kinds import kind_phrase
 from dmbot.memory.link_words import (
@@ -131,7 +132,19 @@ from dmbot.ui.names import (
     sees_secrets,
     split_names,
 )
-from dmbot.ui.who_knows import WhoKnowsMenu, called, player_characters, who_text
+from dmbot.ui.who_knows import (
+    ALREADY,
+    NO_LONGER_COMMON,
+    NOTHING_TO_UNDO,
+    UNDONE,
+    UNDONE_PARTLY,
+    WhoKnowsMenu,
+    called,
+    common_done,
+    player_characters,
+    taken_back,
+    who_text,
+)
 
 log = logging.getLogger(__name__)
 WHO_BUTTON = "👁️ Who knows this?"
@@ -2958,9 +2971,11 @@ async def show_who_page(
     alias_id: str,
     *,
     note: str = "",
+    undo: Sequence[int] = (),
 ) -> None:
     """The "Who knows this?" page of a secret other name (#2935), with, for the DM, who was told
-    the name is its entry and who still can be (#3542). `note`: what was just done, on top."""
+    the name is its entry and who still can be (#3542). `note`: what was just done, on top;
+    `undo`: the batches a 🌍 Common knowledge answer made, for its ↩ Undo (#4537)."""
     await _answer_first(interaction, in_place=True)
     found = await _one_name(interaction, campaign_id, entity_id, alias_id)
     memory = _memory(interaction)
@@ -2976,10 +2991,14 @@ async def show_who_page(
     )
     told = await memory.told_characters(campaign.guild_id, campaign.id, alias.id)
     who = name_edits.who_knows_now(alias, knowing)
+    if who == link_edits.EVERYONE and alias.id in await memory.common_knowledge(
+        campaign.guild_id, campaign.id, "alias", [alias.id]
+    ):
+        who = link_edits.COMMON
     names = dict(pcs)
     view = WhoKnowsName(
         campaign_id, entity_id, alias.id, pcs,
-        chosen=[c for c in knowing if c in names], now=who,
+        chosen=[c for c in knowing if c in names], now=who, undo=undo,
         holders=[c for c in knowing if c in names and c not in told],
         told=[c for c in told if c in names], alias_text=alias.text, entry_name=entry,
     )  # fmt: skip
@@ -2994,8 +3013,8 @@ async def show_who_page(
 
 class WhoKnowsName(WhoKnowsMenu):
     """The other name's page (#2935): 🤫 Only the DM, 👥 Only some characters, 👁️ Everyone at the
-    table. Every press checks the campaign, the DM and the name again, and reads where it stands
-    now, so a double press or a stale page writes nothing."""
+    table, 🌍 Common knowledge (#4537). Every press checks the campaign, the DM and the name again,
+    and reads where it stands now, so a double press or a stale page writes nothing."""
 
     def __init__(
         self,
@@ -3010,8 +3029,9 @@ class WhoKnowsName(WhoKnowsMenu):
         told: Sequence[str] = (),
         alias_text: str = "",
         entry_name: str = "",
+        undo: Sequence[int] = (),
     ) -> None:
-        super().__init__(pcs, chosen=chosen, now=now)
+        super().__init__(pcs, chosen=chosen, now=now, undo=undo)
         self.campaign_id, self.entity_id, self.alias_id = campaign_id, entity_id, alias_id
         # Telling one character the name is the entry, and taking it back (#3542): a menu each,
         # on the two rows under the buttons, only when there is someone to offer.
@@ -3045,6 +3065,29 @@ class WhoKnowsName(WhoKnowsMenu):
         self.stop()
         await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
 
+    async def _undo(self, interaction: discord.Interaction) -> None:
+        """↩ Undo of a 🌍 answer (#4537): every change it made, newest first."""
+        await _answer_first(interaction, in_place=True)
+        found = await _one_name(interaction, self.campaign_id, self.entity_id, self.alias_id)
+        memory = _memory(interaction)
+        if found is None or memory is None:
+            return
+        campaign = found[0]
+        if not sees_secrets(campaign, interaction.user.id):  # checked on every press
+            await _tell(interaction, "Only the campaign's DMs can change secret names.")
+            return
+        batches, self.undo = self.undo, []  # (a second press on this page undoes nothing more)
+        if not batches:
+            await _tell(interaction, NOTHING_TO_UNDO)
+            return
+        every = await undo_batches(memory, campaign.guild_id, campaign.id, batches)
+        changed(interaction, campaign)
+        self.stop()
+        await show_who_page(
+            interaction, campaign.id, self.entity_id, self.alias_id,
+            note=UNDONE if every else UNDONE_PARTLY,
+        )  # fmt: skip
+
     async def _set(self, interaction: discord.Interaction, who: str) -> None:
         await _answer_first(interaction, in_place=True)
         found = await _one_name(interaction, self.campaign_id, self.entity_id, self.alias_id)
@@ -3058,13 +3101,18 @@ class WhoKnowsName(WhoKnowsMenu):
         live = (await memory.alias_knowers(campaign.guild_id, campaign.id, [alias.id])).get(
             alias.id, []
         )
-        if who == name_edits.who_knows_now(alias, live) and (
+        now = name_edits.who_knows_now(alias, live)
+        was_common = alias.id in await memory.common_knowledge(
+            campaign.guild_id, campaign.id, "alias", [alias.id]
+        )
+        if now == link_edits.EVERYONE and was_common:
+            now = link_edits.COMMON
+        if who == now and (
             who != link_edits.SOME_CHARACTERS or sorted(self.picked) == sorted(live)
         ):
-            await _tell(
-                interaction, "Already like that. Nothing changed. Press Back to see the card."
-            )
+            await _tell(interaction, ALREADY)
             return
+        made: list[int] = []
         try:
             await name_edits.set_who_knows(
                 memory,
@@ -3074,6 +3122,7 @@ class WhoKnowsName(WhoKnowsMenu):
                 who,
                 self.picked,
                 players_only=True,  # (this menu lists player characters only: NPC knowers stay)
+                made=made,
             )
         except MemoryRuleError as exc:
             if str(exc) == name_edits.PICK_ONE:
@@ -3084,6 +3133,24 @@ class WhoKnowsName(WhoKnowsMenu):
                 )
             else:
                 await _tell(interaction, f"Couldn't change that. {exc}")
+            return
+        if not made:  # (another press got there first: nothing was written)
+            await _tell(interaction, ALREADY)
+            return
+        if who == link_edits.COMMON or was_common:
+            # (the page again, with what changed and one ↩ Undo for all of it, #4537)
+            if who == link_edits.COMMON:
+                note = common_done(alias.secret)
+            else:
+                mine = [self.names[x] for x in self.picked if x in self.names]
+                note = taken_back(who, mine, was_shown=now == link_edits.COMMON)
+                if now == link_edits.COMMON:  # (only when the page showed it as common)
+                    note = f"{NO_LONGER_COMMON} {note}"
+            changed(interaction, campaign)
+            self.stop()
+            await show_who_page(
+                interaction, campaign.id, self.entity_id, self.alias_id, note=note, undo=made
+            )
             return
         text = f"**{_md(alias.text)}**"
         if who == link_edits.EVERYONE:

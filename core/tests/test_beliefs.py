@@ -101,7 +101,10 @@ class TheMigration(unittest.IsolatedAsyncioTestCase):
         async with self.db.guild(GUILD_A) as conn:
             cur = await conn.execute("SELECT campaign_id, kind FROM memory_perspectives")
             seen = sorted((r["campaign_id"], r["kind"]) for r in await cur.fetchall())
-        self.assertEqual(seen, sorted([(campaign, "truth"), (campaign, "party")]))
+        # (and its common knowledge, the "everyone" view 0513 gives every campaign, #4537)
+        self.assertEqual(
+            seen, sorted([(campaign, "truth"), (campaign, "party"), (campaign, "everyone")])
+        )
         elsewhere = await self.beliefs(GUILD_B, other)
         self.assertEqual(
             set(elsewhere), {("truth", other_ids["public"]), ("party", other_ids["public"]),
@@ -117,7 +120,9 @@ class TheMigration(unittest.IsolatedAsyncioTestCase):
                 "SELECT kind FROM memory_perspectives WHERE campaign_id = %s ORDER BY kind",
                 (campaign.id,),
             )
-            self.assertEqual([r["kind"] for r in await cur.fetchall()], ["party", "truth"])
+            self.assertEqual(
+                [r["kind"] for r in await cur.fetchall()], ["everyone", "party", "truth"]
+            )  # (the everyone view from 0513, #4537)
 
 
 class Beliefs(MemoryTest):

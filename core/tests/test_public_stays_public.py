@@ -441,8 +441,10 @@ class EveryCallerThatChoseSecret(unittest.TestCase):
             {
                 "dmbot/memory/backstory_keep.py:keep_all",  # the card's Players: hide
                 "dmbot/memory/link_edits.py:set_secret",  # 🤫 on a connection
-                "dmbot/memory/link_edits.py:set_who_knows",  # Who knows this connection
-                "dmbot/memory/name_edits.py:set_who_knows",  # Who knows this name
+                "dmbot/memory/link_edits.py:_set_flags",  # Who knows this connection
+                "dmbot/memory/name_edits.py:_set_flags",  # Who knows this name
+                # (another Who knows answer on a 🌍 item takes common knowledge back, #4537)
+                "dmbot/memory/store.py:remove_common_knowledge",
                 "dmbot/memory/store.py:_apply_secret",  # Make it secret / End the old one
                 "dmbot/memory/web_actions.py:_do",  # the website's hide and secret buttons
                 "dmbot/ui/clue_audience.py:_remove",  # a clue's audience: take one off
