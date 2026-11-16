@@ -1,0 +1,58 @@
+// The words of the quest sheet's edit controls (#4562): the same words as Discord's 📋 card, so the two stay level. DM only.
+const questEditSaid: Record<string, string> = {
+  to_do: "To do", done: "Done", failed: "Failed", not_needed: "Not needed now", in_the_way: "Still in the way", overcome: "Overcome",
+  no_longer_matters: "No longer matters", owed: "Still owed", settled: "All given", wont_be_given: "Won't be given",
+  turned_down: "The party turned it down", to_keep: "Theirs to keep", lent: "Lent", returned: "Returned", not_returned: "Not returned",
+  running: "Still running", met: "Met in time", lifted: "Lifted",
+};
+
+export const questEditWords = {
+  change: "Change",
+  addToThread: "Add to this thread",
+  whatToAdd: "What to add",
+  working: "Working on it…",
+  undo: "↩ Undo",
+  undone: "↩ Undone.",
+  showToPlayers: "Show to players",
+  hideFromPlayers: "Hide from players",
+  takeItOff: "Take it off",
+  newWords: "New words",
+  storyChanged: "It changed in the story",
+  save: "Save",
+  add: "Add",
+  whenGiven: "When is it given?",
+  upFront: "Up front",
+  afterwards: "When the job's done",
+  notSaid: "Not said",
+  isItTheirs: "Is it theirs to keep?",
+  theirsToKeep: "Theirs to keep",
+  lentBack: "Lent: give it back",
+  whenMissed: "What if it is missed?",
+  hard: "Hard: something's lost",
+  soft: "Soft: things get worse",
+  gone: "⚠️ That was changed since. Here's how it is now.",
+  failed: "⚠️ That didn't save. Try again.",
+  /** The state buttons, by kind, then by state. */
+  states: {
+    objective: { to_do: "☐ To do", done: "☑ Done", failed: "✖ Failed", not_needed: "➖ Not needed now" },
+    complication: { in_the_way: "🚧 Still in the way", overcome: "✔ Overcome", no_longer_matters: "➖ No longer matters" },
+    reward: { owed: "Still owed", settled: "✔ All given", wont_be_given: "Won't be given", turned_down: "Party turned it down" },
+    help: { to_keep: "Theirs to keep", lent: "Lent", returned: "↩ Returned", not_returned: "Not returned" },
+    time_limit: { running: "⏰ Still running", met: "✔ Met in time", lifted: "Lifted" },
+  } as Record<string, Record<string, string>>,
+  stateSaid: (state: string, words: string): string => `✅ ${questEditSaid[state] ?? state}: ${words}.`,
+  shownSaid: (words: string): string => `✅ Players can now see: ${words}.`,
+  hiddenSaid: (words: string): string => `✅ Hidden from players: ${words}.`,
+  removedSaid: (words: string): string => `✅ Taken off: ${words}.`,
+  fixedSaid: (words: string): string => `✅ Changed: ${words}.`,
+  added: (words: string): string => `✅ Added: ${words}.`,
+  /** The kinds for "What to add": the label and the form's label and placeholder. */
+  kinds: [
+    { kind: "objective", label: "A step", fieldLabel: "The step", placeholder: "Find where Sephek sleeps" },
+    { kind: "complication", label: "Something in the way", fieldLabel: "What's in the way", placeholder: "The road north is cut" },
+    { kind: "reward", label: "A reward promised", fieldLabel: "The reward", placeholder: "100 gold" },
+    { kind: "reward_given", label: "A reward given", fieldLabel: "What was given", placeholder: "50 gold" },
+    { kind: "help", label: "Help given or lent", fieldLabel: "What was handed over", placeholder: "Two sleds and eight dogs" },
+    { kind: "time_limit", label: "A time limit", fieldLabel: "The time limit, in their words", placeholder: "Before the new moon" },
+  ] as { kind: string; label: string; fieldLabel: string; placeholder: string }[],
+} as const;
