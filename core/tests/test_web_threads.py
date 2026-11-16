@@ -8,12 +8,16 @@ from __future__ import annotations
 
 from typing import Any
 
+from dmbot.consent import TERMS_VERSION
 from dmbot.memory import thread_parts as tp
 from dmbot.memory import web_actions as wa
 from dmbot.memory.thread_read import ReadBranch, ReadPart, Suggestion
 from dmbot.memory.thread_suggestions import ThreadSuggestionStore
+from dmbot.transcript.models import Line as Heard
+from dmbot.transcript.store import TranscriptStore
 from dmbot.web import thread_suggestions as web_threads
 from dmbot.web.recaps import RecapError, _scoped
+from tests.agreed import agree
 from tests.test_recap_web import BOB
 from tests.test_web_api import ALICE, THURSDAY
 from tests.test_web_name_actions import Acting
@@ -37,7 +41,10 @@ class Threads(Acting):
         session = who or self.session
         async with self.web.user(session.user_id, session=session.id_hash) as conn:
             await _scoped(conn, self.g)
-            cur = await conn.execute("SELECT dmbot_web_threads(%s, %s) AS r", (self.g, self.one.id))
+            cur = await conn.execute(
+                "SELECT dmbot_web_threads(%s, %s, %s, %s) AS r",
+                (self.g, self.one.id, TERMS_VERSION, None),
+            )
             found = await cur.fetchone()
         return found["r"] if found else None
 
@@ -229,6 +236,90 @@ class TheLines(Threads):
                 self.web, self.session, self.cref, {"id": sid, "on": [], "lines": [0, 2]}
             )
         )
+
+
+LINE_MS = 5_000
+SAY, ALSO, OUTSIDER = 71, 72, 73
+
+
+class TheSessions(Threads):
+    """A suggestion read from a session (#4526, migration 0518): listed only while every one of its
+    speakers is recorded now, with where it was heard; a lore suggestion is as before."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        await agree(self.db, self.g, SAY, ALSO)
+        self.transcripts = TranscriptStore(self.db)
+        self.sid = await self.transcripts.open_session(self.g, self.one.id, 1_700_000_000)
+        await self.transcripts.add_lines(
+            self.g, self.sid,
+            [Heard(LINE_MS, SAY, "x", "Keegan  wrings his cap."),
+             Heard(LINE_MS + 1_000, ALSO, "x", "We'll find him."),
+             Heard(LINE_MS + 2_000, OUTSIDER, "x", "Pass me that rope.")],
+        )  # fmt: skip
+        heard = Suggestion(
+            "quest", "Heard Heir", "find the heir", "", (("quest giver", self.mira),), "now",
+            line_starts=(LINE_MS, LINE_MS + 1_000, LINE_MS + 2_000, LINE_MS + 9_999),
+            speaker_ids=(SAY, ALSO),
+        )  # fmt: skip
+        made = await self.threads.offer(
+            self.g, self.one.id, [heard], "the session of 14 Nov 2026", 5,
+            session_id=self.sid, session_at=1_700_000_000,
+        )  # fmt: skip
+        self.assertEqual(made, 1)
+
+    async def listed(self) -> dict[str, Any]:
+        got = await web_threads.read(self.web, self.session, self.cref)
+        return {s["name"]: s for s in got["suggestions"]}
+
+    async def test_a_session_suggestion_says_where_it_was_heard_in_its_speakers_lines(self) -> None:
+        one = (await self.listed())["Heard Heir"]
+        self.assertTrue(one["session"])
+        self.assertEqual(one["upload"], "the session of 14 Nov 2026")
+        # (only the speakers' own lines, in the order spoken, spaces tidied; a line of someone who
+        # is not a speaker, and a start no line has, are not there)
+        self.assertEqual(one["heard"], ["Keegan wrings his cap.", "We'll find him."])
+        self.assertEqual(one["quote"], "")
+
+    async def test_a_lore_suggestion_is_not_from_a_session_and_has_no_heard_lines(self) -> None:
+        lost = (await self.listed())["The Lost Heir"]
+        self.assertEqual((lost["session"], lost["heard"]), (False, []))
+
+    async def test_it_goes_when_one_speaker_stops_being_recorded_and_comes_back_with_them(
+        self,
+    ) -> None:
+        await self.sql("DELETE FROM consent WHERE guild_id = %s AND user_id = %s", self.g, ALSO)
+        listed = await self.listed()
+        self.assertEqual(sorted(listed), ["The Lost Heir"])  # (the lore one stays)
+        await agree(self.db, self.g, ALSO)
+        self.assertIn("Heard Heir", await self.listed())
+
+    async def test_an_older_wording_does_not_count_as_recorded(self) -> None:
+        await self.sql(
+            "UPDATE consent SET terms_version = %s WHERE guild_id = %s AND user_id = %s",
+            TERMS_VERSION - 1, self.g, SAY,
+        )  # fmt: skip
+        self.assertNotIn("Heard Heir", await self.listed())
+
+    async def test_while_an_outside_company_hears_only_those_recorded_for_it_count(self) -> None:
+        got = await web_threads.read(self.web, self.session, self.cref, outside_engine="acme")
+        self.assertEqual([s["name"] for s in got["suggestions"]], ["The Lost Heir"])
+        await self.sql(
+            "UPDATE consent SET outside_to = 'acme' WHERE guild_id = %s AND user_id IN (%s, %s)",
+            self.g, SAY, ALSO,
+        )  # fmt: skip
+        got = await web_threads.read(self.web, self.session, self.cref, outside_engine="acme")
+        self.assertIn("Heard Heir", [s["name"] for s in got["suggestions"]])
+
+    async def test_a_line_deleted_since_is_not_shown(self) -> None:
+        await self.sql(
+            "DELETE FROM transcript_lines WHERE guild_id = %s AND started_ms = %s",
+            self.g, LINE_MS + 1_000,
+        )  # fmt: skip
+        self.assertEqual((await self.listed())["Heard Heir"]["heard"], ["Keegan wrings his cap."])
+
+    async def test_a_player_still_gets_nothing(self) -> None:
+        self.assertIsNone(await self.door(await self.signed(BOB, THURSDAY)))
 
 
 class TheActions(Threads):
