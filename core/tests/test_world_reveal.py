@@ -531,8 +531,14 @@ class TheRead(NamesTest):
         self.campaign = await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, True)
         await self.read("world", links=())
         self.campaign = await self.campaigns.set_ask_before_adding(GUILD, self.campaign.id, False)
-        await self.read("world", links=())
+        done = await self.read("world", links=())
         self.assertFalse(await self.hidden(self.ash))
+        # (ruling (b) on #4606: the read answers it, so the card stops offering it, and the
+        # upload's Undo asks it again)
+        self.assertEqual(await self.waiting(), [])
+        await un.undo_upload_result(self.bot, GUILD, self.campaign.id, done.notice.id, THE_DM)
+        self.assertTrue(await self.hidden(self.ash))
+        self.assertEqual([q.item_id for q in await self.waiting()], [self.ash])
 
     async def test_keep_all_secret_keeps_only_that_uploads_questions(self) -> None:
         wren, view, it, sent = await self.two_uploads()
