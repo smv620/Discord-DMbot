@@ -342,3 +342,15 @@ class PlanChecksSetting(unittest.TestCase):
     def test_the_site_address_loses_its_trailing_slash(self) -> None:
         s = load_settings({**BASE, "WEB_SITE_URL": "https://dmbot.example/"})
         self.assertEqual(s.site_url, "https://dmbot.example")
+
+
+class ServerJobs(unittest.TestCase):
+    def test_two_unless_set_and_a_bad_value_is_refused(self) -> None:
+        """(#4551: lore reads at once on one server)"""
+        self.assertEqual(load_settings(BASE).server_jobs_at_once, 2)
+        self.assertEqual(
+            load_settings({**BASE, "DMBOT_SERVER_JOBS_AT_ONCE": "5"}).server_jobs_at_once, 5
+        )
+        for bad in ("0", "21", "x", "-1"):
+            with self.assertRaisesRegex(ConfigError, "DMBOT_SERVER_JOBS_AT_ONCE"):
+                load_settings({**BASE, "DMBOT_SERVER_JOBS_AT_ONCE": bad})
