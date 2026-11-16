@@ -126,7 +126,7 @@ class Base(MemoryTest):
         owner = await self.add("Mira", type="character", role="npc", status=CONFIRMED)
         alias = await self.memory.add_alias(
             GUILD_A, self.c, owner, name, kind="nickname", source="dm", status=CONFIRMED,
-            secret=True,
+            secret=True, dm_chose_secret=True,
         )  # fmt: skip
         return owner, alias.value.id
 

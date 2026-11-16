@@ -302,7 +302,9 @@ class Chain(ConfirmedMemoryTest):
         ).value[0]
         self.assertTrue(rel.secret)
         with self.assertRaises(MemoryRuleError):
-            await self.memory.update_relation(GUILD_A, self.c, rel.id, source="dm", secret=False)
+            await self.memory.update_relation(
+                GUILD_A, self.c, rel.id, source="dm", secret=False, dm_chose_secret=True
+            )
         await self.link(self.heir, self.tower)
         with self.assertRaises(MemoryRuleError):
             await self.memory.add_relation(

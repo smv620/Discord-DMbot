@@ -43,7 +43,7 @@ class TheOffers(ConfirmedMemoryTest):
     async def test_a_secret_other_name_counts_as_evidence_for_the_dm_only_reader(self) -> None:
         await self.memory.add_alias(
             GUILD_A, self.c, self.mira, "Gate Guard Mira", kind="nickname", secret=True,
-            source="dm", status=CONFIRMED,
+            source="dm", status=CONFIRMED, dm_chose_secret=True,
         )  # fmt: skip
         found = {o.named_id for o in await self.memory.same_person_offers(GUILD_A, self.c)}
         self.assertEqual(found, {self.ken, self.mira})

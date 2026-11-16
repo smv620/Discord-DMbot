@@ -612,6 +612,14 @@ async def carry(
         if perspective_id == party and (new["secret"] or new["unrevealed"]):
             continue  # (the flag decides what the players know; see `follow`)
         if (
+            perspective_id == ids[TRUTH]
+            and belief["status"] == SECRET_PLOT
+            and not (new["secret"] or new["unrevealed"])
+        ):
+            # (a secret fact folded into a twin the players see, kept public by #4524's guard: The
+            # truth's word on it follows the twin's flag, as The party's does, and stays its own)
+            continue
+        if (
             perspective_id == party
             and mine is not None
             and float(mine["confidence"]) >= KNOWN > float(belief["confidence"])

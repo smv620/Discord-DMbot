@@ -77,6 +77,85 @@ _COLUMNS = {
 }
 
 
+_GUARDED_TABLE = {  # the statements the owner's rule covers (#4524): names and connections
+    "entry": "memory_entities",
+    "connection": "memory_relations",
+    "alias": "memory_aliases",
+}
+
+
+async def _players_kept(
+    w: Changes, kind: str, item_id: str, chosen: Collection[str]
+) -> tuple[set[str], set[str]]:
+    """The player characters a setter would take off this item who knew it before this write
+    (#4524: public never becomes secret by itself), as (their entry ids, their points of view),
+    each kept and asked as one 🤫 question; none when the DM chose it (`dm_chose_secret`), for an
+    Undo, or for a kind the rule doesn't cover. A row this same write made was not known before
+    it (an upload setting its own new name's knowers), so it is never kept."""
+    if w.dm_chose_secret or w.undoes is not None or w.joining or kind not in _GUARDED_TABLE:
+        return set(), set()
+    column, _ = _COLUMNS[kind]
+    pcs = {
+        str(r["id"]): str(r["entity_id"])
+        for r in await w.select(PERSPECTIVES, " AND kind = %s", [PC_VIEW])
+        if r["entity_id"] is not None
+    }
+    if not pcs:
+        return set(), set()
+    rows = await w.select(KNOWERS, f" AND {column} = %s AND created_at < %s", [item_id, w.now])
+    if kind == "alias":
+        rows += await w.select(
+            ALIAS_KNOWERS, " AND alias_id = %s AND created_at < %s", [item_id, w.now]
+        )
+    before = {pcs[str(r["perspective_id"])] for r in rows if str(r["perspective_id"]) in pcs}
+    if kind == "connection":  # (the old lists: a player character's belief in it)
+        before |= set((await connection_knowers(w, [item_id])).get(item_id, [])) & set(pcs.values())
+    dropping = before - set(chosen)
+    if not dropping:
+        return set(), set()
+    from dmbot.memory import public_guard
+
+    await public_guard.ask_knowers(w, _GUARDED_TABLE[kind], item_id, dropping)
+    return dropping, {view for view, entity in pcs.items() if entity in dropping}
+
+
+async def take_off(w: Changes, kind: str, item_id: str, entity_ids: Collection[str]) -> None:
+    """Make it secret on a 🤫 knowers question (#4524): exactly these player characters stop knowing
+    this name or connection, as the DM's own choice. Only their rows go (who-knows rows, a name's
+    older list, and for a connection a 0.0 belief in place of theirs, as `set_connection_knowers`
+    does); everyone else keeps what they know and how sure they are."""
+    if not w.dm_chose_secret:
+        raise ValueError("Only the DM's own choice takes someone off.")
+    off = set(entity_ids)
+    if not off or kind not in _GUARDED_TABLE:
+        return
+    column, _ = _COLUMNS[kind]
+    views = {
+        str(r["id"]): str(r["entity_id"])
+        for r in await w.select(PERSPECTIVES, " AND entity_id = ANY(%s)", [sorted(off)])
+    }
+    if not views:
+        return
+    for row in await w.select(
+        KNOWERS, f" AND {column} = %s AND perspective_id = ANY(%s)", [item_id, sorted(views)],
+        dormant=True,
+    ):  # fmt: skip
+        await w.delete(KNOWERS, row["id"])
+    if kind == "alias":
+        old = await w.select(
+            ALIAS_KNOWERS,
+            " AND alias_id = %s AND perspective_id = ANY(%s)",
+            [item_id, sorted(views)],
+        )
+        for row in old:
+            await w.delete(ALIAS_KNOWERS, row["id"])
+    elif kind == "connection":
+        believed = set((await connection_knowers(w, [item_id])).get(item_id, []))
+        for view_id, entity_id in views.items():
+            if entity_id in believed:
+                await beliefs.add_belief(w, view_id, item_id, 0.0, SECRET_PLOT)
+
+
 async def _known_characters(w: Scope, character_ids: Sequence[str]) -> dict[str, bool]:
     """The confirmed characters among these ids, player characters and NPCs, each with whether it
     is a player's (§9b: a point of view for each character). Anything else (another campaign's
@@ -156,8 +235,9 @@ async def set_statement_knowers(
             )  # fmt: skip
         elif have[view_id]["confidence"] != sure[entity_id]:
             await w.update(KNOWERS, have[view_id]["id"], {"confidence": sure[entity_id]})
+    _kept, kept_views = await _players_kept(w, kind, statement_id, list(chosen))
     for view_id, row in have.items():
-        if view_id not in views.values():
+        if view_id not in views.values() and view_id not in kept_views:
             await w.delete(KNOWERS, row["id"])
     return list(chosen)
 
@@ -311,7 +391,9 @@ async def know_own_disguise(w: Changes, relation_id: str, entity_id: str) -> Non
         await w.insert(KNOWERS, _row("relation_id", relation_id, view, w.now))
 
 
-async def mark_guess(w: Changes, kind: str, statement_ids: Sequence[str], certainty: float) -> int:
+async def mark_guess(
+    w: Changes, kind: str, statement_ids: Sequence[str], certainty: float, made_since: int
+) -> int:
     """The player characters who know these statements only because the AI guessed so (an upload's
     Smart guess, #2959) are recorded as sure to `certainty`, not 1.0: a guess is not the DM's word.
     Only the player characters' rows are touched, only down from sure, and no row is made or
@@ -332,6 +414,10 @@ async def mark_guess(w: Changes, kind: str, statement_ids: Sequence[str], certai
         f" AND {column} = ANY(%s) AND perspective_id = ANY(%s) AND confidence > %s",
         [list(statement_ids), views, certainty],
     )
+    # Only rows the caller's keep made (`made_since`, its own start: the keep ran in an earlier
+    # write, so this write's clock may have moved on): a player character already sure of it
+    # stays sure (#4524). Making someone less sure is never asked about, it is simply not done.
+    rows = [r for r in rows if r["created_at"] >= made_since]
     for row in rows:
         await w.update(KNOWERS, row["id"], {"confidence": certainty})
     return len(rows)
@@ -373,6 +459,8 @@ async def set_connection_knowers(
     if not (relation["secret"] or relation["unrevealed"]):
         raise MemoryRuleError(NOT_HIDDEN)
     known = await _known_characters(w, character_ids)
+    for entity_id in (await _players_kept(w, "connection", relation_id, list(known)))[0]:
+        known[entity_id] = True  # (a player character who knew it keeps knowing: #4524)
     chosen = list(known)
     now = await connection_knowers(w, [relation_id])
     current = set(now.get(relation_id, []))
@@ -402,6 +490,8 @@ async def set_alias_knowers(
     if alias is None or alias["status"] == "rejected" or not alias["secret"]:
         raise MemoryRuleError(NOT_SECRET)
     known = await _known_characters(w, character_ids)
+    for entity_id in (await _players_kept(w, "alias", alias_id, list(known)))[0]:
+        known[entity_id] = True  # (a player character who knew it keeps knowing: #4524)
     chosen = list(known)
     views = {
         entity_id: await _view_for(w, entity_id, player) for entity_id, player in known.items()
@@ -823,40 +913,91 @@ async def fold_knowers(
         column = next(c for c in columns if moved.get(c, row[c]) is not None)
         return column, str(moved.get(column, row[column])), str(moved["perspective_id"])
 
-    seen: set[tuple[str, str, str]] = set()
+    seen: dict[tuple[str, str, str], dict[str, Any]] = {}
     changing: list[tuple[dict[str, Any], dict[str, Any]]] = []
     for row in rows:
         moved = after(row)
         if moved["perspective_id"] == row["perspective_id"] and (
             moved["about_entity_id"] == row["about_entity_id"]
         ):
-            seen.add(key(row, moved))
+            seen[key(row, moved)] = row
         else:
             changing.append((row, moved))
     for row, moved in changing:
         k = key(row, moved)
-        if k in seen:
+        held = seen.get(k)
+        if held is not None and not _stronger(row, held):
             await w.delete(KNOWERS, row["id"])
-        else:
-            seen.add(k)
-            await w.update(KNOWERS, row["id"], moved)
+            continue
+        if held is not None:  # (the moving row is the stronger: it stays, the weaker goes, #4524)
+            await w.delete(KNOWERS, held["id"])
+        seen[k] = row
+        await w.update(KNOWERS, row["id"], moved)
     await rehome_hidden_by(w, keep_id, gone_id, rows)
 
 
-async def move_rows(w: Changes, column: str, old_id: str, new_id: str) -> None:
+def _stronger(row: Mapping[str, Any], other: Mapping[str, Any]) -> bool:
+    """Of two who-knows rows for one character and statement (a fold or merge meets both), whether
+    `row` is the one to keep: awake beats asleep, then the surer (#4524: knowledge is never taken
+    away or lowered by a merge). A tie keeps `other`."""
+    return (not row["hidden_by"], float(row["confidence"])) > (
+        not other["hidden_by"],
+        float(other["confidence"]),
+    )
+
+
+async def move_rows(w: Changes, column: str, old_id: str, new_id: str, *, asleep: str = "") -> None:
     """A statement is folded into its twin (the same name or connection Ken already had, #3037):
     whoever knew the folded one knows the twin, and nothing is lost with the copy that goes. A
-    character the twin already lists keeps its own row. `column`: which statement column of the
-    list (`relation_id` or `alias_id`)."""
+    character on both keeps the stronger of its two rows (`_stronger`), so a fold never takes
+    knowledge away or makes anyone less sure (#4524). `column`: which statement column of the
+    list (`relation_id` or `alias_id`). `asleep`: a 🤫 question's id: a row that arrives for
+    someone the twin didn't list sleeps under it until the DM answers (`wake_under`)."""
     mine = await w.select(KNOWERS, f" AND {column} = %s", [new_id], dormant=True)
-    have = {r["perspective_id"] for r in mine}
+    have = {r["perspective_id"]: r for r in mine}
     folded = await w.select(KNOWERS, f" AND {column} = %s", [old_id], dormant=True)
-    for row in sorted(folded, key=lambda r: bool(r["hidden_by"])):
-        if row["perspective_id"] in have:
+    for row in folded:
+        held = have.get(row["perspective_id"])
+        if held is not None and not _stronger(row, held):
             await w.delete(KNOWERS, row["id"])
+            continue
+        if held is not None:  # (the folded row is the stronger: it stays, the weaker goes, #4524)
+            await w.delete(KNOWERS, held["id"])
+        have[row["perspective_id"]] = row
+        moved: dict[str, Any] = {column: new_id}
+        if asleep and held is None:  # (asleep until the DM answers `asleep`, a 🤫 question)
+            moved["hidden_by"] = _joined(row["hidden_by"], [asleep])
+        await w.update(KNOWERS, row["id"], moved)
+
+
+async def move_alias_list(w: Changes, old_id: str, new_id: str) -> None:
+    """`move_rows` for a name's older per-name list (#2935): whoever was on the folded copy's list
+    is on the twin's; one already there keeps its own row (#4524: nobody stops knowing). The list
+    has no certainty and no sleep mark, so two rows for one character say the same thing and
+    either one keeps it (`_stronger` has nothing to compare)."""
+    have = {
+        r["perspective_id"] for r in await w.select(ALIAS_KNOWERS, " AND alias_id = %s", [new_id])
+    }
+    for row in await w.select(ALIAS_KNOWERS, " AND alias_id = %s", [old_id]):
+        if row["perspective_id"] in have:
+            await w.delete(ALIAS_KNOWERS, row["id"])
         else:
             have.add(row["perspective_id"])
-            await w.update(KNOWERS, row["id"], {column: new_id})
+            await w.update(ALIAS_KNOWERS, row["id"], {"alias_id": new_id})
+
+
+async def wake_under(w: Changes, column: str, statement_id: str, mark: str) -> None:
+    """The rows of this statement that slept under `mark` (a 🤫 question's id, `move_rows`) wake:
+    the DM answered Let them know (#4524). Logged, so the answer's Undo puts them back to sleep."""
+    rows = await w.select(KNOWERS, f" AND {column} = %s", [statement_id], dormant=True)
+    await w.update_rows(
+        KNOWERS,
+        {
+            r["id"]: {"hidden_by": [h for h in r["hidden_by"] if h != mark]}
+            for r in rows
+            if mark in r["hidden_by"]
+        },
+    )
 
 
 # ---- the old flags keep the lists in step (slice 2b) --------------------------------------------

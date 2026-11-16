@@ -357,7 +357,7 @@ class Linking(ConfirmedMemoryTest):
     async def test_a_secret_name_is_matched_only_for_the_dms_own_lines(self) -> None:
         await self.memory.add_alias(
             GUILD_A, self.c, self.bram, "The Hollow King", kind="nickname", source=DM_SOURCE,
-            status=CONFIRMED, secret=True,
+            status=CONFIRMED, secret=True, dm_chose_secret=True,
         )  # fmt: skip
         by_player = await self.propose(
             said("The Hollow King", "knows", "Veldmoor", "1"), speakers={"1": PLAYER}

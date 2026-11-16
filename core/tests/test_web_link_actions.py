@@ -1957,7 +1957,7 @@ class TheReveal(Editing):
         """#3426: the rule is unchanged, but the refusal has its own word instead of bad_target."""
         link = await self.hidden_link()
         await self.memory.set_hidden_from_players(
-            self.g, self.one.id, self.hall, True, source=DM_SOURCE
+            self.g, self.one.id, self.hall, True, source=DM_SOURCE, dm_chose_secret=True
         )
         answer = await self.reveal("link", link)
         self.assertEqual([o.error for o in await self.apply_all()], ["names_not_shown"])
@@ -1991,7 +1991,9 @@ class TheReveal(Editing):
 
     async def test_a_dm_reveals_a_name_and_undo_hides_it_again(self) -> None:
         name = await self.add("Hidden Tower", "place")
-        await self.memory.set_hidden_from_players(self.g, self.one.id, name, True, source=DM_SOURCE)
+        await self.memory.set_hidden_from_players(
+            self.g, self.one.id, name, True, source=DM_SOURCE, dm_chose_secret=True
+        )
         before = await self.memory.version(self.g, self.one.id)
         answer = await self.reveal("name", name)
         self.assertEqual([o.error for o in await self.apply_all()], [""])
@@ -2581,7 +2583,7 @@ class TheRoutes(Editing):
             self.assertEqual((edit.status_code, edit.json()["error"]), (400, "needs_confirm"))
             name = await self.add("Hidden Tower", "place")
             await self.memory.set_hidden_from_players(
-                self.g, self.one.id, name, True, source=DM_SOURCE
+                self.g, self.one.id, name, True, source=DM_SOURCE, dm_chose_secret=True
             )
             revealed = await client.post(
                 f"/me/campaigns/{self.cref}/web/reveal", json={"kind": "name", "id": name}

@@ -56,7 +56,9 @@ class TheNumberMoves(ConfirmedMemoryTest):
         a, b = await self.add("Aldric"), await self.add("Brann")
         rel = (await self.relate(a, "knows", b)).value[0]
         v = await self.version()
-        await self.memory.update_relation(GUILD_A, self.c, rel.id, source="dm", secret=True)
+        await self.memory.update_relation(
+            GUILD_A, self.c, rel.id, source="dm", secret=True, dm_chose_secret=True
+        )
         self.assertTrue(await self.moved(v))
 
     async def test_a_merge_moves_it(self) -> None:

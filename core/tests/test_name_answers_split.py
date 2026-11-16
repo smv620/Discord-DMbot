@@ -173,7 +173,14 @@ class SplitAndGroup(WithChecks):
             )
         ).value.id  # fmt: skip
         await self.memory.add_alias(
-            GUILD, self.one.id, group, "The Grey Hand", kind="full", source="dm", secret=True
+            GUILD,
+            self.one.id,
+            group,
+            "The Grey Hand",
+            kind="full",
+            source="dm",
+            secret=True,
+            dm_chose_secret=True,
         )
         await self.queue(listed, "join_group", target=group)
         self.assertEqual(await self.apply_one(), "")
@@ -183,7 +190,14 @@ class SplitAndGroup(WithChecks):
     async def test_a_waiting_name_with_a_secret_spelling_is_not_split(self) -> None:
         listed = await self.waiting("Aldmoor, Quillgate, Fenwick")
         await self.memory.add_alias(
-            GUILD, self.one.id, listed, "The Hidden Three", kind="full", source="dm", secret=True
+            GUILD,
+            self.one.id,
+            listed,
+            "The Hidden Three",
+            kind="full",
+            source="dm",
+            secret=True,
+            dm_chose_secret=True,
         )
         await self.queue(listed, "split")
         self.assertEqual(await self.apply_one(), na.GONE)

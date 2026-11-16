@@ -129,7 +129,7 @@ class Store(MemoryTest):
         mira = await self.add("Mira", type="character", role="npc", status=CONFIRMED)
         alias = await self.memory.add_alias(
             GUILD_A, self.c, mira, "The Hooded One", kind="nickname", source="dm",
-            status=CONFIRMED, secret=True,
+            status=CONFIRMED, secret=True, dm_chose_secret=True,
         )  # fmt: skip
         key = spelling_key("The Hooded One")
         for session in (100, 200):
@@ -190,7 +190,7 @@ class Store(MemoryTest):
         mira, rook, rid = await self.secret_link()
         await self.memory.add_alias(
             GUILD_A, self.c, mira, "The Hooded One", kind="nickname", source="dm",
-            status=CONFIRMED, secret=True,
+            status=CONFIRMED, secret=True, dm_chose_secret=True,
         )  # fmt: skip
         open_one = await self.relate(mira, "ally_of", rook, status=CONFIRMED)  # not secret
         self.assertTrue(open_one.value)

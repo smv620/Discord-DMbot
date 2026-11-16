@@ -154,17 +154,22 @@ class TheChange(NamesTest):
         self.assertIn("1 already known", again)  # (waiting from the first run)
         self.assertEqual(len(await self.store.waiting(GUILD, self.campaign.id)), 1)
 
-    async def test_keep_all_ends_the_old_one_and_undo_brings_it_back(self) -> None:
+    async def test_keep_all_asks_before_ending_a_public_one_and_undo_takes_it_back(self) -> None:
+        # (#4524, ruling E: the kept one waits to be said at the table, so ending the public one
+        # would take it from the players by itself: "Did this change?" is asked instead)
         await self.read("enemy")
         waiting = await self.store.waiting(GUILD, self.campaign.id)
         done = await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, waiting)
         by_kind = {r.predicate: r for r in await self.relations()}
-        self.assertIsNotNone(by_kind["ally_of"].to_session_at)
+        self.assertIsNone(by_kind["ally_of"].to_session_at)
+        (q,) = await self.memory.secret_questions_waiting(GUILD, self.campaign.id)
+        self.assertEqual((q.kind, q.item_id), ("replace", by_kind["ally_of"].id))
         self.assertEqual(
             await keep.undo_all(self.memory, self.store, GUILD, self.campaign.id, done), 1
         )
         live = [r.predicate for r in await self.relations() if r.to_session_at is None]
         self.assertEqual(live, ["ally_of"])
+        self.assertEqual(await self.memory.secret_questions_waiting(GUILD, self.campaign.id), [])
 
     async def test_a_refused_change_leaves_the_old_connection_as_it_was(self) -> None:
         await self.read("enemy")

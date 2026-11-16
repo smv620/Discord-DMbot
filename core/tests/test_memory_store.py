@@ -140,7 +140,14 @@ class Isolation(MemoryTest):
         await self.memory.add_alias(GUILD_A, self.c, a, "Bell", kind="nickname", source="dm")
         # and a character who knows a secret other name (#2935)
         shade = await self.memory.add_alias(
-            GUILD_A, self.c, a, "Shade", kind="title", secret=True, source="dm"
+            GUILD_A,
+            self.c,
+            a,
+            "Shade",
+            kind="title",
+            secret=True,
+            source="dm",
+            dm_chose_secret=True,
         )
         view = await self.add(
             "Tavin", type="character", role="player_character", played_by=DM, status="confirmed"
@@ -191,7 +198,9 @@ class Isolation(MemoryTest):
             prompt_version="deeds-1", model="m",
         )  # fmt: skip
         # and a character who knows an entry exists (#2995)
-        await self.memory.set_statement_knowers(GUILD_A, self.c, "entry", b, [view], source="dm")
+        await self.memory.set_statement_knowers(
+            GUILD_A, self.c, "entry", b, [view], source="dm", dm_chose_secret=True
+        )
         await self.relate(a, "located_in", b)  # flagged: Cerric isn't a place
         known = await self.relate(a, "knows", b, status="confirmed")  # and its beliefs (#2409)
         # and the upload a kept connection came from (#2946)
@@ -486,6 +495,7 @@ class Entities(MemoryTest):
             secret=True,
             status=CONFIRMED,
             source="dm",
+            dm_chose_secret=True,
         )
         self.assertEqual((secret.value.secret, secret.value.status), (True, CONFIRMED))
         quieter = await self.memory.add_alias(
@@ -494,7 +504,12 @@ class Entities(MemoryTest):
         self.assertEqual((quieter.value.secret, quieter.value.status), (True, CONFIRMED))
         with self.assertRaisesRegex(MemoryRuleError, "Only the DM"):
             await self.memory.update_alias(
-                GUILD_A, self.c, first.value.id, secret=False, source="entitybot"
+                GUILD_A,
+                self.c,
+                first.value.id,
+                secret=False,
+                source="entitybot",
+                dm_chose_secret=True,
             )
 
     async def test_rejected_alias_stays_rejected_unless_the_dm_says_it(self) -> None:
@@ -515,7 +530,14 @@ class Entities(MemoryTest):
     async def test_secret_aliases_are_hidden_unless_asked(self) -> None:
         a = await self.add("Belleros")
         await self.memory.add_alias(
-            GUILD_A, self.c, a, "the hooded stranger", kind="title", secret=True, source="dm"
+            GUILD_A,
+            self.c,
+            a,
+            "the hooded stranger",
+            kind="title",
+            secret=True,
+            source="dm",
+            dm_chose_secret=True,
         )
         self.assertEqual([x.text for x in await self.memory.aliases(GUILD_A, self.c)], ["Belleros"])
         everything = await self.memory.aliases(GUILD_A, self.c, include_secret=True)
@@ -1033,7 +1055,14 @@ class Undo(MemoryTest):
     async def test_a_typed_name_already_known_or_secret_is_refused(self) -> None:
         a = await self.add("Belleros")
         await self.memory.add_alias(
-            GUILD_A, self.c, a, "the Veiled One", kind="title", source="dm", secret=True
+            GUILD_A,
+            self.c,
+            a,
+            "the Veiled One",
+            kind="title",
+            source="dm",
+            secret=True,
+            dm_chose_secret=True,
         )
         before = await self.snapshot()
         for typed in ["Belleros", "the veiled one"]:
@@ -1052,7 +1081,9 @@ class Undo(MemoryTest):
         steps: list[Step] = [
             lambda: self.memory.add_entity(GUILD_A, self.c, type="npc", name="X", source="dm"),
             lambda: self.memory.add_alias(GUILD_A, self.c, a, "Belle", kind="short", source="dm"),
-            lambda: self.memory.update_alias(GUILD_A, self.c, bel.id, secret=True, source="dm"),
+            lambda: self.memory.update_alias(
+                GUILD_A, self.c, bel.id, secret=True, source="dm", dm_chose_secret=True
+            ),
             lambda: self.memory.set_entity_status(GUILD_A, self.c, a, CONFIRMED, source="dm"),
             lambda: self.relate(a, "enemy_of", b, source="cleaner", confidence=0.3),
             lambda: self.memory.update_relation(
@@ -1063,6 +1094,7 @@ class Undo(MemoryTest):
                 to_session_at=500,
                 secret=True,
                 source="dm",
+                dm_chose_secret=True,
             ),
             lambda: self.memory.resolve_flag(GUILD_A, self.c, flag.id, source="dm"),
             lambda: self.memory.add_correction(
@@ -1109,7 +1141,14 @@ class Undo(MemoryTest):
         cerric, tamsin = await self.add("Cerric"), await self.add("Tamsin")
         await self.memory.add_alias(GUILD_A, self.c, keep, "Bel", kind="short", source="dm")
         await self.memory.add_alias(
-            GUILD_A, self.c, gone, "bel", kind="short", secret=True, source="dm"
+            GUILD_A,
+            self.c,
+            gone,
+            "bel",
+            kind="short",
+            secret=True,
+            source="dm",
+            dm_chose_secret=True,
         )  # same key on both: one is folded away
         await self.memory.add_alias(
             GUILD_A, self.c, cerric, "Cer", kind="short", used_by=gone, source="dm"
@@ -1176,8 +1215,9 @@ class Undo(MemoryTest):
         # 60 before who-knows moved with it, #2995: one read for the whole list.)
         # (62 before a merged entry's languages from the story moved with it, #4229: one read;
         # 63 before a place's land, climate and ruler moved with it, #4256: one read; 64 before a
-        # thread's parts moved with it, #4471: one read)
-        self.assertLess(merge_statements, 65)
+        # thread's parts moved with it, #4471: one read; 65 before a merge read the kept entry to
+        # refuse a secret main name before the #4524 guard could hold it, #4524: one read)
+        self.assertLess(merge_statements, 66)
         self.assertLess(undo_statements, 60)
         self.assertEqual(await self.snapshot(), before)  # undo split them again exactly
         # Still one log row per changed row, so undo and redo work as before.
@@ -1233,7 +1273,14 @@ class Undo(MemoryTest):
             await self.relate(keep, "ally_of", friend, source="cleaner", confidence=0.5)
             await self.relate(gone, "ally_of", friend, secret=True)  # folded, upgrades keep's
             await self.memory.add_alias(
-                GUILD_A, self.c, gone, f"Nick {n}", kind="short", secret=True, source="dm"
+                GUILD_A,
+                self.c,
+                gone,
+                f"Nick {n}",
+                kind="short",
+                secret=True,
+                source="dm",
+                dm_chose_secret=True,
             )
             await self.memory.add_alias(
                 GUILD_A, self.c, keep, f"Nick {n}", kind="short", source="dm"
@@ -1523,7 +1570,7 @@ class Lists(MemoryTest):
         bel = await self.add("Belleros", status=CONFIRMED)
         await self.memory.add_alias(
             GUILD_A, self.c, bel, "the hooded stranger", kind="title", source="dm",
-            status=CONFIRMED, secret=True,
+            status=CONFIRMED, secret=True, dm_chose_secret=True,
         )  # fmt: skip
         bel_alias = (
             await self.memory.add_alias(GUILD_A, self.c, bel, "Bel", kind="short", source="dm")
@@ -1844,7 +1891,14 @@ class Backups(MemoryTest):
         a, b = await self.add("Belleros"), await self.add("Bell")
         place = await self.add("Sorrowmere", type="place")
         await self.memory.add_alias(
-            GUILD_A, self.c, a, "the hooded stranger", kind="title", secret=True, source="dm"
+            GUILD_A,
+            self.c,
+            a,
+            "the hooded stranger",
+            kind="title",
+            secret=True,
+            source="dm",
+            dm_chose_secret=True,
         )
         await self.relate(a, "born_in", place)
         await self.relate(a, "located_in", b, source="cleaner", confidence=0.25)  # flagged
@@ -1862,7 +1916,14 @@ class Backups(MemoryTest):
     async def test_an_older_plain_backup_keeps_its_secret_names(self) -> None:
         a = await self.add("Belleros")
         await self.memory.add_alias(
-            GUILD_A, self.c, a, "the hooded stranger", kind="title", secret=True, source="dm"
+            GUILD_A,
+            self.c,
+            a,
+            "the hooded stranger",
+            kind="title",
+            secret=True,
+            source="dm",
+            dm_chose_secret=True,
         )
         backup = await self.campaigns.export(GUILD_A, self.c)
         backup["version"] = 1  # made before #164: plain JSON, no compression
@@ -2113,7 +2174,7 @@ class Renaming(MemoryTest):
         )
         await self.memory.add_alias(
             GUILD_A, self.c, b, "Beleros", kind="nickname", source="dm", status=CONFIRMED,
-            secret=True,
+            secret=True, dm_chose_secret=True,
         )  # fmt: skip
         await self.memory.rename_entity(GUILD_A, self.c, a, "Belleros", source="dm")
         self.assertEqual(await self.keys(a), {"belleros": CONFIRMED})
@@ -2198,7 +2259,7 @@ class Renaming(MemoryTest):
         a = await self.add("Belleros", status=CONFIRMED)
         await self.memory.add_alias(
             GUILD_A, self.c, a, "the hooded stranger", kind="title", source="dm",
-            status=CONFIRMED, secret=True,
+            status=CONFIRMED, secret=True, dm_chose_secret=True,
         )  # fmt: skip
         stranger = await self.add("the hooded stranger", status=CONFIRMED)
         before = await self.snapshot()
@@ -2230,6 +2291,7 @@ class Renaming(MemoryTest):
             source="dm",
             status=CONFIRMED,
             secret=True,
+            dm_chose_secret=True,
         )
         with self.assertRaises(MemoryRuleError):
             await self.memory.rename_entity(GUILD_A, self.c, a, "The Hooded Stranger", source="dm")
@@ -2294,7 +2356,14 @@ class LookupInPostgres(MemoryTest):
         gone = await self.add("Bellamy")
         await self.memory.set_entity_status(GUILD_A, self.c, gone, REJECTED, source="dm")
         await self.memory.add_alias(
-            GUILD_A, self.c, a, "the hooded stranger", kind="title", secret=True, source="dm"
+            GUILD_A,
+            self.c,
+            a,
+            "the hooded stranger",
+            kind="title",
+            secret=True,
+            source="dm",
+            dm_chose_secret=True,
         )
         await self.relate(a, "ally_of", b)
         await self.relate(a, "enemy_of", b, secret=True)
@@ -2398,6 +2467,7 @@ class MergeMatchesTheOldWalk(MemoryTest):
                             GUILD_A, campaign, owner, f"Nick {n}", kind="short", source="dm",
                             secret=rng.random() < 0.3,
                             status=CONFIRMED if rng.random() < 0.3 else PROPOSED,
+                            dm_chose_secret=True,
                         )
                     )  # fmt: skip
         for n in range(3):
@@ -2473,6 +2543,10 @@ class MergeMatchesTheOldWalk(MemoryTest):
         snap["memory_beliefs"] = sorted(
             (kinds[b["perspective_id"]], b["relation_id"], b["confidence"], b["status"])
             for b in snap.pop("memory_beliefs")
+        )
+        # (a 🤫 question's id is its own random one, #4524: compared by what it asks)
+        snap["secret_questions"] = sorted(
+            (q["item_id"], q["change_key"], q["status"]) for q in snap.pop("secret_questions")
         )
         return snap
 

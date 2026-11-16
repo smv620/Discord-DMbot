@@ -112,8 +112,8 @@ class Review(ConfirmedMemoryTest):
         self.assertIn("2. **", text)  # the others kept their numbers
         rows = [b for b in view.children if "All" not in str(getattr(b, "label", ""))]
         self.assertEqual(
-            [getattr(b, "disabled", None) for b in rows][:3], [True] * 3
-        )  # 1 is done: its yes, its secret yes and its no
+            [getattr(b, "disabled", None) for b in rows][:3], [False, True, True]
+        )  # 1 is done: its ✅ slot is now its ↩️ (open), its secret yes and its no are grey
         self.assertEqual([getattr(b, "disabled", None) for b in rows][3:9], [False] * 6)
         self.assertIn("✅ All true", text)
 
@@ -352,8 +352,8 @@ class Review(ConfirmedMemoryTest):
         self.assertEqual(self.labelled(view, "❌ 1").style, discord.ButtonStyle.secondary)
         rows = {b.label: b.row for b in view.children}
         self.assertEqual(
-            [rows[k] for k in ("✅ All true", "✅ 1", "🤫 1", "❌ 1")], [0, 1, 2, 3]
-        )  # the whole-page buttons share the top row, above the rows
+            [rows[k] for k in ("✅ All true", "✅ 1", "🤫 1", "❌ 1")], [0, 1, 3, 4]
+        )  # the whole-page buttons share the top row; 👥 has row 2 when there is a party (#4534)
 
     async def test_the_press_answers_discord_first_before_any_write(self) -> None:
         it, view = await self.page(said("Bram", "carries", "Heartseeker"))

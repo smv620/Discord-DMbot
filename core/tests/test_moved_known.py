@@ -60,11 +60,13 @@ class MergeMovesConnections(Helpers):
             "Brin", type="character", role="npc", status=CONFIRMED, hidden_from_players=True
         )
         rel = await self.connect(shown)
-        await self.memory.set_connection_knowers(GUILD_A, self.c, rel, [self.pc], source="dm")
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, rel, [self.pc], source="dm", dm_chose_secret=True
+        )
         self.assertEqual(await self.knowers(rel), [self.pc])
         self.assertTrue(await self.believes(rel))
         written = await self.memory.merge(
-            GUILD_A, self.c, hidden, shown, source="dm", dm_said_same=True
+            GUILD_A, self.c, hidden, shown, source="dm", dm_said_same=True, dm_chose_secret=True
         )
         self.assertEqual(await self.knowers(rel), [])
         self.assertFalse(await self.believes(rel))
@@ -78,8 +80,12 @@ class MergeMovesConnections(Helpers):
         one = await self.add("Arlo", type="character", role="npc", status=CONFIRMED)
         two = await self.add("Arlo the Bold", type="character", role="npc", status=CONFIRMED)
         rel = await self.connect(one)
-        await self.memory.set_connection_knowers(GUILD_A, self.c, rel, [self.pc], source="dm")
-        await self.memory.merge(GUILD_A, self.c, two, one, source="dm", dm_said_same=True)
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, rel, [self.pc], source="dm", dm_chose_secret=True
+        )
+        await self.memory.merge(
+            GUILD_A, self.c, two, one, source="dm", dm_said_same=True, dm_chose_secret=True
+        )
         self.assertEqual(await self.knowers(rel), [self.pc])
         self.assertTrue(await self.believes(rel))
 
@@ -90,9 +96,13 @@ class HidingAnEnd(MergeMovesConnections):
     async def test_hiding_an_end_closes_the_rows_and_the_belief(self) -> None:
         shown = await self.add("Arlo", type="character", role="npc", status=CONFIRMED)
         rel = await self.connect(shown)
-        await self.memory.set_connection_knowers(GUILD_A, self.c, rel, [self.pc], source="dm")
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, rel, [self.pc], source="dm", dm_chose_secret=True
+        )
         self.assertTrue(await self.believes(rel))
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, shown, True, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, shown, True, source="dm", dm_chose_secret=True
+        )
         self.assertEqual(await self.knowers(rel), [])
         self.assertFalse(await self.believes(rel))
 
@@ -101,20 +111,30 @@ class HidingAnEnd(MergeMovesConnections):
     ) -> None:
         shown = await self.add("Arlo", type="character", role="npc", status=CONFIRMED)
         rel = await self.connect(shown)
-        await self.memory.set_connection_knowers(GUILD_A, self.c, rel, [self.pc], source="dm")
-        await self.memory.update_relation(GUILD_A, self.c, rel, source="dm", secret=False)
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, shown, True, source="dm")
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, rel, [self.pc], source="dm", dm_chose_secret=True
+        )
+        await self.memory.update_relation(
+            GUILD_A, self.c, rel, source="dm", secret=False, dm_chose_secret=True
+        )
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, shown, True, source="dm", dm_chose_secret=True
+        )
         self.assertFalse(await self.believes(rel))
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, shown, False, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, shown, False, source="dm", dm_chose_secret=True
+        )
         self.assertIn(self.pc, await self.knowers(rel))
         self.assertTrue(await self.believes(rel))
 
     async def test_undoing_the_hide_restores_both(self) -> None:
         shown = await self.add("Arlo", type="character", role="npc", status=CONFIRMED)
         rel = await self.connect(shown)
-        await self.memory.set_connection_knowers(GUILD_A, self.c, rel, [self.pc], source="dm")
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, rel, [self.pc], source="dm", dm_chose_secret=True
+        )
         written = await self.memory.set_hidden_from_players(
-            GUILD_A, self.c, shown, True, source="dm"
+            GUILD_A, self.c, shown, True, source="dm", dm_chose_secret=True
         )
         self.assertFalse(await self.believes(rel))
         batch = written.batch
@@ -126,8 +146,12 @@ class HidingAnEnd(MergeMovesConnections):
     async def test_a_character_who_never_knew_it_is_not_given_a_belief_by_unhiding(self) -> None:
         shown = await self.add("Arlo", type="character", role="npc", status=CONFIRMED)
         rel = await self.connect(shown)  # secret: nobody knows it
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, shown, True, source="dm")
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, shown, False, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, shown, True, source="dm", dm_chose_secret=True
+        )
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, shown, False, source="dm", dm_chose_secret=True
+        )
         self.assertFalse(await self.believes(rel))
 
 
@@ -157,7 +181,7 @@ class MergeTwinFold(MergeMovesConnections):
         )
         self.assertTrue(await self.believes(folded))
         written = await self.memory.merge(
-            GUILD_A, self.c, hidden, shown, source="dm", dm_said_same=True
+            GUILD_A, self.c, hidden, shown, source="dm", dm_said_same=True, dm_chose_secret=True
         )
         self.assertFalse(await self.believes(twin))  # (Brin's connection is not the players')
         batch = written.batch
@@ -174,7 +198,9 @@ class MergeTwinFold(MergeMovesConnections):
         mara = self.ids["mara"]
         await self.know(CONNECTION, twin, [mara])
         await self.know(CONNECTION, folded, [self.pc])
-        await self.memory.merge(GUILD_A, self.c, two, one, source="dm", dm_said_same=True)
+        await self.memory.merge(
+            GUILD_A, self.c, two, one, source="dm", dm_said_same=True, dm_chose_secret=True
+        )
         self.assertEqual(await self.knowers(twin), sorted([self.pc, mara]))
 
     async def test_an_audience_limited_list_is_kept_through_a_merge(self) -> None:
@@ -183,9 +209,13 @@ class MergeTwinFold(MergeMovesConnections):
         await self.memory.add_relation(
             GUILD_A, self.c, self.pc, "knows", one, source="dm", confidence=1.0, status=CONFIRMED
         )
-        await self.memory.set_audience_limited(GUILD_A, self.c, one, True, source="dm")
+        await self.memory.set_audience_limited(
+            GUILD_A, self.c, one, True, source="dm", dm_chose_secret=True
+        )
         await self.know(ENTRY, one, [self.pc])  # (the DM's list, written once it is limited)
-        await self.memory.merge(GUILD_A, self.c, two, one, source="dm", dm_said_same=True)
+        await self.memory.merge(
+            GUILD_A, self.c, two, one, source="dm", dm_said_same=True, dm_chose_secret=True
+        )
         got = await self.memory.statement_knowers(GUILD_A, self.c, ENTRY, [two])
         self.assertEqual(sorted(got.get(two, [])), [self.pc])  # (and still limited to them)
         kept = await self.memory.entity(GUILD_A, self.c, two)
@@ -208,10 +238,12 @@ class JoinKeepsWhoKnew(JoinBase):
         return str(made.value[0].id)
 
     async def test_the_guards_knower_keeps_the_row_onto_a_hidden_ken_and_after_undo(self) -> None:
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.ken, True, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, self.ken, True, source="dm", dm_chose_secret=True
+        )
         rel = await self.hidden_connection(self.guard)
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, rel, [self.sees_guard], source="dm"
+            GUILD_A, self.c, rel, [self.sees_guard], source="dm", dm_chose_secret=True
         )
         written = await self.join()
         got = await self.memory.statement_knowers(GUILD_A, self.c, CONNECTION, [rel])
@@ -226,7 +258,7 @@ class JoinKeepsWhoKnew(JoinBase):
         twin = await self.hidden_connection(self.ken)
         mine = await self.hidden_connection(self.guard)
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, mine, [self.sees_guard], source="dm"
+            GUILD_A, self.c, mine, [self.sees_guard], source="dm", dm_chose_secret=True
         )
         await self.join()
         got = await self.memory.statement_knowers(GUILD_A, self.c, CONNECTION, [twin])

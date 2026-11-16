@@ -52,6 +52,8 @@ READERS = {
     + ": reads kept and guess connections to put a difference "
     "into the campaign's words for PlotBot; ids and names, no transcript",
     "memory/report_store.py": "only checks that the connections of a difference still exist",
+    "memory/public_guard.py": DM_ONLY + ": reads a connection's ends to say whether the players "
+    "see it, so the guard keeps it public and asks the DM (#4524); shows players nothing",
     "memory/claims.py": "DM-side: reads only the facts made by kept described-person claims of "
     "one session, to find the person they made; shows players nothing (#3431)",
     "memory/party.py": DM_ONLY + ": the party fill reads member_of ties to find the group the "
@@ -119,6 +121,10 @@ STORE = {
     "flag_kept": DM_ONLY + ": checks a connection the DM keeps",
     "_delete_relation": DM_ONLY + ": removal with its flags",
     "_move_relations": DM_ONLY + ": a merge; carries beliefs to the twin",
+    "ask_replace": "writes: a 🤫 question to end a public connection, the DM decides (#4524); "
+    "shows players nothing",
+    "_make_secret": "writes: the DM's own Make it secret or End the old one on a 🤫 question "
+    "(#4524), through the store's own rules; shows players nothing",
     "_met_back": "writes: moves the other's own knows up to met (#3881); never shows anything",
     "_has_parent": DM_ONLY + ": whether a place may be given an assumed parent (#4173 slice 3)",
     "_replace_assumed": "writes: a stated parent rejects the place's assumed one (#4173 slice 3)",

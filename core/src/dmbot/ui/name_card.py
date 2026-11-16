@@ -1565,7 +1565,12 @@ class NameCard(_Menu):
         )  # (not a stale card)
         try:
             await memory.set_hidden_from_players(
-                campaign.guild_id, campaign.id, self.entity_id, hide, source=DM
+                campaign.guild_id,
+                campaign.id,
+                self.entity_id,
+                hide,
+                source=DM,
+                dm_chose_secret=True,
             )
         except MemoryRuleError as exc:
             await _tell(interaction, f"Couldn't change it. {exc}")
@@ -2266,6 +2271,7 @@ class AnotherNameForm(discord.ui.Modal, title="Add another name"):
                     source=DM,
                     status=CONFIRMED,
                     secret=secret,
+                    dm_chose_secret=True,
                 )
             except MemoryRuleError as exc:
                 problems.append(f"**{_md(text)}**: {exc}")

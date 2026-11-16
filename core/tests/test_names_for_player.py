@@ -23,10 +23,12 @@ class TheReaderNamesEachEndAsTheCharacterKnowsIt(JoinBase):
         return str(made.value[0].id)
 
     async def test_a_joined_connection_reads_as_the_guard_and_never_ken(self) -> None:
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.ken, True, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, self.ken, True, source="dm", dm_chose_secret=True
+        )
         rel = await self.hidden_connection(self.guard)
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, rel, [self.sees_guard], source="dm"
+            GUILD_A, self.c, rel, [self.sees_guard], source="dm", dm_chose_secret=True
         )
         written = await self.join()
         after = await self.memory.what_my_characters_know(GUILD_A, self.c, 1)
@@ -46,7 +48,9 @@ class TheReaderNamesEachEndAsTheCharacterKnowsIt(JoinBase):
             status=CONFIRMED, secret=True,
         )  # fmt: skip
         rel = str(made.value[0].id)
-        await self.memory.set_connection_knowers(GUILD_A, self.c, rel, [self.sees_ken], source="dm")
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, rel, [self.sees_ken], source="dm", dm_chose_secret=True
+        )
         await self.join()
         mine = await self.memory.what_my_characters_know(GUILD_A, self.c, 2)
         self.assertEqual([c.subject for c in mine.connections], ["Ken"])
@@ -58,7 +62,7 @@ class TheReaderNamesEachEndAsTheCharacterKnowsIt(JoinBase):
         the guard's name, so it is listed under that name and never as Ken."""
         rel = await self.hidden_connection(self.guard)
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, rel, [self.sees_guard], source="dm"
+            GUILD_A, self.c, rel, [self.sees_guard], source="dm", dm_chose_secret=True
         )
         await self.join()
         mine = await self.memory.what_my_characters_know(GUILD_A, self.c, 1)
@@ -68,7 +72,9 @@ class TheReaderNamesEachEndAsTheCharacterKnowsIt(JoinBase):
 
     async def test_a_player_whose_character_knows_ken_by_name_is_shown_ken(self) -> None:
         rel = await self.hidden_connection(self.ken)
-        await self.memory.set_connection_knowers(GUILD_A, self.c, rel, [self.sees_ken], source="dm")
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, rel, [self.sees_ken], source="dm", dm_chose_secret=True
+        )
         await self.join()
         mine = await self.memory.what_my_characters_know(GUILD_A, self.c, 2)
         self.assertEqual([c.subject for c in mine.connections], ["Ken"])
@@ -81,7 +87,12 @@ class TheReaderNamesEachEndAsTheCharacterKnowsIt(JoinBase):
             status=CONFIRMED, secret=True,
         )  # fmt: skip
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, str(made.value[0].id), [self.sees_guard], source="dm"
+            GUILD_A,
+            self.c,
+            str(made.value[0].id),
+            [self.sees_guard],
+            source="dm",
+            dm_chose_secret=True,
         )
         mine = await self.memory.what_my_characters_know(GUILD_A, self.c, 1)
         self.assertIn(
@@ -89,7 +100,9 @@ class TheReaderNamesEachEndAsTheCharacterKnowsIt(JoinBase):
         )
 
     async def test_an_unnamed_persons_label_never_carries_a_hidden_anchor(self) -> None:
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.ken, True, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, self.ken, True, source="dm", dm_chose_secret=True
+        )
         sister = await self.memory.add_unnamed(
             GUILD_A, self.c, what="sister", role="sibling", anchor_id=self.ken
         )
@@ -118,7 +131,9 @@ class TheReaderNamesEachEndAsTheCharacterKnowsIt(JoinBase):
     ) -> None:
         from dmbot.memory.ontology import FALLBACK_PREDICATE
 
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.ken, True, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, self.ken, True, source="dm", dm_chose_secret=True
+        )
         sister = await self.memory.add_unnamed(
             GUILD_A, self.c, what="sister", role="sibling", anchor_id=self.ken
         )
@@ -134,14 +149,14 @@ class TheReaderNamesEachEndAsTheCharacterKnowsIt(JoinBase):
         )  # fmt: skip
         rel = str(made.value[0].id)
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, rel, [self.sees_guard], source="dm"
+            GUILD_A, self.c, rel, [self.sees_guard], source="dm", dm_chose_secret=True
         )
         await self.know(ENTRY, sister_id, [self.sees_guard])
         await self.memory.join_same_person(GUILD_A, self.c, sister_id, self.ken)
         found = await self.memory.aliases(GUILD_A, self.c, entity_id=self.ken, include_secret=True)
         label_alias = next(a.id for a in found if a.text.startswith("unnamed - "))
         await self.memory.set_alias_knowers(
-            GUILD_A, self.c, label_alias, [self.sees_guard], source="dm"
+            GUILD_A, self.c, label_alias, [self.sees_guard], source="dm", dm_chose_secret=True
         )
         mine = await self.memory.what_my_characters_know(GUILD_A, self.c, 1)
         self.assertNotIn("Ken", repr(mine))
