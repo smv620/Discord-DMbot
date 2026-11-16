@@ -118,3 +118,16 @@ class TheReply(unittest.IsolatedAsyncioTestCase):
         mem = memory()
         mem.name_uploads = AsyncMock(side_effect=RuntimeError)
         self.assertEqual(await ask(mem), name_places.TRY_AGAIN)
+
+    async def test_a_kept_session_quest_without_transcripts_still_shows_its_upload(self) -> None:
+        Threads.kept = KeptFrom("s1", (100,), (7,), "Winter plot", DAY)
+        text = await ask(memory(), transcripts=None)
+        self.assertIn("*Winter plot*", text)
+
+    async def test_a_deleted_session_says_the_line_was_removed(self) -> None:
+        Threads.kept = KeptFrom("s1", (100,), (7,), "", DAY)
+        session = SimpleNamespace(number=4, started_at=DAY, deleted_at=DAY)
+        transcripts = SimpleNamespace(
+            session=AsyncMock(return_value=session), around=AsyncMock(return_value=None)
+        )
+        self.assertIn(name_places.REMOVED, await ask(memory(), transcripts=transcripts))

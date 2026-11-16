@@ -99,7 +99,9 @@ async def where_entry(
         if not lore:
             extra.extend(upload_lines(uploads))
         if kept is not None:
-            extra.extend(await _session_lines(transcripts, guild_id, kept, agreed))
+            if transcripts is not None:  # (no transcripts: the upload sources still show)
+                extra.extend(await _session_lines(transcripts, guild_id, kept, agreed))
+            # (the day is the suggestion's own, made when the upload was read)
             if kept.upload and not uploads and not lore:
                 extra.append(upload_line(kept.upload, kept.created_at))
         text = await name_places.where_said(

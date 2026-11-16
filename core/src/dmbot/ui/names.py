@@ -1625,7 +1625,6 @@ class SuggestionReview(_Menu):
                 lore_source=source,
                 lore_card=True,
             )
-        log.info("Showed where a name was said: %d places kept", len(self.refs))
         await interaction.followup.send(text, ephemeral=True)
 
     def _buttons(self) -> None:

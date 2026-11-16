@@ -279,7 +279,8 @@ class ThreadSuggestionStore:
     async def kept_from(self, guild_id: int, campaign_id: str, entity_id: str) -> KeptFrom | None:
         """The suggestion the DM kept that made this entry, found through the change that added
         it (the keep writes both under one number). None for an entry no suggestion made, or one
-        whose suggestion was undone. A DM-only reader: the upload's label can name a backstory."""
+        whose suggestion was undone, or one merged into another entry (only the entry's own
+        creating change is followed). A DM-only reader: the upload's label can name a backstory."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT t.session_id, t.line_starts, t.speaker_ids, t.upload, t.created_at"
