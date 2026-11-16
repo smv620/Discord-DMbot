@@ -26,6 +26,8 @@ The documents themselves are linked, not copied.
 
 `master_key.json` stays as it is (the lore and session, merged by hand), so today's single-stage run keeps its series.
 
+To score a backup against them: `python -m dmbot.devtools.graph_key_check BACKUP --key core/tests/fixtures/story_graph/total_key.json --docs all --counts-only` (stage 1; `full_key.json` for stage 2). `--docs all` scores every document the key holds, backstories included. The report adds who knows each found row: per player character it is right, **leaked** (a player character knows what the key keeps from them, a failure), or too narrow; an NPC the key names is right or wrong on its own line. Rows marked `check` (the owner is still checking their knowers) are also counted apart.
+
 ## The test players
 
 | Player character | Player (not on Discord) |
