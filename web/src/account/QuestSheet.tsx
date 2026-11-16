@@ -5,7 +5,9 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { questSheetWords as w } from "../content/quest-sheet-words";
+import { QUEST_EDIT_LIVE } from "../content/quest-edit-switch";
 import type { AccountApi, ThreadCard, ThreadCardPart } from "./api";
+import QuestSheetEdit from "./QuestSheetEdit";
 
 type Load = { kind: "loading" } | { kind: "card"; card: ThreadCard } | { kind: "none" };
 
@@ -33,10 +35,11 @@ export default function QuestSheet({
   // Each thread gets its own answer; an answer for a thread picked before is dropped.
   const latest = useRef(0);
 
-  useEffect(() => {
+  // Reads the sheet again. A reload after a change keeps the sheet on screen while it reads (no "Loading…" flash).
+  const fetchCard = (showLoading: boolean): Promise<void> => {
     const mine = ++latest.current;
-    setLoad({ kind: "loading" });
-    api
+    if (showLoading) setLoad({ kind: "loading" });
+    return api
       .threadCard!(refId, thread.id)
       .then((card) => {
         if (mine === latest.current) setLoad({ kind: "card", card });
@@ -45,6 +48,9 @@ export default function QuestSheet({
         // a refused or failed sheet: nothing is shown, and the pane is as it was
         if (mine === latest.current) setLoad({ kind: "none" });
       });
+  };
+  useEffect(() => {
+    void fetchCard(true);
   }, [api, refId, thread.id]);
 
   if (load.kind === "none") return null;
@@ -149,6 +155,9 @@ export default function QuestSheet({
         <p class="small">
           <a href="/account/questions">{w.questionsWaiting(card.waiting)}</a>
         </p>
+      )}
+      {QUEST_EDIT_LIVE && api.changeThreadParts !== undefined && (
+        <QuestSheetEdit api={api} refId={refId} threadId={thread.id} card={card} reload={() => fetchCard(false)} />
       )}
     </section>
   );

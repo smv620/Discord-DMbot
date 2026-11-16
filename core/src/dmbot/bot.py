@@ -325,6 +325,7 @@ from dmbot.memory import (
     scan_kinds,
     scene_move_step,
     scene_step,
+    time_limits,
     voyage,
     waiting_now,
     web_actions,
@@ -12589,6 +12590,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
         return may
 
+    def _game_now(self, guild_id: int) -> web_actions.GameNowFn:
+        """The campaign's game clock now, for a time limit's date from the website (#4503): the
+        one function Discord's card counts on (`time_limits.clock_now`), minutes only."""
+
+        async def now(campaign_id: str) -> int | None:
+            clock = await time_limits.clock_now(self.clocks, guild_id, campaign_id)
+            return None if clock is None else clock[0]
+
+        return now
+
     def _import_clock_choice(self, guild_id: int) -> web_actions.ClockChoiceFn:
         """The website's answer to an import clock offer (#3199), applied the way Discord's two
         buttons do it: the offer is held for this answer (a second answer, from either place,
@@ -13326,6 +13337,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 look_up=self._player_lookup(guild.id),
                                 actions=store,
                                 clock=self._import_clock_choice(guild.id),
+                                game_now=self._game_now(guild.id),
                                 maps=self.map_store,
                                 uploads=MapUploads(
                                     self.maps_staging,

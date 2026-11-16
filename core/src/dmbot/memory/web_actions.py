@@ -24,6 +24,7 @@ from dmbot.db import Database
 from dmbot.memory import backstory_keep as keep
 from dmbot.memory import beliefs, evidence, link_edits, map_uploads, name_edits, placing, told
 from dmbot.memory import claims as claims_mod
+from dmbot.memory import time_limits as tl
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import ALREADY_UNDONE, CLAIMS, Changes
 from dmbot.memory._changes import NOT_FOUND as STORE_NOT_FOUND
@@ -96,6 +97,7 @@ NAMES_NOT_SHOWN = "names_not_shown"  # a connection to a name still held back (#
 NAME_UNNAMED = "name_unnamed"  # ... or to a person the story never named (#3426)
 FAILED = "failed"  # anything unexpected; the action can be sent again
 GONE = "gone"  # a waiting question that is not waiting any more
+NO_CLOCK = "no_clock"  # a time limit's date asked for with no game clock to count on (#4503)
 CHANGED = "changed"  # an Undo refused: something done since is in the way (#4156)
 TOO_LATE = "too_late"  # an Undo past the store's limit (#4156)
 LINK_UNDO = "link-undo"  # takes back the change batch of one of the DM's own connection edits
@@ -151,7 +153,7 @@ THREAD_ACTIONS = ("thread-keep", "thread-not", "thread-undo")
 # Discord's 🧵 "📋 Steps, rewards and more", each one change and one Undo.
 PART_ACTIONS = (
     "part-add", "part-fix", "part-state", "part-show", "part-remove", "branch-move", "branch-not",
-    "part-undo",
+    "part-undo", "part-date",
 )  # fmt: skip
 # The Maps page's presses (#4347): a DM's yes or no to using a map (`<map id> yes|no`), Show to
 # the table or Hide (`<map id> shown|hidden`), Remove (`<map id>`), a poster's Take it back
@@ -588,6 +590,7 @@ async def apply(
     maps: MapStore | None = None,
     uploads: MapUploads | None = None,
     reads: Callable[[int], Awaitable[bool]] | None = None,
+    game_now: GameNowFn | None = None,
 ) -> Outcome:
     """Do one action the way Discord's name card does. Nothing here logs the DM's words."""
     if action.action in MAPS_PAGE_ACTIONS:
@@ -620,7 +623,7 @@ async def apply(
     if action.action in PART_ACTIONS:
         if actions is None and action.action == "part-undo":
             return _failed(FAILED)
-        return await _parts(memory, actions, guild_id, cid, action)
+        return await _parts(memory, actions, guild_id, cid, action, game_now)
     if action.action in THREAD_ACTIONS:
         if actions is None and action.action == "thread-undo":
             return _failed(FAILED)
@@ -1015,7 +1018,12 @@ def _none(word: str) -> str | None:
 
 
 async def _parts(
-    memory: MemoryStore, actions: ActionStore | None, guild_id: int, cid: str, a: Action
+    memory: MemoryStore,
+    actions: ActionStore | None,
+    guild_id: int,
+    cid: str,
+    a: Action,
+    game_now: GameNowFn | None = None,
 ) -> Outcome:
     """A change to a kept thread's parts or branches from the page (#4476), through the same store
     calls as Discord's 🧵 card (`add_thread_part`, `correct_thread_part`, `set_thread_part_state`,
@@ -1035,6 +1043,17 @@ async def _parts(
             await memory.undo(guild_id, cid, batch)
             return Outcome()
         words = a.text.split(" ")
+        if a.action == "part-date":
+            # N game days from the clock's now, counted here and never sent by the page, so the
+            # website cannot write a date the clock would not; `-` clears (#4503).
+            now = await game_now(cid) if game_now is not None else None
+            if words[1] != "-" and now is None:
+                return _failed(NO_CLOCK)
+            minute = None if words[1] == "-" else tl.days_from(now or 0, int(words[1]))
+            dated = await memory.set_time_limit_date(
+                guild_id, cid, words[0], minute, now=now, source=DM
+            )
+            return _changed(dated.batch)
         if a.action == "part-add":
             thread, kind, state, due, limit, who, about, under = words[:8]
             made = await memory.add_thread_part(
@@ -1325,6 +1344,10 @@ class PlayerLookup:
 # function (it needs the Discord client to move and redraw the clock); the offer row carries the
 # outcome.
 ClockChoiceFn = Callable[[str, str, bool, int], Awaitable[None]]
+
+# The campaign's game clock now, in minutes (the group furthest ahead while the party is split),
+# or None with no clock: what a time limit's date is counted from (#4503). The bot's own function.
+GameNowFn = Callable[[str], Awaitable[int | None]]
 
 # Asks Discord about one ID: None when Discord does not know it. A failed lookup raises, so it is
 # never read as "unknown" (and nothing is linked without the name having been shown).

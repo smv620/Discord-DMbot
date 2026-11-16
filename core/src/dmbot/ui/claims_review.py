@@ -166,6 +166,8 @@ def party_names(party: list[Entity], ids: list[str]) -> str:
     in the party list's order. Names only."""
     wanted = set(ids)
     names = [_md(e.name) for e in party if e.id in wanted]
+    if not names:  # (a stale list: nothing to name)
+        return "nobody"
     return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
 
 
@@ -457,7 +459,12 @@ class ClaimsReview(_Menu):
         again now; nothing is written until Save."""
         campaign = await _campaign_for(interaction, self.campaign_id)
         claim = next((c for c in self.page if c.id == claim_id), None)
-        if campaign is None or claim is None or claim_id in self.answered:
+        if campaign is None:
+            return
+        if (
+            claim is None or claim_id in self.answered
+        ):  # (a stale or double press still gets an answer)
+            await _tell(interaction, "That question was already answered.")
             return
         picker = KnowersPicker(self, claim)
         await _replace(interaction, picker.text(), picker)
@@ -600,8 +607,9 @@ class KnowersPicker(_Menu):
         self.review, self.claim = review, claim
         shown = {e.id for e in review.party[: self.MAX_OPTIONS]}  # (a menu holds 25)
         guessed = [i for i in guess_for(claim, review.party) if i in shown]
-        self.chosen: list[str] = guessed
-        self.guessed = bool(guessed)
+        self.chosen: list[str] = list(guessed)
+        self.guess = guessed  # DMbot's own guess, kept apart from what the DM ticks
+        self.saving = False
         self.select: discord.ui.Select[Any] = discord.ui.Select(
             placeholder="Who knows it?",
             min_values=1,
@@ -621,16 +629,18 @@ class KnowersPicker(_Menu):
         ]
 
     def text(self) -> str:
+        # (DMbot's name only goes on DMbot's guess, never on what the DM ticked)
         who = (
-            f"{knower_icon(len(self.chosen))} DMbot thinks only "
-            f"{party_names(self.review.party, self.chosen)} "
-            f"{knows(len(self.chosen))} this: it is ticked.\n"
-            if self.guessed
+            f"{knower_icon(len(self.guess))} DMbot's guess is ticked: only "
+            f"{party_names(self.review.party, self.guess)} {knows(len(self.guess))} this.\n"
+            if self.guess and sorted(self.chosen) == sorted(self.guess)
             else ""
         )
         return (
             f"{SOME} **Who knows this?** {statement(self.claim)}\n{who}"
-            "Tick the characters who know it, then Save. It happened; only they know."
+            "Tick who knows it, then press Save. Saving also marks it true, and only they will "
+            "know. "
+            "Back changes nothing."
         )
 
     async def _ticked(self, interaction: discord.Interaction) -> None:
@@ -640,10 +650,17 @@ class KnowersPicker(_Menu):
 
     async def _save(self, interaction: discord.Interaction) -> None:
         if not self.chosen:  # (the menu needs one, but a card with nothing ticked says so)
-            await _tell(interaction, "Tick at least one character who knows it, or go back.")
+            await _tell(interaction, "Tick at least one character who knows it, or press Back.")
             return
-        await _answer_first(interaction, in_place=True)  # (the write below can take a moment)
-        await self.review._decide(interaction, self.claim.id, True, knowers=self.chosen)
+        if self.saving or self.claim.id in self.review.answered:  # (a double press writes once)
+            await _tell(interaction, "That question was already answered.")
+            return
+        self.saving = True
+        try:
+            await _answer_first(interaction, in_place=True)  # (the write below can take a moment)
+            await self.review._decide(interaction, self.claim.id, True, knowers=self.chosen)
+        finally:
+            self.saving = False
         if self.claim.id in self.review.answered:
             self.stop()  # (a refusal leaves this card in place to change the ticks)
 
