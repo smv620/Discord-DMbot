@@ -64,7 +64,7 @@ class Estimates(unittest.TestCase):
         small = credits.estimate("lore", 0.2, allowance=100, used=0)
         self.assertEqual((small.credits, small.ask), (8, False))
         big = credits.estimate("import", 200, allowance=100, used=40)
-        self.assertEqual((big.credits, big.left, big.enough), (800, 60, False))
+        self.assertEqual((big.credits, big.left, big.enough), (1000, 60, False))
 
     def test_a_month_over_its_allowance_has_nothing_left_not_less(
         self,

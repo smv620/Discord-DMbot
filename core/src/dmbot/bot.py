@@ -794,6 +794,7 @@ IMPORT_READING = "Reading connections"
 # The two steps after the read, in the same feed (#3602's ruling, #3596): the words show as written.
 IMPORT_SCENES = "Writing what happened around each name"
 IMPORT_WHO = "Working out who each name is"
+IMPORT_THREADS = "Looking for story threads"
 IDLE_CHECK_S = 60  # how often a running session is checked for being empty or quiet (#2034)
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
@@ -3423,6 +3424,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # extractor, inside the same call limit, live wherever it runs (ruled); after the
             # posts the DM waits for, since nothing above reads a rank.
             ("importance", lambda: self.write_importance(table)),
+            # New story threads the table's talk started (#4522, quests slice 5a): after the
+            # importance step (as an import runs them), inside the same call limit, so a long
+            # session's threads never leave importance without calls; one counts line in the DM
+            # Bot channel. Off unless its switch is on.
+            ("story threads", lambda: self.read_session_threads(table)),
             # The questions above go out as one private message (#3210).
             ("questions for the DM", lambda: self.send_collected_asks(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
@@ -9397,6 +9403,126 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             except Exception as exc:  # the type only: never fatal, never a word of the story
                 log.warning("Importance: the reading failed (%s)", type(exc).__name__)
 
+    async def read_session_threads(self, table: Table) -> None:
+        """After a live session (#4522): see `_read_threads`. The people who may be read are
+        those who agree now (`ConsentStore.consenting`)."""
+        if table.campaign_id is None or table.transcript_session_id is None:
+            return
+        gid = table.guild_id
+        await DMBot._read_threads(  # (by the class: the tests' stand-ins are not DMBots)
+            self, gid, table.campaign_id, table.transcript_session_id,
+            {table.dm_user_id, *table.dm_user_ids}, lambda: self.consent.consenting(gid),
+        )  # fmt: skip
+
+    async def _read_threads(
+        self,
+        gid: int,
+        cid: str,
+        sid: str,
+        dm_ids: Collection[int],
+        consenting: Callable[[], Awaitable[Collection[int]]],
+        renew: Callable[[], Awaitable[Any]] | None = None,
+    ) -> None:
+        """The new story threads one stored session's talk starts (#4522, quests slice 5a;
+        `memory.session_threads`), waiting on the 📜 card for the DM, with one counts line in the
+        DM Bot channel (#3874; its button opens the card privately, for a DM only). Only with
+        DMBOT_STORY_THREADS and the story extractor on, where the plan allows the story, inside
+        the extractor's session and daily call limits, only lines of people who agree (last
+        time's recap left out). A thread the campaign has, or one suggested before, is never
+        suggested again. Counts only in the log and the channel. Never raises. `renew` keeps an
+        import's hold while it reads (unused live)."""
+        if (
+            not self.settings.story_threads_on  # (off means off: nothing is read or asked)
+            or not self.settings.story_extractor_on
+            or self.extractor_ai is None
+            or self.memory is None
+            or self.transcripts is None
+        ):
+            return
+        from dmbot.ai import OUTPUT_FLOOR
+        from dmbot.memory import session_threads
+        from dmbot.memory.thread_suggestions import ThreadSuggestionStore
+        from dmbot.ui.name_background import thread_inputs
+        from dmbot.ui.thread_questions import session_label
+
+        memory, transcripts, ai = self.memory, self.transcripts, self.extractor_ai
+        with log_context(guild_id=gid, campaign_id=cid):
+            try:
+                campaign = await self.campaigns.get(gid, cid)
+                if campaign is None or not await self.plan_allows(
+                    "story", gid, campaign, fail_open=False
+                ):
+                    return
+                session = await transcripts.session(gid, sid)
+                if session is None:
+                    return
+                _after_ms, used = await transcripts.extraction(gid, sid)
+                now = int(time.time())
+                allowed = extractor.calls_left(
+                    self.settings.story_extractor_max_calls,
+                    used,
+                    self.settings.story_extractor_max_calls_day,
+                    await transcripts.extractor_calls_since(gid, cid, now - 86400),
+                )
+                label = session_label(session.started_at)
+                if allowed <= 0:  # (a limit stopped it before it began: said, never "nothing")
+                    log.info("Session threads: no calls left in the extractor's limit")
+                    await self._tell_threads(campaign, 0, "call limit", label)
+                    return
+                recap = await self._recap_lines(gid, sid)
+                lines = [
+                    s
+                    for s in extractor.readable(await transcripts.lines(gid, sid))
+                    if s.number not in recap
+                ]
+                if not lines:
+                    return
+                have, entries, names, known = await thread_inputs(memory, gid, cid)
+
+                async def count_call() -> None:
+                    await transcripts.record_extraction(
+                        gid, sid, through_ms=0, calls=1, now=int(time.time())
+                    )
+                    if renew is not None:
+                        await renew()
+
+                found, report = await session_threads.run(
+                    ai, lines, dm_ids=dm_ids, entries=entries, names=names, have=have,
+                    known=known, consenting=consenting, max_calls=allowed,
+                    max_tokens=OUTPUT_FLOOR, count_call=count_call,
+                )  # fmt: skip
+                store = ThreadSuggestionStore(memory._db)
+                # (the consent re-check just before storing: who stopped meanwhile is never kept)
+                agreed = set(await consenting())
+                found = [f for f in found if set(f.speaker_ids) <= agreed]
+                made = await store.offer(
+                    gid, cid, found, label, int(time.time()),
+                    session_id=sid, session_at=session.started_at,
+                )  # fmt: skip
+                await self._tell_threads(campaign, made, report.stopped, label)
+            except Exception as exc:  # the type only: never fatal, never a word of the story
+                log.warning("Session threads: the reading failed (%s)", type(exc).__name__)
+
+    async def _tell_threads(self, campaign: Campaign, made: int, stopped: str, label: str) -> None:
+        """One counts line in the DM Bot channel (#3874; the DM screen when there is none) when a
+        session's reading made new story threads to check, or stopped early: counts only (the
+        channel is the campaign's people's), with the 📜 button that opens the card privately for
+        a DM. Nothing when nothing was found and nothing stopped it."""
+        from dmbot.ui.thread_questions import ThreadQuestionsButton, threads_found_text
+
+        if not made and not stopped:
+            return
+        channel, _counts_only = self._upkeep_channel(campaign)
+        if channel is None:
+            return
+        view = discord.ui.View(timeout=None)
+        if made:
+            view.add_item(ThreadQuestionsButton(campaign.id))
+        try:
+            await self.post(channel, threads_found_text(made, bool(stopped), label), view=view)
+        except Exception as exc:
+            log.warning("Session threads: couldn't post the count (%s)", type(exc).__name__)
+
     async def write_who(self, table: Table) -> None:
         """After a live session (#3602): see `_write_who`. The people who may be read are those
         who agree now (`ConsentStore.consenting`)."""
@@ -12301,6 +12427,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         for word, step in (
             (IMPORT_SCENES, self._write_scenes),
             (IMPORT_WHO, self._write_who),
+            (IMPORT_THREADS, self._read_threads),  # (#4522: off unless its switch is on)
         ):
             try:
                 ai_feed.step(word)

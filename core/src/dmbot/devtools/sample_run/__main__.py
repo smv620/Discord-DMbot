@@ -554,6 +554,7 @@ async def _measure(
         sources = question_counts.Sources(
             db=db, memory=memory, claims=ClaimStore(memory), backstory=BackstoryLinks(db),
             heard=WaitingQuestionStore(db), agreed=ConsentStore(db).consenting,
+            recorded=ConsentStore(db).recorded_in,
         )  # fmt: skip
         asked = await questions.asked(sources, gid, cid)
     except Exception as exc:  # (a count that can't be read never fails the run)

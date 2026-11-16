@@ -1540,6 +1540,42 @@ THREADS_SHORT = {
 }
 
 
+async def thread_inputs(
+    memory: Any, guild_id: int, campaign_id: str
+) -> tuple[list[tuple[str, frozenset[str]]], dict[str, set[str]], dict[str, str], list[str]]:
+    """What both thread readers check against (#4453, #4522): `have`, every suggestion made before
+    and every thread the campaign has, by name key and people (never suggested again); `entries`,
+    a name's key to the campaign's people, groups and places it may point at (never the party's own
+    group, a rejected entry or a thread: design §6); `names`, entry id to name; and the open
+    threads' names, for the session reader's prompt."""
+    from dmbot.memory import thread_read
+    from dmbot.memory.thread_suggestions import ThreadSuggestionStore
+    from dmbot.memory.threads import LIVE_STATES
+
+    lookup = CampaignLookup.build(await memory.lookup_data(guild_id, campaign_id))
+    onto = await memory.ontology(guild_id, campaign_id)
+    have = list(await ThreadSuggestionStore(memory._db).known(guild_id, campaign_id))
+    known: list[str] = []
+    for t in await memory.threads(guild_id, campaign_id):
+        have.append((name_key(t.thread.name), frozenset(i.who.id for i in t.involved)))
+        if t.state in LIVE_STATES:
+            known.append(t.thread.name)
+    rows = []
+    for entry in lookup.names:
+        who = lookup.entities.get(entry.entity_id)
+        if (
+            who is None
+            or who.status == REJECTED
+            or who.party  # (the party is never one of a thread's people: design §6)
+            or onto.is_a(who.type, "thread")
+        ):
+            continue
+        rows.append((who.id, who.type, entry.text))
+    entries = thread_read.entries_by_name(rows)
+    names = {i: e.name for i, e in lookup.entities.items()}
+    return have, entries, names, known
+
+
 async def store_thread_suggestions(
     bot: Any,
     campaign: Campaign,
@@ -1576,25 +1612,8 @@ async def store_thread_suggestions(
     dropped: dict[str, int] = {}
     short, made = "", 0
     try:
-        lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
-        onto = await memory.ontology(campaign.guild_id, campaign.id)
         store = ThreadSuggestionStore(memory._db)
-        have = list(await store.known(campaign.guild_id, campaign.id))
-        for t in await memory.threads(campaign.guild_id, campaign.id):
-            have.append((name_key(t.thread.name), frozenset(i.who.id for i in t.involved)))
-        rows = []
-        for entry in lookup.names:
-            who = lookup.entities.get(entry.entity_id)
-            if (
-                who is None
-                or who.status == REJECTED
-                or who.party  # (the party is never one of a thread's people: design §6)
-                or onto.is_a(who.type, "thread")
-            ):
-                continue
-            rows.append((who.id, who.type, entry.text))
-        entries = thread_read.entries_by_name(rows)
-        names = {i: e.name for i, e in lookup.entities.items()}
+        have, entries, names, _known = await thread_inputs(memory, campaign.guild_id, campaign.id)
         reading = thread_read.read_threads(ai, text, max_tokens=OUTPUT_FLOOR)
         said, short = await (reading if left is None else asyncio.wait_for(reading, left))
         found, dropped = thread_read.check(said, text, entries, names, have=have)

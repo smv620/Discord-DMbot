@@ -120,6 +120,10 @@ class Settings:
     # A fourth question (#2996, part 2 slice 1): who learned what, proposed for the DM to keep.
     # Off until dev1's sample run; only runs when the extractor does, inside the same call limits.
     story_reveals_on: bool = False
+    # Quests slice 5a (#4522): after a session, the new story threads the table's talk starts are
+    # suggested on the 📜 card. Off until dev1's scored sample run shows the other counts no worse
+    # (Supervisor's ruling C on #4522; docs/GO_LIVE.md)
+    story_threads_on: bool = False
     # Ask the reveal question only of batches that could hold one (#2996): off until dev1's run
     # shows the kept reveals don't drop with it on.
     story_reveals_precheck: bool = False
@@ -516,6 +520,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_PICTURE_NAMES must be 1 (on) or 0 (off), got "' + picture_raw + '".'
         )
+    threads_raw = (get("DMBOT_STORY_THREADS") or "0").lower()
+    if threads_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_STORY_THREADS must be 1 (on) or 0 (off), got "' + threads_raw + '".'
+        )
     reveals_raw = (get("DMBOT_STORY_REVEALS") or "0").lower()
     if reveals_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -725,6 +734,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_scenes_on=scenes_raw in ("1", "true", "on"),
         story_deeds_on=deeds_raw in ("1", "true", "on"),
         story_reveals_on=reveals_raw in ("1", "true", "on"),
+        story_threads_on=threads_raw in ("1", "true", "on"),
         story_reveals_precheck=precheck_raw in ("1", "true", "on"),
         met_unnamed_on=met_raw in ("1", "true", "on"),
         private_scenes_on=private_raw in ("1", "true", "on"),

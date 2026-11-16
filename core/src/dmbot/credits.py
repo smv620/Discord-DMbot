@@ -73,7 +73,9 @@ OwnerOf = Callable[[int, str], Awaitable[int | None]]
 CREDITS_PER_UNIT: dict[str, int] = {
     "lore": 40,  # per 1,000 words
     "adventure": 60,  # per 1,000 words (a careful read, so dearer than names)
-    "import": 4,  # per line of the imported session
+    # per line of the imported session: 4 for the reading, and 1 for the story-threads pass (#4522,
+    # Supervisor's ruling E: one call per 200 lines, well under a credit a line, so it stays high)
+    "import": 5,
     "script": 120,  # per script (one imported session)
 }
 # The words the DM sees for what is counted, by job kind.
