@@ -200,6 +200,10 @@ def predicate_for_either(words: str) -> tuple[str, str, bool]:
     return predicate, detail, False
 
 
+# How an ended sighting reads (#4569): where someone was, never where they were last seen
+VISIT_PAST = "was in"
+
+
 def link_words(
     predicate: str,
     detail: str,
@@ -209,6 +213,7 @@ def link_words(
     feeling: bool = False,
     knows_how: str | None = None,
     route_state: str = "",
+    ended: bool = False,
 ) -> str:
     """How one connection reads from its first name to its second. On the catch-all, the words it
     was said in ("sworn on the ashes of") are the connection's own label (#1303); on family, the
@@ -220,7 +225,8 @@ def link_words(
     "knows (hostile)" is worded only for a DM-only screen, and everyone else reads plain "knows"
     (#3610). `knows_how` (#3881): the row's word on whether they've met, so a `knows` reads "has
     met", "has heard of" or plain "knows" (the story doesn't say); None where the caller has no row
-    (a menu of kinds), which is plain "knows" too."""
+    (a menu of kinds), which is plain "knows" too. `ended`: the connection has ended (a later
+    sighting took its place, #4530): an old sighting reads "was in", never "was last seen in"."""
     predicate, detail = for_reader(predicate, detail, feeling=feeling)
     knows = (
         KNOWS_HOW_WORDS.get(knows_how, "knows")
@@ -228,6 +234,8 @@ def link_words(
         else "knows"
     )
     if predicate == "located_in":
+        if ended and place_words.is_visit(detail):
+            return VISIT_PAST  # (history, #4569: the words only, the row is as kept)
         return place_words.forward(detail, subject_kind)
     if predicate == "next_to":
         return next_words.forward(detail)

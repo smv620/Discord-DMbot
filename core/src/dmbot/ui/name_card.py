@@ -223,6 +223,8 @@ def fact_words(r: Relation, subject_kind: str = "", *, feeling: bool = False) ->
         feeling=feeling,
         knows_how=r.knows_how if r.predicate == "knows" else None,
         route_state=r.route_state,  # (a journey or a plan, #4173 slice 6d)
+        # (an old sighting reads "was in", #4569; only a place tie can be one)
+        ended=r.predicate == "located_in" and r.to_session_at is not None,
     )  # (family reads with its role: "is the niece of"; a knows says whether they met, #3881)
 
 

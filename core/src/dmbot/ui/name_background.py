@@ -40,6 +40,7 @@ from dmbot.memory import (
     map_facts,
     picture_read,
     place_levels,
+    place_words,
     pronouns,
     route_condition,
     route_words,
@@ -3646,9 +3647,15 @@ class ConnectionOffer(_Menu):
                 + f"{view.line}"
                 + scope_line
             )
+        proposal = f"**{_md(c.subject)}** {how} **{_md(c.object)}**"
+        if c.predicate == "located_in" and place_words.is_visit(c.detail):
+            # a visit asks whether it happened, with when: never where someone is now (#4530,
+            # #4569); an upload's "when" is the file it came from
+            when = f"in {_md(c.upload)}" if c.upload else ""
+            proposal = place_words.visit_question(_md(c.subject), _md(c.object), "", when)
         return (
             f"📜 **Connection {n} of {self.total}**\n"
-            + f"🙋❓ **PROPOSED:** **{_md(c.subject)}** {how} **{_md(c.object)}**{handed[0]}\n"
+            + f"🙋❓ **PROPOSED:** {proposal}{handed[0]}\n"
             + mine
             + source
             + checked
