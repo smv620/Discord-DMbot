@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any
 
 from dmbot.campaigns.store import decode_backup
+from dmbot.devtools import sample_name
 from dmbot.memory import kin, place_words, reputation_words, route_length, unnamed
 from dmbot.memory.models import name_key
 
@@ -86,7 +87,7 @@ UNCLE = frozenset({"uncle", "aunt", "aunt or uncle"})
 NEPHEW = frozenset({"nephew", "niece", "niece or nephew"})
 GRAND_UP = frozenset({"grandparent", "grandmother", "grandfather"})
 GRAND_DOWN = frozenset({"grandchild", "grandson", "granddaughter"})
-SAMPLE_CAMPAIGN = "test of the frostmaiden (sample)"
+SAMPLE_CAMPAIGN = sample_name.OLD_NAME  # (numbered names pass `sample_name.is_sample`, #4538)
 # What slot (word, past) each key place tie means, as `place_words.slot` reads a stored detail.
 PLACE_SLOTS = {
     "lives_in": (place_words.LIVES, False), "lived_in": (place_words.LIVES, True),
@@ -928,9 +929,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         key = json.loads(args.key.read_text())
         campaign = backup.get("campaign") if isinstance(backup, dict) else None
         name = campaign.get("name") if isinstance(campaign, dict) else None
-        if name != SAMPLE_CAMPAIGN and not args.force:
+        if not (isinstance(name, str) and sample_name.is_sample(name)) and not args.force:
             raise ValueError(
-                f'This campaign is not "{SAMPLE_CAMPAIGN}"; the check is only for the sample.'
+                'This campaign is not "test of the frostmaiden (sample N)"; the check is only '
+                "for the sample."
             )
         report = check(backup, key, args.docs)
     except (ValueError, OSError) as exc:

@@ -36,6 +36,7 @@ from dmbot.dm_screen.handover import (
     CLOSED_RECEIVER_TO_DM,
     CLOSED_RECEIVER_TO_RECEIVER,
     DECLINED,
+    HANDOVER_POINTER,
     MOVE_ENDED_NEW_OWNER,
     MOVE_FAILED,
     MOVE_FAILED_NEW_OWNER,
@@ -132,6 +133,7 @@ class SiteOffers:
         spawn: Callable[[Awaitable[None], str], object],
         deliver: Deliver = _deliver,
         post: Callable[[int, str], Awaitable[object]] | None = None,
+        note: Callable[[Campaign, str, str], Awaitable[object]] | None = None,
         mover: HandoverMover | None = None,
         owner_mail: OwnerMail | None = None,
         site_url: str = "",
@@ -145,6 +147,7 @@ class SiteOffers:
         self._wait_until_ready = wait_until_ready
         self._spawn = spawn
         self._deliver = deliver
+        self._note = note
         self._post = post  # a message in a channel: the #dm-screen note on an accept
         self._site_url = site_url
         self._owner_mail = owner_mail  # the owner is also told by email, when there is an address
@@ -361,9 +364,15 @@ class SiteOffers:
     async def _screen_note(self, campaign: Campaign, offer: HandoverOffer) -> None:
         """The accept noted in the campaign's #dm-screen, as for the Discord button (it
         changes whose plan the table uses). Best effort."""
+        names = {"name": _who(offer), "campaign": md(campaign.name)}
+        if self._note is not None:  # names, so the DMs privately and a pointer in the channel
+            try:
+                await self._note(campaign, SCREEN_ACCEPTED.format(**names), HANDOVER_POINTER)
+            except Exception as exc:
+                log.warning("Couldn't note a website accept to the DMs (%s)", type(exc).__name__)
+            return
         if self._post is None or campaign.dm_screen_channel_id is None:
             return
-        names = {"name": _who(offer), "campaign": md(campaign.name)}
         try:
             await self._post(campaign.dm_screen_channel_id, SCREEN_ACCEPTED.format(**names))
         except Exception as exc:

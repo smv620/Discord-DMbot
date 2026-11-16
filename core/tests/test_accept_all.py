@@ -115,6 +115,23 @@ class OnTheSample(Base):
         self.assertIn("names: 4 accepted", line)
 
 
+class TheName(NamesTest):
+    """accept_all runs only on a sample campaign: a numbered one (#4538) or the old name."""
+
+    async def test_a_numbered_sample_and_the_old_one_pass_and_a_look_alike_is_refused(self) -> None:
+        from dmbot.devtools import sample_name
+
+        for name in (sample_name.name_for(31), sample_name.OLD_NAME):
+            sample = await self.campaigns.create(GUILD, name, DM)
+            await tool.check_campaign(self.db, GUILD, sample.id)  # (no refusal)
+            await self.campaigns.delete(GUILD, sample.id)
+        for name in (f"{sample_name.name_for(31)} copy", "Test of the frostmaiden (sample 31)"):
+            other = await self.campaigns.create(GUILD, name, DM)
+            with self.assertRaises(tool.WrongCampaign):
+                await tool.check_campaign(self.db, GUILD, other.id)
+            await self.campaigns.delete(GUILD, other.id)
+
+
 class SamePerson(NamesTest):
     async def test_a_same_person_question_is_answered_with_the_best_offer(self) -> None:
         sample = await self.campaigns.create(GUILD, tool.SAMPLE_CAMPAIGN, DM)

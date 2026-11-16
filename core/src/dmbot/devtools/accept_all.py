@@ -13,8 +13,9 @@ DMbot's own first candidate) and every same-person question (answered with the b
 name that needs a person to say who plays it, a question with no suggestion, and anything a rule
 refuses stay waiting and are counted.
 
-Guard: it refuses any campaign not named "test of the frostmaiden (sample)", the same as
-`graph_key_check`, and there is no flag to override that. Without `--dry-run` it needs `--yes`.
+Guard: it refuses any campaign not named "test of the frostmaiden (sample N)" (or the old
+unnumbered name), the same as `graph_key_check`, and there is no flag to override that.
+Without `--dry-run` it needs `--yes`.
 Output: counts by kind only (accepted, left waiting, refused by a rule), never a name or a word of
 a text. It reads no transcript. Connect as the normal `dmbot` user, as `movers_check` does.
 """
@@ -29,6 +30,7 @@ import sys
 from dataclasses import dataclass
 
 from dmbot.db import Database
+from dmbot.devtools import sample_name
 from dmbot.memory import auto_accept as auto
 from dmbot.memory.backstory_links import DONE, BackstoryLinks
 from dmbot.memory.store import MemoryStore
@@ -36,7 +38,7 @@ from dmbot.ui.names import background_kind
 
 log = logging.getLogger(__name__)
 
-SAMPLE_CAMPAIGN = "test of the frostmaiden (sample)"
+SAMPLE_CAMPAIGN = sample_name.OLD_NAME  # (the old unnumbered name; numbered ones pass `is_sample`)
 NAMES, OTHER_NAMES, CONNECTIONS, QUESTIONS, SAME_PERSON = (
     "names", "other names", "connections", "which-one questions", "same-person questions",
 )  # fmt: skip
@@ -69,9 +71,10 @@ async def check_campaign(db: Database, guild_id: int, campaign_id: str) -> None:
             "SELECT name FROM campaigns WHERE guild_id = %s AND id = %s", (guild_id, campaign_id)
         )
         row = await cur.fetchone()
-    if row is None or str(row["name"]) != SAMPLE_CAMPAIGN:
+    if row is None or not sample_name.is_sample(str(row["name"])):
         raise WrongCampaign(
-            f"accept_all only runs on the campaign named {SAMPLE_CAMPAIGN!r}; nothing was done"
+            'accept_all only runs on a sample campaign, "test of the frostmaiden (sample N)"; '
+            "nothing was done"
         )
 
 

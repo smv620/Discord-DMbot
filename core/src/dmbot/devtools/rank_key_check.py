@@ -27,7 +27,8 @@ from pathlib import Path
 from typing import Any
 
 from dmbot.campaigns.store import decode_backup
-from dmbot.devtools.graph_key_check import DEFAULT_KEY, SAMPLE_CAMPAIGN, Graph, _tables
+from dmbot.devtools import sample_name
+from dmbot.devtools.graph_key_check import DEFAULT_KEY, Graph, _tables
 from dmbot.memory import roles
 from dmbot.memory.importance_rank import links_from, newest_by_group, ranks_from, roots
 from dmbot.memory.roles_backed import backed_roles
@@ -177,9 +178,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         master = json.loads(args.master.read_text())
         campaign = backup.get("campaign") if isinstance(backup, dict) else None
         name = campaign.get("name") if isinstance(campaign, dict) else None
-        if name != SAMPLE_CAMPAIGN and not args.force:
+        if not (isinstance(name, str) and sample_name.is_sample(name)) and not args.force:
             raise ValueError(
-                f'This campaign is not "{SAMPLE_CAMPAIGN}"; the check is only for the sample.'
+                'This campaign is not "test of the frostmaiden (sample N)"; the check is only '
+                "for the sample."
             )
         if not isinstance(backup, dict):
             raise ValueError("That file is not a campaign backup.")
