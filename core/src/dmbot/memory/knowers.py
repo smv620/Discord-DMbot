@@ -203,6 +203,45 @@ async def add_common(
     return changed
 
 
+async def remove_common(w: Changes, kind: str, statement_ids: Sequence[str]) -> int:
+    """Common knowledge taken back (#4537 slice 1b): the DM's own choice (`dm_chose_secret`), as
+    another answer on "Who knows this?". The "everyone" rows of these statements go, logged, so
+    Undo brings them back. Returns how many went."""
+    if not w.dm_chose_secret:
+        raise ValueError("Only the DM's own choice takes common knowledge back.")
+    if kind not in _COLUMNS or not statement_ids:
+        return 0
+    column, _ = _COLUMNS[kind]
+    views = [str(r["id"]) for r in await w.select(PERSPECTIVES, " AND kind = 'everyone'")]
+    if not views:
+        return 0
+    rows = await w.select(
+        KNOWERS, f" AND {column} = ANY(%s) AND perspective_id = ANY(%s)",
+        [list(statement_ids), views], dormant=True,
+    )  # fmt: skip
+    for row in rows:
+        await w.delete(KNOWERS, row["id"])
+    return len(rows)
+
+
+async def common_of(scope: Scope, kind: str, statement_ids: Sequence[str]) -> set[str]:
+    """Which of these statements hold a common-knowledge row (#4537), whatever their flags say.
+    Awake rows only, unlike `remove_common` (which also takes sleeping ones): nothing puts an
+    "everyone" row to sleep today (`_sleep` touches player views only). If that changes, decide
+    here whether a sleeping row still makes the page say 🌍, or the two will disagree."""
+    if kind not in _COLUMNS or not statement_ids:
+        return set()
+    column, _ = _COLUMNS[kind]
+    views = [str(r["id"]) for r in await scope.select(PERSPECTIVES, " AND kind = 'everyone'")]
+    if not views:
+        return set()
+    rows = await scope.select(
+        KNOWERS, f" AND {column} = ANY(%s) AND perspective_id = ANY(%s)",
+        [list(statement_ids), views],
+    )  # fmt: skip
+    return {str(r[column]) for r in rows}
+
+
 async def _known_characters(w: Scope, character_ids: Sequence[str]) -> dict[str, bool]:
     """The confirmed characters among these ids, player characters and NPCs, each with whether it
     is a player's (§9b: a point of view for each character). Anything else (another campaign's
