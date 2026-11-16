@@ -33,10 +33,15 @@ async def send(
     words: str,
     make_view: Callable[[], discord.ui.View],
     pointer: str | None,
+    *,
+    note: bool = False,
 ) -> bool:
     """True when the words went somewhere a DM will see them. `pointer` must hold counts and kinds
-    only: it is shown to everyone who can read the DM Bot channel (None: no pointer)."""
-    if await bot.ask_privately(campaign.guild_id, campaign.id, words, _copy(make_view())):
+    only: it is shown to everyone who can read the DM Bot channel (None: no pointer). `note`: the
+    words are a statement, not a question, so the private message says so."""
+    if await bot.ask_privately(
+        campaign.guild_id, campaign.id, words, _copy(make_view()), note=note
+    ):
         if pointer and campaign.dm_bot_channel_id:
             with contextlib.suppress(Exception):  # (a courtesy: the words have gone out)
                 await bot.post(campaign.dm_bot_channel_id, pointer)

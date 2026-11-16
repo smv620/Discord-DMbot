@@ -1741,7 +1741,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             guild_ids=lambda: [g.id for g in self.guilds],
             wait_until_ready=self.wait_until_ready,
             spawn=self._track,
-            post=self.post,  # the #dm-screen note on an accept made on the website
+            post=self.post,  # (the fallback where no note sender is given)
+            note=self.tell_dms_with_pointer,  # the note on an accept made on the website
             owner_mail=self.email_hand_over_owner,  # the owner also hears by email (#2532)
             site_url=self.settings.site_url,
             # a hand-over to another server: its audio files go with it, and the caches that are
@@ -3614,6 +3615,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             await self.check_owners_daily()
         except Exception:
             log.exception("The daily owner check failed")
+
+    async def tell_dms_with_pointer(
+        self,
+        campaign: Campaign,
+        words: str,
+        pointer: str,
+        view: Callable[[], discord.ui.View] | None = None,
+    ) -> bool:
+        """A note with names in it (#3874): the words to the campaign's DMs privately (the DM
+        screen only if none can be reached) and, after a private message went out, `pointer` (counts
+        only) in the DM Bot channel. `view` makes the buttons, if any."""
+        return await pointer_note.send(
+            self, campaign, words, view or (lambda: discord.ui.View()), pointer, note=True
+        )
 
     async def _post_upkeep(self, campaign: Campaign, text: str) -> bool:
         """Say a counts-only upkeep note for a campaign (the daily jobs; #3874): in the DM Bot
@@ -11967,10 +11982,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         text: str,
         view: discord.ui.View,
         links: dm_links.DMLinks | None = None,
+        *,
+        note: bool = False,
     ) -> bool:
         """Send a question to each of the campaign's DMs in their private chat (#3210). True when
         at least one got it; False (DMs closed, campaign gone) means the caller keeps its old
-        place for the question. Never raises."""
+        place for the question. `note`: it is a statement, not a question (#3874), so it is marked
+        "DMbot note". Never raises."""
         try:
             campaign = await self.campaigns.get(guild_id, campaign_id)
             if campaign is None:
@@ -11979,7 +11997,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # Marked as from DMbot, with the campaign, so a DM with several campaigns knows which
             # one is asking (owner, 2026-11-01, #3210).
             who = discord.utils.escape_markdown(campaign.name)
-            text = f"❓ **DMbot has a question** · {who}\n{text}"
+            heading = "📣 **DMbot note**" if note else "❓ **DMbot has a question**"
+            text = f"{heading} · {who}\n{text}"
             # The two link buttons (#3663), added once: every DM gets the same view.
             view = (
                 dm_links.for_campaign(
