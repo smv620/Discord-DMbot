@@ -11,7 +11,7 @@ from typing import Any
 from dmbot.memory import web_actions as wa
 from dmbot.memory.models import DM
 from dmbot.memory.thread_read import STATE
-from dmbot.web import thread_card
+from dmbot.web import relationships, thread_card
 from dmbot.web.recaps import RecapError, _scoped
 from tests.test_recap_web import BOB
 from tests.test_web_api import ALICE, GORRAK, THURSDAY
@@ -127,6 +127,10 @@ class TheChanges(Card):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.actions = wa.ActionStore(self.db)
+        self.clock_now: int | None = 10_000  # (the game clock's minute; None is no clock)
+
+    async def game_now(self, _campaign: str) -> int | None:
+        return self.clock_now
 
     async def queue_part(self, action: str, text: str) -> Any:
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
@@ -143,7 +147,9 @@ class TheChanges(Card):
         self.assertEqual(got["status"], "ok", got)
         claimed = await self.actions.claim_next(self.g)
         assert claimed is not None
-        outcome = await wa.apply(self.memory, self.g, {ALICE.id}, claimed, actions=self.actions)
+        outcome = await wa.apply(
+            self.memory, self.g, {ALICE.id}, claimed, actions=self.actions, game_now=self.game_now
+        )
         await self.actions.finish(
             self.g, claimed, error=outcome.error, result_batches=outcome.batches
         )
@@ -165,6 +171,67 @@ class TheChanges(Card):
         self.assertEqual((await self.act("part-undo", str(batch))).error, "")
         self.assertEqual(await self.parts(), [])
         self.assertEqual((await self.act("part-undo", str(batch))).error, "")  # (a retry is done)
+
+    async def test_a_time_limits_date_is_set_changed_cleared_and_each_undone(self) -> None:
+        await self.act("part-add", f"{self.thread} time_limit - - hard - - - Before the new moon")
+        (limit,) = await self.parts()
+        self.assertFalse(limit["dated"])
+        set_to = await self.act("part-date", f"{limit['id']} 3")
+        self.assertEqual(set_to.error, "")
+        (limit,) = await self.parts()
+        self.assertTrue(limit["dated"])
+        (batch,) = set_to.batches
+        self.assertEqual((await self.act("part-undo", str(batch))).error, "")
+        self.assertFalse((await self.parts())[0]["dated"])
+        # (a date moved is a change in the story: the part has a new row; read its id again)
+        await self.act("part-date", f"{limit['id']} 1")
+        (limit,) = await self.parts()
+        self.assertEqual((await self.act("part-date", f"{limit['id']} 7")).error, "")
+        (limit,) = await self.parts()
+        cleared = await self.act("part-date", f"{limit['id']} -")
+        self.assertEqual(cleared.error, "")
+        self.assertFalse((await self.parts())[0]["dated"])
+
+    async def test_with_no_game_clock_nothing_is_dated_and_it_says_so(self) -> None:
+        await self.act("part-add", f"{self.thread} time_limit - - - - - - By the thaw")
+        (limit,) = await self.parts()
+        self.clock_now = None
+        self.assertEqual((await self.act("part-date", f"{limit['id']} 3")).error, wa.NO_CLOCK)
+        self.assertFalse((await self.parts())[0]["dated"])
+
+    async def test_a_date_for_a_part_gone_or_not_a_time_limit_is_refused(self) -> None:
+        await self.act("part-add", f"{self.thread} objective - - - - - - Find the heir")
+        (step,) = await self.parts()
+        self.assertNotEqual((await self.act("part-date", f"{step['id']} 3")).error, "")
+        self.assertEqual((await self.act("part-date", f"{'a' * 32} 3")).error, wa.GONE)
+
+    async def test_more_days_than_the_bot_takes_is_refused_not_written(self) -> None:
+        await self.act("part-add", f"{self.thread} time_limit - - - - - - By the thaw")
+        (limit,) = await self.parts()
+        self.assertEqual((await self.act("part-date", f"{limit['id']} 5000")).error, wa.BAD_TARGET)
+        self.assertFalse((await self.parts())[0]["dated"])
+
+    async def test_the_dates_shape_is_checked_by_the_door(self) -> None:
+        for text in (f"{'a' * 32} 0", f"{'a' * 32} 10000", f"{'a' * 32} x", f"{'a' * 32}", "5 3"):
+            got = await self.queue_part("part-date", text)
+            self.assertNotEqual(got["status"], "ok", text)
+
+    async def test_the_answer_route_reads_a_change_and_gives_its_undo_batch(self) -> None:
+        answer = await thread_card.change(
+            self.web, self.session, self.cref, self.thread,
+            {"action": "add", "kind": "objective", "words": "Find the heir"},
+        )  # fmt: skip
+        waiting = await relationships.read_answer(self.web, self.session, self.cref, answer)
+        self.assertEqual((waiting["state"], waiting["batch"]), ("waiting", None))
+        claimed = await self.actions.claim_next(self.g)
+        assert claimed is not None
+        done = await wa.apply(
+            self.memory, self.g, {ALICE.id}, claimed, actions=self.actions, game_now=self.game_now
+        )
+        await self.actions.finish(self.g, claimed, error=done.error, result_batches=done.batches)
+        read = await relationships.read_answer(self.web, self.session, self.cref, answer)
+        self.assertEqual((read["state"], read["error"]), ("done", ""))
+        self.assertEqual(read["batch"], done.batches[0])
 
     async def test_a_state_a_show_and_a_remove(self) -> None:
         made = await self.act("part-add", f"{self.thread} objective - - - - - - Cross the pass")
@@ -273,6 +340,11 @@ class TheChanges(Card):
             {"action": "show", "part": "a" * 32, "shown": "yes"},
             {"action": "branch-move", "bigger": self.thread},
             {"action": "undo", "batch": "-1"},
+            {"action": "date", "part": "a" * 32, "days": 0},
+            {"action": "date", "part": "a" * 32, "days": 3651},
+            {"action": "date", "part": "a" * 32, "days": True},
+            {"action": "date", "part": "a" * 32, "days": "3"},
+            {"action": "date", "days": 3},
         ):
             with self.assertRaises(RecapError, msg=str(body)):
                 await thread_card.change(self.web, self.session, self.cref, self.thread, body)
@@ -281,3 +353,11 @@ class TheChanges(Card):
             {"action": "add", "kind": "objective", "words": "Find the heir"},
         )  # fmt: skip
         self.assertTrue(answer)
+        dates: list[dict[str, Any]] = [
+            {"action": "date", "part": "a" * 32, "days": 3},
+            {"action": "date", "part": "a" * 32, "days": None},
+        ]
+        for date_body in dates:
+            self.assertTrue(
+                await thread_card.change(self.web, self.session, self.cref, self.thread, date_body)
+            )
