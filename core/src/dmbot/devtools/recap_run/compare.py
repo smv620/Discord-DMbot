@@ -232,6 +232,7 @@ async def run_compare(
         start = start_from(first)
     except ValueError as exc:
         emit(f"recap_run: {exc}; nothing to compare.")
+        print(f"recap_run: nothing to compare ({type(exc).__name__})", file=sys.stderr)
         return 1
     second = await run_text(
         inputs, fast, careful, consenting, session_at=session_at, models=models,
@@ -242,6 +243,7 @@ async def run_compare(
     drafts = (first, second)  # draft A, draft B
     if any(leaks(o) for o in drafts):
         emit("recap_run: a draft names something the DM keeps secret, so nothing is written.")
+        print("recap_run: a draft named a secret and nothing was written", file=sys.stderr)
         return 3
     write_blind(
         folder,
@@ -259,4 +261,11 @@ async def run_compare(
         emit("")
         for line in summary_lines(outcome_, "AB"[slot], prices, checks_of(outcome_)):
             emit(line)
-    return 0 if all(o.job.state == "ready" for o in drafts) else 1
+    unfinished = [o for o in drafts if o.job.state != "ready"]
+    for slot, o in enumerate(drafts):
+        if o.job.state != "ready":
+            print(
+                f"recap_run: draft {'AB'[slot]} did not finish (state {o.job.state})",
+                file=sys.stderr,
+            )
+    return 0 if not unfinished else 1

@@ -44,7 +44,7 @@ class Repeat(unittest.TestCase):
                 raise RuntimeError("stand-in")
             return 0
 
-        async def recap(guild: int, campaign: str, started: int) -> int:
+        async def recap(guild: int, campaign: str, started: int, **_: Any) -> int:
             recaps.append(campaign)
             return 0
 
