@@ -153,6 +153,11 @@ async def _apply(bot: Any, guild_id: int, answer: Answer) -> tuple[str, int | No
 async def _already_linked(bot: Any, guild_id: int, answer: Answer) -> bool:
     """Whether the character already has the link a Yes would write (the bot stopped between the
     write and closing the row, so the page must not show a failure for a change that happened)."""
+    if (
+        answer.kind == "language"
+    ):  # (a language is no rules link: it is in the character's languages)
+        known = await bot.memory.story_languages(guild_id, answer.campaign_id, answer.entity_id)
+        return any(k.given_by == "dm" and name_key(k.name) == answer.name_key for k in known)
     links = await bot.memory.rule_links(guild_id, answer.campaign_id, {answer.entity_id})
     return any(lk.kind == answer.kind and name_key(lk.name) == answer.name_key for lk in links)
 
