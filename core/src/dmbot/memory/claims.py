@@ -2083,6 +2083,7 @@ class ClaimStore:
         opted_in: Collection[int],
         before: Callable[[Changes], Awaitable[None]] | None = None,
         secret: bool = False,
+        knowers: Sequence[str] | None = None,
     ) -> Confirmed:
         """The DM says yes: the fact is written as the DM's own, through the store (so every
         rule and check runs as for any fact), and the claim keeps which fact it became. A fact
@@ -2093,7 +2094,10 @@ class ClaimStore:
         fact it replaces or brings back what had ended): all of it happens, or none.
         `secret`: the DM's "truth but secret" (#2410): The truth holds the connection and the
         players are not shown it. A condition ("Roan is dead") has no secret flag, so it is
-        never written secret."""
+        never written secret. `knowers` (#4534, the DM's 👥 Some know): the connection happened
+        and only these player characters know it. It is written held back and each learns it, in
+        the claim's own change (one Undo), exactly as for a split party's scene, and it takes
+        the place of that guess. Never for a condition, which has no audience."""
         claim = await self.get(guild_id, campaign_id, claim_id)
         # A held claim (waiting for its name, or past a read's cap, #3749) is in no list the DM
         # sees: an id that reaches here anyway is gone, never written.
@@ -2216,6 +2220,8 @@ class ClaimStore:
                     if not secret and not hold
                     else None
                 )
+                if knowers is not None and not secret and not hold:
+                    in_scene = tuple(knowers)  # the DM's own pick, over any guess (#4534)
                 relation, flags = await self._store.add_relation_in(
                     w, subject_id, term.key, object_id, confidence=1.0, status=CONFIRMED,
                     detail=label or self._detail(term.key, claim, subject_kind),
