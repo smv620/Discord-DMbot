@@ -293,6 +293,9 @@ class Settings:
     # Website lore reads at the same time on one server, one a campaign (#4551). 2 for real
     # servers until a measurement shows more is safe; dev1 sets 5 on the test server only.
     server_jobs_at_once: int = 2
+    # Document reads a server a day, Discord's button and the website's Upload lore together
+    # (#4582): 20 for the operator's bill; the test server raises it for the two-stage sample.
+    lore_reads_per_day: int = 20
     # Settle open pronouns in a lore read with the AI (#2790); off until the calibration run.
     who_is_it: bool = False
     # The most characters of story the recall service hands one helper (#1350).
@@ -399,6 +402,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if not (jobs_raw.isascii() and jobs_raw.isdigit() and 1 <= int(jobs_raw) <= 20):
         raise ConfigError(
             f'DMBOT_SERVER_JOBS_AT_ONCE must be a whole number from 1 to 20, got "{jobs_raw}".'
+        )
+    reads_raw = get("DMBOT_LORE_READS_PER_DAY") or "20"
+    if not (reads_raw.isascii() and reads_raw.isdigit() and 1 <= int(reads_raw) <= 500):
+        raise ConfigError(
+            f'DMBOT_LORE_READS_PER_DAY must be a whole number from 1 to 500, got "{reads_raw}".'
         )
     who_raw = (get("DMBOT_WHO_IS_IT") or "0").lower()
     if who_raw not in ("0", "1", "true", "false", "on", "off"):
@@ -801,6 +809,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         continuity=continuity,
         thread_stalled_sessions=int(stalled_raw),
         server_jobs_at_once=int(jobs_raw),
+        lore_reads_per_day=int(reads_raw),
         who_is_it=who_raw in ("1", "true", "on"),
         recall_budget=recall_budget,
         sidebar_recall=sidebar_recall_raw in ("1", "true", "on"),
