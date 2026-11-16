@@ -20,7 +20,7 @@ _SOURCE = re.compile(r"^[A-Za-z0-9_.:-]{1,100}$")  # an id: letters, digits and 
 # connections said at the table, #3963 c, and those kept hidden beside a hidden one, #3979, too).
 _NOT_KINDS = (
     "connections", "other_names", "shown", "held", "split_group", "split_unknown",
-    "names_split_group", "names_split_unknown",
+    "names_split_group", "names_split_unknown", "revealed",
 )  # fmt: skip
 
 
