@@ -8,6 +8,7 @@ counts only: a part's words are the DM's own, shown to that DM."""
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
 
@@ -42,25 +43,30 @@ def _part(thread: str, r: dict[str, Any]) -> tp.Part:
 async def _clock(
     db: Database, session: Session, guild_id: int, campaign_id: str
 ) -> tuple[int, cal.Calendar] | None:
-    """The campaign's game clock and calendar for a countdown, or None with no clock (or one the
-    calendar cannot read: the card then shows no countdown, never a failure)."""
-    async with db.user(session.user_id, session=session.id_hash) as conn:
-        await _scoped(conn, guild_id)
-        cur = await conn.execute(
-            "SELECT dmbot_web_game_clock(%s, %s) AS r", (guild_id, campaign_id)
-        )
-        found = await cur.fetchone()
-    got = found["r"] if found else None
-    if not got or got.get("minute") is None:
+    """The campaign's game clock and calendar for a countdown, or None with no clock. Like the bot's
+    `time_limits.clock_now`, a failure to read it is no clock (logged, never the card's failure),
+    and a calendar date the calendar cannot hold falls back to Day N, as `ClockStore.calendar`."""
+    try:
+        async with db.user(session.user_id, session=session.id_hash) as conn:
+            await _scoped(conn, guild_id)
+            cur = await conn.execute(
+                "SELECT dmbot_web_game_clock(%s, %s) AS r", (guild_id, campaign_id)
+            )
+            found = await cur.fetchone()
+        got = found["r"] if found else None
+        if not got or got.get("minute") is None:
+            return None
+        minute = int(got["minute"])
+    except Exception:
+        log.warning("Couldn't read the game clock for a thread card", exc_info=True)
         return None
+    calendar = cal.Calendar()
     try:
         if got.get("kind") == cal.HARPTOS and got.get("year") is not None:
             calendar = cal.Calendar(cal.HARPTOS, cal.DayOne(int(got["year"]), int(got["ordinal"])))
-        else:
-            calendar = cal.Calendar()
-        return int(got["minute"]), calendar
-    except (ValueError, TypeError):
-        return None
+    except (ValueError, TypeError):  # (e.g. a leap day in a common year)
+        calendar = cal.Calendar()
+    return minute, calendar
 
 
 def _date_words(row: dict[str, Any], clock: tuple[int, cal.Calendar] | None) -> str:
@@ -71,7 +77,10 @@ def _date_words(row: dict[str, Any], clock: tuple[int, cal.Calendar] | None) -> 
         return ""
     if clock is None:
         return NO_CLOCK
-    return left_said(int(due), clock[0], clock[1])
+    try:
+        return left_said(int(due), clock[0], clock[1])
+    except ValueError:  # (a date the calendar cannot word: no countdown, never a failure)
+        return ""
 
 
 async def read(db: Database, session: Session, ref: str, thread_id: str) -> dict[str, Any]:
@@ -167,6 +176,7 @@ async def read(db: Database, session: Session, ref: str, thread_id: str) -> dict
 
 # Discord's line for a dated limit with no game clock to count it on (`ui/thread_parts.NO_CLOCK`)
 NO_CLOCK = "no game clock here, so I can't count this down"
+log = logging.getLogger(__name__)
 _ID = re.compile(r"^[0-9a-f]{32}$")
 _WORD = re.compile(r"^[a-z_]{1,20}$")
 _KINDS = ("objective", "complication", "reward", "reward_given", "help", "time_limit")
