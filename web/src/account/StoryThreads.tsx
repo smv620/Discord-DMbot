@@ -54,6 +54,8 @@ export default function StoryThreads({ api, refId, onSignedOut }: { api: Account
       const kind = error instanceof ApiError ? error.kind : "";
       const text = kind === "gone" ? w.gone : kind === "undo-late" ? w.tooLate : w.wrong;
       setSaid({ ok: false, text });
+      // A press that failed takes back nothing: the Undo of the earlier press is no longer offered.
+      setUndoable(null);
       if (kind === "gone") setShown(0);
     } finally {
       flight.current = false;

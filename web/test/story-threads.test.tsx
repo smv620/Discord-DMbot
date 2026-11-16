@@ -91,6 +91,20 @@ describe("the story threads card", () => {
     expect(await screen.findByText(w.gone)).toBeTruthy();
   });
 
+  it("a failed press after a keep shows its error and no Undo", async () => {
+    const api = mockApi("table");
+    show(api);
+    fireEvent.click(await screen.findByRole("button", { name: w.keepIt }));
+    await screen.findByText("✅ Kept: Find the heir is on your 🧵 Threads list.");
+    expect(screen.getByRole("button", { name: w.undo })).toBeTruthy();
+    api.changeStoryThreads = async () => {
+      throw new ApiError("server");
+    };
+    fireEvent.click(screen.getByRole("button", { name: w.notAStory }));
+    expect(await screen.findByText(w.wrong)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.undo })).toBeNull();
+  });
+
   it("a DM-only refusal shows its sentence", async () => {
     const api = mockApi("table");
     api.storyThreads = async () => {

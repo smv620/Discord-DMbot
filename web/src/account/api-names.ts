@@ -545,6 +545,16 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/pc-icons/${encodeURIComponent(entityId)}`, { choice })) as { previous: IconChoice; now: IconChoice },
     worldNotes: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/world-notes`)) as WorldNotes,
     // The quest sheet of a kept story thread (#4547): read only, DM only (the door answers anyone else with nothing).
+    // Queued for the bot like the other website presses (202 {answer}); this waits for it and gives back the batch for Undo (#4562).
+    changeThreadParts: async (ref, thread, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/threads/${encodeURIComponent(thread)}/change`, change)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { batch: typeof got.batch === "number" ? got.batch : null };
+    },
+    threadCard: async (ref, thread) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/threads/${encodeURIComponent(thread)}/card`)) as ThreadCard,
     // The story threads DMbot found (#4482): read only, DM only (the door answers anyone else with nothing).
     storyThreads: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/threads`)) as StoryThreads,
     // Queued for the bot (202 {answer}); this waits for it and gives back the batch of a keep, for Undo (#4482).
@@ -566,16 +576,6 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
       return { batch: typeof got.batch === "number" ? got.batch : null };
     },
-    // Queued for the bot like the other website presses (202 {answer}); this waits for it and gives back the batch for Undo (#4562).
-    changeThreadParts: async (ref, thread, change) => {
-      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
-      const queued = (await call("POST", `${base}/threads/${encodeURIComponent(thread)}/change`, change)) as { answer: string };
-      if (!queued?.answer) throw new ApiError("server");
-      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
-      return { batch: typeof got.batch === "number" ? got.batch : null };
-    },
-    threadCard: async (ref, thread) =>
-      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/threads/${encodeURIComponent(thread)}/card`)) as ThreadCard,
     // Queued for the bot like the connection edits (202 {answer}); this waits for it and gives back the change it made, for Undo.
     changeWorldNotes: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;
