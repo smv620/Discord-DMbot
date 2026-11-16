@@ -85,8 +85,10 @@ class Grants(DatabaseTest):
         can always re-grant itself), and the bot calls a few `dmbot_web_*` helpers itself
         (`dmbot_web_lore_add`, `_scenes`, `_readings`, the move codes). What would be wrong is a
         grant to any other role, to PUBLIC, or a default-privileges grant: this test reads every
-        `dmbot_web_*` function's ACL and fails on any grantee but its owner and the website's
-        role."""
+        SECURITY DEFINER `dmbot_web_*` function's ACL (the doors) and fails on any grantee but its
+        owner and the website's role. (`dmbot_web_guilds` and `dmbot_web_managed_guilds` are plain
+        functions the row-level security policies call, so every role must run them: they are open
+        to PUBLIC on purpose and are not doors.)"""
         async with self.db.guild(1) as conn:
             cur = await conn.execute(
                 "SELECT p.proname AS name, pg_get_userbyid(p.proowner) AS owner,"
@@ -95,7 +97,7 @@ class Grants(DatabaseTest):
                 " FROM pg_proc p CROSS JOIN LATERAL aclexplode("
                 "   COALESCE(p.proacl, acldefault('f', p.proowner))) a"
                 " WHERE p.pronamespace = current_schema()::regnamespace"
-                " AND p.proname LIKE 'dmbot\\_web\\_%'"
+                " AND p.proname LIKE 'dmbot\\_web\\_%' AND p.prosecdef"
             )
             rows = [dict(r) for r in await cur.fetchall()]
         self.assertTrue(rows, "no website door found: the query is wrong")
