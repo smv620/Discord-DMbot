@@ -75,7 +75,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { ThreadCardPart, WorldLanguageNote, WorldPlaceNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint } from "./api";
+import type { StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
@@ -1050,6 +1050,22 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     languages: [{ id: `language:${"b1".repeat(16)}`, entityId: "n3", name: "Brother Venn", language: "Giant", from: "lore", fromSession: null }],
   };
   const worldBatches = new Map<number, { places: WorldPlaceNote[]; languages: WorldLanguageNote[] }>();
+  // The story threads DMbot found in an upload (#4482), waiting for the DM; a keep or a 🚫 takes one out, and Undo puts it back.
+  const storyThreadList: StoryThreadSuggestion[] = [
+    {
+      id: "a1".repeat(16), kind: "quest", name: "Find the heir", aim: "Bring the heir home before the pass closes.",
+      quote: "Garret needs his heir brought back by the new moon.", upload: "Notes, 9 Nov",
+      people: [{ index: 0, role: "quest giver", name: "Keegan Velryn" }, { index: 1, role: "target", name: "Garret Velryn" }],
+      lines: [{ words: "Find the heir", what: "a step", branch: false }, { words: "The old pass", what: "a branch", branch: true }],
+    },
+    {
+      id: "b2".repeat(16), kind: "hook", name: "Ask about the bell", aim: "A lead nobody has taken up yet.",
+      quote: "", upload: "Notes, 9 Nov", people: [],
+      lines: [{ words: "Ask the sexton", what: "a step", branch: false }, { words: "The bell tower", what: "a branch", branch: true }],
+    },
+  ];
+  const storyThreadBatches = new Map<number, StoryThreadSuggestion>();
+  const storyThreadTurnedDown = new Map<string, StoryThreadSuggestion>();
   // The Maps page (#4347): the pictures a DM or a player added. A DM sees them all; a player sees the shown usable ones and their own.
   let mapList: { id: string; title: string; addedBy: string; via: "website" | "discord"; mine: boolean; shown: boolean; state: "usable" | "waiting" | "declined" }[] = [
     { id: "m1", title: "Icewind Dale", addedBy: "Ana", via: "discord", mine: false, shown: true, state: "usable" },
@@ -2740,6 +2756,33 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (thread !== "thread-heir") throw new ApiError("not-found");
       if (change.action === "undo") return { batch: null };
       return { batch: 1 };
+    },
+    // The story threads DMbot found (#4482): two suggestions, each with one step and one branch as a line; a keep, a turn-down and their Undo
+    // are recorded and change the list as the bot would.
+    async storyThreads(ref) {
+      calls.push(`storyThreads:${ref}`);
+      return { suggestions: storyThreadList.map((t) => ({ ...t, people: t.people.map((p) => ({ ...p })), lines: t.lines.map((l) => ({ ...l })) })) };
+    },
+    async changeStoryThreads(ref, change) {
+      calls.push(`changeStoryThreads:${ref}:${JSON.stringify(change)}`);
+      if (change.action === "undo") {
+        const back = "keep" in change ? storyThreadBatches.get(change.keep) : storyThreadTurnedDown.get(change.not);
+        if (!back) throw new ApiError("gone");
+        if ("keep" in change) storyThreadBatches.delete(change.keep);
+        else storyThreadTurnedDown.delete(change.not);
+        storyThreadList.push(back);
+        return { batch: null };
+      }
+      const at = storyThreadList.findIndex((t) => t.id === change.id);
+      if (at < 0) throw new ApiError("gone");
+      const [gone] = storyThreadList.splice(at, 1);
+      if (change.action === "not") {
+        storyThreadTurnedDown.set(change.id, gone!);
+        return { batch: null };
+      }
+      const batch = ++lastBatch;
+      storyThreadBatches.set(batch, gone!);
+      return { batch };
     },
     async worldNotes(ref) {
       calls.push(`worldNotes:${ref}`);

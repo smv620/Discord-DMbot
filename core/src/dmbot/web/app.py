@@ -2749,7 +2749,9 @@ def create_app(
         nothing for anyone else."""
         session, _token = signed
         try:
-            return await thread_suggestions.read(db, session, ref)
+            return await thread_suggestions.read(
+                db, session, ref, outside_engine=settings.outside_engine
+            )
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
