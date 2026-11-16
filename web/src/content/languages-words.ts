@@ -1,0 +1,25 @@
+// The words of a character's languages on the Names page (#4621): the same as Discord's 🗣️ Languages screen, so the two stay level. DM only.
+// No id is ever shown; a language's name is shown as text.
+export const languagesWords = {
+  heading: "🗣️ Languages",
+  none: "None yet.",
+  notChecked: " · not checked yet",
+  fromSheet: " (from the sheet)",
+  sheetSays: "This character has a sheet, so its languages come from the sheet. To change them, edit the sheet.",
+  addLabel: "Add a language",
+  addButton: "➕ Add a language",
+  checkLine: "Tap ✅ These are right if what DMbot found in your notes is correct, or remove a wrong one.",
+  checkButton: "✅ These are right",
+  removeButton: "Remove",
+  removeLabel: (name: string): string => `Remove ${name}`,
+  working: "Working on it…",
+  undo: "↩ Undo",
+  undone: "↩ Undone.",
+  added: (name: string): string => `✅ Added: ${name}.`,
+  marked: "✅ Marked right.",
+  removed: (name: string): string => `✅ Removed: ${name}.`,
+  gone: "That was changed since. Here's the list as it is now.",
+  notDm: "Only a DM of this campaign can change a character's languages.",
+  wrong: "Something went wrong. Nothing was changed. Press the button again.",
+  loading: "Loading…",
+} as const;

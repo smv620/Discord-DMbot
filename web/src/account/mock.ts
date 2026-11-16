@@ -1074,6 +1074,13 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     },
   ];
   const storyThreadBatches = new Map<number, StoryThreadSuggestion>();
+  // A character's languages (#4621): the DM's and the ones DMbot found, and a character with a sheet's (read only).
+  let lastLanguageId = 10;
+  let lastLanguageBatch = 0;
+  const charLanguages = new Map<string, { hasSheet: boolean; languages: { id?: string; name: string; source: "sheet" | "dm" | "read" }[] }>([
+    ["lang-dm", { hasSheet: false, languages: [{ id: "l1", name: "Common", source: "dm" }, { id: "l2", name: "Giant", source: "read" }] }],
+    ["lang-sheet", { hasSheet: true, languages: [{ name: "Elvish", source: "sheet" }, { name: "Dwarvish", source: "sheet" }] }],
+  ]);
   const storyThreadTurnedDown = new Map<string, StoryThreadSuggestion>();
   // The Maps page (#4347): the pictures a DM or a player added. A DM sees them all; a player sees the shown usable ones and their own.
   let mapList: { id: string; title: string; addedBy: string; via: "website" | "discord"; mine: boolean; shown: boolean; state: "usable" | "waiting" | "declined" }[] = [
@@ -2795,6 +2802,23 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const batch = ++lastBatch;
       storyThreadBatches.set(batch, gone!);
       return { batch };
+    },
+    // A character's languages (#4621): one with the DM's and DMbot's (ids), one with a sheet (read only).
+    async characterLanguages(ref, entity) {
+      calls.push(`characterLanguages:${ref}:${entity}`);
+      const row = charLanguages.get(entity);
+      if (!row) throw new ApiError("not-allowed");
+      return { hasSheet: row.hasSheet, languages: row.languages.map((l) => ({ ...l })) };
+    },
+    async changeCharacterLanguages(ref, entity, change) {
+      calls.push(`changeCharacterLanguages:${ref}:${entity}:${JSON.stringify(change)}`);
+      const row = charLanguages.get(entity);
+      if (!row) throw new ApiError("not-allowed");
+      if (change.action === "undo") return { batch: null };
+      if (change.action === "add") row.languages.push({ id: `l${++lastLanguageId}`, name: change.name, source: "dm" });
+      if (change.action === "remove") row.languages = row.languages.filter((l) => l.id !== change.language);
+      if (change.action === "check") row.languages = row.languages.map((l) => (l.source === "read" ? { ...l, source: "dm" as const } : l));
+      return { batch: ++lastLanguageBatch };
     },
     async worldNotes(ref) {
       calls.push(`worldNotes:${ref}`);
