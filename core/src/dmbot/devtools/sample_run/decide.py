@@ -94,6 +94,18 @@ class Decision:
     at: int
     verdict: str | None  # against the key (judge.VERDICTS), None for not sure
     done: bool = True  # False: a rule refused the store call, so it stays waiting
+    # For the scorer's tiers (#4523 slice 2, ruling F): the names the item is about (an entry's
+    # name; a tie's two ends), what the card offered in the order shown (a name's kinds, a "Which
+    # one?"'s candidates; empty for a yes-or-no item, whose one suggestion is the item itself),
+    # DMbot's first choice (the first offered), and what was picked ("" for no or not sure).
+    names: tuple[str, ...] = ()
+    offered: tuple[str, ...] = ()
+    first: str = ""
+    picked: str = ""
+    no_order: bool = False  # DMbot gave no order, so `first` is just the first stored (ruling F)
+
+
+NOT_DECIDED = "not decided"  # (a record line for an item left at the cap: scored on its own line)
 
 
 @dataclass
@@ -237,9 +249,32 @@ class Asker:
         on_no: Act,
         key_says: Callable[[dict[str, Any]], str | None],
         merge: bool = False,
+        names: Sequence[str] = (),
+        offered: Sequence[str] = (),
+        picked: Callable[[dict[str, Any]], str] | None = None,
+        no_order: bool = False,
     ) -> None:
+        """`names`, `offered` and `picked` go in the record for the scorer's tiers (#4523): what
+        the item is about, the choices in the order shown, and which one the answer took (by
+        default the item itself on a yes, "" otherwise)."""
+
+        def write(decision: str, got: dict[str, Any], **more: Any) -> None:
+            chose = ""
+            if decision == YES:
+                chose = picked(got) if picked is not None else (offered[0] if offered else item)
+            line = Decision(
+                self.stage, kind, item, decision, more.pop("model", self.model), "careful",
+                str(got.get("reason", "")), int(self.clock()), more.pop("verdict", None),
+                more.pop("done", True), tuple(names), tuple(offered),
+                offered[0] if offered else "", chose, no_order,
+            )  # fmt: skip
+            open_record(self.record)
+            with self.record.open("a", encoding="utf-8") as f:
+                f.write(json.dumps(asdict(line)) + "\n")
+
         if not self.budget.take():
             self.run.over_cap[kind] += 1
+            write(NOT_DECIDED, {"reason": "the cap was reached"})
             return
         text = question + "\n\nThe lines:\n" + "\n".join(f"- {line}" for line in lines)
         self.run.calls += 1
@@ -273,14 +308,10 @@ class Asker:
         self.run.add(kind, decision)
         if done:
             self.run.agreement.add(kind, decision, key, merge=merge)
-        line = Decision(
-            self.stage, kind, item, decision, answered_by or self.model, "careful",
-            str(got.get("reason", "")), int(self.clock()),
-            judge.verdict(decision, key) if done else None, done,
+        write(
+            decision, got, model=answered_by or self.model,
+            verdict=judge.verdict(decision, key) if done else None, done=done,
         )  # fmt: skip
-        open_record(self.record)
-        with self.record.open("a", encoding="utf-8") as f:
-            f.write(json.dumps(asdict(line)) + "\n")
 
 
 async def run(
@@ -326,6 +357,10 @@ async def run(
             on_yes=_confirm_name(memory, guild, campaign, e),
             on_no=_reject_name(memory, guild, campaign, e),
             key_says=fixed(key.name_says(e.name)),
+            names=(e.name,),
+            offered=_kinds_offered(e),
+            picked=functools.partial(_kind_picked, e),
+            no_order=not _guessed(e),
         )
 
     # which one
@@ -342,6 +377,9 @@ async def run(
             on_yes=_pick(links, guild, campaign, q),
             on_no=_neither(links, guild, campaign, q),
             key_says=functools.partial(_which_says, key, q),
+            names=(q.other, q.word),
+            offered=tuple(n for _c, n in q.candidates),
+            picked=functools.partial(_picked_name, q),
         )
 
     # things said
@@ -357,6 +395,7 @@ async def run(
             on_no=_claim_no(claims, guild, campaign, c.id),
             # (a condition, "X is dead", has no tie for the key to hold: not in the key)
             key_says=fixed(key.tie_says(c.subject, c.object) if c.object else None),
+            names=(c.subject, *([c.object] if c.object else [])),
         )
 
     # connections DMbot worked out
@@ -373,6 +412,7 @@ async def run(
             on_yes=_relation(memory, guild, campaign, r.id, CONFIRMED),
             on_no=_relation(memory, guild, campaign, r.id, REJECTED),
             key_says=fixed(key.tie_says(a, b)),
+            names=(a, b),
         )
 
     # look-alikes: read again after every answer, as the DM's list is (a join changes the rest)
@@ -397,6 +437,7 @@ async def run(
             on_no=_apart(memory, guild, campaign, o.unnamed_id, o.named_id, dm),
             key_says=fixed(key.same_says(u, n)),
             merge=True,
+            names=(u, n),
         )
     return asker.run
 
@@ -424,6 +465,37 @@ def fixed(says: str | None) -> Callable[[dict[str, Any]], str | None]:
         return says
 
     return read
+
+
+def _picked_name(q: Any, got: dict[str, Any]) -> str:
+    """The candidate a "Which one?" yes took, by name ("" when the pick was not one of them)."""
+    picked = _picked(q, got)
+    return picked[1] if picked is not None else ""
+
+
+def _kinds_offered(e: Any) -> tuple[str, ...]:
+    """A name's kinds in the order the card shows them: DMbot's own guess first (the kind it was
+    read as), then the others in their usual order. With no guess, the usual order (ruling F:
+    "where DMbot gives no order, the first one stored", and the scorer says so)."""
+    from dmbot.ui.names import background_kind
+
+    guess = background_kind(e)
+    return tuple(dict.fromkeys([*([guess] if guess in NAME_KINDS else []), *NAME_KINDS]))
+
+
+def _guessed(e: Any) -> bool:
+    from dmbot.ui.names import background_kind
+
+    return background_kind(e) in NAME_KINDS
+
+
+def _kind_picked(e: Any, got: dict[str, Any]) -> str:
+    """The kind a yes took: the model's own, or DMbot's guess when it gave none it knows (as
+    `_confirm_name` does)."""
+    from dmbot.ui.names import background_kind
+
+    kind = str(got.get("kind", "")).casefold()
+    return kind if kind in NAME_KINDS else background_kind(e)
 
 
 def _unnamed(e: Any) -> bool:

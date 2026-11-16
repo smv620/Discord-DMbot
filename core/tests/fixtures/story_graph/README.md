@@ -28,6 +28,8 @@ The documents themselves are linked, not copied.
 
 To score a backup against them: `python -m dmbot.devtools.graph_key_check BACKUP --key core/tests/fixtures/story_graph/total_key.json --docs all --counts-only` (stage 1; `full_key.json` for stage 2). `--docs all` scores every document the key holds, backstories included. The report adds who knows each found row: per player character it is right, **leaked** (a player character knows what the key keeps from them, a failure), or too narrow; an NPC the key names is right or wrong on its own line. Rows marked `check` (the owner is still checking their knowers) are also counted apart.
 
+With `--record <the run's decisions.jsonl>` the report also gives each key row's tier (#4523): **total success** (found, never asked: DMbot added it itself), **partial success** (the AI DM took DMbot's first choice), **provisional success** (another choice the card offered), **partial failure** (missing, and the AI DM said no), **failure** (missing otherwise, or leaked), and **not decided** (left at the cap) on its own line. Extras are counted as added by DMbot itself (failures), kept by the AI DM, or turned down. A key entry's `secret_aliases` are scored as names of their own: found or missing, and who knows each found one. The record stays on the server; the report prints counts only.
+
 ## The test players
 
 | Player character | Player (not on Discord) |

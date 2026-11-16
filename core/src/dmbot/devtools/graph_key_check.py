@@ -34,7 +34,7 @@ from pathlib import Path
 from typing import Any
 
 from dmbot.campaigns.store import decode_backup
-from dmbot.devtools import key_knowers, sample_name
+from dmbot.devtools import key_knowers, key_tiers, sample_name
 from dmbot.memory import gate, kin, place_words, reputation_words, route_length, unnamed
 from dmbot.memory.models import name_key
 
@@ -163,6 +163,16 @@ class Report:
     # them. Empty for a key without knowers, so older reports are unchanged.
     knowers: list[key_knowers.Scored] = field(default_factory=list)
     knowers_scored: bool = False  # (the key says who knows: its lines show, found rows or none)
+    # A key entry's secret other names (`secret_aliases`, a name only a backstory gives): found on
+    # the entry or missing. A found one's knowers are scored as a name of its own (`knowers`).
+    secret_names: Counter[str] = field(default_factory=Counter)
+    # The tiers (#4523 slice 2, from the decision record): every key row, and the must-find ones
+    tiers: Counter[str] = field(default_factory=Counter)
+    tiers_must: Counter[str] = field(default_factory=Counter)
+    # Extras by how they came: added by DMbot itself (a failure), kept by the AI DM's yes, or
+    # flagged and turned down (counted apart, never a failure); and decisions DMbot gave no order
+    extras: Counter[str] = field(default_factory=Counter)
+    unordered: int = 0
 
 
 def _live(row: Mapping[str, Any]) -> bool:
@@ -439,7 +449,14 @@ def docs_wanted(key: Mapping[str, Any], docs: str) -> set[str]:
     return {d for d in named if docs == "all" or d.startswith("backstory_")}
 
 
-def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
+def check(
+    backup: object,
+    key: Mapping[str, Any],
+    docs: str = "both",
+    record: Sequence[Mapping[str, Any]] | None = None,
+) -> Report:
+    """Score `backup` against `key`. With `record` (the sample run's decision record, #4523), each
+    key row also gets its tier: how it got there, by itself or by which answer."""
     tables = _tables(backup)
     graph = Graph(tables)
     wanted = docs_wanted(key, docs)
@@ -454,6 +471,8 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
     used_relations: set[str] = set()
     strict = {n["name"] for n in nodes if n.get("unnamed")}
     held: list[tuple[str, Mapping[str, Any], set[str]]] = []  # found rows, for who knows them
+    extra_entities: list[Mapping[str, Any]] = []  # (confirmed extras, for the tiers' extras line)
+    extra_relations: list[tuple[str, str]] = []
 
     def lookup(name: str) -> set[str]:
         # (a key entry the story never names, marked `unnamed`, is found by an unnamed entry's
@@ -526,6 +545,8 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
         if str(e["type"]) in THREAD_TYPES:
             continue  # (a story thread is scored on its own line, #4453, never as an extra name)
         report.extra_entries[_kind_for(str(e["type"]))] += 1
+        if e.get("status") == "confirmed":
+            extra_entities.append(e)
     for name in key.get("must_not_names", ()):
         # (a must-not name is still found in a description too, as before; only one that is a
         # key `unnamed` entry's own description is right as a description, #3545)
@@ -539,6 +560,9 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
             and str(r["id"]) not in used_relations
         ):
             report.extra_ties += 1
+            if r.get("status") == "confirmed":
+                ends = (graph.entities[str(r["subject_id"])], graph.entities[str(r["object_id"])])
+                extra_relations.append((str(ends[0]["name"]), str(ends[1]["name"])))
     players = key.get("players", {})
     report.players_expected = len(players)
     report.players_found = sum(
@@ -562,6 +586,16 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
                 [n, *every.get(n, {}).get("aliases", [])]
             ),
             held,
+        )  # fmt: skip
+    if record is not None:
+        key_tiers.score(
+            report, key, nodes, record,
+            ids_of_word=lambda w: graph.ids([w]),
+            ids_of_key=lambda n: lookup(n) if n in names else set(),
+            extra_entities=extra_entities,
+            extra_relations=extra_relations,
+            found_status=FOUND,
+            by_design=BY_DESIGN,
         )  # fmt: skip
     _score_map_facts(report, graph, key, names)
     _score_threads(report, graph, key, names)
@@ -589,6 +623,8 @@ def _score_knowers(
     for _, row, _ in held:
         if isinstance(row.get("knowers"), list):
             asked.update(row["knowers"])
+        for who in row.get("secret_aliases", {}).values():
+            asked.update(who)
     # Who each knower is: a player character only as a stored player character, an NPC only as a
     # character or group, so a key's other name ("Norro") stored as its own entry, a place say,
     # never lends its rows; a key entry the story never names only by its description (`lookup`).
@@ -614,6 +650,21 @@ def _score_knowers(
                 check=bool(row.get("check")),
             )
         )
+    aliases = [a for a in tables.get("alias", ()) if a.get("status") != "rejected"]
+    for section, row, ids in held:
+        for alias, who in row.get("secret_aliases", {}).items() if section == "entry" else ():
+            found = {
+                str(a["id"])
+                for a in aliases
+                if str(a.get("entity_id")) in ids
+                and (str(a.get("key") or "") or name_key(str(a["text"]))) == name_key(alias)
+            }
+            report.secret_names["found" if found else "missing"] += 1
+            if found:
+                # (its id holds the key's names, so the counts-only report never prints it)
+                report.knowers.append(
+                    knowers.score("name", f"{row['name']} / {alias}", who, gate.ALIAS, found)
+                )
 
 
 def _score_languages(
@@ -903,17 +954,28 @@ def summarize(report: Report) -> dict[str, Any]:
         **({"languages": dict(report.languages)} if report.languages else {}),
         **({"route_lengths": dict(report.route_lengths)} if report.route_lengths else {}),
         **({"knowers": _knower_counts(report.knowers)} if report.knowers_scored else {}),
+        **({"secret_names": dict(report.secret_names)} if report.secret_names else {}),
+        **(
+            {
+                "tiers": dict(report.tiers),
+                "tiers_must": dict(report.tiers_must),
+                "extras": dict(report.extras),
+                "unordered": report.unordered,
+            }
+            if report.tiers
+            else {}
+        ),
     }
 
 
 def _knower_counts(scored: Sequence[key_knowers.Scored]) -> dict[str, dict[str, int]]:
     """Who knows, counted: the player characters' verdicts by entries and ties, the NPCs' where the
     key names them, and the verdicts on rows whose knowers the owner is still checking."""
-    out: dict[str, Counter[str]] = {"entries": Counter(), "ties": Counter()}
+    out: dict[str, Counter[str]] = {"entries": Counter(), "ties": Counter(), "names": Counter()}
     npcs: Counter[str] = Counter()
     checked: Counter[str] = Counter()
     for s in scored:
-        out["entries" if s.section == "entry" else "ties"][s.verdict] += 1
+        out[{"entry": "entries", "tie": "ties", "name": "names"}[s.section]][s.verdict] += 1
         if s.npc:
             npcs[s.npc] += 1
         if s.check:
@@ -984,7 +1046,11 @@ def render(report: Report, counts_only: bool = False) -> str:
         lines.append(f"Road lengths: found {c['found']}, missed {c['missed']}, extra {c['extra']}")
     if report.knowers_scored:  # (#4523 slice 2: who knows each found row; a leak is a failure)
         c = _knower_counts(report.knowers)
-        for label, part in (("entries", c["entries"]), ("ties", c["ties"])):
+        for label, part in (
+            ("entries", c["entries"]),
+            ("ties", c["ties"]),
+            ("secret names", c["names"]),
+        ):
             lines.append(
                 f"Who knows found {label} (player characters): "
                 f"right {part.get(key_knowers.RIGHT, 0)}, "
@@ -997,6 +1063,11 @@ def render(report: Report, counts_only: bool = False) -> str:
             f"leaked {c['checked'].get(key_knowers.LEAKED, 0)}, "
             f"too narrow {c['checked'].get(key_knowers.NARROW, 0)}"
         )
+        if report.secret_names:
+            lines.append(
+                f"Secret names (only a backstory gives them): found "
+                f"{report.secret_names['found']}, missing {report.secret_names['missing']}"
+            )
         for label, said in (
             ("Leaks (a player character knows what the key keeps from them)", key_knowers.LEAKED),
             ("Known too narrowly", key_knowers.NARROW),
@@ -1007,6 +1078,23 @@ def render(report: Report, counts_only: bool = False) -> str:
                 # (a tie's id is the key's; an entry's id is its key name, shown only with words)
                 if x.section == "tie" or not counts_only:
                     lines.append(f"  {x.section} {x.id}")
+    if report.tiers:  # (#4523 slice 2: with the decision record)
+        for label, c in (("every key row", report.tiers), ("must-find rows", report.tiers_must)):
+            lines.append(
+                f"Tiers, {label}: "
+                + ", ".join(f"{t} {c[t]}" for t in key_tiers.TIERS)
+                + f"; not decided (stopped at the cap) {c[key_tiers.NOT_DECIDED]}"
+            )
+        extra = report.extras
+        lines.append(
+            f"Extras: added by DMbot itself {extra[key_tiers.EXTRA_ITSELF]} (failures), "
+            f"kept by the AI DM {extra[key_tiers.EXTRA_KEPT]}, "
+            f"flagged and turned down {extra[key_tiers.EXTRA_TURNED_DOWN]}"
+        )
+        lines.append(
+            f"Decisions where DMbot gave no order (its first is the first stored): "
+            f"{report.unordered}"
+        )
     lines.append(f"Must-not-find names present: {len(report.violations)}")
     if report.violations and not counts_only:
         lines.append("  " + ", ".join(report.violations))
@@ -1065,6 +1153,11 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="what to score: one document, the lore and session (both), the four backstories, "
         "or all the key's documents (the built keys' stages)",
     )
+    parser.add_argument(
+        "--record",
+        type=Path,
+        help="the sample run's decision record (decisions.jsonl): adds each key row's tier",
+    )
     parser.add_argument("--counts-only", action="store_true", help="print ids and counts, no names")
     parser.add_argument("--json", type=Path, help="also write the counts and rows as json")
     parser.add_argument("--i-know-this-is-the-test-campaign", action="store_true", dest="force")
@@ -1079,7 +1172,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 'This campaign is not "test of the frostmaiden (sample N)"; the check is only '
                 "for the sample."
             )
-        report = check(backup, key, args.docs)
+        record = key_tiers.read_record(args.record) if args.record else None
+        report = check(backup, key, args.docs, record)
     except (ValueError, OSError) as exc:
         sys.stderr.write(f"{exc}\n")
         return 2

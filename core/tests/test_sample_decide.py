@@ -182,6 +182,48 @@ class TheStage(unittest.IsolatedAsyncioTestCase):
         got = await self.stage(ai, cap=1)
         self.assertEqual((ai.calls, got.over_cap["names"]), (1, 2))
 
+    async def test_an_item_left_at_the_cap_is_recorded_not_decided(self) -> None:
+        """#4523: the scorer counts it on its own line, never as a success or a failure."""
+        self.names(entity("e1", "Tran"), entity("e2", "Bruno Hale"))
+        await self.stage(FakeAI({"answer": "no"}), cap=1)
+        rows = [json.loads(line) for line in self.record.read_text().splitlines()]
+        self.assertEqual([r["decision"] for r in rows], [j.NO, d.NOT_DECIDED])
+        self.assertEqual(rows[1]["names"], ["Bruno Hale"])
+
+    async def test_the_record_says_what_was_offered_first_and_picked(self) -> None:
+        """#4523 ruling F: a name's kinds with DMbot's guess first (none here: the first stored,
+        and `no_order` says so); a "Which one?"'s candidates in the order shown; a yes-or-no item
+        offers nothing, and its yes picks the item."""
+        self.names(entity("e1", "Tran"))
+        q = SimpleNamespace(id="q1", other="Tran", predicate="knows", word="Bruno", quote="",
+                            candidates=(("e2", "Bruno Hale"), ("e3", "Shela Marr")))  # fmt: skip
+        self.links.which_waiting = AsyncMock(return_value=[q])
+        claim = SimpleNamespace(id="k1", subject="Tran", relationship="knows", object="Bruno Hale",
+                                details="")  # fmt: skip
+        self.claims.waiting = AsyncMock(return_value=[claim])
+        ai = FakeAI({"answer": "yes", "kind": "place"}, {"answer": "yes", "pick": 2},
+                    {"answer": "yes"})  # fmt: skip
+        await self.stage(ai)
+        name, which, said = [json.loads(line) for line in self.record.read_text().splitlines()]
+        self.assertEqual((name["names"], name["first"], name["picked"]), (["Tran"], "npc", "place"))
+        self.assertEqual(name["offered"], list(d.NAME_KINDS))
+        self.assertTrue(name["no_order"])
+        self.assertEqual(which["offered"], ["Bruno Hale", "Shela Marr"])
+        self.assertEqual((which["first"], which["picked"]), ("Bruno Hale", "Shela Marr"))
+        self.assertEqual(which["names"], ["Tran", "Bruno"])
+        self.assertEqual((said["names"], said["offered"], said["picked"]),
+                         (["Tran", "Bruno Hale"], [], "k1"))  # fmt: skip
+        self.assertFalse(said["no_order"])
+
+    async def test_dmbot_s_own_guess_is_offered_first(self) -> None:
+        guessed = SimpleNamespace(id="e1", name="Greyford", type="place", role=None,
+                                  status="proposed", source="background")  # fmt: skip
+        self.names(guessed)
+        await self.stage(FakeAI({"answer": "yes", "kind": "place"}))
+        (row,) = [json.loads(line) for line in self.record.read_text().splitlines()]
+        self.assertEqual((row["first"], row["picked"], row["no_order"]), ("place", "place", False))
+        self.assertEqual(row["offered"][0], "place")
+
     async def test_a_yes_with_no_kind_is_left_and_counted_refused(self) -> None:
         self.names(entity("e1", "Tran"))
         got = await self.stage(FakeAI({"answer": "yes"}))
