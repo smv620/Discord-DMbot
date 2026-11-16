@@ -17,6 +17,15 @@ The documents themselves are linked, not copied.
 
   The sample lore is read after them (stage 1b) and makes some of their rows known to the party: `lore_key.json`'s `reveals`. Every lore row says who knows it (`knowers`: `everyone` for the world, `party` for the party's own story).
 
+## The two-stage run's keys (built, never edited by hand)
+
+`python -m dmbot.devtools.build_keys` makes them from the keys above, and a test fails when they are stale (`--check`):
+
+- `total_key.json`, stage 1: the four backstories, then the lore. What the lore states of a backstory is one row with both sources, known as the lore says. A reveal of another kind (the lore tells a tie as an event) keeps its own row, known as the lore says. Everything else stays its backstory knowers' secret, and a name only a backstory gives is a `secret_aliases` entry beside the public name, never a public alias.
+- `full_key.json`, stage 2: stage 1, then the session, built from `master_key.json`. A backstory tie or entry the session states is the party's too.
+
+`master_key.json` stays as it is (the lore and session, merged by hand), so today's single-stage run keeps its series.
+
 ## The test players
 
 | Player character | Player (not on Discord) |
