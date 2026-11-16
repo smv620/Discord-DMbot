@@ -48,6 +48,7 @@ from dmbot.memory import (
     traits_read,
     who_ask,
     who_resolve,
+    world_reveal,
 )
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory import spellings as place_spellings_mod
@@ -1002,6 +1003,9 @@ async def _read_background(
     questions: list[str] = []
     keys: set[tuple[str, str, str]] = set()
     made_unnamed: list[str] = []
+    # What this text states that the campaign keeps from the players (#4524 slice 1b): filled by a
+    # World read only, and revealed below as one of the upload's own changes.
+    revealable: list[Relation] | None = [] if everyone and not speaker else None
     # Which NPCs and groups know each name and connection, DMbot's guess (#2959 slice 3): the
     # names' wait for their yes, the connections' ride on their waiting rows. Off by default.
     link_guesses: dict[tuple[str, str, str], dict[str, float]] = {}
@@ -1040,6 +1044,7 @@ async def _read_background(
         made_unnamed=made_unnamed,
         npc_guesses=link_guesses,
         owner_of=owner_of,
+        revealable=revealable,
     )
     # (the people the read could not name, made while queueing: the same upload, #3675)
     await _record_sources(memory, campaign, {"unnamed": made_unnamed}, upload, label)
@@ -1088,12 +1093,19 @@ async def _read_background(
         # (a read that was cut off is not finished: nothing is added until the DM has seen it)
         from dmbot.ui.upload_notice import add_sure
 
+        shown = (
+            await _reveal_world(memory, campaign, read, revealable)
+            if revealable is not None
+            else world_reveal.Revealed()
+        )
         added = await add_sure(
             bot,
             campaign,
             not_held(stored, held_ids),
             label,
             source=("lore", upload.source_id) if upload.source_id else None,
+            earlier=shown.batches,
+            revealed=shown.total,
         )
         if added is not None:
             done.notice, done.questions_left = added
@@ -1116,6 +1128,53 @@ async def _read_background(
         bot, campaign, upload.text, label, read_ai, progress, until=started + THREADS_UNTIL_S
     )
     return done
+
+
+async def _reveal_world(
+    memory: MemoryStore,
+    campaign: Campaign,
+    read: lore_read.LoreRead,
+    links: Sequence[Relation],
+) -> world_reveal.Revealed:
+    """What a World read reveals (#4524 slice 1b, `world_reveal`): the entries it names word for
+    word, the connections it states (`links`, from `queue_links`), and a secret other name only
+    where the line about that person's own name lists it. Never stops the read: a failure is
+    logged and nothing is revealed."""
+    try:
+        lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+
+        def public(name: str) -> str | None:
+            ids = {
+                e.entity_id
+                for e in lookup.by_key.get(name_key(name), ())
+                if not e.secret and not e.person
+            }
+            return next(iter(ids)) if len(ids) == 1 else None
+
+        entries = [i for i in map(public, read.known_named) if i is not None]
+        wanted: dict[str, set[str]] = {}  # entry -> its secret names the text gives with it
+        for main, spellings in read.known_spellings.items():
+            owner = public(main)
+            if owner is None:
+                continue
+            for sp in spellings:
+                for e in lookup.by_key.get(name_key(sp), ()):
+                    if e.secret and e.entity_id == owner:
+                        wanted.setdefault(owner, set()).add(e.alias_id)
+        aliases = [
+            a
+            for owner, ids in wanted.items()
+            for a in await memory.aliases(
+                campaign.guild_id, campaign.id, entity_id=owner, include_secret=True
+            )
+            if a.id in ids
+        ]
+        return await world_reveal.reveal(
+            memory, campaign.guild_id, campaign.id, entries=entries, links=links, aliases=aliases
+        )
+    except Exception as exc:  # the read is kept whatever happens to this
+        log.warning("A World read's reveals were not made (%s)", type(exc).__name__)
+        return world_reveal.Revealed()
 
 
 def not_held(stored: Mapping[str, Sequence[str]], held: Collection[str]) -> dict[str, list[str]]:
@@ -2568,6 +2627,7 @@ async def queue_links(
     made_unnamed: list[str] | None = None,
     npc_guesses: Mapping[tuple[str, str, str], Mapping[str, float]] | None = None,
     text: str = "",
+    revealable: list[Relation] | None = None,
 ) -> int:
     """Keep the reading's connections for later (`BackstoryLinks`), as entry IDs. An end is a
     name of this reading or a confirmed public name of the campaign; a pair the campaign has
@@ -2588,7 +2648,9 @@ async def queue_links(
     `world_links` (#2959): the connections (their two names' keys and the kind) the players know
     once kept, by the upload's choice; `world_all`: all of them (the DM said everything is known),
     which also covers the ones made from a settled pronoun, a "Which one?" question and an unnamed
-    person. `world_level`: how they are known (`lore_knowledge.SURE`, or `GUESS` for the AI's)."""
+    person. `world_level`: how they are known (`lore_knowledge.SURE`, or `GUESS` for the AI's).
+    `revealable` (#4524 slice 1b): with `world_all`, filled with the connections the campaign keeps
+    from the players that this text states itself, for the read to reveal."""
     store = getattr(bot, "backstory_links", None)
     # (an upload with places and no connections still has a chain of where the story is: #4173)
     if store is None or not (any(answers) or unsettled or unnamed or text):
@@ -2649,21 +2711,45 @@ async def queue_links(
         if r.predicate == "knows" and r.to_session_at is None
     }
 
+    by_triple = {(r.subject_id, r.predicate, r.object_id): r for r in live if not r.assumed}
+
+    def note_reveal(c: bg.Connection, triple: tuple[str, str, str]) -> None:
+        """A World read that states a connection the campaign keeps from the players reveals it
+        (#4524 slice 1b): only one it states itself (never DMbot's inference), and never one it
+        writes through a secret name, which would tie the disguise to the person in public."""
+        if revealable is None or not world_all or c.inferred:
+            return
+        secret_end = any(
+            e.secret for end in (c.a, c.b) for e in lookup.by_key.get(name_key(end), ())
+        ) or {name_key(c.a), name_key(c.b)} & set(secret_spellings)
+        r = by_triple.get(triple)
+        if (
+            r is not None
+            and not secret_end
+            and (r.secret or r.unrevealed)
+            and r.id not in {x.id for x in revealable}
+        ):
+            revealable.append(r)
+
     def known(c: bg.Connection) -> bool:
         a, b = entry(c.a), entry(c.b)
         if a is None or b is None:
             return True  # an end that is no entry of the campaign (a name that was refused)
         if c.how == "knows" and (a, "knows", b) in have:
             # the same way round: known only when it says the same about the feeling (#3175)
-            return feeling_words.sign_of(knows_feeling.get((a, b), "")) == feeling_words.sign_of(
+            same = feeling_words.sign_of(knows_feeling.get((a, b), "")) == feeling_words.sign_of(
                 c.words
             )
+            if same:
+                note_reveal(c, (a, "knows", b))
+            return same
         how = (
             f"{c.how}:{route_words.canonical(c.words)}"
             if c.how == route_words.ROUTE_TO and route_words.canonical(c.words)
             else c.how
         )
         if (a, how, b) in have or (c.how in symmetric and (b, how, a) in have):
+            note_reveal(c, (a, how, b) if (a, how, b) in have else (b, how, a))
             return True
         # A friendship or enmity stored the old way (ally_of, enemy_of) is the same fact as
         # "knows" with the feeling that matches it (#3175): not offered a second time.

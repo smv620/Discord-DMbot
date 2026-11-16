@@ -56,7 +56,7 @@ def _plural(kind: str, count: int) -> str:
 # Counts that ride beside the kinds of names, never one of them (#3963 c, #3979, #2996).
 _NOT_NAMES = (
     "connections", "other_names", "shown", "held", "split_group", "split_unknown",
-    "names_split_group", "names_split_unknown",
+    "names_split_group", "names_split_unknown", "revealed",
 )  # fmt: skip
 
 
@@ -110,6 +110,13 @@ def notice_text(label: str, counts: Mapping[str, int], questions: int) -> str:
             f"hidden from your players: the party was split, and DMbot can't tell which group "
             f"heard {'it' if one else 'them'}. To choose who knows: open either name, ✏️ Edit a "
             f"connection…, 👁️ Who knows this?, pick who was there, then 👥 Only some characters."
+        )
+    revealed = counts.get("revealed", 0)
+    if revealed:  # (a World read named what backstories kept hidden, #4524 slice 1b)
+        one = revealed == 1
+        text += (
+            f"\n🌍 **{revealed} thing{'' if one else 's'}** from backstories "
+            f"{'is' if one else 'are'} now known to everyone."
         )
     if names_split := split_words.for_many(
         counts.get("names_split_group", 0), counts.get("names_split_unknown", 0)
@@ -294,6 +301,8 @@ async def add_sure(
     connections: bool = True,
     source: tuple[str, str] | None = None,
     dm_claims: DmClaims | None = None,
+    earlier: Sequence[int] = (),
+    revealed: int = 0,
 ) -> tuple[Notice, int] | None:
     """Add what DMbot is sure of from this reading, as the DM's own calls (`memory.auto_accept`),
     and keep the upload's notice with the changes it made. Returns the notice and the number of
@@ -302,7 +311,9 @@ async def add_sure(
     `source`: ("lore" or "import", that upload's or import's id), so the website finds this notice
     by it (#3879). `dm_claims`: the DMs and this import's sessions, to also keep the connections the
     DM's own lines state, once their names are in (#3897; an import's); who may be recorded is read
-    again just before. Never raises."""
+    again just before. `earlier`: changes this upload made before (a World read's reveals, #4524
+    slice 1b), kept first so ↩️ Undo takes them back too; `revealed`: how many things they made
+    known to everyone, for the notice's count. Never raises."""
     from dmbot.memory import auto_accept as auto
     from dmbot.memory import backstory_keep
     from dmbot.ui.names import background_kind
@@ -354,6 +365,8 @@ async def add_sure(
             counts["names_split_group"] = tally.names_split_group
         if tally.names_split_unknown:
             counts["names_split_unknown"] = tally.names_split_unknown
+        if revealed:
+            counts["revealed"] = revealed
         questions = (
             tally.waiting[auto.NAMES]
             + tally.waiting[auto.CONNECTIONS]
@@ -367,7 +380,7 @@ async def add_sure(
             cid,
             label,
             counts,
-            tally.batches,
+            [*earlier, *tally.batches],  # (in the order made: Undo goes newest first)
             source_kind=source[0] if source else None,
             source_id=source[1] if source else None,
         )
