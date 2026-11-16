@@ -26,7 +26,7 @@ from dmbot.campaigns.models import Campaign, CampaignError
 from dmbot.campaigns.store import CampaignStore
 from dmbot.db import Database
 from dmbot.devtools import sample_name
-from dmbot.devtools.sample_run.costs import CostLine, recap_line
+from dmbot.devtools.sample_run.costs import CostLine, recap_line, recap_scores
 from dmbot.devtools.sample_run.plan import (
     STEPS,
     Existing,
@@ -708,11 +708,14 @@ async def write_recap(
     run: Callable[[list[str]], Awaitable[int]] | None = None,
     spent: list[CostLine] | None = None,
     why: list[str] | None = None,
+    scores: dict[str, int | str] | None = None,
 ) -> int:
     """The recap, with no audio, by the same code as `recap_run --session ... --yes`. Its report
     holds the recap's words, so it is swallowed: only the exit code comes back (0: made). `spent`
     (#4087) gets the recap's tokens and dollars, read from its one "tokens in N, out N; spend $X"
-    line and nothing else of the report."""
+    line and nothing else of the report. `scores` (#4556): the recap is also scored (`--score`: two
+    more AI calls, the must-have counts and the four storytelling numbers), and the numbers go in
+    `scores`, never a word of the recap."""
     if run is None:
         from dmbot.devtools.recap_run import __main__ as rr
 
@@ -720,6 +723,8 @@ async def write_recap(
             return await rr.main_async(rr.parse_args(argv))
 
     argv = ["--session", str(guild), campaign_id, str(session_at), "--yes"]
+    if scores is not None:
+        argv.append("--score")
     swallowed, complaints = io.StringIO(), io.StringIO()
     try:
         with contextlib.redirect_stdout(swallowed), contextlib.redirect_stderr(complaints):
@@ -736,6 +741,8 @@ async def write_recap(
                 print(said, file=sys.stderr)
     if spent is not None and (line := recap_line(swallowed.getvalue())) is not None:
         spent.append(line)
+    if scores is not None and code == 0:
+        scores.update(recap_scores(swallowed.getvalue()))
     return code
 
 

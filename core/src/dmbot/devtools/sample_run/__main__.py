@@ -452,11 +452,12 @@ async def run(
 
         async def recap_step() -> Mapping[str, int | str]:
             why: list[str] = []
-            code = await steps.write_recap(gid, cid, started, spent=spent, why=why)
+            scores: dict[str, int | str] = {}
+            code = await steps.write_recap(gid, cid, started, spent=spent, why=why, scores=scores)
             if code != 0:
                 reason = f": {why[-1]}" if why else " (and no reason was printed)"
                 raise SampleError(f"the recap was not made (recap_run exit {code}){reason}")
-            return {"made": 1}
+            return {"made": 1, **scores}  # (the numbers go in the report for #3545, #4556)
 
         if args.accept_all:  # the old way (#3544), for comparison
             lore_accept: dict[str, Callable[[], Awaitable[Mapping[str, int | str]]]] = {
@@ -826,9 +827,14 @@ async def _finish(
     if kept and not failed:
         say("=== recap of the kept run (no audio) ===")
         why: list[str] = []
-        code = await steps.write_recap(kept["guild"], kept["campaign"], kept["started"], why=why)
+        scores: dict[str, int | str] = {}
+        code = await steps.write_recap(
+            kept["guild"], kept["campaign"], kept["started"], why=why, scores=scores
+        )
         if code == 0:
             say("recap: made")
+            for label, value in scores.items():  # (numbers only, for #3545, #4556)
+                say(f"{label}: {value}")
         else:
             reason = why[-1] if why else "no reason was printed"
             say(f"recap: not made (recap_run exit {code}); {reason}")
