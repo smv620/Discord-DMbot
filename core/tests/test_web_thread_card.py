@@ -128,7 +128,7 @@ class TheChanges(Card):
         await super().asyncSetUp()
         self.actions = wa.ActionStore(self.db)
 
-    async def queue(self, action: str, text: str) -> Any:
+    async def queue_part(self, action: str, text: str) -> Any:
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
             await _scoped(conn, self.g)
             cur = await conn.execute(
@@ -139,7 +139,7 @@ class TheChanges(Card):
         return found["r"] if found else None
 
     async def act(self, action: str, text: str) -> wa.Outcome:
-        got = await self.queue(action, text)
+        got = await self.queue_part(action, text)
         self.assertEqual(got["status"], "ok", got)
         claimed = await self.actions.claim_next(self.g)
         assert claimed is not None
@@ -259,7 +259,7 @@ class TheChanges(Card):
             ("branch-move", f"{t}"),
             ("part-undo", "x"),
         ):
-            got = await self.queue(action, text)
+            got = await self.queue_part(action, text)
             self.assertNotEqual(got["status"], "ok", (action, text))
 
     async def test_the_web_module_checks_before_anything_is_queued(self) -> None:
