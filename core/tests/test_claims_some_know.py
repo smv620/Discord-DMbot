@@ -149,7 +149,9 @@ class SomeKnow(ConfirmedMemoryTest):
         first, second = view.page
         await view._pick(it, first.id)
         picker = it.sent[-1][1]
-        self.assertIn("👤 DMbot thinks only Wren knows this: it is ticked.", it.sent[-1][0])
+        self.assertIn("👤 DMbot's guess is ticked: only Wren knows this.", it.sent[-1][0])
+        picker.chosen = [self.wren, self.ash]  # (the DM's own ticks never carry DMbot's name)
+        self.assertNotIn("DMbot's guess", picker.text())
         picker.chosen = [self.wren]
         await picker._save(it)
         self.assertIn("👤 Remembered:", it.sent[-1][0])
@@ -242,3 +244,10 @@ class SomeKnow(ConfirmedMemoryTest):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class AStalePressStillAnswers(unittest.IsolatedAsyncioTestCase):
+    async def test_party_names_of_nothing_is_safe(self) -> None:
+        from dmbot.ui.claims_review import party_names
+
+        self.assertEqual(party_names([], ["x"]), "nobody")

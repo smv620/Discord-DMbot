@@ -145,16 +145,20 @@ NOT_A_NAME_REASON = "a number, time, address or plain word in it is no name"  # 
 SECRET_NAME_REASON = "a name in it is one only the DM may use"
 NAME_FIRST = "Say what the new name is first (in Check new names)."
 # The DM's 👥 Some know (#4534): refused in plain words, nothing written, never quietly different.
-SOME_KNOW_NONE = "Tick at least one character who knows it, or use 🤫 for nobody."
-SOME_KNOW_WHO = "Only characters in this campaign can be ticked."
-SOME_KNOW_STATE = "A state (like 'is dead') has no audience: choose ✅ or ❌."
+SOME_KNOW_NONE = (
+    "Tick at least one character who knows it. To keep it from everyone, use 🤫 instead."
+)
+SOME_KNOW_WHO = "That character isn't in this campaign. Go Back and pick again."
+SOME_KNOW_STATE = (
+    "Facts like 'is dead' are for everyone, so you can't pick who knows. Press ✅ or ❌."
+)
 SOME_KNOW_SHOWN = (
-    "Your players can already see this. Use 👁️ Who knows this? on the connection to change who "
-    "knows it."
+    "Your players can already see this, so it can't be limited here. To change who knows it: "
+    "open either name, ✏️ Edit a connection…, 👁️ Who knows this?"
 )
 SOME_KNOW_HIDDEN = (
-    "A name in it, or the connection itself, is hidden from your players, so choosing who knows "
-    "it can't work yet. Use 🤫 to keep it secret, or show the name first."
+    "Can't pick who knows this yet: a name in it is hidden from your players. Press 🤫 to keep it "
+    "secret, or show that name first (open the name, then 👁️ Who knows this?), then try again."
 )
 # A claim whose name was past the session's limit is kept, waiting for its name to be proposed in
 # a later session (#1367). It is a proposed claim with this as its `reason`, which no claim that
