@@ -118,6 +118,108 @@ class TheDoor(Threads):
             self.assertNotEqual(got["status"], "ok", (action, text))
 
 
+class TheLines(Threads):
+    """What is in a suggestion (#4501, migration 0517): its steps, rewards and branches in words,
+    and a keep that names the ones left on."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        rich = Suggestion(
+            "quest", "The Second Heir", "Bring her home.", "Find the heir.", (), "now",
+            reads=(
+                ReadPart(tp.OBJECTIVE, "Find the heir", "to_do", "Find the heir."),
+                ReadPart(tp.REWARD, "100 gold", "owed", "100 gold.", self.mira, "afterwards"),
+            ),
+            branches=(ReadBranch("mystery", "Who took her?", "Who took her?", "x", "hinted"),),
+        )  # fmt: skip
+        await self.threads.offer(self.g, self.one.id, [rich], "more notes", 2_000)
+
+    async def second(self) -> dict[str, Any]:
+        return next(s for s in await self.waiting() if s["name"] == "The Second Heir")
+
+    async def test_the_lines_come_in_the_cards_own_words_by_position(self) -> None:
+        got = await web_threads.read(self.web, self.session, self.cref)
+        mine = next(s for s in got["suggestions"] if s["name"] == "The Second Heir")
+        lines = mine["lines"]
+        self.assertEqual(
+            [(line["words"], line["branch"]) for line in lines],
+            [("Find the heir", False), ("100 gold", False), ("Who took her?", True)],
+        )
+        self.assertEqual(lines[0]["what"], "Step")
+        self.assertTrue(lines[1]["what"].startswith("Reward from "), lines[1])
+        self.assertTrue(lines[2]["what"].startswith("🌿 Branch, just a hint"), lines[2])
+        self.assertIn(", when the job's done", lines[1]["what"])
+        self.assertNotIn(self.mira, str(mine))  # (names, never entry ids)
+
+    async def test_a_suggestion_with_no_lines_has_an_empty_list(self) -> None:
+        got = await web_threads.read(self.web, self.session, self.cref)
+        lost = next(s for s in got["suggestions"] if s["name"] == "The Lost Heir")
+        self.assertEqual(lost["lines"], [])
+
+    async def test_a_keep_with_the_lines_left_on_keeps_those_and_not_the_others(self) -> None:
+        sid = (await self.second())["id"]
+        done = await self.act("thread-keep", f"{sid} - +0,2")
+        self.assertEqual(done.error, "")
+        parts, _, _, branches = await self.memory.thread_card(self.g, self.one.id, done.result_id)
+        self.assertEqual([p.words for p in parts], ["Find the heir"])  # (position 1 was off)
+        self.assertEqual(len(branches), 1)
+
+    async def test_a_keep_with_the_lines_and_a_name_keeps_both(self) -> None:
+        sid = (await self.second())["id"]
+        done = await self.act("thread-keep", f"{sid} - +1 My Own Name")
+        self.assertEqual(done.error, "")
+        parts, _, _, branches = await self.memory.thread_card(self.g, self.one.id, done.result_id)
+        self.assertEqual(([p.words for p in parts], branches), (["100 gold"], []))
+        thread = await self.memory.entity(self.g, self.one.id, done.result_id)
+        self.assertEqual(thread.name if thread else "", "My Own Name")
+
+    async def test_no_lines_word_or_none_keeps_none(self) -> None:
+        for n, text in enumerate(("{sid} -", "{sid} - +-")):
+            await self.threads.offer(
+                self.g, self.one.id,
+                [Suggestion("quest", f"Heir {n}", "a", "q", (), "now",
+                            reads=(ReadPart(tp.OBJECTIVE, "Step", "to_do", "q"),))],
+                "x", 3_000 + n,
+            )  # fmt: skip
+            sid = next(s["id"] for s in await self.waiting() if s["name"] == f"Heir {n}")
+            done = await self.act("thread-keep", text.format(sid=sid))
+            parts, _, _, _ = await self.memory.thread_card(self.g, self.one.id, done.result_id)
+            self.assertEqual(parts, [], text)
+
+    async def test_one_undo_takes_back_the_thread_and_its_lines(self) -> None:
+        sid = (await self.second())["id"]
+        (batch,) = (await self.act("thread-keep", f"{sid} - +0,1,2")).batches
+        self.assertEqual((await self.act("thread-undo", f"keep {batch}")).error, "")
+        self.assertEqual((await self.second())["id"], sid)  # (waiting again)
+
+    async def test_the_lines_door_gives_a_player_nothing_and_the_shapes_are_checked(self) -> None:
+        bob = await self.signed(BOB, THURSDAY)
+        async with self.web.user(bob.user_id, session=bob.id_hash) as conn:
+            await _scoped(conn, self.g)
+            cur = await conn.execute(
+                "SELECT dmbot_web_thread_lines(%s, %s) AS r", (self.g, self.one.id)
+            )
+            found = await cur.fetchone()
+        self.assertIsNone(found and found["r"])
+        sid = (await self.second())["id"]
+        for text in (f"{sid} - +", f"{sid} - +100", f"{sid} - +x", f"{sid} - +0,"):
+            got = await self.add_action("thread-keep", text)
+            self.assertNotEqual(got["status"], "ok", text)
+
+    async def test_the_page_names_for_lines_are_checked_before_anything_is_queued(self) -> None:
+        for lines in ("0", [True], [0, 0], [100], [-1], list(range(51))):
+            with self.assertRaises(RecapError, msg=str(lines)):
+                await web_threads.queue_keep(
+                    self.web, self.session, self.cref, {"id": "a" * 32, "on": [], "lines": lines}
+                )
+        sid = (await self.second())["id"]
+        self.assertTrue(
+            await web_threads.queue_keep(
+                self.web, self.session, self.cref, {"id": sid, "on": [], "lines": [0, 2]}
+            )
+        )
+
+
 class TheActions(Threads):
     async def test_keep_with_one_person_left_on_is_one_undo(self) -> None:
         (one,) = await self.waiting()
