@@ -259,9 +259,48 @@ async def forget(conn: Any, guild_id: int, user_id: int, campaign_id: str | None
     return gone
 
 
+@dataclass(frozen=True, slots=True)
+class KeptFrom:
+    """Where a kept thread came from, for "Where was it said?" (#4554): pointers only, never
+    words. A session's lines are found by when each began and who said it; a lore one has its
+    upload's label."""
+
+    session_id: str | None
+    line_starts: tuple[int, ...]
+    speaker_ids: tuple[int, ...]
+    upload: str
+    created_at: int
+
+
 class ThreadSuggestionStore:
     def __init__(self, db: Any) -> None:
         self._db = db
+
+    async def kept_from(self, guild_id: int, campaign_id: str, entity_id: str) -> KeptFrom | None:
+        """The suggestion the DM kept that made this entry, found through the change that added
+        it (the keep writes both under one number). None for an entry no suggestion made, or one
+        whose suggestion was undone. A DM-only reader: the upload's label can name a backstory."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT t.session_id, t.line_starts, t.speaker_ids, t.upload, t.created_at"
+                " FROM thread_suggestions t JOIN memory_changes c"
+                " ON c.guild_id = t.guild_id AND c.campaign_id = t.campaign_id"
+                " AND c.batch = t.kept_batch"
+                " WHERE t.guild_id = %s AND t.campaign_id = %s AND t.status = 'kept'"
+                " AND c.table_name = 'memory_entities' AND c.op = 'insert' AND c.row_id = %s"
+                " ORDER BY t.created_at DESC LIMIT 1",
+                (guild_id, campaign_id, entity_id),
+            )
+            r = await cur.fetchone()
+        if r is None:
+            return None
+        return KeptFrom(
+            None if r["session_id"] is None else str(r["session_id"]),
+            tuple(int(n) for n in r["line_starts"] or ()),
+            tuple(int(n) for n in r["speaker_ids"] or ()),
+            str(r["upload"]),
+            int(r["created_at"]),
+        )
 
     async def known(self, guild_id: int, campaign_id: str) -> list[tuple[str, frozenset[str]]]:
         """Every suggestion's name key and people, whatever became of it: the reader never
