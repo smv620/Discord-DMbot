@@ -2,12 +2,12 @@
 docs/design/mapbot_layers.md §4.3, §4.4 and §9; Supervisor's ruling on #4670; the ux-critic's
 wording). One place, so Discord and the website say the same. Pure: no Discord, no database.
 
-Rules kept in the words (§9): every answer says "about" and names the map it used; a measured line
-is called a straight line; an answer that rests on north being assumed says "if north is at the
-top"; no scale is no number, never a guess, with the fix said to the DM (a player is told the DM
-can add one, as setting a scale is the DM's); "pin" is never said; and a player is never told a
-hidden map exists (the same words whether or not a DM-only map has both places). DMbot never says
-a stated distance is wrong."""
+Rules kept in the words (§9): every answer that measures says "about" and names the map it
+used; a measured line is called a straight line; an answer that rests on north being assumed says
+"if north is at the top"; no scale is no number, never a guess, with the fix said to the DM (a
+player is told the DM can add one, as setting a scale is the DM's); "pin" is never said; and a
+player is never told a hidden map exists (the same words whether or not a DM-only map has both
+places). DMbot never says a stated distance is wrong."""
 
 from __future__ import annotations
 
@@ -32,20 +32,21 @@ def on_map(title: str) -> str:
 
 def far(amount: str, a: str, b: str, map_title: str) -> str:
     """'About 40 miles from Bryn Shander to Targos in a straight line, on the Icewind Dale map.'
-    (a, b as the question gave them.) `amount` "" is less than the map can tell: 'Less than a mile
-    …' or 'Less than 100 feet …' comes from `less_than`."""
+    (a, b as the question gave them.) Closer than the map can tell is `at_most`'s words."""
     return f"About {amount} from {a} to {b} in a straight line, on {on_map(map_title)}."
 
 
-def less_than(limit: str, a: str, b: str, map_title: str) -> str:
-    return f"Less than {limit} from {a} to {b} in a straight line, on {on_map(map_title)}."
+def at_most(limit: str, a: str, b: str, map_title: str) -> str:
+    """Closer than the map can tell: 'About a mile or less from …' ("about" in every answer)."""
+    return f"About {limit} or less from {a} to {b} in a straight line, on {on_map(map_title)}."
 
 
-def way(b: str, direction: str, a: str, map_title: str, *, north_known: bool) -> str:
-    """'Bryn Shander is north-east of Targos on the Icewind Dale map.' With north assumed:
-    '… on the Icewind Dale map, if north is at the top.'"""
+def way(place: str, direction: str, from_place: str, map_title: str, *, north_known: bool) -> str:
+    """'Bryn Shander is about north-east of Targos on the Icewind Dale map.' With north assumed:
+    '… on the Icewind Dale map, if north is at the top.' (One of eight directions is never exact,
+    so "about" here too.)"""
     tail = "" if north_known else ", if north is at the top"
-    return f"{b} is {direction} of {a} on {on_map(map_title)}{tail}."
+    return f"{place} is about {direction} of {from_place} on {on_map(map_title)}{tail}."
 
 
 def no_scale(map_title: str, *, dm: bool) -> str:
@@ -67,4 +68,4 @@ def not_on_a_map(name: str, *, dm: bool) -> str:
 
 
 def same_spot(a: str, b: str, map_title: str) -> str:
-    return f"{a} and {b} are at the same spot on {on_map(map_title)}."
+    return f"{a} and {b} are at about the same spot on {on_map(map_title)}."

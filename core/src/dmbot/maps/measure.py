@@ -35,6 +35,7 @@ class MapInfo:
     unit: str  # "miles" or "feet" ("" with no scale)
     north: float  # degrees clockwise from the top of the picture
     north_known: bool  # read from a compass or set by the DM (not assumed up)
+    created_at: int = 0  # the newer of two maps of one kind answers first
 
 
 @dataclass(frozen=True, slots=True)
@@ -72,16 +73,17 @@ def rounded(value: float, unit: str) -> str | None:
     """A measured number as said: miles whole from 10 up, to a half below; feet to the nearest 5;
     with its unit, singular for one. None when it is less than the smallest it says (never
     "about 0 miles": the answer says "less than a mile" instead)."""
+    # (halves round up: Python's round() takes them to the even number, which could say "0")
     if unit == "feet":
         if value < 2.5:
             return None
-        return f"{round(value / 5.0) * 5} feet"
+        return f"{max(5, math.floor(value / 5.0 + 0.5) * 5)} feet"
     if value < 0.75:
         return None
     if value < 10:
-        said = f"{round(value * 2) / 2:g}"
+        said = f"{max(1.0, math.floor(value * 2 + 0.5) / 2):g}"
         return f"{said} mile" if said == "1" else f"{said} miles"
-    return f"{round(value)} miles"
+    return f"{math.floor(value + 0.5)} miles"
 
 
 SMALLEST = {"feet": "5 feet", "miles": "a mile"}
@@ -98,12 +100,16 @@ def choose(
         on.setdefault(p.map_id, set()).add(p.place_id)
     both = sorted(
         (m for m in maps if {a, b} <= on.get(m.id, set())),
-        key=lambda m: (DETAIL.get(m.kind, 5), m.id),
+        key=lambda m: (DETAIL.get(m.kind, 5), -m.created_at, m.id),
     )
     if not both:
         return None, None
-    usable = [m for m in both if not need_scale or (m.per_px and m.width and m.height)]
-    return (usable[0] if usable else None), both[0]
+    if need_scale:
+        usable = [m for m in both if m.per_px and m.width and m.height]
+        return (usable[0] if usable else None), both[0]
+    # (a direction is truest on a map whose size is known: a wide map is not square)
+    sized = [m for m in both if m.width and m.height]
+    return (sized or both)[0], both[0]
 
 
 def pin_of(pins: Sequence[Pin], map_id: str, place_id: str) -> Pin | None:
@@ -142,7 +148,7 @@ def answer(
         assert d is not None
         amount = rounded(d, used.unit)
         if amount is None:
-            return words.less_than(SMALLEST[used.unit], a_name, b_name, used.title)
+            return words.at_most(SMALLEST[used.unit], a_name, b_name, used.title)
         return words.far(amount, a_name, b_name, used.title)
     deg = bearing(used, pb, pa)  # ("which way is A from B": from B towards A)
     if deg is None:

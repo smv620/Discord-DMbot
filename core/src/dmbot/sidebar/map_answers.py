@@ -14,12 +14,15 @@ DMbot may use, and carries the Maps page's link."""
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Awaitable, Callable
 from typing import Any
 
 from dmbot.maps import measure_phrase
 from dmbot.maps import measure_words as words
 from dmbot.sidebar.answer import Answer
+
+log = logging.getLogger(__name__)
 
 PROMPT_VERSION = "map-measure-1"  # no prompt: the words are code's (`maps/measure_words.py`)
 
@@ -47,7 +50,15 @@ class MapMeasuring:
     ) -> Any:
         asked = measure_phrase.read(question) if self._on() else None
         if asked is not None:
-            text = await self._measure(campaign, asked, not table)
+            # The plan's check comes first, as for any answer (an engine without one has none).
+            check = getattr(self.inner, "_gate", None)
+            refused = await check(campaign, asker_id) if check is not None else None
+            text = None
+            if refused is None:
+                try:
+                    text = await self._measure(campaign, asked, not table)
+                except Exception as exc:  # (never fatal: the usual answer goes on)
+                    log.warning("Map answer failed (%s)", type(exc).__name__)
             if text is not None:
                 page = self._maps_page() if not table else ""
                 shown = f"{text}\n{words.LINK}: {page}" if page else text
@@ -56,8 +67,11 @@ class MapMeasuring:
                     if asked.kind == measure_phrase.FAR
                     else f"which way is {asked.a} from {asked.b}"
                 )
+                # A DM's private answer may come from a DM-only map: it is never written to the
+                # raw transcript, which the players may read (`in_game` False: the question line
+                # is kept, the answer is not). The table's answer is from the table's maps.
                 return Answer(
-                    text=shown, in_game=True, question=restated, model="",
+                    text=shown, in_game=table, question=restated, model="",
                     prompt_version=PROMPT_VERSION, sources=("a kept map",), parts=(shown,),
                 )  # fmt: skip
         return await self.inner.answer(
@@ -65,5 +79,8 @@ class MapMeasuring:
         )
 
     def __getattr__(self, name: str) -> Any:
-        # (anything else the sidebar reads from its engine is the engine's own)
+        # (anything else the sidebar reads from its engine is the engine's own; never `inner`
+        # itself, which would loop before it is set)
+        if name == "inner":
+            raise AttributeError(name)
         return getattr(self.inner, name)

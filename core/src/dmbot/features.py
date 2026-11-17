@@ -144,7 +144,7 @@ FEATURES: tuple[Feature, ...] = (
         "Quick questions",
         "Ask DMbot a question in the game and get a short private answer.",
         lambda s: s.sidebar_on,
-        ("sidebar_on",),
+        ("sidebar_on", "map_measure_on"),  # (map answers, #4670 4b, need the sidebar)
     ),
     Feature(
         "sidebar recall",
@@ -173,7 +173,6 @@ FEATURES: tuple[Feature, ...] = (
             "story_reveals_on",
             "story_reveals_precheck",
             "story_threads_on",
-            "map_measure_on",
             "met_unnamed_on",
             "private_scenes_on",
             "picture_names_on",
