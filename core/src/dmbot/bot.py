@@ -697,6 +697,9 @@ log = logging.getLogger(__name__)
 # this long for its close read, which nobody is waiting on at the table.
 MAP_CLOSE_EVERY_S = 600
 MAP_CLOSE_PER_SWEEP = 10  # (the first sweep after a deploy, or credits back, reads no more)
+# The one-time re-read of a map read before pins were (#4670, Supervisor's ruling 1): at most this
+# many a day in each server, metered like any close read.
+MAP_PINS_PER_DAY = 5
 MAP_CLOSE_NO_FUNDS_S = 3600  # a campaign put off for AI credits is tried again after this
 
 WHO_PER_SESSION = 120  # waiting names ranked in one session's step: about four calls
@@ -1603,6 +1606,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # campaign → when its close reads may be tried again after being put off (in memory: a
         # restart simply tries once more)
         self._map_close_after: dict[str, float] = {}
+        self._map_pins_day: dict[int, tuple[int, int]] = {}  # server -> (day, re-reads that day)
         self.image_desk: ImageDesk | None = (
             ImageDesk(
                 self.ai_client.tier(FEATURE_TIERS[Feature.IMAGE], Feature.IMAGE),
@@ -14003,14 +14007,53 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     except Exception as exc:  # one map's trouble never stops the others
                         log.warning("Map close reads: one failed (%s)", type(exc).__name__)
                         done["error"] += 1
+        for guild in list(self.guilds):  # (then old maps' one-time re-read for pins, #4670)
+            if self._closing or done["read"] + done["failed"] >= MAP_CLOSE_PER_SWEEP:
+                break
+            turned_away: set[str] = set()  # (campaigns refused before a read, this sweep)
+            try:
+                await self.consent.consenting(guild.id)  # (fill the cache, as above)
+                waiting = await store.pins_waiting(guild.id)
+            except Exception as exc:
+                log.warning("Map pins: a server's list failed (%s)", type(exc).__name__)
+                continue
+            for campaign_id, a_map in waiting:
+                today = int(now // 86400)
+                day, count = self._map_pins_day.get(guild.id, (today, 0))
+                count = count if day == today else 0
+                if self._closing or count >= MAP_PINS_PER_DAY:
+                    break
+                if self._map_close_after.get(campaign_id, 0.0) > now or campaign_id in turned_away:
+                    continue
+                with log_context(guild_id=guild.id, campaign_id=campaign_id):
+                    try:
+                        outcome = await self._close_read_one(
+                            guild.id, campaign_id, a_map, again=True
+                        )
+                    except Exception as exc:
+                        log.warning("Map pins: one failed (%s)", type(exc).__name__)
+                        outcome = "error"
+                done["again " + outcome] += 1
+                # Only a read that was claimed counts toward the day's 5 (the reviewer: a
+                # campaign refused before the read, with no AI on its plan say, would otherwise
+                # use up the server's day every sweep); a refused campaign is passed over until
+                # the next sweep. (Counted in memory: a restart allows a few more that day.)
+                if outcome in ("read", "failed", "not read", "stopped meanwhile", "error"):
+                    self._map_pins_day[guild.id] = (today, count + 1)
+                elif outcome not in ("put off", "taken"):
+                    turned_away.add(campaign_id)
         if done:
             log.info("Map close reads: %s", ", ".join(f"{k} {v}" for k, v in sorted(done.items())))
 
-    async def _close_read_one(self, gid: int, cid: str, a_map: MapRow) -> str:
+    async def _close_read_one(
+        self, gid: int, cid: str, a_map: MapRow, *, again: bool = False
+    ) -> str:
         """One kept map's close read, every check asked now and again after the slow steps
         (Supervisor's ruling; CLAUDE.md, "Consent" and "Maps and pictures"): DMbot may use it, the
         plan has AI, the DM confirmed the right to use shared material, the picture is still kept
-        and its poster still agrees to pictures. What to count it as in the log."""
+        and its poster still agrees to pictures. What to count it as in the log. The read's pins,
+        scale and north are written with it (#4670). `again`: the one-time re-read of a map read
+        before pins were (Supervisor's ruling 1 on #4670), claimed by its own mark, once."""
         store, desk, notes = self.map_store, self.image_desk, self.map_notes
         pictures, bucket = self.picture_store, self.picture_bucket
         assert store and desk and notes and pictures and bucket
@@ -14031,6 +14074,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
         if not still_ok():
             return "poster stopped"
+        if again:
+            if not await store.claim_pins(gid, cid, a_map.id):
+                return "taken"
+            return await _pins_again(self, gid, cid, a_map, picture, still_ok)
         claimed = await store.claim_close_read(gid, cid, a_map.id)
         if claimed is None:
             return "taken"  # (another sweep has it, or it changed since it was listed)
@@ -14078,6 +14125,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             await store.close_read_failed(gid, cid, a_map.id, claimed)
             return "not read"
         await store.close_read_done(gid, cid, a_map.id, claimed)
+        await _record_pins(self, gid, cid, a_map.id, read)
         return "read"
 
     async def run_waiting_now(self) -> None:
@@ -16203,3 +16251,62 @@ async def _open_mysteries(bot: Any, gid: int, cid: str) -> list[tuple[str, str]]
     except Exception as exc:
         log.warning("Story extractor: open mysteries not read (%s)", type(exc).__name__)
         return []
+
+
+async def _record_pins(bot: Any, gid: int, cid: str, map_id: str, read: Any) -> None:
+    """A close read's pins, scale and north (#4670): counts only in the log; a failure here
+    never undoes the read itbot."""
+    assert bot.map_store is not None
+    try:
+        got = await bot.map_store.record_positions(gid, cid, map_id, read)
+    except Exception as exc:
+        log.warning("Map pins: not written (%s)", type(exc).__name__)
+        return
+    log.info(
+        "Map pins: %d written (%d matched, %d kept), scale %s, north %s",
+        got.pins, got.matched, got.kept, "read" if got.scale else "no",
+        "read" if got.north else "no",
+    )  # fmt: skip
+
+
+async def _pins_again(
+    bot: Any, gid: int, cid: str, a_map: MapRow, picture: Any, still_ok: Any
+) -> str:
+    """The one-time re-read for pins (#4670), claimed already: the same metered read and the
+    same checks after it as a first close read; its note gets the newer read too."""
+    store, desk, notes = bot.map_store, bot.image_desk, bot.map_notes
+    bucket = bot.picture_bucket
+    assert store and desk and notes and bucket
+    try:
+        data = await bucket.get(picture.object_key)
+        media = images.sniff(data)
+        if media is None:
+            raise images.ImageError("not a picture")
+        read = await desk.read_closely(
+            gid, cid, Image(media, data), lambda: credits.preparing(gid, cid, "map"), still_ok
+        )
+    except (image_desk.DayLimit, AIOutOfFunds) as exc:  # put off: given back for later
+        await store.release_pins(gid, cid, a_map.id)
+        bot._map_close_after[cid] = time.time() + (
+            MAP_CLOSE_NO_FUNDS_S if isinstance(exc, AIOutOfFunds) else image_desk.DAY_S
+        )
+        return "put off"
+    except image_desk.Stopped:
+        return "stopped meanwhile"
+    except asyncio.CancelledError:
+        await store.release_pins(gid, cid, a_map.id)
+        raise
+    except Exception as exc:
+        log.info("Map pins: the re-read failed (%s)", type(exc).__name__)
+        return "failed"  # (one time only: not tried again)
+    now_map = await store.get(gid, cid, a_map.id, maps_store.Viewer(dm=True))
+    if not still_ok() or now_map is None or not maps_store.may_use_map(now_map):
+        return "stopped meanwhile"
+    if read is None or read.kind != images.MAP:
+        return "not read"
+    if not await notes.set_close(
+        gid, cid, picture.poster_id, read, picture_id=picture.id, message_id=picture.message_id
+    ):
+        return "not read"  # (the picture went meanwhile: no pins for it)
+    await _record_pins(bot, gid, cid, a_map.id, read)
+    return "read"
