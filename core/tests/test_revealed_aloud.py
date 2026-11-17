@@ -154,8 +154,14 @@ def fake_bot(memory: Any, lines: list[Line], agreed: set[int]) -> Any:
             ),
         ),
         campaigns=SimpleNamespace(
-            get=AsyncMock(return_value=SimpleNamespace(dm_screen_channel_id=55))
+            get=AsyncMock(
+                return_value=SimpleNamespace(
+                    id="c" * 32, guild_id=GUILD_A, dm_screen_channel_id=55, dm_bot_channel_id=None
+                )
+            )
         ),
+        ask_privately=AsyncMock(return_value=True),  # (#3874 E1: the names go to the DMs first)
+        post_message=AsyncMock(return_value=None),
         consent=SimpleNamespace(consenting=AsyncMock(return_value=agreed)),
         post=AsyncMock(return_value=True),
     )
@@ -181,13 +187,13 @@ class AfterTheSession(WithTheStore):
         await DMBot.reveal_names_said(bot, self.table())
         self.assertFalse(await self.hidden(orla))
         self.assertTrue(await self.hidden(rook))
-        bot.post.assert_awaited_once()
-        self.assertEqual(bot.post.await_args.args[0], 55)
+        bot.ask_privately.assert_awaited_once()
+        bot.post.assert_not_awaited()  # (no DM Bot channel here, so no pointer)
         self.assertEqual(
-            bot.post.await_args.args[1],
+            bot.ask_privately.await_args.args[2],
             "👁️ Revealed at the table: **Orla Finch** (Session 2). Your players can see them now.",
         )
-        self.assertIsNotNone(bot.post.await_args.kwargs["view"])
+        self.assertIsNotNone(bot.ask_privately.await_args.args[3])  # (the Undo)
         bot.lookup.drop.assert_called_once_with([self.c])
 
     async def test_a_name_said_while_the_party_was_split_is_not_shown_to_everyone(self) -> None:
@@ -231,7 +237,7 @@ class AfterTheSession(WithTheStore):
 
         await DMBot._reveal_said(bot, GUILD_A, self.c, texts, "an imported session")
         self.assertFalse(await self.hidden(orla))
-        self.assertIn("(an imported session)", bot.post.await_args.args[1])
+        self.assertIn("(an imported session)", bot.ask_privately.await_args.args[2])
 
     async def test_consent_is_asked_last_and_a_person_who_stopped_does_not_reveal(self) -> None:
         orla, _ = await self.held("Orla Finch", "Rook Pell")
@@ -261,7 +267,7 @@ class AfterTheSession(WithTheStore):
     async def test_a_failing_post_still_leaves_the_names_shown_and_does_not_raise(self) -> None:
         orla, _ = await self.held("Orla Finch", "Rook Pell")
         bot = fake_bot(self.memory, [line(PLAYER, "Orla Finch")], {PLAYER})
-        bot.post = AsyncMock(return_value=False)
+        bot.ask_privately = AsyncMock(return_value=False)
         await DMBot.reveal_names_said(bot, self.table())
         self.assertFalse(await self.hidden(orla))
 
@@ -274,7 +280,9 @@ class AfterTheSession(WithTheStore):
         )  # fmt: skip
         bot = fake_bot(self.memory, [line(PLAYER, "Orla Finch")], {PLAYER})
         await DMBot.reveal_names_said(bot, self.table())
-        self.assertNotIn("hidden connection", bot.post.await_args.args[1])  # an old, kept one
+        self.assertNotIn(
+            "hidden connection", bot.ask_privately.await_args.args[2]
+        )  # an old, kept one
 
     async def test_waiting_connections_are_pointed_to_after_the_names(self) -> None:
         orla, rook = await self.held("Orla Finch", "Rook Pell")
@@ -284,7 +292,7 @@ class AfterTheSession(WithTheStore):
         )  # fmt: skip
         bot = fake_bot(self.memory, [line(PLAYER, "Orla Finch and Rook Pell")], {PLAYER})
         await DMBot.reveal_names_said(bot, self.table())
-        text = bot.post.await_args.args[1]
+        text = bot.ask_privately.await_args.args[2]
         self.assertIn("1 hidden connection joins names your players know now", text)
 
 

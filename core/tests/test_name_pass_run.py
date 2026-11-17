@@ -44,6 +44,8 @@ class ThePass(NamesTest):
         self.transcripts = TranscriptStore(self.db)
         self.bot.transcripts = self.transcripts
         self.bot.post = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        # (#3874 E1: the report goes to the DMs privately first)
+        self.bot.ask_privately = AsyncMock(return_value=True)  # type: ignore[method-assign]
         self.ai = SimpleNamespace(complete=AsyncMock(return_value=reply()))
         self.bot.name_pass_ai = self.ai  # type: ignore[assignment]
         await self.campaigns.set_dm_screen(GUILD, self.campaign.id, 3)
@@ -89,7 +91,8 @@ class ThePass(NamesTest):
         )
         self.assertEqual(await self.heard(), heard)  # what was heard never changes (#933)
         self.assertTrue(await self.done())
-        text, view = self.bot.post.await_args.args[1], self.bot.post.await_args.args[2]  # type: ignore[attr-defined]
+        asked: Any = self.bot.ask_privately
+        text, view = asked.await_args.args[2], asked.await_args.args[3]
         self.assertEqual(
             text,
             "**Names fixed this session**\n"
@@ -128,11 +131,11 @@ class ThePass(NamesTest):
     async def test_the_dm_is_told_what_was_not_sure_and_what_was_new(self) -> None:
         self.ai.complete.return_value = reply({"n": 1, "answer": "unsure", "name": ""})
         await self.run_pass()
-        text = self.bot.post.await_args.args[1]  # type: ignore[attr-defined]
+        text = self.bot.ask_privately.await_args.args[2]  # type: ignore[attr-defined]
         self.assertIn("Not sure (asked the DM): 1\n  (3) Keirandal → Kethrandil?", text)
         self.ai.complete.return_value = reply({"n": 1, "answer": "new", "name": ""})
         await self.run_pass()
-        self.assertIn("New names (asked the DM): 1", self.bot.post.await_args.args[1])  # type: ignore[attr-defined]
+        self.assertIn("New names (asked the DM): 1", self.bot.ask_privately.await_args.args[2])  # type: ignore[attr-defined]
 
     async def test_a_word_plotbot_was_not_sure_of_becomes_a_name_question_even_heard_once(
         self,
@@ -154,7 +157,7 @@ class ThePass(NamesTest):
         self.ai.complete.return_value = reply({"n": 1, "answer": "new", "name": ""})
         await self.run_pass()
         self.assertEqual(self.bot._name_pass_asks[self.session], [("Keirandal", 3)])
-        self.assertIn("New names (asked the DM): 1", self.bot.post.await_args.args[1])  # type: ignore[attr-defined]
+        self.assertIn("New names (asked the DM): 1", self.bot.ask_privately.await_args.args[2])  # type: ignore[attr-defined]
         await self.bot._propose_new_names(
             GUILD, self.campaign.id, ["Nothing else here."], {PLAYER}, self.session
         )
@@ -168,9 +171,9 @@ class ThePass(NamesTest):
         self.ai.complete.return_value = reply({"n": 1, "answer": "new", "name": ""})
         await self.run_pass()
         self.assertNotIn(self.session, self.bot._name_pass_asks)
-        posted = self.bot.post.await_args  # type: ignore[attr-defined]
+        posted = self.bot.ask_privately.await_args  # type: ignore[attr-defined]
         if posted is not None:
-            self.assertNotIn("New names (asked the DM): 1", posted.args[1])
+            self.assertNotIn("New names (asked the DM): 1", posted.args[2])
 
     async def test_two_list_names_that_sound_alike_are_never_chosen_between(self) -> None:
         """#2628 review: with Kethrandel on the list too, "Keirandal" is not fixed to either,
@@ -181,7 +184,7 @@ class ThePass(NamesTest):
         self.assertEqual(await self.run_pass(), 0)
         self.assertEqual(await self.texts(), before)
         self.assertEqual(self.bot._name_pass_asks[self.session], [("Keirandal", 3)])
-        self.assertIn("Not sure (asked the DM): 1", self.bot.post.await_args.args[1])  # type: ignore[attr-defined]
+        self.assertIn("Not sure (asked the DM): 1", self.bot.ask_privately.await_args.args[2])  # type: ignore[attr-defined]
 
     async def test_a_failed_call_changes_nothing_and_does_not_hold_the_recap_back(self) -> None:
         self.ai.complete.side_effect = RuntimeError("the service is down")
@@ -226,7 +229,7 @@ class ThePass(NamesTest):
         self.ai.complete.return_value = reply({"n": 1, "answer": "is", "name": "Kethrandil"})
         before = await self.texts()
         await self.run_pass()
-        view = self.bot.post.await_args.args[2]  # type: ignore[attr-defined]
+        view = self.bot.ask_privately.await_args.args[3]  # type: ignore[attr-defined]
         button = view.children[0]
         it = self.it()
         it.message = SimpleNamespace(content="Fixed.", id=1, edit=AsyncMock(), components=[])
@@ -250,7 +253,7 @@ class ThePass(NamesTest):
         self.assertEqual((kept.unsure, kept.new_names, kept.guarded, kept.cut), (0, 0, 0, False))
         (fix,) = kept.fixes
         self.assertEqual((fix.name, fix.times, fix.undone_at), ("Kethrandil", 3, None))
-        button = self.bot.post.await_args.args[2].children[0]  # type: ignore[attr-defined]
+        button = self.bot.ask_privately.await_args.args[3].children[0]  # type: ignore[attr-defined]
         it = self.it()
         it.message = SimpleNamespace(content="Fixed.", id=1, edit=AsyncMock(), components=[])
         await button.callback(it)
@@ -273,7 +276,7 @@ class ThePass(NamesTest):
     async def test_only_a_dm_may_press_undo(self) -> None:
         self.ai.complete.return_value = reply({"n": 1, "answer": "is", "name": "Kethrandil"})
         await self.run_pass()
-        button = self.bot.post.await_args.args[2].children[0]  # type: ignore[attr-defined]
+        button = self.bot.ask_privately.await_args.args[3].children[0]  # type: ignore[attr-defined]
         changed = await self.texts()
         it = self.it(user_id=PLAYER)
         await button.callback(it)
@@ -427,9 +430,9 @@ class ThePass(NamesTest):
             GUILD, self.campaign.id, type="concept", name="Keirandal", source="scan"
         )
         await self.run_pass()
-        posted = self.bot.post.await_args  # type: ignore[attr-defined]
+        posted = self.bot.ask_privately.await_args  # type: ignore[attr-defined]
         if posted is not None:
-            self.assertNotIn("New names (asked the DM): 1", posted.args[1])
+            self.assertNotIn("New names (asked the DM): 1", posted.args[2])
 
     async def test_a_line_of_a_person_who_stopped_agreeing_is_not_written_and_undo_is_exact(
         self,
@@ -621,20 +624,20 @@ class ThePass(NamesTest):
             )
             await tell(GUILD, store)
             if sid != second:
-                self.bot.post.assert_not_awaited()  # type: ignore[attr-defined]
+                self.bot.ask_privately.assert_not_awaited()  # type: ignore[attr-defined]
         self.assertEqual(len(held), 2)  # the quiet session was left out
-        self.bot.post.assert_awaited_once()  # type: ignore[attr-defined]
-        posted = self.bot.post.await_args.args  # type: ignore[attr-defined]
+        self.bot.ask_privately.assert_awaited_once()  # type: ignore[attr-defined]
+        posted = self.bot.ask_privately.await_args.args  # type: ignore[attr-defined]
         from dmbot.transcript import name_pass as np
 
-        self.assertEqual(posted[1], np.import_text(held))
+        self.assertEqual(posted[2], np.import_text(held))
         self.assertNotIn((GUILD, self.campaign.id), self.bot._import_reports)
-        self.bot.post.reset_mock()  # type: ignore[attr-defined]
+        self.bot.ask_privately.reset_mock()  # type: ignore[attr-defined]
         live = await self.transcripts.open_session(GUILD, self.campaign.id, START + 4000)
         await self.transcripts.end_session(GUILD, live, START + 4100)
         await self.transcripts.add_lines(GUILD, live, [Line(MS + 4_000_000, PLAYER, text, text)])
         await self.bot.repair_names(GUILD, self.campaign.id, live, {PLAYER}, {PLAYER})
-        self.bot.post.assert_awaited_once()  # type: ignore[attr-defined]
+        self.bot.ask_privately.assert_awaited_once()  # type: ignore[attr-defined]
 
     async def _entity(self) -> str:
         lookup = await self.bot.lookup.get(GUILD, self.campaign.id)  # type: ignore[union-attr]

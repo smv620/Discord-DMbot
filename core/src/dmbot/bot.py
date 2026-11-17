@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import inspect
 import logging
 import os
@@ -282,7 +283,11 @@ from dmbot.dm_screen.transcript_keep import (
     KeepYesButton,
     TranscriptsButton,
 )
-from dmbot.dm_screen.upkeep_pointers import names_fixed_pointer, secrets_pointer
+from dmbot.dm_screen.upkeep_pointers import (
+    names_fixed_pointer,
+    secrets_pointer,
+    session_names_pointer,
+)
 from dmbot.dm_waiting import WaitingChecks, WaitingSent, asks_for
 from dmbot.ears.protocol import (
     AudioFrame,
@@ -640,6 +645,7 @@ from dmbot.ui.names import (
     ReviewButton,
     after_session_text,
     counts_after_session_text,
+    held_back_pointer,
     held_back_text,
     private_after_session_text,
     review_view,
@@ -651,6 +657,7 @@ from dmbot.ui.recap_again import (
 )
 from dmbot.ui.recap_upload import recap_upload_command  # noqa: F401 (registers it)
 from dmbot.ui.revealed_report import UndoRevealedButton, report_text, revealed_view
+from dmbot.ui.revealed_report import pointer_text as revealed_pointer_text
 from dmbot.ui.rule_clash import ClashView
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 from dmbot.ui.secret_aloud import (
@@ -916,6 +923,13 @@ def _joined_at(guild: discord.Guild) -> int | None:
     """When the bot joined this server, as Discord says (None while the server is still loading)."""
     me = cast(discord.Member | None, getattr(guild, "me", None))
     return int(me.joined_at.timestamp()) if me is not None and me.joined_at else None
+
+
+def _first_undo_view(campaign_id: str, fixes: list[Any]) -> discord.ui.View:
+    """A fresh first Undo message for an import's name report each time it is asked (a view that
+    was copied for a private send must not be reused for the screen)."""
+    views = name_pass_undo.undo_views_import(campaign_id, fixes)
+    return views[0] if views else discord.ui.View()
 
 
 class DMBotTree(app_commands.CommandTree["DMBot"]):
@@ -3664,8 +3678,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if table.campaign_id is not None
             else None
         )
-        channel = (
-            self._upkeep_channel(campaign)[0] if campaign is not None else table.screen_channel_id
+        # (a campaign with neither channel saved still has the table's own screen, as before)
+        channel = (self._upkeep_channel(campaign)[0] if campaign is not None else None) or (
+            table.screen_channel_id
         )
         if channel is None:
             return False
@@ -8914,7 +8929,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def save_unanswered(self, table: Table) -> None:
         """After a session: keep the questions that went unanswered for the after-session check,
         and say how many wait (#1572). Only for speakers who still agree, checked again after the
-        write; a person who stopped meanwhile has theirs removed. DM screen only."""
+        write; a person who stopped meanwhile has theirs removed. The count goes to the DM Bot
+        channel (else the DM screen; #3874 E1)."""
         items, table.unanswered = table.unanswered, []  # (lost if the save fails: only a reminder)
         session_id = table.transcript_session_id
         if (
@@ -8941,10 +8957,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             waiting = await self.heard_questions.count(gid, cid)
             log.info("Did they mean: %d question(s) wait for the DM", waiting)
             if waiting:
-                await self.post(
-                    table.screen_channel_id,
-                    heard_waiting_text(waiting),
-                    view=heard_review_view(cid),
+                # A count and a button only the DM can use: the DM Bot channel (else the screen)
+                await self._post_after_session(
+                    table, heard_waiting_text(waiting), heard_review_view(cid)
                 )
 
     async def answer_waiting_question(
@@ -9876,12 +9891,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     progress=progress,
                 )
             log.info(report.line())
-            if report.recap_lines and notice_channel is not None:
+            # Counts and buttons go to the DM Bot channel when the campaign has one (the DM screen
+            # otherwise); names go to the DMs privately, with a count-only pointer (#3874 E1)
+            campaign = await self.campaigns.get(gid, cid)
+            counts_channel = (
+                self._upkeep_channel(campaign)[0] if campaign is not None else notice_channel
+            )
+            if report.recap_lines and counts_channel is not None:
                 # Said once, with the way back, before anything else is relied on (#3298): counts
                 # only. Only an imported session is ever split by the story reader.
                 try:
                     await self.post(
-                        notice_channel,
+                        counts_channel,
                         recap_lines_ui.note(report.recap_lines),
                         view=recap_lines_ui.undo_view(cid, sid),
                     )
@@ -9893,28 +9914,37 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )  # (the calls were counted as they were made)
             except Exception:
                 log.exception("Story extractor: couldn't note how far it got")
-            if report.named and notice_channel is not None:
+            if report.named and (campaign is not None or notice_channel is not None):
                 # the DM checks them where the name scan's are checked
-                await self.post(
-                    notice_channel, held_back_text(report.new_names), view=review_view(cid)
-                )
-            if asked and notice_channel is not None:  # (#4524: counts only)
+                if campaign is not None:
+                    await pointer_note.send(
+                        self,
+                        campaign,
+                        held_back_text(report.new_names),
+                        lambda: review_view(cid),
+                        held_back_pointer(len(report.new_names)),
+                    )
+                elif notice_channel is not None:
+                    await self.post(
+                        notice_channel, held_back_text(report.new_names), view=review_view(cid)
+                    )
+            if asked and counts_channel is not None:  # (#4524: counts only)
                 from dmbot.ui import secret_questions as secret_questions_ui
 
                 try:
                     left = await self.memory.secret_questions_still_waiting(gid, cid, asked)
                     if left:
                         await self.post(
-                            notice_channel,
+                            counts_channel,
                             secret_questions_ui.count_line(left).strip(),
                             view=secret_questions_ui.notice_view(cid),
                         )
                 except Exception as exc:
                     log.warning("Secret questions: no note (%s)", type(exc).__name__)
-            if report.met_made and notice_channel is not None:  # (#4045: counts only)
+            if report.met_made and counts_channel is not None:  # (#4045: counts only)
                 try:
                     await self.post(
-                        notice_channel,
+                        counts_channel,
                         met_list_ui.notice(report.met_made),
                         view=met_list_ui.notice_view(cid),
                     )
@@ -10447,17 +10477,24 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self.lookup.drop([cid])
         log.info("Names said at the table and shown: %d", len(written.value))  # a count only
         campaign = await self.campaigns.get(gid, cid)
-        if campaign is None or campaign.dm_screen_channel_id is None:
+        if campaign is None:
             return
         shown = [f.name for f in found if f.entity_id in set(written.value)]
         waiting = await self.memory.waiting_connections(gid, cid, written.value)
-        if not await self.post(
-            campaign.dm_screen_channel_id,
+        batch = written.batch
+        # The names go to the DMs privately, with Undo; the DM Bot channel (which the campaign's
+        # people read) gets a count only, and only when a private message really went out. With
+        # no private message the words go on the DM screen as before (#3874 E1).
+        if not await pointer_note.send(
+            self,
+            campaign,
             report_text(shown, where=where, waiting=waiting),
-            view=revealed_view(cid, written.batch),
+            lambda: revealed_view(cid, batch),
+            revealed_pointer_text(len(shown)),
+            note=True,
         ):
             # The names are shown and the DM could not be told: say so in the log (a count only)
-            log.warning("Names shown at the table, but the DM screen could not say so")
+            log.warning("Names shown at the table, but no DM could be told")
 
     async def record_exposures(self, table: Table) -> None:
         """After a session: remember the secret names and secret connections said or typed at the
@@ -11433,11 +11470,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if hold is not None:
             if not report.quiet:
                 hold.append(report)
-        elif not report.quiet and campaign.dm_screen_channel_id is not None:
-            await self.post(
-                campaign.dm_screen_channel_id,
+        elif not report.quiet:
+            # The spellings go to the DMs privately, with Undo; the DM Bot channel gets counts
+            # only (#3874 E1)
+            await pointer_note.send(
+                self,
+                campaign,
                 name_pass_logic.report_text(report),
-                name_pass_undo.undo_view(cid, report.fixed),
+                lambda: name_pass_undo.undo_view(cid, report.fixed) or discord.ui.View(),
+                session_names_pointer(len(report.fixed), len(report.unsure), len(report.new)),
+                note=True,
             )
         log.info("Name pass report: %s", name_pass_logic.counts_line(report))  # counts only
         return sum(f.times for f in report.fixed)
@@ -12773,23 +12815,31 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 continue  # the import is not over: one report at the end
             reports = self._import_reports.pop(key, [])
             campaign = await self.campaigns.get(gid, cid)
-            if reports and campaign is not None and campaign.dm_screen_channel_id is not None:
+            if reports and campaign is not None:
                 views = name_pass_undo.undo_views_import(cid, [r.fixed for r in reports])
-                screen = campaign.dm_screen_channel_id
-                await self.post(
-                    screen, name_pass_logic.import_text(reports), views[0] if views else None
+                # Private first, with the numbers-only pointer in the DM Bot channel after; the
+                # DM screen holds it only when no DM could be messaged (#3874 E1)
+                fixes = [r.fixed for r in reports]
+                told = await pointer_note.send(
+                    self,
+                    campaign,
+                    name_pass_logic.import_text(reports),
+                    functools.partial(_first_undo_view, cid, fixes),
+                    names_fixed_pointer(
+                        sum(len(r.fixed) for r in reports),
+                        sum(len(r.unsure) for r in reports),
+                        sum(len(r.new) for r in reports),
+                    ),
+                    note=True,
                 )
+                # (`told` is true for either route; an extra that can't go private then goes to the
+                # screen with the first message, which is where it fell back to)
                 for extra in views[1:]:  # Discord holds 25 buttons a message: no Undo is lost
-                    await self.post(screen, "↩️ More Undo buttons for the report above:", extra)
-                if campaign.dm_bot_channel_id:  # numbers only; the names stay on the DM screen
-                    await self.post(
-                        campaign.dm_bot_channel_id,
-                        names_fixed_pointer(
-                            sum(len(r.fixed) for r in reports),
-                            sum(len(r.unsure) for r in reports),
-                            sum(len(r.new) for r in reports),
-                        ),
-                    )
+                    more = "↩️ More Undo buttons for the report above:"
+                    if not await self.ask_privately(gid, cid, more, extra, note=True) and (
+                        told and campaign.dm_screen_channel_id is not None
+                    ):
+                        await self.post(campaign.dm_screen_channel_id, more, extra)
         for cid in list(self._import_party):
             if await store.pending_scans(gid, cid):
                 continue  # once, at the end of the import

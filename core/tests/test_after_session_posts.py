@@ -44,6 +44,14 @@ class TheNote(unittest.IsolatedAsyncioTestCase):
         await DMBot._post_after_session(fake, table(), "3 things")
         fake.post.assert_awaited_once_with(SCREEN, "3 things", None)
 
+    async def test_a_campaign_with_no_saved_channel_uses_the_tables_screen(self) -> None:
+        fake = bot(dm_bot_channel=None)
+        fake.campaigns.get = AsyncMock(
+            return_value=SimpleNamespace(dm_bot_channel_id=None, dm_screen_channel_id=None)
+        )
+        await DMBot._post_after_session(fake, table(), "x")
+        fake.post.assert_awaited_once_with(SCREEN, "x", None)
+
     async def test_with_no_campaign_it_falls_back_to_the_tables_screen(self) -> None:
         fake = bot(dm_bot_channel=UPKEEP)
         fake.campaigns.get = AsyncMock(return_value=None)
@@ -73,3 +81,127 @@ class TheWords(unittest.TestCase):
 
     def test_private_scenes_keep_only_the_times(self) -> None:
         self.assertIn("never the words", private_scenes_list.notice(2))
+
+
+class TheDidTheyMeanCount(unittest.IsolatedAsyncioTestCase):
+    """(#3874 E1) the "Did they mean…?" count goes with the others"""
+
+    async def test_the_count_goes_through_the_after_session_post_with_its_button(self) -> None:
+        store = SimpleNamespace(
+            save=AsyncMock(), count=AsyncMock(return_value=2), forget_speaker=AsyncMock()
+        )
+        fake: Any = SimpleNamespace(
+            heard_questions=store,
+            consent=SimpleNamespace(consenting=AsyncMock(return_value={7})),
+            _post_after_session=AsyncMock(return_value=True),
+        )
+        asked = SimpleNamespace(speaker=7, started_ms=1, heard="Zed", options=[("e1", "Zed")])
+        tbl = SimpleNamespace(
+            guild_id=GUILD,
+            campaign_id="c" * 32,
+            transcript_session_id="s1",
+            unanswered=[asked],
+            screen_channel_id=SCREEN,
+        )
+        await DMBot.save_unanswered(fake, tbl)  # type: ignore[arg-type]
+        fake._post_after_session.assert_awaited_once()
+        args = fake._post_after_session.await_args.args
+        self.assertIs(args[0], tbl)
+        self.assertIn("2", args[1])
+        self.assertNotIn("Zed", args[1])  # (a count: never the word that was heard)
+        self.assertIsNotNone(args[2])  # (the DM-only review button)
+
+
+class TheNamesShownReport(unittest.IsolatedAsyncioTestCase):
+    """(#3874 E1) names said at the table: the names and Undo go to the DMs privately; the DM Bot
+    channel gets a count only"""
+
+    async def _run(self, sent: bool) -> tuple[Any, Any]:
+        from unittest.mock import patch
+
+        found = [
+            SimpleNamespace(entity_id="e1", name="Zed"),
+            SimpleNamespace(entity_id="e2", name="Ona"),
+        ]
+        memory = SimpleNamespace(
+            reveal_said=AsyncMock(return_value=SimpleNamespace(value=["e1", "e2"], batch=5)),
+            waiting_connections=AsyncMock(return_value=0),
+        )
+        campaign = SimpleNamespace(dm_bot_channel_id=UPKEEP, dm_screen_channel_id=SCREEN)
+        fake: Any = SimpleNamespace(
+            memory=memory,
+            lookup=None,
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
+        )
+        send = AsyncMock(return_value=sent)
+        with (
+            patch("dmbot.bot.unrevealed_names", AsyncMock(return_value=[])),
+            patch("dmbot.bot.said", lambda held, texts: found),
+            patch("dmbot.bot.pointer_note.send", send),
+        ):
+            await DMBot._reveal_said(
+                fake, GUILD, "c" * 32, AsyncMock(return_value=["x"]), "Session 1"
+            )
+        return send, campaign
+
+    async def test_the_names_go_through_the_private_first_note_with_an_undo(self) -> None:
+        send, campaign = await self._run(True)
+        send.assert_awaited_once()
+        args = send.await_args.args
+        self.assertIs(args[1], campaign)
+        self.assertIn("Zed", args[2])  # the words, which go privately
+        self.assertIsNotNone(args[3]())  # the Undo view
+        self.assertTrue(send.await_args.kwargs["note"])
+
+    async def test_the_pointer_in_the_dm_bot_channel_is_a_count_with_no_name(self) -> None:
+        send, _ = await self._run(True)
+        pointer = send.await_args.args[4]
+        self.assertIn("2", pointer)
+        self.assertNotIn("Zed", pointer)
+        self.assertNotIn("Ona", pointer)
+
+    async def test_no_dm_could_be_told_is_only_logged(self) -> None:
+        with self.assertLogs("dmbot", level="WARNING") as logs:
+            await self._run(False)
+        self.assertNotIn("Zed", "".join(logs.output))
+
+
+class TheImportNamesReport(unittest.IsolatedAsyncioTestCase):
+    """(#3874 E1) an import's name report: private first, a count in the DM Bot channel"""
+
+    async def test_the_report_goes_private_first_and_the_pointer_has_no_name(self) -> None:
+        from functools import partial
+        from unittest.mock import patch
+
+        report = SimpleNamespace(fixed=[], unsure=[1], new=[2, 3])
+        campaign = SimpleNamespace(
+            id="c" * 32, guild_id=GUILD, dm_bot_channel_id=UPKEEP, dm_screen_channel_id=SCREEN
+        )
+        store = SimpleNamespace(pending_scans=AsyncMock(return_value=[]))
+        fake: Any = SimpleNamespace(
+            _import_reports={(GUILD, "c" * 32): [report]},
+            _import_party={},
+            _import_names={},
+            _import_unchecked={},
+            _import_speakers={},
+            _import_entries={},
+            _import_batches={},
+            _import_queued={},
+            _import_unhonoured={},
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
+            post=AsyncMock(),
+            ask_privately=AsyncMock(return_value=True),
+        )
+        send = AsyncMock(return_value=True)
+        with (
+            patch("dmbot.bot.pointer_note.send", send),
+            patch("dmbot.bot.name_pass_logic.import_text", lambda r: "Zed was fixed"),
+            patch("dmbot.bot.name_pass_undo.undo_views_import", lambda cid, fixed: []),
+        ):
+            await partial(DMBot._tell_import_news, fake)(GUILD, store)  # type: ignore[arg-type]
+        send.assert_awaited_once()
+        args = send.await_args_list[-1].args
+        self.assertIn("Zed", args[2])
+        self.assertIn("1 not sure", args[4])
+        self.assertIn("2 new", args[4])
+        self.assertNotIn("Zed", args[4])

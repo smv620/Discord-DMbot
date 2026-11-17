@@ -143,3 +143,67 @@ class SaidAsReview(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(memory.answer_said_as.await_count, saved, user)
             if saved:
                 memory.answer_said_as.assert_awaited_once_with(GUILD, CAMPAIGN, "e1", "zed")
+
+
+class TheNameButtonsInAPrivateChat(unittest.IsolatedAsyncioTestCase):
+    """(#3874 E1) the name-check Undo and "Check new names" are sent privately now: pressed with
+    no server they find the campaign's own server, and still check the DM on every press"""
+
+    def bot(self, *, dms: tuple[int, ...] = (DM,)) -> Any:
+        campaign = SimpleNamespace(id=CAMPAIGN, dm_user_ids=dms)
+        return SimpleNamespace(
+            campaigns=SimpleNamespace(
+                guild_of=AsyncMock(return_value=GUILD), get=AsyncMock(return_value=campaign)
+            ),
+            transcripts=object(),
+            memory=object(),
+        )
+
+    async def test_the_name_check_undo_works_with_no_server_for_a_dm(self) -> None:
+        from dmbot.ui import name_pass_undo
+
+        it = interaction()
+        it.client = self.bot()
+        it.message = None
+        with (
+            patch.object(name_pass_undo, "undo_fix", AsyncMock(return_value=2)) as undo,
+            patch.object(name_pass_undo, "_tell", AsyncMock()) as tell,
+        ):
+            await name_pass_undo.UndoNamePassButton(CAMPAIGN, 5).callback(it)
+        self.assertEqual(undo.await_args_list[-1].args[2], GUILD)  # (the campaign's own server)
+        self.assertNotEqual(tell.await_args_list[-1].args[1], name_pass_undo.GONE)
+
+    async def test_the_name_check_undo_still_refuses_someone_who_is_not_a_dm(self) -> None:
+        from dmbot.ui import name_pass_undo
+
+        it = interaction(user=99)
+        it.client = self.bot()
+        with (
+            patch.object(name_pass_undo, "undo_fix", AsyncMock()) as undo,
+            patch.object(name_pass_undo, "_tell", AsyncMock()) as tell,
+        ):
+            await name_pass_undo.UndoNamePassButton(CAMPAIGN, 5).callback(it)
+        undo.assert_not_awaited()
+        self.assertEqual(tell.await_args_list[-1].args[1], name_pass_undo.NOT_YOURS)
+
+    async def test_check_new_names_opens_for_a_dm_with_no_server(self) -> None:
+        from dmbot.ui import names
+
+        it = interaction()
+        it.client = self.bot()
+        with patch.object(names, "start_review", AsyncMock()) as start:
+            await names.ReviewButton(CAMPAIGN).callback(it)
+        start.assert_awaited_once()
+
+    async def test_check_new_names_still_refuses_someone_who_is_not_a_dm(self) -> None:
+        from dmbot.ui import names
+
+        it = interaction(user=99)
+        it.client = self.bot()
+        with (
+            patch.object(names, "start_review", AsyncMock()) as start,
+            patch.object(names, "_tell", AsyncMock()) as tell,
+        ):
+            await names.ReviewButton(CAMPAIGN).callback(it)
+        start.assert_not_awaited()
+        tell.assert_awaited_once()
