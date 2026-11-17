@@ -1,0 +1,237 @@
+"""MapBot's "how far" and "which way" (#4670, MapBot layers slice 4b; Supervisor's ruling and the
+ux-critic's words): the sums, the rounding, which map answers, the question shapes, the words, the
+sidebar's thin layer, and who sees what (a player only from the table's maps). Invented names. The
+last class needs Postgres; the rest need nothing."""
+
+from __future__ import annotations
+
+import unittest
+from typing import Any
+
+from dmbot.maps import measure, measure_phrase
+from dmbot.maps import measure_words as words
+from dmbot.sidebar.map_answers import MapMeasuring
+from tests.test_map_pins import PinsBase
+from tests.test_map_store import GUILD_A
+
+A, B = ("a", "Bryn Shander"), ("b", "Targos")
+
+
+def a_map(**more: Any) -> measure.MapInfo:
+    base: dict[str, Any] = dict(
+        id="m1", title="Icewind Dale", kind="region", width=1000, height=1000, per_px=0.1,
+        unit="miles", north=0.0, north_known=True,
+    )  # fmt: skip
+    base.update(more)
+    return measure.MapInfo(**base)
+
+
+def pins(map_id: str = "m1", a: tuple[float, float] = (0.5, 0.1), b: Any = (0.5, 0.5)) -> list[Any]:
+    return [measure.Pin(map_id, "a", *a), measure.Pin(map_id, "b", *b)]
+
+
+class TheSums(unittest.TestCase):
+    def test_a_straight_line_with_the_scale(self) -> None:
+        pa, pb = pins()
+        self.assertAlmostEqual(measure.distance(a_map(), pa, pb) or 0, 40.0)
+        self.assertIsNone(measure.distance(a_map(per_px=None), pa, pb))
+
+    def test_rounding_never_says_zero(self) -> None:
+        self.assertEqual(measure.rounded(39.6, "miles"), "40 miles")
+        self.assertEqual(measure.rounded(1.1, "miles"), "1 mile")
+        self.assertEqual(measure.rounded(2.3, "miles"), "2.5 miles")
+        self.assertIsNone(measure.rounded(0.3, "miles"))
+        self.assertEqual(measure.rounded(23, "feet"), "25 feet")
+        self.assertIsNone(measure.rounded(1, "feet"))
+
+    def test_the_bearing_uses_the_maps_north(self) -> None:
+        pa, pb = pins()  # (a is above b on the picture)
+        self.assertEqual(measure.direction(measure.bearing(a_map(), pb, pa) or 0), "north")
+        tilted = a_map(north=90.0)  # (north points right: "up" is west)
+        self.assertEqual(measure.direction(measure.bearing(tilted, pb, pa) or 0), "west")
+        self.assertIsNone(measure.bearing(a_map(), pa, pa))
+
+    def test_the_most_detailed_map_with_a_scale_answers(self) -> None:
+        town = a_map(id="t", kind="settlement", per_px=None, title="Targos")
+        region = a_map(id="r", kind="region")
+        both = [*pins("t"), *pins("r")]
+        used, closest = measure.choose([region, town], both, "a", "b", need_scale=True)
+        assert used is not None and closest is not None
+        self.assertEqual((used.id, closest.id), ("r", "t"))
+        used, _ = measure.choose([region, town], both, "a", "b", need_scale=False)
+        assert used is not None
+        self.assertEqual(used.id, "t")
+
+
+class TheWords(unittest.TestCase):
+    def test_how_far(self) -> None:
+        self.assertEqual(
+            measure.answer("far", [a_map()], pins(), A, B, dm=False),
+            "About 40 miles from Bryn Shander to Targos in a straight line,"
+            " on the Icewind Dale map.",
+        )
+
+    def test_less_than_the_map_can_tell(self) -> None:
+        said = measure.answer("far", [a_map(per_px=0.001)], pins(), A, B, dm=False)
+        self.assertTrue(said.startswith("Less than a mile from Bryn Shander"))
+
+    def test_which_way_and_an_assumed_north(self) -> None:
+        self.assertEqual(
+            measure.answer("way", [a_map()], pins(), A, B, dm=False),
+            "Bryn Shander is north of Targos on the Icewind Dale map.",
+        )
+        said = measure.answer("way", [a_map(north_known=False)], pins(), A, B, dm=False)
+        self.assertTrue(said.endswith("on the Icewind Dale map, if north is at the top."))
+
+    def test_what_is_missing_and_the_fix_for_the_dm_only(self) -> None:
+        no_scale = [a_map(per_px=None)]
+        self.assertIn(
+            "Your DM can add one", measure.answer("far", no_scale, pins(), A, B, dm=False)
+        )
+        self.assertIn("Maps page", measure.answer("far", no_scale, pins(), A, B, dm=True))
+        apart = [*pins("m1")[:1], measure.Pin("m2", "b", 0.5, 0.5)]
+        two = [a_map(), a_map(id="m2")]
+        self.assertEqual(
+            measure.answer("far", two, apart, A, B, dm=False),
+            "I don't have a map with both Bryn Shander and Targos on it.",
+        )
+        self.assertEqual(
+            measure.answer("far", [a_map()], pins()[:1], A, B, dm=False),
+            "I can't find Targos on any map yet.",
+        )
+
+    def test_a_player_is_never_told_a_hidden_map_exists(self) -> None:
+        # (the caller passes only the table's maps: the hidden one's pins are not counted)
+        said = measure.answer("far", [], pins(), A, B, dm=False)
+        self.assertEqual(said, "I can't find Bryn Shander on any map yet.")
+
+    def test_a_title_that_says_map_is_not_doubled(self) -> None:
+        self.assertEqual(words.on_map("Ten-Towns Map"), "the Ten-Towns Map")
+        self.assertEqual(words.on_map("Map of the Sword Coast"), "Map of the Sword Coast")
+        self.assertEqual(words.on_map(""), "the map")
+        self.assertEqual(words.on_map("Icewind Dale"), "the Icewind Dale map")
+
+    def test_no_word_is_jargon_or_a_verdict(self) -> None:
+        said = " ".join(
+            [
+                measure.answer("far", [a_map()], pins(), A, B, dm=True),
+                measure.answer("far", [a_map(per_px=None)], pins(), A, B, dm=True),
+                measure.answer("far", [a_map()], pins()[:1], A, B, dm=True),
+            ]
+        ).lower()
+        for word in ("pin", "wrong", "correct", "exactly"):
+            self.assertNotIn(word, said)
+
+
+class TheQuestions(unittest.TestCase):
+    def test_the_shapes(self) -> None:
+        cases = {
+            "Hey DMbot, how far is Bryn Shander from Targos?": ("far", "Bryn Shander", "Targos"),
+            "how far from Targos to Bryn Shander": ("far", "Targos", "Bryn Shander"),
+            "What's the distance between Targos and Termalaine?": ("far", "Targos", "Termalaine"),
+            "which way is the Old Well from Thornwick?": ("way", "the Old Well", "Thornwick"),
+            "What direction is Targos from Bryn Shander?": ("way", "Targos", "Bryn Shander"),
+        }
+        for q, want in cases.items():
+            with self.subTest(q=q):
+                got = measure_phrase.read(q)
+                assert got is not None
+                self.assertEqual((got.kind, got.a, got.b), want)
+
+    def test_anything_else_goes_the_usual_way(self) -> None:
+        for q in (
+            "how far can I jump?",
+            "how far to the next town?",
+            "which way did he go?",
+            "how far is Targos from Targos?",
+            "what does Targos sell?",
+        ):
+            with self.subTest(q=q):
+                self.assertIsNone(measure_phrase.read(q))
+
+
+class Inner:
+    def __init__(self) -> None:
+        self.asked: list[str] = []
+
+    async def answer(
+        self, campaign: Any, question: str, *, asker_id: int, scene: str, table: bool = False
+    ) -> str:
+        self.asked.append(question)
+        return "engine"
+
+
+class TheLayer(unittest.IsolatedAsyncioTestCase):
+    async def layer(self, *, on: bool, text: str | None = "About 40 miles …") -> Any:
+        self.inner, self.dms = Inner(), list[bool]()
+
+        async def measured(_c: Any, _asked: Any, dm: bool) -> str | None:
+            self.dms.append(dm)
+            return text
+
+        return MapMeasuring(self.inner, measured, on=lambda: on, maps_page=lambda: "https://x/m")
+
+    async def test_off_means_the_engine_as_before(self) -> None:
+        layer = await self.layer(on=False)
+        got = await layer.answer(None, "how far is A from B?", asker_id=1, scene="")
+        self.assertEqual(got, "engine")
+        self.assertEqual(self.dms, [])
+
+    async def test_a_map_question_is_answered_by_code(self) -> None:
+        layer = await self.layer(on=True)
+        got = await layer.answer(None, "how far is Ab from Bc?", asker_id=1, scene="")
+        self.assertEqual(got.model, "")
+        self.assertIn("🗺️ Open the map: https://x/m", got.text)  # (the DM's private answer)
+        self.assertEqual(self.dms, [True])
+
+    async def test_the_tables_question_uses_the_tables_maps_and_no_link(self) -> None:
+        layer = await self.layer(on=True)
+        got = await layer.answer(None, "how far is Ab from Bc?", asker_id=1, scene="", table=True)
+        self.assertNotIn("Open the map", got.text)
+        self.assertEqual(self.dms, [False])
+
+    async def test_names_that_are_not_kept_places_go_to_the_engine(self) -> None:
+        layer = await self.layer(on=True, text=None)
+        got = await layer.answer(None, "how far is Ab from Bc?", asker_id=1, scene="")
+        self.assertEqual(got, "engine")
+
+
+class WhoSeesWhat(
+    PinsBase
+):  # (Postgres: the store's read, the ruling's condition tested both ways)
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.bryn = await self.place("Bryn Shander")
+        await self.record()  # (Targos and Bryn Shander pinned, a scale bar read)
+
+    async def ask(self, question: str, *, dm: bool) -> str | None:
+        asked = measure_phrase.read(question)
+        assert asked is not None
+        return await self.maps.measure(GUILD_A, self.one.id, asked, dm=dm)
+
+    async def test_the_dm_gets_the_distance_from_a_dm_only_map(self) -> None:
+        said = await self.ask("how far is Targos from Bryn Shander?", dm=True)
+        assert said is not None
+        self.assertTrue(said.startswith("About "), said)
+        self.assertIn("in a straight line", said)
+
+    async def test_a_player_gets_nothing_from_a_dm_only_map(self) -> None:
+        said = await self.ask("how far is Targos from Bryn Shander?", dm=False)
+        self.assertEqual(said, "I can't find Targos on any map yet.")  # (no hint it exists)
+
+    async def test_a_player_gets_it_from_a_map_shown_to_the_table(self) -> None:
+        await self.maps.set_audience(GUILD_A, self.one.id, self.map_id, "table")
+        said = await self.ask("how far is Targos from Bryn Shander?", dm=False)
+        assert said is not None
+        self.assertTrue(said.startswith("About "), said)
+
+    async def test_a_place_hidden_from_the_players_is_not_answered_for_them(self) -> None:
+        await self.maps.set_audience(GUILD_A, self.one.id, self.map_id, "table")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.one.id, self.bryn, True, source="dm", dm_chose_secret=True
+        )
+        self.assertIsNone(await self.ask("how far is Targos from Bryn Shander?", dm=False))
+        self.assertIsNotNone(await self.ask("how far is Targos from Bryn Shander?", dm=True))
+
+    async def test_names_that_are_not_kept_places_go_the_usual_way(self) -> None:
+        self.assertIsNone(await self.ask("how far is Luskan from Targos?", dm=True))
