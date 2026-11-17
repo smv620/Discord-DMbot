@@ -42,7 +42,7 @@ def story_watch_pointer(shown: int, more: int) -> str:
     words name people and places, so they go to the DMs privately; this is the count."""
     total = shown + more
     return (
-        f"🧭 {_count(total, 'thing', 'things')} the table changed in the DM's story. "
+        f"🧭 After the session: {_count(total, 'story note', 'story notes')} for the DMs. "
         "DMs: the details are in your private message."
     )
 

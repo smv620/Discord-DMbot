@@ -55,8 +55,9 @@ class ThePointers(unittest.TestCase):
         self.assertIn("1 person recorded", session_summary_pointer(1, 1))
 
     def test_the_story_watch_pointer_counts_what_is_shown_and_what_waits(self) -> None:
-        self.assertIn("1 thing the table changed", story_watch_pointer(1, 0))
-        self.assertIn("5 things", story_watch_pointer(3, 2))
+        self.assertIn("1 story note for the DMs", story_watch_pointer(1, 0))
+        self.assertIn("5 story notes for the DMs", story_watch_pointer(3, 2))
+        self.assertNotIn("changed", story_watch_pointer(1, 0))  # (it must not tell players)
         self.assertIn("private message", story_watch_pointer(1, 0))
 
     def test_a_finished_read_names_the_file_only_where_it_is_private(self) -> None:

@@ -335,7 +335,7 @@ class Triggers(Setup):
         self.assertEqual(len(fake.sent), 1)  # (only the pointer, in the DM Bot channel)
         channel, pointer = fake.sent[0]
         self.assertEqual(channel, 888)
-        self.assertIn("1 thing", pointer)
+        self.assertIn("1 story note", pointer)
         self.assertNotIn("Varn", pointer)  # (a count: never a name)
 
     async def test_a_check_for_one_condition_tells_only_that_one(self) -> None:
