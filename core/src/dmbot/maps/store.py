@@ -258,6 +258,17 @@ async def roads_off(
     return out
 
 
+@dataclass(frozen=True, slots=True)
+class SaidOff:
+    """A distance or direction the DM said that a kept map disagrees with (#4670 4c-2): what was
+    said, the two places' names, and `disagree.Distance` or `disagree.Direction`."""
+
+    said: Any  # `said_phrases.Said`
+    a_name: str
+    b_name: str
+    off: Any
+
+
 class MapStore:
     """A campaign's maps. Every write is one batch of the change log, so one DM action is one Undo
     (design rule 8, #4346): they go through `MemoryStore.map_write`, take the picture store's lock
@@ -655,6 +666,41 @@ class MapStore:
             )
         return found[0] if found else None
 
+    async def said_off(self, guild_id: int, campaign_id: str, line: str) -> list[SaidOff]:
+        """What a line the DM said states that a kept map disagrees with (#4670 4c-2; design §9):
+        a distance more than 20% shorter than the map's straight line, or a direction 45° or more
+        off on a map whose north was read or set. Names are kept places only, the DM's secret
+        other names included (the note is the DM's alone); the DM's maps (`dm=True`). Nothing is
+        stored or changed. Empty when the line states nothing in a set shape."""
+        from dmbot.maps import disagree, positions, said_phrases
+        from dmbot.memory._changes import ALIASES, ENTITIES
+        from dmbot.memory.store import _load_ontology
+
+        if not said_phrases.may_state(line):
+            return []
+        async with self._memory._read(guild_id, campaign_id, snapshot=True) as scope:
+            onto = await _load_ontology(scope)
+            entities = await scope.select(ENTITIES, " AND status = 'confirmed'")
+            aliases = await scope.select(ALIASES, " AND status = 'confirmed'")
+            found = positions.place_names(entities, aliases, lambda kind: onto.is_a(kind, "place"))
+            names = {key: entry for key, entry in found.items() if entry is not None}
+            said = said_phrases.read(line, names)
+            if not said:
+                return []
+            places = sorted({i for s in said for i in (s.a_id, s.b_id)})
+            maps, pins = await maps_and_pins(scope.conn, guild_id, campaign_id, places, dm=True)
+        called = {str(e["id"]): str(e["name"]) for e in entities}
+        out: list[SaidOff] = []
+        for s in said:
+            off: Any = (
+                disagree.check_distance(maps, pins, s.a_id, s.b_id, s.value)
+                if s.kind == said_phrases.FAR
+                else disagree.check_direction(maps, pins, s.a_id, s.b_id, s.value)
+            )
+            if off is not None:
+                out.append(SaidOff(s, called[s.a_id], called[s.b_id], off))
+        return out
+
     async def pins_waiting(self, guild_id: int) -> list[tuple[str, Map]]:
         """The maps in this server read closely before pins were read (Supervisor's ruling 1: a
         one-time re-read), oldest first, each with its campaign: DMbot may use them, their close
@@ -710,6 +756,6 @@ def _full(usage: Usage, need: int) -> bool:
 
 
 __all__ = [
-    "MB", "Map", "MapError", "MapStore", "RoadOff", "Viewer", "maps_and_pins", "may_use_map",
-    "roads_off",
+    "MB", "Map", "MapError", "MapStore", "RoadOff", "SaidOff", "Viewer", "maps_and_pins",
+    "may_use_map", "roads_off",
 ]  # fmt: skip

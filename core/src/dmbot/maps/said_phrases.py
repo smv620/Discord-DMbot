@@ -56,6 +56,15 @@ class Said:
     words: str  # the length's or the direction's own words ("20 miles", "north-east")
 
 
+_MAY = re.compile(r"\b(?:miles?|leagues?)\b|\b(?:north|south|east|west)\w*\s+of\b", re.I)
+
+
+def may_state(line: str) -> bool:
+    """A cheap first look, so the live note reads the campaign's places only for a line that could
+    state a distance or a direction: a length word, or a direction followed by "of"."""
+    return bool(_MAY.search(line))
+
+
 def _names_in(clause: str, names: Mapping[str, str]) -> list[tuple[int, int, str]]:
     """Where known names sit in the clause (start, end, entry id), longest first so "Bryn Shander"
     wins over "Bryn", never overlapping."""

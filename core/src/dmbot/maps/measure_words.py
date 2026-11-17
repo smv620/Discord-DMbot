@@ -92,3 +92,25 @@ def road_note(stated: str, from_session: bool, amount: str, map_title: str) -> s
     speaker may not be the DM, so never "you said")."""
     where = SESSION_SAID if from_session else LORE_SAYS
     return f"{where} {stated}; on {on_map(map_title)}, about {amount} in a straight line"
+
+
+# ---- The live note: said at the table, far off a map (#4670 4c-2; the ux-critic's words) --------
+# Private to the DM, once for a pair of places in a session; its one button stops them. Never a
+# correction: what was said, then what the map shows, side by side. No map link (Supervisor's
+# ruling 2: one button at most, and "how far" gives the map).
+
+STOP = "🔕 Stop map checks"  # the note's one button
+STOPPED = "Map checks are off for this campaign. Turn them back on in ⚙️ Settings."
+
+
+def said_far(stated: str, a: str, b: str, amount: str, map_title: str) -> str:
+    """'You said 20 miles from Targos to Bryn Shander. On the Ten-Towns map it's about 35 miles in
+    a straight line.'"""
+    return f"You said {stated} from {a} to {b}. {map_measures(amount, map_title)}"
+
+
+def said_way(a: str, direction: str, b: str, map_way: str, map_title: str) -> str:
+    """'You said Bryn Shander is north of Targos. On the Ten-Towns map, Bryn Shander is about east
+    of Targos.' (Only on a map whose north was read or set, so no "if north is at the top".)"""
+    said = f"You said {a} is {direction} of {b}."
+    return f"{said} On {on_map(map_title)}, {a} is about {map_way} of {b}."
