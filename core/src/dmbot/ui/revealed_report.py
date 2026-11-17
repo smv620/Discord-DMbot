@@ -17,11 +17,22 @@ from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.memory.revealed_aloud import MAX_LISTED
 from dmbot.mentions import NO_PINGS
 from dmbot.ui.dmbot_commands import _bot, _tell
+from dmbot.ui.private_server import guild_id_for
 
 NOT_YOURS = "Only this campaign's DM can undo this."
 GONE = "I can't find this campaign any more, so nothing was changed."
 UNDONE = "↩️ Undone. Those names are hidden from your players again."
 TOO_LATE = "Not undone: it was changed since, or it is too late. Use each name's card instead."
+
+
+def pointer_text(count: int) -> str:
+    """The line in the DM Bot channel, which the campaign's people read: how many, never which
+    (#3874 E1). The names and the Undo are in the DMs' private message."""
+    what = "name the table said is" if count == 1 else "names the table said are"
+    return (
+        f"👁️ {count} {what} now shown to your players. DMs: the names and Undo are in your "
+        "private message."
+    )
 
 
 def report_text(names: list[str], *, where: str, waiting: int = 0) -> str:
@@ -63,9 +74,9 @@ class UndoRevealedButton(
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         bot = _bot(interaction)
-        guild = interaction.guild
+        guild_id = await guild_id_for(interaction, self.campaign_id)  # (a private chat has none)
         campaign = (
-            await bot.campaigns.get(guild.id, self.campaign_id) if guild is not None else None
+            await bot.campaigns.get(guild_id, self.campaign_id) if guild_id is not None else None
         )
         if campaign is None:
             await _tell(interaction, GONE)

@@ -214,7 +214,13 @@ class Gates(unittest.IsolatedAsyncioTestCase):
             extractor_ai=object(),
             memory=object(),
             transcripts=transcripts,
-            campaigns=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id="c"))),
+            campaigns=SimpleNamespace(
+                get=AsyncMock(
+                    return_value=SimpleNamespace(
+                        id="c", dm_bot_channel_id=None, dm_screen_channel_id=5
+                    )
+                )
+            ),
             plan_allows=AsyncMock(return_value=allowed),
             _recap_lines=AsyncMock(return_value=frozenset()),  # (no split yet: every line is play)
             add_short_names=AsyncMock(),  # (#3880: tested in test_short_names)
@@ -222,6 +228,7 @@ class Gates(unittest.IsolatedAsyncioTestCase):
             name_of=unittest.mock.Mock(side_effect=lambda gid, uid: f"<@{uid}>"),
             post=AsyncMock(),
         )  # fmt: skip
+        me._upkeep_channel = lambda c: DMBot._upkeep_channel(me, c)  # (#3874 E1)
         me._extract_session = partial(BOT._extract_session, me)  # (extract_claims calls it)
         return me
 
@@ -334,6 +341,45 @@ dm_user_ids=frozenset(),
         self.assertNotIn(-3, [c.args[1] for c in me.name_of.call_args_list])  # (no placeholder)
 
 
+class AfterSessionNotes(unittest.IsolatedAsyncioTestCase):
+    """(#3874 E1) what the extractor tells the DM afterwards: names go privately with a count-only
+    pointer, counts go to the DM Bot channel"""
+
+    async def _run(self, report: Any, *, bot_channel: int | None = 60) -> Any:
+        me = Gates().fake()
+        me.campaigns.get = AsyncMock(
+            return_value=SimpleNamespace(
+                id="c", guild_id=1, dm_bot_channel_id=bot_channel, dm_screen_channel_id=5
+            )
+        )
+        with (
+            patch.object(extractor, "run", AsyncMock(return_value=report)),
+            patch("dmbot.bot.pointer_note.send", AsyncMock(return_value=True)) as send,
+        ):
+            await BOT._extract_session(
+                me, 1, "c" * 32, "a" * 32, dm_ids={DM}, tally=None, notice_channel=5
+            )
+        me.sent = send
+        return me
+
+    async def test_held_back_names_go_privately_and_the_pointer_has_no_name(self) -> None:
+        me = await self._run(extractor.Report(named=1, new_names=["Zed"]))
+        me.sent.assert_awaited_once()
+        args = me.sent.await_args.args
+        self.assertIn("Zed", args[2])
+        self.assertIn("1", args[4])
+        self.assertNotIn("Zed", args[4])
+        me.post.assert_not_awaited()
+
+    async def test_recap_lines_count_goes_to_the_dm_bot_channel(self) -> None:
+        me = await self._run(extractor.Report(recap_lines=2))
+        self.assertEqual(me.post.await_args.args[0], 60)
+
+    async def test_with_no_dm_bot_channel_the_count_goes_to_the_dm_screen(self) -> None:
+        me = await self._run(extractor.Report(recap_lines=2), bot_channel=None)
+        self.assertEqual(me.post.await_args.args[0], 5)
+
+
 class Contradictions(unittest.IsolatedAsyncioTestCase):
     """`DMBot.grade_contradictions`, with the parts it asks canned (#2660)."""
 
@@ -354,7 +400,13 @@ class Contradictions(unittest.IsolatedAsyncioTestCase):
             extractor_ai=object(),
             memory=SimpleNamespace(_db=object()),
             transcripts=transcripts,
-            campaigns=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(id="c"))),
+            campaigns=SimpleNamespace(
+                get=AsyncMock(
+                    return_value=SimpleNamespace(
+                        id="c", dm_bot_channel_id=None, dm_screen_channel_id=5
+                    )
+                )
+            ),
             plan_allows=AsyncMock(return_value=allowed),
         )  # fmt: skip
 

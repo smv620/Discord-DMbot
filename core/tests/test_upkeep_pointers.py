@@ -13,7 +13,11 @@ from unittest.mock import AsyncMock
 
 from dmbot.bot import DMBot
 from dmbot.dm_screen.adventure_card import finished_text
-from dmbot.dm_screen.upkeep_pointers import names_fixed_pointer, secrets_pointer
+from dmbot.dm_screen.upkeep_pointers import (
+    names_fixed_pointer,
+    secrets_pointer,
+    session_names_pointer,
+)
 
 FILE = "Mirelle Vane's secrets.pdf"
 
@@ -33,6 +37,13 @@ class ThePointers(unittest.TestCase):
         self.assertIn("2 not sure", text)
         self.assertNotIn("new", text)
         self.assertIn("The DM has the report with Undo.", text)
+
+    def test_the_session_names_pointer_is_numbers_only_and_says_where_the_report_is(self) -> None:
+        text = session_names_pointer(2, 1, 3)
+        self.assertIn("2 names fixed", text)
+        self.assertIn("1 not sure", text)
+        self.assertIn("3 new", text)
+        self.assertIn("private message", text)
 
     def test_a_finished_read_names_the_file_only_where_it_is_private(self) -> None:
         done = SimpleNamespace(status="done", stop_reason="", percent=100)
