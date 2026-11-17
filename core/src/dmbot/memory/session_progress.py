@@ -62,8 +62,8 @@ lifted); for a new help, "lent" when it must come back, else ""; for "thread_mov
 - "words": a few words of what it is ("two dog sleds", "the bridge is out"; for a clue not \
 shown, the clue: "the torn letter");
 - "clue": for "clue_found", the clue's label ("T1.C1") when it is one shown, else "";
-- "who": for "clue_found", the names of the characters who found it, as the transcript gives \
-them, else [] (never a guess at its meaning, and never the DM's own characters);
+- "who": for "clue_found", the names of the player characters who found it, as the transcript \
+says them, else [] (never a guess; never the DM or a character the DM voices);
 - "due": for a time limit, the words of when ("before the full moon"), else "";
 - "quote": the shortest exact words from the transcript that show it.
 None is fine."""

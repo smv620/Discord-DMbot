@@ -119,8 +119,12 @@ class TheCard(unittest.TestCase):
         both = tp.Change(tp.CLUE, "", "", tp.FOUND, None, "", "c1", ("pc-ash", "pc-wren"))
         self.assertEqual(
             card.line_text(both, self.NAMES),
-            "Clue found: the torn letter (now Ash and Wren know it too)",
+            "Clue found: the torn letter (now known by Ash and Wren)",
         )
+        gone = tp.Change(tp.CLUE, "", "", tp.FOUND, None, "", "c1", ("pc-gone",))
+        self.assertEqual(card.line_text(gone, self.NAMES), "Clue found again: the torn letter")
+        new_gone = tp.Change(tp.CLUE, "", "a key", tp.FOUND, None, "", None, ("pc-gone",))
+        self.assertEqual(card.line_text(new_gone, self.NAMES), "Clue found: a key")
 
 
 LINE_MS = 1_700_000_005_000
@@ -166,6 +170,19 @@ class TheKeep(MemoryTest):
     async def clues(self) -> list[Any]:
         return await self.memory.thread_clues(GUILD_A, self.c, self.thread, Viewer.the_dm())
 
+    async def knowers(self, clue_id: str) -> set[str]:
+        """The characters with a kept "knows" on the clue."""
+        return {
+            r.subject_id
+            for r in await self.memory.relations(
+                GUILD_A, self.c, entity_id=clue_id, include_secret=True
+            )
+            if r.predicate == "knows" and r.status == "confirmed" and r.object_id == clue_id
+        }
+
+    def found(self, *finders: str, clue_id: str | None = None, words: str = "") -> tp.Change:
+        return tp.Change(tp.CLUE, "", words, tp.FOUND, None, "", clue_id, finders)
+
     async def test_a_new_clue_found_by_some_is_tied_and_theirs_alone(self) -> None:
         await self.offer(tp.Change(tp.CLUE, "", "the silver key", tp.FOUND, None, "", None,
                                    (self.wren,)))  # fmt: skip
@@ -175,8 +192,11 @@ class TheKeep(MemoryTest):
         entry = await self.memory.entity(GUILD_A, self.c, clue.clue_id)
         assert entry is not None
         self.assertTrue(entry.audience_limited)  # (Ash didn't find it: Wren's alone)
+        self.assertEqual(await self.knowers(clue.clue_id), {self.wren})
         await self.memory.undo(GUILD_A, self.c, batch, source=DM, after=tp.unkeep_in(batch))
         self.assertEqual(await self.clues(), [])
+        gone = await self.memory.entity(GUILD_A, self.c, clue.clue_id)
+        self.assertTrue(gone is None or gone.status != "confirmed")  # (the new clue went too)
         self.assertEqual(len(await self.store.waiting(GUILD_A, self.c)), 1)  # (waits again)
 
     async def test_the_campaign_s_clue_keeps_its_audience_and_gains_its_finder(self) -> None:
@@ -188,9 +208,45 @@ class TheKeep(MemoryTest):
         await self.keep()
         (clue,) = await self.clues()
         self.assertTrue(clue.found)
+        self.assertEqual(await self.knowers(clue_id), {self.ash})
         entry = await self.memory.entity(GUILD_A, self.c, clue_id)
         assert entry is not None
         self.assertFalse(entry.audience_limited)  # (the DM's own clue: never narrowed here)
+
+    async def test_a_clue_the_dm_took_off_since_is_never_tied_back(self) -> None:
+        tied = await self.memory.tie_clue(
+            GUILD_A, self.c, self.thread, new_name="the torn letter", source=DM
+        )
+        clue_id = tied.value[0].subject_id
+        await self.offer(self.found(self.ash, clue_id=clue_id))
+        await self.memory.untie_clue(GUILD_A, self.c, self.thread, clue_id, source=DM)
+        (line,) = await self.store.waiting(GUILD_A, self.c)
+        done = await self.memory.keep_thread_progress(GUILD_A, self.c, [line.id], source=DM)
+        self.assertEqual(done.value, 0)  # ("Not a clue to this" stands)
+        self.assertEqual(await self.clues(), [])
+
+    async def test_a_new_clue_every_player_character_found_is_not_narrowed(self) -> None:
+        await self.offer(self.found(self.ash, self.wren, words="the silver key"))
+        await self.keep()
+        (clue,) = await self.clues()
+        entry = await self.memory.entity(GUILD_A, self.c, clue.clue_id)
+        assert entry is not None
+        self.assertFalse(entry.audience_limited)
+        self.assertEqual(await self.knowers(clue.clue_id), {self.ash, self.wren})
+
+    async def test_new_words_naming_a_tied_clue_find_that_clue(self) -> None:
+        tied = await self.memory.tie_clue(
+            GUILD_A, self.c, self.thread, new_name="the torn letter", source=DM
+        )
+        clue_id = tied.value[0].subject_id
+        await self.offer(self.found(self.wren, words="The Torn Letter"))
+        await self.keep()
+        (clue,) = await self.clues()  # (one clue, never a twin)
+        self.assertEqual(clue.clue_id, clue_id)
+        self.assertEqual(await self.knowers(clue_id), {self.wren})
+        entry = await self.memory.entity(GUILD_A, self.c, clue_id)
+        assert entry is not None
+        self.assertFalse(entry.audience_limited)
 
     async def test_a_finder_gone_since_leaves_the_line_unkept(self) -> None:
         await self.offer(tp.Change(tp.CLUE, "", "a key", tp.FOUND, None, "", None, (self.wren,)))

@@ -19,7 +19,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 from functools import partial
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import discord
 
@@ -123,6 +123,9 @@ from dmbot.ui.who_knows import player_characters
 from dmbot.waiting import WaitingMessage, message_is_gone
 from dmbot.walk import Walk
 from dmbot.word_end import in_the_middle
+
+if TYPE_CHECKING:
+    from dmbot.memory import session_progress
 
 log = logging.getLogger(__name__)
 
@@ -1800,7 +1803,7 @@ async def progress_inputs(memory: Any, guild_id: int, campaign_id: str) -> list[
     ]
 
 
-async def clue_finders(memory: Any, guild_id: int, campaign_id: str) -> Any:
+async def clue_finders(memory: Any, guild_id: int, campaign_id: str) -> session_progress.Finders:
     """Who may have found a clue in a session (#4624 6c; `session_progress.Finders`): the
     campaign's player characters, by each of their kept names (a name two share is left out), and
     by the player who plays each. Only player characters: an NPC holding a clue has not found it

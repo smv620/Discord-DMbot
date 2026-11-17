@@ -2364,26 +2364,27 @@ class MemoryStore:
                 and row["type"] == "character"
                 and row["status"] == CONFIRMED
                 and row["role"] == PLAYER_CHARACTER
+                and not row["party"]
             ):
                 finders.append(str(row["id"]))
         finders = list(dict.fromkeys(finders))
         if not finders:
             return False
-        clue_id = ""
+        made_new = False
         if change.clue_id is not None:
             clue_id = await _followed(w, change.clue_id) or ""
-            if not clue_id:
+            # (a clue the DM took off this thread since the read is never tied back by a plain
+            # Keep: "Not a clue to this" stands, and the line no longer fits)
+            if not clue_id or await _live_clue_tie(w, clue_id, thread_id) is None:
                 return False
-        made_new = False
-        try:
-            fact, made_new = await self._tie_clue_in(
-                w, onto, thread_id, clue_id=clue_id, new_name="" if clue_id else change.words
-            )
-            clue_id = fact.subject_id
-        except MemoryRuleError as exc:
-            if str(exc) != clues_mod.ALREADY_TIED:
-                raise  # (not a clue, or a name that can't be one: the line no longer fits)
-            if not clue_id:  # (the campaign's clue of that name, tied already)
+        else:
+            try:
+                fact, made_new = await self._tie_clue_in(w, onto, thread_id, new_name=change.words)
+                clue_id = fact.subject_id
+            except MemoryRuleError as exc:
+                if str(exc) != clues_mod.ALREADY_TIED:
+                    raise  # (a name that can't be a clue's: the line no longer fits)
+                # (the campaign's clue of that name, tied already: `_tie_clue_in`'s own lookup)
                 have = await w.select(
                     ENTITIES,
                     " AND type = 'clue' AND status = 'confirmed' AND lower(name) = lower(%s)",
@@ -2398,12 +2399,16 @@ class MemoryStore:
             )
             if {str(r["id"]) for r in party} - set(finders):  # (only some of the table)
                 await w.update(ENTITIES, clue_id, {"audience_limited": True})
+        learned = 0
         for character in finders:
             try:
                 await knowers.learn(w, gate.ENTRY, clue_id, character)
                 await self.add_knower_in(w, clue_id, character, None)
+                learned += 1
             except MemoryRuleError:
-                continue  # (refused before it wrote: the others still learn it)
+                continue  # (the rules refused this one: the others still learn it)
+        if not learned:  # (can't happen for checked player characters; counted, never hidden)
+            log.info("A found clue was kept with no finder learning it")
         return True
 
     async def _new_thread_in(

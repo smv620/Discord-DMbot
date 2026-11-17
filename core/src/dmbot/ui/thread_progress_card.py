@@ -69,17 +69,17 @@ def _and(names: Sequence[str]) -> str:
 
 def clue_text(change: prog.Change, names: Mapping[str, str]) -> str:
     """A session's "clue found" (#4624 6c): "Clue found: the torn letter (by Okthandom)", or, for
-    a clue the campaign has, "Clue found: the torn letter (now Cerric knows it too)". `names`: the
+    a clue the campaign has, "Clue found: the torn letter (now known by Cerric)". `names`: the
     clue's and the finders' names by id (a gone one is left out)."""
     clue = names.get(change.clue_id or "") if change.clue_id else change.words
     who = [n for f in change.finder_ids if (n := names.get(f))]
+    name = logic.shorten(clue or "a clue", LINE_MAX)
+    text = f"Clue found: {name}"
+    if not who:  # (every finder gone: a clue the campaign has must not read as a new one)
+        return f"Clue found again: {name}" if change.clue_id else text
     said = _and(who)
-    text = f"Clue found: {logic.shorten(clue or 'a clue', LINE_MAX)}"
-    if not who:
-        return text
-    if change.clue_id:
-        knows = "know" if len(who) > 1 else "knows"
-        return f"{text} (now {said} {knows} it too)"
+    if change.clue_id:  # (the campaign's clue: who knows it now, never a claim about before)
+        return f"{text} (now known by {said})"
     return f"{text} (by {said})"
 
 
