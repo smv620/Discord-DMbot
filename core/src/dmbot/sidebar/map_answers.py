@@ -10,7 +10,9 @@ unchanged: the table's chat or the DM's private chat, the transcript's lines, co
 Who sees what (the ruling's condition): a question asked at the table (`table=True`) is answered
 from the table's maps and the places shown to the players only, whoever asked it, so a DM-only
 map's pins, scale and distances never reach a player; a DM's private question uses every map
-DMbot may use, and carries the Maps page's link."""
+DMbot may use, and carries the Maps page's link. The one exception (#4676): the DM's own table
+question that only a DM-only map can answer is answered to the DM privately (`one_for_dm`), and the
+table hears only that it was sent."""
 
 from __future__ import annotations
 
@@ -76,9 +78,11 @@ class MapMeasuring:
                         # table hears only "Sent to the DM privately", never that a map exists.)
                         theirs = await self._measure(campaign, asked, True)
                         if theirs is not None and words.measured(theirs):
+                            # (the table's own miss as the text: should the table's DM list
+                            # and the campaign's ever differ, the table gets its usual words)
                             return Answer(
-                                text="", in_game=False, question=_restated(asked), model="",
-                                prompt_version=PROMPT_VERSION, one_for_dm=True,
+                                text=text, in_game=False, question=_restated(asked), model="",
+                                prompt_version=PROMPT_VERSION, one_for_dm=True, parts=(text,),
                             )  # fmt: skip
                 except Exception as exc:  # (never fatal: the usual answer goes on)
                     log.warning("Map answer failed (%s)", type(exc).__name__)
