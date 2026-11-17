@@ -18,9 +18,9 @@ from __future__ import annotations
 # audience or unnamed) and the campaign has a player character at all (the gate's "any player
 # character" has no one to ask without one). A row a hide put to sleep grants nothing. A row held
 # by the party entity or by a former player character, a common row on a hidden clue and a row on
-# a clue that is not kept never make a clue found. The bot's gate knows more ways (a group the character belongs to, a
-# property, a connection or another name of the clue that the character knows), so on those the
-# door says "not found yet" where Discord says "found", and never the other way round
+# a clue that is not kept never make a clue found. The bot's gate knows more ways (a group the
+# character belongs to, a property, a connection or another name of the clue that the character
+# knows), so on those the door says "not found yet" where Discord says "found", and never the other way round
 # (`test_web_thread_clues` holds both together, each difference written down). The count's words
 # are `thread_clues.found_text`'s, said by the web module. A player's reading never comes from
 # here: the door answers only a DM, and `clue_to` is the DM's alone. No entry id leaves it but the
