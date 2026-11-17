@@ -253,6 +253,11 @@ ONLY_PLACES = "Only a place has a size, and this isn't a place now."
 SETTING_LEVELS = place_levels.SETTING_LEVELS
 SETTING_PLACE = "Confirm this place first, then make it the setting."
 SETTING_SIZE = "Tap 📏 Size and kind first and pick Region or bigger."
+SETTING_NO_NAME = "Type the world's name, then try again."
+SETTING_TYPED_SMALL = (
+    "That place is smaller than a region. Open it under Names, tap 📏 Size and kind and pick "
+    "Region or bigger, or type another name."
+)
 SETTING_TWO = (
     "More than one place has that name. Open the one you mean and tap 🌍 Make it the setting."
 )
@@ -1462,7 +1467,11 @@ class MemoryStore:
         which: the DM picks from the place's own card)."""
         if source != DM:
             raise MemoryRuleError("Only the DM can say that.")
-        world = clean_text(name)  # (refuses an empty name)
+        try:
+            world = clean_text(name)
+        except MemoryRuleError:
+            raise MemoryRuleError(SETTING_NO_NAME) from None  # (says what to do)
+        check_named("place", world)  # (as every typed name: never "DM" or a monster's kind)
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
 
@@ -1481,7 +1490,7 @@ class MemoryStore:
             if len(found) > 1:
                 raise MemoryRuleError(SETTING_TWO)
             if found and found[0].get("place_level") not in SETTING_LEVELS:
-                raise MemoryRuleError(SETTING_SIZE)  # (before any write)
+                raise MemoryRuleError(SETTING_TYPED_SMALL)  # (before any write)
             now = await w.select(ENTITIES, " AND setting", [])
             if (
                 found
