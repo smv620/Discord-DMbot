@@ -229,6 +229,7 @@ def campaign() -> Any:
     return SimpleNamespace(
         guild_id=GUILD, id="c" * 32, recaps_text=True, recaps_email=True, owner_user_id=DM,
         dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM}), dm_bot_channel_id=None,
+        dm_screen_channel_id=None,
     )  # fmt: skip
 
 
@@ -301,6 +302,15 @@ class WhenTheSessionEnds(IsolatedAsyncioTestCase):
         self.assertEqual((channel, text), (66, hold.question_text(5)))
         ids = [c.custom_id for c in bot.post.await_args.kwargs["view"].children]
         self.assertEqual(ids, [f"dmbot:names:review:{'c' * 32}", f"dmbot:rhold:go:{'c' * 32}:{AT}"])
+
+    async def test_with_a_dm_bot_channel_the_question_and_its_hold_go_there(self) -> None:
+        # (#3874 E2: a count only, in the channel the campaign's people read)
+        bot = fake_bot(proposed=3)
+        mine = campaign()
+        mine.dm_bot_channel_id = 88
+        await bot._hold_or_queue(mine, "s1", AT, 66, DM)
+        self.assertEqual(bot.post.await_args.args[0], 88)
+        self.assertEqual(bot.recap_holds.hold.await_args.kwargs["channel_id"], 88)
 
     async def test_names_from_before_the_session_are_not_counted(self) -> None:
         bot = fake_bot(proposed=0)  # one proposed name, but from before the session

@@ -47,18 +47,31 @@ class TheStoresList(DatabaseTest):
         self.assertEqual(await self.store.waiting_drafts(GUILD, "0" * CID_LEN), [])
 
 
-def fake_bot(drafts: list[tuple[int, str]], *, on: bool = True, text: bool = True) -> Any:
+def fake_bot(
+    drafts: list[tuple[int, str]],
+    *,
+    on: bool = True,
+    text: bool = True,
+    bot_channel: int | None = None,
+) -> Any:
     table = SimpleNamespace(
         guild_id=GUILD, campaign_id="c" * CID_LEN, screen_channel_id=66, resumed=False
     )
     bot = SimpleNamespace(
         recaps=SimpleNamespace(waiting_drafts=AsyncMock(return_value=drafts)),
         settings=SimpleNamespace(recaps_on=on, site_url="https://site.example.com"),
-        campaigns=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(recaps_text=text))),
+        campaigns=SimpleNamespace(
+            get=AsyncMock(
+                return_value=SimpleNamespace(
+                    recaps_text=text, dm_bot_channel_id=bot_channel, dm_screen_channel_id=66
+                )
+            )
+        ),
         tables={GUILD: table},
         post=AsyncMock(return_value=True),
         recap_audio_why=AsyncMock(return_value=""),
     )
+    bot._upkeep_channel = lambda c: DMBot._upkeep_channel(bot, c)  # type: ignore[arg-type]
     return bot, table
 
 
@@ -85,6 +98,16 @@ class TheStartLines(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(children[3].url.startswith("https://site.example.com/account/recaps"))
         self.assertEqual(cast(Any, children[4]).item.custom_id, f"dmbot:recapshare:{'c' * 32}")
         self.assertEqual(bot.post.await_count, 1)
+
+    async def test_with_a_dm_bot_channel_the_line_goes_there_and_names_no_title(self) -> None:
+        # (#3874 E2: the campaign's people read that channel, and a title can carry story words)
+        bot, table = fake_bot([(300, "The Silver Lock")], bot_channel=77)
+        await run(bot, table)
+        channel, line = bot.post.await_args.args
+        self.assertEqual(channel, 77)
+        self.assertNotIn("Silver", line)
+        self.assertIn("still waiting", line)
+        self.assertIsNotNone(bot.post.await_args.kwargs["view"])  # (the DM-only buttons)
 
     async def test_at_most_two_one_line_each_newest_first(self) -> None:
         bot, table = fake_bot([(300, "Third"), (200, "Second")])
@@ -131,3 +154,27 @@ class TheStartLines(unittest.IsolatedAsyncioTestCase):
         bot.recaps.waiting_drafts = AsyncMock(side_effect=RuntimeError("down"))
         await run(bot, table)  # no exception
         bot.post.assert_not_awaited()
+
+
+class TheNamesReminder(unittest.IsolatedAsyncioTestCase):
+    """(#3874 E2) the unchecked-names reminder goes to the DM Bot channel, else the screen"""
+
+    async def go(self, bot_channel: int | None) -> Any:
+        bot, table = fake_bot([], bot_channel=bot_channel)
+        bot.recaps = SimpleNamespace(
+            names_waiting=AsyncMock(return_value=[(300, ["Zed"])]),
+            set_names_state=AsyncMock(return_value=True),
+        )
+        bot.memory = SimpleNamespace(entities=AsyncMock(return_value=[SimpleNamespace(name="Zed")]))
+        await DMBot._waiting_recap_names(cast(Any, bot), table)
+        return bot
+
+    async def test_it_goes_to_the_dm_bot_channel_with_a_count_only(self) -> None:
+        bot = await self.go(77)
+        channel, line = bot.post.await_args.args
+        self.assertEqual(channel, 77)
+        self.assertNotIn("Zed", line)
+
+    async def test_with_no_dm_bot_channel_it_goes_to_the_screen_as_before(self) -> None:
+        bot = await self.go(None)
+        self.assertEqual(bot.post.await_args.args[0], 66)
