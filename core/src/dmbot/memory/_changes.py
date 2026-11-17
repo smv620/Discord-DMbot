@@ -200,6 +200,14 @@ MAPS = Table(
      "north_from", "audience", "came_from", "import_tool", "right_by", "right_at", "use_ok",
      "use_by", "use_at", "as_of", "replaces", "created_at"),
 )  # fmt: skip
+# One thing marked on one map (#4670, MapBot slice 4a; 0530): a pin, path or area, at most one
+# target. Logged, so a DM's pin and a map's removal undo; housekeeping (`pins_read_at`) is not here.
+MAP_FEATURES = Table(
+    "map_features",
+    "id",
+    ("id", "map_id", "shape", "points", "place_id", "relation_id", "fact_id", "label", "status",
+     "source", "created_at"),
+)  # fmt: skip
 # The parts of a story thread (#4471, quests slice 2; design `docs/design/quests.md` §4):
 # objectives, complications, rewards promised and given, help and time limits, beside the thread.
 THREAD_PARTS = Table(
@@ -367,7 +375,7 @@ THREAD_GUESSES = Table(
     "memory_thread_guesses", "id", ("id", "thread_id", "belief_id", "created_at"), logged=False
 )
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
-       STORY_LANGUAGES, CULTURES, MAP_FACTS, MAPS, THREAD_PARTS,
+       STORY_LANGUAGES, CULTURES, MAP_FACTS, MAPS, MAP_FEATURES, THREAD_PARTS,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
        BELIEFS, EVIDENCE, THREAD_GUESSES, ALIAS_KNOWERS, KNOWERS, TOLD,
        SECRET_QUESTIONS)  # fmt: skip

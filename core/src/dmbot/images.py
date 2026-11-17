@@ -131,8 +131,35 @@ CLOSE_MAP_SYSTEM = "\n".join(
         'wild, or ""), or "apart" (both drawn and clearly not next to each other). "sure": true '
         "only when the map plainly shows it.",
         "Use only names that are in your places list.",
+        '- each place\'s "at": where its label or symbol sits on the picture, "x" from 0 (left '
+        'edge) to 1 (right edge) and "y" from 0 (top) to 1 (bottom); both -1 when you can\'t tell.',
+        '- "scale": only when a scale bar is drawn: the distance written on it, its unit as '
+        "written, and its two ends as x1, y1, x2, y2 (the same 0 to 1 fractions); distance 0 when "
+        "there is no scale bar. Never work one out from anything else.",
+        '- "grid": "square" or "hex" when a grid is drawn, how many cells fit across the whole '
+        'width ("across"), and the distance and unit of one cell when the map writes it ("1 hex '
+        '= 6 miles"); "none" and zeros otherwise.',
+        '- "north": the angle of north on the picture in degrees (0 = up, 90 = right) only when a '
+        "compass rose or north arrow is drawn; -1 when there is none.",
     ]
 )
+
+# What a scale bar, grid or compass may be read as (#4670, MapBot slice 4a): the units a map row
+# takes (`campaign_maps.scale_unit`), from the words a map writes. Anything else is no scale.
+UNIT_WORDS = {
+    "mile": "miles", "miles": "miles", "mi": "miles", "mi.": "miles",
+    "foot": "feet", "feet": "feet", "ft": "feet", "ft.": "feet",
+}  # fmt: skip
+GRID_KINDS = ("square", "hex")
+
+# (numbers with no minimum or maximum: the AI service refuses those in a schema, deploy 34's map
+# failure; code checks the range instead)
+_POINT: dict[str, Any] = {
+    "type": "object",
+    "properties": {"x": {"type": "number"}, "y": {"type": "number"}},
+    "required": ["x", "y"],
+    "additionalProperties": False,
+}
 
 CLOSE_MAP_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -147,8 +174,9 @@ CLOSE_MAP_SCHEMA: dict[str, Any] = {
                     "where": {"type": "string"},
                     "level": {"type": "string"},
                     "form": {"type": "string"},
+                    "at": _POINT,
                 },
-                "required": ["name", "where", "level", "form"],
+                "required": ["name", "where", "level", "form", "at"],
                 "additionalProperties": False,
             },
         },
@@ -168,8 +196,33 @@ CLOSE_MAP_SCHEMA: dict[str, Any] = {
             },
         },
         "layout": {"type": "string"},
+        "scale": {
+            "type": "object",
+            "properties": {
+                "distance": {"type": "number"},
+                "unit": {"type": "string"},
+                "x1": {"type": "number"},
+                "y1": {"type": "number"},
+                "x2": {"type": "number"},
+                "y2": {"type": "number"},
+            },
+            "required": ["distance", "unit", "x1", "y1", "x2", "y2"],
+            "additionalProperties": False,
+        },
+        "grid": {
+            "type": "object",
+            "properties": {
+                "kind": {"type": "string"},
+                "across": {"type": "number"},
+                "distance": {"type": "number"},
+                "unit": {"type": "string"},
+            },
+            "required": ["kind", "across", "distance", "unit"],
+            "additionalProperties": False,
+        },
+        "north": {"type": "number"},
     },
-    "required": ["level", "places", "links", "layout"],
+    "required": ["level", "places", "links", "layout", "scale", "grid", "north"],
     "additionalProperties": False,
 }
 
@@ -213,6 +266,7 @@ class Place:
     where: str
     level: str = ""  # the close read only: its size (`CLOSE_LEVELS`), or "" when not said
     form: str = ""  # the close read only: land, water or route
+    at: tuple[float, float] | None = None  # the close read only: across, down (0 to 1), if read
 
 
 @dataclass(frozen=True, slots=True)
@@ -227,6 +281,27 @@ class MapLink:
 
 
 @dataclass(frozen=True, slots=True)
+class MapScale:
+    """A drawn scale bar (#4670): the distance written on it, in feet or miles, and its two ends
+    as fractions of the picture (across, down)."""
+
+    distance: float
+    unit: str
+    ends: tuple[float, float, float, float]
+
+
+@dataclass(frozen=True, slots=True)
+class MapGrid:
+    """A drawn grid (#4670): square or hex, how many cells fit across the whole width, and one
+    cell's distance in feet or miles when the map writes it (0 when it doesn't)."""
+
+    kind: str
+    across: float
+    distance: float = 0.0
+    unit: str = ""
+
+
+@dataclass(frozen=True, slots=True)
 class Read:
     """What was made of one image."""
 
@@ -237,6 +312,9 @@ class Read:
     layout: str = ""  # a map's layout in words
     level: str = ""  # the close read: how much the map shows ("" when there was none)
     links: tuple[MapLink, ...] = ()  # the close read: how its places sit
+    scale: MapScale | None = None  # the close read: a drawn scale bar (#4670)
+    grid: MapGrid | None = None  # the close read: a drawn grid
+    north: float | None = None  # the close read: north's angle from a drawn compass
 
 
 class Vision(Protocol):
@@ -393,7 +471,9 @@ def parse_close_map(raw: str) -> Read | None:
             continue
         level = str(item["level"]) if item.get("level") in CLOSE_LEVELS else ""
         form = str(item["form"]) if item.get("form") in CLOSE_FORMS else ""
-        places.append(Place(name, clean(item.get("where"), PLACE_WHERE_MAX), level, form))
+        places.append(
+            Place(name, clean(item.get("where"), PLACE_WHERE_MAX), level, form, _point(item))
+        )
         if len(places) >= PLACES_MAX:
             break
     named = {p.name.casefold() for p in places}
@@ -413,7 +493,72 @@ def parse_close_map(raw: str) -> Read | None:
     if not places and not layout:
         return None
     level = str(data["level"]) if data.get("level") in CLOSE_LEVELS else ""
-    return Read(MAP, "", "", tuple(places), layout, level, tuple(links))
+    return Read(
+        MAP, "", "", tuple(places), layout, level, tuple(links),
+        _scale(data.get("scale")), _grid(data.get("grid")), _north(data.get("north")),
+    )  # fmt: skip
+
+
+def _fraction(value: object) -> float | None:
+    """A number from 0 to 1, or None (a bool, text, -1 or anything outside is not one)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    v = float(value)
+    return v if 0.0 <= v <= 1.0 else None
+
+
+def _point(item: dict[str, Any]) -> tuple[float, float] | None:
+    """A place's "at" (#4670), or None when it wasn't read: both numbers must be fractions."""
+    at = item.get("at")
+    if not isinstance(at, dict):
+        return None
+    x, y = _fraction(at.get("x")), _fraction(at.get("y"))
+    return None if x is None or y is None else (x, y)
+
+
+def _unit(value: object) -> str:
+    return UNIT_WORDS.get(str(value).strip().casefold(), "") if isinstance(value, str) else ""
+
+
+def _positive(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    v = float(value)
+    return v if 0.0 < v < 1e7 else 0.0
+
+
+def _scale(value: object) -> MapScale | None:
+    """A drawn scale bar, only whole: a distance, a unit in feet or miles, and two ends that are
+    fractions and not the same point (§4.3: no scale is no number, never a guess)."""
+    if not isinstance(value, dict):
+        return None
+    distance, unit = _positive(value.get("distance")), _unit(value.get("unit"))
+    read = [_fraction(value.get(k)) for k in ("x1", "y1", "x2", "y2")]
+    ends = [e for e in read if e is not None]
+    if not distance or not unit or len(ends) != 4:
+        return None
+    x1, y1, x2, y2 = ends
+    if (x1, y1) == (x2, y2):
+        return None
+    return MapScale(distance, unit, (x1, y1, x2, y2))
+
+
+def _grid(value: object) -> MapGrid | None:
+    if not isinstance(value, dict) or value.get("kind") not in GRID_KINDS:
+        return None
+    across = _positive(value.get("across"))
+    if not across:
+        return None
+    unit = _unit(value.get("unit"))
+    distance = _positive(value.get("distance")) if unit else 0.0
+    return MapGrid(str(value["kind"]), across, distance, unit if distance else "")
+
+
+def _north(value: object) -> float | None:
+    """North's angle from a drawn compass, 0 to under 360, or None (no compass is -1)."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+        return None
+    return float(value) % 360.0
 
 
 def _link_word(item: dict[str, Any]) -> str:
