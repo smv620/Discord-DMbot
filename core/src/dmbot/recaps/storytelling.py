@@ -61,7 +61,9 @@ SCHEMA: dict[str, Any] = {
         p: {
             "type": "object",
             "properties": {
-                "score": {"type": "integer", "minimum": SCORE_MIN, "maximum": SCORE_MAX},
+                # (an enum, not minimum/maximum: the AI service refuses those on an integer with
+                # HTTP 400, #4652; `parse` checks the range again)
+                "score": {"type": "integer", "enum": list(range(SCORE_MIN, SCORE_MAX + 1))},
                 "reason": {"type": "string", "enum": list(REASONS)},
             },
             "required": ["score", "reason"],

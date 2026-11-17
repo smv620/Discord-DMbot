@@ -60,7 +60,10 @@ MAX_USD = 5.0  # the cap a deploy, the same ruling
 USD_PER_CREDIT = 0.001  # `credits.MICRO_PER_CREDIT`: 1 credit = 1,000 micro-dollars
 # Set aside for the kept run's recap before any run starts: the recap writer is not on the bot's
 # credit ledger, so its cost is never measured here; runs 16 and 17 on #3545 cost $0.40 to $0.60
-RUN_USD = 3.0  # what one run may cost, set aside for each of the runs that go together (#4551)
+# What one run may cost, set aside for each of the runs that go together (#4551). Measured, not
+# guessed (#4652): the bot's AI cost a median of $0.85 a run on deploy 34 ($3.55 for four runs), so
+# $1.50 is about 1.7 times that. At $3.00 five runs needed $15 and `--parallel 5` ran one at a time.
+RUN_USD = 1.5
 RECAP_RESERVE_USD = 0.75
 # And for the sample map's one close read (#4423): one careful-model look at one picture
 MAP_RESERVE_USD = 0.10
@@ -750,9 +753,10 @@ async def run_parallel(args: argparse.Namespace, n: int, **kw: Any) -> int:
             f"(${args.run_usd:g} set aside each, --run-usd)"
         )
     if width < wanted:
+        need = wanted * args.run_usd + RECAP_RESERVE_USD + (MAP_RESERVE_USD if args.map else 0.0)
         say(
-            f"Only {width} of {wanted} runs fit at once within ${args.max_usd:g}: "
-            f"going {width} at a time."
+            f"Only {width} at once fit ${args.max_usd:g}; --max-usd {need:.2f} would fit "
+            f"{wanted}. Going {width} at a time."
         )
     deploy = deploy_number(args.deploy)
     # The paid slots are counted before anything is deleted or made, like the money: older kept
