@@ -24,7 +24,8 @@ from __future__ import annotations
 # A row a hide put to sleep stays out, as for every other row. The `learned` list keeps its
 # character-only rows (an everyone row has no time of learning to give). Counts and ids only, as
 # before; the door's answer is read back from the database as it is and each anchor must be found
-# exactly once, so a drift stops the migration. No row is changed.
+# exactly once, so a drift stops the migration. No row is changed, and `CREATE OR REPLACE` keeps
+# the function's pinned search path and its grants, as 0413 relies on.
 
 
 def _shown(entry: str) -> str:

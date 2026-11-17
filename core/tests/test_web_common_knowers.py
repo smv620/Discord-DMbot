@@ -83,6 +83,56 @@ class CommonOnTheWeb(Web):
         )
         self.assertEqual(self.rows(await self.door(), self.plain_link), [])
 
+    async def test_an_entry_not_confirmed_or_limited_to_an_audience_is_not_listed(self) -> None:
+        proposed = await self.add("Ten-Towns", "place", status="proposed")
+        await self.common("entry", proposed)
+        self.assertEqual(self.rows(await self.door(), proposed), [])
+        async with self.db.guild(self.g) as conn:  # (a clue only some know: `audience_limited`)
+            await conn.execute(
+                "UPDATE memory_entities SET audience_limited = true WHERE id = %s", (self.mira,)
+            )
+        await self.common("entry", self.mira)
+        self.assertEqual(self.rows(await self.door(), self.mira), [])
+
+    async def test_an_other_name_is_listed_only_while_it_is_not_secret(self) -> None:
+        shown = await self.memory.add_alias(
+            self.g, self.one.id, self.mira, "Red Mira", kind="nickname", source=DM_SOURCE,
+            status="confirmed",
+        )  # fmt: skip
+        hidden = await self.memory.add_alias(
+            self.g, self.one.id, self.mira, "The Widow", kind="nickname", source=DM_SOURCE,
+            status="confirmed", secret=True, dm_chose_secret=True,
+        )  # fmt: skip
+        await self.common("alias", shown.value.id, hidden.value.id)
+        data = await self.door()
+        self.assertEqual(self.rows(data, shown.value.id), [COMMON])
+        self.assertEqual(self.rows(data, hidden.value.id), [])
+
+    async def test_an_everyone_row_asleep_under_a_hide_is_not_listed(self) -> None:
+        await self.common("entry", self.mira)
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE memory_knowers SET hidden_by = ARRAY['x'] WHERE about_entity_id = %s",
+                (self.mira,),
+            )
+        self.assertEqual(self.rows(await self.door(), self.mira), [])
+
+    async def test_the_door_answers_a_player_with_the_same_rows_and_hides_what_is_hidden(
+        self,
+    ) -> None:
+        await self.common("entry", self.mira)
+        await self.common("connection", self.secret_link)
+        async with self.web.user(self.player.user_id, session=self.player.id_hash) as conn:
+            await _scoped(conn, self.g)
+            cur = await conn.execute(
+                "SELECT dmbot_web_knowers_data(%s, %s) AS r", (self.g, self.one.id)
+            )
+            found = await cur.fetchone()
+        assert found is not None
+        theirs: dict[str, Any] = found["r"]
+        self.assertEqual(self.rows(theirs, self.mira), [COMMON])
+        self.assertEqual(self.rows(theirs, self.secret_link), [])
+
     async def test_a_characters_own_row_still_comes_with_its_character(self) -> None:
         await self.memory.set_connection_knowers(
             self.g, self.one.id, self.secret_link, [self.tavin],
