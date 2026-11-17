@@ -325,6 +325,8 @@ dev1 as a note on the issue.
   and a line in `docs/testing-history.log`. The decision record stays on the server, never on GitHub.
   `--accept-all` (#3544, accept every suggestion) remains for comparison; scores from before #3900 are a
   different series. The steps are in `core/tests/fixtures/story_graph/README.md`.
+  **Five runs at once, capped at $9** (owner, 2026-11-17): each deploy's sample is five runs in parallel
+  (`--repeat 5 --parallel 5`), each run capped at `--run-usd 1.5`, all five together at `--max-usd 9`.
   **dev1's checks gate the next deploy; the owner's checks can wait** (owner, 2026-11-06, to clear
   the deploy backlog). Supervisor marks each deploy-handover check as **dev1** (logs, counts, the
   sample run) or **owner** (looked at in Discord or on the site, or at the table). The next deploy
