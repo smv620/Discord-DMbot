@@ -207,3 +207,48 @@ class TheNameButtonsInAPrivateChat(unittest.IsolatedAsyncioTestCase):
             await names.ReviewButton(CAMPAIGN).callback(it)
         start.assert_not_awaited()
         tell.assert_awaited_once()
+
+
+class TheStoryWatchButtonsInAPrivateChat(unittest.IsolatedAsyncioTestCase):
+    """(#3874 E1) the story watch is sent privately now, so its buttons find the campaign's own
+    server with no `interaction.guild`, and still check the DM on every press"""
+
+    def bot(self, *, dms: tuple[int, ...] = (DM,), found: bool = True) -> Any:
+        campaign = SimpleNamespace(
+            id=CAMPAIGN, guild_id=GUILD, dm_user_ids=dms, dm_accounts=dms, owner_user_id=DM
+        )
+        return SimpleNamespace(
+            campaigns=SimpleNamespace(
+                guild_of=AsyncMock(return_value=GUILD),
+                get=AsyncMock(return_value=campaign if found else None),
+            ),
+            watch=object(),
+            plan_allows=AsyncMock(return_value=True),
+        )
+
+    async def test_a_dm_in_a_private_chat_gets_the_campaign_and_the_watch(self) -> None:
+        from dmbot.ui import story_watch
+
+        it = interaction()
+        it.client = self.bot()
+        got = await story_watch._dm_and_watch(it, CAMPAIGN)
+        self.assertIsNotNone(got)
+        self.assertEqual(it.client.campaigns.get.await_args.args[0], GUILD)
+
+    async def test_someone_who_is_not_a_dm_is_refused_in_a_private_chat(self) -> None:
+        from dmbot.ui import story_watch
+
+        it = interaction(user=99)
+        it.client = self.bot()
+        with patch.object(story_watch, "_tell", AsyncMock()) as tell:
+            self.assertIsNone(await story_watch._dm_and_watch(it, CAMPAIGN))
+        self.assertEqual(tell.await_args.args[1], story_watch.ONLY_DM)
+
+    async def test_a_campaign_that_is_gone_says_so(self) -> None:
+        from dmbot.ui import story_watch
+
+        it = interaction()
+        it.client = self.bot(found=False)
+        with patch.object(story_watch, "_tell", AsyncMock()) as tell:
+            self.assertIsNone(await story_watch._dm_and_watch(it, CAMPAIGN))
+        self.assertEqual(tell.await_args.args[1], story_watch.ONLY_DM)
