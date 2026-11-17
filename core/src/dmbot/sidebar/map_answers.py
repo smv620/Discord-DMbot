@@ -29,6 +29,13 @@ PROMPT_VERSION = "map-measure-1"  # no prompt: the words are code's (`maps/measu
 Measure = Callable[[Any, measure_phrase.Asked, bool], Awaitable[str | None]]
 
 
+def _restated(asked: measure_phrase.Asked) -> str:
+    """The question as the transcript keeps it."""
+    if asked.kind == measure_phrase.FAR:
+        return f"how far from {asked.a} to {asked.b}"
+    return f"which way is {asked.a} from {asked.b}"
+
+
 class MapMeasuring:
     """An `Answerer` that answers map questions itself and passes the rest on."""
 
@@ -57,16 +64,28 @@ class MapMeasuring:
             if refused is None:
                 try:
                     text = await self._measure(campaign, asked, not table)
+                    if (
+                        table
+                        and text is not None
+                        and not words.measured(text)
+                        and asker_id in getattr(campaign, "dm_user_ids", ())
+                    ):
+                        # (#4676: the DM asked at the table and the table's maps can't answer;
+                        # if a DM-only map can, the answer is the DM's alone. The sidebar sends
+                        # it privately, as for any question that needs the DM's side, and the
+                        # table hears only "Sent to the DM privately", never that a map exists.)
+                        theirs = await self._measure(campaign, asked, True)
+                        if theirs is not None and words.measured(theirs):
+                            return Answer(
+                                text="", in_game=False, question=_restated(asked), model="",
+                                prompt_version=PROMPT_VERSION, one_for_dm=True,
+                            )  # fmt: skip
                 except Exception as exc:  # (never fatal: the usual answer goes on)
                     log.warning("Map answer failed (%s)", type(exc).__name__)
             if text is not None:
                 page = self._maps_page() if not table else ""
                 shown = f"{text}\n{words.LINK}: {page}" if page else text
-                restated = (
-                    f"how far from {asked.a} to {asked.b}"
-                    if asked.kind == measure_phrase.FAR
-                    else f"which way is {asked.a} from {asked.b}"
-                )
+                restated = _restated(asked)
                 # A DM's private answer may come from a DM-only map: it is never written to the
                 # raw transcript, which the players may read (`in_game` False: the question line
                 # is kept, the answer is not). The table's answer is from the table's maps.
