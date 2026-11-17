@@ -21,10 +21,13 @@ import discord
 
 from dmbot.discord_limits import MESSAGE_MAX, fit_message
 from dmbot.memory import thread_parts as tp
+from dmbot.memory import thread_progress as tprog
+from dmbot.memory.gate import Viewer
 from dmbot.memory.models import DM, HINTED, MemoryRuleError, TooLateToUndo
 from dmbot.memory.thread_read import ReadBranch, ReadPart
 from dmbot.memory.thread_suggestions import ThreadSuggestionStore, Waiting, unkeep_in
 from dmbot.ui import logic
+from dmbot.ui import thread_progress_card as pcard
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
     _answer_first,
@@ -211,14 +214,24 @@ def session_label(started_at: int) -> str:
     return f"the session of {date_label(started_at)}"
 
 
-def threads_found_text(made: int, stopped: bool, label: str) -> str:
+def threads_found_text(made: int, stopped: bool, label: str, changes: int = 0) -> str:
     """The one counts line in the DM Bot channel after a session (#4522, #3874): counts only, no
     thread's name (the channel is the campaign's people's), and the session by its date (an
-    import may be an old one, so never "the last session"). Its 📜 button is for a DM."""
+    import may be an old one, so never "the last session"). `changes`: progress lines on threads
+    the campaign has (5b, ruling D). Its 📜 button is for a DM."""
     many = "possible story thread" if made == 1 else "possible story threads"
-    if made:
+    # (guesses, as "possible story threads" are; and never "you": the whole campaign reads it)
+    moved = (
+        "possible update to a story thread" if changes == 1 else "possible updates to story threads"
+    )
+    found = " and ".join(
+        part
+        for part in (f"{made} {many}" if made else "", f"{changes} {moved}" if changes else "")
+        if part
+    )
+    if found:
         line = (
-            f"📜 DMbot heard {made} {many} in {label}. A DM can keep or turn down each one: "
+            f"📜 DMbot heard {found} in {label}. A DM can keep or turn down each one: "
             f"press {LABEL}."
         )
         return line + (" It stopped early, so it may have missed some." if stopped else "")
@@ -270,8 +283,14 @@ class ThreadQuestions(_Menu):
         self.on: frozenset[int] = frozenset()
         self.lines_on: frozenset[int] = frozenset()
         self.names: dict[str, str] = {}
-        # ("keep", batch, name) or ("no", suggestion, name), for ↩ Undo
-        self.undo: tuple[str, int | str, str] | None = None
+        # ("keep", batch, name) or ("no", suggestion, name), for ↩ Undo; for progress (#4522 5b)
+        # ("progress", batch, name) or ("progress_no", line ids, name)
+        self.undo: tuple[Any, ...] | None = None
+        # The second stage, once no new thread waits (#4522 5b part 3): one thread's progress
+        self.progress: list[tprog.Line] = []
+        self.progress_on: frozenset[str] = frozenset()
+        self.progress_name = ""
+        self.skipped_threads: set[str] = set()
 
     async def _load(self, interaction: discord.Interaction) -> str | None:
         """The next card's words (its controls drawn), or None when none is left."""
@@ -294,9 +313,7 @@ class ThreadQuestions(_Menu):
         self.clear_items()
         if not left:
             self.current = None
-            if self.undo is not None:
-                self.add_item(_Button(self._undo, label=UNDO, style=discord.ButtonStyle.secondary))
-            return None
+            return await self._load_progress(interaction, agreed)
         s = left[0]
         if self.current is None or self.current.id != s.id:
             self.name, self.on = "", frozenset(range(len(s.parts)))
@@ -368,6 +385,96 @@ class ThreadQuestions(_Menu):
             lines_on=self.lines_on, heard=heard,
         )  # fmt: skip
 
+    async def _load_progress(
+        self, interaction: discord.Interaction, agreed: Collection[int] | None
+    ) -> str | None:
+        """The second stage (#4522 5b part 3): the progress lines on one thread the campaign has,
+        with the consent sweep first; None when none waits."""
+        memory = _memory(interaction)
+        if memory is None:
+            return None
+        lines = await tprog.ThreadProgressStore(memory._db).waiting(
+            self.guild_id, self.campaign_id, opted_in=agreed
+        )
+        by_thread: dict[str, list[tprog.Line]] = {}
+        for line in lines:
+            by_thread.setdefault(line.thread_id, []).append(line)
+        order = list(by_thread)
+        todo = [t for t in order if t not in self.skipped_threads]
+        if not todo:  # (every one skipped: start over, so Skip keeps working)
+            self.skipped_threads.clear()
+            todo = order
+        if not todo:
+            self.progress = []
+            if self.undo is not None:
+                self.add_item(_Button(self._undo, label=UNDO, style=discord.ButtonStyle.secondary))
+            return None
+        thread_id = todo[0]
+        # (at most `SHOWN` a card: a press answers only what the DM can see and untick; the rest
+        # of a long list shows on the next card for the same thread)
+        now = by_thread[thread_id][: pcard.SHOWN]
+        ids = frozenset(x.id for x in now)
+        before = frozenset(x.id for x in self.progress)
+        # (a list that changed between presses keeps the DM's unticks; a new line starts ticked)
+        self.progress_on = (self.progress_on & ids) | (ids - before)
+        self.progress = now
+        thread = await memory.entity(self.guild_id, self.campaign_id, thread_id)
+        self.progress_name = thread.name if thread is not None else "a story thread"
+        kind = thread.type if thread is not None else ""
+        parts = await memory.parts_of_threads(
+            self.guild_id, self.campaign_id, [thread_id], Viewer.the_dm()
+        )
+        words = {p.id: p.words for p in parts}
+        green, grey = discord.ButtonStyle.success, discord.ButtonStyle.secondary
+        self.add_item(_Button(self._keep_progress, label=pcard.KEEP, style=green))
+        self.add_item(
+            _Button(self._no_progress, label=pcard.NONE, style=discord.ButtonStyle.danger)
+        )
+        if len(todo) > 1:
+            self.add_item(_Button(self._skip_progress, label=pcard.SKIP, style=grey))
+        if self.undo is not None:
+            self.add_item(_Button(self._undo, label=UNDO, style=grey))
+        shown = now
+        self.progress_menu = _Select(
+            self._progress_picked,
+            placeholder=pcard.HOLDER,
+            min_values=0,
+            max_values=len(shown),
+            options=[
+                discord.SelectOption(
+                    label=logic.shorten(
+                        pcard.line_text(x.change, words, kind), logic.OPTION_LABEL_MAX
+                    ),
+                    value=x.id,
+                    default=x.id in self.progress_on,
+                )
+                for x in shown
+            ],
+            row=1,
+        )
+        self.add_item(self.progress_menu)
+        heard = session_label(now[0].session_at) if now[0].session_at else ""
+        return pcard.card_text(
+            self.progress_name, now, words, self.progress_on,
+            at=order.index(thread_id) + 1, of=len(order), heard=heard, kind=kind,
+            sessions=len({x.session_id for x in now}),
+        )  # fmt: skip
+
+    async def _progress_picked(self, interaction: discord.Interaction) -> None:
+        self.progress_on = frozenset(str(v) for v in self.progress_menu.values)
+        await self._show(interaction, "")
+
+    async def _skip_progress(self, interaction: discord.Interaction) -> None:
+        if self.progress:
+            self.skipped_threads.add(self.progress[0].thread_id)
+        await self._show(interaction, "")
+
+    async def _keep_progress(self, interaction: discord.Interaction) -> None:
+        await self._answer(interaction, "keep_progress")
+
+    async def _no_progress(self, interaction: discord.Interaction) -> None:
+        await self._answer(interaction, "no_progress")
+
     async def _who_picked(self, interaction: discord.Interaction) -> None:
         self.on = frozenset(int(v) for v in self.who.values)
         await self._show(interaction, "")
@@ -422,9 +529,40 @@ class ThreadQuestions(_Menu):
                 how, ref, was = self.undo
                 if how == "keep":  # (the thread goes and the suggestion waits, in one write)
                     await memory.undo(g, c, int(ref), after=unkeep_in(int(ref)))
+                    said = undone_text(was)
+                elif how == "progress":  # (the changes go and every line waits, in one write)
+                    await memory.undo(g, c, int(ref), after=tprog.unkeep_in(int(ref)))
+                    said = pcard.undone_text(was)
+                elif how == "progress_no":
+                    await tprog.ThreadProgressStore(memory._db).unturn(g, c, list(ref))
+                    said = pcard.undone_text(was)
                 else:
                     await store.unturn(g, c, str(ref))
-                self.undo, said = None, undone_text(was)
+                    said = undone_text(was)
+                self.undo = None
+            elif what == "keep_progress" and self.progress:
+                on = [x.id for x in self.progress if x.id in self.progress_on]
+                off = [x.id for x in self.progress if x.id not in self.progress_on]
+                progress_store = tprog.ThreadProgressStore(memory._db)
+                moved_batch: int | None = None
+                if on:  # (the unticked ones are turned down inside the keep: one change)
+                    moved = await memory.keep_thread_progress(g, c, on, source=DM, turn_down=off)
+                    moved_batch = moved.batch
+                    if moved_batch is not None:
+                        self.undo = ("progress", moved_batch, self.progress_name)
+                        said = pcard.kept_text(self.progress_name, moved.value)
+                    else:
+                        said = pcard.NONE_FIT
+                if moved_batch is None and off:  # (nothing kept: unticked means it didn't happen)
+                    await progress_store.turn_down(g, c, off)
+                    self.undo = ("progress_no", tuple(off), self.progress_name)
+                    if not on:
+                        said = pcard.none_text(self.progress_name)
+            elif what == "no_progress" and self.progress:
+                ids = [x.id for x in self.progress]
+                await tprog.ThreadProgressStore(memory._db).turn_down(g, c, ids)
+                self.undo = ("progress_no", tuple(ids), self.progress_name)
+                said = pcard.none_text(self.progress_name)
             elif what == "keep" and s is not None:
                 name = self.name or s.name
                 kept = await memory.keep_thread(
@@ -442,7 +580,7 @@ class ThreadQuestions(_Menu):
         except TooLateToUndo:
             self.undo, said = None, TOO_LATE
         except MemoryRuleError as exc:
-            self.undo = None
+            # (a double press or an answer from elsewhere: the earlier Undo stays offered)
             said = f"⚠️ {exc}"
         await self._show(interaction, said)
 

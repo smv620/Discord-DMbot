@@ -77,6 +77,7 @@ from dmbot.memory import secret_questions as secret_questions_mod
 from dmbot.memory import short_names as short_names_mod
 from dmbot.memory import tags as tags_mod
 from dmbot.memory import thread_clues as clues_mod
+from dmbot.memory import thread_progress as tp_mod
 from dmbot.memory import threads as threads_mod
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory import worked_out as worked_out_mod
@@ -2248,6 +2249,91 @@ class MemoryStore:
                         confidence=1.0, status=CONFIRMED,
                     )  # fmt: skip
             return Written(_entity(row), w.batch)
+
+    async def keep_thread_progress(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        line_ids: Sequence[str],
+        *,
+        source: str,
+        turn_down: Sequence[str] = (),
+    ) -> Written[int]:
+        """The DM keeps progress lines the session reader offered on threads the campaign has
+        (#4522, quests slice 5b; `thread_progress`): every line left on, in ONE change, so one
+        Undo takes them all back (`thread_progress.unkeep_in`). A new part is kept as the DM's
+        keep with its source 'session' (§9.6), a part's new state as the story moving on
+        (`thread_parts.set_state`), a thread's state as its condition from that session. A line
+        that no longer fits (its thread or part gone or changed since, the same part already
+        there) is left out, never failing the keep, and answered as turned down (never shown as
+        kept). A part and a part's new state are dated at the story's newest moment, as the DM's
+        own adds are (`thread_parts.story_now`); a thread's state at the line's session. Returns
+        how many were written (no change, and no Undo, when none); raises when none of them still
+        waited. `turn_down`: the lines the DM unticked on the same card, turned down in this same
+        change when anything is kept, so its Undo brings them back with the rest (the reviewer on
+        part 3); with nothing kept they are left for the caller. Consent is read again inside the
+        write (`consent.still_recorded`): a line quoting
+        someone no longer recorded is deleted, never kept, and the deletion stands even when
+        nothing else is left (the keep then writes nothing rather than raising, which would undo
+        the deletion)."""
+        if source != DM:
+            raise MemoryRuleError(thread_parts.ONLY_DM)
+        tp = tp_mod
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            lines = await tp.waiting_in(w, line_ids)
+            if not lines:
+                raise MemoryRuleError(tp.GONE)
+            # (consent read again inside this write, after the card's own check: a stop between
+            # the card opening and the press, even one `forget` never ran for, keeps the words of
+            # whoever stopped out of the story; #4153's way, Supervisor on #4610)
+            from dmbot.consent import still_recorded
+
+            speakers = {u for line in lines for u in line.speaker_ids}
+            allowed = await still_recorded(w.conn, guild_id, campaign_id, speakers)
+            stopped = [line.id for line in lines if not set(line.speaker_ids) <= allowed]
+            if stopped:
+                await tp.drop_in(w, stopped)
+                log.info("Story thread progress: %d line(s) dropped at keep", len(stopped))
+                lines = [line for line in lines if line.id not in stopped]
+            fits = [line.id for line in lines if await self._keep_progress_line(w, onto, line)]
+            await tp.mark_kept(w, fits, w.batch)
+            await tp.mark_unfit(w, [line.id for line in lines if line.id not in fits])
+            if fits and turn_down:  # (the DM's unticked lines, in this same change: one Undo)
+                await tp.turn_down_in(w, turn_down, w.batch)
+            return Written(len(fits), w.batch)
+
+    async def _keep_progress_line(self, w: Changes, onto: Ontology, line: tp_mod.Line) -> bool:
+        """One progress line inside `keep_thread_progress`'s write: True when it wrote, False when
+        it no longer fits. A thread merged since is followed to the one it became. Only the
+        thread rules' own refusals (`MemoryRuleError`, raised before any write) mean "no longer
+        fits"; anything else fails the keep, so a mistake is never hidden."""
+        tp = tp_mod
+        thread_id = await _followed(w, line.thread_id)
+        thread = await w.get(ENTITIES, thread_id) if thread_id is not None else None
+        if thread is None or not onto.is_a(str(thread["type"]), "thread"):
+            return False
+        thread_id = str(thread["id"])
+        change = line.change
+        try:
+            if change.kind == tp.PART:
+                # (a time limit's "when" stays the line's own words: the date is the DM's to give)
+                await thread_parts.add(
+                    w, onto, thread_id, change.part_kind, change.words,
+                    state=change.state or None, source=thread_parts.SESSION,
+                )  # fmt: skip
+            elif change.kind == tp.PART_STATE:
+                await thread_parts.set_state_in_thread(
+                    w, thread_id, str(change.part_id), change.state
+                )
+            else:
+                await states.set_condition(
+                    w, onto, thread, change.state, from_session_at=line.session_at
+                )
+        except MemoryRuleError as exc:
+            log.info("A progress line no longer fits (%s)", type(exc).__name__)
+            return False
+        return True
 
     async def _new_thread_in(
         self,

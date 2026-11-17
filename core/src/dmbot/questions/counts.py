@@ -201,14 +201,19 @@ async def _world(src: Sources, g: int, c: str) -> Counted:
 
 async def _threads(src: Sources, g: int, c: str) -> Counted:
     """The story threads the lore and session readers suggested and the DM hasn't answered (#4453,
-    #4522): the ones the 📜 card shows (`ThreadSuggestionStore.waiting`), never one quoting someone
-    no longer recorded."""
+    #4522), and the progress lines on the threads the campaign has (5b): what the 📜 card shows
+    (`ThreadSuggestionStore.waiting`, `ThreadProgressStore.waiting`), never one quoting someone no
+    longer recorded."""
+    from dmbot.memory.thread_progress import ThreadProgressStore
     from dmbot.memory.thread_suggestions import ThreadSuggestionStore
 
     if src.memory is None:
         return Counted(0)
     opted_in = await src.recorded(g, c) if src.recorded is not None else None
-    return Counted(await ThreadSuggestionStore(src.db).count(g, c, opted_in=opted_in))
+    new = await ThreadSuggestionStore(src.db).count(g, c, opted_in=opted_in)
+    # (the progress lines on threads the campaign has: the same 📜 card's second stage, #4522 5b)
+    moved = await ThreadProgressStore(src.db).count(g, c, opted_in=opted_in)
+    return Counted(new + moved)
 
 
 async def _secrets(src: Sources, g: int, c: str) -> Counted:
