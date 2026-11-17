@@ -1979,6 +1979,7 @@ class ClaimStore:
             private_scene_store,
             reveal_proposals,
             secret_questions,
+            thread_progress,
             thread_suggestions,
         )
 
@@ -2001,6 +2002,8 @@ class ClaimStore:
             readings += await secret_questions.forget(conn, guild_id, user_id)
             # (the story threads read from a session that quote them, #4522)
             readings += await thread_suggestions.forget(conn, guild_id, user_id)
+            # (the progress on story threads read from a session that quotes them, #4522 5b)
+            readings += await thread_progress.forget(conn, guild_id, user_id)
             answers = await who_answers.forget(conn, guild_id, user_id)
             cur = await conn.execute(
                 "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"

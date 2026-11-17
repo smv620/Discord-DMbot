@@ -18,7 +18,8 @@
   "languages": "a character's languages are a property of the character, never a tie (owner, 2026-11-14; #4229): {character, language, line, note, doc (the document that says it)}; scored as found, missed, and extra (a language the key does not list)",
   "route_lengths": "how far a road is, as the session says it (#4255): a property of the road, never a tie; found by the same amount and unit, or the same words when they give none",
   "threads": "a story thread (quests design, #4450 §9.3; #4453): kind quest, hook or mystery; giver, target and taker (who takes it on, for a pursuit that is one character's own) are key names; missing and in_danger list who the thread is about. The party is never named: a thread is the party's unless it has a taker. hint = a question the text leaves open, counted when found and never missed. Scored as found, missed, wrong (another kind), doubles and extra (a thread the key does not list)",
-  "clues": "a clue to a thread (#4624, quests 6b; design \u00a77, \u00a79.3): found when a clue tied with clue_to to the backup thread its key thread matched has a name holding one of words (casefold); wrong thread when tied only elsewhere; must_not_clues name a thread that must have no clue tied. Who has a clue is not scored yet (the text's holders are the DM's to confirm)"
+  "clues": "a clue to a thread (#4624, quests 6b; design \u00a77, \u00a79.3): found when a clue tied with clue_to to the backup thread its key thread matched has a name holding one of words (casefold); wrong thread when tied only elsewhere; must_not_clues name a thread that must have no clue tied. Who has a clue is not scored yet (the text's holders are the DM's to confirm)",
+  "progress": "what the session moves on a thread the lore made (#4522, quests 5c): change thread_moves (state happening_now, finished or dropped), part_moves (a part of part_kind whose words hold one of words, now in state) or new_part (a part of part_kind read from the session); found when it or one of its 'or' rows stands on the backup thread its lore thread matched; must_not_progress rows are false when they stand"
  },
  "players": {
   "Cerric Vanya'elen": "player_ist",
@@ -4142,5 +4143,18 @@
  "must_not_clues": [
   {"thread": "L-lq04", "note": "Hlin's contract has no clue in this passage"},
   {"thread": "L-lq06", "note": "the route map and the sleds are Find Garret's help, never its clues"}
+ ],
+ "progress": [
+  {"id": "sp01", "thread": "L-lq06", "change": "thread_moves", "state": "happening_now", "must_find": true, "line": 135, "doc": "session", "note": "the party takes it up: Belleros agrees to look for Garret and is paid, and they set off (222)"},
+  {"id": "sp02", "thread": "L-lq06", "change": "part_moves", "part_kind": "reward", "words": ["50 gold"], "state": "settled", "or": [{"change": "new_part", "part_kind": "reward_given", "words": ["50"]}], "must_find": true, "line": 135, "doc": "session", "note": "the 50 gold the lore offers is paid up front"},
+  {"id": "sp03", "thread": "L-lq06", "change": "part_moves", "part_kind": "help", "words": ["sled", "dog"], "state": "lent", "or": [{"change": "new_part", "part_kind": "help", "words": ["sled", "dog"], "state": "lent"}], "must_find": false, "line": 243, "doc": "session", "note": "the kennel master only lends the dogs: the lore's help to keep is lent (a good find)"},
+  {"id": "sp04", "thread": "L-lq06", "change": "new_part", "part_kind": "time_limit", "words": ["10", "15", "days"], "must_find": false, "line": 204, "doc": "session", "note": "Belleros's estimate: Garret can last 10 to 15 days with shelter (a good find; words only)"}
+ ],
+ "must_not_progress": [
+  {"thread": "L-lq06", "change": "thread_moves", "state": "finished", "note": "Garret is not found this session"},
+  {"thread": "L-lq06", "change": "part_moves", "part_kind": "objective", "words": ["Garret"], "state": "done", "note": "nor is that objective done"},
+  {"thread": "L-lq03", "change": "thread_moves", "state": "finished", "note": "Okthandom only speaks of the curse (439-490)"},
+  {"thread": "L-lq03", "change": "part_moves", "part_kind": "objective", "words": ["curse"], "state": "done", "note": "the curse is not broken"},
+  {"thread": "L-lq04", "change": "thread_moves", "state": "happening_now", "note": "Hlin's contract is never spoken of in the session"}
  ]
 }

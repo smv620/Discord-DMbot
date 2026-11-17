@@ -30,7 +30,7 @@ from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping, 
 from dataclasses import dataclass, field, replace
 from typing import Any
 
-from dmbot.memory import thread_read
+from dmbot.memory import session_progress, thread_progress, thread_read
 from dmbot.memory.extractor import Said as Line
 from dmbot.memory.extractor import quoted, transcript_of
 from dmbot.memory.models import name_key
@@ -74,10 +74,16 @@ def prompt(
     window: Sequence[tuple[str, str, str]],
     context: Sequence[tuple[str, str, str]],
     known: Sequence[str],
+    progress: Sequence[session_progress.KnownThread] = (),
 ) -> str:
-    """The user message: the known threads' names, the context lines and the window, all as data
-    (`extractor.quoted`: no line can close its block or pass for another)."""
-    names = "\n".join(f"- {quoted(n)}" for n in known[:KNOWN_MAX]) or "(none)"
+    """The user message: the known threads (with their labels and standing parts when progress
+    is read, #4522 5b), the context lines and the window, all as data (`extractor.quoted`: no
+    line can close its block or pass for another)."""
+    names = (
+        session_progress.known_block(progress)
+        if progress
+        else "\n".join(f"- {quoted(n)}" for n in known[:KNOWN_MAX]) or "(none)"
+    )
     before = transcript_of(context).replace("transcript>", "already_read>") if context else ""
     return f"<known_threads>\n{names}\n</known_threads>\n{before}\n{transcript_of(window)}".strip()
 
@@ -164,12 +170,17 @@ class Report:
     found: int = 0
     stopped: str = ""  # "call limit", "out of funds", "cut", "failed", or "" when whole
     dropped: dict[str, int] = field(default_factory=dict)
+    # Progress on the known threads (#4522 5b): (thread id, change, line starts, speakers). Ids and
+    # the reader's few words only, never in the log line.
+    progress: list[tuple[str, thread_progress.Change, tuple[int, ...], tuple[int, ...]]] = field(
+        default_factory=list, repr=False
+    )
 
     def line(self) -> str:
         why = ", ".join(f"{k} {v}" for k, v in sorted(self.dropped.items())) or "none"
         return (
             f"Session story threads: {self.found} suggested from {self.windows} windows in"
-            f" {self.calls} calls (dropped: {why})"
+            f" {self.calls} calls, {len(self.progress)} progress lines (dropped: {why})"
             + (f"; stopped early: {self.stopped}" if self.stopped else "")
         )
 
@@ -187,13 +198,19 @@ async def run(
     max_calls: int,
     max_tokens: int,
     count_call: Callable[[], Awaitable[None]] | None = None,
+    progress: Sequence[session_progress.KnownThread] = (),
 ) -> tuple[list[Suggestion], Report]:
     """Read the session's readable lines (`extractor.readable`, recap left out by the caller) for
-    new threads, window by window. Never raises: out of funds is reported as a stop."""
+    new threads, window by window. With `progress` (the open threads and their standing parts,
+    #4522 5b), the same calls also read what the talk changed on them (`session_progress`), kept
+    in `Report.progress`. Never raises: out of funds is reported as a stop."""
     from dmbot.ai import AIOutOfFunds
 
     report = Report()
     seen = list(have)
+    moved: set[tuple[str, str]] = set()  # (the progress lines kept so far this run)
+    instructions = SESSION_INSTRUCTIONS + (session_progress.INSTRUCTIONS if progress else "")
+    schema = session_progress.schema(thread_read.SCHEMA) if progress else thread_read.SCHEMA
     out: list[Suggestion] = []
     for window, context in windows(lines):
         if report.calls >= max_calls:
@@ -219,11 +236,12 @@ async def run(
                 await count_call()
             except Exception as exc:
                 log.warning("Session threads: couldn't count a call (%s)", type(exc).__name__)
+        raw: list[str] = []
         try:
             said, short = await asyncio.wait_for(
                 thread_read.read_threads(
-                    ai, prompt(rows(window), rows(context), known),
-                    max_tokens=max_tokens, instructions=SESSION_INSTRUCTIONS,
+                    ai, prompt(rows(window), rows(context), known, progress),
+                    max_tokens=max_tokens, instructions=instructions, schema=schema, raw=raw,
                 ),
                 CALL_TIMEOUT_S,
             )  # fmt: skip
@@ -239,13 +257,27 @@ async def run(
         found, dropped = check_window(said, window, entries, names, have=seen)
         for k, v in dropped.items():
             report.dropped[k] = report.dropped.get(k, 0) + v
+        lines_moved: list[tuple[str, thread_progress.Change, tuple[int, ...], tuple[int, ...]]] = []
+        if progress and raw:
+            lines_moved, why = session_progress.check(
+                session_progress.parse(raw[0]), window, progress, where=where, seen=moved
+            )
+            for k, v in why.items():
+                report.dropped[f"progress_{k}"] = report.dropped.get(f"progress_{k}", 0) + v
         agreed = set(await consenting())  # (and after the answer: who stopped meanwhile drops it)
         kept = [s for s in found if set(s.speaker_ids) <= agreed]
-        if len(kept) < len(found):
+        moves = [m for m in lines_moved if set(m[3]) <= agreed]
+        if len(kept) + len(moves) < len(found) + len(lines_moved):
             report.dropped["stopped_recording"] = (
-                report.dropped.get("stopped_recording", 0) + len(found) - len(kept)
+                report.dropped.get("stopped_recording", 0)
+                + len(found)
+                + len(lines_moved)
+                - len(kept)
+                - len(moves)
             )
         out.extend(kept)
+        report.progress.extend(moves)
+        moved.update((m[0], m[1].key(m[0])) for m in moves)  # (only what passed consent)
     report.found = len(out)
     log.info(report.line())
     return out, report

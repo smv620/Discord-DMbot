@@ -439,3 +439,24 @@ A clue is found when a clue tied to the thread (`clue_to`, kept with the thread)
 | L-lq03 | whisper | no | 36 | the whispers Nyssara hears |
 
 **Must have no clue tied:** L-lq04 (Hlin's contract has none in this passage); L-lq06 (the route map and the sleds are its help, never its clues).
+
+### Progress the session makes on the lore's threads (quests 5c, #4522; design §9.5)
+
+The session reader is shown the campaign's open threads and says what the talk moved on them; the sample keeps every line (`accept_all.keep_progress`, for the score only). A row is found when it, or its "or", stands on the backup thread its lore thread matched: the thread's state now, a part of that kind (words holding one of the words) in that state, or a new part read from the session. A lore thread starts hinted or open and a lore part in its kind's first state, so these stand only once the session moved them. A row holds on any backup thread its lore thread matched (a second "Find Garret" the session reader suggests counts too).
+
+| ID | Thread | Change | Kind | Words | Now | Or | Must find | Line | Note |
+|---|---|---|---|---|---|---|---|---|---|
+| sp01 | L-lq06 | the thread moves | | | happening now | | yes | 135 | the party takes it up: Belleros agrees to look for Garret and is paid, and they set off (222) |
+| sp02 | L-lq06 | a part moves | reward | 50 gold | settled | a reward given, "50", from the session | yes | 135 | the 50 gold the lore offers is paid up front |
+| sp03 | L-lq06 | a part moves | help | sled, dog | lent | new help, lent | no | 243 | the kennel master only lends the dogs: the lore's help to keep is lent |
+| sp04 | L-lq06 | a new part | time limit | 10, 15, days | | | no | 204 | Belleros's estimate: Garret can last 10 to 15 days with shelter (words only) |
+
+**Must make nothing** (each counts as false when it stands):
+
+| Thread | Change | Note |
+|---|---|---|
+| L-lq06 | the thread finished | Garret is not found this session |
+| L-lq06 | objective "Garret" done | nor is that objective done |
+| L-lq03 | the thread finished | Okthandom only speaks of the curse (439-490) |
+| L-lq03 | objective "curse" done | the curse is not broken |
+| L-lq04 | the thread happening now | Hlin's contract is never spoken of in the session |

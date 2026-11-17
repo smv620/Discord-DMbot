@@ -165,4 +165,4 @@ Who gave it, who it is aimed at, and who takes it on when it is one character's 
 
 | ID | Kind | Thread | Giver | Target | Takes it on | About (missing / in danger) | Must find | Line | Note |
 |---|---|---|---|---|---|---|---|---|---|
-| sq01 | quest | Find Garret Velryn | Keegan Velryn | Garret Velryn |  |  | no | 135 | an ask and a taker; replaces s015; a good find until quests slice 5 (the session reader); must-find from then (the session reader) |
+| sq01 | quest | Find Garret Velryn | Keegan Velryn | Garret Velryn |  |  | yes | 135 | an ask and a taker; replaces s015; must-find since quests slice 5 (the session reader reads new threads, #4522) |
