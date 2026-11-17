@@ -102,3 +102,57 @@ class TheDidTheyMeanCount(unittest.IsolatedAsyncioTestCase):
         self.assertIn("2", args[1])
         self.assertNotIn("Zed", args[1])  # (a count: never the word that was heard)
         self.assertIsNotNone(args[2])  # (the DM-only review button)
+
+
+class TheNamesShownReport(unittest.IsolatedAsyncioTestCase):
+    """(#3874 E1) names said at the table: the names and Undo go to the DMs privately; the DM Bot
+    channel gets a count only"""
+
+    async def _run(self, sent: bool) -> tuple[Any, Any]:
+        from unittest.mock import patch
+
+        found = [
+            SimpleNamespace(entity_id="e1", name="Zed"),
+            SimpleNamespace(entity_id="e2", name="Ona"),
+        ]
+        memory = SimpleNamespace(
+            reveal_said=AsyncMock(return_value=SimpleNamespace(value=["e1", "e2"], batch=5)),
+            waiting_connections=AsyncMock(return_value=0),
+        )
+        campaign = SimpleNamespace(dm_bot_channel_id=UPKEEP, dm_screen_channel_id=SCREEN)
+        fake: Any = SimpleNamespace(
+            memory=memory,
+            lookup=None,
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
+        )
+        send = AsyncMock(return_value=sent)
+        with (
+            patch("dmbot.bot.unrevealed_names", AsyncMock(return_value=[])),
+            patch("dmbot.bot.said", lambda held, texts: found),
+            patch("dmbot.bot.pointer_note.send", send),
+        ):
+            await DMBot._reveal_said(
+                fake, GUILD, "c" * 32, AsyncMock(return_value=["x"]), "Session 1"
+            )
+        return send, campaign
+
+    async def test_the_names_go_through_the_private_first_note_with_an_undo(self) -> None:
+        send, campaign = await self._run(True)
+        send.assert_awaited_once()
+        args = send.await_args.args
+        self.assertIs(args[1], campaign)
+        self.assertIn("Zed", args[2])  # the words, which go privately
+        self.assertIsNotNone(args[3]())  # the Undo view
+        self.assertTrue(send.await_args.kwargs["note"])
+
+    async def test_the_pointer_in_the_dm_bot_channel_is_a_count_with_no_name(self) -> None:
+        send, _ = await self._run(True)
+        pointer = send.await_args.args[4]
+        self.assertIn("2", pointer)
+        self.assertNotIn("Zed", pointer)
+        self.assertNotIn("Ona", pointer)
+
+    async def test_no_dm_could_be_told_is_only_logged(self) -> None:
+        with self.assertLogs("dmbot", level="WARNING") as logs:
+            await self._run(False)
+        self.assertNotIn("Zed", "".join(logs.output))

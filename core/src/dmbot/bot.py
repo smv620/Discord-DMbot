@@ -651,6 +651,7 @@ from dmbot.ui.recap_again import (
 )
 from dmbot.ui.recap_upload import recap_upload_command  # noqa: F401 (registers it)
 from dmbot.ui.revealed_report import UndoRevealedButton, report_text, revealed_view
+from dmbot.ui.revealed_report import pointer_text as revealed_pointer_text
 from dmbot.ui.rule_clash import ClashView
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 from dmbot.ui.secret_aloud import (
@@ -10443,17 +10444,24 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self.lookup.drop([cid])
         log.info("Names said at the table and shown: %d", len(written.value))  # a count only
         campaign = await self.campaigns.get(gid, cid)
-        if campaign is None or campaign.dm_screen_channel_id is None:
+        if campaign is None:
             return
         shown = [f.name for f in found if f.entity_id in set(written.value)]
         waiting = await self.memory.waiting_connections(gid, cid, written.value)
-        if not await self.post(
-            campaign.dm_screen_channel_id,
+        batch = written.batch
+        # The names go to the DMs privately, with Undo; the DM Bot channel (which the campaign's
+        # people read) gets a count only, and only when a private message really went out. With
+        # no private message the words go on the DM screen as before (#3874 E1).
+        if not await pointer_note.send(
+            self,
+            campaign,
             report_text(shown, where=where, waiting=waiting),
-            view=revealed_view(cid, written.batch),
+            lambda: revealed_view(cid, batch),
+            revealed_pointer_text(len(shown)),
+            note=True,
         ):
             # The names are shown and the DM could not be told: say so in the log (a count only)
-            log.warning("Names shown at the table, but the DM screen could not say so")
+            log.warning("Names shown at the table, but no DM could be told")
 
     async def record_exposures(self, table: Table) -> None:
         """After a session: remember the secret names and secret connections said or typed at the
