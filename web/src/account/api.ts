@@ -2133,6 +2133,22 @@ export interface StoryThreadSuggestion {
   heard: string[];
 }
 /** One press on the story threads card: keep one (the people and lines ticked, a new name if renamed), turn one down, or Undo. */
+/** One thread with lines waiting for the DM (#4616): `more` lines wait behind the ones shown, `sessions` is how many sessions said them. */
+export interface ThreadProgressThread {
+  id: string;
+  name: string;
+  kind: string;
+  lines: { id: string; text: string }[];
+  more: number;
+  sessions: number;
+  /** When the one session was heard, in seconds, or null when there is more than one or no date. */
+  sessionAt: number | null;
+}
+export type ThreadProgressChange =
+  | { action: "keep"; on: string[]; off: string[] }
+  | { action: "none"; lines: string[] }
+  | { action: "undo"; batch: number }
+  | { action: "undo"; lines: string[] };
 export type StoryThreadsChange =
   | { action: "keep"; id: string; on: number[]; name?: string; lines: number[] }
   | { action: "not"; id: string }
@@ -3252,6 +3268,10 @@ export interface AccountApi {
   /** The story threads DMbot found in an upload (#4482): DM only; the list is read again after every press. */
   storyThreads?(ref: string): Promise<StoryThreads>;
   changeStoryThreads?(ref: string, change: StoryThreadsChange): Promise<StoryThreadsResult>;
+  /** The 🧵 Progress to check lines a session's talk changed on the story threads (#4616): DM only; nothing for anyone else. */
+  threadProgress?(ref: string): Promise<ThreadProgressThread[]>;
+  /** Keep the ticked lines and turn the rest down, none happened, or take either back (#4616; core thread_progress.py). */
+  changeThreadProgress?(ref: string, change: ThreadProgressChange): Promise<{ batch: number | null }>;
   /** A character's languages (#4621): DM only; a place has none. */
   characterLanguages?(ref: string, entity: string): Promise<CharacterLanguages>;
   changeCharacterLanguages?(ref: string, entity: string, change: LanguagesChange): Promise<{ batch: number | null }>;
@@ -3698,7 +3718,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadProgress", "changeThreadProgress", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */

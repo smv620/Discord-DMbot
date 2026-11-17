@@ -37,3 +37,27 @@ export const storyThreadsWords = {
   tooLate: "Too late to undo. Open the thread on your 🧵 Threads list to change it.",
   wrong: "Something went wrong. Nothing was changed. Press the button again.",
 } as const;
+
+/** The 🧵 Progress to check card on the Names page (#4616): the same words as Discord's card, so the two stay level. DM only. */
+export const threadProgressWords = {
+  heading: "🧵 Progress to check",
+  thread: (n: number, total: number): string => ` (thread ${n} of ${total})`,
+  // "{name}: did these happen? DMbot heard them in {where}." where = one session, with its date when known, or several.
+  heard: (name: string, where: string): string => `${name}: did these happen? DMbot heard them in ${where}.`,
+  oneSession: (date: string | null): string => (date ? `a session on ${date}` : "a session"),
+  sessions: (n: number): string => `${n} sessions`,
+  more: (n: number): string => `…and ${n} more: they show after you answer these.`,
+  help: "Untick what didn't happen, then press Keep these. DMbot won't offer unticked ones again; Undo takes it all back.",
+  keep: "Keep these",
+  none: "None happened",
+  skip: "Skip ›",
+  undo: "Undo",
+  kept: (n: number, name: string): string => `Kept ${n} ${n === 1 ? "change" : "changes"} on ${name}. See them on its card.`,
+  leftAsIs: (name: string): string => `Left as it was: ${name}. DMbot won't offer those again.`,
+  undone: (name: string): string => `Undone: the changes on ${name} are waiting again.`,
+  gone: "Those were answered already. Showing what is left.",
+  changedKeep: "Those no longer fit the thread (it changed since), so nothing was kept.",
+  tooLate: "It's too late to undo that one here. Showing what is left.",
+  wrong: "DMbot couldn't save that answer. Nothing changed. Try again in a minute.",
+  saving: "Saving your answer",
+} as const;
