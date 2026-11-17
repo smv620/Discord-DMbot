@@ -280,6 +280,8 @@ OWED_TO_BACKUP: tuple[str, ...] = (
     "campaign_pictures",
     # a map is a kept picture with its two yeses (#4344): it goes into a backup with its picture
     "campaign_maps",
+    # a map's pins, paths and areas (#4670): they go into a backup with their map
+    "map_features",
 )
 
 

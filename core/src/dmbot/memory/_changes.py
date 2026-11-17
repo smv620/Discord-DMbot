@@ -183,9 +183,10 @@ MAP_FACTS = Table(
     "id",
     ("id", "entity_id", "layer", "value", "words", "faction_id", "how", "part",
      "from_session_at", "to_session_at", "from_game_time", "to_game_time", "status", "source",
-     "also_text", "table_knows", "created_at", "culture_id", "relation_id"),
-    # (a named culture, #4257 slice 3b; a road's condition on a known `route_to`, #4258)
-    defaults={"culture_id": None, "relation_id": None},
+     "also_text", "table_knows", "created_at", "culture_id", "relation_id", "map_id"),
+    # (a named culture, #4257 slice 3b; a road's condition on a known `route_to`, #4258; the map
+    # a row rests on, #4259 slice 8b, so a map's removal and its Undo carry it)
+    defaults={"culture_id": None, "relation_id": None, "map_id": None},
 )  # fmt: skip
 # One map: a kept picture DMbot knows is a map (#4344, MapBot layers slice 3a). It is in the log so
 # that each DM action on a map (keep, yes or no to using it, show to the table, remove) is one Undo
@@ -198,7 +199,16 @@ MAPS = Table(
     ("id", "picture_id", "title", "covers", "kind", "width", "height", "scale_value",
      "scale_unit", "scale_from", "grid_kind", "grid_cell_px", "grid_cell_distance", "north_angle",
      "north_from", "audience", "came_from", "import_tool", "right_by", "right_at", "use_ok",
-     "use_by", "use_at", "as_of", "replaces", "created_at"),
+     "use_by", "use_at", "as_of", "replaces", "created_at", "grid_from"),
+    defaults={"grid_from": None},  # (0530: a change logged before it had none)
+)  # fmt: skip
+# One thing marked on one map (#4670, MapBot slice 4a; 0530): a pin, path or area, at most one
+# target. Logged, so a DM's pin and a map's removal undo; housekeeping (`pins_read_at`) is not here.
+MAP_FEATURES = Table(
+    "map_features",
+    "id",
+    ("id", "map_id", "shape", "points", "place_id", "relation_id", "fact_id", "label", "status",
+     "source", "created_at"),
 )  # fmt: skip
 # The parts of a story thread (#4471, quests slice 2; design `docs/design/quests.md` §4):
 # objectives, complications, rewards promised and given, help and time limits, beside the thread.
@@ -367,7 +377,7 @@ THREAD_GUESSES = Table(
     "memory_thread_guesses", "id", ("id", "thread_id", "belief_id", "created_at"), logged=False
 )
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
-       STORY_LANGUAGES, CULTURES, MAP_FACTS, MAPS, THREAD_PARTS,
+       STORY_LANGUAGES, CULTURES, MAP_FACTS, MAPS, MAP_FEATURES, THREAD_PARTS,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
        BELIEFS, EVIDENCE, THREAD_GUESSES, ALIAS_KNOWERS, KNOWERS, TOLD,
        SECRET_QUESTIONS)  # fmt: skip
@@ -421,6 +431,7 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_thread_parts", "thread_id", False),  # a thread's parts (#4471)
         ("memory_thread_parts", "who_id", False),  # who promised, gave or lent it (#4471)
         ("memory_thread_parts", "about_id", False),  # the item or event it names (#4471)
+        ("map_features", "place_id", False),  # a map's pin on the place (#4670)
         ("campaign_maps", "covers", False),  # the place a map covers (#4346)
         ("memory_states", "entity_id", False),
         ("memory_impressions", "viewer_id", False),
@@ -437,9 +448,11 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
     # (a logged delete of a culture is refused while a row points at it: the database's cascade
     # would delete those rows outside the log)
     "memory_cultures": (("memory_map_facts", "culture_id", False),),
+    "memory_map_facts": (("map_features", "fact_id", False),),  # an area on a map (#4670)
     # (the database would set these to NULL outside the log: #4346)
     "campaign_maps": (
         ("memory_map_facts", "map_id", False),
+        ("map_features", "map_id", False),  # its pins (#4670: `_remove` deletes them first)
         ("campaign_maps", "replaces", False),
     ),
     "memory_mentions": (("memory_relations", "mention_ids", True),),
@@ -452,6 +465,7 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         # (a road's condition, #4258: outside an Undo the store deletes it first, logged; an Undo
         # that would delete the road is refused while it has one, so nothing goes unlogged)
         ("memory_map_facts", "relation_id", False),
+        ("map_features", "relation_id", False),  # a road traced on a map (#4670)
     ),
     "memory_perspectives": (
         ("memory_beliefs", "perspective_id", False),
@@ -589,6 +603,15 @@ class Changes(Scope):
         self.perspectives: dict[str, str] | None = (
             None  # The truth's and The party's ids, once known
         )
+
+    def new_batch(self) -> None:
+        """Start a batch of its own for this write's later changes, in the same transaction: their
+        Undo takes back only them (a map read's layer rows apart from its pins, Supervisor's
+        ruling on #4699). Not for a write that asks 🤫 questions: those join `batch` at the end, so
+        one asked before would move to the later batch's Undo."""
+        if self.asked:
+            raise RuntimeError("new_batch after a 🤫 question: it would join the later batch")
+        self.batch = None
 
     async def _dm_only_check(
         self, table: Table, row: Mapping[str, Any], before: Mapping[str, Any] | None = None
@@ -1087,6 +1110,9 @@ class Changes(Scope):
 # Columns added after change-log rows were written, with the value an older snapshot reads as
 # (#1189): a fact written before definitions were versioned was written under version 1.
 _ADDED_LATER: dict[str, dict[str, Any]] = {
+    "campaign_maps": {"grid_from": None},  # (0530: nobody had set a grid before)
+    # (a row logged before #4259 rested on no map: nothing wrote `map_id` before slice 8)
+    "memory_map_facts": {"map_id": None},
     "memory_relations": {
         "definition_version": 1,
         "unrevealed": False,

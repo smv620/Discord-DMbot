@@ -8,10 +8,10 @@ answers "Use this in a server". Pressed against a stand-in client, so a handler 
 the stand-in's answers; what is checked is only that none of them refuses for want of a server.
 
 Not covered, said plainly: a non-DM's press and "reaches its campaign lookup" are per button and
-need that button's own fixtures (each module's tests); and `heard_review.py` and
-`said_as_review.py` read `interaction.guild` and do nothing when it is None (they do not answer
-with the sentence, so this walk cannot see them): `KNOWN_NEEDS_A_SERVER` lists them, and the test
-below names them so they are not forgotten (filed as #4630).
+need that button's own fixtures (each module's tests: `test_private_server_cards.py` for the review
+cards, the names and Undo buttons and the story watch). A button that reads `interaction.guild` and
+quietly does nothing with none does not answer with the sentence, so this walk cannot see it;
+`ui/private_server.py` `guild_id_for` is the one way to find the campaign's server (#4630).
 """
 
 from __future__ import annotations
@@ -32,12 +32,6 @@ from tests.test_dynamic_items import registered_items
 # Server-only on purpose: the item and why. Only the main menu's own button answers so.
 SERVER_ONLY: dict[str, str] = {
     "ImportButton": "📥 Import sessions on the main menu: it starts in a server channel (#2154)",
-}
-
-# Read `interaction.guild` and do nothing with none (found by reading, not by the walk).
-# (`ui/said_as_review.py` does the same, but it is a view, not a registered item: not walked.)
-KNOWN_NEEDS_A_SERVER: dict[str, str] = {
-    "HeardReviewButton": "ui/heard_review.py current_text: guild is None returns None",
 }
 
 SERVER_WORDS = "in a server"
@@ -107,8 +101,3 @@ class WithNoServer(unittest.IsolatedAsyncioTestCase):
             self.assertIn(name, by_name, f"{name} is no longer registered: drop it from the list")
             said = " ".join(await press(by_name[name]))
             self.assertIn(SERVER_WORDS, said, f"{name} no longer needs a server: drop it")
-
-    def test_the_two_known_ones_are_still_registered(self) -> None:
-        names = {c.__name__ for c in registered_items()}
-        for name in KNOWN_NEEDS_A_SERVER:
-            self.assertIn(name, names, f"{name} was renamed or removed: update the list")

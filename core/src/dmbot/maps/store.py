@@ -20,12 +20,16 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from dmbot.db import Conn, Database
-from dmbot.memory._changes import MAP_FACTS, MAPS
+from dmbot.memory._changes import MAP_FACTS, MAP_FEATURES, MAPS
 from dmbot.memory.models import Written, new_id
 from dmbot.memory.store import MemoryStore
 from dmbot.pictures.store import MB, Usage, _lock, _usage
 
 if TYPE_CHECKING:
+    from dmbot.maps.disagree import Direction, Distance
+    from dmbot.maps.measure import MapInfo, Pin
+    from dmbot.maps.measure_words import NotShown
+    from dmbot.maps.said_phrases import Said
     from dmbot.memory._changes import Changes
 
 # Fixed lists in code, each with "other" (design rule 6).
@@ -156,6 +160,134 @@ def _seen(viewer: Viewer) -> str:
     return f" AND (FALSE{own})"
 
 
+async def maps_and_pins(
+    conn: Conn, guild_id: int, campaign_id: str, place_ids: list[str], *, dm: bool
+) -> tuple[list[MapInfo], list[Pin]]:
+    """The maps an answer or a check may measure on, and these places' pins on them (#4670): for
+    the DM (`dm`), every map DMbot may use; otherwise only the table's (section 8.1's one clause,
+    `_seen`); never a map another one replaces (§4.4: the newer version answers), and only maps
+    `may_use_map` allows. Rejected pins never count. `measure.MapInfo` and `measure.Pin` rows."""
+    from dmbot.maps import measure
+
+    cur = await conn.execute(
+        f"SELECT {COLUMNS}, scale_value, scale_unit, north_angle, north_from"
+        " FROM campaign_maps WHERE guild_id = %s AND campaign_id = %s"
+        + _seen(Viewer(dm=dm, table=not dm)),
+        (guild_id, campaign_id),
+    )
+    rows = await cur.fetchall()
+    cur = await conn.execute(
+        "SELECT map_id, place_id, points FROM map_features WHERE guild_id = %s"
+        " AND campaign_id = %s AND shape = 'pin' AND status <> 'rejected'"
+        " AND place_id = ANY(%s)",
+        (guild_id, campaign_id, place_ids),
+    )
+    pins = [
+        measure.Pin(str(r["map_id"]), str(r["place_id"]), r["points"][0], r["points"][1])
+        for r in await cur.fetchall()
+    ]
+    replaced = {str(r["replaces"]) for r in rows if r["replaces"]}
+    maps = [
+        measure.MapInfo(
+            m.id, m.title, m.kind, m.width, m.height, r["scale_value"],
+            str(r["scale_unit"] or ""), float(r["north_angle"]), r["north_from"] != "assumed",
+            m.created_at,
+        )
+        for r in rows
+        if (m := _map(r)).id not in replaced
+        and may_use_map(m)  # (the one answer to "may DMbot use this map?")
+    ]  # fmt: skip
+    return maps, pins
+
+
+@dataclass(frozen=True, slots=True)
+class RoadOff:
+    """A road whose stated length a kept map's straight line disagrees with (#4670 4c, §9)."""
+
+    relation_id: str
+    a_id: str
+    b_id: str
+    stated: str  # the length's own words ("20 miles")
+    session_at: int | None  # the session the road came from; None for lore or an upload
+    created_at: int
+    off: Distance  # the map and both figures
+
+
+async def roads_off(
+    conn: Conn, guild_id: int, campaign_id: str, *, read_only: bool, relation_ids: list[str] | None
+) -> list[RoadOff]:
+    """Roads whose stated length in miles is far shorter than a kept map's straight line between
+    their two kept places (`disagree.check_distance`), worked out now and never stored (Supervisor's
+    ruling on #4670). DM's maps only (`dm=True`): both notes are the DM's alone. `read_only`: only
+    lengths DMbot read and the DM hasn't kept (World notes; a length the DM kept gets no note
+    later, ruling 3). `relation_ids`: only these roads (the card's own). A travel time is never
+    compared (§9), so only `length_unit = 'miles'`."""
+    from dmbot.maps import disagree
+
+    cur = await conn.execute(
+        "SELECT r.id, r.subject_id, r.object_id, r.length_words, r.length_amount,"
+        " r.from_session_at, r.created_at FROM memory_relations r"
+        " JOIN memory_entities a ON a.guild_id = r.guild_id AND a.campaign_id = r.campaign_id"
+        " AND a.id = r.subject_id AND a.status IN ('confirmed', 'proposed')"
+        " AND a.merged_into IS NULL"
+        " JOIN memory_entities b ON b.guild_id = r.guild_id AND b.campaign_id = r.campaign_id"
+        " AND b.id = r.object_id AND b.status IN ('confirmed', 'proposed')"
+        " AND b.merged_into IS NULL"
+        " WHERE r.guild_id = %s AND r.campaign_id = %s AND r.predicate = 'route_to'"
+        # (a kept road only: one still waiting is asked about on its own, never twice)
+        " AND r.status = 'confirmed' AND r.to_session_at IS NULL AND r.length_unit = 'miles'"
+        + (" AND r.length_from = 'read'" if read_only else "")
+        + (" AND r.id = ANY(%s)" if relation_ids is not None else "")
+        + " ORDER BY r.created_at, r.id",
+        (guild_id, campaign_id, *([relation_ids] if relation_ids is not None else [])),
+    )
+    roads = await cur.fetchall()
+    if not roads:
+        return []
+    places = sorted({str(r[k]) for r in roads for k in ("subject_id", "object_id")})
+    maps, pins = await maps_and_pins(conn, guild_id, campaign_id, places, dm=True)
+    out: list[RoadOff] = []
+    for r in roads:
+        a, b = str(r["subject_id"]), str(r["object_id"])
+        off = disagree.check_distance(maps, pins, a, b, float(r["length_amount"]))
+        if off is not None:
+            out.append(
+                RoadOff(
+                    str(r["id"]), a, b, str(r["length_words"]), r["from_session_at"],
+                    int(r["created_at"]), off,
+                )
+            )  # fmt: skip
+    return out
+
+
+async def _shown_at(w: Changes, map_id: str) -> int:
+    """The story time a map was shown (§7.4): the start of the last session that began before its
+    picture was posted (not when it was kept as a map, which can be later), else the campaign's
+    own start."""
+    cur = await w.conn.execute(
+        "SELECT COALESCE((SELECT max(s.started_at) FROM transcript_sessions s, campaign_maps m"
+        " JOIN campaign_pictures p ON p.guild_id = m.guild_id AND p.campaign_id = m.campaign_id"
+        " AND p.id = m.picture_id"
+        " WHERE s.guild_id = %(g)s AND s.campaign_id = %(c)s AND m.guild_id = %(g)s"
+        " AND m.campaign_id = %(c)s AND m.id = %(m)s AND s.started_at <= p.made_at),"
+        " (SELECT created_at FROM campaigns WHERE guild_id = %(g)s AND id = %(c)s)) AS at",
+        {"g": w.guild_id, "c": w.campaign_id, "m": map_id},
+    )
+    row = await cur.fetchone()
+    return int(row["at"]) if row is not None and row["at"] is not None else int(w.now)
+
+
+@dataclass(frozen=True, slots=True)
+class SaidOff:
+    """A distance or direction the DM said that a kept map disagrees with (#4670 4c-2): what was
+    said, the two places' names, and `disagree.Distance` or `disagree.Direction`."""
+
+    said: Said
+    a_name: str
+    b_name: str
+    off: Distance | Direction
+
+
 class MapStore:
     """A campaign's maps. Every write is one batch of the change log, so one DM action is one Undo
     (design rule 8, #4346): they go through `MemoryStore.map_write`, take the picture store's lock
@@ -237,6 +369,7 @@ class MapStore:
                     "right_at": now, "use_ok": True if uploader_is_dm else None,
                     "use_by": uploader_id if uploader_is_dm else None,
                     "use_at": now if uploader_is_dm else None, "as_of": None, "replaces": None,
+                    "grid_from": None,
                     "created_at": now,
                 },
             )  # fmt: skip
@@ -252,10 +385,15 @@ class MapStore:
         yes: bool,
         first_only: bool = False,
     ) -> Written[Map]:
-        """A DM's yes or no to "A map from <player>: use it?". A no leaves the picture kept and
-        unused; removing it is a separate tap. The caller has checked that `dm_id` is a DM of this
-        campaign. Answering again changes the answer, and the later one stands, unless
-        `first_only`: then an answered map is left as it is and `AlreadyAnswered` says so (two DMs
+        """A DM's yes or no to "A map from <player>: use it?". A no ends DMbot's use of the map:
+        what it said goes by the deletion rule (`_forget_said`, §7.5; Supervisor's ruling 1 on
+        #4694, #4695) in the same write, one Undo. DMbot's reads resting only on it go, the DM's
+        word on a place stays, and every pin on it goes (the DM's own too: a refused map is never
+        shown; Undo brings them back). The map row stays, refused, so a second DM is told the
+        first answer, the poster still sees it as theirs, and nothing reads it again. The caller
+        has checked that `dm_id` is a DM of this campaign. Without `first_only` (no caller today)
+        answering again changes the answer; a Yes after a No brings nothing back, only Undo does.
+        With `first_only` an answered map is left as it is and `AlreadyAnswered` says so (two DMs
         pressing at once: the first answer stands). The check and the write are one step, under
         the picture store's lock."""
         async with self._memory.map_write(guild_id, campaign_id) as w:
@@ -268,6 +406,8 @@ class MapStore:
             row = await w.update(
                 MAPS, map_id, {"use_ok": yes, "use_by": dm_id, "use_at": int(self._clock())}
             )
+            if not yes:  # (the answer is logged first, so Undo puts the question back as it was)
+                await self._forget_said(w, map_id)
             return Written(_map(row), w.batch)
 
     async def set_audience(
@@ -287,8 +427,8 @@ class MapStore:
     async def remove_map(self, guild_id: int, campaign_id: str, map_id: str) -> Written[Map | None]:
         """Take a picture's map status away (a DM can always; its poster can too). The picture
         stays a picture, no longer permanent (Supervisor's ruling on #4344: a pin the DM set before
-        the map existed is cleared too). Facts that point at the map are cleared first, through
-        the log, so one Undo puts them back with it. No such map: nothing, and no batch."""
+        the map existed is cleared too). What the map said goes by §7.5 (`_remove`), through the
+        log, so one Undo puts it back with it. No such map: nothing, and no batch."""
         async with self._memory.map_write(guild_id, campaign_id) as w:
             await _lock(w.conn, guild_id, campaign_id)
             gone = await self._remove(w, map_id)
@@ -331,8 +471,7 @@ class MapStore:
         row = await w.get(MAPS, map_id)
         if row is None:
             return None
-        for fact in await w.select(MAP_FACTS, " AND map_id = %s", [map_id]):
-            await w.update(MAP_FACTS, str(fact["id"]), {"map_id": None})
+        await MapStore._forget_said(w, map_id)
         for other in await w.select(MAPS, " AND replaces = %s", [map_id]):
             await w.update(MAPS, str(other["id"]), {"replaces": None})
         await w.delete(MAPS, map_id)
@@ -342,6 +481,33 @@ class MapStore:
             (w.guild_id, w.campaign_id, int(row["picture_id"])),
         )
         return _map(row)
+
+    @staticmethod
+    async def _forget_said(w: Changes, map_id: str) -> None:
+        """What a map said goes by the deletion rule, in the caller's write (§7.5): its pins, and
+        its rows as below. A removal and a DM's No (#4695) both run it."""
+        for feature in await w.select(MAP_FEATURES, " AND map_id = %s", [map_id]):
+            # (its pins go with it, logged, so one Undo puts the map back with them: #4670)
+            await w.delete(MAP_FEATURES, str(feature["id"]))
+        # What the map said (§7.5, Supervisor's ruling on #4236 f; #4259 slice 8b), in the same
+        # write, so one Undo puts it all back: DMbot's read resting only on this map goes with it;
+        # a read the text also stated stays, as the text's; the DM's own word (and the DM's no)
+        # stays, without the pointer. A picture deleted with its map follows the same rule
+        # (`PictureStore.delete`); only a row whose map is gone some other way loses just the
+        # pointer (the foreign key's ON DELETE SET NULL).
+        for fact in await w.select(MAP_FACTS, " AND map_id = %s", [map_id]):
+            fact_id = str(fact["id"])
+            if fact["status"] == "read" and fact["source"] == "map" and not fact["also_text"]:
+                for pinned in await w.select(MAP_FEATURES, " AND fact_id = %s", [fact_id]):
+                    await w.update(MAP_FEATURES, str(pinned["id"]), {"fact_id": None})
+                await w.delete(MAP_FACTS, fact_id)
+            elif fact["status"] == "read" and fact["source"] == "map":
+                # (the text is its source now, so "also the text" says nothing more)
+                await w.update(
+                    MAP_FACTS, fact_id, {"source": "text", "also_text": False, "map_id": None}
+                )
+            else:
+                await w.update(MAP_FACTS, fact_id, {"map_id": None})
 
     async def maps(
         self,
@@ -452,6 +618,222 @@ class MapStore:
                 (guild_id, campaign_id, map_id, claimed),
             )
 
+    # ---- positions (#4670, MapBot slice 4a; Supervisor's ruling 1 on #4670) ----
+
+    async def record_positions(
+        self, guild_id: int, campaign_id: str, map_id: str, read: Any, *, layers: bool = False
+    ) -> Any:
+        """A close read's pins, scale, grid and north, as DMbot's own write (one batch),
+        and the map marked as read for pins (`pins_read_at`, in the same transaction). Counts only
+        come back (`positions.Recorded`). `layers` (DMBOT_MAP_LAYERS, #4259 slice 8a): what the
+        map shows outright is written too, in the same transaction but a batch of its own
+        (`Recorded.batch`: the note's Undo takes back what the note reports and leaves the pins,
+        #4700), as layer rows for the DM to check (`source = 'map'`, this map, from the story time
+        it was shown: §7.4)."""
+        from collections import Counter
+
+        from dmbot.maps import layers_read, positions
+        from dmbot.memory import map_fact_store
+        from dmbot.memory import map_facts as mf
+        from dmbot.memory._changes import ALIASES, ENTITIES
+        from dmbot.memory.store import _load_ontology
+
+        async with self._memory._write(guild_id, campaign_id, "extractor") as w:
+            await _lock(w.conn, guild_id, campaign_id)
+            current = await w.get(MAPS, map_id)
+            if current is None or current["use_ok"] is not True:
+                # (asked again under the lock: a No that landed since the caller's check has
+                # already forgotten what the map said, and nothing may be written onto it, #4695)
+                return positions.Recorded()
+            onto = await _load_ontology(w)
+            entities = await w.select(ENTITIES, " AND status = 'confirmed'")
+            aliases = await w.select(ALIASES, " AND status = 'confirmed'")
+            names = positions.place_names(entities, aliases, lambda kind: onto.is_a(kind, "place"))
+            done = await positions.record_in(w, map_id, read, names)
+            if layers and read.shows:
+                rulers = positions.place_names(
+                    entities, aliases,
+                    lambda kind: onto.is_a(kind, "faction") or onto.is_a(kind, "place"),
+                )  # fmt: skip
+                rows = layers_read.reads(read.shows, names, rulers)
+                written: Counter[str] = Counter()
+                w.new_batch()  # (the rows' own Undo, apart from the pins', #4700; anything logged
+                # after this joins the rows' batch: only the unlogged `pins_read_at` follows)
+                counts = await map_fact_store.add_read(
+                    w, onto, rows, source=mf.FROM_MAP, map_id=map_id,
+                    shown_at=await _shown_at(w, map_id), layers_written=written,
+                )  # fmt: skip
+                done.layers, done.written = dict(counts), dict(written)
+                done.batch = w.batch
+            await w.conn.execute(
+                "UPDATE campaign_maps SET pins_read_at = %s WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s",
+                (int(self._clock()), guild_id, campaign_id, map_id),
+            )
+        return done
+
+    async def measure(
+        self, guild_id: int, campaign_id: str, asked: Any, *, dm: bool
+    ) -> str | NotShown | None:
+        """The words of a "how far" or "which way" answer (#4670 4b, `measure.answer`), or None
+        when the usual answer should go on instead: the two names are not both kept places the
+        asker may know, or (for "how far") the story or the DM has stated a length between them,
+        which beats a measured one (§9). `dm`: every map DMbot may use; otherwise only the table's
+        maps, and places the players have been shown, worked out as every list does (the knowledge
+        gate; with no party, `gate.public_entries`), so a DM-only map's pins, scale and distances
+        never reach a player (Supervisor's condition). `NOT_SHOWN` (#4692): not `dm`, and both
+        names are kept places to the DM, but one is not shown to the players (hidden, limited,
+        not yet known, or named by a secret other name): a DM's question then goes privately."""
+        from dmbot.maps import measure, measure_phrase, positions
+        from dmbot.maps.measure_words import NOT_SHOWN
+        from dmbot.memory import gate
+        from dmbot.memory._changes import ALIASES, ENTITIES
+        from dmbot.memory.models import name_key
+        from dmbot.memory.store import _load_ontology
+
+        async with self._memory._read(guild_id, campaign_id, snapshot=True) as scope:
+            onto = await _load_ontology(scope)
+            entities = await scope.select(ENTITIES, " AND status = 'confirmed'")
+            # (a secret other name is the DM's: a player's question never matches by one)
+            aliases = await scope.select(
+                ALIASES, " AND status = 'confirmed'" + ("" if dm else " AND NOT secret")
+            )
+            names = positions.place_names(entities, aliases, lambda kind: onto.is_a(kind, "place"))
+            shown: set[str] | None = None
+            if not dm:
+                seen = await gate.party_entries(scope)
+                if seen is None:  # (no player character, or a list held by a group)
+                    statements = await gate.load(scope)
+                    if statements.player_characters:
+                        full = gate.visible(gate.Viewer.the_party(), statements)
+                        seen = frozenset(i for (k, i) in full.sureness if k == gate.ENTRY)
+                if seen is None:  # (no party yet: the names every player may read)
+                    every_name = await scope.select(ALIASES, " AND status = 'confirmed'")
+                    seen = gate.public_entries(entities, every_name)
+                shown = set(seen)
+
+            def place(said: str) -> str | None:
+                for key in (name_key(said), name_key(measure_phrase.without_article(said))):
+                    found = names.get(key)
+                    if found is not None:
+                        return found if shown is None or found in shown else None
+                return None
+
+            a, b = place(asked.a), place(asked.b)
+            if not dm and (a is None or b is None):
+                # (both kept places to the DM, one not shown to the table: say so, never what. The
+                # DM's view reads every other name, a secret one included, which the table's skips)
+                every = await scope.select(ALIASES, " AND status = 'confirmed'")
+                to_dm = positions.place_names(
+                    entities, every, lambda kind: onto.is_a(kind, "place")
+                )
+
+                def dm_place(said: str) -> str | None:
+                    for key in (name_key(said), name_key(measure_phrase.without_article(said))):
+                        found = to_dm.get(key)
+                        if found is not None:  # (as `place`: a name two places share is none)
+                            return found
+                    return None
+
+                da, db = dm_place(asked.a), dm_place(asked.b)
+                if da is not None and db is not None and da != db:
+                    return NOT_SHOWN
+            if a is None or b is None or a == b:
+                return None
+            if asked.kind == measure_phrase.FAR:
+                cur = await scope.conn.execute(
+                    "SELECT 1 FROM memory_relations WHERE guild_id = %s AND campaign_id = %s"
+                    " AND predicate = 'route_to' AND status = 'confirmed' AND to_session_at IS NULL"
+                    " AND length_words IS NOT NULL AND ((subject_id = %s AND object_id = %s)"
+                    " OR (subject_id = %s AND object_id = %s)) LIMIT 1",
+                    (guild_id, campaign_id, a, b, b, a),
+                )
+                if await cur.fetchone() is not None:
+                    return None  # (a stated length: the usual answer gives it, by its own rules)
+            maps, pins = await maps_and_pins(scope.conn, guild_id, campaign_id, [a, b], dm=dm)
+        # (the names as the asker said them, so a misheard name is easy to spot)
+        return measure.answer(asked.kind, maps, pins, (a, asked.a), (b, asked.b), dm=dm)
+
+    async def road_off(self, guild_id: int, campaign_id: str, relation_id: str) -> RoadOff | None:
+        """This road's stated length against the kept maps (#4670 4c): the disagreement, or None
+        when no map with a scale has both places or the length is within the limit (§9). For the
+        road card's private line after the DM sets or keeps the length; the DM's maps only."""
+        async with self._memory._read(guild_id, campaign_id, snapshot=True) as scope:
+            found = await roads_off(
+                scope.conn, guild_id, campaign_id, read_only=False, relation_ids=[relation_id]
+            )
+        return found[0] if found else None
+
+    async def said_off(self, guild_id: int, campaign_id: str, line: str) -> list[SaidOff]:
+        """What a line the DM said states that a kept map disagrees with (#4670 4c-2; design §9):
+        a distance more than 20% shorter than the map's straight line, or a direction 45° or more
+        off on a map whose north was read or set. Names are kept places only, the DM's secret
+        other names included (the note is the DM's alone); the DM's maps (`dm=True`). Nothing is
+        stored or changed. Empty when the line states nothing in a set shape."""
+        from dmbot.maps import disagree, positions, said_phrases
+        from dmbot.memory._changes import ALIASES, ENTITIES
+        from dmbot.memory.store import _load_ontology
+
+        if not said_phrases.may_state(line):
+            return []
+        async with self._memory._read(guild_id, campaign_id, snapshot=True) as scope:
+            onto = await _load_ontology(scope)
+            entities = await scope.select(ENTITIES, " AND status = 'confirmed'")
+            aliases = await scope.select(ALIASES, " AND status = 'confirmed'")
+            found = positions.place_names(entities, aliases, lambda kind: onto.is_a(kind, "place"))
+            names = {key: entry for key, entry in found.items() if entry is not None}
+            said = said_phrases.read(line, names)
+            if not said:
+                return []
+            places = sorted({i for s in said for i in (s.a_id, s.b_id)})
+            maps, pins = await maps_and_pins(scope.conn, guild_id, campaign_id, places, dm=True)
+        called = {str(e["id"]): str(e["name"]) for e in entities}
+        out: list[SaidOff] = []
+        for s in said:
+            off: Distance | Direction | None = (
+                disagree.check_distance(maps, pins, s.a_id, s.b_id, s.value)
+                if s.kind == said_phrases.FAR
+                else disagree.check_direction(maps, pins, s.a_id, s.b_id, s.value)
+            )
+            if off is not None:
+                out.append(SaidOff(s, called[s.a_id], called[s.b_id], off))
+        return out
+
+    async def pins_waiting(self, guild_id: int) -> list[tuple[str, Map]]:
+        """The maps in this server read closely before pins were read (Supervisor's ruling 1: a
+        one-time re-read), oldest first, each with its campaign: DMbot may use them, their close
+        read is done, and they have no pins read yet."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"SELECT campaign_id, {COLUMNS} FROM campaign_maps WHERE guild_id = %s"
+                " AND use_ok IS TRUE AND close_read_at IS NOT NULL AND close_read_tries = 0"
+                " AND pins_read_at IS NULL ORDER BY created_at, id",
+                (guild_id,),
+            )
+            found = [(str(r["campaign_id"]), _map(r)) for r in await cur.fetchall()]
+        return [(c, m) for c, m in found if may_use_map(m)]
+
+    async def claim_pins(self, guild_id: int, campaign_id: str, map_id: str) -> bool:
+        """Mark a map's one-time re-read as taken, in the statement that checks it isn't yet, so
+        it is read at most once whatever happens next (a failure isn't tried again)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE campaign_maps SET pins_read_at = %s WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s AND pins_read_at IS NULL RETURNING id",
+                (int(self._clock()), guild_id, campaign_id, map_id),
+            )
+            return await cur.fetchone() is not None
+
+    async def release_pins(self, guild_id: int, campaign_id: str, map_id: str) -> None:
+        """A re-read put off (no credits, the day's picture limit, shutting down): its mark is
+        given back, so it is taken another day."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE campaign_maps SET pins_read_at = NULL WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s",
+                (guild_id, campaign_id, map_id),
+            )
+
     async def waiting_for_a_dm(self, guild_id: int, campaign_id: str) -> list[Map]:
         """The maps a player said yes to and no DM has answered ("❓ Questions for you")."""
         return [m for m in await self.maps(guild_id, campaign_id, Viewer(dm=True)) if m.waiting]
@@ -471,4 +853,7 @@ def _full(usage: Usage, need: int) -> bool:
     return usage.permanent_bytes + need > usage.permanent_limit_bytes
 
 
-__all__ = ["MB", "Map", "MapError", "MapStore", "Viewer", "may_use_map"]
+__all__ = [
+    "MB", "Map", "MapError", "MapStore", "RoadOff", "SaidOff", "Viewer", "maps_and_pins",
+    "may_use_map", "roads_off",
+]  # fmt: skip

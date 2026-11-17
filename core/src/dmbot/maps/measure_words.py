@@ -1,0 +1,141 @@
+"""The words of MapBot's "how far" and "which way" answers (#4670, MapBot layers slice 4b;
+docs/design/mapbot_layers.md §4.3, §4.4 and §9; Supervisor's ruling on #4670; the ux-critic's
+wording). One place, so Discord and the website say the same. Pure: no Discord, no database.
+
+Rules kept in the words (§9): every answer that measures says "about" and names the map it
+used; a measured line is called a straight line; an answer that rests on north being assumed says
+"if north is at the top"; no scale is no number, never a guess, with the fix said to the DM (a
+player is told the DM can add one, as setting a scale is the DM's); "pin" is never said; and a
+player is never told a hidden map exists (the same words whether or not a DM-only map has both
+places; a DM's own table question the table's maps can't answer goes to the DM privately, #4676).
+DMbot never says a stated distance is wrong."""
+
+from __future__ import annotations
+
+# The eight directions, clockwise from north (§9: "as one of eight directions").
+DIRECTIONS = (
+    "north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west",
+)  # fmt: skip
+
+LINK = "🗺️ Open the map"  # the link's words, after the answer
+
+
+def on_map(title: str) -> str:
+    """'the Icewind Dale map', or the title as it is when it says "map" already ("the Ten-Towns
+    Map", never "Map map"); 'the map' with no title."""
+    title = title.strip()
+    if not title:
+        return "the map"
+    if "map" in title.casefold().split() or title.casefold().startswith("map "):
+        return title if title.casefold().startswith(("the ", "map ")) else f"the {title}"
+    return f"the {title} map"
+
+
+def far(amount: str, a: str, b: str, map_title: str) -> str:
+    """'About 40 miles from Bryn Shander to Targos in a straight line, on the Icewind Dale map.'
+    (a, b as the question gave them.) Closer than the map can tell is `at_most`'s words."""
+    return f"About {amount} from {a} to {b} in a straight line, on {on_map(map_title)}."
+
+
+def at_most(limit: str, a: str, b: str, map_title: str) -> str:
+    """Closer than the map can tell: 'About a mile or less from …' ("about" in every answer)."""
+    return f"About {limit} or less from {a} to {b} in a straight line, on {on_map(map_title)}."
+
+
+def way(place: str, direction: str, from_place: str, map_title: str, *, north_known: bool) -> str:
+    """'Bryn Shander is about north-east of Targos on the Icewind Dale map.' With north assumed:
+    '… on the Icewind Dale map, if north is at the top.' (One of eight directions is never exact,
+    so "about" here too.)"""
+    tail = "" if north_known else ", if north is at the top"
+    return f"{place} is about {direction} of {from_place} on {on_map(map_title)}{tail}."
+
+
+def no_scale(map_title: str, *, dm: bool) -> str:
+    said = on_map(map_title)
+    said = said[0].upper() + said[1:]
+    if dm:
+        return f"{said} has no scale. Set its scale on the Maps page and I can measure on it."
+    return f"{said} has no scale, so I can't measure on it. Your DM can add one."
+
+
+def no_shared_map(a: str, b: str, *, dm: bool) -> str:
+    said = f"I don't have a map with both {a} and {b} on it."
+    return f"{said} You can add both to one map on the Maps page." if dm else said
+
+
+def not_on_a_map(name: str, *, dm: bool) -> str:
+    said = f"I can't find {name} on any map yet."
+    return f"{said} You can add it on the Maps page." if dm else said
+
+
+def same_spot(a: str, b: str, map_title: str) -> str:
+    return f"{a} and {b} are at about the same spot on {on_map(map_title)}."
+
+
+# ---- When the DM's word and a map disagree (#4670 4c; §9; the ux-critic's words) ---------------
+# Never "wrong", never "should", never a correction, never "Nothing was changed" (that is the
+# failure wording elsewhere): both figures side by side, the map's said as a measurement.
+
+LORE_SAYS = "your lore says"
+SESSION_SAID = "said in a session:"
+
+
+def map_measures(amount: str, map_title: str) -> str:
+    """The road card's line after the DM's own length: "On the Ten-Towns map it's about 35 miles
+    in a straight line." (`amount` "35 miles", or "a mile or less")."""
+    said = on_map(map_title)
+    return f"On {said} it's about {amount} in a straight line."
+
+
+def road_note(stated: str, from_session: bool, amount: str, map_title: str) -> str:
+    """A World notes line after the road's names: "your lore says 20 miles; on the Ten-Towns
+    map, about 35 miles in a straight line" ("said in a session: 20 miles; …" from a session: the
+    speaker may not be the DM, so never "you said")."""
+    where = SESSION_SAID if from_session else LORE_SAYS
+    return f"{where} {stated}; on {on_map(map_title)}, about {amount} in a straight line"
+
+
+# ---- The live note: said at the table, far off a map (#4670 4c-2; the ux-critic's words) --------
+# Private to the DM, once for a pair of places in a session; its one button stops them. Never a
+# correction: what was said, then what the map shows, side by side. No map link (Supervisor's
+# ruling 2: one button at most, and "how far" gives the map).
+
+STOP = "🔕 Stop map checks"  # the note's one button
+STOPPED = (
+    "Map checks are off for this campaign. Turn them back on with 🗺️ Map checks in ⚙️ Manage DMbot."
+)
+
+
+def said_far(stated: str, a: str, b: str, amount: str, map_title: str) -> str:
+    """'You said 20 miles from Targos to Bryn Shander. On the Ten-Towns map it's about 35 miles in
+    a straight line.'"""
+    return f"You said {stated} from {a} to {b}. {map_measures(amount, map_title)}"
+
+
+def said_way(a: str, direction: str, b: str, map_way: str, map_title: str) -> str:
+    """'You said Bryn Shander is north of Targos. On the Ten-Towns map, Bryn Shander is about east
+    of Targos.' (Only on a map whose north was read or set, so no "if north is at the top".)"""
+    said = f"You said {a} is {direction} of {b}."
+    return f"{said} On {on_map(map_title)}, {a} is about {map_way} of {b}."
+
+
+class NotShown:
+    """`MapStore.measure`'s answer for a table question naming a kept place the players haven't
+    been shown (#4692): the DM's view finds both places, the table's doesn't. Never words: a
+    player's question goes the usual way, and a DM's goes to the DM privately."""
+
+    __slots__ = ()
+
+
+NOT_SHOWN = NotShown()
+
+
+# (any new miss wording above must be added here and to `test_what_counts_as_measured`, or a miss
+# would be sent to the DM privately as if it were a figure)
+def measured(text: str) -> bool:
+    """Whether an answer gives a figure or a direction, not what is missing ("I can't find …",
+    "I don't have a map with both …", "… has no scale …"). #4676: a DM's table question the table's
+    maps can't answer is then answered privately."""
+    return not (
+        text.startswith(("I can't find ", "I don't have a map ")) or " has no scale" in text
+    )

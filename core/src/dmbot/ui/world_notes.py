@@ -1,8 +1,12 @@
 """World notes in Discord (#4285 slice 1b; Supervisor's ruling, 2026-11-14, and the ux-critic's
 words): the DM's private screen of DMbot's guesses about the world (`memory/world_notes.py`). Pick
 one note from the menu, see it on its own with where DMbot read it, then ✅ Keep, ✏️ Change (the
-place's own 🗺️ screen, or the character's languages), 🚫 Not right, or ↩ Back; ✅ Keep all keeps
-every line of one group the screen showed. Each press is one change, so one Undo.
+place's own 🗺️ screen, the character's languages, or the road's page), 🚫 Not right, or ↩ Back; ✅
+Keep all keeps every line of one group the screen showed. Each press is one change, so one Undo.
+
+A road's length a kept map disagrees with (#4670 4c, Supervisor's ruling; design §9) has no 🚫: the
+length or the map may be the one that's off, so ✏️ opens the road and the DM decides. Its line puts
+both figures side by side and says "about" and "in a straight line" (the ux-critic's words).
 
 DM only, checked on every press (a menu can be pressed minutes later); only ever a private reply,
 never on the DM screen or where players are. Names and the lists' own words only."""
@@ -17,6 +21,7 @@ from typing import Any
 import discord
 
 from dmbot.discord_limits import MESSAGE_MAX, SELECT_OPTIONS_MAX
+from dmbot.maps import measure_words
 from dmbot.memory import map_facts as mf
 from dmbot.memory import world_notes as wn
 from dmbot.memory.models import DM, MemoryRuleError, TooLateToUndo
@@ -58,8 +63,9 @@ LAYER = {
     mf.CULTURE: "Culture", mf.POPULATION: "Who lives here",  # (#4257: never "people")
     mf.CONDITION: "Road condition",  # (#4258; the ux-critic: "condition" alone reads as Poisoned)
 }  # fmt: skip
-GROUP = {wn.PLACE: "Places", wn.LANGUAGE: "Languages"}
-ONE = {wn.PLACE: "place", wn.LANGUAGE: "language"}
+GROUP = {wn.PLACE: "Places", wn.LANGUAGE: "Languages", wn.ROAD: "Roads"}
+ONE = {wn.PLACE: "place", wn.LANGUAGE: "language", wn.ROAD: "road"}
+ROAD_LENGTH = "Road length"
 
 
 def counted(n: int, kind: str) -> str:
@@ -73,7 +79,7 @@ def keep_all_label(n: int, kind: str) -> str:
 
 def guess(note: wn.Note) -> str:
     """What DMbot guessed, in the place screen's own words ("arctic", "Ruled by: Ten-Towns")."""
-    if note.kind == wn.LANGUAGE:
+    if note.kind in (wn.LANGUAGE, wn.ROAD):  # (a road: its length's own words, "20 miles")
         return note.value
     f = note.fact
     if note.layer == mf.CONTROL:
@@ -97,6 +103,11 @@ def full_line(note: wn.Note) -> str:
     """The note in the message text, where it wraps: "**Icewind Dale** · land: arctic"."""
     if note.kind == wn.LANGUAGE:
         return f"**{_md(note.name)}** speaks {_md(note.value)}"
+    if note.kind == wn.ROAD:  # ("**Targos to Bryn Shander** · your lore says 20 miles; on …")
+        said = measure_words.road_note(
+            note.value, note.session_at is not None, note.measured, note.map_title
+        )
+        return f"**{_md(note.name)}** · {_md(said)}"
     if note.layer == mf.CONTROL:  # ("ruled by Ten-Towns" says what it is: no "ruler:" before it)
         return f"**{_md(note.name)}** · {_md(guess(note))}"
     return f"**{_md(note.name)}** · {LAYER[note.layer].lower()}: {_md(guess(note))}"
@@ -104,7 +115,11 @@ def full_line(note: wn.Note) -> str:
 
 def option(note: wn.Note) -> discord.SelectOption:
     """A menu choice short enough for a phone: the guess in the label, the rest below it."""
-    what = "Language" if note.kind == wn.LANGUAGE else LAYER[note.layer]
+    what = (
+        "Language" if note.kind == wn.LANGUAGE
+        else ROAD_LENGTH if note.kind == wn.ROAD
+        else LAYER[note.layer]
+    )  # fmt: skip
     return discord.SelectOption(
         label=logic.shorten(f"{note.name}: {guess(note)}", 100),
         description=logic.shorten(f"{what} · {source(note)}", 100),
@@ -153,6 +168,8 @@ def note_text(note: wn.Note) -> str:
 
 
 def done_text(note: wn.Note, kept: bool) -> str:
+    if kept and note.kind == wn.ROAD:  # (the length is the DM's now: the map's figure is no news)
+        return f"✅ Kept: **{_md(note.name)}** · {_md(note.value)}."
     if kept:
         return f"✅ Kept: {full_line(note)}."
     return f"🚫 Taken out: {full_line(note)}. {NEVER_AGAIN}"
@@ -170,7 +187,9 @@ async def show_world_notes(
     if not sees_secrets(campaign, interaction.user.id):  # (checked before the list is read)
         await _tell(interaction, ONLY_DM)
         return
-    notes = await memory.world_notes(campaign.guild_id, campaign.id)
+    settings = getattr(interaction.client, "settings", None)
+    roads = bool(getattr(settings, "map_measure_on", False))  # (#4670 4c, DMBOT_MAP_MEASURE)
+    notes = await memory.world_notes(campaign.guild_id, campaign.id, with_roads=roads)
     text = list_text(notes)
     if note:
         text = f"{note}\n\n{text}"
@@ -223,7 +242,9 @@ class OneNote(_Menu):
         self.campaign_id, self.note = campaign_id, note
         self.add_item(_Button(self._keep, label=KEEP, style=discord.ButtonStyle.success))
         self.add_item(_Button(self._change, label=CHANGE))
-        self.add_item(_Button(self._not_right, label=NOT_RIGHT, style=discord.ButtonStyle.danger))
+        if note.kind != wn.ROAD:  # (a road's length: the DM changes the road or the map, §9)
+            style = discord.ButtonStyle.danger
+            self.add_item(_Button(self._not_right, label=NOT_RIGHT, style=style))
         self.add_item(_Button(self._back, label=BACK))
 
     async def _keep(self, interaction: discord.Interaction) -> None:
@@ -244,6 +265,13 @@ class OneNote(_Menu):
 
     async def _change(self, interaction: discord.Interaction) -> None:
         self.stop()
+        if self.note.kind == wn.ROAD:  # (the road's own page, where its 🛣️ Length is)
+            from dmbot.ui.connection_edit import show_one
+
+            await show_one(
+                interaction, self.campaign_id, self.note.entity_id, self.note.relation_id
+            )
+            return
         if self.note.layer == mf.CONDITION:  # (its own screen, a place's or a road's, #4258)
             from dmbot.ui.route_condition import show
 

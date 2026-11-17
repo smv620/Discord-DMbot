@@ -144,7 +144,9 @@ FEATURES: tuple[Feature, ...] = (
         "Quick questions",
         "Ask DMbot a question in the game and get a short private answer.",
         lambda s: s.sidebar_on,
-        ("sidebar_on",),
+        # (map answers, #4670 4b, need the sidebar; the same switch also turns on World notes'
+        # road lengths and the road page's map line, 4c-1, which don't)
+        ("sidebar_on", "map_measure_on"),
     ),
     Feature(
         "sidebar recall",
@@ -265,6 +267,14 @@ FEATURES: tuple[Feature, ...] = (
         lambda s: s.pictures_ready,
         ("pictures_kept",),
         for_dms=False,  # not live until the consent wording is: for whoever runs DMbot
+    ),
+    Feature(
+        "map layers",
+        "What your maps show about places",
+        "",
+        lambda s: s.map_layers_on,
+        ("map_layers_on",),
+        for_dms=False,  # not live yet: on only after dev1's scored run on the sample map (#4259)
     ),
     Feature(
         "who is he",

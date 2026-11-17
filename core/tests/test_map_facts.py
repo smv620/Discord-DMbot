@@ -283,6 +283,25 @@ class TheStore(MemoryTest):
                     await self.campaigns.import_backup(GUILD_B, data, DM)
 
 
+class MapPointer(MemoryTest):  # (#4259 slice 8b: maps are not in a backup yet)
+    async def test_a_backup_never_carries_the_map_pointer(self) -> None:
+        # (an older file without the field and a file with one both load, the row resting on no
+        # map; never refused as damaged, never a foreign key error)
+        place = await self.add("Bryn Shander", type="place", status=CONFIRMED)
+        await self.memory.set_map_fact(GUILD_A, self.c, place, mf.TERRAIN, "hill", source=BY_DM)
+        for change in ({"map_id": "f" * 32}, None):
+            data = decode_backup(encode_backup(await self.campaigns.export(GUILD_A, self.c)))
+            assert isinstance(data, dict)
+            (row,) = [r for r in data["sections"]["memory"] if r["table"] == "map_fact"]
+            if change is None:
+                row.pop("map_id", None)
+            else:
+                row.update(change)
+            restored = await self.campaigns.import_backup(GUILD_B, data, DM)
+            copy = await self.snapshot(GUILD_B, restored.id)
+            self.assertEqual([r["map_id"] for r in copy["memory_map_facts"]], [None])
+
+
 class AfterTheReview(TheStore):
     """The reviewer's cases on #4256: backups that still load after a place changes, one 🙈 / 👁️
     for the whole place, a DM's no that sticks, and the ruler's neighbours."""

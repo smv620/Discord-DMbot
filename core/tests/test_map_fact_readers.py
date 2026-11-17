@@ -27,10 +27,13 @@ ALLOWED = {
     " every status, counts only, nothing reaches a player",
     "migrations/0496_named_cultures.py": "adds `culture_id`; typed cultures become named (#4257)",
     "migrations/0500_route_condition.py": "adds the condition layer and a road's `relation_id`",
-    "maps/store.py": "`remove_map` clears a fact's `map_id` through the log before the map goes",
+    "maps/store.py": "`remove_map` applies the map deletion rule (§7.5) through the log",
+    "pictures/store.py": "a picture deleted with its map applies the same rule (§7.5, #4259)",
     "migrations/0472_campaign_maps.py": "adds the `map_id` column; nothing reads it (#4344)",
     "migrations/0466_place_world_table_door.py": "confirmed, shown rows; gate and for_players",
     "migrations/0463_place_world_door.py": "a DM-only door: NULL for anyone else (#4287; #4311)",
+    "migrations/0530_map_features.py": "a pin's foreign key to a row; nothing reads it (#4670)",
+    "migrations/0531_map_pins_web.py": "a DM-only web door, read only: an area pin's words (#4672)",
     "migrations/0481_world_notes_door.py": "World notes, DM-only: NULL for anyone else (#4285)",
 }
 NAMES = re.compile(r"memory_map_facts|\bMAP_FACTS\b")

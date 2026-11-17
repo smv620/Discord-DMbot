@@ -428,6 +428,33 @@ class PictureStore:
                 )
                 if await cur.fetchone() is not None:
                     return None
+            # What its map said goes by the map deletion rule first (§7.5, #4259 slice 8b, as
+            # `MapStore._remove` does): DMbot's read resting only on it goes, a read the text also
+            # stated stays as the text's, and the DM's word stays without the pointer (the foreign
+            # key's SET NULL below). Not undoable, as the picture's deletion is not.
+            only_map = (
+                " FROM memory_map_facts WHERE guild_id = %s AND campaign_id = %s"
+                " AND status = 'read' AND source = 'map' AND map_id IN (SELECT id FROM"
+                " campaign_maps WHERE guild_id = %s AND campaign_id = %s AND picture_id = %s)"
+            )
+            ids = (guild_id, campaign_id, guild_id, campaign_id, picture_id)
+            await conn.execute(
+                "UPDATE map_features SET fact_id = NULL WHERE guild_id = %s AND campaign_id = %s"
+                " AND fact_id IN (SELECT id" + only_map + " AND NOT also_text)",
+                (guild_id, campaign_id, *ids),
+            )
+            cur = await conn.execute("DELETE" + only_map + " AND NOT also_text", ids)
+            changed = cur.rowcount
+            cur = await conn.execute(
+                "UPDATE memory_map_facts SET source = 'text', also_text = FALSE, map_id = NULL"
+                " WHERE id IN (SELECT id" + only_map + ")",
+                ids,
+            )
+            changed += cur.rowcount
+            if changed > 0:  # (World notes draw these rows: a page holding a copy reads again)
+                from dmbot.memory import role_store
+
+                await role_store._bump(conn, guild_id, campaign_id)
             # A picture that is gone is no map either (#4344: a poster who deletes their picture
             # takes its map with it, in the same step).
             cur = await conn.execute(

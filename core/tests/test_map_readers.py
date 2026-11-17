@@ -18,6 +18,9 @@ ALLOWED = {
     "campaigns/tables.py",
     "lineage.py",
     "pictures/store.py",
+    "migrations/0530_map_features.py",  # (its pins' foreign key, and two columns, #4670)
+    "migrations/0531_map_pins_web.py",  # (a DM-only web door, read only, #4672)
+    "images.py",  # (names the scale's column in a comment only, #4670)
     "memory/_changes.py",  # (the change log and its Undo, #4346: existence checks, never content)
     # The Maps page's read door (#4347): a definer function that applies the player rule inside
     # the database (its shown-and-usable test is `may_use_map`'s, tested in test_web_maps.py),

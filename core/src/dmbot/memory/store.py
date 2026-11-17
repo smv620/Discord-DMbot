@@ -2018,11 +2018,14 @@ class MemoryStore:
 
     # ---- World notes: DMbot's guesses about the world, for the DM to check (#4285) ----------
 
-    async def world_notes(self, guild_id: int, campaign_id: str) -> list[world_notes.Note]:
+    async def world_notes(
+        self, guild_id: int, campaign_id: str, *, with_roads: bool = False
+    ) -> list[world_notes.Note]:
         """Every open World note of the campaign: the DM's own list (the caller checks it is a DM
-        of the campaign asking), never a player's."""
+        of the campaign asking), never a player's. `with_roads`: the road lengths a map disagrees
+        with too (#4670 4c, only while DMBOT_MAP_MEASURE is on)."""
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
-            return await world_notes.read(scope)
+            return await world_notes.read(scope, with_roads=with_roads)
 
     async def keep_world_notes(
         self, guild_id: int, campaign_id: str, line_ids: Sequence[str], *, source: str
@@ -4274,6 +4277,8 @@ class MemoryStore:
                 await record_name_session(w, str(row["id"]), session_started_at)
             if role == PLAYER_CHARACTER and played_by is not None:
                 await _sync_plays(w, row["id"])
+            if status == CONFIRMED:  # (added already kept: a map's pin with its name, #4670)
+                await _rematch_pins(w, str(row["id"]))
             return Written(_entity(row), w.batch)
 
     async def name_met(
@@ -5267,6 +5272,7 @@ class MemoryStore:
             from dmbot.memory.claims import ClaimStore
 
             await ClaimStore(self).keep_dm_claims_in(w, [entity_id])
+            await _rematch_pins(w, entity_id)  # (a map's pin with its name, #4670)
             said = "" if scene is None else "group" if learned else "unknown"
             return Written(_entity(row), w.batch, split=said)
 
@@ -5670,6 +5676,8 @@ class MemoryStore:
             await self._confirm_group_memberships(w, entity_id)
             # (DMbot's guesses of who knows this name, waiting for this yes: #2959)
             await knowers.apply_waiting_guesses(w, entity_id)
+        if status == CONFIRMED:
+            await _rematch_pins(w, entity_id)
         await _forget_quotes(
             w, [entity_id] if status != PROPOSED and _note_cleared(current) else []
         )
@@ -6053,10 +6061,14 @@ class MemoryStore:
                 if old["kind"] == "old" and kind != "old":
                     upgrade = {**upgrade, "kind": kind}  # asked for by name: listened for again
                 row = await w.update(ALIASES, old["id"], upgrade) if upgrade else old
+                if row["status"] == CONFIRMED:  # (a kept other name: its map pin, #4670)
+                    await _rematch_pins(w, entity_id)
                 return Written(_alias(row), w.batch)
             row = await w.insert(
                 ALIASES, _new_alias(w, entity_id, text, kind, status, secret, used_by)
             )
+            if status == CONFIRMED:
+                await _rematch_pins(w, entity_id)
             return Written(_alias(row), w.batch)
 
     async def add_short_names(
@@ -6911,6 +6923,9 @@ class MemoryStore:
         await thread_parts.move_on_merge(  # a thread's parts (#4471)
             w, keep_id, gone_id, onto.is_a(str(kept["type"]), "thread")
         )
+        from dmbot.maps import positions as map_positions  # (maps builds on this module)
+
+        await map_positions.move_on_merge(w, keep_id, gone_id)  # its pins on maps (#4670)
         if onto.is_a(str(kept["type"]), "thread"):
             # The table's guesses at the thread merged away go on the kept one (#4655). Unlogged,
             # like the link itself: an Undo of the merge leaves them on the kept thread.
@@ -10876,6 +10891,22 @@ async def _followed(w: Changes, entity_id: str) -> str | None:
             return entity_id if row["status"] == CONFIRMED else None
         entity_id = str(row["merged_into"])
     return None
+
+
+async def _rematch_pins(w: Changes, entity_id: str) -> None:
+    """A place kept now: a map's unmatched pin with its name is tied to it (#4670, Supervisor's
+    ruling 2: a waiting name is never a pin's target, so it is tied when kept)."""
+    from dmbot.maps import positions as map_positions  # (maps builds on this module)
+
+    cur = await w.conn.execute(  # (no unmatched pin in the campaign: nothing more is read)
+        "SELECT 1 FROM map_features WHERE guild_id = %s AND campaign_id = %s AND place_id IS NULL"
+        " AND relation_id IS NULL AND fact_id IS NULL LIMIT 1",
+        w.ids,
+    )
+    if await cur.fetchone() is None:
+        return
+    onto = await _load_ontology(w)
+    await map_positions.rematch_in(w, entity_id, lambda kind: onto.is_a(kind, "place"))
 
 
 async def _delete_relation(w: Changes, relation_id: str) -> None:
