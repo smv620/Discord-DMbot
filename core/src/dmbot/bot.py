@@ -1712,6 +1712,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.sidebar = SidebarService(self)
         if settings.sidebar_on:  # off until the answers have been read (#954)
             self.sidebar.answerer = self.sidebar_answers
+            if self.sidebar_answers is not None and settings.map_measure_on:
+                # (#4670 4b: "how far" / "which way" from the kept maps, behind its switch, read
+                # at start as the others are; the map store is made after this, so it is looked
+                # up at each question)
+                from dmbot.sidebar.map_answers import MapMeasuring
+
+                self.sidebar.answerer = MapMeasuring(
+                    self.sidebar_answers,
+                    self._map_measure,
+                    on=lambda: self.settings.map_measure_on,
+                    maps_page=lambda: (
+                        f"{self.settings.site_url}/account/maps" if self.settings.site_url else ""
+                    ),
+                )
         self.pipeline = TranscriptionPipeline(
             transcriber or PlaceholderTranscriber(),
             consent,
@@ -9759,6 +9773,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             tally=table.steward_tally,
             notice_channel=table.screen_channel_id,
         )
+
+    async def _map_measure(self, campaign: Any, asked: Any, dm: bool) -> str | None:
+        """A map question's words (#4670 4b), or None (no maps yet: the usual answer)."""
+        store = self.map_store
+        if store is None:
+            return None
+        return await store.measure(campaign.guild_id, campaign.id, asked, dm=dm)
 
     async def _extract_session(
         self,
