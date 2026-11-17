@@ -9759,7 +9759,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def _open_mysteries(self, gid: int, cid: str) -> list[tuple[str, str]]:
         """The open mysteries a session's theories may answer (#4655), with story threads on; none
         when off, or when they can't be read (the theories are still asked, tied to nothing)."""
-        if not self.settings.story_threads_on or self.memory is None:
+        if (
+            not self.settings.story_threads_on
+            or self.settings.story_family_only  # (no readings are asked then)
+            or self.memory is None
+        ):
             return []
         from dmbot.ui.name_background import open_mysteries
 

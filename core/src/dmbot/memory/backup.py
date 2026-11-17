@@ -665,9 +665,9 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
                     "added_at": 0,
                 }
             )  # fmt: skip
+    _check_thread_guesses(by_tag)  # which mystery a guess is about (#4655)
     # A row asleep waits for entries of this campaign: a name in the mark that is not an entry of
     # the file is dropped from it (a row left with none is awake), never a reason to refuse.
-    _check_thread_guesses(by_tag)
     entry_ids = {r["id"] for r in by_tag["entity"]}
     for tag in ("knower", "belief"):
         for row in by_tag[tag]:
@@ -685,13 +685,18 @@ def _check_thread_guesses(by_tag: dict[str, list[dict[str, Any]]]) -> None:
     """Which mystery a table's guess is about (#4655): a row names a story thread and a belief
     the file holds, one row for each belief, or the file is damaged (the database would refuse it
     mid-restore otherwise)."""
-    threads = {r["id"] for r in by_tag["entity"] if r["type"] in THREAD_TYPES}
+    entries = {r["id"]: r for r in by_tag["entity"]}
     held = {r["id"] for r in by_tag["belief"]}
     beliefs = [g["belief_id"] for g in by_tag["thread_guess"]]
     if len(beliefs) != len(set(beliefs)) or any(
-        g["thread_id"] not in threads or g["belief_id"] not in held for g in by_tag["thread_guess"]
+        g["thread_id"] not in entries or g["belief_id"] not in held for g in by_tag["thread_guess"]
     ):
         raise CampaignError(DAMAGED)
+    # (one on an entry the DM has since made something other than a story thread is history, and
+    # dropped: a backup must always be loadable)
+    by_tag["thread_guess"] = [
+        g for g in by_tag["thread_guess"] if entries[g["thread_id"]]["type"] in THREAD_TYPES
+    ]
 
 
 def _check_knowers(

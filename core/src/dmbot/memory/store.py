@@ -2848,6 +2848,14 @@ class MemoryStore:
             ):
                 continue  # (another character's guess, or a name the player can't see)
             said = str(rel["detail"] or "") or link_words.connection_words(str(rel["predicate"]))
+            if (
+                seen is not None
+                and rel["status"] != "proposed"
+                and (rel["secret"] or rel["unrevealed"])
+            ):
+                # (a guess placed on a connection the DM keeps hidden: its words are the DM's,
+                # so a player gets the plain kind of connection, never them)
+                said = link_words.connection_words(str(rel["predicate"]))
             words = f"{names.get(ends[0], '?')} {said} {names.get(ends[1], '?')}"
             guess = guesses_mod.Guess(
                 str(b["id"]), holder, words, float(b["confidence"]),
@@ -6903,6 +6911,14 @@ class MemoryStore:
         await thread_parts.move_on_merge(  # a thread's parts (#4471)
             w, keep_id, gone_id, onto.is_a(str(kept["type"]), "thread")
         )
+        if onto.is_a(str(kept["type"]), "thread"):
+            # The table's guesses at the thread merged away go on the kept one (#4655). Unlogged,
+            # like the link itself: an Undo of the merge leaves them on the kept thread.
+            await w.conn.execute(
+                "UPDATE memory_thread_guesses SET thread_id = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND thread_id = %s",
+                (keep_id, *w.ids, gone_id),
+            )
         await _move_plan_links(w, keep_id, gone_id)
         await states.move_states(w, onto, keep_id, kept["type"], gone_id)
         if confirm_keys and source != DM:

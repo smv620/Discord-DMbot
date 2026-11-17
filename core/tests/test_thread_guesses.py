@@ -9,8 +9,9 @@ from dataclasses import replace
 from typing import Any
 
 from dmbot.campaigns.models import CampaignError
-from dmbot.memory import gate, readings
+from dmbot.memory import beliefs, gate, readings
 from dmbot.memory import thread_guesses as guesses
+from dmbot.memory._changes import BELIEFS
 from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.models import MemoryRuleError
@@ -18,7 +19,7 @@ from tests.test_memory_store import DM, GUILD_A, ConfirmedMemoryTest
 from tests.test_placing import PLAYER, belief
 
 
-class ThreadGuesses(ConfirmedMemoryTest):
+class GuessBase(ConfirmedMemoryTest):
     """(`test_placing.Placing`'s set-up, without running its tests again)"""
 
     async def asyncSetUp(self) -> None:
@@ -57,6 +58,8 @@ class ThreadGuesses(ConfirmedMemoryTest):
     async def links(self) -> list[dict[str, Any]]:
         return await self.rows("memory_thread_guesses")
 
+
+class ThreadGuesses(GuessBase):
     async def test_a_placed_guess_goes_on_its_mystery(self) -> None:
         placed = await self.place(await self.guess())
         (link,) = await self.links()
@@ -121,6 +124,37 @@ class ThreadGuesses(ConfirmedMemoryTest):
             )
             self.assertEqual([r["thread_id"] for r in await cur.fetchall()], [self.mystery])
 
+    async def test_an_undo_of_the_beliefs_removal_puts_the_guess_back(self) -> None:
+        placed = await self.place(await self.guess())
+        assert placed.belief is not None
+        async with self.memory._write(GUILD_A, self.c, "dm") as w:  # (a logged removal)
+            await w.delete(BELIEFS, placed.belief.id)
+            batch = w.batch
+        self.assertEqual(await self.links(), [])
+        await self.memory.undo(GUILD_A, self.c, batch, source="dm")  # type: ignore[arg-type]
+        (link,) = await self.links()
+        self.assertEqual(link["thread_id"], self.mystery)
+
+    async def test_a_merged_threads_guesses_go_to_the_kept_one(self) -> None:
+        await self.place(await self.guess())
+        other = await self.add("Who took Heartseeker?", type="mystery")
+        await self.memory.merge(
+            GUILD_A, self.c, other, self.mystery, source="dm", dm_said_same=True
+        )
+        (link,) = await self.links()
+        self.assertEqual(link["thread_id"], other)
+
+    async def test_a_backup_link_on_what_is_no_longer_a_thread_is_dropped(self) -> None:
+        await self.place(await self.guess())
+        section = MemorySection()
+        async with self.db.guild(GUILD_A) as conn:
+            rows = await section.dump(conn, GUILD_A, self.c)
+        changed = [
+            {**r, "type": "place"} if r["table"] == "entity" and r["id"] == self.mystery else r
+            for r in rows
+        ]
+        self.assertEqual(section.check(changed)["thread_guess"], [])
+
     async def test_a_backup_link_to_nothing_is_damage(self) -> None:
         await self.place(await self.guess())
         section = MemorySection()
@@ -128,7 +162,7 @@ class ThreadGuesses(ConfirmedMemoryTest):
             rows = await section.dump(conn, GUILD_A, self.c)
         (row,) = [r for r in rows if r["table"] == "thread_guess"]
         bad: list[dict[str, Any]] = [
-            {**row, "thread_id": self.bram},  # not a thread
+            {**row, "thread_id": "d" * 32},  # no such entry
             {**row, "belief_id": "f" * 32},  # no such belief
             {**row, "created_at": "soon"},
         ]
@@ -139,7 +173,7 @@ class ThreadGuesses(ConfirmedMemoryTest):
             section.check([*rows, {**row, "id": "e" * 32}])
 
 
-class TheCard(ThreadGuesses):
+class TheCard(GuessBase):
     """The read the 🧵 card shows (#4655): the DM sees every guess; a player only their own
     characters' and the party's (Supervisor's condition, tested both ways)."""
 
@@ -172,6 +206,29 @@ class TheCard(ThreadGuesses):
             GUILD_A, self.c, self.mystery, True, source="dm", dm_chose_secret=True
         )
         self.assertEqual(await self.read(gate.Viewer.player([self.mira])), [])
+
+    async def test_a_newer_belief_of_the_same_holder_replaces_the_guess(self) -> None:
+        placed = await self.place(await self.guess("pc:Mira"))
+        assert placed.belief is not None
+        async with self.memory._write(GUILD_A, self.c, "dm") as w:  # (Mira changes her mind)
+            await beliefs.place_belief(
+                w, placed.belief.perspective_id, placed.relation_id, 0.25, "theory",
+                session_at=2_000,
+            )  # fmt: skip
+        self.assertEqual(await self.read(gate.Viewer.the_dm()), [])
+
+    async def test_a_players_guess_on_the_dms_hidden_connection_shows_no_dm_words(self) -> None:
+        placed = await self.place(await self.guess("pc:Mira"))
+        async with self.db.guild(GUILD_A) as conn:  # (as if it sat on the DM's kept secret)
+            await conn.execute(
+                "UPDATE memory_relations SET status = 'confirmed', secret = true,"
+                " detail = 'hides under the floor' WHERE campaign_id = %s AND id = %s",
+                (self.c, placed.relation_id),
+            )
+        (dm,) = await self.read(gate.Viewer.the_dm())
+        self.assertIn("hides under the floor", dm.words)
+        (mine,) = await self.read(gate.Viewer.player([self.mira]))
+        self.assertNotIn("hides under the floor", mine.words)
 
     async def test_a_guess_whose_connection_was_turned_down_is_gone(self) -> None:
         placed = await self.place(await self.guess())

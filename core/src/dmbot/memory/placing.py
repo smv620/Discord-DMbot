@@ -133,7 +133,7 @@ def _checked(stored: Mapping[str, Any]) -> dict[str, Any]:
     if not ok or (status == SUSPECTED_LIE) != isinstance(liar, str) or (liar and not lie):
         raise MemoryRuleError(beliefs.BAD_READING)
     thread = stored.get("thread_id")  # the mystery a guess is about (#4655), from the reader
-    if thread is not None and (not is_id(thread) or not (guess or lie) or view == TRUTH):
+    if thread is not None and (not is_id(thread) or not (guess or lie)):  # (guesses only)
         raise MemoryRuleError(beliefs.BAD_READING)
     spoken = stored.get("spoken_at")  # the real moment of the line it came from (Unix seconds)
     if spoken is not None and (
