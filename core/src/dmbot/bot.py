@@ -16383,7 +16383,7 @@ async def _map_layers_note(bot: Any, gid: int, cid: str, map_id: str, got: Any) 
             return
         label = note.map_label(a_map.title, a_map.created_at)
         site = getattr(bot.settings, "site_url", "") or ""
-        text = note.note_text(label, got.written, got.layers, site, pins=got.pins)
+        text = note.note_text(label, got.written, got.layers, site)
         if text is None:
             return
         view = note.note_view(gid, cid, got.batch if got.written else None, label)

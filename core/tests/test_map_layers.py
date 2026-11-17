@@ -2,7 +2,8 @@
 §5.2, §7.1 to 7.4; Supervisor's ruling on #4259): the read's `shows` (a legend, a labelled border, a
 colour key or a terrain symbol only), the words each layer allows, kept places and rulers only, and
 the store's write (`source = 'map'`, the map's id, the map above the text, the DM's word above the
-map, one batch with the pins). Invented names. The last class needs Postgres."""
+map, a batch of their own apart from the pins', #4700). Invented names. The last class needs
+Postgres."""
 
 from __future__ import annotations
 
@@ -159,20 +160,81 @@ class TheWrite(PinsBase):  # (Postgres: Targos is a kept place; the map is the D
         self.assertEqual(got.layers.get("noted"), 1)  # (against the DM's word: World notes)
         self.assertNotIn("mountain", [r["value"] for r in await self.rows()])
 
-    async def test_one_undo_takes_the_pins_and_the_rows_back(self) -> None:
+    async def test_the_notes_undo_takes_the_rows_and_leaves_the_pins(self) -> None:
+        # (Supervisor's ruling on #4699, #4700: Undo takes back exactly what the note reports)
         got = await self.record(shows=[
             {"place": "Targos", "layer": "terrain", "value": "arctic", "from": "symbol"}
         ])  # fmt: skip
         self.assertEqual(got.written, {mf.TERRAIN: 1})
+        pins = await self.features()
+        self.assertTrue(pins)
         async with self.db.guild(GUILD_A) as conn:
             cur = await conn.execute(
-                "SELECT max(batch) AS b FROM memory_changes WHERE table_name = 'memory_map_facts'"
+                "SELECT DISTINCT table_name, batch FROM memory_changes ORDER BY batch"
             )
-            batch = (await cur.fetchone() or {}).get("b")
-        self.assertEqual(got.batch, batch)  # (the note's button carries this read's batch)
+            batches = [(r["table_name"], r["batch"]) for r in await cur.fetchall()]
+        self.assertIn(("memory_map_facts", got.batch), batches)
+        self.assertNotIn(("map_features", got.batch), batches)  # (the pins: a batch of their own)
         await self.memory.undo(GUILD_A, self.one.id, got.batch)
         self.assertEqual(await self.rows(), [])
+        self.assertEqual(await self.features(), pins)
+
+    async def test_undo_puts_the_texts_row_back(self) -> None:
+        from dmbot.memory.map_fact_store import Read
+
+        await self.memory.add_read_map_facts(
+            GUILD_A, self.one.id, [Read(self.targos, mf.TERRAIN, "arctic")], source="extractor"
+        )
+        got = await self.record(shows=[
+            {"place": "Targos", "layer": "terrain", "value": "arctic", "from": "legend"}
+        ])  # fmt: skip
+        assert got.batch is not None  # (the text's row became the map's: that is the batch)
+        await self.memory.undo(GUILD_A, self.one.id, got.batch)
+        (row,) = await self.rows()
+        self.assertEqual((row["source"], row["map_id"]), (mf.FROM_TEXT, None))
+
+    async def test_both_undos_in_either_order(self) -> None:
+        for rows_first in (True, False):
+            with self.subTest(rows_first=rows_first):
+                async with self.db.guild(GUILD_A) as conn:
+                    await conn.execute("DELETE FROM memory_map_facts")
+                    await conn.execute("DELETE FROM map_features")
+                got = await self.record(shows=[
+                    {"place": "Targos", "layer": "terrain", "value": "arctic", "from": "symbol"}
+                ])  # fmt: skip
+                pins = await self.pins_batch()
+                assert got.batch is not None
+                self.assertLess(pins, got.batch)
+                for batch in (got.batch, pins) if rows_first else (pins, got.batch):
+                    await self.memory.undo(GUILD_A, self.one.id, batch)
+                self.assertEqual(await self.rows(), [])
+                self.assertEqual(await self.features(), [])
+
+    async def test_nothing_new_gives_no_batch(self) -> None:
+        got = await self.record(shows=[
+            {"place": "Luskan", "layer": "terrain", "value": "arctic", "from": "symbol"}
+        ])  # fmt: skip
+        self.assertIsNone(got.batch)  # (a place not kept: nothing written, no Undo)
+
+    async def pins_batch(self) -> int:
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT DISTINCT batch FROM memory_changes WHERE table_name = 'map_features'"
+                " AND undoes IS NULL ORDER BY batch DESC LIMIT 1"
+            )
+            got = await cur.fetchone()
+        assert got is not None
+        return int(got["batch"])
+
+    async def test_the_pins_undo_leaves_the_rows(self) -> None:
+        got = await self.record(shows=[
+            {"place": "Targos", "layer": "terrain", "value": "arctic", "from": "symbol"}
+        ])  # fmt: skip
+        pins = await self.pins_batch()
+        self.assertNotEqual(pins, got.batch)
+        await self.memory.undo(GUILD_A, self.one.id, pins)
         self.assertEqual(await self.features(), [])
+        self.assertEqual(len(await self.rows()), 1)
 
     async def test_a_row_starts_at_the_session_the_picture_was_posted_in(self) -> None:
         # (§7.4: the session that began last before the picture was posted, not before it was
@@ -242,12 +304,11 @@ class TheNote(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(
             note_text(
                 "the Ten-Towns map", {mf.CLIMATE: 1, mf.POPULATION: 2},
-                {"corrected": 1, "noted": 1}, pins=4,
+                {"corrected": 1, "noted": 1},
             ),
             "🗺️ DMbot read the Ten-Towns map: climate for 1 place, who lives there for 2. They're"
             " waiting in 🌍 World notes for you to check. 1 of them replaces what DMbot read in"
-            " your lore. 1 differs from what's already there, and that stays as it is. ↩ Undo"
-            " takes back this whole read, including where places are on the map.",
+            " your lore. 1 differs from what's already there, and that stays as it is.",
         )  # fmt: skip
         # (a difference alone writes no row: nothing to check or undo, so no note)
         self.assertIsNone(note_text("the Ten-Towns map", {}, {"noted": 1}))
@@ -292,8 +353,8 @@ class TheNote(unittest.IsolatedAsyncioTestCase):
         undo.assert_awaited_once_with(1, "c" * 32, 5)
         self.assertEqual(
             interaction.edit_original_response.await_args.kwargs["content"],
-            "↩ Undone. DMbot took back everything it read from the Ten-Towns map, including where"
-            " places are on it, and won't place them again. The map itself is still kept.",
+            "↩ Undone. Nothing from the Ten-Towns map is in World notes now. The map itself is"
+            " still kept.",
         )
         from dmbot.memory import _changes
 
@@ -330,7 +391,7 @@ class TheTiming(unittest.IsolatedAsyncioTestCase):
             else {},
             _dm_message=AsyncMock(),
         )
-        bot.got = SimpleNamespace(written={mf.TERRAIN: 1}, layers={"added": 1}, batch=4, pins=0)
+        bot.got = SimpleNamespace(written={mf.TERRAIN: 1}, layers={"added": 1}, batch=4)
         return bot
 
     async def test_at_once_to_each_dm_with_no_session(self) -> None:
