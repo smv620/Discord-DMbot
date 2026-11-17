@@ -17,7 +17,7 @@ from psycopg import errors as pg_errors
 from dmbot.campaigns import CampaignError, CampaignStore
 from dmbot.campaigns.store import decode_backup, encode_backup
 from dmbot.memory import evidence, importance_rank, knowers
-from dmbot.memory._changes import ALIASES, ALL, TOLD, Changes, scoped_select
+from dmbot.memory._changes import ALIASES, ALL, THREAD_GUESSES, TOLD, Changes, scoped_select
 from dmbot.memory._changes import ENTITIES as ENTITIES_TABLE
 from dmbot.memory._changes import FLAGS as FLAGS_TABLE
 from dmbot.memory.backup import MemorySection
@@ -348,6 +348,17 @@ class Isolation(MemoryTest):
         await self.memory.add_thread_part(
             GUILD_A, self.c, quest, "objective", "find the heir", source="dm"
         )
+        # and a table's guess on it (#4655): a theory in a character's view, tied to the quest
+        async with self.memory._write(GUILD_A, self.c, "dm") as w:
+            await w.insert(
+                THREAD_GUESSES,
+                {
+                    "id": new_id(),
+                    "thread_id": quest,
+                    "belief_id": await _a_belief(w, GUILD_A, self.c),
+                    "created_at": 1,
+                },
+            )
         # and where the story is (#4173 slice 4): ids only
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
@@ -2739,3 +2750,15 @@ class Pruning(MemoryTest):
         self.now += 1
         self.assertGreater(await memory.prune_changes(GUILD_A, self.c), 0)
         self.assertEqual(await self.batches(), set())
+
+
+async def _a_belief(w: Any, guild: int, campaign: str) -> str:
+    """Any belief of the campaign (the fill made some, #2409), for a row that hangs off one."""
+    cur = await w.conn.execute(
+        "SELECT id FROM memory_beliefs WHERE guild_id = %s AND campaign_id = %s ORDER BY id"
+        " LIMIT 1",
+        (guild, campaign),
+    )
+    row = await cur.fetchone()
+    assert row is not None
+    return str(row["id"])

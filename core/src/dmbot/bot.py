@@ -9756,23 +9756,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             notice_channel=table.screen_channel_id,
         )
 
-    async def _open_mysteries(self, gid: int, cid: str) -> list[tuple[str, str]]:
-        """The open mysteries a session's theories may answer (#4655), with story threads on; none
-        when off, or when they can't be read (the theories are still asked, tied to nothing)."""
-        if (
-            not self.settings.story_threads_on
-            or self.settings.story_family_only  # (no readings are asked then)
-            or self.memory is None
-        ):
-            return []
-        from dmbot.ui.name_background import open_mysteries
-
-        try:
-            return await open_mysteries(self.memory, gid, cid)
-        except Exception as exc:
-            log.warning("Story extractor: open mysteries not read (%s)", type(exc).__name__)
-            return []
-
     async def _extract_session(
         self,
         gid: int,
@@ -9889,7 +9872,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     after_ms=after_ms,
                     readings=self.settings.story_readings_on,
                     theories=self.settings.story_threads_on,  # (#4655: guesses at mysteries)
-                    mysteries=await self._open_mysteries(gid, cid),
+                    mysteries=await _open_mysteries(self, gid, cid),
                     deeds=self.settings.story_deeds_on,
                     deed_store=DeedProposals(self.memory)
                     if self.settings.story_deeds_on and self.memory is not None
@@ -10111,7 +10094,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 after_ms=0,
                 readings=self.settings.story_readings_on,
                 theories=self.settings.story_threads_on,  # (#4655: guesses at mysteries)
-                mysteries=await self._open_mysteries(gid, cid),
+                mysteries=await _open_mysteries(self, gid, cid),
                 deeds=self.settings.story_deeds_on,
                 deed_store=DeedProposals(self.memory)
                 if self.settings.story_deeds_on and self.memory is not None
@@ -16155,3 +16138,19 @@ def _close_on_sigterm(bot: DMBot) -> None:
     loop = asyncio.get_running_loop()
     with contextlib.suppress(NotImplementedError):  # not available on Windows
         loop.add_signal_handler(signal.SIGTERM, lambda: asyncio.ensure_future(bot.close()))
+
+
+async def _open_mysteries(bot: Any, gid: int, cid: str) -> list[tuple[str, str]]:
+    """The open mysteries a session's theories may answer (#4655), with story threads on; none
+    when off, in the family-only mode (no readings are asked then), or when they can't be read
+    (the theories are still asked, tied to nothing)."""
+    settings = bot.settings
+    if not settings.story_threads_on or settings.story_family_only or bot.memory is None:
+        return []
+    from dmbot.ui.name_background import open_mysteries
+
+    try:
+        return await open_mysteries(bot.memory, gid, cid)
+    except Exception as exc:
+        log.warning("Story extractor: open mysteries not read (%s)", type(exc).__name__)
+        return []
