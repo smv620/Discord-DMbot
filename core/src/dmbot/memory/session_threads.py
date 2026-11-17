@@ -120,6 +120,7 @@ def _no_words(s: Suggestion, starts: tuple[int, ...], speakers: tuple[int, ...])
         quote="",
         reads=tuple(replace(p, quote="") for p in s.reads),
         branches=tuple(replace(b, quote="") for b in s.branches),
+        clues=(),  # (a session's clues are quests slice 6c's: who found one, with consent, #4624)
         line_starts=starts,
         speaker_ids=speakers,
     )
@@ -140,6 +141,8 @@ def check_window(
     them: its speaker is that line's (good enough for evidence; the DM sees the line itself)."""
     flat = "\n".join(s.text for s in window)
     found, counts = thread_read.check(said, flat, entries, names, have=have)
+    # (a session's clues wait for slice 6c, #4624: their drops would only mislead this report)
+    counts = {k: n for k, n in counts.items() if not k.startswith("clue_")}
     by_number = {s.number: s for s in window}
     out: list[Suggestion] = []
     for s in found:

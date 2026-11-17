@@ -24,7 +24,7 @@ from dmbot.memory import thread_parts as tp
 from dmbot.memory import thread_progress as tprog
 from dmbot.memory.gate import Viewer
 from dmbot.memory.models import DM, HINTED, MemoryRuleError, TooLateToUndo
-from dmbot.memory.thread_read import ReadBranch, ReadPart
+from dmbot.memory.thread_read import ReadBranch, ReadClue, ReadPart
 from dmbot.memory.thread_suggestions import ThreadSuggestionStore, Waiting, unkeep_in
 from dmbot.ui import logic
 from dmbot.ui import thread_progress_card as pcard
@@ -64,6 +64,8 @@ PARTS_HEADING = "**What's in it:**"
 PARTS_UNTICK = "Untick anything that doesn't belong in it. The rest is kept with it."
 PARTS_HOLDER = "What's in it"
 BRANCH_WORD = "🌿 Branch"
+CLUE_WORD = "🔎 Clue"  # (#4624 6b: the 🔎 Clues screen's icon)
+HELD_BY = "held by"
 HINT_SAID = "just a hint: your lore leaves it open"
 NOT_KEPT_SHORT = "name not kept yet, left out"
 # Discord's limit on one message (`MESSAGE_MAX`); a card over it can't be shown, and the queue
@@ -101,7 +103,7 @@ def undone_text(name: str) -> str:
 
 
 def line_for(
-    line: ReadPart | ReadBranch,
+    line: ReadPart | ReadBranch | ReadClue,
     names: Mapping[str, str],
     waiting: frozenset[str] = frozenset(),
 ) -> tuple[str, str]:
@@ -116,6 +118,9 @@ def line_for(
         return f"{name} ({NOT_KEPT_SHORT})" if name and entity_id in waiting else name
 
     words = logic.shorten(line.name if isinstance(line, ReadBranch) else line.words, LINE_WORDS_MAX)
+    if isinstance(line, ReadClue):  # (#4624 6b: kept as a clue to the thread, hidden for now)
+        holders = [named(e) for e in line.who_ids if e in names]
+        return words, CLUE_WORD + (f" · {HELD_BY} {', '.join(holders)}" if holders else "")
     if isinstance(line, ReadBranch):
         what = f"{BRANCH_WORD}, {HINT_SAID}" if line.state == HINTED else BRANCH_WORD
         people = [f"{named(e)} ({part})" for part, e in line.parts if e in names]
@@ -322,6 +327,7 @@ class ThreadQuestions(_Menu):
         self.names, self.waiting = {}, frozenset[str]()
         givers = [p.who_id for p in s.reads if p.who_id]
         givers += [e for b in s.branches for _, e in b.parts]
+        givers += [e for c in s.clues for e in c.who_ids]
         for who in [*(w for _, w in s.parts), *givers]:
             e = await memory.entity(self.guild_id, self.campaign_id, who)
             if e is not None:
