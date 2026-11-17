@@ -27,6 +27,8 @@ ALLOWED = {
     "ui/name_card.py": "a player's card drops a read (`_rows`, and the route place's line)",
     "ui/place_size.py": "the route place's card line; its buttons are the DM's, checked again",
     "ui/connection_edit.py": "the DM's edit page only (`found.secrets`)",
+    "maps/store.py": "a stated length beats a measured one (4b), and a kept road's length is "
+    "checked against the DM's maps for the DM alone (#4670 4c); shows players nothing",
 }
 NAMES = re.compile(r"\blength_(?:words|from|amount|unit|approx)\b|\broute_length\b")
 

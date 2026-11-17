@@ -141,7 +141,7 @@ class TheSums(unittest.TestCase):
         self.assertNotIn(name_key("Cerric"), names)
 
 
-class Pins(DatabaseTest):
+class PinsBase(DatabaseTest):
     # (`test_map_store.Maps`'s set-up and helpers, without running its tests again)
     async def picture(self, campaign: str, n: int) -> int:
         return await base.Maps.picture(self, campaign, n)  # type: ignore[arg-type]
@@ -187,6 +187,8 @@ class Pins(DatabaseTest):
         assert row is not None
         return dict(row)
 
+
+class Pins(PinsBase):
     async def test_pins_scale_and_the_mark_are_written(self) -> None:
         got = await self.record()
         self.assertEqual((got.pins, got.matched, got.scale, got.north), (2, 1, True, False))
