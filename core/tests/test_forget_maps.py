@@ -4,6 +4,10 @@ the DM who said so and DMbot's use of them unchanged; nobody else's map changes.
 
 from __future__ import annotations
 
+import time
+import uuid
+from typing import Any
+
 from dmbot import entitlements
 from dmbot.campaigns import CampaignStore
 from dmbot.maps.store import MapStore, Viewer
@@ -132,3 +136,105 @@ class ForgetMaps(DatabaseTest):
         self.assertEqual({r[0] for r in (await self.rows()).values()}, {BOB})
         self.assertIn(bobs, await self.rows())
         self.assertNotIn(mine, await self.rows())
+
+
+class ForgetMapReads(ForgetMaps):
+    """Migration 0534 (#4693): what DMbot read from a departing person's maps follows the deletion
+    rule of a removed map (design 7.5): its own read goes, a read the text also stated becomes the
+    text's, the DM's word and the DM's no stay without the pointer."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        memory = MemoryStore(self.db)
+        placed = await memory.add_entity(
+            GUILD, self.campaign, type="place", name="Targos", source="dm", status="confirmed"
+        )
+        self.place = placed.value.id
+
+    async def fact(self, map_id: str, value: str, *, status: str, source: str, text: bool) -> str:
+        fact_id = uuid.uuid4().hex
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO memory_map_facts (guild_id, campaign_id, id, entity_id, layer, value,"
+                " status, source, also_text, created_at, map_id)"
+                " VALUES (%s, %s, %s, %s, 'terrain', %s, %s, %s, %s, %s, %s)",
+                (GUILD, self.campaign, fact_id, self.place, value, status, source, text,
+                 int(time.time()), map_id),
+            )  # fmt: skip
+        return fact_id
+
+    async def row(self, fact_id: str) -> dict[str, Any] | None:
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT status, source, also_text, map_id FROM memory_map_facts WHERE id = %s",
+                (fact_id,),
+            )
+            got = await cur.fetchone()
+        return dict(got) if got is not None else None
+
+    async def test_each_kind_of_row_follows_the_rule(self) -> None:
+        mine = await self.a_map(ALICE, dm=False)
+        only_map = await self.fact(mine, "arctic", status="read", source="map", text=False)
+        text_too = await self.fact(mine, "mountain", status="read", source="map", text=True)
+        dms_word = await self.fact(mine, "forest", status="confirmed", source="map", text=False)
+        dms_no = await self.fact(mine, "swamp", status="rejected", source="map", text=False)
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        self.assertIsNone(await self.row(only_map))  # (rested only on the map: gone)
+        self.assertEqual(
+            await self.row(text_too),
+            {"status": "read", "source": "text", "also_text": False, "map_id": None},
+        )
+        self.assertEqual(
+            await self.row(dms_word),
+            {"status": "confirmed", "source": "map", "also_text": False, "map_id": None},
+        )
+        self.assertEqual(
+            await self.row(dms_no),
+            {"status": "rejected", "source": "map", "also_text": False, "map_id": None},
+        )
+
+    async def test_a_pin_on_a_deleted_read_loses_only_its_pointer(self) -> None:
+        mine = await self.a_map(ALICE, dm=False)
+        bobs = await self.a_map(BOB, dm=False)
+        gone = await self.fact(mine, "arctic", status="read", source="map", text=False)
+        feature = uuid.uuid4().hex
+        async with self.db.guild(GUILD) as conn:  # (a pin on Bob's map that pointed at the read)
+            await conn.execute(
+                "INSERT INTO map_features (guild_id, campaign_id, id, map_id, shape, points,"
+                " fact_id, status, source, created_at) VALUES (%s, %s, %s, %s, 'area',"
+                " ARRAY[0.1, 0.1, 0.2, 0.1, 0.2, 0.2], %s, 'read', 'read', %s)",
+                (GUILD, self.campaign, feature, bobs, gone, int(time.time())),
+            )
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        self.assertIsNone(await self.row(gone))
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT fact_id FROM map_features WHERE id = %s", (feature,))
+            pin = await cur.fetchone()
+        assert pin is not None
+        self.assertIsNone(pin["fact_id"])
+
+    async def test_nobody_elses_reads_change(self) -> None:
+        mine = await self.a_map(ALICE, dm=False)
+        bobs = await self.a_map(BOB, dm=False)
+        await self.fact(mine, "arctic", status="read", source="map", text=False)
+        theirs = await self.fact(bobs, "arctic2", status="read", source="map", text=False)
+        theirs_text = await self.fact(bobs, "plain", status="read", source="map", text=True)
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        self.assertEqual(
+            await self.row(theirs),
+            {"status": "read", "source": "map", "also_text": False, "map_id": bobs},
+        )
+        self.assertEqual(
+            await self.row(theirs_text),
+            {"status": "read", "source": "map", "also_text": True, "map_id": bobs},
+        )
+
+    async def test_the_dm_who_only_answered_keeps_the_map_and_its_reads(self) -> None:
+        mid = await self.a_map(BOB, dm=False)
+        await self.maps.answer_use(GUILD, self.campaign, mid, dm_id=ALICE, yes=True)
+        kept = await self.fact(mid, "arctic", status="read", source="map", text=False)
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        self.assertEqual(
+            await self.row(kept),
+            {"status": "read", "source": "map", "also_text": False, "map_id": mid},
+        )
