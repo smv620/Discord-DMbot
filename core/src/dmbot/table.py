@@ -323,6 +323,7 @@ class Table:
     sidebar_limiter: AskLimiter = field(default_factory=AskLimiter)
     # A map's private note held until this session's end (#4259 8a: nothing alerts during play):
     # (text, view). On the session itself, so a new session never takes an old one's notes.
+    # In memory: a restart loses a held note, but its rows still wait in World notes.
     held_map_notes: list[tuple[str, Any]] = field(default_factory=list)
 
     @property
