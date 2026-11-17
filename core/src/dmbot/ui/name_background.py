@@ -737,7 +737,7 @@ class BackgroundRead:
     notice: Any = None
     questions_left: int = 0
     # A lineage or class the lore gives a character the campaign has already (#3926): how many new
-    # questions it left, asked only in the DM's private chat ("🧬 Lineage and class").
+    # questions it left, asked only in the DM's private chat ("🧬 Character details").
     trait_questions: int = 0
     # A lore language a player character's sheet lacks (#4229 slice 1c, Supervisor's ruling): one
     # plain line on the note naming each, never a row or a question (the sheet is the truth).

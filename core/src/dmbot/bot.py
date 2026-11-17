@@ -1955,7 +1955,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             questions_board.LookAlikesButton,
             questions_board.QuestionsButton,
             FamilyTiesButton,
-            TraitQuestionsButton,  # 🧬 Lineage and class (#3926)
+            TraitQuestionsButton,  # 🧬 Character details (#3926)
             WorldNotesButton,  # 🌍 World notes (#4285)
             ThreadQuestionsButton,  # 📜 Story threads (#4453)
             SecretQuestionsButton,  # 🤫 Known or secret? (#4524)
