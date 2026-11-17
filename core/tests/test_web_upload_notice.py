@@ -84,7 +84,9 @@ class UploadNoticeRead(Script):
         await self.add("up1", "lore")
         none = await self.read("lore", "up2")
         self.assertEqual(none["state"], "none")
-        self.assertEqual(none["counts"], {"names": 0, "byKind": {}, "connections": 0, "revealed": 0})
+        self.assertEqual(
+            none["counts"], {"names": 0, "byKind": {}, "connections": 0, "revealed": 0}
+        )
         self.assertIsNone(none["undone"])
         self.assertIsNone(none["undoUntil"])
         self.assertEqual((await self.read("import", "up1"))["state"], "none")
