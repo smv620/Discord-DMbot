@@ -640,6 +640,7 @@ from dmbot.ui.names import (
     ReviewButton,
     after_session_text,
     counts_after_session_text,
+    held_back_pointer,
     held_back_text,
     private_after_session_text,
     review_view,
@@ -9873,12 +9874,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     progress=progress,
                 )
             log.info(report.line())
-            if report.recap_lines and notice_channel is not None:
+            # Counts and buttons go to the DM Bot channel when the campaign has one (the DM screen
+            # otherwise); names go to the DMs privately, with a count-only pointer (#3874 E1)
+            campaign = await self.campaigns.get(gid, cid)
+            counts_channel = (
+                self._upkeep_channel(campaign)[0] if campaign is not None else notice_channel
+            )
+            if report.recap_lines and counts_channel is not None:
                 # Said once, with the way back, before anything else is relied on (#3298): counts
                 # only. Only an imported session is ever split by the story reader.
                 try:
                     await self.post(
-                        notice_channel,
+                        counts_channel,
                         recap_lines_ui.note(report.recap_lines),
                         view=recap_lines_ui.undo_view(cid, sid),
                     )
@@ -9890,28 +9897,37 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )  # (the calls were counted as they were made)
             except Exception:
                 log.exception("Story extractor: couldn't note how far it got")
-            if report.named and notice_channel is not None:
+            if report.named and (campaign is not None or notice_channel is not None):
                 # the DM checks them where the name scan's are checked
-                await self.post(
-                    notice_channel, held_back_text(report.new_names), view=review_view(cid)
-                )
-            if asked and notice_channel is not None:  # (#4524: counts only)
+                if campaign is not None:
+                    await pointer_note.send(
+                        self,
+                        campaign,
+                        held_back_text(report.new_names),
+                        lambda: review_view(cid),
+                        held_back_pointer(len(report.new_names)),
+                    )
+                elif notice_channel is not None:
+                    await self.post(
+                        notice_channel, held_back_text(report.new_names), view=review_view(cid)
+                    )
+            if asked and counts_channel is not None:  # (#4524: counts only)
                 from dmbot.ui import secret_questions as secret_questions_ui
 
                 try:
                     left = await self.memory.secret_questions_still_waiting(gid, cid, asked)
                     if left:
                         await self.post(
-                            notice_channel,
+                            counts_channel,
                             secret_questions_ui.count_line(left).strip(),
                             view=secret_questions_ui.notice_view(cid),
                         )
                 except Exception as exc:
                     log.warning("Secret questions: no note (%s)", type(exc).__name__)
-            if report.met_made and notice_channel is not None:  # (#4045: counts only)
+            if report.met_made and counts_channel is not None:  # (#4045: counts only)
                 try:
                     await self.post(
-                        notice_channel,
+                        counts_channel,
                         met_list_ui.notice(report.met_made),
                         view=met_list_ui.notice_view(cid),
                     )

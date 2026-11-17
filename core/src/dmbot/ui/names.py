@@ -2496,6 +2496,13 @@ def held_back_text(names: list[str]) -> str:
     )
 
 
+def held_back_pointer(count: int) -> str:
+    """The line in the DM Bot channel, which the campaign's people read: how many, never which
+    (#3874 E1). The names and the check are in the DMs' private message."""
+    what = "new name" if count == 1 else "new names"
+    return f"📝 {count} {what} to check from this session. DMs: it is in your private message."
+
+
 def recap_names_text(count: int) -> str:
     """For the DM Bot channel when a recap used names DMbot didn't know yet (#2027): the names are
     listed on the DM's recap page, not here, so nothing is spoiled for players who peek."""
