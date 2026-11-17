@@ -1355,7 +1355,9 @@ class TheEdits(Editing):
         await self.stop(-3)  # (`claim` agrees for its speaker: there is no consent row to find)
         async with self.db.guild(self.g) as conn:
             cur = await conn.execute("SELECT count(*) AS n FROM consent WHERE user_id = -3")
-            self.assertEqual((await cur.fetchone())["n"], 0)
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row["n"], 0)
         self.assertEqual((await self.waiting_now())["counts"]["claims"], 1)
 
     async def test_the_website_counts_what_the_bot_lists_for_who_is_recorded_now(self) -> None:
