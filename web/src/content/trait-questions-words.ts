@@ -4,7 +4,7 @@
 import type { TraitOffer } from "../account/api";
 
 export const traitWords = {
-  heading: "Lineage and class",
+  heading: "Character details",
   loading: "Loading…",
   failed: "We couldn't load these. Reload the page to try again.",
   why: "DMbot never changes a character without asking you.",

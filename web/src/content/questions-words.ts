@@ -59,7 +59,7 @@ export const questionsPage = {
     // Answered in the Story Graph's waiting list ("Which one?" card for a kept fact, #3463) and in Discord.
     family: { label: "Family ties", how: "here", to: "graph", link: "Open the Story Graph" },
     // A lineage or class the lore gives a character the DM has (#3926): asked in Discord only until the website's card.
-    traits: { label: "Lineage and class", how: "discord" },
+    traits: { label: "Character details", how: "discord" },
     // DMbot's guesses about places and languages (#4285): checked in Discord until the website's page (slice 1c).
     world_notes: { label: "World notes", how: "discord" },
     // Story threads the lore holds, to keep or turn down (#4453): in Discord until the website's card.

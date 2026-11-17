@@ -78,6 +78,7 @@ class TheCard(unittest.TestCase):
 
     def test_the_buttons_are_a_yes_and_a_no(self) -> None:
         self.assertEqual((tq.YES, tq.NO), ("✅ Yes, change it", "❌ No, leave it"))
+        self.assertEqual(tq.YES_ADD, "✅ Yes, add it")  # (a language is only added)
 
     def test_each_answer_says_what_happened(self) -> None:
         offer = to.Offer("e1", DWARF, entity_name="Torvin", current="Human")
