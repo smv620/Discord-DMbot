@@ -116,7 +116,13 @@ const brewner: TraitOffer = {
 /** A page whose only question is the one given (the mock's own list is not used for the read). */
 function withOffers(list: TraitOffer[]) {
   const api = mockApi("table");
-  api.traitOffers = async () => structuredClone(list);
+  let waiting = structuredClone(list);
+  api.traitOffers = async () => structuredClone(waiting);
+  api.answerTrait = async (ref, offer, how) => {
+    api.calls.push(`answerTrait:${ref}:${offer.kind}:${offer.key}:${how}`);
+    waiting = waiting.filter((o) => o.key !== offer.key); // an answered question is no longer waiting
+    return { batch: 1 };
+  };
   const ref = `100.cmp${(n += 1)}.traits`;
   render(<TraitQuestions api={api} campaignRef={ref} id="q" />);
   return { api, ref };
@@ -142,6 +148,7 @@ describe("the language question (#4632)", () => {
     const { api, ref } = withOffers([brewner]);
     fireEvent.click(await screen.findByRole("button", { name: w.yesAdd }));
     expect(await screen.findByText(w.kept("Brewner", "Giant", "language"))).toBeTruthy();
+    await waitFor(() => expect(screen.queryByText("Does Brewner speak Giant?")).toBeNull());
     expect(api.calls).toContain(`answerTrait:${ref}:language:giant:keep`);
   });
 
@@ -152,7 +159,7 @@ describe("the language question (#4632)", () => {
     expect(screen.queryByText(/name card/)).toBeNull();
   });
 
-  it("the lore line ends with a colon and the quote when there is one, a full stop when not (all three kinds)", async () => {
+  it("the lore line ends with a colon before a quote and a full stop when there is none", async () => {
     withOffers([brewner]);
     expect(await screen.findByText(`Your lore "Session 4 notes" says so:`)).toBeTruthy();
     expect(w.source("Notes", true)).toBe(`Your lore "Notes" says so:`);
