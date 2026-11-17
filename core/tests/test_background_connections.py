@@ -779,6 +779,28 @@ class ThePath(NamesTest):
         await picker._back(self.it())
         self.assertEqual(await self.backstory(), [])
 
+    async def test_known_to_is_said_once_after_a_save_with_the_icon_for_how_many(self) -> None:
+        # (#4682) 👤 for one, 👥 for two or more; names only, never ids
+        cerric = await self.pc("Cerric")
+        belleros = await self.pc("Belleros")
+        await self.read()
+        await self.confirm_all()
+        for ticked, line in (
+            ([cerric], "👤 Known to: Cerric."),
+            ([cerric, belleros], "👥 Known to: Cerric and Belleros."),
+        ):
+            _, view = await self.offer()
+            picker_it = self.it()
+            await self.button(view, "👥 Some know").callback(picker_it)
+            picker = picker_it.edit_original_response.await_args.kwargs["view"]
+            picker.chosen = ticked
+            save = self.it()
+            await picker._save(save)
+            said = save.edit_original_response.await_args.kwargs["content"]
+            self.assertTrue(said.startswith(line), said)
+            self.assertNotIn(cerric, said)  # (an id, never)
+            self.assertNotIn("Known to", view.text())  # (once: the next render is the card again)
+
     async def test_an_empty_save_writes_nothing_and_a_plain_add_after_it_is_everyones(self) -> None:
         await self.pc("Cerric")
         await self.read()
