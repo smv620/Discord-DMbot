@@ -609,7 +609,7 @@ class MapStore:
     async def record_positions(
         self, guild_id: int, campaign_id: str, map_id: str, read: Any, *, layers: bool = False
     ) -> Any:
-        """A close read's pins, scale, grid and north, as DMbot's own write (one batch, one Undo),
+        """A close read's pins, scale, grid and north, as DMbot's own write (one batch),
         and the map marked as read for pins (`pins_read_at`, in the same transaction). Counts only
         come back (`positions.Recorded`). `layers` (DMBOT_MAP_LAYERS, #4259 slice 8a): what the
         map shows outright is written too, in the same transaction but a batch of its own
@@ -638,7 +638,8 @@ class MapStore:
                 )  # fmt: skip
                 rows = layers_read.reads(read.shows, names, rulers)
                 written: Counter[str] = Counter()
-                w.new_batch()  # (the rows' own Undo, apart from the pins', #4700)
+                w.new_batch()  # (the rows' own Undo, apart from the pins', #4700; anything logged
+                # after this joins the rows' batch: only the unlogged `pins_read_at` follows)
                 counts = await map_fact_store.add_read(
                     w, onto, rows, source=mf.FROM_MAP, map_id=map_id,
                     shown_at=await _shown_at(w, map_id), layers_written=written,

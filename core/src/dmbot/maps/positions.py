@@ -109,7 +109,8 @@ async def record_in(
     w: Changes, map_id: str, read: Read, names: Mapping[str, str | None]
 ) -> Recorded:
     """Write one close read's pins and the map's scale, grid and north, in the open write `w`
-    (one batch, one Undo). The map must still exist; nothing is written otherwise."""
+    (one batch; a map read's layer rows get their own after it, #4700). The map must still
+    exist; nothing is written otherwise."""
     done = Recorded()
     row = await w.get(MAPS, map_id)
     if row is None:

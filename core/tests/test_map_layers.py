@@ -2,7 +2,8 @@
 §5.2, §7.1 to 7.4; Supervisor's ruling on #4259): the read's `shows` (a legend, a labelled border, a
 colour key or a terrain symbol only), the words each layer allows, kept places and rulers only, and
 the store's write (`source = 'map'`, the map's id, the map above the text, the DM's word above the
-map, one batch with the pins). Invented names. The last class needs Postgres."""
+map, a batch of their own apart from the pins', #4700). Invented names. The last class needs
+Postgres."""
 
 from __future__ import annotations
 
@@ -178,17 +179,60 @@ class TheWrite(PinsBase):  # (Postgres: Targos is a kept place; the map is the D
         self.assertEqual(await self.rows(), [])
         self.assertEqual(await self.features(), pins)
 
+    async def test_undo_puts_the_texts_row_back(self) -> None:
+        from dmbot.memory.map_fact_store import Read
+
+        await self.memory.add_read_map_facts(
+            GUILD_A, self.one.id, [Read(self.targos, mf.TERRAIN, "arctic")], source="extractor"
+        )
+        got = await self.record(shows=[
+            {"place": "Targos", "layer": "terrain", "value": "arctic", "from": "legend"}
+        ])  # fmt: skip
+        assert got.batch is not None  # (the text's row became the map's: that is the batch)
+        await self.memory.undo(GUILD_A, self.one.id, got.batch)
+        (row,) = await self.rows()
+        self.assertEqual((row["source"], row["map_id"]), (mf.FROM_TEXT, None))
+
+    async def test_both_undos_in_either_order(self) -> None:
+        for rows_first in (True, False):
+            with self.subTest(rows_first=rows_first):
+                async with self.db.guild(GUILD_A) as conn:
+                    await conn.execute("DELETE FROM memory_map_facts")
+                    await conn.execute("DELETE FROM map_features")
+                got = await self.record(shows=[
+                    {"place": "Targos", "layer": "terrain", "value": "arctic", "from": "symbol"}
+                ])  # fmt: skip
+                pins = await self.pins_batch()
+                assert got.batch is not None
+                self.assertLess(pins, got.batch)
+                for batch in (got.batch, pins) if rows_first else (pins, got.batch):
+                    await self.memory.undo(GUILD_A, self.one.id, batch)
+                self.assertEqual(await self.rows(), [])
+                self.assertEqual(await self.features(), [])
+
+    async def test_nothing_new_gives_no_batch(self) -> None:
+        got = await self.record(shows=[
+            {"place": "Luskan", "layer": "terrain", "value": "arctic", "from": "symbol"}
+        ])  # fmt: skip
+        self.assertIsNone(got.batch)  # (a place not kept: nothing written, no Undo)
+
+    async def pins_batch(self) -> int:
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT DISTINCT batch FROM memory_changes WHERE table_name = 'map_features'"
+                " AND undoes IS NULL ORDER BY batch DESC LIMIT 1"
+            )
+            got = await cur.fetchone()
+        assert got is not None
+        return int(got["batch"])
+
     async def test_the_pins_undo_leaves_the_rows(self) -> None:
         got = await self.record(shows=[
             {"place": "Targos", "layer": "terrain", "value": "arctic", "from": "symbol"}
         ])  # fmt: skip
-        async with self.db.guild(GUILD_A) as conn:
-            cur = await conn.execute(
-                "SELECT min(batch) AS b FROM memory_changes WHERE table_name = 'map_features'"
-            )
-            pins = (await cur.fetchone() or {}).get("b")
-        assert pins is not None and pins != got.batch
-        await self.memory.undo(GUILD_A, self.one.id, int(pins))
+        pins = await self.pins_batch()
+        self.assertNotEqual(pins, got.batch)
+        await self.memory.undo(GUILD_A, self.one.id, pins)
         self.assertEqual(await self.features(), [])
         self.assertEqual(len(await self.rows()), 1)
 

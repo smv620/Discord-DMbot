@@ -149,6 +149,7 @@ class UndoMapLayersButton(
             await interaction.followup.send(TOO_OLD, ephemeral=True)
             return
         except MemoryRuleError as exc:  # (the store's reason says which: `_changes`' words)
+            # (picture gone: defensive, as the rows' batch holds no map row since #4700)
             words = {ALREADY_UNDONE: ALREADY, MAP_PICTURE_GONE: PICTURE_GONE}.get(str(exc))
             await interaction.followup.send(words or NOT_UNDONE, ephemeral=True)
             return
