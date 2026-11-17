@@ -86,3 +86,49 @@ class WriteRecap(unittest.TestCase):
     def test_a_recap_that_was_not_made_has_no_scores(self) -> None:
         _seen, scores = self.go(code=1)
         self.assertEqual(scores, {})
+
+
+class ScoringCost(unittest.TestCase):
+    """(#4556, Supervisor: the --score calls are counted in the spend)"""
+
+    LINE = "Scoring: 2 calls; tokens in 3000, out 400; spend $0.021"
+
+    def test_the_recap_tools_scoring_line_is_a_cost_line_of_its_own(self) -> None:
+        got = costs.scoring_cost(REPORT + "\n" + self.LINE)
+        assert got is not None
+        self.assertEqual((got.name, got.tokens_in, got.tokens_out), ("recap scoring", 3000, 400))
+        self.assertAlmostEqual(got.dollars, 0.021)
+        # (the recap's own line is still the first "tokens in" of the report, untouched)
+        recap = costs.recap_line(REPORT + "\n" + self.LINE)
+        assert recap is not None
+        self.assertEqual((recap.tokens_in, recap.tokens_out), (1200, 800))
+
+    def test_no_line_or_no_price_gives_none(self) -> None:
+        self.assertIsNone(costs.scoring_cost(REPORT))
+        self.assertIsNone(costs.scoring_cost("Scoring: 2 calls; tokens in 1, out 1; spend"))
+
+    def test_the_sample_run_adds_the_scoring_to_what_the_recap_spent(self) -> None:
+        spent: list[costs.CostLine] = []
+
+        async def run(argv: list[str]) -> int:
+            print(REPORT)
+            print(self.LINE)
+            return 0
+
+        asyncio.run(sample_steps.write_recap(1, "c" * 32, 5, run=run, spent=spent, scores={}))
+        self.assertEqual([line.name for line in spent], ["recap (no audio)", "recap scoring"])
+
+
+class ToolLine(unittest.TestCase):
+    def test_the_tool_prints_its_scoring_calls_tokens_and_money(self) -> None:
+        from dmbot.devtools.recap_run import __main__ as rr
+
+        class Quiet:
+            async def complete(self, *_a: object, **_k: object) -> object:
+                raise AssertionError("not called")
+
+        scoring = rr.Counting(Quiet(), "m1")  # type: ignore[arg-type]
+        scoring.calls, scoring.input_tokens, scoring.output_tokens = 2, 3000, 400
+        line = rr.scoring_line(scoring, {"m1": (3.0, 15.0)})
+        self.assertEqual(line, "Scoring: 2 calls; tokens in 3000, out 400; spend $0.015")
+        self.assertIsNotNone(costs.scoring_cost(line))
