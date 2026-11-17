@@ -656,6 +656,19 @@ class ThePath(NamesTest):
             for name in names:
                 self.assertNotIn(name, line)
         self.assertEqual(await self.relations(), [])  # (nothing kept: they stay waiting)
+        # a sentence that is not on the fixed list is never logged, only its class: the guarantee
+        # that no campaign's words reach the log
+        words = f"{names[0]} is not welcome at {names[1]}'s table."
+        _, view = await self.offer()  # (the first press ended that card; they are still waiting)
+        with (
+            patch.object(type(self.memory), "add_relation", side_effect=MemoryRuleError(words)),
+            self.assertLogs("dmbot.memory.backstory_keep", level="INFO") as unlisted,
+        ):
+            await view.all_button.callback(self.it())
+        said = [m for m in unlisted.output if "was refused (Keep all)" in m]
+        self.assertTrue(said)
+        self.assertIn("unlisted rule (MemoryRuleError)", said[0])
+        self.assertTrue(all(words not in m and names[0] not in m for m in said))
 
     async def test_a_real_refusal_of_a_travels_with_between_two_non_players_is_loggable(
         self,
