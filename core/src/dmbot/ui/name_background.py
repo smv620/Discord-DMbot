@@ -96,6 +96,7 @@ from dmbot.mentions import NO_PINGS
 from dmbot.ui import logic, split_words
 from dmbot.ui import secret_questions as secret_questions_ui
 from dmbot.ui.check_everything import add_stop, next_part, progress
+from dmbot.ui.claims_review import knower_icon, names_joined
 from dmbot.ui.dmbot_commands import VIEW_TIMEOUT_S, _bot, _Button, _Menu, _send, _tell
 from dmbot.ui.name_lists import (
     AI_AT_ONCE,
@@ -3773,6 +3774,7 @@ class ConnectionOffer(_Menu):
         self.add_item(self.toggle)
         # 👥 Some know (#4534): only the ticked player characters learn it; the rest of the table
         # hears it when it is said. The picker's Save hands its ticks straight to `_answer`.
+        self.saved_note = ""  # "👤 Known to: Cerric." above the next card, shown once
         self.some = _Button(self._some, label=SOME_KNOW, style=grey, row=1)
         self.add_item(self.some)
         self.add_item(_Button(self._skip, label="⏭️ Skip the rest", style=grey, row=2))
@@ -3891,11 +3893,12 @@ class ConnectionOffer(_Menu):
         return link_words(r.predicate, r.detail, r.directional, feeling=True, knows_how=r.knows_how)
 
     def text(self) -> str:
-        """The card, with the walk's part line above it when this is inside "Check everything"."""
+        """The card, with the walk's part line above it when this is inside "Check everything",
+        and, once, who the last 👥 Some know saved it for (#4682)."""
         if self.walk is None or self.current is None:
-            return self._card()
+            return self.saved_note + self._card()
         done = self.kept + self.left_out + 1
-        return progress(self.walk, done, max(self.total, done)) + self._card()
+        return self.saved_note + progress(self.walk, done, max(self.total, done)) + self._card()
 
     def _card(self) -> str:
         c = self.current
@@ -3914,8 +3917,10 @@ class ConnectionOffer(_Menu):
         mine = ""
         if who is not None:
             name = _md(who[:40])
+            # (DMbot's guess shown before the answer: the icon says how many, #4682; it writes
+            # nothing, 👥 Some know opens the picker with it ticked)
             mine = (
-                f"👥 **{name}**'s character will know it.\n"
+                f"{knower_icon(1)} DMbot thinks only {name} knows this.\n"
                 if not (view.secret or c.secret)
                 else f"👥 **{name}**'s character won't know it: it is hidden.\n"
             )
@@ -4006,9 +4011,11 @@ class ConnectionOffer(_Menu):
         self._set(ready)
         if self.current is None:
             self.stop()
+        text = self.text()
+        self.saved_note = ""  # (said once, with the card that follows the save)
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
-                content=self.text(),
+                content=text,
                 view=self if self.current else None,
                 allowed_mentions=NO_PINGS,
             )
@@ -4208,6 +4215,9 @@ class ConnectionOffer(_Menu):
                     log.info("A kept connection could not be pinned")
             changed(interaction, campaign)
             await store.remove(campaign.guild_id, campaign.id, c)
+            if knowers is not None:
+                names = [self.characters.get(k, "") for k in knowers if k in self.characters]
+                self.saved_note = f"{knower_icon(len(names))} Known to: {names_joined(names)}.\n"
             self.kept += 1
             await self._show(interaction, await self._ready(interaction, campaign))
 
