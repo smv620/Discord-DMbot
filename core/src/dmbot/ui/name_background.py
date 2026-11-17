@@ -1755,6 +1755,26 @@ async def thread_inputs(
     return have, entries, names, known
 
 
+async def open_mysteries(memory: Any, guild_id: int, campaign_id: str) -> list[tuple[str, str]]:
+    """The open mysteries a session's theories may answer (#4655, quests slice 7b), as (thread id,
+    name): kept mysteries that are live (a hint, not started or happening now), the ones touched
+    most recently first, at most `readings.MYSTERIES_SHOWN`. The DM's view, as the reading is."""
+    from dmbot.memory.models import CONFIRMED
+    from dmbot.memory.readings import MYSTERIES_SHOWN
+    from dmbot.memory.threads import LIVE_STATES
+
+    live = [
+        t
+        for t in await memory.threads(guild_id, campaign_id)
+        if t.thread.type == "mystery"
+        and t.thread.status == CONFIRMED
+        and t.state is not None
+        and t.state.condition in LIVE_STATES
+    ]
+    live.sort(key=lambda t: -t.last_touch)
+    return [(t.thread.id, t.thread.name) for t in live[:MYSTERIES_SHOWN]]
+
+
 async def progress_inputs(memory: Any, guild_id: int, campaign_id: str) -> list[Any]:
     """The open threads and their standing parts, for the session reader's progress lines (#4522
     5b; `session_progress.KnownThread`): the DM's view, as the reading is the DM's. Live threads

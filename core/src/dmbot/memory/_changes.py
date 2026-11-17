@@ -358,10 +358,18 @@ SECRET_QUESTIONS = Table(
      "line_starts", "speaker_ids", "status", "created_at", "batch", "answered_batch"),
     logged=False,
 )  # fmt: skip
+# Which story thread a table's guess is about (#4655, quests slice 7b; 0529): one row per belief.
+# Unlogged, like the evidence links: it is written in the same change as its belief, and an Undo
+# that takes the belief back takes the link with it by the database (as it does when the belief or
+# the thread goes for any other reason).
+THREAD_GUESSES = Table(
+    "memory_thread_guesses", "id", ("id", "thread_id", "belief_id", "created_at"), logged=False
+)
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
        STORY_LANGUAGES, CULTURES, MAP_FACTS, MAPS, THREAD_PARTS,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
-       BELIEFS, EVIDENCE, ALIAS_KNOWERS, KNOWERS, TOLD, SECRET_QUESTIONS)  # fmt: skip
+       BELIEFS, EVIDENCE, THREAD_GUESSES, ALIAS_KNOWERS, KNOWERS, TOLD,
+       SECRET_QUESTIONS)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
 
 # The columns whose change can change whether the players are shown a statement (#2995).

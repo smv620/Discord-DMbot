@@ -29,7 +29,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.memory import beliefs, evidence
-from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, PERSPECTIVES, RELATIONS, Changes
+from dmbot.memory._changes import (
+    ALIASES,
+    CLAIMS,
+    ENTITIES,
+    PERSPECTIVES,
+    RELATIONS,
+    THREAD_GUESSES,
+    Changes,
+)
 from dmbot.memory.checks import waiting_guess
 from dmbot.memory.claims import (
     EXTRACTOR,
@@ -67,10 +75,12 @@ from dmbot.memory.models import (
     SECRET_PLOT,
     SUSPECTED_LIE,
     THEORY,
+    THREAD_TYPES,
     TRUTH,
     Belief,
     Flag,
     MemoryRuleError,
+    is_id,
     new_id,
 )
 from dmbot.memory.store import (
@@ -122,6 +132,9 @@ def _checked(stored: Mapping[str, Any]) -> dict[str, Any]:
     liar = stored.get("liar")
     if not ok or (status == SUSPECTED_LIE) != isinstance(liar, str) or (liar and not lie):
         raise MemoryRuleError(beliefs.BAD_READING)
+    thread = stored.get("thread_id")  # the mystery a guess is about (#4655), from the reader
+    if thread is not None and (not is_id(thread) or not (guess or lie) or view == TRUTH):
+        raise MemoryRuleError(beliefs.BAD_READING)
     spoken = stored.get("spoken_at")  # the real moment of the line it came from (Unix seconds)
     if spoken is not None and (
         type(spoken) is not int or not 0 < spoken <= 4_102_444_800
@@ -133,6 +146,7 @@ def _checked(stored: Mapping[str, Any]) -> dict[str, Any]:
         "confidence": c,
         "liar": liar or "",
         "spoken_at": spoken,
+        "thread_id": thread,
     }
 
 
@@ -369,7 +383,25 @@ async def _place_in(
         game_time=at_that_moment,
     )  # fmt: skip
     await _link_reasons(w, reasons, belief_id=belief.id, session_at=claim.session_started_at)
+    await _tie_to_mystery(w, reading.get("thread_id"), belief.id)
     return host, belief, list(flags)
+
+
+async def _tie_to_mystery(w: Changes, thread_id: object, belief_id: str) -> None:
+    """The guess goes on the story thread the reader said it is about (#4655, quests slice 7b), in
+    the same write as the belief, so one Undo takes both back. Asked again under the lock: a thread
+    turned down, merged away or changed into something else since the session was read takes no
+    guess, and the belief stays a plain one, as a guess about no shown mystery does (Supervisor's
+    ruling 4)."""
+    if not isinstance(thread_id, str):
+        return
+    row = await w.get(ENTITIES, thread_id)
+    if row is None or row["status"] != CONFIRMED or row["type"] not in THREAD_TYPES:
+        return
+    await w.insert(
+        THREAD_GUESSES,
+        {"id": new_id(), "thread_id": thread_id, "belief_id": belief_id, "created_at": w.now},
+    )
 
 
 def _reasons(
