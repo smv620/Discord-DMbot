@@ -26,7 +26,7 @@ from dmbot.campaigns.models import Campaign, CampaignError
 from dmbot.campaigns.store import CampaignStore
 from dmbot.db import Database
 from dmbot.devtools import sample_name
-from dmbot.devtools.sample_run.costs import CostLine, recap_line, recap_scores
+from dmbot.devtools.sample_run.costs import CostLine, recap_line, recap_scores, scoring_cost
 from dmbot.devtools.sample_run.plan import (
     STEPS,
     Existing,
@@ -743,6 +743,8 @@ async def write_recap(
         spent.append(line)
     if scores is not None and code == 0:
         scores.update(recap_scores(swallowed.getvalue()))
+        if spent is not None and (extra := scoring_cost(swallowed.getvalue())) is not None:
+            spent.append(extra)  # (the scoring's own calls, #4556: the recap's line has not them)
     return code
 
 
