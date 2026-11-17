@@ -102,7 +102,7 @@ class Recorded:
     # (`map_fact_store.add_read`) and the written rows' layers, for the DM's note
     layers: dict[str, int] = field(default_factory=dict)
     written: dict[str, int] = field(default_factory=dict)
-    batch: int | None = None  # (the write's one batch, for the note's Undo; set with the layers)
+    batch: int | None = None  # (the layer rows' own batch, for the note's Undo, #4700)
 
 
 async def record_in(

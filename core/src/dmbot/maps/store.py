@@ -612,8 +612,10 @@ class MapStore:
         """A close read's pins, scale, grid and north, as DMbot's own write (one batch, one Undo),
         and the map marked as read for pins (`pins_read_at`, in the same transaction). Counts only
         come back (`positions.Recorded`). `layers` (DMBOT_MAP_LAYERS, #4259 slice 8a): what the
-        map shows outright is written too, in the same batch, as layer rows for the DM to check
-        (`source = 'map'`, this map, from the story time it was shown: §7.4)."""
+        map shows outright is written too, in the same transaction but a batch of its own
+        (`Recorded.batch`: the note's Undo takes back what the note reports and leaves the pins,
+        #4700), as layer rows for the DM to check (`source = 'map'`, this map, from the story time
+        it was shown: §7.4)."""
         from collections import Counter
 
         from dmbot.maps import layers_read, positions
@@ -636,6 +638,7 @@ class MapStore:
                 )  # fmt: skip
                 rows = layers_read.reads(read.shows, names, rulers)
                 written: Counter[str] = Counter()
+                w.new_batch()  # (the rows' own Undo, apart from the pins', #4700)
                 counts = await map_fact_store.add_read(
                     w, onto, rows, source=mf.FROM_MAP, map_id=map_id,
                     shown_at=await _shown_at(w, map_id), layers_written=written,

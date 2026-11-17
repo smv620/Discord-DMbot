@@ -61,12 +61,10 @@ def note_text(
     written: Mapping[str, int],
     counts: Mapping[str, int],
     site: str = "",
-    *,
-    pins: int = 0,
 ) -> str | None:
     """The note's words, or None when the map added nothing (a difference alone writes no row, so
     there is nothing to check or undo, and no note). `written`: new rows by layer; `counts`: the
-    store's (`corrected`, `noted`); `pins`: places placed in the same read, which Undo takes too."""
+    store's (`corrected`, `noted`)."""
     parts: list[str] = []
     for layer, words in COUNTS:
         n = written.get(layer, 0)
@@ -84,16 +82,12 @@ def note_text(
     if disagrees:
         verb = "differs" if disagrees == 1 else "differ"
         text += f" {disagrees} {verb} from what's already there, and that stays as it is."
-    if pins:  # (one batch: Undo can't take the rows without the placements, so it says so)
-        text += " ↩ Undo takes back this whole read, including where places are on the map."
     return text
 
 
 def undone_text(label: str) -> str:
-    return (
-        f"↩ Undone. DMbot took back everything it read from {label}, including where places are"
-        " on it, and won't place them again. The map itself is still kept."
-    )
+    """The rows' own batch only: where DMbot placed places on the map stays (#4700)."""
+    return f"↩ Undone. Nothing from {label} is in World notes now. The map itself is still kept."
 
 
 def note_view(guild_id: int, campaign_id: str, batch: int | None, label: str) -> Any:
@@ -109,8 +103,9 @@ class UndoMapLayersButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=r"dmbot:mapundo:(?P<guild>[0-9]{1,20}):(?P<campaign>[0-9a-f]{32}):(?P<batch>[0-9]{1,18})",
 ):
-    """↩ Undo on a map's note: the read's one batch (its pins and its rows) taken back. Pressed in
-    a private chat, so it carries the server; a DM of that campaign only, checked on every press."""
+    """↩ Undo on a map's note: the read's layer rows taken back (their own batch: the map's pins
+    stay, #4700). Pressed in a private chat, so it carries the server; a DM of that campaign
+    only, checked on every press."""
 
     def __init__(self, guild_id: int, campaign_id: str, batch: int) -> None:
         super().__init__(
