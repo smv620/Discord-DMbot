@@ -75,7 +75,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion } from "./api";
+import type { ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
@@ -732,6 +732,26 @@ function pretendHandOvers(): HandOverQuestion[] {
   ];
 }
 
+/** The pretend 🧵 Progress to check threads (#4616): one heard in one session with a date, one heard in two with none. */
+function pretendThreadProgress(): ThreadProgressThread[] {
+  return [
+    {
+      id: "t1",
+      name: "Find Garret",
+      kind: "quest",
+      sessions: 1,
+      sessionAt: 1790000000,
+      more: 0,
+      lines: [
+        { id: "a".repeat(32), text: "New · In the way: the cave is trapped" },
+        { id: "b".repeat(32), text: "Done: find Garret" },
+        { id: "c".repeat(32), text: "This thread: happening now" },
+      ],
+    },
+    { id: "t2", name: "Free the Mill", kind: "quest", sessions: 2, sessionAt: null, more: 0, lines: [{ id: "d".repeat(32), text: "Clue found: the torn letter (by Ash)" }] },
+  ];
+}
+
 /** The pretend 🤫 Known or secret? questions (#4598): a narrowing and a reveal, the words as the API gives them. */
 function pretendSecretQuestions(): SecretQuestion[] {
   return [
@@ -859,6 +879,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const waitingState: Record<string, Waiting> = {}; // (fresh for each pretend API)
   const handOverState: Record<string, { list: HandOverQuestion[]; no: Map<string, HandOverQuestion> }> = {}; // by campaign (#4122)
   const traitState: Record<string, TraitOffer[]> = {}; // the lineage and class questions left, by campaign (#3946)
+  const threadProgressState: Record<string, ThreadProgressThread[]> = {}; // the 🧵 Progress to check threads left, by campaign (#4616)
   const secretState: Record<string, SecretQuestion[]> = {}; // the 🤫 Known or secret? questions left, by campaign (#4598)
   const readingState: Record<string, { list: Reading[]; kept: Map<string, Reading> }> = {}; // (#2412) by campaign
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
@@ -2806,6 +2827,26 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     // The story threads DMbot found (#4482): two suggestions, each with one step and one branch as a line; a keep, a turn-down and their Undo
     // are recorded and change the list as the bot would.
+    // The 🧵 Progress to check lines (#4616): DM only. A keep or a none takes its lines off the list (a thread with none left goes).
+    async threadProgress(ref): Promise<ThreadProgressThread[]> {
+      calls.push(`threadProgress:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      return structuredClone((threadProgressState[ref] ??= pretendThreadProgress()));
+    },
+    async changeThreadProgress(ref, change) {
+      const ids = change.action === "keep" ? [...change.on, ...change.off] : change.action === "none" ? change.lines : "lines" in change ? change.lines : [String(change.batch)];
+      calls.push(`changeThreadProgress:${ref}:${change.action}:${ids.join(",")}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      if (change.action === "undo") return { batch: null };
+      const list = (threadProgressState[ref] ??= pretendThreadProgress());
+      for (const t of list) t.lines = t.lines.filter((l) => !ids.includes(l.id));
+      for (let i = list.length - 1; i >= 0; i--) if (list[i]!.lines.length === 0) list.splice(i, 1);
+      return { batch: change.action === "keep" && change.on.length > 0 ? 41 : null };
+    },
     async storyThreads(ref) {
       calls.push(`storyThreads:${ref}`);
       return { suggestions: storyThreadList.map((t) => ({ ...t, people: t.people.map((p) => ({ ...p })), lines: t.lines.map((l) => ({ ...l })) })) };
