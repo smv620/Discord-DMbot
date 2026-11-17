@@ -1343,7 +1343,10 @@ export interface UploadNotice {
   /** While applying: the shared progress shape ("Adding what DMbot found: 40 of 110"). */
   progress?: JobProgress | null;
   label: string;
-  counts: { names: number; byKind: Record<string, number>; connections: number };
+  counts: { names: number; byKind: Record<string, number>; connections: number;
+    /** Hidden things a 🌍 Common knowledge read made known to everyone (#4589); absent from an older API. */
+    revealed?: number;
+  };
   /** Until when Undo works (Unix seconds); null when it no longer does or never did. */
   undoUntil: number | null;
   /** What an Undo took back, once pressed. */
