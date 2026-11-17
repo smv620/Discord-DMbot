@@ -6,16 +6,16 @@
 // the quote and the upload's name to no one else. The wait shows its stage, how long and, after a minute, that it is slow.
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { questionOf, traitWords as w } from "../content/trait-questions-words";
+import { headingOf, nameOf, questionOf, traitWords as w } from "../content/trait-questions-words";
 import { ApiError, type AccountApi, type TraitOffer } from "./api";
 import SavingWait from "./SavingWait";
 
 /** The plain line for how an answer ended: the bot's own word (`gone`, `refused`, `not-allowed`, `failed`) or the door's `lost`. */
-function sayFailure(error: unknown): string {
+function sayFailure(error: unknown, who: string): string {
   if (!(error instanceof ApiError)) return w.couldNot;
   if (error.kind === "still-waiting") return w.stillWorking;
   if (error.kind === "gone" || error.note === "gone") return w.gone;
-  if (error.note === "refused") return w.refused;
+  if (error.note === "refused") return w.refused(who);
   if (error.kind === "not-allowed" || error.note === "not-allowed") return w.notAllowed;
   return w.couldNot; // (failed, lost, anything else: try again in a minute)
 }
@@ -55,9 +55,10 @@ export default function TraitQuestions({ api, campaignRef, id }: { api: AccountA
     setSaid(null);
     try {
       await api.answerTrait(campaignRef, offer, how);
-      if (live.current) setSaid({ ok: true, text: how === "keep" ? w.kept(offer.who, offer.name.toLowerCase(), offer.kind === "species") : w.left(offer.who, offer.name.toLowerCase()) });
+      const what = nameOf(offer);
+      if (live.current) setSaid({ ok: true, text: how === "keep" ? w.kept(offer.who, what, offer.kind) : w.left(offer.who, what, offer.kind) });
     } catch (error) {
-      if (live.current) setSaid({ ok: false, text: sayFailure(error) });
+      if (live.current) setSaid({ ok: false, text: sayFailure(error, offer.who) });
     } finally {
       await read(); // (what shows is always the API's own)
       flight.current = false;
@@ -73,7 +74,7 @@ export default function TraitQuestions({ api, campaignRef, id }: { api: AccountA
   return (
     <section id={id} class="stack" aria-labelledby={`${id}-heading`}>
       <h3 id={`${id}-heading`}>
-        {w.heading}
+        {offer ? headingOf(offer.kind) : w.heading}
         {list.length > 1 ? ` (${w.waiting(list.length)})` : ""}
       </h3>
       <p class={said?.ok ? "ok" : "visually-hidden"} role="status">
@@ -85,20 +86,18 @@ export default function TraitQuestions({ api, campaignRef, id }: { api: AccountA
       {offer && q ? (
         <>
           <p>
-            <strong>{q.ask}</strong> {q.has}
+            <strong>{q.ask}</strong>
+            {q.has ? ` ${q.has}` : ""}
           </p>
-          <p class="small">
-            {w.source(offer.upload)}
-            {quote ? ":" : "."}
-          </p>
+          <p class="small">{w.source(offer.upload, quote !== "")}</p>
           {quote && <blockquote class="small">“{quote.length > QUOTE_SHOWN ? `${quote.slice(0, QUOTE_SHOWN - 1).trimEnd()}…` : quote}”</blockquote>}
           <p class="small">{w.why}</p>
           <p class="small">
-            {w.yes}: {q.yes} {w.no}: {q.no}, and DMbot won't ask this again.
+            {q.yesWord}: {q.yes} {w.no}: {q.no}, and DMbot won't ask this again.
           </p>
           <div class="row">
             <button type="button" class="button" disabled={busy} onClick={() => void answer(offer, "keep")}>
-              {w.yes}
+              {q.yesWord}
             </button>
             <button type="button" class="button secondary" disabled={busy} onClick={() => void answer(offer, "never")}>
               {w.no}

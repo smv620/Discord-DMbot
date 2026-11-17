@@ -1384,8 +1384,8 @@ export interface TraitOffer {
   /** The character's entry id, and who they are. */
   entity: string;
   who: string;
-  /** "species" is the lineage; "class" adds to their classes. */
-  kind: "species" | "class";
+  /** "species" is the lineage; "class" adds to their classes; "language" adds a language they speak (#4271). */
+  kind: "species" | "class" | "language";
   name: string;
   /** The trait's key, with `entity` and `kind` it names the question. */
   key: string;
