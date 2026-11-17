@@ -16,8 +16,12 @@ export const traitWords = {
   yesAdd: "Yes, add it",
   no: "No, leave it",
   gone: "Already answered, maybe in Discord. Showing what is left.",
-  refused: (who: string): string =>
-    `DMbot couldn't change ${who}: they may have been joined with another name or removed. Showing what is left.`,
+  // A refused answer: a language's says the character has a sheet now (as Discord's card does); a lineage or class says
+  // they may have been joined with another name or removed.
+  refused: (who: string, name: string, kind: TraitKind): string =>
+    kind === "language"
+      ? `DMbot couldn't add it: ${who} has a sheet now, so add ${name} there. Showing what is left.`
+      : `DMbot couldn't change ${who}: they may have been joined with another name or removed. Showing what is left.`,
   notAllowed: "Only a DM of the campaign can answer this.",
   nothingLeft: "Nothing left to answer. If a lore upload finds more, it shows here.",
   couldNot: "DMbot couldn't save that answer. Nothing changed. Try again in a minute.",

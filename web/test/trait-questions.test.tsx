@@ -75,7 +75,7 @@ describe("the lineage and class question", () => {
   });
 
   it.each([
-    [".traits-refused", w.refused("Torvin")],
+    [".traits-refused", w.refused("Torvin", "dwarf", "species")],
     [".traits-notallowed", w.notAllowed],
     [".traits-lost", w.couldNot],
     [".traits-gone", w.gone],
@@ -174,8 +174,21 @@ describe("the language question (#4632)", () => {
   });
 
   it("refused and could-not words are the new ones", () => {
-    expect(w.refused("Brewner")).toBe("DMbot couldn't change Brewner: they may have been joined with another name or removed. Showing what is left.");
+    expect(w.refused("Brewner", "Giant", "language")).toBe("DMbot couldn't add it: Brewner has a sheet now, so add Giant there. Showing what is left.");
+    expect(w.refused("Torvin", "dwarf", "species")).toBe("DMbot couldn't change Torvin: they may have been joined with another name or removed. Showing what is left.");
+    expect(w.refused("Mira Voss", "cleric", "class")).toBe("DMbot couldn't change Mira Voss: they may have been joined with another name or removed. Showing what is left.");
     expect(w.couldNot).toBe("DMbot couldn't save that answer. Nothing changed. Try again in a minute.");
+  });
+
+  it("a refused language answer says the character has a sheet now", async () => {
+    const api = mockApi("table");
+    api.answerTrait = async () => {
+      throw Object.assign(new ApiError("server"), { note: "refused" });
+    };
+    api.traitOffers = async () => [structuredClone(brewner)];
+    render(<TraitQuestions api={api} campaignRef={`100.cmp${(n += 1)}.traits`} id="q" />);
+    fireEvent.click(await screen.findByRole("button", { name: w.yesAdd }));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.refused("Brewner", "Giant", "language"));
   });
 });
 

@@ -11,11 +11,11 @@ import { ApiError, type AccountApi, type TraitOffer } from "./api";
 import SavingWait from "./SavingWait";
 
 /** The plain line for how an answer ended: the bot's own word (`gone`, `refused`, `not-allowed`, `failed`) or the door's `lost`. */
-function sayFailure(error: unknown, who: string): string {
+function sayFailure(error: unknown, offer: TraitOffer): string {
   if (!(error instanceof ApiError)) return w.couldNot;
   if (error.kind === "still-waiting") return w.stillWorking;
   if (error.kind === "gone" || error.note === "gone") return w.gone;
-  if (error.note === "refused") return w.refused(who);
+  if (error.note === "refused") return w.refused(offer.who, nameOf(offer), offer.kind);
   if (error.kind === "not-allowed" || error.note === "not-allowed") return w.notAllowed;
   return w.couldNot; // (failed, lost, anything else: try again in a minute)
 }
@@ -58,7 +58,7 @@ export default function TraitQuestions({ api, campaignRef, id }: { api: AccountA
       const what = nameOf(offer);
       if (live.current) setSaid({ ok: true, text: how === "keep" ? w.kept(offer.who, what, offer.kind) : w.left(offer.who, what, offer.kind) });
     } catch (error) {
-      if (live.current) setSaid({ ok: false, text: sayFailure(error, offer.who) });
+      if (live.current) setSaid({ ok: false, text: sayFailure(error, offer) });
     } finally {
       await read(); // (what shows is always the API's own)
       flight.current = false;
