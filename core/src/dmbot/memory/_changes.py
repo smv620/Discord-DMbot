@@ -604,6 +604,15 @@ class Changes(Scope):
             None  # The truth's and The party's ids, once known
         )
 
+    def new_batch(self) -> None:
+        """Start a batch of its own for this write's later changes, in the same transaction: their
+        Undo takes back only them (a map read's layer rows apart from its pins, Supervisor's
+        ruling on #4699). Not for a write that asks 🤫 questions: those join `batch` at the end, so
+        one asked before would move to the later batch's Undo."""
+        if self.asked:
+            raise RuntimeError("new_batch after a 🤫 question: it would join the later batch")
+        self.batch = None
+
     async def _dm_only_check(
         self, table: Table, row: Mapping[str, Any], before: Mapping[str, Any] | None = None
     ) -> None:

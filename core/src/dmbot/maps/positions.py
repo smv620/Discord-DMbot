@@ -102,14 +102,15 @@ class Recorded:
     # (`map_fact_store.add_read`) and the written rows' layers, for the DM's note
     layers: dict[str, int] = field(default_factory=dict)
     written: dict[str, int] = field(default_factory=dict)
-    batch: int | None = None  # (the write's one batch, for the note's Undo; set with the layers)
+    batch: int | None = None  # (the layer rows' own batch, for the note's Undo, #4700)
 
 
 async def record_in(
     w: Changes, map_id: str, read: Read, names: Mapping[str, str | None]
 ) -> Recorded:
     """Write one close read's pins and the map's scale, grid and north, in the open write `w`
-    (one batch, one Undo). The map must still exist; nothing is written otherwise."""
+    (one batch; a map read's layer rows get their own after it, #4700). The map must still
+    exist; nothing is written otherwise."""
     done = Recorded()
     row = await w.get(MAPS, map_id)
     if row is None:
