@@ -252,6 +252,7 @@ from dmbot.dm_screen.settings import (
     InviteButton,
     LevelButton,
     ManagementMenuButton,
+    MapChecksButton,
     QuietStopButton,
     RuleLookupButton,
     RulesCardsButton,
@@ -307,6 +308,7 @@ from dmbot.install_record import InstallStore
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
 from dmbot.map_notes import MapNotesSection, MapNoteStore
+from dmbot.maps import said_phrases
 from dmbot.maps import store as maps_store
 from dmbot.maps.pending import PendingMaps
 from dmbot.maps.store import Map as MapRow
@@ -628,6 +630,7 @@ from dmbot.ui.line_fix import (
     suggestion_view,
 )
 from dmbot.ui.live_heads_up import LiveHeadsUpButton, heads_up_text, heads_up_view
+from dmbot.ui.map_checks import StopMapChecksButton
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
 from dmbot.ui.name_card import (
     FinishPastButton,
@@ -1845,6 +1848,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             RuleLookupButton,
             RulesCardsButton,
             AskBeforeAddingButton,
+            MapChecksButton,
+            StopMapChecksButton,
             KeepSettingButton,
             PickButton,
             WorldMenu,
@@ -5455,6 +5460,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # waiting for the off-topic filter adds its words only once labelled game talk
             # (`_label_topics`, `put_back`): talk not about the game never feeds them (#1748).
             table.vocabulary.note(utterance.user_id, text)
+        if text and not holds and self.settings.map_measure_on:
+            # (#4670 4c-2: a distance or direction the DM says, far off a kept map's; a cheap look
+            # at the words first, so most lines cost nothing)
+            line = str(cleaned or text)
+            # (the table's own DM list first, in memory: a player's "miles" costs nothing; the
+            # campaign's DMs are checked again inside, as the one that counts)
+            if table.is_dm(utterance.user_id) and said_phrases.may_state(line):
+                self._track(self._map_check(table, utterance.user_id, line), "map-check")
         if text:
             # A line the off-topic filter holds for a label is not offered a time suggestion now:
             # it is, if it turns out to be game talk (`_label_topics`). The same rule that holds
@@ -7490,6 +7503,55 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 log.info("Live heads-up posted")  # no names, no words
             except Exception:
                 log.exception("The live heads-up failed")
+
+    async def _map_check(self, table: Table, speaker: int, line: str) -> None:
+        """MapBot's live note (#4670 4c-2; design §9; Supervisor's ruling on #4670): the DM said a
+        distance or direction between two kept places that a kept map's is far from. One private
+        message to that DM with 🔕 Stop map checks and nothing else, once for each pair of places in
+        a session. Only the campaign's DMs' own lines, only while they are recorded (asked again
+        after every wait), while the session runs, on a plan with story memory, and while the
+        campaign's "Map checks" is on. Nothing is stored or changed. A failure costs the note,
+        never the line."""
+        from dmbot.ui import map_checks
+
+        gid, cid = table.guild_id, table.campaign_id
+        if (
+            self.map_store is None
+            or cid is None
+            or self.tables.get(gid) is not table
+            or not self.consent.has_consent(gid, speaker)
+        ):
+            return
+        live = table.live_heads_up
+        with log_context(guild_id=gid, campaign_id=cid):
+            try:
+                campaign = await self.campaigns.get(gid, cid)
+                if (
+                    campaign is None
+                    or speaker not in campaign.dm_user_ids  # (the DM's own words only)
+                    or not campaign.map_checks
+                    or not await self.plan_allows("story", gid, campaign, fail_open=False)
+                ):
+                    return
+                found = await self.map_store.said_off(gid, cid, line)
+                for item in found:
+                    pair = (item.said.kind, *sorted((item.said.a_id, item.said.b_id)))
+                    if pair in live.map_pairs:
+                        continue
+                    if (
+                        not self.consent.has_consent(gid, speaker)
+                        or self.tables.get(gid) is not table
+                        or table.campaign_id != cid
+                    ):
+                        return
+                    live.map_pairs.add(pair)  # (claimed before the send: never twice)
+                    sent = await self._dm_message(
+                        speaker, map_checks.note_text(item), map_checks.note_view(gid, cid)
+                    )
+                    if sent is not None:
+                        log.info("Map check note sent")  # no names, no words
+            except Exception:
+                log.exception("The map check failed")
 
     async def _save_topic(self, table: Table, waiting: Waiting, topic: str) -> None:
         """Save a line's topic, waiting or saved. Only while its speaker is recorded."""

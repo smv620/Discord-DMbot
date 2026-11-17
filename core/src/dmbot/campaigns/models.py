@@ -201,6 +201,9 @@ class Campaign:
     # "Ask me before adding" (#3878): a lore upload offers its names for a yes instead of adding
     # what DMbot is sure of by itself. Off by default.
     ask_before_adding: bool = False
+    # "Map checks" (#4670 4c-2): DMbot may tell the DM privately when a distance or direction they
+    # say at the table is far off a kept map's. On by default; the note's 🔕 turns it off.
+    map_checks: bool = True
     # Who sees the DM Bot and transcript channels: "people" (the campaign's own) or "everyone"
     # (#3891; dm_screen/channel_people.py).
     channels_visibility: str = "people"

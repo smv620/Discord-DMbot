@@ -25,6 +25,9 @@ class LiveSession:
     ready: bool | None = None  # critical mass, read once per session; None: not read yet
     last_at: float | None = None  # when the last heads-up was claimed (monotonic seconds)
     quiet: set[str] = field(default_factory=set)  # entries the DM silenced for this session
+    # MapBot's live note (#4670 4c-2): each (kind, place, place) already told this session, so a
+    # pair of places is noted once a session, as a heads-up is (design §9)
+    map_pairs: set[tuple[str, str, str]] = field(default_factory=set)
 
 
 @dataclass(frozen=True, slots=True)
