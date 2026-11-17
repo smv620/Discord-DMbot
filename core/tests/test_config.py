@@ -243,6 +243,12 @@ class PlanChecksSetting(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "DMBOT_MAP_MEASURE must be 1"):
             load_settings({**BASE, "DMBOT_MAP_MEASURE": "maybe"})
 
+    def test_map_layers_are_off_by_default(self) -> None:  # (#4259 8a)
+        self.assertFalse(load_settings(BASE).map_layers_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_MAP_LAYERS": "1"}).map_layers_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_MAP_LAYERS must be 1"):
+            load_settings({**BASE, "DMBOT_MAP_LAYERS": "maybe"})
+
     def test_grading_contradictions_is_off_unless_asked(self) -> None:
         self.assertFalse(load_settings(BASE).story_contradictions_on)
         self.assertTrue(

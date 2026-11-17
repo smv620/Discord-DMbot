@@ -16293,7 +16293,8 @@ async def _record_pins(bot: Any, gid: int, cid: str, map_id: str, read: Any) -> 
     never undoes the read itbot."""
     assert bot.map_store is not None
     try:
-        got = await bot.map_store.record_positions(gid, cid, map_id, read)
+        layers = bool(getattr(bot.settings, "map_layers_on", False))  # (#4259 8a, off for now)
+        got = await bot.map_store.record_positions(gid, cid, map_id, read, layers=layers)
     except Exception as exc:
         log.warning("Map pins: not written (%s)", type(exc).__name__)
         return
@@ -16302,6 +16303,8 @@ async def _record_pins(bot: Any, gid: int, cid: str, map_id: str, read: Any) -> 
         got.pins, got.matched, got.kept, "read" if got.scale else "no",
         "read" if got.north else "no",
     )  # fmt: skip
+    if got.layers:  # (counts only: what the map showed outright, #4259)
+        log.info("Map layers: %s", ", ".join(f"{k} {v}" for k, v in sorted(got.layers.items())))
 
 
 async def _pins_again(
