@@ -8,7 +8,9 @@ import json
 from dataclasses import replace
 from typing import Any, cast
 
+from dmbot.campaigns.models import CampaignError
 from dmbot.memory import beliefs, claims, readings
+from dmbot.memory.backup import MemorySection
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.models import MemoryRuleError
 from tests.test_memory_store import DM, GUILD_A, ConfirmedMemoryTest
@@ -644,6 +646,28 @@ class Placing(ConfirmedMemoryTest):
                 with self.assertRaises(MemoryRuleError):
                     await self.place(claim_id)
         self.assertEqual(await self.connections(), [])
+
+    async def test_a_campaign_with_a_placed_reading_restores_from_its_backup(self) -> None:
+        """#4663: a placed reading is a confirmed claim that keeps its reading and names the
+        connection it became; its backup loads (it was refused as damaged)."""
+        placed = await self.place(await self.waiting_reading(belief("pc:Mira", "theory", 0.5)))
+        section = MemorySection()
+        async with self.db.guild(GUILD_A) as conn:
+            rows = await section.dump(conn, GUILD_A, self.c)
+        (claim,) = [r for r in rows if r["table"] == "claim"]
+        self.assertEqual((claim["status"], claim["fact_id"]), ("confirmed", placed.relation_id))
+        copy = (await self.campaigns.create(GUILD_A, "Copy", DM)).id
+        async with self.db.guild(GUILD_A) as conn:
+            await section.load(conn, GUILD_A, copy, rows)
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM memory_beliefs WHERE campaign_id = %s", (copy,)
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertGreaterEqual(int(row["n"]), 1)
+        orphan = {**claim, "fact_id": None}  # (confirmed with a reading and nothing it became)
+        with self.assertRaises(CampaignError):
+            section.check([orphan if r is claim else r for r in rows])
 
     async def test_one_undo_puts_the_question_and_everything_back(self) -> None:
         claim_id = await self.waiting_reading(belief("pc:Mira", "theory", 0.5))
