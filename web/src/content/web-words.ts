@@ -289,6 +289,11 @@ export const webPage = {
   whoDoneSome: (names: string): string => `Now only ${names} know this.`,
   whoDoneAll: "Now everyone at the table can see this.",
   whoAlready: "It was already like that.",
+  // 🌍 Common knowledge on a connection (#4559; the bot's door takes `common`).
+  whoCommon: "🌍 Common knowledge",
+  whoStateCommon: "🌍 Common knowledge: every character knows it, NPCs too, and anyone who joins later. Players can see it.",
+  whoDoneCommon: "Done: everyone, NPCs too, now knows it.",
+  whoCannotShow: "Show the names to the players first: common knowledge is something they see.",
   // Names in a list: "Mara, Tavin and Brann"; past five, the first four and how many more.
   whoNames: (names: string[]): string => {
     if (names.length <= 5) {
