@@ -523,6 +523,12 @@ async def with_know_words(
     shared = _knowers(known)  # worked out once for both
     names, links = know_words(known, shared)
     holders = link_holders(known, shared)
+    # the connections the "everyone" point of view holds (the door lists them only while shown)
+    common = {
+        str(statement)
+        for kind, statement, character, _sure in known["knowers"]
+        if kind == gate.CONNECTION and character == gate.COMMON
+    }
     # (a graph page has nodes and edges, an overview page its tray of unconnected names; one
     # confirmed since the page was read is not in the data and has no word yet)
     for node in [*page.get("nodes", []), *page.get("tray", [])]:
@@ -538,6 +544,8 @@ async def with_know_words(
                 now = holders.get(str(link["id"]), [])
                 link["who"] = ("some" if now else "dm") if held else "all"
                 link["knownBy"] = now if held and now else []
+                if str(link["id"]) in common:  # 🌍 every character knows it (#4559)
+                    link["who"], link["knownBy"] = "common", []
 
 
 def page_of(
