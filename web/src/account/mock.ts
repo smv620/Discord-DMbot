@@ -75,7 +75,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint } from "./api";
+import type { StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
@@ -732,6 +732,28 @@ function pretendHandOvers(): HandOverQuestion[] {
   ];
 }
 
+/** The pretend 🤫 Known or secret? questions (#4598): a narrowing and a reveal, the words as the API gives them. */
+function pretendSecretQuestions(): SecretQuestion[] {
+  return [
+    {
+      id: "q1",
+      kind: "narrow",
+      heading: "Bob Tamsin is an ally of Ilsa sounds like a secret, but your players already know it.",
+      source: `From "Tavin's tale, 3 Nov".`,
+      keep: { label: "Keep it known", says: "Keep it known: nothing changes, and DMbot won't ask this again.", done: "Left as known. DMbot won't ask about this again." },
+      make: { label: "Make it secret", says: "Make it secret: this connection is hidden from your players in DMbot. Undo takes it back.", done: "Done: Bob Tamsin is an ally of Ilsa is a secret now. Undo takes it back." },
+    },
+    {
+      id: "q2",
+      kind: "reveal",
+      heading: "Your players know the name Old Bob. Only you know it is Bob Tamsin.",
+      source: "",
+      keep: { label: "Keep it secret", says: "Keep it secret: they don't learn it is Bob Tamsin, and DMbot won't ask this again.", done: "Kept secret. DMbot won't ask about this again." },
+      make: { label: "Let them know", says: "Let them know: your players learn that Old Bob is Bob Tamsin. Undo takes it back.", done: "Done: your players now know Old Bob is Bob Tamsin. Undo takes it back." },
+    },
+  ];
+}
+
 function pretendTraitOffers(): TraitOffer[] {
   return [
     { entity: "e1", who: "Torvin", kind: "species", name: "Dwarf", key: "dwarf", known: true, edition: "2024", current: "Human", classes: [], upload: "Notes, 9 Nov", quote: "Torvin Ashgrove is a dwarf of the northern holds." },
@@ -837,6 +859,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const waitingState: Record<string, Waiting> = {}; // (fresh for each pretend API)
   const handOverState: Record<string, { list: HandOverQuestion[]; no: Map<string, HandOverQuestion> }> = {}; // by campaign (#4122)
   const traitState: Record<string, TraitOffer[]> = {}; // the lineage and class questions left, by campaign (#3946)
+  const secretState: Record<string, SecretQuestion[]> = {}; // the 🤫 Known or secret? questions left, by campaign (#4598)
   const readingState: Record<string, { list: Reading[]; kept: Map<string, Reading> }> = {}; // (#2412) by campaign
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
   let me = scenarioMe(scenario);
@@ -3311,6 +3334,27 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       }
       list.splice(at, 1);
       return how === "keep" ? { batch: 700 + at } : {};
+    },
+    // The 🤫 Known or secret? questions (#4598): the DM's own. A keep or a make takes the question off the list; a make's
+    // Undo (by its batch, 41 here) puts nothing back, since the mock keeps no change to undo.
+    async secretQuestions(ref): Promise<SecretQuestion[]> {
+      calls.push(`secretQuestions:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      return structuredClone((secretState[ref] ??= pretendSecretQuestions()));
+    },
+    async answerSecret(ref, change) {
+      calls.push(`answerSecret:${ref}:${change.action}:${change.action === "undo" ? change.batch : change.question}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      if (change.action === "undo") return { batch: null };
+      const list = (secretState[ref] ??= pretendSecretQuestions());
+      const at = list.findIndex((q) => q.id === change.question);
+      if (at < 0) throw new ApiError("gone");
+      list.splice(at, 1);
+      return { batch: change.action === "make" ? 41 : null };
     },
     async nameSources(ref): Promise<NameSource[]> {
       calls.push(`nameSources:${ref}`);
