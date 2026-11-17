@@ -6,6 +6,7 @@ last class needs Postgres; the rest need nothing."""
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from typing import Any
 
 from dmbot.maps import measure, measure_phrase
@@ -222,6 +223,56 @@ class TheLayer(unittest.IsolatedAsyncioTestCase):
             None, "how far is Ab from Bc?", asker_id=1, scene="", table=True
         )
         self.assertEqual((private.in_game, public.in_game), (False, True))
+
+    async def private_case(
+        self, asker: int, table_says: str = "I can't find Bc on any map yet."
+    ) -> Any:
+        self.dms = []
+        campaign = SimpleNamespace(dm_user_ids=frozenset({7}))
+
+        async def measured(_c: Any, _asked: Any, dm: bool) -> str | None:
+            self.dms.append(dm)
+            return "About 40 miles …" if dm else table_says
+
+        layer = MapMeasuring(Inner(), measured, on=lambda: True)
+        return await layer.answer(
+            campaign, "how far is Ab from Bc?", asker_id=asker, scene="", table=True
+        )
+
+    async def test_a_dms_table_question_the_tables_maps_miss_always_goes_privately(self) -> None:
+        # (#4676, Supervisor's ruling on #4691: the table hears "Sent to the DM privately" whether
+        # or not a hidden map has the answer; the DM's maps are read on the private path only)
+        for table_says in (
+            "I can't find Bc on any map yet.",
+            "I don't have a map with both Ab and Bc on it.",
+        ):
+            got = await self.private_case(asker=7, table_says=table_says)
+            self.assertTrue(got.one_for_dm)
+            self.assertFalse(got.in_game)  # (never written to the raw transcript)
+            self.assertEqual(got.text, table_says)  # (the table's own words, as a fallback)
+            self.assertEqual(self.dms, [False])
+
+    async def test_a_dms_table_question_the_tables_maps_answer_stays_at_the_table(self) -> None:
+        got = await self.private_case(asker=7, table_says="About 40 miles …")
+        self.assertFalse(got.one_for_dm)
+        self.assertEqual((got.text, self.dms), ("About 40 miles …", [False]))
+
+    async def test_a_players_table_question_gets_the_tables_words(self) -> None:
+        got = await self.private_case(asker=8)
+        self.assertFalse(got.one_for_dm)
+        self.assertEqual(got.text, "I can't find Bc on any map yet.")  # (no hint a map exists)
+        self.assertEqual(self.dms, [False])  # (the DM's maps are never read for a player)
+
+    def test_what_counts_as_measured(self) -> None:
+        self.assertTrue(words.measured(words.far("40 miles", "A", "B", "X")))
+        self.assertTrue(words.measured(words.way("A", "east", "B", "X", north_known=True)))
+        self.assertTrue(words.measured(words.same_spot("A", "B", "X")))
+        self.assertTrue(words.measured(words.at_most("a mile", "A", "B", "X")))
+        for miss in (
+            words.not_on_a_map("A", dm=True), words.no_shared_map("A", "B", dm=False),
+            words.no_scale("X", dm=True), words.no_scale("X", dm=False),
+        ):  # fmt: skip
+            self.assertFalse(words.measured(miss), miss)
 
     async def test_a_failure_goes_to_the_engine(self) -> None:
         inner = Inner()
