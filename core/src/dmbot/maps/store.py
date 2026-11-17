@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NamedTuple
 
 from dmbot.db import Conn, Database
-from dmbot.memory._changes import MAP_FACTS, MAPS
+from dmbot.memory._changes import MAP_FACTS, MAP_FEATURES, MAPS
 from dmbot.memory.models import Written, new_id
 from dmbot.memory.store import MemoryStore
 from dmbot.pictures.store import MB, Usage, _lock, _usage
@@ -237,6 +237,7 @@ class MapStore:
                     "right_at": now, "use_ok": True if uploader_is_dm else None,
                     "use_by": uploader_id if uploader_is_dm else None,
                     "use_at": now if uploader_is_dm else None, "as_of": None, "replaces": None,
+                    "grid_from": None,
                     "created_at": now,
                 },
             )  # fmt: skip
@@ -333,6 +334,9 @@ class MapStore:
             return None
         for fact in await w.select(MAP_FACTS, " AND map_id = %s", [map_id]):
             await w.update(MAP_FACTS, str(fact["id"]), {"map_id": None})
+        for feature in await w.select(MAP_FEATURES, " AND map_id = %s", [map_id]):
+            # (its pins go with it, logged, so one Undo puts the map back with them: #4670)
+            await w.delete(MAP_FEATURES, str(feature["id"]))
         for other in await w.select(MAPS, " AND replaces = %s", [map_id]):
             await w.update(MAPS, str(other["id"]), {"replaces": None})
         await w.delete(MAPS, map_id)
@@ -450,6 +454,69 @@ class MapStore:
                 f"UPDATE campaign_maps SET {change}"
                 " WHERE guild_id = %s AND campaign_id = %s AND id = %s AND close_read_at = %s",
                 (guild_id, campaign_id, map_id, claimed),
+            )
+
+    # ---- positions (#4670, MapBot slice 4a; Supervisor's ruling 1 on #4670) ----
+
+    async def record_positions(
+        self, guild_id: int, campaign_id: str, map_id: str, read: Any
+    ) -> Any:
+        """A close read's pins, scale, grid and north, as DMbot's own write (one batch, one Undo),
+        and the map marked as read for pins (`pins_read_at`, in the same transaction). Counts only
+        come back (`positions.Recorded`)."""
+        from dmbot.maps import positions
+        from dmbot.memory._changes import ALIASES, ENTITIES
+        from dmbot.memory.store import _load_ontology
+
+        async with self._memory._write(guild_id, campaign_id, "extractor") as w:
+            await _lock(w.conn, guild_id, campaign_id)
+            onto = await _load_ontology(w)
+            names = positions.place_names(
+                await w.select(ENTITIES, " AND status = 'confirmed'"),
+                await w.select(ALIASES, " AND status = 'confirmed'"),
+                lambda kind: onto.is_a(kind, "place"),
+            )
+            done = await positions.record_in(w, map_id, read, names)
+            await w.conn.execute(
+                "UPDATE campaign_maps SET pins_read_at = %s WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s",
+                (int(self._clock()), guild_id, campaign_id, map_id),
+            )
+        return done
+
+    async def pins_waiting(self, guild_id: int) -> list[tuple[str, Map]]:
+        """The maps in this server read closely before pins were read (Supervisor's ruling 1: a
+        one-time re-read), oldest first, each with its campaign: DMbot may use them, their close
+        read is done, and they have no pins read yet."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"SELECT campaign_id, {COLUMNS} FROM campaign_maps WHERE guild_id = %s"
+                " AND use_ok IS TRUE AND close_read_at IS NOT NULL AND close_read_tries = 0"
+                " AND pins_read_at IS NULL ORDER BY created_at, id",
+                (guild_id,),
+            )
+            found = [(str(r["campaign_id"]), _map(r)) for r in await cur.fetchall()]
+        return [(c, m) for c, m in found if may_use_map(m)]
+
+    async def claim_pins(self, guild_id: int, campaign_id: str, map_id: str) -> bool:
+        """Mark a map's one-time re-read as taken, in the statement that checks it isn't yet, so
+        it is read at most once whatever happens next (a failure isn't tried again)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE campaign_maps SET pins_read_at = %s WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s AND pins_read_at IS NULL RETURNING id",
+                (int(self._clock()), guild_id, campaign_id, map_id),
+            )
+            return await cur.fetchone() is not None
+
+    async def release_pins(self, guild_id: int, campaign_id: str, map_id: str) -> None:
+        """A re-read put off (no credits, the day's picture limit, shutting down): its mark is
+        given back, so it is taken another day."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE campaign_maps SET pins_read_at = NULL WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s",
+                (guild_id, campaign_id, map_id),
             )
 
     async def waiting_for_a_dm(self, guild_id: int, campaign_id: str) -> list[Map]:

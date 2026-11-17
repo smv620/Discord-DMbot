@@ -1227,8 +1227,9 @@ class Undo(MemoryTest):
         # (62 before a merged entry's languages from the story moved with it, #4229: one read;
         # 63 before a place's land, climate and ruler moved with it, #4256: one read; 64 before a
         # thread's parts moved with it, #4471: one read; 65 before a merge read the kept entry to
-        # refuse a secret main name before the #4524 guard could hold it, #4524: one read)
-        self.assertLess(merge_statements, 66)
+        # refuse a secret main name before the #4524 guard could hold it, #4524: one read; 66
+        # before a place's pins on maps moved with it, #4670: one read)
+        self.assertLess(merge_statements, 67)
         self.assertLess(undo_statements, 60)
         self.assertEqual(await self.snapshot(), before)  # undo split them again exactly
         # Still one log row per changed row, so undo and redo work as before.
@@ -1358,9 +1359,9 @@ class Undo(MemoryTest):
             assert merged.batch is not None
             await self.memory.undo(GUILD_A, self.c, merged.batch, source="dm")
         self.assertLess(
-            merge_statements, 63
+            merge_statements, 64
         )  # (60 with #2790: one statement for the people who hang off a merge; 61 with #4229; 62
-        # with #4256's places)
+        # with #4256's places; 63 with #4670's pins on maps)
         self.assertLess(statements, 60)
         self.assertEqual(await self.snapshot(), before)
 
@@ -1860,8 +1861,9 @@ class Lists(MemoryTest):
         # was 30 before beliefs, #2409: the perspectives and the manipulated-by link).
         # (35 with #4229's story languages; 37 with #4256's places: one read per kind written;
         # 38 with #4346's maps, which name the place they cover; 41 with #4471's thread parts,
-        # which name their thread, who gave them and what they point at)
-        self.assertLess(statements, 42)
+        # which name their thread, who gave them and what they point at; 42 with #4670's pins,
+        # which name their place)
+        self.assertLess(statements, 43)
         self.assertEqual(await self.snapshot(), before)
 
     async def test_a_2000_line_list_saves_faster_than_row_by_row(self) -> None:
