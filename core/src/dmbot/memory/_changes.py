@@ -1417,10 +1417,11 @@ async def _map_pictures_kept(
     conn: Conn, ids: tuple[int, str], rows: Sequence[dict[str, Any]]
 ) -> list[int]:
     """The pictures of the maps a batch changed, each still kept: a map's Undo needs its picture
-    (#4346). Deleting a picture takes its map with it
-    outside the log (`PictureStore.delete`), and a deleted picture's row stays behind with
-    `deleted_at` set, so without this check an Undo could bring back a map of a picture that is
-    gone, or report a plain "changed since" for a map the picture took with it."""
+    (#4346), and a batch whose map went with its picture is refused (MAP_PICTURE_GONE, #4697).
+    Deleting a picture takes its map with it outside the log (`PictureStore.delete`), and a
+    deleted picture's row stays behind with `deleted_at` set, so without this check an Undo could
+    bring back a map of a picture that is gone, or report a plain "changed since" for a map the
+    picture took with it."""
     pictures = {
         int(side["picture_id"])
         for r in rows
@@ -1440,6 +1441,8 @@ async def _map_pictures_kept(
         if isinstance(side, dict) and side.get("map_id")
     }
     if named:
+        # (the picture store's lock first, as below: a picture deleted meanwhile waits for this)
+        await pictures_lock(conn, *ids)
         cur = await conn.execute(
             "SELECT m FROM unnest(%s::text[]) AS m WHERE NOT EXISTS (SELECT 1 FROM campaign_maps"
             " WHERE guild_id = %s AND campaign_id = %s AND id = m) AND NOT EXISTS (SELECT 1"

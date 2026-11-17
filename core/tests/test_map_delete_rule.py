@@ -187,27 +187,45 @@ class TheNo(Facts):
 
 
 class UndoAfterThePictureWent(Facts):
-    """#4697 (Supervisor's ruling 3 on #4694): an Undo of a Remove after the map's picture was
-    deleted changes nothing and says so plainly, never the generic failure."""
+    """#4697 (Supervisor's ruling 3 on #4694): an Undo of a map read's pins after the map's picture
+    was deleted (the map and its own log rows went with it, outside the log) changes nothing and
+    says so plainly; a map gone by a logged Remove is still "changed since"."""
+
+    async def pins_batch(self) -> int:
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT max(batch) AS b FROM memory_changes WHERE table_name = 'map_features'"
+            )
+            got = await cur.fetchone()
+        assert got is not None and got["b"] is not None
+        return int(got["b"])
 
     async def test_nothing_comes_back_and_it_says_why(self) -> None:
         from dmbot.memory._changes import MAP_PICTURE_GONE
         from dmbot.memory.models import MemoryRuleError
 
-        await self.record()  # (pins on the map: the Remove's batch holds them)
-        kept = await self.fact("forest", status="confirmed", source="map", also_text=False)
-        removed = await self.maps.remove_map(GUILD_A, self.one.id, self.map_id)
-        assert removed.batch is not None
+        await self.record()  # (the read's pins: a batch with no map row of its own)
+        batch = await self.pins_batch()
         async with self.db.guild(GUILD_A) as conn:
             cur = await conn.execute(
-                "SELECT id FROM campaign_pictures WHERE campaign_id = %s ORDER BY id LIMIT 1",
-                (self.one.id,),
+                "SELECT picture_id FROM campaign_maps WHERE id = %s", (self.map_id,)
             )
             picture = await cur.fetchone()
         assert picture is not None
-        await self.pictures.delete(GUILD_A, self.one.id, int(picture["id"]))
-        before = (await self.row(kept), await self.features())
+        await self.pictures.delete(GUILD_A, self.one.id, int(picture["picture_id"]))
+        before = await self.features()
         with self.assertRaises(MemoryRuleError) as caught:
-            await self.memory.undo(GUILD_A, self.one.id, removed.batch)
+            await self.memory.undo(GUILD_A, self.one.id, batch)
         self.assertEqual(str(caught.exception), MAP_PICTURE_GONE)
-        self.assertEqual((await self.row(kept), await self.features()), before)  # (nothing)
+        self.assertEqual(await self.features(), before)  # (nothing changed)
+
+    async def test_a_map_gone_by_a_logged_remove_is_changed_since(self) -> None:
+        from dmbot.memory._changes import CHANGED_SINCE
+        from dmbot.memory.models import MemoryRuleError
+
+        await self.record()
+        batch = await self.pins_batch()
+        await self.maps.remove_map(GUILD_A, self.one.id, self.map_id)
+        with self.assertRaises(MemoryRuleError) as caught:
+            await self.memory.undo(GUILD_A, self.one.id, batch)
+        self.assertEqual(str(caught.exception), CHANGED_SINCE)
