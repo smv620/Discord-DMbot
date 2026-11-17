@@ -691,6 +691,9 @@ class MapStore:
         from dmbot.memory.models import name_key
         from dmbot.memory.store import _load_ontology
 
+        if asked.kind not in (measure_phrase.FAR, measure_phrase.WAY):
+            return None  # (#4260 slice 10a: "how long" is built next; until then, the usual answer)
+
         async with self._memory._read(guild_id, campaign_id, snapshot=True) as scope:
             onto = await _load_ontology(scope)
             entities = await scope.select(ENTITIES, " AND status = 'confirmed'")
