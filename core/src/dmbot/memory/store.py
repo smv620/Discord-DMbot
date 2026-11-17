@@ -4847,7 +4847,8 @@ class MemoryStore:
             _check_role(onto, type, role, played_by)
             before = await _entity_row(w, entity_id)
             check_named(asked, before["name"])
-            hide = as_kin and await _kin_hidden(w, before)
+            # (only an unnamed person is kept as kin: a named entry passed in is left as it is)
+            hide = as_kin and bool(before["unnamed"]) and await _kin_hidden(w, before)
             # A session's new name said only while the party was split: kept from the players who
             # weren't there (#4037), in this same update (one change per entry, one Undo).
             scene = (
@@ -10637,29 +10638,39 @@ async def _live_led_to(
 
 
 async def _kin_hidden(w: Changes, row: Mapping[str, Any]) -> bool:
-    """An unnamed relative kept with its character (#4636 part 1) is hidden from players when the
-    character is, or when any tie between them, kept or still waiting, is secret: it is never
-    more visible than the tie that makes it (Supervisor's condition). One that hangs off nobody,
-    or off something gone, is hidden too: nothing says the players may know of it."""
+    """An unnamed relative kept with its character (#4636 part 1) is hidden from players unless
+    every tie between the two is one the players are shown, or would be once kept: it is never
+    more visible than the tie that makes it (Supervisor's condition), so naming it later shows
+    nothing the tie hides. Shown means, for a kept connection, confirmed and neither secret nor
+    unrevealed (`knowers.relation_shown`); for one still waiting, what keeping it leaves shown
+    (`backstory_keep.kept_unrevealed`): not secret, said to be known by everyone (`world`) and not
+    one character's own backstory (`known_by`). A plain backstory ("Brewner has a daughter") is
+    known by its character only, so the relative stays hidden. Hidden too when its character is,
+    or when no tie or no character is found: nothing says the players may know of it."""
     anchor_id = row.get("unnamed_anchor")
     if not anchor_id:
         return True
     anchor = await w.get(ENTITIES, str(anchor_id))
     if anchor is None or anchor["hidden_from_players"] or anchor["audience_limited"]:
         return True
-    pair = (row["id"], anchor_id, anchor_id, row["id"])
-    for table, live in (("memory_relations", " AND status <> 'rejected'"), ("backstory_links", "")):
-        cur = await w.conn.execute(
-            f"SELECT bool_or(secret) AS secret FROM {table}"  # (two fixed table names)
-            " WHERE guild_id = %s AND campaign_id = %s"
-            " AND ((subject_id = %s AND object_id = %s) OR (subject_id = %s AND object_id = %s))"
-            + live,
-            (*w.ids, *pair),
-        )
+    pair = (*w.ids, row["id"], anchor_id, anchor_id, row["id"])
+    between = (
+        " WHERE guild_id = %s AND campaign_id = %s"
+        " AND ((subject_id = %s AND object_id = %s) OR (subject_id = %s AND object_id = %s))"
+    )
+    ties, shown = 0, True
+    for query in (
+        "SELECT count(*) AS n, bool_and(status = 'confirmed' AND NOT secret AND NOT unrevealed)"
+        " AS shown FROM memory_relations" + between + " AND status <> 'rejected'",
+        "SELECT count(*) AS n, bool_and(NOT secret AND world <> 0 AND known_by = '')"
+        " AS shown FROM backstory_links" + between,
+    ):
+        cur = await w.conn.execute(query, pair)
         found = await cur.fetchone()
-        if found is not None and found["secret"]:
-            return True
-    return False
+        if found is not None and found["n"]:
+            ties += int(found["n"])
+            shown = shown and bool(found["shown"])
+    return not (ties and shown)
 
 
 async def _settle_kinds_after_undo(w: Changes, batch: int) -> None:

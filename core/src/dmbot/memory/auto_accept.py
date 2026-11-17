@@ -36,7 +36,7 @@ from dmbot.memory.models import (
     Entity,
     MemoryRuleError,
 )
-from dmbot.memory.ontology import rules_word_for
+from dmbot.memory.ontology import resolve_kind, rules_word_for
 from dmbot.memory.store import MemoryStore
 from dmbot.names.not_names import CREATURE_KINDS
 
@@ -144,7 +144,8 @@ async def accept_names(
         if dry_run:
             tally.accepted[NAMES] += 1
             tally.kinds[kind] += 1
-            accepted.add(entity.id)
+            if _a_person(kind):
+                accepted.add(entity.id)
             continue
         try:
             written = await memory.confirm_entity(guild, campaign, entity.id, kind, source=DM)
@@ -153,15 +154,23 @@ async def accept_names(
             tally.accepted[NAMES] += 1
             tally.kinds[kind] += 1
             tally.add_batch(written.batch)
-            accepted.add(entity.id)
         except Exception as exc:  # a rule, or anything else: counted, the run goes on
             refused(tally, NAMES, exc)
     if kin:
         await _accept_kin(memory, guild, campaign, tally, kin, accepted, dry_run=dry_run)
 
 
+def _a_person(kind: str) -> bool:
+    """A kind a dry run counts as a kept character, as the live run reads them back."""
+    try:
+        return resolve_kind(kind)[0] == "character"
+    except MemoryRuleError:
+        return False
+
+
 def _is_kin(entity: Entity) -> bool:
-    """An unnamed person who hangs off another entry and is a character, not a group."""
+    """An unnamed person who hangs off another entry and is a character, not a group. (Read with
+    getattr: callers and tests may pass a bare stand-in without the unnamed fields.)"""
     return bool(
         getattr(entity, "unnamed", False)
         and getattr(entity, "unnamed_anchor", None)
@@ -186,7 +195,7 @@ async def _accept_kin(
         e.id
         for e in await memory.entities(guild, campaign, statuses=("confirmed",))
         if e.type == "character"
-    } | (accepted if dry_run else set())  # (a dry run keeps nothing: count its names as kept)
+    } | (accepted if dry_run else set())  # (a dry run keeps nothing: count its people as kept)
     left = list(kin)
     for _ in range(len(kin)):
         ready = [e for e in left if e.unnamed_anchor in kept_people]
