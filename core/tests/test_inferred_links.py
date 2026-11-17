@@ -233,5 +233,28 @@ class TheStore(DatabaseTest):
         self.assertFalse(row.truth)
 
 
+class TheGuessLine(unittest.TestCase):
+    """(#4682) the card says before the answer who DMbot thinks knows, with the icon for one"""
+
+    def card(self, known_by: str, characters: dict[str, str]) -> str:
+        from dmbot.ui.name_background import ConnectionOffer
+
+        view = ConnectionOffer("c" * 32)
+        view.characters = characters
+        w = waiting()
+        w.known_by, w.subject, w.object = known_by, "Mira", "Tam"
+        w.hand_over_name, w.upload = "", ""
+        view.current, view.shown = w, [w]
+        return view._card()
+
+    def test_one_character_gets_the_one_person_icon_and_their_name(self) -> None:
+        text = self.card("e1", {"e1": "Cerric"})
+        self.assertIn("👤 DMbot thinks only Cerric knows this.", text)
+
+    def test_no_guess_means_no_guess_line(self) -> None:
+        self.assertNotIn("DMbot thinks", self.card("", {"e1": "Cerric"}))
+        self.assertNotIn("DMbot thinks", self.card("e2", {"e1": "Cerric"}))  # (not a character)
+
+
 if __name__ == "__main__":
     unittest.main()
