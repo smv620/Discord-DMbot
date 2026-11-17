@@ -74,6 +74,7 @@ from dmbot.web import (
     npc_pages,
     offers,
     optional_rules,
+    party_characters,
     past_sessions,
     pc_icons,
     pictures,
@@ -2823,6 +2824,17 @@ def create_app(
             body = None
         try:
             return {"answer": await thread_clues.change(db, session, ref, thread, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/party-characters")
+    async def me_campaign_party_characters(ref: str, signed: Signed) -> dict[str, Any]:
+        """The party's player characters, for 👥 Some know (#4680): DM only, nothing for anyone
+        else."""
+        session, _token = signed
+        try:
+            return await party_characters.read(db, session, ref)
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
