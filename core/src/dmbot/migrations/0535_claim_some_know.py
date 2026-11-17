@@ -9,7 +9,9 @@ from __future__ import annotations
 # `dmbot_web_party_characters(g, c)`: NULL for anyone who is not a DM of the campaign (or a server
 # the caller is not in), as 0519's door; else `[{id, name}]`, the campaign's confirmed player
 # characters (`type = 'character'`, `role = 'player_character'`), A to Z: the picker's list, the
-# same people Discord's picker offers. Read only; the ids are the entries' own, which the answer
+# same people Discord's picker offers (merged-away entries left out, and the first 25, as its
+# picker caps). The bot's own check on an answer is Discord's: any confirmed character of the
+# campaign may be ticked. Read only; the ids are the entries' own, which the answer
 # needs.
 #
 # `claim-some` goes on the queue door as 0343's `claim-pick` did: its target is the waiting claim
@@ -158,11 +160,13 @@ SQL = (
             RETURN NULL;
         END IF;
         RETURN COALESCE((
-            SELECT jsonb_agg(jsonb_build_object('id', e.id, 'name', e.name)
-                             ORDER BY lower(e.name), e.id)
-            FROM memory_entities e
-            WHERE e.guild_id = g AND e.campaign_id = c AND e.type = 'character'
-              AND e.role = 'player_character' AND e.status = 'confirmed'), '[]'::jsonb);
+            SELECT jsonb_agg(jsonb_build_object('id', p.id, 'name', p.name)
+                             ORDER BY lower(p.name), p.id)
+            FROM (SELECT e.id, e.name FROM memory_entities e
+                  WHERE e.guild_id = g AND e.campaign_id = c AND e.type = 'character'
+                    AND e.role = 'player_character' AND e.status = 'confirmed'
+                    AND e.merged_into IS NULL
+                  ORDER BY lower(e.name), e.id LIMIT 25) p), '[]'::jsonb);
     END
     $fn$;
 

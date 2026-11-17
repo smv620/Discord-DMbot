@@ -1914,6 +1914,17 @@ class TheEdits(Editing):
         again = await self.claims.get(self.g, self.one.id, claim)
         assert again is not None
         self.assertEqual(again.status, "proposed")
+        self.assertIsNone(again.fact_id)  # (the fact and who knew it went with the Undo)
+
+    async def test_some_know_for_a_claim_already_kept_is_refused(self) -> None:
+        (wren,) = await self.party("Wren")
+        claim = await self.claim()
+        await self.queue(kind="claim", action="confirm", id=claim)
+        await self.apply_waiting()
+        self.assertEqual(
+            await self.refused_queue(kind="claim", action="some", id=claim, characters=[wren]),
+            "not_found",
+        )
 
     async def test_some_know_needs_a_waiting_claim_a_dm_and_one_to_25_people(self) -> None:
         (wren,) = await self.party("Wren")
@@ -1958,6 +1969,7 @@ class TheEdits(Editing):
         self.assertIn("Ash", names)
         self.assertIn("Wren", names)
         self.assertNotIn("An NPC", names)  # (a player character is one a player plays)
+        self.assertEqual(len(names), len(set(names)))
         with self.assertRaises(RecapError) as refused:
             await party_characters.read(self.web, self.player, self.cref)
         self.assertEqual(refused.exception.code, "not_allowed")

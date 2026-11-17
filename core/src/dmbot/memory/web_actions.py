@@ -2084,6 +2084,10 @@ async def _answer_waiting(
         if claim is None or claim.reason == WAITING_NAME_REASON:
             return _failed(NOT_FOUND)  # (a held claim is in no list the DM sees, #3749)
         if claim.status != CLAIM_PROPOSED:
+            if a.action == "claim-some":
+                # Already kept for everyone (Discord, another tab): a stale 👥 must not read as
+                # "held back and known to exactly these characters".
+                return _failed(GONE)
             done = CLAIM_REJECTED if a.action == "claim-reject" else CLAIM_CONFIRMED
             return (
                 Outcome(result_id=claim.fact_id or "")
