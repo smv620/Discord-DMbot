@@ -504,13 +504,10 @@ async def run(
                     # (a single run's map step, once the rest is done: `--repeat` does it after
                     # the runs, on the kept campaign)
                     await _map_on(args, {"guild": gid, "campaign": cid}, folder, say)
-                else:  # (#4646: a step that does not run says why, never silence)
-                    map_step.skipped(
-                        say,
-                        "only the kept run reads the map"
-                        if not recap
-                        else "an earlier step did not finish",
-                    )
+                elif recap:
+                    # (#4646: a step that does not run says why, never silence; the runs of a
+                    # `--repeat` stay quiet here, `_finish` says it for the kept run)
+                    map_step.skipped(say, "an earlier step did not finish")
             if metrics is not None or snapshot is not None:
                 await _measure(db, memory, gid, cid, done, metrics, snapshot, say)
         # The secret connections by source and the split-party counts (Supervisor, #3545): counts

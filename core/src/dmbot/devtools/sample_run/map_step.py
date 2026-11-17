@@ -30,11 +30,12 @@ POLL_S = 20
 TITLE = "Icewind Dale (sample)"
 
 
-def skipped(say: Callable[[str], None], reason: str) -> None:
+def skipped(say: Callable[[str], None], reason: str, *, logged: str | None = None) -> None:
     """Say, and log, that the map step did not run and why (#4646): a step that silently doesn't
-    run reads as "nothing found". The reason is a fixed phrase, never a path or a name."""
+    run reads as "nothing found". `reason` is said on the screen, never a path; the log gets
+    `logged` (a fixed phrase) when given, else `reason`."""
     say(f"map: skipped ({reason})")
-    log.info("Sample map: skipped (%s)", reason)
+    log.info("Sample map: skipped (%s)", logged or reason)
 
 
 async def run(
@@ -108,7 +109,7 @@ async def run(
             title=TITLE, audience="dm", storage_mb=settings.picture_storage_mb,
         )  # fmt: skip
     except MapError as exc:  # (the store's own words)
-        skipped(say, str(exc))
+        skipped(say, str(exc), logged="the map was refused")  # (the store's words: screen only)
         return {"skipped": 1}
     # The owner's standing confirmation for the sample campaign (#4423): recorded only now that the
     # map is kept, as the file's own SHA-256 (it can be checked against the file on the server)
@@ -123,9 +124,10 @@ async def run(
             break
         await sleep(POLL_S)
     if read:  # (#4646: the success path says so too, never only the failures)
-        say(f"map: read closely ({tries} tries, {int(clock() - began)} seconds)")
-        log.info("Sample map: read closely after %d tries", tries)
-    if not read:
+        seconds = int(clock() - began)
+        say(f"map: read closely ({tries} tries, {seconds} seconds)")
+        log.info("Sample map: read closely after %d tries, %d seconds", tries, seconds)
+    else:
         say(
             f"map: not read closely (the bot tried {tries} times)"
             if tries
