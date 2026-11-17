@@ -217,6 +217,10 @@ class MapUndo(DatabaseTest):
         # (both keys are ON DELETE SET NULL: the database would clear them unlogged)
         self.assertEqual(
             set(DEPENDENTS["campaign_maps"]),
-            {("memory_map_facts", "map_id", False), ("campaign_maps", "replaces", False)},
+            {
+                ("memory_map_facts", "map_id", False),
+                ("campaign_maps", "replaces", False),
+                ("map_features", "map_id", False),  # (its pins: CASCADE, #4670)
+            },
         )
         self.assertIn(("campaign_maps", "covers", False), DEPENDENTS["memory_entities"])
