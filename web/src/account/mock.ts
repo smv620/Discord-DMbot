@@ -736,6 +736,7 @@ function pretendTraitOffers(): TraitOffer[] {
   return [
     { entity: "e1", who: "Torvin", kind: "species", name: "Dwarf", key: "dwarf", known: true, edition: "2024", current: "Human", classes: [], upload: "Notes, 9 Nov", quote: "Torvin Ashgrove is a dwarf of the northern holds." },
     { entity: "e2", who: "Mira Voss", kind: "class", name: "Cleric", key: "cleric", known: true, edition: "2024", current: null, classes: ["Fighter"], upload: "", quote: "" },
+    { entity: "e3", who: "Brewner", kind: "language", name: "Giant", key: "giant", known: true, edition: "2024", current: null, classes: [], upload: "Session 4 notes", quote: "Brewner speaks Giant, the tongue of the hill clans." },
   ];
 }
 
