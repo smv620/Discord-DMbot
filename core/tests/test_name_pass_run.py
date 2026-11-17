@@ -632,7 +632,7 @@ class ThePass(NamesTest):
         posted = self.bot.ask_privately.await_args.args  # type: ignore[attr-defined]
         from dmbot.transcript import name_pass as np
 
-        self.assertEqual(posted[1], np.import_text(held))
+        self.assertEqual(posted[2], np.import_text(held))
         self.assertNotIn((GUILD, self.campaign.id), self.bot._import_reports)
         self.bot.ask_privately.reset_mock()  # type: ignore[attr-defined]
         live = await self.transcripts.open_session(GUILD, self.campaign.id, START + 4000)
