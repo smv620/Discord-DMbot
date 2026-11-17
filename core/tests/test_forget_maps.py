@@ -217,7 +217,7 @@ class ForgetMapReads(ForgetMaps):
         mine = await self.a_map(ALICE, dm=False)
         bobs = await self.a_map(BOB, dm=False)
         await self.fact(mine, "arctic", status="read", source="map", text=False)
-        theirs = await self.fact(bobs, "arctic2", status="read", source="map", text=False)
+        theirs = await self.fact(bobs, "glacier", status="read", source="map", text=False)
         theirs_text = await self.fact(bobs, "plain", status="read", source="map", text=True)
         await accounts.delete_person(self.db, ALICE, now=NOW)
         self.assertEqual(
