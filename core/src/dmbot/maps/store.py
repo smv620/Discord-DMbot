@@ -278,12 +278,13 @@ async def _shown_at(w: Changes, map_id: str) -> int:
 
 
 async def _other_map_showing(w: Changes, fact_id: str, map_id: str) -> str | None:
-    """The oldest other map DMbot may use whose area points at this fact (#4696), or None."""
+    """The oldest other map DMbot may use whose area (not one the DM turned down) points at this
+    fact (#4696), or None."""
     cur = await w.conn.execute(
         "SELECT m.id FROM map_features f JOIN campaign_maps m ON m.guild_id = f.guild_id"
         " AND m.campaign_id = f.campaign_id AND m.id = f.map_id"
         " WHERE f.guild_id = %s AND f.campaign_id = %s AND f.fact_id = %s AND m.id <> %s"
-        " AND m.use_ok IS TRUE ORDER BY m.created_at, m.id LIMIT 1",
+        " AND f.status <> 'rejected' AND m.use_ok IS TRUE ORDER BY m.created_at, m.id LIMIT 1",
         (w.guild_id, w.campaign_id, fact_id, map_id),
     )
     row = await cur.fetchone()
@@ -505,7 +506,9 @@ class MapStore:
         # What the map said (§7.5, Supervisor's ruling on #4236 f; #4259 slice 8b), in the same
         # write, so one Undo puts it all back: DMbot's read resting only on this map goes with it;
         # a read the text also stated stays, as the text's; the DM's own word (and the DM's no)
-        # stays, without the pointer. A picture deleted with its map follows the same rule
+        # stays, without the pointer; a fact another usable map's area still shows is first kept
+        # and re-pointed to the oldest such map (#4696). A picture deleted with its map follows
+        # the same rule
         # (`PictureStore.delete`); only a row whose map is gone some other way loses just the
         # pointer (the foreign key's ON DELETE SET NULL).
         for fact in await w.select(MAP_FACTS, " AND map_id = %s", [map_id]):

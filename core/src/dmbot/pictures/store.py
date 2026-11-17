@@ -445,7 +445,7 @@ class PictureStore:
                 " (f.fact_id) f.fact_id, m.id AS map_id FROM map_features f JOIN campaign_maps m"
                 " ON m.guild_id = f.guild_id AND m.campaign_id = f.campaign_id AND m.id = f.map_id"
                 " WHERE f.guild_id = %s AND f.campaign_id = %s AND m.use_ok IS TRUE"
-                " AND m.picture_id <> %s AND f.fact_id IS NOT NULL"
+                " AND m.picture_id <> %s AND f.fact_id IS NOT NULL AND f.status <> 'rejected'"
                 " ORDER BY f.fact_id, m.created_at, m.id) AS o"
                 " WHERE t.guild_id = %s AND t.campaign_id = %s AND t.id = o.fact_id"
                 " AND t.map_id IN (SELECT id FROM campaign_maps WHERE guild_id = %s"

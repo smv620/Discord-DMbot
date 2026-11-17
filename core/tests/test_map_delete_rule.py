@@ -1,7 +1,8 @@
 """When a map is deleted (#4259, MapBot slice 8b; docs/design/mapbot_layers.md §7.5; Supervisor's
 ruling on #4236 f): DMbot's read resting only on that map goes with it; a read the text also stated
 stays as the text's; the DM's own word stays, without the pointer; one Undo puts it all back. A
-picture deleted with its map follows the same rule, (backups: test_map_facts).
+picture deleted with its map follows the same rule, (backups: test_map_facts). A fact another
+usable map's area still shows is kept, re-pointed to the oldest such map (#4696).
 Invented names; needs Postgres."""
 
 from __future__ import annotations
@@ -65,8 +66,8 @@ class TheRule(Facts):
             await self.row(dms), {"status": "confirmed", "source": "map", "map_id": None}
         )  # (the DM's word stays, without the pointer)
 
-    async def other_area(self, fact_id: str, *, usable: bool = True) -> tuple[str, str]:
-        other = await self.add(await self.picture(self.one.id, 2), dm=True, width=10, height=10)
+    async def other_area(self, fact_id: str, *, usable: bool = True, n: int = 2) -> tuple[str, str]:
+        other = await self.add(await self.picture(self.one.id, n), dm=True, width=10, height=10)
         feature = uuid.uuid4().hex
         async with self.db.guild(GUILD_A) as conn:  # (another map's area pointing at the fact)
             await conn.execute(
@@ -77,7 +78,8 @@ class TheRule(Facts):
             )
             if not usable:
                 await conn.execute(
-                    "UPDATE campaign_maps SET use_ok = FALSE WHERE id = %s", (other,)
+                    "UPDATE campaign_maps SET use_ok = FALSE WHERE guild_id = %s AND id = %s",
+                    (GUILD_A, other),
                 )
         return other, feature
 
@@ -103,6 +105,34 @@ class TheRule(Facts):
             await self.row(only_map), {"status": "read", "source": "map", "map_id": self.map_id}
         )
 
+    async def test_the_oldest_other_map_and_never_a_turned_down_area(self) -> None:
+        only_map = await self.fact("arctic", status="read", source="map", also_text=False)
+        older, _ = await self.other_area(only_map)
+        newer, newer_area = await self.other_area(only_map, n=3)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE campaign_maps SET created_at = 1 WHERE guild_id = %s AND id = %s",
+                (GUILD_A, older),
+            )
+            await conn.execute(  # (the older one's area turned down: the newer one keeps it)
+                "UPDATE map_features SET status = 'rejected' WHERE guild_id = %s AND map_id = %s",
+                (GUILD_A, older),
+            )
+        await self.maps.remove_map(GUILD_A, self.one.id, self.map_id)
+        self.assertEqual((await self.row(only_map) or {}).get("map_id"), newer)
+        self.assertEqual(await self.area_points_at(newer_area), only_map)
+
+    async def test_a_dms_no_re_points_it_and_undo_puts_it_back(self) -> None:
+        dms = await self.fact("forest", status="confirmed", source="map", also_text=False)
+        other, _ = await self.other_area(dms)
+        written = await self.maps.answer_use(GUILD_A, self.one.id, self.map_id, dm_id=7, yes=False)
+        self.assertEqual(
+            await self.row(dms), {"status": "confirmed", "source": "map", "map_id": other}
+        )
+        assert written.batch is not None
+        await self.memory.undo(GUILD_A, self.one.id, written.batch)
+        self.assertEqual((await self.row(dms) or {}).get("map_id"), self.map_id)
+
     async def test_a_map_dmbot_may_not_use_does_not_keep_it(self) -> None:
         only_map = await self.fact("arctic", status="read", source="map", also_text=False)
         _, feature = await self.other_area(only_map, usable=False)
@@ -119,7 +149,9 @@ class TheRule(Facts):
             )
             picture = await cur.fetchone()
         assert picture is not None
+        before = await self.version()
         await self.pictures.delete(GUILD_A, self.one.id, int(picture["picture_id"]))
+        self.assertGreater(await self.version(), before)  # (a re-point alone moves it too)
         self.assertEqual(
             await self.row(only_map), {"status": "read", "source": "map", "map_id": other}
         )
