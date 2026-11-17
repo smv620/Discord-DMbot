@@ -16,20 +16,23 @@ import discord
 
 from dmbot.logs import set_log_context
 from dmbot.memory.models import DM, MemoryRuleError
+from dmbot.memory.setting_worlds import WORLDS
+from dmbot.mentions import NO_PINGS
 
 log = logging.getLogger(__name__)
 
-_ID = r"(?P<campaign>[0-9a-f]{32}):(?P<entity>[0-9a-f]{32})"
+_CAMPAIGN = r"(?P<campaign>[0-9a-f]{32})"
+_ID = rf"{_CAMPAIGN}:(?P<entity>[0-9a-f]{{32}})"
 
 LABEL = "Campaign setting"
 KEEP_LABEL = "Keep it"
 NOT_SET = (
-    f"• **{LABEL}:** not set yet. To pick one, open the card of a region or a bigger "
-    "place and tap "
-    "🌍 Make it the setting."
+    f"• **{LABEL}:** not set. Pick one here, or open a big place's card (a region or "
+    "bigger) and tap 🌍 Make it the setting."
 )
 ONLY_DMS = "Only the DM can change the campaign's setting."
 CHANGED = "That guess had already changed. The card now shows the latest."
+STALE_LIST = "That list was out of date. Pick again from the card."
 FAILED = "Couldn't change the campaign's setting. Try again in a moment."
 
 
@@ -53,8 +56,8 @@ def line(field: SettingField | None) -> list[str]:
     name = discord.utils.escape_markdown(field.name)
     if field.guessed:
         return [
-            f"• **{LABEL}:** {name} (DMbot's guess from your adventure). "
-            f"Tap ✅ {KEEP_LABEL} if it's right."
+            f"• **{LABEL}:** {name}? DMbot guessed this from your adventure. "
+            f"Keep it, or pick another."
         ]
     return [f"• **{LABEL}:** {name}"]
 
@@ -128,5 +131,158 @@ class KeepSettingButton(
             log.exception("Couldn't keep the campaign's setting")
             await interaction.followup.send(FAILED, ephemeral=True)
             return
-        changed(interaction, campaign)
+        else:
+            changed(interaction, campaign)
         await settings._redraw(interaction, campaign)
+
+
+OWN = "own"  # the menu's last choice: a world that isn't in the list
+OWN_LABEL = "Somewhere of my own"
+PICK_TEXT = "🌍 **Which world is your story in?**\nPick one, or choose {own}."
+PICK_LABEL = "Pick another"
+PICK_NONE_LABEL = "Pick one"
+FORM_TITLE = "Your world's name"
+FORM_HINT = "Like Golarion or Middle Vale"
+
+
+async def _choose(interaction: discord.Interaction, campaign_id: str, name: str) -> None:
+    """The DM's pick, by name: checked again, saved as one change, and the card is drawn again.
+    The store's own words are said when it refuses (a typed name can be a place that is too small
+    or two places of one name)."""
+    from dmbot.dm_screen import settings
+    from dmbot.ui.names import changed
+
+    set_log_context(guild_id=interaction.guild_id)
+    allowed = await settings._may(interaction, campaign_id)
+    if allowed is None:
+        return
+    campaign = allowed[0]
+    if interaction.user.id not in campaign.dm_user_ids:  # (every press, and the form's send)
+        await interaction.response.send_message(ONLY_DMS, ephemeral=True)
+        return
+    memory = getattr(interaction.client, "memory", None)
+    if memory is None:
+        await interaction.response.send_message(FAILED, ephemeral=True)
+        return
+    await interaction.response.defer()
+    try:
+        await memory.choose_setting(campaign.guild_id, campaign.id, name, source=DM)
+    except MemoryRuleError as exc:  # (its words say what to do; the card stays as it is)
+        await interaction.followup.send(str(exc), ephemeral=True)
+        return
+    except Exception:
+        log.exception("Couldn't choose the campaign's setting")
+        await interaction.followup.send(FAILED, ephemeral=True)
+        return
+    else:
+        changed(interaction, campaign)
+    await settings._redraw(interaction, campaign)
+
+
+class PickButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:setpick:{_CAMPAIGN}",
+):
+    """Pick another (or Pick one, with no setting yet): opens the list of worlds in place. DM
+    only, checked again on every press."""
+
+    def __init__(self, campaign_id: str, *, has_setting: bool = True) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=PICK_LABEL if has_setting else PICK_NONE_LABEL,
+                emoji="🌍",
+                style=discord.ButtonStyle.secondary,
+                row=4,
+                custom_id=f"dmbot:setpick:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> PickButton:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        from dmbot.dm_screen import settings
+        from dmbot.dm_screen.settings import BackToSettingsButton
+
+        set_log_context(guild_id=interaction.guild_id)
+        allowed = await settings._may(interaction, self.campaign_id)
+        if allowed is None:
+            return
+        if interaction.user.id not in allowed[0].dm_user_ids:
+            await interaction.response.send_message(ONLY_DMS, ephemeral=True)
+            return
+        view = discord.ui.View(timeout=None)
+        view.add_item(WorldMenu(self.campaign_id))
+        view.add_item(BackToSettingsButton(self.campaign_id))
+        await interaction.response.edit_message(
+            content=PICK_TEXT.format(own=OWN_LABEL), view=view, allowed_mentions=NO_PINGS
+        )
+
+
+class WorldMenu(
+    discord.ui.DynamicItem[discord.ui.Select[discord.ui.View]],
+    template=rf"dmbot:setworld:{_CAMPAIGN}",
+):
+    """The list of worlds, each by its own name with its place under it, and Somewhere of my own.
+    A world is picked by key, never by text from the menu."""
+
+    def __init__(self, campaign_id: str) -> None:
+        options = [
+            discord.SelectOption(label=w.label, value=w.key, description=w.description)
+            for w in WORLDS
+        ]
+        options.append(discord.SelectOption(label=OWN_LABEL, value=OWN))
+        super().__init__(
+            discord.ui.Select(
+                placeholder="Pick a world",
+                options=options,
+                row=0,
+                custom_id=f"dmbot:setworld:{campaign_id}",
+            )
+        )
+        self.campaign_id = campaign_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> WorldMenu:
+        return cls(match["campaign"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        from dmbot.dm_screen import settings
+
+        allowed = await settings._may(interaction, self.campaign_id)
+        if allowed is None:
+            return
+        if interaction.user.id not in allowed[0].dm_user_ids:
+            await interaction.response.send_message(ONLY_DMS, ephemeral=True)
+            return
+        value = self.item.values[0]
+        if value == OWN:
+            # (a form isn't registered anywhere: one open across a restart fails, as all forms do)
+            await interaction.response.send_modal(OwnWorldForm(self.campaign_id))
+            return
+        world = next((w for w in WORLDS if w.key == value), None)
+        if world is None:  # (a stale menu)
+            await interaction.response.send_message(STALE_LIST, ephemeral=True)
+            return
+        await _choose(interaction, self.campaign_id, world.place)
+
+
+class OwnWorldForm(discord.ui.Modal, title=FORM_TITLE):
+    """Somewhere of my own: the world's name, typed."""
+
+    name: discord.ui.TextInput[OwnWorldForm] = discord.ui.TextInput(
+        label="World name", placeholder=FORM_HINT, max_length=80
+    )
+
+    def __init__(self, campaign_id: str) -> None:
+        super().__init__(timeout=900)
+        self.campaign_id = campaign_id
+
+    async def on_submit(self, interaction: discord.Interaction) -> None:
+        await _choose(interaction, self.campaign_id, self.name.value)

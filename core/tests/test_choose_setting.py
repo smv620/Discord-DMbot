@@ -134,6 +134,16 @@ class Choosing(MemoryTest):
         assert gone is not None
         self.assertEqual((gone.setting, gone.setting_from), (False, "declined"))
 
+    async def test_the_words_say_what_to_do_and_dm_is_no_name(self) -> None:
+        for name in ("   ", "DM"):
+            with self.assertRaises(MemoryRuleError):
+                await self.memory.choose_setting(GUILD_A, self.c, name, source=BY_DM)
+        town = await self.add("Phandalin", type="place", status=CONFIRMED)
+        await self.memory.set_place_level(GUILD_A, self.c, town, "settlement", source=BY_DM)
+        with self.assertRaises(MemoryRuleError) as small:
+            await self.memory.choose_setting(GUILD_A, self.c, "Phandalin", source=BY_DM)
+        self.assertIn("type another name", str(small.exception))
+
     async def test_an_empty_name_and_anyone_but_the_dm_are_refused(self) -> None:
         for name, source in (("  ", BY_DM), ("Golarion", "background")):
             with self.assertRaises(MemoryRuleError):
