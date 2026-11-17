@@ -177,6 +177,8 @@ FILES: dict[str, str] = {
     "memory/report_store.py": NOT_DRAWN,
     "memory/store.py": INSIDE_WRITE + " (`_drop_person`, the scan cleanup, heard words)",
     "memory/vectors.py": NOT_DRAWN + " (search vectors)",
+    "pictures/store.py": BUMPS + " (a deleted picture's map rows by the map deletion rule, #4259"
+    " slice 8b)",
     "transcript/store.py": NOT_DRAWN + " (erasing a person's words)",
 }
 
