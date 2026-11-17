@@ -46,7 +46,7 @@ from dmbot.memory.name_longer import longer_names, widens
 from dmbot.memory.scan import Match, near_match_in, sound_keys
 from dmbot.memory.scenes import ENTITY, Scenes
 from dmbot.memory.sounds import sound_codes
-from dmbot.ui import all_names, logic, name_places, player_id, split_words
+from dmbot.ui import all_names, logic, name_origin, name_places, player_id, split_words
 from dmbot.ui.check_everything import add_stop, next_part, progress
 from dmbot.ui.dmbot_commands import (
     NOT_IN_SERVER,
@@ -188,6 +188,13 @@ async def _campaign_for(interaction: discord.Interaction, campaign_id: str) -> C
         await _tell(interaction, NOT_IN_SERVER)
         return None
     campaign = await _bot(interaction).campaigns.get(guild_id, campaign_id)
+    if campaign is None and interaction.guild is None:
+        # A remembered server can be out of date (a campaign moved to another server, #2550):
+        # ask the database before saying no.
+        fresh = await _bot(interaction).campaigns.guild_of(campaign_id)
+        if fresh is not None and fresh != guild_id:
+            _PRIVATE_SERVERS[campaign_id] = fresh
+            campaign = await _bot(interaction).campaigns.get(fresh, campaign_id)
     if campaign is None or not logic.can_run(
         campaign, interaction.user.id, _is_manager(interaction)
     ):
@@ -944,7 +951,15 @@ async def save_name(
         )
     for disguise in secret:
         await memory.add_alias(
-            gid, cid, entity.id, disguise, kind="title", source=DM, status=CONFIRMED, secret=True
+            gid,
+            cid,
+            entity.id,
+            disguise,
+            kind="title",
+            source=DM,
+            status=CONFIRMED,
+            secret=True,
+            dm_chose_secret=True,
         )
     return entity
 
@@ -1597,33 +1612,27 @@ class SuggestionReview(_Menu):
         if not sees_secrets(campaign, interaction.user.id):  # DM only, not a server manager
             await _tell(interaction, logic.NO_CAMPAIGN_ACCESS)
             return
-        transcripts = getattr(interaction.client, "transcripts", None)
         await _answer_first(interaction)
         held = getattr(interaction.client, "lore_context", None)
         lore = source = ""
         if held is not None and sees_secrets(campaign, interaction.user.id):
             lore = str(held.get(campaign.guild_id, self.entity_id))
             source = str(held.source(campaign.guild_id, self.entity_id))
-        try:
-            if not self.refs and not lore:  # the upload's sentence is only held for a while
-                text = name_places.LORE_GONE
-            elif transcripts is None:
-                text = name_places.NOTHING_KEPT
-            else:
-                text = await name_places.where_said(
-                    interaction.guild,
-                    transcripts,
-                    campaign.guild_id,
-                    self.refs,
-                    self.spellings,
-                    await cast(Any, interaction.client).consent.consenting(campaign.guild_id),
-                    lore=lore,
-                    lore_source=source,
-                )
-        except Exception:
-            log.exception("Couldn't show where a name was said")
-            text = name_places.TRY_AGAIN
-        log.info("Showed where a name was said: %d places kept", len(self.refs))
+        memory = _memory(interaction)
+        if memory is None:
+            text = name_places.NOTHING_KEPT
+        else:
+            text = await name_origin.where_entry(
+                interaction,
+                campaign,
+                memory,
+                self.entity_id,
+                self.spellings,
+                refs=self.refs,
+                lore=lore,
+                lore_source=source,
+                lore_card=True,
+            )
         await interaction.followup.send(text, ephemeral=True)
 
     def _buttons(self) -> None:

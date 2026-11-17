@@ -10,21 +10,24 @@ the session is printed or logged.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import io
 import math
 import os
+import sys
 import time
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
 from dmbot.campaigns.models import Campaign, CampaignError
 from dmbot.campaigns.store import CampaignStore
 from dmbot.db import Database
-from dmbot.devtools.sample_run.costs import CostLine, recap_line
+from dmbot.devtools import sample_name
+from dmbot.devtools.sample_run.costs import CostLine, recap_line, recap_scores, scoring_cost
 from dmbot.devtools.sample_run.plan import (
-    NAME,
     STEPS,
     Existing,
     SampleError,
@@ -43,6 +46,7 @@ LORE_CHOICES = ("world", "spoilers", "smart")
 POLL_S = 5.0
 LORE_WAIT_S = 45 * 60
 IMPORT_WAIT_S = 90 * 60
+SETTLE_WAIT_S = 10 * 60  # how long an old sample's background work is waited for before deleting
 
 
 def campaign_store(db: Database) -> CampaignStore:
@@ -80,10 +84,11 @@ async def require_paid(
 
 
 async def existing_samples(db: Database, campaigns: CampaignStore, guild: int) -> list[Existing]:
-    """The campaigns in this server that carry the sample's name, with what each one holds."""
+    """The campaigns in this server that carry a sample name (numbered or the old one), with what
+    each one holds."""
     out: list[Existing] = []
     for c in await campaigns.list_campaigns(guild):
-        if c.name != NAME:
+        if not sample_name.is_sample(c.name):
             continue
         async with db.guild(guild, snapshot=True) as conn:
             cur = await conn.execute(
@@ -103,15 +108,24 @@ async def existing_samples(db: Database, campaigns: CampaignStore, guild: int) -
 
 
 async def check_existing(
-    db: Database, campaigns: CampaignStore, guild: int, dm: int
+    db: Database, campaigns: CampaignStore, guild: int, dm: int, deploy: int | None = None
 ) -> list[Existing]:
-    """The earlier sample campaigns, every one checked (`plan.can_replace`) before anything is
-    changed. A refusal here changes nothing, which is why the run does it before it spends."""
+    """The earlier sample campaigns. Only this deploy's own (the same N, which the run replaces)
+    must pass `plan.can_replace`: if it cannot be deleted, the run cannot make a second one with
+    that name, so it stops here, before it spends and before anything is changed (#4538). Any
+    other campaign the guard refuses is left alone later and counted, so a kept sample someone
+    played in never blocks a run."""
     found = await existing_samples(db, campaigns, guild)
-    for old in found:
-        why = can_replace(old, dm)
-        if why:
-            raise SampleError(why)
+    if deploy is not None:
+        own = {
+            c.id
+            for c in await campaigns.list_campaigns(guild)
+            if sample_name.deploy_of(c.name) == deploy  # (any run of this deploy)
+        }
+        for old in found:
+            why = can_replace(old, dm) if old.campaign_id in own else None
+            if why:
+                raise SampleError(why)
     return found
 
 
@@ -121,53 +135,214 @@ DM_BOT_CHANNEL_NEEDED = (
 )
 
 
+async def busy_count(db: Database, guild: int, campaign_id: str) -> int:
+    """How many pieces of background work the campaign has running or queued: lore uploads and
+    imported sessions that are waiting or working, recap requests waiting or working, and recap
+    jobs not yet ready or failed. A number only. Deleting a campaign while these still run makes
+    their AI charges find no campaign (#4542); a check and a delete are not atomic, so new work
+    can still start in between (this is a test tool)."""
+    async with db.guild(guild, snapshot=True) as conn:
+        total = 0
+        for sql in (
+            "SELECT count(*) AS n FROM lore_uploads WHERE guild_id = %s AND campaign_id = %s"
+            " AND state IN ('waiting', 'working')",
+            "SELECT count(*) AS n FROM session_imports WHERE guild_id = %s AND campaign_id = %s"
+            " AND state IN ('waiting', 'working')",
+            "SELECT count(*) AS n FROM recap_jobs WHERE guild_id = %s AND campaign_id = %s"
+            " AND state NOT IN ('ready', 'failed')",
+            "SELECT count(*) AS n FROM recap_requests WHERE guild_id = %s AND campaign_id = %s"
+            " AND state IN ('waiting', 'working')",
+        ):
+            cur = await conn.execute(sql, (guild, campaign_id))
+            total += int((await cur.fetchone() or {}).get("n", 0))
+    return total
+
+
+async def wait_settled(
+    db: Database,
+    guild: int,
+    campaign_id: str,
+    *,
+    sleep: Sleep,
+    clock: Callable[[], float] = time.monotonic,
+    limit_s: float = SETTLE_WAIT_S,
+    poll_s: float = POLL_S,
+) -> bool:
+    """Wait until the campaign has no background work (`busy_count` is 0), up to `limit_s`. True
+    when it settled, False when the wait ran out (the caller says so and deletes anyway: a
+    forgotten, stuck job must not block the next deploy's run)."""
+    began = clock()
+    while await busy_count(db, guild, campaign_id):
+        if clock() - began > limit_s:
+            return False
+        await sleep(poll_s)
+    return True
+
+
+async def clear_for_deploy(
+    db: Database,
+    campaigns: CampaignStore,
+    guild: int,
+    dm: int,
+    *,
+    deploy: int,
+    say: Say,
+    found: list[Existing] | None = None,
+    sleep: Sleep | None = None,
+    settle_s: float = SETTLE_WAIT_S,
+    need: int | None = None,
+    free: int | None = None,
+) -> tuple[sample_name.Kept, int]:
+    """Make room for this deploy's sample campaign(s) (#4538, #4551): every campaign of the same N
+    is deleted first (a re-run never leaves two of one number, runs of a parallel deploy
+    included), the oldest deploys beyond the newest `sample_name.KEEP` go with all their runs, and
+    old unnumbered ones always go. `found`: what `check_existing` returned (every one already
+    passed the guard `plan.can_replace`); asked again when not given. Each delete waits for the
+    campaign's background work and re-checks ownership under its lock (`only_if_owner`).
+
+    `need`, `free` (#4551): the runs about to be made and the DM's free paid slots (None: no
+    limit). The slots are counted before anything is deleted: while they are short after the
+    deletions above, the oldest kept deploys go with all their runs (each through `can_replace`),
+    never the newest kept deploy, and the counts line says which. Returns what is deleted and how
+    many runs there is room for (`need`, or fewer); none is a `SampleError`, with nothing
+    deleted."""
+    found = found if found is not None else await check_existing(db, campaigns, guild, dm, deploy)
+    names = {c.id: c.name for c in await campaigns.list_campaigns(guild)}
+    have = [(old.campaign_id, names[old.campaign_id]) for old in found if old.campaign_id in names]
+    by_id = {old.campaign_id: old for old in found}
+    # Only what the run would delete is checked: a kept sample is never touched. A refusal on
+    # this deploy's own campaign stops the run (it cannot be made again); on any other it is
+    # left alone and counted in the line.
+    first = sample_name.plan_keep(have, deploy)
+    refused: set[str] = set()
+    for campaign_id in first.delete:
+        why = can_replace(by_id[campaign_id], dm)
+        if why is None:
+            continue
+        if sample_name.deploy_of(names.get(campaign_id, "")) == deploy:
+            raise SampleError(why)
+        refused.add(campaign_id)
+    kept = sample_name.plan_keep(have, deploy, protected=refused)
+    allowed = need if need is not None else 1
+    if need is not None:
+        extra, dropped, allowed = sample_name.slot_drops(
+            have,
+            kept,
+            need,
+            free,
+            lambda cid: can_replace(by_id[cid], dm) is None,
+        )
+        if allowed == 0:
+            raise SampleError(
+                "no free paid campaign slot for even one run, and no older sample to make room "
+                "from: nothing was changed"
+            )
+        if extra:
+            kept = replace(
+                kept,
+                delete=(*kept.delete, *extra),
+                keep=tuple(c for c in kept.keep if c not in set(extra)),
+                slot_dropped=dropped,
+            )
+    deleted = 0
+    timed_out = 0
+    try:
+        for campaign_id in kept.delete:
+            # Its background AI work is still being charged: wait for it, so the charge finds the
+            # campaign (#4542). A job that never settles is not waited on for ever.
+            if not await wait_settled(
+                db, guild, campaign_id, sleep=sleep or asyncio.sleep, limit_s=settle_s
+            ):
+                timed_out += 1
+            await campaigns.delete(guild, campaign_id, only_if_owner=dm)
+            deleted += 1
+    except CampaignError:  # (a hand-over just now: the store refuses under its lock)
+        say(f"stopped after deleting {deleted} of {len(kept.delete)} old sample campaign(s)")
+        raise
+    say(sample_name.counts_line(kept))
+    if kept.slot_dropped:
+        say(sample_name.slot_line(kept.slot_dropped))
+    if timed_out:
+        say(f"{timed_out} old sample campaign(s) still had background work after the wait: deleted")
+    if kept.delete:
+        say(f"{len(kept.delete)} old campaign channel(s) to delete by hand")
+    return kept, allowed
+
+
+async def free_slots(db: Database, dm: int, now: int, guild: int) -> int | None:
+    """The DM's free paid campaign slots, counted the way the plan counts them
+    (`campaign_cap.room`): the plan's cap less the campaigns they own, none when there is no cap or
+    the server is on the free list (its campaigns take no slot, #3792)."""
+    from dmbot import campaign_cap, entitlements
+
+    if guild in entitlements.free_guilds():
+        return None
+    async with db.user(dm) as conn:
+        room = await campaign_cap.room(conn, dm, now)
+    return None if room.cap is None else max(0, room.cap - room.owned)
+
+
+async def make_campaign(
+    campaigns: CampaignStore,
+    guild: int,
+    dm: int,
+    *,
+    deploy: int,
+    run: int | None = None,
+    say: Say,
+    deleted: int = 0,
+    of: int | None = None,
+) -> Campaign:
+    """Make the sample campaign for this deploy, or for run k of it (#4551), paid because the DM
+    owns it. A refusal (no free paid slot, or a campaign with a look-alike name) is one plain
+    `SampleError`. `deleted`: how many old ones were deleted just before, for the stop line."""
+    try:
+        made = await campaigns.create(guild, sample_name.name_for(deploy, run), dm)
+    except CampaignError as exc:  # no free paid slot, or a name that differs only in capitals
+        # Deleting comes first because it frees the paid slot: say how far it got (a count only).
+        total = deleted if of is None else of
+        say(f"stopped after deleting {deleted} of {total} old sample campaign(s)")
+        raise SampleError(
+            "the sample campaign could not be made (no free paid campaign slot, or a campaign "
+            "with a look-alike name exists)"
+        ) from exc
+    # This tool has no Discord client, so it cannot make or delete a channel (#4112). The new
+    # campaign has no DM Bot channel yet: the bot makes it the way it does for any campaign made
+    # before the channel existed, when the DM presses ⚙️ Manage DMbot. A deleted campaign's channel
+    # stays in the server and is deleted by hand; its buttons say it cannot find the campaign.
+    # Said as one counts-only line, so dev1 does it before checking the main menu.
+    say(DM_BOT_CHANNEL_NEEDED)
+    return made
+
+
 async def fresh_campaign(
     db: Database,
     campaigns: CampaignStore,
     guild: int,
     dm: int,
     *,
-    keep_old: bool,
-    today: str,
+    deploy: int,
     say: Say,
     found: list[Existing] | None = None,
+    sleep: Sleep | None = None,
+    settle_s: float = SETTLE_WAIT_S,
 ) -> Campaign:
-    """Retire the last run's campaign (deleted, or renamed with `keep_old`) and make a new one,
-    paid because the DM owns it. `found`: what `check_existing` returned; asked again when not
-    given. The delete re-checks ownership under the campaign's lock (`only_if_owner`)."""
-    found = found if found is not None else await check_existing(db, campaigns, guild, dm)
-    for old in found:
-        if keep_old:
-            await _keep(campaigns, guild, old.campaign_id, today)
-        else:
-            await campaigns.delete(guild, old.campaign_id, only_if_owner=dm)
-    say(f"{len(found)} earlier sample campaign(s) {'kept' if keep_old else 'deleted'}")
-    try:
-        made = await campaigns.create(guild, NAME, dm)
-    except CampaignError as exc:  # e.g. a campaign whose name differs only in capitals
-        raise SampleError(
-            "the sample campaign could not be made (a campaign with a look-alike name exists)"
-        ) from exc
-    # This tool has no Discord client, so it cannot make or delete a channel (#4112). The new
-    # campaign has no DM Bot channel yet: the bot makes it the way it does for any campaign made
-    # before the channel existed, when the DM presses ⚙️ Manage DMbot. An earlier sample campaign's
-    # channel stays in the server and is deleted by hand; its buttons say it cannot find the
-    # campaign. Said as one counts-only line, so dev1 does it before checking the main menu.
-    say(DM_BOT_CHANNEL_NEEDED)
-    return made
-
-
-async def _keep(campaigns: CampaignStore, guild: int, campaign_id: str, today: str) -> None:
-    """Rename a kept campaign so the sample's name is free; it is never the exact name again, so
-    the tool can never delete it."""
-    for n in range(1, 50):
-        name = f"{NAME} (kept {today}{'' if n == 1 else f' {n}'})"
-        try:
-            await campaigns.rename(guild, campaign_id, name)
-            return
-        except CampaignError:  # the name was taken: try the next
-            continue
-    raise SampleError("could not find a free name to keep the earlier campaign under")
+    """Make this deploy's sample campaign, "test of the frostmaiden (sample N)" (#4538): room is
+    made first (`clear_for_deploy`), then the campaign."""
+    kept, _allowed = await clear_for_deploy(
+        db,
+        campaigns,
+        guild,
+        dm,
+        deploy=deploy,
+        say=say,
+        found=found,
+        sleep=sleep,
+        settle_s=settle_s,
+    )
+    return await make_campaign(
+        campaigns, guild, dm, deploy=deploy, say=say, deleted=len(kept.delete), of=len(kept.delete)
+    )
 
 
 def check_lore(text: str, choice: str) -> None:
@@ -458,7 +633,8 @@ async def backup(
     from dmbot.campaigns.store import encode_backup
 
     stamp = time.strftime("%Y%m%d-%H%M%S")  # a new file each run: an earlier backup is kept
-    path = folder / f"sample-{stamp}-{label}.dmbot.json.gz"
+    # (the campaign's own id in the name: runs side by side finish in the same second, #4551)
+    path = folder / f"sample-{stamp}-{campaign_id[:8]}-{label}.dmbot.json.gz"
     data = encode_backup(await campaigns.export(guild, campaign_id))
     fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "wb") as handle:
@@ -531,11 +707,15 @@ async def write_recap(
     *,
     run: Callable[[list[str]], Awaitable[int]] | None = None,
     spent: list[CostLine] | None = None,
+    why: list[str] | None = None,
+    scores: dict[str, int | str] | None = None,
 ) -> int:
     """The recap, with no audio, by the same code as `recap_run --session ... --yes`. Its report
     holds the recap's words, so it is swallowed: only the exit code comes back (0: made). `spent`
     (#4087) gets the recap's tokens and dollars, read from its one "tokens in N, out N; spend $X"
-    line and nothing else of the report."""
+    line and nothing else of the report. `scores` (#4556): the recap is also scored (`--score`: two
+    more AI calls, the must-have counts and the four storytelling numbers), and the numbers go in
+    `scores`, never a word of the recap."""
     if run is None:
         from dmbot.devtools.recap_run import __main__ as rr
 
@@ -543,11 +723,28 @@ async def write_recap(
             return await rr.main_async(rr.parse_args(argv))
 
     argv = ["--session", str(guild), campaign_id, str(session_at), "--yes"]
-    swallowed = io.StringIO()
-    with contextlib.redirect_stdout(swallowed):
-        code = await run(argv)
+    if scores is not None:
+        argv.append("--score")
+    swallowed, complaints = io.StringIO(), io.StringIO()
+    try:
+        with contextlib.redirect_stdout(swallowed), contextlib.redirect_stderr(complaints):
+            code = await run(argv)
+    finally:
+        # The tool's own "recap_run: ..." lines say why and hold none of the recap's words (the
+        # stdout report does, which is why it is swallowed): pass them on (#4543). Anything else
+        # on stderr (a warning, a traceback) shows as it did before.
+        for said in complaints.getvalue().splitlines():
+            if said.startswith("recap_run:"):
+                if why is not None:
+                    why.append(said.strip())
+            else:
+                print(said, file=sys.stderr)
     if spent is not None and (line := recap_line(swallowed.getvalue())) is not None:
         spent.append(line)
+    if scores is not None and code == 0:
+        scores.update(recap_scores(swallowed.getvalue()))
+        if spent is not None and (extra := scoring_cost(swallowed.getvalue())) is not None:
+            spent.append(extra)  # (the scoring's own calls, #4556: the recap's line has not them)
     return code
 
 

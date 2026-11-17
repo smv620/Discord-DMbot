@@ -33,6 +33,7 @@ import {
   type SimNode,
 } from "./webForce";
 import { PC_ICONS_LIVE } from "../content/pc-icons-switch";
+import { QUEST_SHEET_LIVE } from "../content/quest-sheet-switch";
 import { pcIconWords } from "../content/pc-icon-words";
 import LazyPanel from "./LazyPanel";
 import { DEFAULT_LOOK, readMode, readPlaces, saveMode, savePlaces, type GraphLook } from "./webPrefs";
@@ -614,7 +615,7 @@ export default function WebMap({
             secret: l.secret,
             ...(l.knowWord ? { knowWord: l.knowWord } : {}),
             belief: l.belief,
-            text: words.linkText(byId.get(x.a)?.name ?? "", byId.get(x.b)?.name ?? "", l.words, l.direction),
+            text: words.linkText(byId.get(x.a)?.name ?? "", byId.get(x.b)?.name ?? "", l.words, l.direction, l.pairWords),
           })),
         )
     : [];
@@ -717,7 +718,7 @@ export default function WebMap({
             const tip =
               edge.links.length > 1
                 ? [
-                    ...ordered.slice(0, TIP_LINKS).map((l, i) => `${theory && i === 0 ? `${words.theoryMark} ` : ""}${words.linkText(aName, bName, l.words, l.direction)}`),
+                    ...ordered.slice(0, TIP_LINKS).map((l, i) => `${theory && i === 0 ? `${words.theoryMark} ` : ""}${words.linkText(aName, bName, l.words, l.direction, l.pairWords)}`),
                     ...(ordered.length > TIP_LINKS ? [words.plusMore(ordered.length - TIP_LINKS)] : []),
                   ].join("\n")
                 : text;
@@ -889,6 +890,14 @@ export default function WebMap({
           )}
           {onPair && canEdit && (
             <LazyPanel load={() => import("./WebPairing")} what="the joining" props={{ kind: "button" as const, name: "", onPair, id: detail.id }} />
+          )}
+          {QUEST_SHEET_LIVE && canEdit && detail.kind === "thread" && api && api.threadCard !== undefined && (
+            <LazyPanel
+              key={detail.id}
+              load={() => import("./QuestSheet")}
+              what="the quest sheet"
+              props={{ api, refId, thread: { id: detail.id, name: detail.name }, onSelect: (id: string) => setPicked(id) }}
+            />
           )}
           <button
             type="button"

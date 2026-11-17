@@ -231,6 +231,12 @@ class PlanChecksSetting(unittest.TestCase):
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_REVEALS_PRECHECK must be 1"):
             load_settings({**BASE, "DMBOT_STORY_REVEALS_PRECHECK": "maybe"})
 
+    def test_session_story_threads_are_off_by_default(self) -> None:  # (#4522)
+        self.assertFalse(load_settings(BASE).story_threads_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_STORY_THREADS": "1"}).story_threads_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_THREADS must be 1"):
+            load_settings({**BASE, "DMBOT_STORY_THREADS": "maybe"})
+
     def test_grading_contradictions_is_off_unless_asked(self) -> None:
         self.assertFalse(load_settings(BASE).story_contradictions_on)
         self.assertTrue(
@@ -336,3 +342,27 @@ class PlanChecksSetting(unittest.TestCase):
     def test_the_site_address_loses_its_trailing_slash(self) -> None:
         s = load_settings({**BASE, "WEB_SITE_URL": "https://dmbot.example/"})
         self.assertEqual(s.site_url, "https://dmbot.example")
+
+
+class ServerJobs(unittest.TestCase):
+    def test_two_unless_set_and_a_bad_value_is_refused(self) -> None:
+        """(#4551: lore reads at once on one server)"""
+        self.assertEqual(load_settings(BASE).server_jobs_at_once, 2)
+        self.assertEqual(
+            load_settings({**BASE, "DMBOT_SERVER_JOBS_AT_ONCE": "5"}).server_jobs_at_once, 5
+        )
+        for bad in ("0", "21", "x", "-1"):
+            with self.assertRaisesRegex(ConfigError, "DMBOT_SERVER_JOBS_AT_ONCE"):
+                load_settings({**BASE, "DMBOT_SERVER_JOBS_AT_ONCE": bad})
+
+
+class LoreReadsPerDay(unittest.TestCase):
+    def test_twenty_unless_set_and_outside_1_to_500_is_a_start_up_error(self) -> None:
+        """(#4582: the day's document reads a server, so the test server can raise it)"""
+        self.assertEqual(load_settings(BASE).lore_reads_per_day, 20)
+        self.assertEqual(
+            load_settings({**BASE, "DMBOT_LORE_READS_PER_DAY": "60"}).lore_reads_per_day, 60
+        )
+        for bad in ("0", "501", "x", "-3"):
+            with self.assertRaisesRegex(ConfigError, "DMBOT_LORE_READS_PER_DAY"):
+                load_settings({**BASE, "DMBOT_LORE_READS_PER_DAY": bad})

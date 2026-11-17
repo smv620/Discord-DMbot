@@ -48,6 +48,7 @@ from dmbot.web import (
     campaign_backup,
     campaign_delete,
     campaign_settings,
+    discord_accounts,
     dm_players,
     email_change,
     email_signin,
@@ -62,6 +63,7 @@ from dmbot.web import (
     house_file,
     import_clock,
     imports,
+    languages,
     line_fixes,
     lore,
     maps_upload,
@@ -92,6 +94,7 @@ from dmbot.web import (
     strays,
     support,
     theatre_script,
+    thread_card,
     thread_suggestions,
     timeline,
     tokens,
@@ -301,6 +304,7 @@ def create_app(
     session_cookie = f"{prefix}dmbot_session"
     state_cookie = f"{prefix}dmbot_signin"
     install_cookie = f"{prefix}dmbot_install"
+    add_cookie = f"{prefix}dmbot_discord_add"  # adding a Discord account to this DMbot account
     # The page a signed-out person asked for (#2301), kept just long enough to come back to it.
     return_cookie = f"{prefix}dmbot_signin_next"
     account_page = f"{settings.site_url}/account"
@@ -455,6 +459,9 @@ def create_app(
         # Read by hand (not as typed parameters) so nothing malformed becomes an error page.
         state = request.query_params.get("state", "")
         code = request.query_params.get("code", "")
+        bound = tokens.read(settings.secret_key, "discordadd", state, now=clock())
+        if bound is not None:  # an add of a Discord account, not a sign-in (#4473)
+            return await discord_add_finish(request, state, code, bound)
         failed = RedirectResponse(f"{account_page}?signin=failed", status_code=302)
         failed.delete_cookie(state_cookie, path="/", secure=settings.secure_cookies)
         failed.delete_cookie(return_cookie, path="/", secure=settings.secure_cookies)
@@ -684,12 +691,31 @@ def create_app(
     @app.get("/me")
     async def me(signed: Signed) -> dict[str, Any]:
         session, _token = signed
-        return await build_me(
+        found = await build_me(
             db,
             session,
             now=clock(),
             recap_audio_for_sale=payments is not None and payments.recap_audio_for_sale,
             imports_for=settings.imports_enabled_for,
+        )
+        # The account's Discord accounts, by name and an opaque key (#2534, #2533 slice 4)
+        found["discordAccounts"] = await discord_accounts.listing(db, session, settings.secret_key)
+        return found
+
+    @app.post("/me/discord-accounts/{key}/remove", status_code=204)
+    async def remove_discord_account(key: str, signed: Signed) -> Response:
+        """Take one Discord account off this DMbot account (#2533). The shared function says why
+        it can't, in words the page shows as they are."""
+        session, _token = signed
+        fresh(session)
+        done = await discord_accounts.remove(db, session, settings.secret_key, key, now=clock())
+        if done.ok:
+            return Response(status_code=204)
+        if done.code in (discord_accounts.NOT_FOUND, "not_linked"):
+            raise HTTPException(status_code=404, detail="not_found")
+        # (the account in use is its own answer: it is not "the only one")
+        raise HTTPException(
+            status_code=409, detail="account_in_use" if done.code == "in_use" else "last_account"
         )
 
     change_limit = RateLimit(60 * 60, count=6)  # asks to change the email, counted by account
@@ -2690,13 +2716,69 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/threads/{thread}/card")
+    async def me_campaign_thread_card(ref: str, thread: str, signed: Signed) -> dict[str, Any]:
+        """A kept story thread's steps, rewards and more (#4476): DM only, nothing for anyone
+        else."""
+        session, _token = signed
+        try:
+            return await thread_card.read(db, session, ref, thread)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/threads/{thread}/change", status_code=202)
+    async def me_campaign_thread_change(
+        ref: str, thread: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """One change to a kept thread's parts or branches (#4476); polled at
+        `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await thread_card.change(db, session, ref, thread, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/names/{entity}/languages")
+    async def me_campaign_languages(ref: str, entity: str, signed: Signed) -> dict[str, Any]:
+        """A character's languages (#4271): DM only, nothing for anyone else."""
+        session, _token = signed
+        try:
+            return await languages.read(db, session, ref, entity)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/names/{entity}/languages/change", status_code=202)
+    async def me_campaign_languages_change(
+        ref: str, entity: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """One change to a character's languages (#4271); polled at `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await languages.change(db, session, ref, entity, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/threads")
     async def me_campaign_threads(ref: str, signed: Signed) -> dict[str, Any]:
         """The story threads DMbot found in an upload, waiting for the DM (#4457): DM only,
         nothing for anyone else."""
         session, _token = signed
         try:
-            return await thread_suggestions.read(db, session, ref)
+            return await thread_suggestions.read(
+                db, session, ref, outside_engine=settings.outside_engine
+            )
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
@@ -4643,6 +4725,79 @@ def create_app(
         if session.managed(guild_id) is None:
             raise HTTPException(status_code=403, detail="not_allowed")
         return guild_id
+
+    @app.get("/auth/discord/add")
+    async def discord_add_start(request: Request) -> Response:
+        """Sends the browser to Discord so the person can sign in as another Discord account and add
+        it to this DMbot account (#2533, #4473). A plain link (GET), so every answer is a redirect
+        to the account page. The state is bound to this one DMbot account and this browser, used
+        once and short-lived; Discord signs in as whichever account it is already logged in with, so
+        the page tells the person to switch accounts in Discord first."""
+        try:
+            session, _token = await current_session(request)
+            fresh(session)
+        except HTTPException:
+            return RedirectResponse(f"{account_page}?discord=signed_out", status_code=302)
+        state = tokens.make(
+            settings.secret_key,
+            "discordadd",
+            str(session.user_id),
+            now=clock(),
+            seconds=STATE_SECONDS,
+        )
+        response = RedirectResponse(
+            discord.authorize_url(state, settings.oauth_redirect_uri), status_code=302
+        )
+        response.set_cookie(
+            add_cookie,
+            state,
+            max_age=STATE_SECONDS,
+            path="/",
+            secure=settings.secure_cookies,
+            httponly=True,
+            samesite="lax",
+        )
+        return response
+
+    async def discord_add_finish(request: Request, state: str, code: str, bound: str) -> Response:
+        """Discord's answer for an add (the same address as a sign-in, told apart by the state):
+        the added Discord account never gets a session here, it is only put on the account."""
+
+        def back(result: str) -> RedirectResponse:
+            response = RedirectResponse(f"{account_page}?discord={result}", status_code=302)
+            response.delete_cookie(add_cookie, path="/", secure=settings.secure_cookies)
+            return response
+
+        try:
+            session, _token = await current_session(request)
+        except HTTPException:
+            return back("signed_out")
+        cookie = request.cookies.get(add_cookie) or ""
+        if bound != str(session.user_id) or not hmac.compare_digest(
+            state.encode(), cookie.encode()
+        ):
+            return back("failed")
+        if not code:  # (Discord sends no code when the person said no)
+            return back("cancelled")
+        token: str | None = None
+        try:
+            token = await discord.exchange(code, settings.oauth_redirect_uri)
+            added = await discord.user(token)
+            result = await discord_accounts.add(db, session, added.id, now=clock())
+        except DiscordError as exc:
+            log.warning("Adding a Discord account failed: %s", exc)
+            return back("failed")
+        except Exception:
+            log.exception("Adding a Discord account failed unexpectedly")
+            return back("failed")
+        finally:
+            if token is not None:
+                try:
+                    await discord.revoke(token)
+                except DiscordError as exc:
+                    log.warning("Couldn't revoke a Discord token: %s", exc)
+        log.info("A Discord account was added: %s", result)
+        return back(result)
 
     @app.get("/install")
     async def install_start(request: Request, server_id: str = "") -> Response:

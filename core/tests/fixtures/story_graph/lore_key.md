@@ -365,3 +365,37 @@ Who gave it, who it is aimed at, and who takes it on when it is one character's 
 | lq04 | quest | Hlin's contract on Sephek Kaltro | Hlin Trollbane | Sephek Kaltro |  |  | yes | 73 | an ask and a taker; replaces l069 'the party works for Hlin' (§6); capture or eliminate, one objective |
 | lq05 | quest | Speaker Masthew's bounty on the mine | Speaker Masthew | The gemstone mine |  |  | no | 84 | an ask and a taker, already paid (line 93); replaces l076; not one of §9.3's four, so a good find |
 | lq06 | quest | Find Garret Velryn | Keegan Velryn | Garret Velryn |  |  | yes | 102 | an ask and a taker (Belleros agrees for the party); replaces l118 |
+
+### Thread parts and branches (quests slice 3, #4500; design §5, §5a, §5b, §6a, §8, §9.3)
+
+Each part is found when the thread it belongs to has a part of that kind whose words hold one of the key's words. A part on another thread is "wrong thread"; a part on a matched thread that the key doesn't list is extra. A branch is found when its thread is a `branch_of` its quest; a hint branch's miss is never counted.
+
+| Thread | Kind | Words to find | Line | Note |
+|---|---|---|---|---|
+| lq01 | objective | Danneth | 27 | the tome's lead: Danneth, in Easthaven |
+| lq01 | complication | Brotherhood | 27 | the Brotherhood knows who he is; trust no one |
+| lq02 | branch of lq01 | | 27 | Who killed Wit? (a hint) |
+| lq03 | objective | answers | 36 | searching for answers |
+| lq03 | objective | curse | 36 | break the curse |
+| lq03 | time limit | shadow claims | 36 | soft, words only: before the shadow claims his sister, his child, and himself |
+| lq04 | objective | capture or eliminate | 59 | one objective with the text's own "or", never two |
+| lq05 | objective | mine | 84 | clear out the gemstone mine |
+| lq05 | reward | gold | 84 | 50 gold offered (line 84), raised to 250 in all (line 93) |
+| lq06 | objective | Garret | 102 | locate Garret |
+| lq06 | reward | 50 gold | 102 | offering 50 gold pieces |
+| lq06 | help | map | 102 | the route map: help to keep (§9.3) |
+| lq06 | help | sled, dogs | 102 | two dog sleds with eight dogs from Jebidiah; the lore doesn't say lent, so to keep (§5b) |
+
+### Clues (quests slice 6b, #4624; design §7, §9.3)
+
+A clue is found when a clue tied to the thread (`clue_to`, kept with the thread) has a name holding one of the words. Tied only to another thread, it is "wrong thread"; a clue tied to a listed thread that no row is, is extra. Who has a clue is not scored yet.
+
+| Thread | Words to find | Must find | Line | Note |
+|---|---|---|---|---|
+| lq01 | tome | yes | 27 | the warning in the locked azure tome |
+| lq01 | coming, Wit | no | 27 | Wit's warning that they are coming |
+| lq03 | journal | yes | 36 | the ancestral journal |
+| lq03 | campsite, camp | no | 36 | the blood-stained campsite |
+| lq03 | whisper | no | 36 | the whispers Nyssara hears |
+
+**Must have no clue tied:** lq04 (Hlin's contract has none in this passage); lq06 (the route map and the sleds are its help, never its clues).

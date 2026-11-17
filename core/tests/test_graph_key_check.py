@@ -833,6 +833,26 @@ class Roads(unittest.TestCase):
             self.assertEqual(sorted(m["line"] for m in key["map_context"]), [6, 171])
 
 
+class RoadConditions(unittest.TestCase):
+    """The sample keys state no road condition (#4258 4a): the line is always there, and any row,
+    a route place's or a road's, is a false note."""
+
+    def test_none_expected_and_every_row_is_extra(self) -> None:
+        key = {"nodes": [{"name": "Pass", "kind": "place", "aliases": [], "note": ""}], "pairs": []}
+        data = backup([("p", "Pass", "place")], [])
+        self.assertIn(
+            "Place condition: found 0, wrong 0, missed 0, extra 0", gkc.render(gkc.check(data, key))
+        )
+        rows = [
+            {"table": "map_fact", "id": i, "entity_id": place, "relation_id": road,
+             "layer": "condition", "value": "closed", "faction_id": None, "status": "read",
+             "to_session_at": None}
+            for i, place, road in (("f1", "p", None), ("f2", None, "r1"))
+        ]  # fmt: skip
+        report = gkc.check(backup([("p", "Pass", "place")], rows), key)
+        self.assertEqual(report.map_facts["condition"]["extra"], 2)
+
+
 class StoryThreads(unittest.TestCase):
     """Story threads (#4453, quests slice 1; design §9.7): found by their people and part words,
     wrong by kind, doubles, extras, hints never missed, and the invented quest cases' must-nots."""
@@ -877,6 +897,238 @@ class StoryThreads(unittest.TestCase):
         )
         self.assertIn("Story threads: found 1, missed 0, wrong 1", gkc.render(report))
         self.assertEqual(report.extra_entries, Counter())  # (threads are never extra names)
+
+    def test_parts_and_branches_on_the_matched_thread(self) -> None:
+        """#4500, quests slice 3: a part is found on the thread its key thread matched, "wrong
+        thread" on another, extra when the key doesn't list it; a branch by its `branch_of`."""
+        key = {
+            "nodes": [{"name": n, "kind": "person", "aliases": [], "note": ""}
+                      for n in ("Hlin", "Sephek", "Cerric", "Wit", "Okthan")],
+            "pairs": [],
+            "threads": [
+                {"id": "t1", "kind": "quest", "name": "x", "giver": "Hlin", "target": "Sephek",
+                 "taker": "", "missing": [], "in_danger": [], "must_find": True, "hint": False,
+                 "parts": [{"kind": "objective", "words": ["capture or eliminate"]},
+                           {"kind": "reward", "words": ["gold"]},
+                           {"kind": "time_limit", "words": ["new moon"]}]},
+                {"id": "t2", "kind": "quest", "name": "y", "giver": "", "target": "",
+                 "taker": "Cerric", "missing": [], "in_danger": [], "must_find": True,
+                 "hint": False, "parts": [{"kind": "complication", "words": ["Brotherhood"]}]},
+                {"id": "t3", "kind": "mystery", "name": "z", "giver": "", "target": "",
+                 "taker": "", "missing": ["Wit"], "in_danger": [], "must_find": False,
+                 "hint": True, "branch_of": "t2"},
+                {"id": "t4", "kind": "quest", "name": "w", "giver": "", "target": "",
+                 "taker": "Okthan", "missing": [], "in_danger": [], "must_find": True,
+                 "hint": False, "branch_of": "t2"},
+            ],
+        }  # fmt: skip
+        people = [("h", "Hlin", "npc"), ("s", "Sephek", "npc"), ("c", "Cerric", "npc"),
+                  ("w", "Wit", "npc"), ("o", "Okthan", "npc")]  # fmt: skip
+        threads = [("q1", "Hlin's job", "quest"), ("q2", "Cerric's search", "quest"),
+                   ("q3", "Who killed Wit?", "mystery"), ("q4", "Okthan's", "quest")]  # fmt: skip
+
+        def part(i: str, thread: str, kind: str, words: str) -> dict[str, Any]:
+            return {"table": "thread_part", "id": i, "thread_id": thread, "kind": kind,
+                    "words": words, "status": "confirmed", "to_session_at": None}  # fmt: skip
+
+        rows = [
+            self.rel("r1", "h", "q1", "quest giver"), self.rel("r2", "s", "q1", "target"),
+            self.rel("r3", "c", "q2", "takes it on"), self.rel("r4", "w", "q3", "the one missing"),
+            self.rel("r5", "o", "q4", "takes it on"),
+            {"table": "relation", "id": "b1", "subject_id": "q3", "predicate": "branch_of",
+             "object_id": "q2", "status": "confirmed"},
+            part("p1", "q1", "objective", "Capture or eliminate Sephek"),
+            part("p2", "q2", "reward", "100 gold"),  # (t1's reward, on Cerric's thread)
+            part("p3", "q2", "complication", "the Brotherhood knows him"),
+            part("p4", "q1", "help", "a sled"),  # (the key doesn't list it)
+        ]  # fmt: skip
+        report = gkc.check(backup(people + threads, rows), key)
+        self.assertEqual(
+            dict(report.thread_parts),
+            {"found objective": 1, "found complication": 1, "wrong thread": 1,
+             "missed time_limit": 1, "extra": 2, "branches found": 1, "branches missed": 1},
+        )  # fmt: skip
+        self.assertIn("Thread parts found: objective 1/1, complication 1/1", gkc.render(report))
+
+    def test_clues_on_the_matched_thread(self) -> None:
+        """#4624, quests 6b: a clue tied to the matched thread by words, one on another thread,
+        a good find missed, an extra tie, and a must-not thread with a tie (false)."""
+        key = {
+            "nodes": [{"name": n, "kind": "person", "aliases": [], "note": ""}
+                      for n in ("Hlin", "Sephek", "Cerric")],
+            "pairs": [],
+            "threads": [
+                {"id": "t1", "kind": "quest", "name": "x", "giver": "Hlin", "target": "Sephek",
+                 "taker": "", "missing": [], "in_danger": [], "must_find": True, "hint": False},
+                {"id": "t2", "kind": "quest", "name": "y", "giver": "", "target": "",
+                 "taker": "Cerric", "missing": [], "in_danger": [], "must_find": True,
+                 "hint": False},
+            ],
+            "clues": [
+                {"thread": "t2", "words": ["Tome"]},
+                {"thread": "t2", "words": ["journal"]},
+                {"thread": "t2", "words": ["whisper"], "must_find": False},
+            ],
+            "must_not_clues": [{"thread": "t1"}],
+        }  # fmt: skip
+        people = [("h", "Hlin", "npc"), ("s", "Sephek", "npc"), ("c", "Cerric", "npc")]
+        things = [("q1", "Hlin's job", "quest"), ("q2", "Cerric's search", "quest"),
+                  ("k1", "the warning in the azure tome", "clue"), ("k2", "his journal", "clue"),
+                  ("k3", "a strange mark", "clue")]  # fmt: skip
+
+        def tie(i: str, clue: str, thread: str) -> dict[str, Any]:
+            return {"table": "relation", "id": i, "subject_id": clue, "predicate": "clue_to",
+                    "object_id": thread, "status": "confirmed"}  # fmt: skip
+
+        rows = [
+            self.rel("r1", "h", "q1", "quest giver"), self.rel("r2", "s", "q1", "target"),
+            self.rel("r3", "c", "q2", "takes it on"),
+            tie("c1", "k1", "q2"), tie("c2", "k2", "q1"), tie("c3", "k3", "q2"),
+        ]  # fmt: skip
+        report = gkc.check(backup(people + things, rows), key)
+        self.assertEqual(
+            dict(report.clues),
+            {"found": 1, "wrong thread": 1, "good finds missed": 1, "extra": 1, "false": 1},
+        )
+        self.assertIn("Clues: found 1, missed 0, wrong thread 1", gkc.render(report))
+        self.assertEqual(report.extra_entries["clue"], 0)  # (a tied clue is scored here only)
+
+    def test_a_clue_answers_one_row_and_words_match_from_their_start(self) -> None:
+        key = {
+            "nodes": [{"name": "Cerric", "kind": "person", "aliases": [], "note": ""}],
+            "pairs": [],
+            "threads": [{"id": "t2", "kind": "quest", "name": "y", "giver": "", "target": "",
+                         "taker": "Cerric", "missing": [], "in_danger": [], "must_find": True,
+                         "hint": False}],
+            "clues": [
+                {"thread": "t2", "words": ["coming"], "must_find": False},
+                {"thread": "t2", "words": ["tome"]},  # (must-find rows are answered first)
+                {"thread": "t2", "words": ["Wit"]},  # ("with" is not "Wit": missed)
+                {"thread": "t9", "words": ["map"]},  # (no such thread: missed)
+            ],
+        }  # fmt: skip
+        things = [("c", "Cerric", "npc"), ("q2", "Cerric's search", "quest"),
+                  ("k1", "the tome's warning: they are coming, with blood", "clue")]  # fmt: skip
+        rows = [
+            self.rel("r3", "c", "q2", "takes it on"),
+            {"table": "relation", "id": "c1", "subject_id": "k1", "predicate": "clue_to",
+             "object_id": "q2", "status": "confirmed"},
+        ]  # fmt: skip
+        report = gkc.check(backup(things, rows), key)
+        got = {k: n for k, n in report.clues.items() if n}
+        self.assertEqual(got, {"found": 1, "missed": 2, "good finds missed": 1})
+
+    def test_the_keys_clue_rows_name_their_threads(self) -> None:
+        for name in ("lore_key.json", "master_key.json"):
+            key = load(name)
+            ids = {t["id"] for t in key["threads"]}
+            for c in [*key["clues"], *key["must_not_clues"]]:
+                self.assertIn(c["thread"], ids)
+
+    def test_progress_on_the_matched_thread(self) -> None:
+        """#4522, quests 5c: what the session moved on a lore thread, read off the backup thread
+        its key thread matched: the thread's open state, a part's state now, a session's new part
+        (or an `or` row); a good find's miss apart; a must-not that stands is false."""
+        key = {
+            "nodes": [{"name": n, "kind": "person", "aliases": [], "note": ""}
+                      for n in ("Keegan", "Garret")],
+            "pairs": [],
+            "threads": [
+                {"id": "t1", "kind": "quest", "name": "x", "giver": "Keegan", "target": "Garret",
+                 "taker": "", "missing": [], "in_danger": [], "must_find": True, "hint": False},
+            ],
+            "progress": [
+                {"thread": "t1", "change": "thread_moves", "state": "happening_now"},
+                {"thread": "t1", "change": "part_moves", "part_kind": "reward",
+                 "words": ["50 gold"], "state": "settled",
+                 "or": [{"change": "new_part", "part_kind": "reward_given", "words": ["50"]}]},
+                {"thread": "t1", "change": "new_part", "part_kind": "help", "words": ["SLED"],
+                 "state": "lent"},  # (only a rejected and a closed one lent: missed)
+                {"thread": "t1", "change": "new_part", "part_kind": "time_limit",
+                 "words": ["days"], "must_find": False},
+                {"thread": "t9", "change": "thread_moves", "state": "finished"},
+            ],
+            "must_not_progress": [
+                {"thread": "t1", "change": "part_moves", "part_kind": "objective",
+                 "words": ["Garret"], "state": "done"},
+                {"thread": "t1", "change": "thread_moves", "state": "finished"},
+            ],
+        }  # fmt: skip
+
+        def part(i: str, kind: str, words: str, state: str, source: str) -> dict[str, Any]:
+            return {"table": "thread_part", "id": i, "thread_id": "q1", "kind": kind,
+                    "words": words, "state": state, "source": source, "status": "confirmed",
+                    "to_session_at": None}  # fmt: skip
+
+        rows = [
+            self.rel("r1", "k", "q1", "quest giver"), self.rel("r2", "g", "q1", "target"),
+            {"table": "state", "id": "s1", "entity_id": "q1", "condition": "resolved",
+             "closed_at": 5},  # (closed: the "finished" must-not doesn't stand on it)
+            {"table": "state", "id": "s2", "entity_id": "q1", "condition": "active",
+             "closed_at": None},
+            part("p1", "reward_given", "50 gold up front", "given", "session"),  # (the "or")
+            part("p2", "help", "two sleds", "to_keep", "session"),  # (not lent: missed)
+            part("p3", "objective", "find Garret", "done", "lore"),  # (a must-not that stands)
+            part("p4", "time_limit", "ten DAYS", "running", "lore"),  # (not the session's own)
+            {**part("p5", "help", "two Sleds", "lent", "session"), "status": "rejected"},
+            {**part("p6", "help", "a sled", "lent", "session"), "to_session_at": 9},
+        ]  # fmt: skip
+        people = [("k", "Keegan", "npc"), ("g", "Garret", "npc"), ("q1", "Find him", "quest")]
+        report = gkc.check(backup(people, rows), key)
+        self.assertEqual(
+            dict(report.progress),
+            {"found": 2, "missed": 2, "good finds missed": 1, "false": 1},
+        )
+        self.assertIn("Thread progress: found 2, missed 2, false 1", gkc.render(report))
+        self.assertEqual(gkc.summarize(report)["progress"]["found"], 2)
+
+    def test_a_found_part_move_and_a_double_thread(self) -> None:
+        """A part's own move is found (not only through an "or"), and on the second backup thread
+        a key thread matched as well as on the first."""
+        key = {
+            "nodes": [{"name": n, "kind": "person", "aliases": [], "note": ""}
+                      for n in ("Keegan", "Garret")],
+            "pairs": [],
+            "threads": [{"id": "t1", "kind": "quest", "name": "x", "giver": "Keegan",
+                         "target": "Garret", "taker": "", "missing": [], "in_danger": [],
+                         "must_find": True, "hint": False}],
+            "progress": [{"thread": "t1", "change": "part_moves", "part_kind": "reward",
+                          "words": ["Gold"], "state": "settled"}],
+        }  # fmt: skip
+        rows = [
+            self.rel("r1", "k", "q1", "quest giver"), self.rel("r2", "g", "q1", "target"),
+            self.rel("r3", "k", "q2", "quest giver"), self.rel("r4", "g", "q2", "target"),
+            {"table": "thread_part", "id": "p1", "thread_id": "q2", "kind": "reward",
+             "words": "50 gold", "state": "settled", "source": "lore", "status": "confirmed",
+             "to_session_at": None},
+        ]  # fmt: skip
+        people = [("k", "Keegan", "npc"), ("g", "Garret", "npc"),
+                  ("q1", "Find him", "quest"), ("q2", "Find him again", "quest")]  # fmt: skip
+        report = gkc.check(backup(people, rows), key)
+        self.assertEqual(dict(report.progress), {"found": 1})
+
+    def test_the_master_keys_progress_rows_are_ones_the_reader_can_make(self) -> None:
+        """A typo in a row would only ever be scored as missed: each names a lore thread of the
+        key, a change the reader makes, a part kind and a state that kind has."""
+        from dmbot.memory.session_progress import THREAD_WORDS
+        from dmbot.memory.thread_parts import STATES
+
+        key = load("master_key.json")
+        ids = {t["id"] for t in key["threads"]}
+        rows = [*key["progress"], *key["must_not_progress"]]
+        self.assertTrue(rows)
+        for p in rows:
+            self.assertIn(p["thread"], ids)
+            for r in (p, *p.get("or", [])):
+                with self.subTest(p.get("id", p["note"]), change=r["change"]):
+                    if r["change"] == "thread_moves":
+                        self.assertIn(r["state"], THREAD_WORDS)
+                        continue
+                    self.assertIn(r["change"], ("part_moves", "new_part"))
+                    self.assertIn(r["part_kind"], STATES)
+                    self.assertTrue(r["words"])
+                    if r.get("state"):
+                        self.assertIn(r["state"], STATES[r["part_kind"]])
 
     def test_the_quest_cases_key_reads_and_scores_its_must_nots(self) -> None:
         key = load("quest_cases_key.json")

@@ -89,14 +89,20 @@ class Merge(Common, Helpers):
         pub = await self.rel(self.a, self.vale)
         sec = await self.rel(self.a, self.vale, secret=True, detail="x")
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, sec, [self.ids["okthandom"]], source="dm"
+            GUILD_A, self.c, sec, [self.ids["okthandom"]], source="dm", dm_chose_secret=True
         )
         await self.memory.believe(
             GUILD_A, self.c, await self.pv("mara"), pub, 1.0, "revealed_fact", source="dm"
         )
         before = (await self.kn(pub), await self.bel(pub), await self.kn(sec), await self.bel(sec))
         w = await self.memory.merge(
-            GUILD_A, self.c, self.hidden, self.a, source="dm", dm_said_same=True
+            GUILD_A,
+            self.c,
+            self.hidden,
+            self.a,
+            source="dm",
+            dm_said_same=True,
+            dm_chose_secret=True,
         )
         after = (await self.kn(pub), await self.bel(pub), await self.kn(sec), await self.bel(sec))
         await self.undo(w)
@@ -110,12 +116,16 @@ class Merge(Common, Helpers):
         b = await self.add("Cora", type="character", role="npc", status=CONFIRMED)
         await limit(self, b)
         pub = await self.rel(self.a, self.vale)
-        await self.memory.merge(GUILD_A, self.c, b, self.a, source="dm", dm_said_same=True)
+        await self.memory.merge(
+            GUILD_A, self.c, b, self.a, source="dm", dm_said_same=True, dm_chose_secret=True
+        )
         self.assertEqual(await self.kn(pub), [])
 
     async def test_p1c_merge_many_hidden_closes(self) -> None:
         pub = await self.rel(self.a, self.vale)
-        w = await self.memory.merge_many(GUILD_A, self.c, self.hidden, [self.a], source="dm")
+        w = await self.memory.merge_many(
+            GUILD_A, self.c, self.hidden, [self.a], source="dm", dm_chose_secret=True
+        )
         self.assertEqual(await self.kn(pub), [])
         await self.undo(w)
         self.assertEqual(await self.kn(pub), ["mara", "okthandom"])
@@ -125,17 +135,19 @@ class Merge(Common, Helpers):
         pub = await self.rel(self.a, self.vale)
         sec = await self.rel(self.a, self.vale, secret=True, detail="x")
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, sec, [self.ids["okthandom"]], source="dm"
+            GUILD_A, self.c, sec, [self.ids["okthandom"]], source="dm", dm_chose_secret=True
         )
         before = (await self.kn(pub), await self.kn(sec), await self.bel(sec))
-        await self.memory.merge(GUILD_A, self.c, b, self.a, source="dm", dm_said_same=True)
+        await self.memory.merge(
+            GUILD_A, self.c, b, self.a, source="dm", dm_said_same=True, dm_chose_secret=True
+        )
         self.assertEqual((await self.kn(pub), await self.kn(sec), await self.bel(sec)), before)
 
     async def test_p3_a_secret_twin_fold_onto_hidden_carries_no_player_belief(self) -> None:
         twin = await self.rel(self.hidden, self.vale, secret=True)
         mine = await self.rel(self.a, self.vale, secret=True)
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, mine, [self.ids["okthandom"]], source="dm"
+            GUILD_A, self.c, mine, [self.ids["okthandom"]], source="dm", dm_chose_secret=True
         )
         before = (
             await self.kn(mine),
@@ -144,7 +156,13 @@ class Merge(Common, Helpers):
             await self.bel(twin),
         )
         w = await self.memory.merge(
-            GUILD_A, self.c, self.hidden, self.a, source="dm", dm_said_same=True
+            GUILD_A,
+            self.c,
+            self.hidden,
+            self.a,
+            source="dm",
+            dm_said_same=True,
+            dm_chose_secret=True,
         )
         self.assertEqual(await self.kn(twin), [])
         self.assertTrue(all((v or 0) < 1.0 for v in (await self.bel(twin)).values()))
@@ -166,7 +184,13 @@ class Merge(Common, Helpers):
             GUILD_A, self.c, await self.pv("mara"), mine, 1.0, "revealed_fact", source="dm"
         )
         await self.memory.merge(
-            GUILD_A, self.c, self.hidden, self.a, source="dm", dm_said_same=True
+            GUILD_A,
+            self.c,
+            self.hidden,
+            self.a,
+            source="dm",
+            dm_said_same=True,
+            dm_chose_secret=True,
         )
         self.assertTrue(all((v or 0) < 1.0 for v in (await self.bel(twin)).values()))
 
@@ -175,9 +199,11 @@ class Merge(Common, Helpers):
         twin = await self.rel(b, self.vale, secret=True)
         mine = await self.rel(self.a, self.vale, secret=True)
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, mine, [self.ids["okthandom"]], source="dm"
+            GUILD_A, self.c, mine, [self.ids["okthandom"]], source="dm", dm_chose_secret=True
         )
-        w = await self.memory.merge(GUILD_A, self.c, b, self.a, source="dm", dm_said_same=True)
+        w = await self.memory.merge(
+            GUILD_A, self.c, b, self.a, source="dm", dm_said_same=True, dm_chose_secret=True
+        )
         self.assertEqual(await self.kn(twin), ["okthandom"])
         await self.undo(w)
         self.assertEqual(await self.kn(mine), ["okthandom"])
@@ -188,9 +214,11 @@ class Merge(Common, Helpers):
         await limit(self, a2)
         sec = await self.rel(a2, self.vale, secret=True)
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, sec, [self.ids["okthandom"]], source="dm"
+            GUILD_A, self.c, sec, [self.ids["okthandom"]], source="dm", dm_chose_secret=True
         )
-        await self.memory.merge(GUILD_A, self.c, self.hidden, a2, source="dm", dm_said_same=True)
+        await self.memory.merge(
+            GUILD_A, self.c, self.hidden, a2, source="dm", dm_said_same=True, dm_chose_secret=True
+        )
         self.assertEqual(await self.kn(sec), ["okthandom"])
 
     async def test_x1_an_npcs_belief_is_carried_onto_a_hidden_twin(self) -> None:
@@ -200,7 +228,13 @@ class Merge(Common, Helpers):
         await self.memory.believe(GUILD_A, self.c, npc, mine, 0.7, "theory", source="dm")
         before = await self.belief_of(npc, mine)
         await self.memory.merge(
-            GUILD_A, self.c, self.hidden, self.a, source="dm", dm_said_same=True
+            GUILD_A,
+            self.c,
+            self.hidden,
+            self.a,
+            source="dm",
+            dm_said_same=True,
+            dm_chose_secret=True,
         )
         self.assertEqual(await self.belief_of(npc, twin), before)
 
@@ -209,7 +243,13 @@ class Merge(Common, Helpers):
         mine = await self.rel(self.a, self.vale)
         await self.memory.pin(GUILD_A, self.c, mine, True, source="dm")
         await self.memory.merge(
-            GUILD_A, self.c, self.hidden, self.a, source="dm", dm_said_same=True
+            GUILD_A,
+            self.c,
+            self.hidden,
+            self.a,
+            source="dm",
+            dm_said_same=True,
+            dm_chose_secret=True,
         )
         self.assertIn(twin, await self.memory.pinned_connections(GUILD_A, self.c))
 
@@ -220,9 +260,11 @@ class Merge(Common, Helpers):
         twin = await self.rel(self.hidden, self.vale, secret=True)
         mine = await self.rel(a2, self.vale, secret=True)
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, mine, [self.ids["okthandom"]], source="dm"
+            GUILD_A, self.c, mine, [self.ids["okthandom"]], source="dm", dm_chose_secret=True
         )
-        await self.memory.merge(GUILD_A, self.c, self.hidden, a2, source="dm", dm_said_same=True)
+        await self.memory.merge(
+            GUILD_A, self.c, self.hidden, a2, source="dm", dm_said_same=True, dm_chose_secret=True
+        )
         self.assertEqual(await self.kn(twin), ["okthandom"])
 
     async def test_x4_a_public_fold_between_shown_entries_and_its_undo(self) -> None:
@@ -230,7 +272,9 @@ class Merge(Common, Helpers):
         twin = await self.rel(b, self.vale)
         mine = await self.rel(self.a, self.vale)
         before = (await self.kn(mine), await self.kn(twin))
-        w = await self.memory.merge(GUILD_A, self.c, b, self.a, source="dm", dm_said_same=True)
+        w = await self.memory.merge(
+            GUILD_A, self.c, b, self.a, source="dm", dm_said_same=True, dm_chose_secret=True
+        )
         await self.undo(w)
         self.assertEqual((await self.kn(mine), await self.kn(twin)), before)
 
@@ -257,11 +301,13 @@ class Merge(Common, Helpers):
 
 class Join(Common, JoinBase):
     async def test_j1_join_onto_hidden_ken_keeps_guard_knower(self) -> None:
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.ken, True, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, self.ken, True, source="dm", dm_chose_secret=True
+        )
         vale = await self.add("Captain Vale", type="character", role="npc", status=CONFIRMED)
         sec = await self.rel(self.guard, vale, secret=True)
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, sec, [self.sees_guard], source="dm"
+            GUILD_A, self.c, sec, [self.sees_guard], source="dm", dm_chose_secret=True
         )
         before = (await self.kn(sec), await self.bel(sec))
         w = await self.join()
@@ -271,12 +317,14 @@ class Join(Common, JoinBase):
         self.assertEqual(before, (await self.kn(sec), await self.bel(sec)))
 
     async def test_j2_a_twin_fold_moves_the_knowers_to_a_hidden_twin(self) -> None:
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.ken, True, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, self.ken, True, source="dm", dm_chose_secret=True
+        )
         vale = await self.add("Captain Vale", type="character", role="npc", status=CONFIRMED)
         twin = await self.rel(self.ken, vale, secret=True)
         mine = await self.rel(self.guard, vale, secret=True)
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, mine, [self.sees_guard], source="dm"
+            GUILD_A, self.c, mine, [self.sees_guard], source="dm", dm_chose_secret=True
         )
         w = await self.join()
         self.assertEqual(await self.kn(twin), ["okthandom"])
@@ -289,7 +337,7 @@ class Join(Common, JoinBase):
         twin = await self.rel(self.ken, vale)
         mine = await self.rel(self.guard, vale, secret=True)
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, mine, [self.sees_guard], source="dm"
+            GUILD_A, self.c, mine, [self.sees_guard], source="dm", dm_chose_secret=True
         )
         await self.join()
         async with self.db.guild(GUILD_A) as conn:

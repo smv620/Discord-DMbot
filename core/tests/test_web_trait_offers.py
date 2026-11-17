@@ -9,7 +9,7 @@ import time
 from typing import Any
 
 from dmbot.memory import trait_offers as to
-from dmbot.memory.models import CLASS, DM, SPECIES, Trait
+from dmbot.memory.models import CLASS, DM, LANGUAGE, SPECIES, Trait
 from dmbot.web import trait_offers
 from dmbot.web.recaps import RecapError
 from dmbot.web.sessions import Session
@@ -17,6 +17,7 @@ from tests.test_web_relationships import Web
 
 DWARF = Trait(SPECIES, "Dwarf", "SRD 5.2.1", "2024", True)
 CLERIC = Trait(CLASS, "Cleric", "SRD 5.2.1", "2024", True)
+GIANT = Trait(LANGUAGE, "Giant", "", None, False)
 
 
 class Base(Web):
@@ -199,3 +200,61 @@ class TraitAnswers(Base):
                 (self.g, self.one.id, int(time.time())),
             )
         self.assertEqual(await self.refusal(), "too_soon")
+
+
+class LanguageQuestions(Base):
+    """A language the lore gives a character waits beside the lineage and class questions (#4271
+    part 2, migration 0521): "Does Mira speak Giant?". Yes writes it as the DM's own word, No is
+    final; it is no longer open once the character's languages hold it or the character has a
+    sheet, as the bot's own reader says (`_STILL_OPEN`)."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.offer = to.Offer(self.mira, GIANT, "Mira shouts in Giant", "Notes, 9 Nov")
+        await self.leave(self.offer)
+
+    async def listed(self) -> list[dict[str, Any]]:
+        got = (await trait_offers.waiting(self.web, self.session, self.cref))["offers"]
+        offers: list[dict[str, Any]] = got
+        return offers
+
+    async def test_a_language_question_is_listed_with_its_words_and_no_lineage(self) -> None:
+        (one,) = await self.listed()
+        self.assertEqual((one["kind"], one["name"], one["who"]), ("language", "Giant", "Mira Voss"))
+        self.assertEqual((one["quote"], one["upload"]), ("Mira shouts in Giant", "Notes, 9 Nov"))
+        self.assertEqual((one["current"], one["classes"]), (None, []))
+
+    async def test_a_language_the_dm_already_has_or_said_no_to_is_not_listed(self) -> None:
+        await self.memory.add_story_language(self.g, self.one.id, self.mira, "Giant", source=DM)
+        self.assertEqual(await self.listed(), [])
+
+    async def test_a_language_for_a_character_with_a_sheet_is_not_listed(self) -> None:
+        from dmbot.memory import sheets
+        from dmbot.memory.sheet_store import SheetStore
+        from tests.test_sheets import answer
+
+        pc = await self.memory.add_entity(
+            self.g, self.one.id, name="Testa", type="player_character", played_by=9,
+            source=DM, status="confirmed",
+        )  # fmt: skip
+        await self.leave(to.Offer(pc.value.id, GIANT, "Testa shouts in Giant", "Notes"))
+        self.assertEqual({o["who"] for o in await self.listed()}, {"Mira Voss", "Testa"})
+        await SheetStore(self.db).save(
+            self.g, self.one.id, pc.value.id, sheets.parse(answer()), 5, player=9
+        )
+        self.assertEqual({o["who"] for o in await self.listed()}, {"Mira Voss"})
+
+    async def test_an_answer_to_a_language_question_is_queued_and_read_back(self) -> None:
+        made = await trait_offers.answer(
+            self.web, self.session, self.cref, self.mira, "language", self.offer.key, "keep"
+        )
+        got = await trait_offers.read_answer(self.web, self.session, self.cref, made)
+        self.assertEqual((got["state"], got["action"]), ("waiting", "keep"))
+
+    async def test_a_language_already_answered_is_not_found_for_the_answer_door(self) -> None:
+        await self.memory.add_story_language(self.g, self.one.id, self.mira, "Giant", source=DM)
+        with self.assertRaises(RecapError) as caught:
+            await trait_offers.answer(
+                self.web, self.session, self.cref, self.mira, "language", self.offer.key, "never"
+            )
+        self.assertEqual(caught.exception.code, "not_found")

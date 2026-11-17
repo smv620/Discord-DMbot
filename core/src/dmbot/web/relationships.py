@@ -523,6 +523,12 @@ async def with_know_words(
     shared = _knowers(known)  # worked out once for both
     names, links = know_words(known, shared)
     holders = link_holders(known, shared)
+    # the connections the "everyone" point of view holds (the door lists them only while shown)
+    common = {
+        str(statement)
+        for kind, statement, character, _sure in known["knowers"]
+        if kind == gate.CONNECTION and character == gate.COMMON
+    }
     # (a graph page has nodes and edges, an overview page its tray of unconnected names; one
     # confirmed since the page was read is not in the data and has no word yet)
     for node in [*page.get("nodes", []), *page.get("tray", [])]:
@@ -538,6 +544,8 @@ async def with_know_words(
                 now = holders.get(str(link["id"]), [])
                 link["who"] = ("some" if now else "dm") if held else "all"
                 link["knownBy"] = now if held and now else []
+                if str(link["id"]) in common:  # 🌍 every character knows it (#4559)
+                    link["who"], link["knownBy"] = "common", []
 
 
 def page_of(
@@ -1129,9 +1137,30 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         found = await cur.fetchone()
     got = found["r"] if found else None
     if got is None or not str(got["action"]).startswith(
-        ("link-", "claim-", "backstory-", "reading-", "names-fixed-", "world-", "maps-")
+        (
+            "link-",
+            "claim-",
+            "backstory-",
+            "reading-",
+            "names-fixed-",
+            "world-",
+            "maps-",
+            "thread-",
+            "part-",
+            "branch-",
+            "lang-",
+        )
     ):
         raise RecapError("not_found")
+    if str(got["action"]).startswith(("thread-", "part-", "branch-", "lang-")):
+        # a story thread's keep, or a change to its parts and branches (#4457, #4476): how it ended
+        # and the change it made, for the page's Undo (none when it changed nothing)
+        made = got.get("resultBatches") or []
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "batch": int(made[0]) if got["state"] == "done" and made else None,
+        }
     if str(got["action"]).startswith("maps-"):
         # a Maps page press (#4347): how it ended, and the change it made for the page's Undo
         made = got.get("resultBatches") or []

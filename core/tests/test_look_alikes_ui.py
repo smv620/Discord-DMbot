@@ -14,7 +14,7 @@ from dmbot.memory.lookalikes import Name
 from dmbot.memory.models import DM, MemoryRuleError
 from dmbot.ui import look_alikes as la
 from dmbot.ui import name_dropdown as dd
-from dmbot.ui import name_places
+from dmbot.ui import name_origin, name_places
 from dmbot.ui.name_card import SAME
 from dmbot.ui.names import NamesHome, Reviews
 
@@ -118,6 +118,14 @@ class TheGroupView(unittest.TestCase):
         self.assertIn("Next group ▸", labels(self.view(3, groups=2)))
 
 
+class _NoThreads:
+    def __init__(self, _db: Any) -> None:
+        pass
+
+    async def kept_from(self, *_a: Any) -> None:
+        return None
+
+
 class TheWhereButton(unittest.IsolatedAsyncioTestCase):
     """📜 Where was it said? on the group screen (#3432): the names-to-check reply, per name."""
 
@@ -125,7 +133,12 @@ class TheWhereButton(unittest.IsolatedAsyncioTestCase):
         self, which: str, *, dm: bool = True, fail: bool = False
     ) -> tuple[Any, Any, Any]:
         view = la.WhichName("c" * 32, NAMES, KINDS)
-        memory = SimpleNamespace(mentions=AsyncMock(return_value=[("s:1:2", 5)]))
+        memory = SimpleNamespace(
+            mentions=AsyncMock(return_value=[("s:1:2", 5)]),
+            name_uploads=AsyncMock(return_value=[]),
+            entity=AsyncMock(return_value=None),
+            _db=object(),
+        )
         campaign = SimpleNamespace(guild_id=1, id="c" * 32)
         tell = AsyncMock()
         said = AsyncMock(side_effect=RuntimeError) if fail else AsyncMock(return_value="THE PLACES")
@@ -140,6 +153,7 @@ class TheWhereButton(unittest.IsolatedAsyncioTestCase):
             patch.object(la, "_tell", tell),
             patch.object(la, "_answer_first", AsyncMock()),
             patch.object(name_places, "where_said", said),
+            patch.object(name_origin, "ThreadSuggestionStore", _NoThreads),
             patch.object(discord.ui.Select, "values", [which], create=True),
         ):
             await view._chosen(asked)

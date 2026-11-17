@@ -38,7 +38,9 @@ class Choosing(MemoryTest):
     async def test_a_place_the_dm_hid_stays_hidden(self) -> None:
         own = await self.add("Eberron", type="place", status=CONFIRMED)
         await self.memory.set_place_level(GUILD_A, self.c, own, "world", source=BY_DM)
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, own, True, source=BY_DM)
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, own, True, source=BY_DM, dm_chose_secret=True
+        )
         made = await self.memory.choose_setting(GUILD_A, self.c, "Eberron", source=BY_DM)
         self.assertTrue(made.value.hidden_from_players)
 
@@ -74,9 +76,42 @@ class Choosing(MemoryTest):
     async def test_a_place_made_for_a_replaced_guess_goes_with_it(self) -> None:
         guess = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
         assert guess.value is not None
-        await self.memory.choose_setting(GUILD_A, self.c, "Golarion", source=BY_DM)
+        made = await self.memory.choose_setting(GUILD_A, self.c, "Golarion", source=BY_DM)
         gone = await self.memory.entity(GUILD_A, self.c, guess.value.id)
-        self.assertTrue(gone is None or gone.status == "rejected")
+        assert gone is not None
+        self.assertEqual(gone.status, "rejected")
+        assert made.batch is not None
+        await self.memory.undo(GUILD_A, self.c, made.batch)  # (one Undo: the guess is back)
+        back = await self.memory.entity(GUILD_A, self.c, guess.value.id)
+        assert back is not None
+        self.assertEqual((back.status, back.setting_guessed), (CONFIRMED, True))
+
+    async def test_a_kept_guess_the_dm_hid_again_is_not_taken(self) -> None:
+        """(the DM's own setting now: only DMbot's guess goes with its replacement)"""
+        guess = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        assert guess.value is not None
+        await self.memory.keep_setting(GUILD_A, self.c, guess.value.id, source=BY_DM)
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, guess.value.id, True, source=BY_DM, dm_chose_secret=True
+        )
+        await self.memory.choose_setting(GUILD_A, self.c, "Golarion", source=BY_DM)
+        kept = await self.memory.entity(GUILD_A, self.c, guess.value.id)
+        assert kept is not None
+        self.assertEqual((kept.status, kept.setting, kept.setting_from), (CONFIRMED, False, None))
+
+    async def test_a_made_place_with_a_map_fact_on_it_is_kept(self) -> None:
+        """(#4291: the one rule `_guess_place_goes`, so a map fact ties it here too, #4495)"""
+        from dmbot.memory import map_facts as mf
+
+        guess = await self.memory.guess_setting(GUILD_A, self.c, "Faerûn", source="background")
+        assert guess.value is not None
+        await self.memory.set_map_fact(
+            GUILD_A, self.c, guess.value.id, mf.TERRAIN, "hill", source=BY_DM
+        )
+        await self.memory.choose_setting(GUILD_A, self.c, "Golarion", source=BY_DM)
+        kept = await self.memory.entity(GUILD_A, self.c, guess.value.id)
+        assert kept is not None
+        self.assertEqual((kept.status, kept.setting_from), (CONFIRMED, "declined"))
 
     async def test_a_small_place_of_that_name_is_refused_and_nothing_changes(self) -> None:
         town = await self.add("Phandalin", type="place", status=CONFIRMED)

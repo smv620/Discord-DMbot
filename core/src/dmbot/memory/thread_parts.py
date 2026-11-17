@@ -92,6 +92,13 @@ class Part:
     table_knows: bool
     since: int | None
     closed: int | None
+    # A time limit's game date (slice 4, #4448): the minute it falls due, who gave it ('dm', or
+    # 'read' for DMbot's read the DM kept), and the clock's minute when it was set, for §8.4's
+    # "halfway when set less than two days ahead". None while it is words only.
+    due_minute: int | None = None
+    due_from: str = ""
+    set_at: int | None = None
+    first_id: str = ""  # (the first row of its history: one limit, however it was edited)
 
 
 def read_amount(words: str) -> tuple[float | None, str]:
@@ -135,7 +142,8 @@ def from_row(row: Mapping[str, Any]) -> Part:
         None if amount is None else float(amount), str(row["unit"]), row["position"],
         str(row["due"]), str(row["terms"]), str(row["limit_kind"]), str(row["status"]),
         str(row["source"]), bool(row["table_knows"]), row["from_session_at"],
-        row["to_session_at"],
+        row["to_session_at"], row.get("due_minute"), str(row.get("due_from") or ""),
+        row.get("from_game_time"), str(row.get("first_id") or row["id"]),
     )  # fmt: skip
 
 
@@ -242,9 +250,14 @@ async def add(
     due: str = "",
     terms: str = "",
     limit_kind: str = "",
+    source: str = DM_SOURCE,
 ) -> dict[str, Any]:
     """The DM adds a part to a kept thread: confirmed, hidden from players until the DM shows it
-    (§10.2: false for the DM's own typing). An objective goes to the end of its list."""
+    (§10.2: false for the DM's own typing). An objective goes to the end of its list. `source`
+    LORE: a part the lore reader found, kept by the DM with its thread (#4500): the DM's keep, so
+    confirmed too, and its source says where the words came from."""
+    if source not in (DM_SOURCE, LORE, SESSION):
+        raise ValueError(f"Not a source: {source}")
     if kind not in KINDS:
         raise ValueError(f"Not a kind of part: {kind}")
     text = _clean(words, WORDS_MAX)
@@ -285,7 +298,7 @@ async def add(
             "terms": _clean(terms, TERMS_MAX), "limit_kind": limit_kind, "due_minute": None,
             "due_from": "", "from_session_at": await story_now(w), "to_session_at": None,
             "from_game_time": None, "to_game_time": None, "status": CONFIRMED,
-            "source": DM_SOURCE, "table_knows": False, "created_at": w.now,
+            "source": source, "table_knows": False, "created_at": w.now,
         },
     )  # fmt: skip
 
@@ -380,6 +393,46 @@ async def _story_change(
     return made
 
 
+async def set_due(
+    w: Changes, part_id: str, minute: int | None, *, now: int | None, source: str = DM_SOURCE
+) -> dict[str, Any]:
+    """A time limit's game date (slice 4; §8.2): the DM's one tap, or DMbot's read the DM kept
+    (`source` 'read'). `now` is the clock's minute (the group furthest ahead), kept as the row's
+    `from_game_time` so "soon" can be halfway for a limit set less than two days ahead. Giving a
+    date to a limit that never had one fills in what the DM knows: in place. Any change to a date
+    it has, moved or cleared, is a change in the story (§4: "a deadline moved"), so the old row
+    stays as history and what was told of it stays with it (slice 4b): a later date is told
+    afresh. None clears the date: words only again. The same date again writes nothing."""
+    if source not in (DM_SOURCE, READ):
+        raise ValueError(f"Not a source for a date: {source}")
+    row = await _open_part(w, part_id)
+    if row["kind"] != TIME_LIMIT:
+        raise ValueError("A date is a time limit's only.")
+    if minute is not None and minute < 0:
+        raise ValueError("minute")
+    if minute == row["due_minute"]:
+        return row  # (the same date again: no change, so no Undo that undoes nothing)
+    if minute is None:
+        new: dict[str, Any] = {"due_minute": None, "due_from": "", "from_game_time": None}
+    else:
+        new = {"due_minute": minute, "due_from": source, "from_game_time": now}
+    if row["due_minute"] is not None:
+        return await _story_change(w, row, new)
+    return await w.update(THREAD_PARTS, part_id, new)
+
+
+async def dated_running(scope: Scope) -> list[Part]:
+    """Every kept, standing, running time limit that has a date (slice 4b, §8.4): what the clock
+    is checked against after it moves. The DM's view: the messages go to the DM alone."""
+    rows = await scope.select(
+        THREAD_PARTS,
+        " AND kind = 'time_limit' AND state = 'running' AND status = 'confirmed'"
+        " AND due_minute IS NOT NULL" + _OPEN + " ORDER BY id",  # (one order: no deadlock)
+        [],
+    )
+    return [from_row(r) for r in rows]
+
+
 async def set_state(w: Changes, part_id: str, state: str) -> dict[str, Any]:
     """A change in the story (§4): the old row closes at the story's time and a new one opens with
     the new state; what stood under the old row (sub-steps, rewards given against a promise) moves
@@ -391,6 +444,17 @@ async def set_state(w: Changes, part_id: str, state: str) -> dict[str, Any]:
     if state == row["state"]:
         return row
     return await _story_change(w, row, {"state": state})
+
+
+async def set_state_in_thread(
+    w: Changes, thread_id: str, part_id: str, state: str
+) -> dict[str, Any]:
+    """`set_state` for a part a caller names with its thread (a progress line kept from a session,
+    #4522 5b): refused when the part is no longer one of that thread's standing parts."""
+    row = await _open_part(w, part_id)
+    if str(row["thread_id"]) != thread_id:
+        raise MemoryRuleError(GONE)
+    return await set_state(w, part_id, state)
 
 
 async def _move_under(w: Changes, old_id: str, new_id_: str | None) -> None:

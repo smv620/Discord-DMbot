@@ -18,8 +18,10 @@ import { PRIVATE_SCENES_LIVE } from "../content/private-scenes-switch";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
 import { PLACE_SPELLING_LIVE } from "../content/place-spelling-switch";
 import { WORLD_NOTES_LIVE } from "../content/world-notes-switch";
+import { THREADS_LIVE } from "../content/threads-switch";
 import { PLACE_ROUTES_LIVE } from "../content/place-routes-switch";
 import { PLACE_WORLD_LIVE } from "../content/place-world-switch";
+import { LANGUAGES_LIVE } from "../content/languages-switch";
 import { PLACE_FACTS_LIVE } from "../content/place-switch";
 import { PLAYERS_LINE_LIVE } from "../content/players-line-switch";
 import { notNamedWords as notNamed } from "../content/not-named-words";
@@ -431,6 +433,9 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
 
       {WORLD_NOTES_LIVE && data.canEdit && api.worldNotes !== undefined && (
         <LazyPanel load={() => import("./WorldNotes")} what="DMbot's guesses about your world" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />
+      )}
+      {THREADS_LIVE && data.canEdit && api.storyThreads !== undefined && (
+        <LazyPanel load={() => import("./StoryThreads")} what="the story threads DMbot found" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />
       )}
       {MET_LIST_LIVE && data.canEdit && api.metList !== undefined && (
         <LazyPanel load={() => import("./MetList")} what="who your party met" props={{ api, campaignRef: ref, onChanged: () => void load(pageNow.current, true) }} />
@@ -1012,6 +1017,9 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
 
       {PLACE_WORLD_LIVE && row.kind === "place" && api.placeWorld && (
         <LazyPanel load={() => import("./PlaceWorld")} what="the place's land, climate and ruler" props={{ api, refId, row, act: (change: NameChange, ok: string) => act(row, change, ok) }} />
+      )}
+      {LANGUAGES_LIVE && (row.kind === "npc" || row.kind === "player_character") && api.characterLanguages && api.changeCharacterLanguages && (
+        <LazyPanel load={() => import("./CharacterLanguages")} what="the character's languages" props={{ api, refId, row }} />
       )}
 
       {PLACE_FACTS_LIVE && row.kind === "place" && row.placeLevel !== undefined && (

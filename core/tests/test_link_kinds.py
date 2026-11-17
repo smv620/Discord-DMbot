@@ -30,6 +30,7 @@ EXPECTED = {
     "plays": OTHER,
     "led_to": OTHER,
     "branch_of": OTHER,  # a branch of a bigger thread (#4471)
+    "clue_to": OTHER,  # a clue to a story thread, the DM's alone (#4624)
     "in_thread": OTHER,
     "advances": OTHER,
     "affected": OTHER,

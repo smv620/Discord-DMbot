@@ -12,12 +12,9 @@ import re
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass, field
 
-from dmbot.devtools.graph_key_check import SAMPLE_CAMPAIGN
-
-# The only campaign this tool may delete or make: the one `graph_key_check` scores. It is
-# deliberately long and odd (a real table would not call its campaign this), and `can_replace`
-# checks the rest.
-NAME = SAMPLE_CAMPAIGN
+# The only campaigns this tool may delete or make are the ones named by `sample_name` ("test of the
+# frostmaiden (sample N)"). The names are deliberately long and odd (a real table would not call a
+# campaign this), and `can_replace` checks the rest.
 
 # (a label is the speaker as the file writes it: "ist", or Craig's "Mira (mira_v)")
 # The four player characters of the sample (the README's table): the character's full name, and the

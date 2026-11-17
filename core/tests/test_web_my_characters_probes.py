@@ -107,6 +107,6 @@ class Probes(MyCharacters):
             status="confirmed", secret=True, detail="Ken's sibling",
         )  # fmt: skip
         await self.memory.set_connection_knowers(
-            self.g, self.one.id, made.value[0].id, [self.okra], source="dm"
+            self.g, self.one.id, made.value[0].id, [self.okra], source="dm", dm_chose_secret=True
         )
         self.assertNotIn("Ken", await self.everything())

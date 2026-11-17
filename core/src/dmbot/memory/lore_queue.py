@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 
 from psycopg.types.json import Jsonb
@@ -109,20 +109,23 @@ class LoreQueue:
                 (NOT_TAKEN, now, guild_id, now - NOT_TAKEN_AFTER_S),
             )
 
-    async def claim_next(self, guild_id: int) -> Claim | None:
-        """The oldest waiting upload of this server, marked as being worked on. One at a time per
-        campaign is the table's own rule (one open upload a campaign)."""
+    async def claim_next(
+        self, guild_id: int, *, not_campaigns: Collection[str] = ()
+    ) -> Claim | None:
+        """The oldest waiting upload of this server, marked as being worked on. `not_campaigns`:
+        campaigns that already have a read running here, so one campaign is read one upload at a
+        time while others go beside it (#4551)."""
         now = self._now()
         claimed = int(now * 1000)  # milliseconds, so two claims of one row never match
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE lore_uploads SET state = 'working', stage = %s, claimed_at = %s,"
                 " updated_at = %s, done = 0, total = 0 WHERE (guild_id, id) = (SELECT guild_id, id"
-                " FROM lore_uploads WHERE guild_id = %s AND state = 'waiting' ORDER BY seq"
-                " LIMIT 1 FOR UPDATE SKIP LOCKED)"
+                " FROM lore_uploads WHERE guild_id = %s AND state = 'waiting'"
+                " AND NOT (campaign_id = ANY(%s)) ORDER BY seq LIMIT 1 FOR UPDATE SKIP LOCKED)"
                 " RETURNING id, campaign_id, user_id, source, text, link, speaker, choice,"
                 " rights_by",
-                (READING, claimed, int(now), guild_id),
+                (READING, claimed, int(now), guild_id, list(not_campaigns)),
             )
             row = await cur.fetchone()
         if row is None:

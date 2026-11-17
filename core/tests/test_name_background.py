@@ -441,9 +441,12 @@ class ThePath(NamesTest):
             [b.label for b in view.children],
             ["🤖 Find names", ui_bg.TRUTH_OFF, "Cancel", ui_bg.KNOWS_LABELS["world"]],
         )
-        # (#3098, owner 2026-10-31: the form starts on "Everyone knows it", marked Default)
-        self.assertIn("Everyone knows it", text)
+        # (#3098, owner 2026-10-31: the form starts on "🌍 Common knowledge", marked Default)
+        self.assertIn("🌍 Common knowledge", text)
         self.assertIn("(Default)", ui_bg.KNOWS_TEXT["world"])
+        # (the owner's words for the World choice, everywhere: #4537)
+        self.assertEqual(ui_bg.KNOWS_LABELS["world"], "🌍 Common knowledge")
+        self.assertIn("Everyone in the world knows this.", ui_bg.KNOWS_TEXT["world"])
         self.assertNotIn("(Default)", ui_bg.KNOWS_TEXT["spoilers"])
         self.assertIn("Tap the Players button to switch", text)
         self.ai.complete.assert_not_awaited()  # nothing is sent until the DM presses
@@ -706,7 +709,7 @@ class ThePath(NamesTest):
         self.assertEqual(ui_bg.not_held(stored, held), {"place": [entities["Northhaven"].id]})
 
     async def test_the_players_line_comes_only_from_an_upload_they_all_know(self) -> None:
-        """#2967 slice a: "Everyone knows it" stores the read's line; a spoilers upload, a smart
+        """#2967 slice a: "🌍 Common knowledge" stores the read's line; a spoilers upload, a smart
         guess or a backstory never does; a line past the column's 120 letters is left to the DM,
         never cut; the DM's own note is never where it comes from."""
         about = "a dwarf merchant who leads a caravan"
@@ -1098,9 +1101,9 @@ class ThePath(NamesTest):
 
     async def test_a_busy_server_and_the_daily_limit_stop_it(self) -> None:
         _, view = await self.offer()
-        _ai_busy.add(GUILD)
+        _ai_busy[GUILD] = {""}
         await view._read(self.it())
-        _ai_busy.discard(GUILD)
+        _ai_busy.pop(GUILD, None)
         day = datetime.fromtimestamp(time.time(), UTC).strftime("%Y-%m-%d")
         _ai_reads[(GUILD, day)] = AI_READS_PER_DAY
         _, view = await self.offer()

@@ -369,9 +369,10 @@ def check_answers(answers: dict[str, Any]) -> dict[str, Any] | None:
     return clean if str(clean.get("name", "")).strip() else None
 
 
-async def run_round(bot: Any, guild_id: int) -> int:
-    """Answer one waiting finish run on a server; returns how many were taken (0 or 1)."""
-    runs = WizardFinishes(bot.campaigns.db)
+async def run_round(bot: Any, guild_id: int, *, clock: Callable[[], float] = time.time) -> int:
+    """Answer one waiting finish run on a server; returns how many were taken (0 or 1). `clock`
+    is the progress writer's clock, so a test can hold time still (#4593)."""
+    runs = WizardFinishes(bot.campaigns.db, clock=clock)
     run = await runs.claim_next(guild_id)
     if run is None:
         return 0

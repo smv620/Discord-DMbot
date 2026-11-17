@@ -25,7 +25,16 @@ from dmbot.memory.claims import (
     Extracted,
     condition_of,
 )
-from dmbot.memory.models import DM, HOW_DM, MemoryRuleError, TooLateToUndo, name_key
+from dmbot.memory.models import (
+    CONFIRMED,
+    DM,
+    HOW_DM,
+    PLAYER_CHARACTER,
+    Entity,
+    MemoryRuleError,
+    TooLateToUndo,
+    name_key,
+)
 from dmbot.ui.check_everything import add_stop, next_part, progress
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _Button, _Menu, _replace, _send, _tell
 from dmbot.ui.name_card import FLAG_WHY
@@ -38,7 +47,7 @@ ODD_PAIR = "DMbot noticed something odd about it"
 REFUSAL_MAX = (
     160  # a store's reason in the summary: the page and the summary share 2,000 characters
 )
-YES, NO, HIDE = "✅", "❌", "🤫"
+YES, NO, HIDE, SOME = "✅", "❌", "🤫", "👥"
 # A held-back connection the table stated, now shown to the players (#3963 c): said every time.
 SHOWN_NOW = "👁️ Your players can see this now: it was said at the table."
 # Kept hidden beside a connection the story already hides between the same two (#3975, #3979).
@@ -147,13 +156,49 @@ def question_text(claim: Claim) -> str:
     return f"{statement(claim)}? _({by})_"
 
 
-def page_text(page: list[Claim], total: int, answered: Mapping[str, str] | None = None) -> str:
+def knows(count: int) -> str:
+    """ "knows" for one, "know" for more."""
+    return "knows" if count == 1 else "know"
+
+
+def party_names(party: list[Entity], ids: list[str]) -> str:
+    """ "Cerric", "Cerric and Belleros", "Cerric, Belleros and Okthandom": the characters' names,
+    in the party list's order. Names only."""
+    wanted = set(ids)
+    names = [_md(e.name) for e in party if e.id in wanted]
+    if not names:  # (a stale list: nothing to name)
+        return "nobody"
+    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+
+
+def knower_icon(count: int) -> str:
+    """The owner's icon rule for what a line says about who knows: 👤 for one, 👥 for two or more.
+    (The button stays 👥: it picks any number.)"""
+    return "👤" if count == 1 else SOME
+
+
+def guess_for(claim: Claim, party: list[Entity]) -> list[str]:
+    """Who DMbot thinks knows it (#4534): the player characters whose players spoke the lines it
+    was said in, when that is some of the party and not all or none (nothing then to suggest).
+    Only the picker's pre-ticks and a line on the card: it writes nothing, and never takes a
+    character off the DM's own list."""
+    spoke = {e.id for e in party if e.played_by is not None and e.played_by in claim.speaker_ids}
+    return [e.id for e in party if e.id in spoke] if 0 < len(spoke) < len(party) else []
+
+
+def page_text(
+    page: list[Claim],
+    total: int,
+    answered: Mapping[str, str] | None = None,
+    hints: Mapping[str, str] | None = None,
+) -> str:
     """A few questions, numbered, with a heading when a name has several. An answered one
     keeps its number and says what came of it, so the numbers never move under a thumb."""
     answered = answered or {}
     lines = [
-        f"**What was said at the table.** {YES} true · {HIDE} true, but secret from your players "
-        f"· {NO} not true.\n{ALL_TRUE} and {ALL_SECRET} answer this whole page at once."
+        f"**What was said at the table.** {YES} true · {SOME} true, only some characters know "
+        f"· {HIDE} true, but secret from your players · {NO} not true.\n"
+        f"{ALL_TRUE} and {ALL_SECRET} answer this whole page at once."
     ]
     last = ""
     for number, claim in enumerate(page, 1):
@@ -165,7 +210,8 @@ def page_text(page: list[Claim], total: int, answered: Mapping[str, str] | None 
             lines.append(f"{number}. {done}")
         else:  # (why it is "something that happened to them" goes on its own line, not the details)
             why = f"\n   _{_md(claim.note)}_" if claim.note else ""
-            lines.append(f"{number}. {question_text(claim)}{why}")
+            hint = f"\n   {hints[claim.id]}" if hints and claim.id in hints else ""
+            lines.append(f"{number}. {question_text(claim)}{why}{hint}")
     if total > len(page):
         lines.append(f"\n_{total - len(page)} more. Answer these and the next ones appear._")
     return "\n".join(lines)
@@ -267,6 +313,7 @@ class ClaimsReview(_Menu):
         # around it (#3210).
         self.guild_id = guild_id
         self.page: list[Claim] = []
+        self.party: list[Entity] = []  # the confirmed player characters, for 👥 and its guess
         self.total = 0
         self.answered: dict[str, str] = {}
         self.undoable: dict[str, int] = {}  # claim → the batch its fact was written in
@@ -283,6 +330,11 @@ class ClaimsReview(_Menu):
         agreed = await _bot(interaction).consent.consenting(self.guild_id)
         waiting = await ClaimStore(memory).waiting(self.guild_id, self.campaign_id, opted_in=agreed)
         self.page, self.total, self.answered = waiting[:PAGE], len(waiting), {}
+        self.party = [
+            e
+            for e in await memory.entities(self.guild_id, self.campaign_id, statuses=[CONFIRMED])
+            if e.type == "character" and e.role == PLAYER_CHARACTER
+        ]
         self.first_total = self.first_total or self.total
         self.undoable = {}
         if not self.page:
@@ -322,27 +374,62 @@ class ClaimsReview(_Menu):
                 )
             )
 
+    def _hints(self) -> dict[str, str]:
+        """For each question still waiting: who DMbot thinks knows it, when it has a guess."""
+        out: dict[str, str] = {}
+        for claim in self.page:
+            if claim.id in self.answered or _is_condition(claim):
+                continue
+            guessed = guess_for(claim, self.party)
+            if guessed:
+                who = party_names(self.party, guessed)
+                icon = knower_icon(len(guessed))
+                out[claim.id] = f"{icon} DMbot thinks only {who} {knows(len(guessed))} this."
+        return out
+
     def _render(self) -> str:
+        """Row 1: ✅ (an answered one's ↩️ takes its place), row 2: 👥, row 3: 🤫, row 4: ❌, so
+        every question has its four answers and the taking back needs no row of its own."""
         self.clear_items()
         self._bulk_buttons()
         for number, claim in enumerate(self.page, 1):
             gone = claim.id in self.answered
-            self.add_item(
-                _Button(
-                    self._answer(claim.id, yes=True),
-                    label=f"{YES} {number}",
-                    style=discord.ButtonStyle.success,
-                    row=1,
-                    disabled=gone,
+            if claim.id in self.undoable:  # a fact the players may now be shown can be taken back
+                self.add_item(
+                    _Button(
+                        self._undo(claim.id),
+                        label=f"↩️ {number}",
+                        style=discord.ButtonStyle.secondary,
+                        row=1,
+                    )
                 )
-            )
-            if not _is_condition(claim):  # a state ("is dead") has no secret flag
+            else:
+                self.add_item(
+                    _Button(
+                        self._answer(claim.id, yes=True),
+                        label=f"{YES} {number}",
+                        style=discord.ButtonStyle.success,
+                        row=1,
+                        disabled=gone,
+                    )
+                )
+            if not _is_condition(claim):  # a state ("is dead") has no audience and no secret flag
+                if len(self.party) >= 2:  # (with one character there is no "some")
+                    self.add_item(
+                        _Button(
+                            self._some(claim.id),
+                            label=f"{SOME} {number}",
+                            style=discord.ButtonStyle.primary,
+                            row=2,
+                            disabled=gone,
+                        )
+                    )
                 self.add_item(
                     _Button(
                         self._answer(claim.id, yes=True, secret=True),
                         label=f"{HIDE} {number}",
                         style=discord.ButtonStyle.primary,
-                        row=2,
+                        row=3,
                         disabled=gone,
                     )
                 )
@@ -351,25 +438,36 @@ class ClaimsReview(_Menu):
                     self._answer(claim.id, yes=False),
                     label=f"{NO} {number}",
                     style=discord.ButtonStyle.secondary,
-                    row=3,
+                    row=4,
                     disabled=gone,
                 )
             )
-        for number, claim in enumerate(self.page, 1):
-            if claim.id in self.undoable:  # a fact the players may now be shown can be taken back
-                self.add_item(
-                    _Button(
-                        self._undo(claim.id),
-                        label=f"↩️ {number}",
-                        style=discord.ButtonStyle.secondary,
-                        row=4,
-                    )
-                )
         add_stop(self, self.walk, row=0)  # (row 0 has at most three buttons; row 4 can be full)
         done = min(self.first_total - self.total + len(self.answered) + 1, self.first_total)
         return progress(self.walk, done, self.first_total) + page_text(
-            self.page, self.total, self.answered
+            self.page, self.total, self.answered, self._hints()
         )
+
+    def _some(self, claim_id: str) -> Any:
+        async def handler(interaction: discord.Interaction) -> None:
+            await self._pick(interaction, claim_id)
+
+        return handler
+
+    async def _pick(self, interaction: discord.Interaction, claim_id: str) -> None:
+        """👥: the party's characters to tick, DMbot's guess ticked already. The DM only, asked
+        again now; nothing is written until Save."""
+        campaign = await _campaign_for(interaction, self.campaign_id)
+        claim = next((c for c in self.page if c.id == claim_id), None)
+        if campaign is None:
+            return
+        if (
+            claim is None or claim_id in self.answered
+        ):  # (a stale or double press still gets an answer)
+            await _tell(interaction, "That question was already answered.")
+            return
+        picker = KnowersPicker(self, claim)
+        await _replace(interaction, picker.text(), picker)
 
     def _undo(self, claim_id: str) -> Any:
         async def handler(interaction: discord.Interaction) -> None:
@@ -420,7 +518,13 @@ class ClaimsReview(_Menu):
         return handler
 
     async def _decide(
-        self, interaction: discord.Interaction, claim_id: str, yes: bool, *, secret: bool = False
+        self,
+        interaction: discord.Interaction,
+        claim_id: str,
+        yes: bool,
+        *,
+        secret: bool = False,
+        knowers: list[str] | None = None,
     ) -> None:
         campaign = await _campaign_for(interaction, self.campaign_id)  # asked again each press
         memory = _memory(interaction)
@@ -436,20 +540,29 @@ class ClaimsReview(_Menu):
                 # Who may be recorded is asked again now: someone may have stopped meanwhile.
                 agreed = await _bot(interaction).consent.consenting(self.guild_id)
                 result = await claims.confirm(
-                    self.guild_id, self.campaign_id, claim_id, opted_in=agreed, secret=secret
+                    self.guild_id,
+                    self.campaign_id,
+                    claim_id,
+                    opted_in=agreed,
+                    secret=secret,
+                    knowers=knowers,
                 )
                 if result.batch is not None:
                     self.undoable[claim_id] = result.batch
-                done = (
-                    f"{HIDE} Remembered, and kept secret from your players: {saying}."
-                    if secret
-                    else f"{YES} Remembered: {saying}."
-                )
+                if knowers is not None:
+                    done = (
+                        f"{knower_icon(len(knowers))} Remembered: {saying}. "
+                        f"Known to: {party_names(self.party, knowers)}."
+                    )
+                elif secret:
+                    done = f"{HIDE} Remembered, and kept secret from your players: {saying}."
+                else:
+                    done = f"{YES} Remembered: {saying}."
                 if result.shown:
                     done += f"\n{SHOWN_NOW}"
                 if result.held:
                     done += f"\n{HELD_NOW}"
-                if result.split:
+                if result.split and knowers is None:  # (a pick is the DM's own word: no guess line)
                     done += f"\n{SPLIT_GROUP if result.scene else SPLIT_UNKNOWN}"
                 await _watch_story(interaction, campaign, result.claim.fact_id)
                 if result.flags:
@@ -478,6 +591,82 @@ class ClaimsReview(_Menu):
             await _replace(interaction, f"{done}{note}\n\n{fresh}", self)
             return
         await _replace(interaction, f"{done}{note}\n\n{text}", self)
+
+
+class KnowersPicker(_Menu):
+    """👥 Some know: who knows what was said. One card with the party's characters to tick (DMbot's
+    guess ticked already), Save and Back. Nothing is written until Save, which answers the question
+    as true with exactly these characters knowing it: one change, one ↩️ on the page. The store
+    refuses what can't be honoured (a shown connection, a hidden name) in plain words and the
+    question stays."""
+
+    MAX_OPTIONS = 25  # what a menu holds; a party is a handful
+
+    def __init__(self, review: ClaimsReview, claim: Claim) -> None:
+        super().__init__()
+        self.review, self.claim = review, claim
+        shown = {e.id for e in review.party[: self.MAX_OPTIONS]}  # (a menu holds 25)
+        guessed = [i for i in guess_for(claim, review.party) if i in shown]
+        self.chosen: list[str] = list(guessed)
+        self.guess = guessed  # DMbot's own guess, kept apart from what the DM ticks
+        self.saving = False
+        self.select: discord.ui.Select[Any] = discord.ui.Select(
+            placeholder="Who knows it?",
+            min_values=1,
+            max_values=min(len(review.party), self.MAX_OPTIONS),
+            options=self._options(),
+            row=0,
+        )
+        self.select.callback = self._ticked  # type: ignore[method-assign]
+        self.add_item(self.select)
+        self.add_item(_Button(self._save, label="Save", style=discord.ButtonStyle.success, row=1))
+        self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary, row=1))
+
+    def _options(self) -> list[discord.SelectOption]:
+        return [
+            discord.SelectOption(label=e.name[:100], value=e.id, default=e.id in self.chosen)
+            for e in self.review.party[: self.MAX_OPTIONS]
+        ]
+
+    def text(self) -> str:
+        # (DMbot's name only goes on DMbot's guess, never on what the DM ticked)
+        who = (
+            f"{knower_icon(len(self.guess))} DMbot's guess is ticked: only "
+            f"{party_names(self.review.party, self.guess)} {knows(len(self.guess))} this.\n"
+            if self.guess and sorted(self.chosen) == sorted(self.guess)
+            else ""
+        )
+        return (
+            f"{SOME} **Who knows this?** {statement(self.claim)}\n{who}"
+            "Tick who knows it, then press Save. Saving also marks it true, and only they will "
+            "know. "
+            "Back changes nothing."
+        )
+
+    async def _ticked(self, interaction: discord.Interaction) -> None:
+        self.chosen = list(self.select.values)
+        self.select.options = self._options()
+        await _replace(interaction, self.text(), self)
+
+    async def _save(self, interaction: discord.Interaction) -> None:
+        if not self.chosen:  # (the menu needs one, but a card with nothing ticked says so)
+            await _tell(interaction, "Tick at least one character who knows it, or press Back.")
+            return
+        if self.saving or self.claim.id in self.review.answered:  # (a double press writes once)
+            await _tell(interaction, "That question was already answered.")
+            return
+        self.saving = True
+        try:
+            await _answer_first(interaction, in_place=True)  # (the write below can take a moment)
+            await self.review._decide(interaction, self.claim.id, True, knowers=self.chosen)
+        finally:
+            self.saving = False
+        if self.claim.id in self.review.answered:
+            self.stop()  # (a refusal leaves this card in place to change the ticks)
+
+    async def _back(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await _replace(interaction, self.review._render(), self.review)
 
 
 def _reopen(claim_id: str) -> Any:

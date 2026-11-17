@@ -11,7 +11,7 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 from dmbot import ai_feed
-from dmbot.bot import IMPORT_SCENES, IMPORT_WHO, DMBot
+from dmbot.bot import IMPORT_SCENES, IMPORT_THREADS, IMPORT_WHO, DMBot
 
 READY = SimpleNamespace(campaign_id="c1", session_id="s" * 32)
 CAMPAIGN = SimpleNamespace(dm_user_ids=(7, 9))
@@ -19,12 +19,13 @@ READY_C = SimpleNamespace(campaign_id="c", session_id="s")  # (`test_who_wiring`
 
 
 class ImportScenesAndWho(unittest.IsolatedAsyncioTestCase):
-    def fake(self, scenes: Any, who: Any) -> Any:
+    def fake(self, scenes: Any, who: Any, threads: Any = None) -> Any:
         return SimpleNamespace(
             import_job=SimpleNamespace(store=SimpleNamespace(renew_scan=AsyncMock())),
             consent=SimpleNamespace(recorded_in=AsyncMock(return_value=frozenset({8}))),
             _write_scenes=scenes,
             _write_who=who,
+            _read_threads=threads or AsyncMock(),  # (#4522: after who, the same way)
             _walk_story_chain=AsyncMock(),  # (#4173 slice 4: its own step, tested elsewhere)
         )
 
@@ -48,10 +49,14 @@ class ImportScenesAndWho(unittest.IsolatedAsyncioTestCase):
 
             return run
 
-        me = self.fake(step("scenes"), step("who"))
+        me = self.fake(step("scenes"), step("who"), step("threads"))
         await self.run_it(me)
         args = (5, "c1", "s" * 32, {7, 9}, frozenset({8}))
-        self.assertEqual(seen, [("scenes", IMPORT_SCENES, args), ("who", IMPORT_WHO, args)])
+        self.assertEqual(
+            seen,
+            [("scenes", IMPORT_SCENES, args), ("who", IMPORT_WHO, args),
+             ("threads", IMPORT_THREADS, args)],
+        )  # fmt: skip
         me.consent.recorded_in.assert_awaited_with(5, "c1")
         me.consent.recorded_in.assert_awaited_with(5, "c1")
         self.assertFalse(me.import_job.store.renew_scan.await_count)  # (only after a counted call)
@@ -89,6 +94,7 @@ class TheRealWhoStep(unittest.IsolatedAsyncioTestCase):
         me._write_scenes = AsyncMock()
         me._walk_story_chain = AsyncMock()
         me._write_who = lambda *a: DMBot._write_who(me, *a)
+        me._read_threads = AsyncMock()
         with helper.patches():
             await DMBot._import_scenes_and_who(me, 1, READY_C, SimpleNamespace(dm_user_ids=(7,)))  # type: ignore[arg-type]
             run = helper.step_run

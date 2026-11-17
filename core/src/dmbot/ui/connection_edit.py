@@ -19,13 +19,14 @@ import discord
 
 from dmbot.campaigns import Campaign
 from dmbot.memory import kin, link_edits, place_levels, route_length, route_words
+from dmbot.memory.backstory_keep import undo_batches
 from dmbot.memory.link_words import CONNECTION_WORDS, link_words, predicate_for, reads_both_ways
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import CONFIRMED, DM, KNOWS_HOWS, MemoryRuleError, Relation
 from dmbot.memory.store import MemoryStore
 from dmbot.memory.who_resolve import checked_line
 from dmbot.mentions import NO_PINGS
-from dmbot.ui import all_names, logic
+from dmbot.ui import all_names, logic, route_condition
 from dmbot.ui.dmbot_commands import (
     VIEW_TIMEOUT_S,
     _answer_first,
@@ -53,7 +54,19 @@ from dmbot.ui.place_size import (
     NOTHING_CHANGED,
     ONLY_DM_LENGTH,
 )
-from dmbot.ui.who_knows import WhoKnowsMenu, called, player_characters, who_text
+from dmbot.ui.who_knows import (
+    ALREADY,
+    NO_LONGER_COMMON,
+    NOTHING_TO_UNDO,
+    UNDONE,
+    UNDONE_PARTLY,
+    WhoKnowsMenu,
+    called,
+    common_done,
+    player_characters,
+    taken_back,
+    who_text,
+)
 
 log = logging.getLogger(__name__)
 
@@ -245,6 +258,7 @@ async def show_one(
         + "\n"
         + (checked_line(found.relation.decided or "") if found.secrets else "")  # DMs only
         + await why_line(found)  # DMs only: the DM's own text
+        + await _condition_line(interaction, found)
         + (
             (
                 "Change the words, say if they've met, hide it, or remove it."
@@ -256,6 +270,24 @@ async def show_one(
         ),
         view,
     )
+
+
+async def _condition_line(interaction: discord.Interaction, found: Found) -> str:
+    """A known road's condition (#4258), for the DM, on its own line; "" for anything else."""
+    r = found.relation
+    if r.predicate != route_words.ROUTE_TO or r.route_state or not found.secrets:
+        return ""
+    from dmbot.memory import gate
+    from dmbot.ui.continuity import _session_numbers
+
+    c = found.campaign
+    got = await found.memory.route_conditions(
+        c.guild_id, c.id, gate.Viewer.the_dm(), relation_ids=[r.id]
+    )
+    held = got.get(r.id)
+    numbers = await _session_numbers(interaction, c.id) if held and held.before else {}
+    line = route_condition.condition_line(held, numbers, dm=True)
+    return f"{line.lstrip()}\n" if line else ""
 
 
 # The DM's "Why?" (#3606), in the words Discord uses for the upload ("📜 Upload campaign lore") and
@@ -338,6 +370,8 @@ class OneConnection(_Menu):
             # a route's stated length, the DM's (#4255; the ux-critic's words): 🛣️ (📏 is Size)
             self.length_words = r.length_words or ""
             self.add_item(_Button(self._length, label=LENGTH_BUTTON, style=grey, row=3))
+            # and whether it is open (#4258): its own screen, as a route place's
+            self.add_item(_Button(self._condition, label=route_condition.BUTTON, style=grey, row=3))
             if r.length_words is not None and r.length_from == place_levels.READ:
                 self.add_item(
                     _Button(self._keep_length, label=KEEP_LENGTH_BUTTON, style=grey, row=3)
@@ -370,6 +404,12 @@ class OneConnection(_Menu):
                 row=4,
             )
             self.add_item(self.direction)
+
+    async def _condition(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await route_condition.show(
+            interaction, self.campaign_id, entity_id=self.entity_id, relation_id=self.relation_id
+        )
 
     async def _changed(
         self, interaction: discord.Interaction, found: Found, note: str, *, undo: int | None = None
@@ -521,27 +561,7 @@ class OneConnection(_Menu):
             await _tell(interaction, SECRET_DENIED_PRESS)
             return
         pcs = await player_characters(found.memory, found.campaign)
-        knowing = await found.memory.connection_knowers(
-            found.campaign.guild_id, found.campaign.id, [found.relation.id]
-        )
-        who = link_edits.who_knows_now(found.relation, knowing.get(found.relation.id, []))
-        names = dict(pcs)
-        view = WhoKnows(
-            self.campaign_id, self.entity_id, found.relation.id, pcs,
-            chosen=[c for c in knowing.get(found.relation.id, []) if c in names],
-            now=who,
-        )  # fmt: skip
-        await _replace(
-            interaction,
-            who_text(
-                _said(found),
-                who,
-                knowing.get(found.relation.id, []),
-                names,
-                has_characters=bool(names),
-            ),
-            view,
-        )
+        await _replace(interaction, *await _who_page(found, self.campaign_id, self.entity_id, pcs))
 
     async def _pin(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -747,6 +767,33 @@ class OtherWords(discord.ui.Modal, title="Other words"):
         await self.page._new_words(interaction, predicate, detail)
 
 
+async def _who_page(
+    found: Found,
+    campaign_id: str,
+    entity_id: str,
+    pcs: Sequence[tuple[str, str]],
+    *,
+    note: str = "",
+    undo: Sequence[int] = (),
+) -> tuple[str, WhoKnows]:
+    """The connection's "Who knows this?" page as it stands now: its words and its buttons,
+    read afresh (#2935; 🌍 Common knowledge, #4537), with `note` on top and ↩ Undo for `undo`."""
+    c, rel = found.campaign, found.relation
+    knowing = (await found.memory.connection_knowers(c.guild_id, c.id, [rel.id])).get(rel.id, [])
+    who = link_edits.who_knows_now(rel, knowing)
+    if who == link_edits.EVERYONE and rel.id in await found.memory.common_knowledge(
+        c.guild_id, c.id, "connection", [rel.id]
+    ):
+        who = link_edits.COMMON
+    names = dict(pcs)
+    view = WhoKnows(
+        campaign_id, entity_id, rel.id, pcs,
+        chosen=[x for x in knowing if x in names], now=who, undo=undo,
+    )  # fmt: skip
+    text = who_text(_said(found), who, knowing, names, has_characters=bool(names))
+    return (f"{note}\n\n{text}" if note else text), view
+
+
 class WhoKnows(WhoKnowsMenu):
     """The connection's page (#2935). Each press checks the campaign, the DM and the connection
     again; the three keep the meaning of the old Hide and Show buttons."""
@@ -760,9 +807,42 @@ class WhoKnows(WhoKnowsMenu):
         *,
         chosen: Sequence[str] = (),
         now: str = "",
+        undo: Sequence[int] = (),
     ) -> None:
-        super().__init__(pcs, chosen=chosen, now=now)
+        super().__init__(pcs, chosen=chosen, now=now, undo=undo)
         self.campaign_id, self.entity_id, self.relation_id = campaign_id, entity_id, relation_id
+
+    async def _undo(self, interaction: discord.Interaction) -> None:
+        """↩ Undo of a 🌍 answer (#4537): every change it made, newest first."""
+        await _answer_first(interaction, in_place=True)
+        found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
+        if found is None:
+            return
+        if not found.secrets:  # checked on every press
+            await _tell(interaction, SECRET_DENIED_PRESS)
+            return
+        c = found.campaign
+        batches, self.undo = self.undo, []  # (a second press on this page undoes nothing more)
+        if not batches:
+            await _tell(interaction, NOTHING_TO_UNDO)
+            return
+        every = await undo_batches(found.memory, c.guild_id, c.id, batches)
+        changed(interaction, c)
+        self.stop()
+        await self._redraw(interaction, UNDONE if every else UNDONE_PARTLY)
+
+    async def _redraw(
+        self, interaction: discord.Interaction, note: str, undo: Sequence[int] = ()
+    ) -> None:
+        """This page again, read afresh, with `note` on top and ↩ Undo for `undo`."""
+        found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
+        if found is None:
+            return
+        pcs = await player_characters(found.memory, found.campaign)
+        await _replace(
+            interaction,
+            *await _who_page(found, self.campaign_id, self.entity_id, pcs, note=note, undo=undo),
+        )
 
     async def _back(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -786,13 +866,18 @@ class WhoKnows(WhoKnowsMenu):
         live = (await found.memory.connection_knowers(c.guild_id, c.id, [found.relation.id])).get(
             found.relation.id, []
         )
-        if who == link_edits.who_knows_now(found.relation, live) and (
+        now = link_edits.who_knows_now(found.relation, live)
+        was_common = found.relation.id in await found.memory.common_knowledge(
+            c.guild_id, c.id, "connection", [found.relation.id]
+        )
+        if now == link_edits.EVERYONE and was_common:
+            now = link_edits.COMMON
+        if who == now and (
             who != link_edits.SOME_CHARACTERS or sorted(self.picked) == sorted(live)
         ):
-            await _tell(
-                interaction, "Already like that. Nothing changed. Press Back to see the card."
-            )
+            await _tell(interaction, ALREADY)
             return
+        made: list[int] = []
         try:
             written = await link_edits.set_who_knows(
                 found.memory,
@@ -802,6 +887,7 @@ class WhoKnows(WhoKnowsMenu):
                 who,
                 self.picked,
                 players_only=True,  # (this menu lists player characters only: NPC knowers stay)
+                made=made,
             )
         except MemoryRuleError as exc:
             if str(exc) == link_edits.PICK_ONE:
@@ -812,6 +898,23 @@ class WhoKnows(WhoKnowsMenu):
                 )
             else:
                 await _tell(interaction, f"Couldn't change that. {exc}")
+            return
+        if not made:  # (another press got there first: nothing was written)
+            await _tell(interaction, ALREADY)
+            return
+        if who == link_edits.COMMON or was_common:
+            # (the page again, with what changed and one ↩ Undo for all of it, #4537: taking common
+            # knowledge back is two changes, which the card's one-change Undo can't reverse)
+            if who == link_edits.COMMON:
+                note = common_done(found.relation.secret or found.relation.unrevealed)
+            else:
+                mine = [self.names[x] for x in self.picked if x in self.names]
+                note = taken_back(who, mine, was_shown=now == link_edits.COMMON)
+                if now == link_edits.COMMON:  # (only when the page showed it as common)
+                    note = f"{NO_LONGER_COMMON} {note}"
+            changed(interaction, c)
+            self.stop()
+            await self._redraw(interaction, note, undo=made)
             return
         said = _said(found)
         undo: int | None = None

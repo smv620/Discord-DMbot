@@ -144,6 +144,18 @@ NAME_REJECTED_REASON = "the DM said a name in it isn't a name"
 NOT_A_NAME_REASON = "a number, time, address or plain word in it is no name"  # #3394
 SECRET_NAME_REASON = "a name in it is one only the DM may use"
 NAME_FIRST = "Say what the new name is first (in Check new names)."
+# The DM's 👥 Some know (#4534): refused in plain words, nothing written, never quietly different.
+SOME_KNOW_NONE = (
+    "Tick at least one character who knows it. To keep it from everyone, use 🤫 instead."
+)
+SOME_KNOW_WHO = "That character isn't in this campaign. Go Back and pick again."
+SOME_KNOW_STATE = (
+    "Facts like 'is dead' are for everyone, so you can't pick who knows. Press ✅ or ❌."
+)
+SOME_KNOW_HIDDEN = (
+    "Can't pick who knows this yet: a name in it is hidden from your players. Press 🤫 to keep it "
+    "secret, or show that name first (open the name, then 👁️ Who knows this?), then try again."
+)
 # A claim whose name was past the session's limit is kept, waiting for its name to be proposed in
 # a later session (#1367). It is a proposed claim with this as its `reason`, which no claim that
 # is asked or dropped carries.
@@ -411,15 +423,19 @@ def _phrase(text: str) -> str:
 def resolve_relationship(onto: Ontology, text: str) -> tuple[PredicateTerm, bool] | None:
     """The relationship a phrase means and whether it is said from the object's side
     ("owned by"): its key, a synonym of a core one, or its words. None: not one DMbot has."""
+    from dmbot.memory.thread_clues import DM_ONLY_PREDICATES
+
     phrase = _phrase(text)
     if not phrase:
         return None
+    # (a clue's tie to a thread is the DM's alone, never read from a text, #4624: a reader's
+    # "is a clue to" falls back to the catch-all, its own words kept)
     for key in (phrase, SYNONYMS.get(phrase, "")):
         term = onto.predicates.get(key)
-        if term is not None and term.status == "active":
+        if term is not None and term.status == "active" and key not in DM_ONLY_PREDICATES:
             return term, False
     for term in onto.predicates.values():
-        if term.status != "active":
+        if term.status != "active" or term.key in DM_ONLY_PREDICATES:
             continue
         if phrase in {_phrase(term.label)} | {_phrase(s) for s in term.synonyms}:
             return term, False
@@ -1008,6 +1024,14 @@ def which_choices(
     return out
 
 
+async def _narrow_to(w: Changes, relation_id: str, characters: Sequence[str]) -> int:
+    """The DM's 👥 pick on a connection the players already see (#4534, #4524): it is held back
+    now and exactly these characters know it, in the claim's own change, so one Undo gives it back
+    to everyone. The pick is the DM's own choice, so the guard lets it through (the write is made
+    with `dm_chose_secret`). Returns how many know it now."""
+    return len(await knowers.set_connection_knowers(w, relation_id, characters))
+
+
 async def _learn_in_scene(w: Changes, relation_id: str, characters: Sequence[str]) -> int:
     """Each character of the group that was in the scene learns the connection (#2996 slice 2a),
     in the claim's own change, so one Undo takes it back. A character the store refuses (gone
@@ -1015,8 +1039,8 @@ async def _learn_in_scene(w: Changes, relation_id: str, characters: Sequence[str
     learned = 0
     for character_id in characters:
         try:
-            await knowers.learn(w, "connection", relation_id, character_id)
-            learned += 1
+            if await knowers.learn(w, "connection", relation_id, character_id):
+                learned += 1
         except MemoryRuleError:
             continue
     return learned
@@ -1949,7 +1973,15 @@ class ClaimStore:
         does), it catches the one writer that re-read just before that delete."""
 
         # (imported here: they need this module's names)
-        from dmbot.memory import deed_proposals, met_store, private_scene_store, reveal_proposals
+        from dmbot.memory import (
+            deed_proposals,
+            met_store,
+            private_scene_store,
+            reveal_proposals,
+            secret_questions,
+            thread_progress,
+            thread_suggestions,
+        )
 
         async with self._store._db.guild(guild_id) as conn:
             # (the one lock order "Delete my transcripts" and a speaker's removal use too). It is
@@ -1966,6 +1998,12 @@ class ClaimStore:
             readings += await scenes.forget(conn, guild_id, user_id)
             # (DMbot's graph check reports that quote them, #3741)
             readings += await graph_review.forget(conn, guild_id, user_id)
+            # (the 🤫 questions that quote them, #4524)
+            readings += await secret_questions.forget(conn, guild_id, user_id)
+            # (the story threads read from a session that quote them, #4522)
+            readings += await thread_suggestions.forget(conn, guild_id, user_id)
+            # (the progress on story threads read from a session that quotes them, #4522 5b)
+            readings += await thread_progress.forget(conn, guild_id, user_id)
             answers = await who_answers.forget(conn, guild_id, user_id)
             cur = await conn.execute(
                 "DELETE FROM memory_claims WHERE guild_id = %s AND %s = ANY(speaker_ids)"
@@ -2083,6 +2121,7 @@ class ClaimStore:
         opted_in: Collection[int],
         before: Callable[[Changes], Awaitable[None]] | None = None,
         secret: bool = False,
+        knowers: Sequence[str] | None = None,
     ) -> Confirmed:
         """The DM says yes: the fact is written as the DM's own, through the store (so every
         rule and check runs as for any fact), and the claim keeps which fact it became. A fact
@@ -2093,7 +2132,11 @@ class ClaimStore:
         fact it replaces or brings back what had ended): all of it happens, or none.
         `secret`: the DM's "truth but secret" (#2410): The truth holds the connection and the
         players are not shown it. A condition ("Roan is dead") has no secret flag, so it is
-        never written secret."""
+        never written secret. `knowers` (#4534, the DM's 👥 Some know): the connection happened
+        and only these characters know it. It is written held back and each learns it, in
+        the claim's own change (one Undo), exactly as for a split party's scene, and it takes
+        the place of that guess. Any confirmed character of the campaign may be ticked, a player
+        character or an NPC with a point of view. Never for a condition, which has no audience."""
         claim = await self.get(guild_id, campaign_id, claim_id)
         # A held claim (waiting for its name, or past a read's cap, #3749) is in no list the DM
         # sees: an id that reaches here anyway is gone, never written.
@@ -2106,6 +2149,15 @@ class ClaimStore:
         wording = Extracted(
             claim.subject, claim.relationship, claim.object, claim.details, claim.lines, claim.how
         )
+        picked: list[str] | None = None  # the DM's 👥 pick, checked before anything is written
+        if knowers is not None:
+            if isinstance(knowers, str) or secret:
+                raise MemoryRuleError(SOME_KNOW_WHO)
+            picked = list(dict.fromkeys(knowers))
+            if not picked:
+                raise MemoryRuleError(SOME_KNOW_NONE)
+            if condition_of(wording) is not None:
+                raise MemoryRuleError(SOME_KNOW_STATE)
         if claim.how == HOW_PLAN:
             raise MemoryRuleError(PLAN_REASON)
         if injection_like(wording):
@@ -2163,7 +2215,11 @@ class ClaimStore:
         # second press waits and then finds the question gone. A fact the rules refuse rolls
         # the whole thing back and leaves the question waiting. The check at the top of
         # `confirm` is only an early exit: this one, under the lock, is the one that counts.
-        async with self._store._write(guild_id, campaign_id, DM) as w:
+        # (the DM's 👥 pick may narrow a connection the players already see: that is the DM's own
+        # choice, so the guard of #4524 lets it through, #4534)
+        async with self._store._write(
+            guild_id, campaign_id, DM, dm_chose_secret=picked is not None
+        ) as w:
             current = await w.get(CLAIMS, claim_id)
             if (
                 current is None
@@ -2187,7 +2243,19 @@ class ClaimStore:
                 other = made.get(other[0], other)
             if before is not None:
                 await before(w)
-            shown = held = split = False
+            if (
+                picked is not None
+            ):  # each a confirmed, unmerged character of this campaign: a player
+                # character or an NPC with a point of view (`knowers.learn` gives an NPC its own)
+                real = await w.select(
+                    ENTITIES,
+                    " AND id = ANY(%s) AND status = %s AND type = 'character'"
+                    " AND merged_into IS NULL",
+                    [picked, CONFIRMED],
+                )
+                if len(real) != len(picked):
+                    raise MemoryRuleError(SOME_KNOW_WHO)
+            shown = held = split = narrowed = False
             scene = 0
             if condition is not None:
                 state, flags = await self._store.set_condition_in(
@@ -2212,7 +2280,11 @@ class ClaimStore:
                 # back from the start, so nothing a shown row sets off (a "met" upgrade, an item's
                 # whereabouts ended) reaches the other group (the reviewer).
                 in_scene = (
-                    await split_scene(w, claim.session_started_at, claim.lines, claim.speaker_ids)
+                    tuple(picked)  # the DM's own pick, over any guess (#4534)
+                    if picked is not None
+                    else await split_scene(
+                        w, claim.session_started_at, claim.lines, claim.speaker_ids
+                    )
                     if not secret and not hold
                     else None
                 )
@@ -2231,8 +2303,13 @@ class ClaimStore:
                 )  # fmt: skip
                 fact_id = relation.id
                 if relation.id in live:
-                    if not live[relation.id]:
-                        in_scene = None  # (one already shown stays as it is: nothing to learn)
+                    if not live[relation.id]:  # (False: it is already shown to the players)
+                        if picked is not None:
+                            # the DM's own narrowing: held back now, and only these know it
+                            await w.update(RELATIONS, relation.id, {"unrevealed": True})
+                            narrowed = True
+                        else:
+                            in_scene = None  # (one already shown stays as it is)
                     elif in_scene is None and not secret:
                         # (the table said a connection the story holds back: the party's now,
                         # #3963 c)
@@ -2248,7 +2325,12 @@ class ClaimStore:
                     # group, or a connection the together rule wouldn't show either (a secret one,
                     # an end the players haven't been shown): nobody, and the DM decides.
                     split = True
-                    if in_scene and await learnable_in_scene(w, relation.id):
+                    if picked is not None and not await learnable_in_scene(w, relation.id):
+                        raise MemoryRuleError(SOME_KNOW_HIDDEN)  # (the DM's word is not dropped)
+                    if narrowed:
+                        # exactly these characters: any other who knew it stops knowing
+                        scene = await _narrow_to(w, relation.id, picked or [])
+                    elif in_scene and await learnable_in_scene(w, relation.id):
                         scene = await _learn_in_scene(w, relation.id, in_scene)
                 # (a secret one is the DM's own choice, and says so already)
                 held = hold and not secret and relation.id not in live

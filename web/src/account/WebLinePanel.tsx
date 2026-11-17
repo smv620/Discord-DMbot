@@ -308,7 +308,7 @@ function LinkRow({
       <p>
         {markSecret(link) && <span aria-hidden="true">{words.secretMark} </span>}
         {link.belief && <span aria-hidden="true">{words.theoryMark} </span>}
-        {words.linkText(a, b, link.words, link.direction)}
+        {words.linkText(a, b, link.words, link.direction, link.pairWords)}
         {ASSUMED_PARENT_LIVE && canEdit && link.assumed && <span> {words.assumedMark}</span>}
         {!link.knowWord && link.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
       </p>

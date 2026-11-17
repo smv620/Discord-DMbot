@@ -205,7 +205,7 @@ class TheStoryGraph(WithASister):
         assert self.hero is not None
         for kind, statement in (("entry", self.sister), ("connection", self.links["mira-sister"])):
             await self.memory.set_statement_knowers(
-                self.g, self.one.id, kind, statement, [self.hero], source="dm"
+                self.g, self.one.id, kind, statement, [self.hero], source="dm", dm_chose_secret=True
             )
         own = await self.graph(self.player, center=self.mira, hops=1)
         sister = next(n for n in own["nodes"] if n["id"] == self.sister)

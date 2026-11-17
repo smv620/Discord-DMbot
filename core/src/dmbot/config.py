@@ -120,6 +120,10 @@ class Settings:
     # A fourth question (#2996, part 2 slice 1): who learned what, proposed for the DM to keep.
     # Off until dev1's sample run; only runs when the extractor does, inside the same call limits.
     story_reveals_on: bool = False
+    # Quests slice 5a (#4522): after a session, the new story threads the table's talk starts are
+    # suggested on the 📜 card. Off until dev1's scored sample run shows the other counts no worse
+    # (Supervisor's ruling C on #4522; docs/GO_LIVE.md)
+    story_threads_on: bool = False
     # Ask the reveal question only of batches that could hold one (#2996): off until dev1's run
     # shows the kept reveals don't drop with it on.
     story_reveals_precheck: bool = False
@@ -286,6 +290,12 @@ class Settings:
     continuity: Levels = field(default_factory=Levels)
     # A story thread (#1662) is stalled when this many sessions have started since it last moved.
     thread_stalled_sessions: int = 3
+    # Website lore reads at the same time on one server, one a campaign (#4551). 2 for real
+    # servers until a measurement shows more is safe; dev1 sets 5 on the test server only.
+    server_jobs_at_once: int = 2
+    # Document reads a server a day, Discord's button and the website's Upload lore together
+    # (#4582): 20 for the operator's bill; the test server raises it for the two-stage sample.
+    lore_reads_per_day: int = 20
     # Settle open pronouns in a lore read with the AI (#2790); off until the calibration run.
     who_is_it: bool = False
     # The most characters of story the recall service hands one helper (#1350).
@@ -387,6 +397,16 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if not (stalled_raw.isascii() and stalled_raw.isdigit() and int(stalled_raw) >= 1):
         raise ConfigError(
             f'DMBOT_THREAD_STALLED_SESSIONS must be a whole number from 1 up, got "{stalled_raw}".'
+        )
+    jobs_raw = get("DMBOT_SERVER_JOBS_AT_ONCE") or "2"
+    if not (jobs_raw.isascii() and jobs_raw.isdigit() and 1 <= int(jobs_raw) <= 20):
+        raise ConfigError(
+            f'DMBOT_SERVER_JOBS_AT_ONCE must be a whole number from 1 to 20, got "{jobs_raw}".'
+        )
+    reads_raw = get("DMBOT_LORE_READS_PER_DAY") or "20"
+    if not (reads_raw.isascii() and reads_raw.isdigit() and 1 <= int(reads_raw) <= 500):
+        raise ConfigError(
+            f'DMBOT_LORE_READS_PER_DAY must be a whole number from 1 to 500, got "{reads_raw}".'
         )
     who_raw = (get("DMBOT_WHO_IS_IT") or "0").lower()
     if who_raw not in ("0", "1", "true", "false", "on", "off"):
@@ -515,6 +535,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if picture_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
             'DMBOT_PICTURE_NAMES must be 1 (on) or 0 (off), got "' + picture_raw + '".'
+        )
+    threads_raw = (get("DMBOT_STORY_THREADS") or "0").lower()
+    if threads_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_STORY_THREADS must be 1 (on) or 0 (off), got "' + threads_raw + '".'
         )
     reveals_raw = (get("DMBOT_STORY_REVEALS") or "0").lower()
     if reveals_raw not in ("0", "1", "true", "on", "false", "off"):
@@ -725,6 +750,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_scenes_on=scenes_raw in ("1", "true", "on"),
         story_deeds_on=deeds_raw in ("1", "true", "on"),
         story_reveals_on=reveals_raw in ("1", "true", "on"),
+        story_threads_on=threads_raw in ("1", "true", "on"),
         story_reveals_precheck=precheck_raw in ("1", "true", "on"),
         met_unnamed_on=met_raw in ("1", "true", "on"),
         private_scenes_on=private_raw in ("1", "true", "on"),
@@ -782,6 +808,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         cleaner_rank_max=int(rank_raw),
         continuity=continuity,
         thread_stalled_sessions=int(stalled_raw),
+        server_jobs_at_once=int(jobs_raw),
+        lore_reads_per_day=int(reads_raw),
         who_is_it=who_raw in ("1", "true", "on"),
         recall_budget=recall_budget,
         sidebar_recall=sidebar_recall_raw in ("1", "true", "on"),

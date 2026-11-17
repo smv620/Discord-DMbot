@@ -47,13 +47,19 @@ FILES: dict[str, tuple[str, str, str]] = {
     "memory/meaning.py": (READS, "GraphEngineer", "meaning search leaves out unseen entries"),
     "memory/models.py": (DEFINES, "GraphEngineer", "the Entity fields and `unseen_by_players`"),
     "memory/party.py": (DEFINES, "GraphEngineer", "the party faction's row"),
+    "memory/public_guard.py": (
+        WRITES,
+        "GraphEngineer",
+        "which flags take an item from the players, held unless the DM chose it (#4524)",
+    ),
     "memory/recall.py": (READS, "GraphEngineer", "recall leaves out unseen entries"),
     "memory/revealed_aloud.py": (READS, "GraphEngineer", "names said aloud that were hidden"),
     "memory/states.py": (WRITES, "GraphEngineer", "clears `audience_limited` on a change of kind"),
     "memory/store.py": (
         WRITES,
         "GraphEngineer",
-        "the writers: add_entity, set_hidden_from_players",
+        "the writers: add_entity, set_hidden_from_players; and `_shown_when_said`, which "
+        "reads them for what `reveal_said` shows and `ask_world_reveals` asks (#4590)",
     ),
     "recaps/name_answers.py": (
         READS,

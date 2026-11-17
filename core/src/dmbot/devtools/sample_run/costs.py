@@ -57,6 +57,47 @@ _SPEND = re.compile(r"tokens in (\d+), out (\d+); spend ([^\n]*)")
 _MONEY = re.compile(r"\$(\d+(?:\.\d+)?)")
 
 
+_COVERED = re.compile(r"covered (\d+), missed (\d+), not given (\d+)")
+_POINT = re.compile(r"^ +(scene and stakes|characters|momentum|sound): ([1-5]) \(", re.MULTILINE)
+_AVERAGE = re.compile(r"^ +average: ([0-9.]+)", re.MULTILINE)
+
+
+_SCORING = re.compile(r"^Scoring: (\d+) calls; tokens in (\d+), out (\d+); spend ([^\n]*)", re.M)
+
+
+def scoring_cost(report: str) -> CostLine | None:
+    """What scoring the recap cost, from the one "Scoring: …" line of the recap tool's report
+    (#4556), counted apart from the recap's own "Calls" line. None when it is not there."""
+    found = _SCORING.search(report)
+    if found is None:
+        return None
+    spend = found.group(4)
+    prices = [float(m) for m in _MONEY.findall(spend)]
+    unpriced = "no price" in spend
+    if not prices and not unpriced:
+        return None
+    return CostLine(
+        "recap scoring", sum(prices), int(found.group(2)), int(found.group(3)), unpriced
+    )
+
+
+def recap_scores(report: str) -> dict[str, int | str]:
+    """The recap's score from the recap tool's `--score` report (#4556): the must-have counts and
+    the four storytelling numbers with their average. Numbers and the fixed labels only: the rest
+    of the report, which holds the recap's words, is never kept. Empty when a part is not there
+    (the score could not be read, or the recap was not made)."""
+    out: dict[str, int | str] = {}
+    if found := _COVERED.search(report):
+        out["recap must-haves covered"] = int(found.group(1))
+        out["recap must-haves missed"] = int(found.group(2))
+        out["recap must-haves not given"] = int(found.group(3))
+    for point, number in _POINT.findall(report):
+        out[f"recap storytelling: {point}"] = int(number)
+    if found := _AVERAGE.search(report):
+        out["recap storytelling: average"] = found.group(1)
+    return out
+
+
 def recap_line(report: str) -> CostLine | None:
     """The recap's tokens and spend, read from the one "Calls: …; tokens in N, out N; spend $X"
     line of the recap tool's report. None when the line is not there (the recap was not made, or

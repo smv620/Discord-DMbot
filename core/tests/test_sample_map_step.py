@@ -94,7 +94,7 @@ class OnTheKeptRun(unittest.TestCase):
             order.append("run")
             return 0
 
-        async def recap(guild: int, campaign: str, started: int) -> int:
+        async def recap(guild: int, campaign: str, started: int, **_: Any) -> int:
             order.append("recap")
             return 0
 

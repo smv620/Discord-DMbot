@@ -19,7 +19,15 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.db import Database, row_int
-from dmbot.memory import evidence, forget_readings, met_store, private_scene_store
+from dmbot.memory import (
+    evidence,
+    forget_readings,
+    met_store,
+    private_scene_store,
+    secret_questions,
+    thread_progress,
+    thread_suggestions,
+)
 from dmbot.session_locks import lock_sessions_of
 from dmbot.transcript import rel_store, theatre_store
 from dmbot.transcript.export import UNKNOWN_SPEAKER, clean_name
@@ -1309,6 +1317,9 @@ class TranscriptStore:
             await met_store.forget_session(conn, guild_id, session_id)  # (the DM's words, #3172)
             # (the private scenes found in its lines, #2996 rule 5: the DM's marks stay)
             await private_scene_store.forget_session(conn, guild_id, session_id)
+            # (the story threads read from its lines that still wait, #4522)
+            await thread_suggestions.forget_session(conn, guild_id, session_id)
+            await thread_progress.forget_session(conn, guild_id, session_id)  # (#4522 5b)
             await conn.execute(
                 "DELETE FROM transcript_respells WHERE guild_id = %s AND session_id = %s",
                 (guild_id, session_id),
@@ -1469,6 +1480,12 @@ async def _forget_memory_traces(
     await met_store.forget_speaker(conn, guild_id, user_id, campaign_id)
     # the private scenes they spoke in (#2996 rule 5)
     await private_scene_store.forget_speaker(conn, guild_id, user_id, campaign_id)
+    # the 🤫 questions that quote them (#4524)
+    await secret_questions.forget(conn, guild_id, user_id, campaign_id)
+    # the story threads read from a session that quote them (#4522)
+    await thread_suggestions.forget(conn, guild_id, user_id, campaign_id)
+    # the progress on story threads read from a session that quotes them (#4522 5b)
+    await thread_progress.forget(conn, guild_id, user_id, campaign_id)
 
 
 async def _drop_log_rows(

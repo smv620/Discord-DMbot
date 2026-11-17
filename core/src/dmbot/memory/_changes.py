@@ -20,6 +20,13 @@ from dmbot.memory.ontology import MIGRATED_KINDS, god_is_an_npc
 from dmbot.pictures.store import _lock as pictures_lock
 
 NOT_FOUND = "DMbot doesn't remember that any more."
+# The columns whose change could let a player know a DM-only connection (#4624: a clue's tie to
+# a thread): `Changes._dm_only_check` reads only when one of them changes
+_DM_ONLY_COLUMNS: dict[str, frozenset[str]] = {
+    "memory_relations": frozenset({"predicate", "secret"}),
+    "memory_knowers": frozenset({"relation_id", "perspective_id", "confidence"}),
+    "memory_beliefs": frozenset({"relation_id", "perspective_id", "confidence"}),
+}
 ALREADY_UNDONE = "That was already undone."
 CHANGED_SINCE = "That was changed again since, so it can't be undone on its own."
 MAP_PICTURE_GONE = "That map's picture was deleted since, so this can't be undone."
@@ -176,8 +183,9 @@ MAP_FACTS = Table(
     "id",
     ("id", "entity_id", "layer", "value", "words", "faction_id", "how", "part",
      "from_session_at", "to_session_at", "from_game_time", "to_game_time", "status", "source",
-     "also_text", "table_knows", "created_at", "culture_id"),
-    defaults={"culture_id": None},  # (a named culture, #4257 slice 3b)
+     "also_text", "table_knows", "created_at", "culture_id", "relation_id"),
+    # (a named culture, #4257 slice 3b; a road's condition on a known `route_to`, #4258)
+    defaults={"culture_id": None, "relation_id": None},
 )  # fmt: skip
 # One map: a kept picture DMbot knows is a map (#4344, MapBot layers slice 3a). It is in the log so
 # that each DM action on a map (keep, yes or no to using it, show to the table, remove) is one Undo
@@ -340,10 +348,20 @@ PLAN_SAME_AS = Table(
 PLAN_POSITION = Table(
     "plan_position", "id", ("id", "document_id", "chapter_id", "set_by", "created_at")
 )
+# The 🤫 questions asked instead of taking knowledge away from the players (#4524, 0510): unlogged
+# (an upload's Undo would otherwise fail once the DM answered one), tied to the asking write's
+# batch instead, which `MemoryStore.undo` reads.
+SECRET_QUESTIONS = Table(
+    "secret_questions",
+    "id",
+    ("id", "kind", "item_table", "item_id", "change", "change_key", "label", "session_id",
+     "line_starts", "speaker_ids", "status", "created_at", "batch", "answered_batch"),
+    logged=False,
+)  # fmt: skip
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
        STORY_LANGUAGES, CULTURES, MAP_FACTS, MAPS, THREAD_PARTS,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
-       BELIEFS, EVIDENCE, ALIAS_KNOWERS, KNOWERS, TOLD)  # fmt: skip
+       BELIEFS, EVIDENCE, ALIAS_KNOWERS, KNOWERS, TOLD, SECRET_QUESTIONS)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
 
 # The columns whose change can change whether the players are shown a statement (#2995).
@@ -351,6 +369,9 @@ _FLAGS = frozenset(
     {"status", "secret", "unrevealed", "hidden_from_players", "audience_limited", "unnamed",
      "entity_id", "subject_id", "object_id", "role", "played_by"}
 )  # fmt: skip
+
+# The tables whose flags can make a statement secret or hidden (`public_guard`, #4524).
+_GUARDED = frozenset({"memory_entities", "memory_aliases", "memory_relations"})
 
 # The column of `memory_knowers` that names each kind of statement.
 _KNOWN_COLUMN: dict[str, str] = {
@@ -419,6 +440,9 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_flags", "relation_id", False),
         ("memory_flags", "other_id", False),
         ("memory_beliefs", "relation_id", False),
+        # (a road's condition, #4258: outside an Undo the store deletes it first, logged; an Undo
+        # that would delete the road is refused while it has one, so nothing goes unlogged)
+        ("memory_map_facts", "relation_id", False),
     ),
     "memory_perspectives": (
         ("memory_beliefs", "perspective_id", False),
@@ -509,9 +533,29 @@ class Changes(Scope):
         source: str,
         now: int,
         undoes: int | None = None,
+        dm_chose_secret: bool = False,
     ) -> None:
         super().__init__(conn, guild_id, campaign_id, version)
         self.source = source
+        # Public never becomes secret by itself (#4524): only a write the DM chose to make secret
+        # (their 👁️ / 🤫 / Who knows buttons, Make it secret) may hide what the players know, make
+        # it secret or take a player character off who knows it. Any other write keeps it public and
+        # asks instead (`public_guard`), counting what it held back here for its caller's notice.
+        self.dm_chose_secret = dm_chose_secret
+        self.held_back = 0
+        self.asked: list[str] = []  # the 🤫 questions this write asked, for their batch
+        # Rows this write brought back from turned down (#4524): the players saw none of them
+        # before, so holding one back in the same write takes nothing from them (`public_guard`).
+        self.revived: set[tuple[str, str]] = set()
+        # (#4624) each connection's predicate, read once per write by `_dm_only_check`
+        self._predicates: dict[str, str | None] = {}
+        # True while a "same person" join moves an unnamed person's statements onto the named one
+        # (`MemoryStore` join): what it makes secret keeps the players from learning who the
+        # stranger was, which takes nothing from them, so the guard lets it through
+        self.joining = False
+        # The evidence a held-back question carries (an upload's or a session's label; from a
+        # session its line starts and speakers, never words: 5a's consent rule)
+        self.evidence: dict[str, Any] = {}
         self.now = now
         self.undoes = undoes
         self.batch: int | None = None
@@ -537,7 +581,41 @@ class Changes(Scope):
             None  # The truth's and The party's ids, once known
         )
 
+    async def _dm_only_check(
+        self, table: Table, row: Mapping[str, Any], before: Mapping[str, Any] | None = None
+    ) -> None:
+        """A story thread's clues are the DM's alone (#4624, Supervisor's condition): a `clue_to`
+        connection is always stored secret, and nobody but The truth may ever know it, so no
+        player's view, list, door or graph can hold it or its "false lead" word. Checked on every
+        single-row insert and update, which every knower and belief writer of a connection uses;
+        the bulk writers (`insert_many`, `update_rows`, a restore) only ever copy rows that passed
+        here, and the gate leaves such a connection out on read too (`gate.load`)."""
+        from dmbot.memory.thread_clues import DM_ONLY_PREDICATES, DM_ONLY_TIE
+
+        if table is RELATIONS:
+            merged = {**(before or {}), **row}
+            self._predicates[str(merged.get("id"))] = merged.get("predicate")
+            if merged.get("predicate") in DM_ONLY_PREDICATES and not merged.get("secret"):
+                raise MemoryRuleError(DM_ONLY_TIE)
+            return
+        if table not in (KNOWERS, BELIEFS) or not row.get("relation_id"):
+            return
+        if table is BELIEFS and float(row.get("confidence") or 0.0) <= 0.0:
+            return  # (a 0.0 belief knows nothing: The party's "it's secret" row)
+        relation_id = str(row["relation_id"])
+        if relation_id not in self._predicates:
+            relation = await self.get(RELATIONS, relation_id, lock=False)
+            self._predicates[relation_id] = None if relation is None else relation["predicate"]
+        if self._predicates[relation_id] not in DM_ONLY_PREDICATES:
+            return
+        if table is BELIEFS:
+            view = await self.get(PERSPECTIVES, str(row["perspective_id"]), lock=False)
+            if view is not None and view["kind"] == "truth":
+                return  # (The truth holds every connection: the DM's own view)
+        raise MemoryRuleError(DM_ONLY_TIE)
+
     async def insert(self, table: Table, row: dict[str, Any]) -> dict[str, Any]:
+        await self._dm_only_check(table, row)
         cols = ("guild_id", "campaign_id", *table.columns)
         query = sql.SQL("INSERT INTO {} ({}) VALUES ({}) RETURNING {}").format(
             sql.Identifier(table.name),
@@ -572,8 +650,16 @@ class Changes(Scope):
         ):  # (a tie reopened is current again: why it once ended no longer holds, #4115)
             changes = {"end_reason": None, **changes}
         changes = {k: v for k, v in changes.items() if before[k] != v}
+        if changes.keys() & _DM_ONLY_COLUMNS.get(table.name, frozenset()):
+            await self._dm_only_check(table, {**before, **changes}, before)
+        if changes and table.name in _GUARDED:  # (public never becomes secret by itself, #4524)
+            from dmbot.memory import public_guard
+
+            changes = await public_guard.hold(self, table, before, changes)
         if not changes:
             return before
+        if before.get("status") == "rejected" and changes.get("status", "rejected") != "rejected":
+            self.revived.add((table.name, row_id))
         if table.key in changes:
             raise ValueError(f"{table.name}.{table.key} can't change")
         query = sql.SQL(
@@ -637,6 +723,9 @@ class Changes(Scope):
             # its beliefs go with it, each logged, so an Undo brings the connection back whole
             for belief in await self.select(BELIEFS, " AND relation_id = %s", [row_id]):
                 await self.delete(BELIEFS, belief["id"])
+            # and so does a road's condition (#4258), which the database would delete unlogged
+            for fact in await self.select(MAP_FACTS, " AND relation_id = %s", [row_id]):
+                await self.delete(MAP_FACTS, fact["id"])
         if table is ALIASES:  # who knows an other name goes with it (#2935)
             for knower in await self.select(ALIAS_KNOWERS, " AND alias_id = %s", [row_id]):
                 await self.delete(ALIAS_KNOWERS, knower["id"])
@@ -770,6 +859,8 @@ class Changes(Scope):
         values are left alone and not logged. Returns the rows after, in key order."""
         if not rows:
             return []
+        if table.name in _GUARDED:  # (public never becomes secret by itself, #4524)
+            rows = await self._held_rows(table, rows)
         columns = sorted({c for changes in rows.values() for c in changes})
         if not columns:
             return []
@@ -828,6 +919,30 @@ class Changes(Scope):
             await self._forget_later(table, [after for _, after in logged])
         await self._knowers_follow(table, logged)
         return [after for _, after in logged]
+
+    async def _held_rows(
+        self, table: Table, rows: dict[str, dict[str, Any]]
+    ) -> dict[str, dict[str, Any]]:
+        """`update_rows`' rows after the guard (#4524): a row whose narrowing the guard held back
+        is written with its old value there, so every row still sets the same columns."""
+        from dmbot.memory import public_guard
+
+        if self.dm_chose_secret or self.undoes is not None:
+            return rows
+        if not any(public_guard.narrows(table.name, c) for ch in rows.values() for c in ch.items()):
+            return rows
+        befores = {
+            r[table.key]: r for r in await self.select(table, " AND id = ANY(%s)", [list(rows)])
+        }
+        out: dict[str, dict[str, Any]] = {}
+        for row_id, changes in rows.items():
+            before = befores.get(row_id)
+            if before is None:
+                out[row_id] = changes
+                continue
+            kept = await public_guard.hold(self, table, before, changes)
+            out[row_id] = {c: kept.get(c, before[c]) for c in changes}
+        return out
 
     async def _forget_later(self, table: Table, rows: list[dict[str, Any]]) -> None:
         """A name decided on is no longer left "for later" (#2174): if it is ever undone back to

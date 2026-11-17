@@ -138,7 +138,7 @@ class TheRecapReads(Two):
         tessaly = await self.name(SERVER_ONE, self.b, ONLY_IN_B)
         await self.memory.add_alias(
             SERVER_ONE, self.b, tessaly, SECRET_IN_B, kind="nickname", source="dm",
-            status="confirmed", secret=True,
+            status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
 
     async def inputs(self, guild: int, campaign: str) -> Any:

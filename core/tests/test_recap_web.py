@@ -1679,7 +1679,7 @@ class TheApproval(Base):
         )
         await memory.add_alias(
             g, c, hall.value.id, secret, kind="title", source=DM_SOURCE, status="confirmed",
-            secret=True,
+            secret=True, dm_chose_secret=True,
         )  # fmt: skip
 
     async def hidden_mira(self) -> str:

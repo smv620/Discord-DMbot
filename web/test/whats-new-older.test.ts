@@ -6,7 +6,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { parsePage } from "./dom";
 
-import { RECENT_DAYS, RECENT_MIN, entries, olderHeading, splitEntries, type Entry } from "../src/content/whats-new";
+import { MONTH_PAGE_BYTES, RECENT_DAYS, RECENT_MIN, entries, monthName, monthPages, olderHeading, splitEntries, type Entry } from "../src/content/whats-new";
+import Month from "../src/pages/whats-new/[month].astro";
 import Older from "../src/pages/whats-new/older.astro";
 import WhatsNew from "../src/pages/whats-new.astro";
 
@@ -44,17 +45,67 @@ describe("splitEntries", () => {
   });
 });
 
-describe("the two pages", () => {
+describe("older changes by month (#4203)", () => {
+  const in_month = (month: string, count: number): Entry[] =>
+    Array.from({ length: count }, (_, i) => ({ date: `${month}-${String(28 - (i % 28)).padStart(2, "0")}`, title: `${month} entry ${i}`, what: "Something." }));
+
+  it("puts every entry on exactly one page, newest month first, and a page holds only its own month", () => {
+    const all = [...in_month("2026-11", 10), ...in_month("2026-10", 5), ...in_month("2026-09", 1)];
+    const pages = monthPages(all);
+    expect(pages.map((p) => p.slug)).toEqual(["2026-11", "2026-10", "2026-09"]);
+    expect(pages.flatMap((p) => p.entries).map((e) => e.title).sort()).toEqual(all.map((e) => e.title).sort());
+    for (const p of pages) expect(p.entries.every((e) => e.date.startsWith(p.month))).toBe(true);
+  });
+
+  it("splits a month that is too long into parts of about equal size, in order, and keeps every entry once", () => {
+    const month = in_month("2026-11", 450); // about 130 KB of entries: several parts
+    const pages = monthPages(month);
+    expect(pages.length).toBeGreaterThanOrEqual(3);
+    expect(pages.map((p) => p.slug)).toEqual(pages.map((_, i) => `2026-11-${String.fromCharCode(97 + i)}`));
+    expect(pages.every((p) => p.parts === pages.length && p.part === String.fromCharCode(65 + pages.indexOf(p)))).toBe(true);
+    const counts = pages.map((p) => p.entries.length);
+    expect(Math.max(...counts) - Math.min(...counts)).toBeLessThanOrEqual(2);
+    expect(pages.flatMap((p) => p.entries)).toEqual(month);
+  });
+
+  it("does not split a month that fits, and has no pages with nothing older", () => {
+    expect(monthPages(in_month("2026-11", 100)).map((p) => p.slug)).toEqual(["2026-11"]); // (about 30 KB)
+    expect(monthPages([])).toEqual([]);
+    expect(MONTH_PAGE_BYTES).toBeLessThan(52 * 1024);
+  });
+
+  it("names a month in words", () => {
+    expect(monthName("2026-11")).toBe("November 2026");
+    expect(monthName("2026-01")).toBe("January 2026");
+  });
+
+  it("a month's worth of new entries still leaves every page under the 52 KB budget", async () => {
+    const container = await AstroContainer.create();
+    const longWords = "A longer line of plain words, about what a real entry says, so a page is measured with more than a few letters in each. ".repeat(2);
+    const heavy = in_month("2026-11", 600).map((e) => ({ ...e, what: longWords }));
+    const pages = monthPages([...heavy, ...in_month("2026-10", 50)]);
+    expect(pages.length).toBeGreaterThan(2);
+    for (const page of pages) {
+      const html = await container.renderToString(Month, { props: { page }, params: { month: page.slug }, request: new Request(`https://dmbot.example/whats-new/${page.slug}`) });
+      expect(Buffer.byteLength(html) / 1024, page.slug).toBeLessThan(52);
+    }
+  });
+});
+
+describe("the three kinds of page", () => {
   let main: Document;
-  let older: Document;
+  let list: Document;
   let mainHtml = "";
-  let olderHtml = "";
+  const monthDocs: { slug: string; doc: Document }[] = [];
   beforeAll(async () => {
     const container = await AstroContainer.create();
     mainHtml = await container.renderToString(WhatsNew, { request: new Request("https://dmbot.example/whats-new") });
-    olderHtml = await container.renderToString(Older, { request: new Request("https://dmbot.example/whats-new/older") });
     main = parsePage(mainHtml);
-    older = parsePage(olderHtml);
+    list = parsePage(await container.renderToString(Older, { request: new Request("https://dmbot.example/whats-new/older") }));
+    for (const page of monthPages(splitEntries(entries, new Date()).older)) {
+      const html = await container.renderToString(Month, { props: { page }, params: { month: page.slug }, request: new Request(`https://dmbot.example/whats-new/${page.slug}`) });
+      monthDocs.push({ slug: page.slug, doc: parsePage(html) });
+    }
   });
   const titles = (doc: Document): string[] => [...doc.querySelectorAll("main .entry h2")].map((h) => h.textContent ?? "");
 
@@ -62,22 +113,34 @@ describe("the two pages", () => {
     expect(titles(main)).toEqual(splitEntries(entries, new Date()).recent.map((e) => e.title));
   });
 
-  it("every visible entry is on exactly one of the two pages", () => {
-    const both = [...titles(main), ...titles(older)];
-    expect(both).toEqual(entries.map((e) => e.title));
+  it("every visible entry is on exactly one page: the main page or one month's", () => {
+    const all = [...titles(main), ...monthDocs.flatMap((m) => titles(m.doc))];
+    expect(all).toEqual(entries.map((e) => e.title));
+  });
+
+  it("the older page lists a link for each month page, newest first, and no entries", () => {
+    const hrefs = [...list.querySelectorAll("main ul a")].map((a) => a.getAttribute("href"));
+    expect(hrefs).toEqual(monthDocs.map((m) => `/whats-new/${m.slug}`));
+    expect(list.querySelectorAll(".entry")).toHaveLength(0);
+  });
+
+  it("each month page is for its own month, kept out of search results, and links back to the list", () => {
+    for (const { slug, doc } of monthDocs) {
+      expect(doc.querySelector("h1")?.textContent, slug).toContain(monthName(slug.slice(0, 7)));
+      expect(doc.querySelector('meta[name="robots"]')?.getAttribute("content"), slug).toBe("noindex");
+      expect(doc.querySelector('main a[href="/whats-new/older"]'), slug).toBeTruthy();
+    }
   });
 
   it("the main page links to the older one, and the older one links back", () => {
     if (splitEntries(entries, new Date()).older.length > 0) {
       expect(main.querySelector('main a[href="/whats-new/older"]')?.textContent).toBe(olderHeading);
     }
-    expect(older.querySelector('main a[href="/whats-new"]')).toBeTruthy();
+    expect(list.querySelector('main a[href="/whats-new"]')).toBeTruthy();
   });
 
-  it("both pages leave room for another entry under the 52 KB budget", () => {
+  it("the main page leaves room for another entry under the 52 KB budget", () => {
     // (the build measures the real files: this keeps the rule honest; a new entry is about 0.5 KB)
-    const kb = (html: string): number => Buffer.byteLength(html) / 1024;
-    expect(kb(mainHtml) + 0.6).toBeLessThan(52);
-    expect(kb(olderHtml) + 0.6).toBeLessThan(52);
+    expect(Buffer.byteLength(mainHtml) / 1024 + 0.6).toBeLessThan(52);
   });
 });

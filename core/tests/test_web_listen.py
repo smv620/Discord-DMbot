@@ -90,7 +90,7 @@ class Listening(Base):
         self.secret = (
             await self.memory.add_alias(
                 g, self.one.id, kazeth.value.id, "the Grey Voice", kind="title",
-                source=DM_SOURCE, status="confirmed", secret=True,
+                source=DM_SOURCE, status="confirmed", secret=True, dm_chose_secret=True,
             )
         ).value.id  # fmt: skip
         await self.memory.add_entity(

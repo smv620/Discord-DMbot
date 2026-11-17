@@ -30,8 +30,10 @@ from pathlib import Path
 from typing import Any
 
 from dmbot.campaigns.store import decode_backup
+from dmbot.devtools import sample_name
 from dmbot.memory import kin, place_words, reputation_words, route_length, unnamed
 from dmbot.memory.models import name_key
+from dmbot.memory.session_progress import THREAD_WORDS
 
 DEFAULT_KEY = (
     Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "story_graph" / "master_key.json"
@@ -86,7 +88,7 @@ UNCLE = frozenset({"uncle", "aunt", "aunt or uncle"})
 NEPHEW = frozenset({"nephew", "niece", "niece or nephew"})
 GRAND_UP = frozenset({"grandparent", "grandmother", "grandfather"})
 GRAND_DOWN = frozenset({"grandchild", "grandson", "granddaughter"})
-SAMPLE_CAMPAIGN = "test of the frostmaiden (sample)"
+SAMPLE_CAMPAIGN = sample_name.OLD_NAME  # (numbered names pass `sample_name.is_sample`, #4538)
 # What slot (word, past) each key place tie means, as `place_words.slot` reads a stored detail.
 PLACE_SLOTS = {
     "lives_in": (place_words.LIVES, False), "lived_in": (place_words.LIVES, True),
@@ -149,6 +151,18 @@ class Report:
     # Story threads (#4453, quests slice 1): found, missed, wrong (another kind), doubles (one key
     # thread suggested twice), extra (a thread the key doesn't list), hints found
     threads: Counter[str] = field(default_factory=Counter)
+    # A thread's parts (#4500, quests slice 3), on the backup thread its key thread matched: found
+    # and missed by kind ("found objective"), on the wrong thread, and extra. Branches: found and
+    # missed (a hint's miss isn't held against the reader), each a `branch_of` to its quest.
+    thread_parts: Counter[str] = field(default_factory=Counter)
+    # A thread's clues (#4624, quests slice 6b): found on the backup thread its key thread matched,
+    # on the wrong thread, missed (must-find only), good finds missed, extra (a clue tied to a
+    # matched thread that no key row is), false (a `must_not_clues` row: any tie to that thread)
+    clues: Counter[str] = field(default_factory=Counter)
+    # Progress a session makes on a thread the campaign had (#4522 quests 5b/5c), read off the
+    # matched backup thread: found, missed (must-find only), good finds missed, and false (a
+    # `must_not_progress` row that holds)
+    progress: Counter[str] = field(default_factory=Counter)
 
 
 def _live(row: Mapping[str, Any]) -> bool:
@@ -470,6 +484,7 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
     # makes it a placeholder, so only another connection makes it a real entry
     others = [r for r in graph.relations if str(r["predicate"]) != "plays"]
     linked = {str(r["subject_id"]) for r in others} | {str(r["object_id"]) for r in others}
+    tied_clues = {str(r["subject_id"]) for r in graph.relations if r["predicate"] == "clue_to"}
     for i, e in graph.entities.items():
         if i in matched_ids:
             continue
@@ -481,6 +496,8 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
             continue
         if str(e["type"]) in THREAD_TYPES:
             continue  # (a story thread is scored on its own line, #4453, never as an extra name)
+        if i in tied_clues:
+            continue  # (a clue tied to a thread is scored on the Clues line, #4624 6b)
         report.extra_entries[_kind_for(str(e["type"]))] += 1
     for name in key.get("must_not_names", ()):
         # (a must-not name is still found in a description too, as before; only one that is a
@@ -609,6 +626,9 @@ def _score_map_facts(
         if r.get("status") != "rejected" and r.get("to_session_at") is None
     ]
     used: set[str] = set()
+    # a road's condition (#4258): the sample states none, so the key expects none and every row is
+    # a false note; the line is always printed, so a zero shows too
+    report.map_facts.setdefault("condition", Counter())
     for fact in key.get("map_facts", []):
         layer = str(fact["layer"])
         tally = report.map_facts.setdefault(layer, Counter())
@@ -650,6 +670,8 @@ def _score_threads(
             role = str(r.get("detail") or "").strip().lower()
             parts.setdefault(str(r["object_id"]), set()).add((role, str(r["subject_id"])))
     used: set[str] = set()
+    matched: dict[str, str] = {}  # (the key thread's id: the backup thread it is, for its parts)
+    every: dict[str, list[str]] = {}  # (and every one it is, for progress: a double holds it too)
     for t in key.get("threads", []):
         wanted_kinds = {str(t["kind"])}
         need: list[tuple[str, set[str]]] = [
@@ -681,6 +703,9 @@ def _score_threads(
         ]
         used.update(hits)
         right = [th for th in hits if str(graph.entities[th]["type"]) in wanted_kinds]
+        if hits and t.get("id"):
+            matched[str(t["id"])] = (right or hits)[0]
+            every[str(t["id"])] = right or hits
         if t.get("hint"):
             report.threads["hints found"] += 1 if hits else 0
             continue
@@ -701,6 +726,170 @@ def _score_threads(
             if any(w in said for w in words):
                 report.threads["false"] += 1
                 break
+    _score_thread_parts(report, graph, key, matched)
+    _score_clues(report, graph, key, matched)
+    _score_progress(report, graph, key, every)
+
+
+def _score_thread_parts(
+    report: Report, graph: Graph, key: Mapping[str, Any], matched: Mapping[str, str]
+) -> None:
+    """A thread's parts and branches (#4500; quests design §9.7). A key part is found when the
+    backup thread its key thread matched has a part of that kind whose words hold one of the key's
+    `words` (casefold); on another thread only, it is "wrong thread". A key thread's part counts as
+    missed whether or not the thread was found, so a missed quest's parts are missed too. Parts on a
+    matched thread that no key part is are extra. A key thread with `branch_of` is found when the
+    backup thread it matched has a live `branch_of` to the one its quest matched."""
+    rows = [
+        r
+        for r in graph.tables.get("thread_part", ())
+        if r.get("status") != "rejected" and r.get("to_session_at") is None
+    ]
+    on: dict[str, list[Mapping[str, Any]]] = {}
+    for r in rows:
+        on.setdefault(str(r["thread_id"]), []).append(r)
+    used: set[str] = set()
+
+    def fits(r: Mapping[str, Any], kind: str, words: Sequence[str]) -> bool:
+        said = str(r.get("words", "")).casefold()
+        return str(r["kind"]) == kind and any(str(w).casefold() in said for w in words)
+
+    for t in key.get("threads", []):
+        thread = matched.get(str(t.get("id", "")))
+        for p in t.get("parts", []):
+            kind, words = str(p["kind"]), [str(w) for w in p.get("words", [])]
+            here = [r for r in on.get(thread or "", []) if fits(r, kind, words)]
+            if here:
+                report.thread_parts[f"found {kind}"] += 1
+                used.update(str(r["id"]) for r in here)
+            elif any(fits(r, kind, words) for r in rows):
+                report.thread_parts["wrong thread"] += 1
+            else:
+                report.thread_parts[f"missed {kind}"] += 1
+        bigger = str(t.get("branch_of", ""))
+        if bigger:
+            links = {
+                (str(r["subject_id"]), str(r["object_id"]))
+                for r in graph.relations
+                if r.get("predicate") == "branch_of"
+            }
+            if thread and (thread, matched.get(bigger, "")) in links:
+                report.thread_parts["branches found"] += 1
+            elif not t.get("hint"):
+                report.thread_parts["branches missed"] += 1
+    for thread in set(matched.values()):
+        report.thread_parts["extra"] += sum(
+            1 for r in on.get(thread, []) if str(r["id"]) not in used
+        )
+
+
+def _score_clues(
+    report: Report, graph: Graph, key: Mapping[str, Any], matched: Mapping[str, str]
+) -> None:
+    """The key's `clues` (#4624, quests 6b; design §7, §9.3): a clue tied with `clue_to` to the
+    backup thread its key thread matched, whose name holds one of the row's `words` (casefold), is
+    found; tied only to another thread, it is "wrong thread". Clues tied to a matched thread that no
+    row is are extra. A `must_not_clues` row names a thread that must have no clue tied at all."""
+    if not key.get("clues") and not key.get("must_not_clues"):
+        return
+    ties = [
+        (str(r["subject_id"]), str(r["object_id"]))
+        for r in graph.relations
+        if r.get("predicate") == "clue_to"
+    ]
+
+    def named(clue: str, words: Sequence[str]) -> bool:
+        # (from a word's start, so "Wit" is never "with" nor "whisper" past "whispers")
+        said = str(graph.entities.get(clue, {}).get("name", ""))
+        return any(re.search(rf"\b{re.escape(str(w))}", said, re.IGNORECASE) for w in words)
+
+    used: set[tuple[str, str]] = set()
+    # (must-find rows first, and each tie answers one row only: one clue is never two finds)
+    rows = sorted(key.get("clues", []), key=lambda c: not c.get("must_find", True))
+    for c in rows:
+        thread = matched.get(str(c.get("thread", "")), "")
+        words = [str(w) for w in c.get("words", [])]
+        here = [
+            t for t in ties if thread and t[1] == thread and t not in used and named(t[0], words)
+        ]
+        if here:
+            report.clues["found"] += 1
+            used.add(here[0])
+        elif any(named(clue, words) for clue, th in ties if th != thread):
+            report.clues["wrong thread"] += 1
+        elif c.get("must_find", True):
+            report.clues["missed"] += 1
+        else:
+            report.clues["good finds missed"] += 1
+    named_threads = {str(c.get("thread", "")) for c in key.get("clues", [])}
+    keyed = {matched[t] for t in named_threads if t in matched}
+    report.clues["extra"] += sum(1 for t in ties if t[1] in keyed and t not in used)
+    for rule in key.get("must_not_clues", []):
+        thread = matched.get(str(rule.get("thread", "")), "")
+        if thread and any(t[1] == thread for t in ties):
+            report.clues["false"] += 1
+
+
+def _progress_holds(
+    graph: Graph, thread: str, row: Mapping[str, Any], parts: Sequence[Mapping[str, Any]]
+) -> bool:
+    """Whether one key progress row (or one of its `or` rows) stands on a backup thread now:
+    "thread_moves", its open state is the row's; "part_moves", an open part of the row's kind
+    whose words hold one of the row's `words` is in the row's state; "new_part", such a part was
+    read from a session (casefold words, as `_score_thread_parts`)."""
+    change = str(row.get("change", ""))
+    if change == "thread_moves":
+        want = THREAD_WORDS.get(str(row.get("state", "")), str(row.get("state", "")))
+        return any(
+            str(r.get("entity_id")) == thread
+            and r.get("closed_at") is None
+            and str(r.get("condition")) == want
+            for r in graph.tables.get("state", ())
+        )
+    words = [str(w).casefold() for w in row.get("words", [])]
+    kind = str(row.get("part_kind", ""))
+    for r in parts:
+        if str(r["thread_id"]) != thread or str(r["kind"]) != kind:
+            continue
+        if words and not any(w in str(r.get("words", "")).casefold() for w in words):
+            continue
+        if change == "part_moves" and str(r.get("state")) == str(row.get("state")):
+            return True
+        same_state = not row.get("state") or str(r.get("state")) == str(row.get("state"))
+        if change == "new_part" and str(r.get("source")) == "session" and same_state:
+            return True
+    return False
+
+
+def _score_progress(
+    report: Report, graph: Graph, key: Mapping[str, Any], matched: Mapping[str, Sequence[str]]
+) -> None:
+    """The key's `progress` (#4522, quests 5c): what the session changes on a thread the lore
+    made, read off the backup thread that key thread matched once the sample keeps every progress
+    line (`accept_all.keep_progress`). A row is found when it, or one of its `or` rows, holds on
+    any backup thread its key thread matched (the session reader may suggest the thread again, and
+    which double sorts first is chance); on an unmatched thread it can't be. `must_not_progress`
+    rows count as false when they hold on any of them."""
+    if not key.get("progress") and not key.get("must_not_progress"):
+        return
+    parts = [
+        r
+        for r in graph.tables.get("thread_part", ())
+        if r.get("status") != "rejected" and r.get("to_session_at") is None
+    ]
+    for p in key.get("progress", []):
+        threads = matched.get(str(p.get("thread", "")), ())
+        rows = [p, *p.get("or", [])]
+        if any(_progress_holds(graph, th, r, parts) for th in threads for r in rows):
+            report.progress["found"] += 1
+        elif p.get("must_find", True):
+            report.progress["missed"] += 1
+        else:
+            report.progress["good finds missed"] += 1
+    for p in key.get("must_not_progress", []):
+        threads = matched.get(str(p.get("thread", "")), ())
+        if any(_progress_holds(graph, th, p, parts) for th in threads):
+            report.progress["false"] += 1
 
 
 def _kind_for(entry_type: str) -> str:
@@ -737,6 +926,9 @@ def summarize(report: Report) -> dict[str, Any]:
         "player_characters": {"found": report.players_found, "expected": report.players_expected},
         "map_facts": {layer: dict(c) for layer, c in sorted(report.map_facts.items())},
         "threads": dict(report.threads),
+        **({"thread_parts": dict(report.thread_parts)} if report.thread_parts else {}),
+        **({"clues": dict(report.clues)} if report.clues else {}),
+        **({"progress": dict(report.progress)} if report.progress else {}),
         **({"languages": dict(report.languages)} if report.languages else {}),
         **({"route_lengths": dict(report.route_lengths)} if report.route_lengths else {}),
     }
@@ -786,6 +978,31 @@ def render(report: Report, counts_only: bool = False) -> str:
             f"Story threads: found {c['found']}, missed {c['missed']}, wrong {c['wrong']}, "
             f"doubles {c['doubles']}, extra {c['extra']}, false {c['false']} "
             f"(hints found {c['hints found']})"
+        )
+    if report.thread_parts:  # (#4500: a thread's parts and branches, quests slice 3)
+        c = report.thread_parts
+        kinds = ("objective", "complication", "reward", "reward_given", "help", "time_limit")
+        said = ", ".join(
+            f"{k} {c['found ' + k]}/{c['found ' + k] + c['missed ' + k]}"
+            for k in kinds
+            if c["found " + k] or c["missed " + k]
+        )
+        lines.append(
+            f"Thread parts found: {said or 'none in the key'}; wrong thread {c['wrong thread']}, "
+            f"extra {c['extra']}; branches found {c['branches found']}, "
+            f"missed {c['branches missed']}"
+        )
+    if report.clues:  # (#4624: a thread's clues, quests 6b)
+        c = report.clues
+        lines.append(
+            f"Clues: found {c['found']}, missed {c['missed']}, wrong thread {c['wrong thread']}, "
+            f"extra {c['extra']}, false {c['false']} (good finds missed {c['good finds missed']})"
+        )
+    if report.progress:  # (#4522: what the session moved on the lore's threads, quests 5c)
+        c = report.progress
+        lines.append(
+            f"Thread progress: found {c['found']}, missed {c['missed']}, false {c['false']} "
+            f"(good finds missed {c['good finds missed']})"
         )
     if report.route_lengths:  # (#4255: a road's length, a property of the road, not a tie)
         c = report.route_lengths
@@ -851,9 +1068,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         key = json.loads(args.key.read_text())
         campaign = backup.get("campaign") if isinstance(backup, dict) else None
         name = campaign.get("name") if isinstance(campaign, dict) else None
-        if name != SAMPLE_CAMPAIGN and not args.force:
+        if not (isinstance(name, str) and sample_name.is_sample(name)) and not args.force:
             raise ValueError(
-                f'This campaign is not "{SAMPLE_CAMPAIGN}"; the check is only for the sample.'
+                'This campaign is not "test of the frostmaiden (sample N)"; the check is only '
+                "for the sample."
             )
         report = check(backup, key, args.docs)
     except (ValueError, OSError) as exc:

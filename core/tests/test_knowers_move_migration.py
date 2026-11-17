@@ -71,17 +71,28 @@ class TheMove(unittest.IsolatedAsyncioTestCase):
         voss = await self.add("Voss", type="character", role="npc")
         council = await self.add("Lantern Council", type="faction")
         rook = await self.add("Rook", type="character", role="npc")
-        await self.memory.set_hidden_from_players(GUILD, self.c, rook, True, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD, self.c, rook, True, source="dm", dm_chose_secret=True
+        )
         seen = await self.link(voss, council)  # The party knows it
         secret = await self.link(rook, council, secret=True)
         known_by_tavin = await self.link(voss, rook, secret=True)
         await self.memory.set_connection_knowers(
-            GUILD, self.c, known_by_tavin, [tavin], source="dm"
+            GUILD, self.c, known_by_tavin, [tavin], source="dm", dm_chose_secret=True
         )
         shade = await self.memory.add_alias(
-            GUILD, self.c, voss, "Shade", kind="title", secret=True, source="dm"
+            GUILD,
+            self.c,
+            voss,
+            "Shade",
+            kind="title",
+            secret=True,
+            source="dm",
+            dm_chose_secret=True,
         )
-        await self.memory.set_alias_knowers(GUILD, self.c, shade.value.id, [mara], source="dm")
+        await self.memory.set_alias_knowers(
+            GUILD, self.c, shade.value.id, [mara], source="dm", dm_chose_secret=True
+        )
         plain = await self.memory.add_alias(
             GUILD, self.c, voss, "Old Voss", kind="nickname", source="dm", status=CONFIRMED
         )
@@ -150,14 +161,27 @@ class TheMove(unittest.IsolatedAsyncioTestCase):
         voss = await self.add("Voss", type="character", role="npc")
         council = await self.add("Lantern Council", type="faction")
         rook = await self.add("Rook", type="character", role="npc")
-        await self.memory.set_hidden_from_players(GUILD, self.c, rook, True, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD, self.c, rook, True, source="dm", dm_chose_secret=True
+        )
         await self.link(voss, council)
         held = await self.link(voss, rook, secret=True)
-        await self.memory.set_connection_knowers(GUILD, self.c, held, [tavin], source="dm")
-        shade = await self.memory.add_alias(
-            GUILD, self.c, voss, "Shade", kind="title", secret=True, source="dm"
+        await self.memory.set_connection_knowers(
+            GUILD, self.c, held, [tavin], source="dm", dm_chose_secret=True
         )
-        await self.memory.set_alias_knowers(GUILD, self.c, shade.value.id, [tavin], source="dm")
+        shade = await self.memory.add_alias(
+            GUILD,
+            self.c,
+            voss,
+            "Shade",
+            kind="title",
+            secret=True,
+            source="dm",
+            dm_chose_secret=True,
+        )
+        await self.memory.set_alias_knowers(
+            GUILD, self.c, shade.value.id, [tavin], source="dm", dm_chose_secret=True
+        )
         await self.memory.add_alias(
             GUILD, self.c, voss, "Old Voss", kind="nickname", source="dm", status=CONFIRMED
         )
@@ -184,7 +208,9 @@ class TheMove(unittest.IsolatedAsyncioTestCase):
         await self.add("Tavin", type="character", role="player_character", played_by=MEMBERS[0])
         clue = await self.add("A torn map", type="clue")
         await self.link(mara, clue)  # "knows"
-        await self.memory.set_audience_limited(GUILD, self.c, clue, True, source="dm")
+        await self.memory.set_audience_limited(
+            GUILD, self.c, clue, True, source="dm", dm_chose_secret=True
+        )
         await self.move()
         table = await self.memory.visible_to(GUILD, self.c, Viewer.the_party())
         self.assertFalse(table.knows(ENTRY, clue))  # not the whole party

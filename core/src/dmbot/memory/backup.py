@@ -130,12 +130,14 @@ _TAGS: dict[str, Table] = {
     "rule_link": RULE_LINKS,
     "story_language": STORY_LANGUAGES,  # a character's languages from the story (#4229)
     "culture": CULTURES,  # the campaign's named cultures (#4257 slice 3b), before their rows
-    "map_fact": MAP_FACTS,  # a place's land, climate and who rules it (#4256)
     "thread_part": THREAD_PARTS,  # a story thread's parts (#4471), after its entries
     "state": STATES,
     "claim": CLAIMS,
     "alias": ALIASES,
     "relation": RELATIONS,
+    # a place's land, climate and who rules it (#4256), after the connections since a road's
+    # condition names one (#4258)
+    "map_fact": MAP_FACTS,
     "perspective": PERSPECTIVES,  # who holds beliefs (#2409)
     "alias_knower": ALIAS_KNOWERS,  # which characters know an other name (#2935)
     "knower": KNOWERS,  # which characters know each statement (#2995)
@@ -593,7 +595,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             or any(len(e) > EVIDENCE_ID_MAX for e in raw["evidence_ids"])
         ):
             raise CampaignError(DAMAGED)
-        if table is PERSPECTIVES and (raw["kind"] in ("truth", "party")) != (
+        if table is PERSPECTIVES and (raw["kind"] in ("truth", "party", "everyone")) != (
             raw["entity_id"] is None
         ):
             raise CampaignError(DAMAGED)  # only a character's perspective points at an entry
@@ -672,8 +674,8 @@ def _check_knowers(
     by_tag: dict[str, list[dict[str, Any]]], views: dict[str, dict[str, Any]]
 ) -> None:
     """Every `memory_knowers` row names one statement in the file and a character's point of
-    view in the file (#2995). A backup must hold the whole list or none of it, so damage refuses
-    the file."""
+    view in the file (#2995), or the campaign's "everyone" view (common knowledge, #4537). A
+    backup must hold the whole list or none of it, so damage refuses the file."""
     held = {
         "about_entity_id": {r["id"] for r in by_tag["entity"]},
         "state_id": {r["id"] for r in by_tag["state"]},
@@ -685,7 +687,8 @@ def _check_knowers(
         if len(named) != 1 or k[named[0]] not in held[named[0]]:
             raise CampaignError(DAMAGED)
         view = views.get(k["perspective_id"])
-        if view is None or view["kind"] not in ("pc", "npc"):
+        # (a character's point of view, or common knowledge's, #4537: carried like the others)
+        if view is None or view["kind"] not in ("pc", "npc", "everyone"):
             raise CampaignError(DAMAGED)
 
 
@@ -765,7 +768,8 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
         elif isinstance(raw, dict) and raw.get("table") == "alias":
             raw = {"said_as": None, **raw}  # from before the narrator's spelling (#1419)
         elif isinstance(raw, dict) and raw.get("table") == "map_fact":
-            raw = {"culture_id": None, **raw}  # from before named cultures (#4257 slice 3b)
+            # (from before named cultures, #4257 slice 3b, and road conditions, #4258)
+            raw = {"culture_id": None, "relation_id": None, **raw}
         elif isinstance(raw, dict) and raw.get("table") == "predicate":
             raw = {**_NEW_PREDICATE_FIELDS, **raw}
             if raw.get("key") in core_predicates:
@@ -1232,13 +1236,24 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
     cultures = {r["id"] for r in by_tag["culture"]}
     if len({r["name_key"] for r in by_tag["culture"]}) != len(by_tag["culture"]):
         raise CampaignError(DAMAGED)  # (one culture per name)
+    # a road's condition (#4258) names a known road between two places in the file
+    roads = {
+        r["id"]
+        for r in by_tag["relation"]
+        if r["predicate"] == "route_to" and r.get("route_state", "") == ""
+    }
     for r in by_tag["map_fact"]:
-        place = places.get(r["entity_id"])
+        if r["relation_id"] is not None:
+            if r["relation_id"] not in roads:
+                raise CampaignError(DAMAGED)
+            place: Mapping[str, Any] | None = {"form": place_levels.ROUTE, "place_level": None}
+        else:
+            place = places.get(r["entity_id"])
         if r["culture_id"] is not None and r["culture_id"] not in cultures:
             raise CampaignError(DAMAGED)
         key = (
-            r["entity_id"], r["layer"], r["value"], r["faction_id"] or "",
-            r["culture_id"] or "", r["part"].lower(),
+            r["entity_id"] or "", r["relation_id"] or "", r["layer"], r["value"],
+            r["faction_id"] or "", r["culture_id"] or "", r["part"].lower(),
         )  # fmt: skip
         is_open = r["status"] != map_facts.REJECTED and r["to_session_at"] is None
         if is_open and key in open_keys:
@@ -1246,7 +1261,9 @@ def _check_terms(by_tag: dict[str, list[dict[str, Any]]]) -> None:
         if is_open:
             open_keys.add(key)
         if not is_open:  # (history: its place or group may have changed since; it must exist)
-            if r["entity_id"] not in every or (r["faction_id"] or r["entity_id"]) not in every:
+            if r["relation_id"] is None and (
+                r["entity_id"] not in every or (r["faction_id"] or r["entity_id"]) not in every
+            ):
                 raise CampaignError(DAMAGED)
             continue
         if (
@@ -1273,7 +1290,10 @@ def _check_map_fact(r: Mapping[str, Any]) -> None:
     ints = ("from_session_at", "to_session_at", "from_game_time", "to_game_time")
     if not (
         is_id(r["id"])
-        and is_id(r["entity_id"])
+        # (exactly one of a place or, for a condition only, a road: #4258)
+        and (r["entity_id"] is None) != (r["relation_id"] is None)
+        and is_id(r["entity_id"] or r["relation_id"])
+        and (r["relation_id"] is None or r["layer"] == map_facts.CONDITION)
         and r["layer"] in map_facts.LAYERS
         and isinstance(r["value"], str)
         and isinstance(r["how"], str)

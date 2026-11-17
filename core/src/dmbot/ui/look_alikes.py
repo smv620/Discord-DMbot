@@ -14,15 +14,14 @@ secret ones included, and the merge moves a secret name as a secret name.
 from __future__ import annotations
 
 import logging
-from typing import Any, cast
 
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.memory.lookalikes import Name, by_use, look_alike
+from dmbot.memory.lookalikes import Name, by_use, family_of, look_alike
 from dmbot.memory.models import DM, MemoryRuleError, days
 from dmbot.memory.store import MemoryStore
-from dmbot.ui import logic, name_places, split_words
+from dmbot.ui import logic, name_origin, name_places, split_words
 from dmbot.ui.dmbot_commands import (
     _answer_first,
     _Button,
@@ -385,25 +384,17 @@ class WhichName(_Menu):
         await _answer_first(interaction)
         name = self.names.get(self.pick.values[0])
         memory = _memory(interaction)
-        transcripts = getattr(interaction.client, "transcripts", None)
-        if name is None or memory is None or transcripts is None:
+        if name is None or memory is None:
             await interaction.followup.send(name_places.NOTHING_KEPT, ephemeral=True)
             return
-        refs: list[tuple[str, int | None]] = []
-        try:
-            refs = list(await memory.mentions(campaign.guild_id, campaign.id, name.id))
-            text = await name_places.where_said(
-                interaction.guild,
-                transcripts,
-                campaign.guild_id,
-                refs,
-                [name.name],
-                await cast(Any, interaction.client).consent.consenting(campaign.guild_id),
-            )
-        except Exception:
-            log.exception("Couldn't show where a name was said")
-            text = name_places.TRY_AGAIN
-        log.info("Showed where a look-alike name was said: %d places kept", len(refs))
+        held = getattr(interaction.client, "lore_context", None)
+        lore = source = ""
+        if held is not None:  # (the DM only, checked above)
+            lore = str(held.get(campaign.guild_id, name.id))
+            source = str(held.source(campaign.guild_id, name.id))
+        text = await name_origin.where_entry(
+            interaction, campaign, memory, name.id, [name.name], lore=lore, lore_source=source
+        )
         await interaction.followup.send(
             text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none()
         )
@@ -564,10 +555,17 @@ async def show_merge_several(
     if names is None:
         await _tell(interaction, NOT_AVAILABLE)
         return
-    # Look-alikes of this name first, then A to Z, so the DM rarely needs the search.
-    pool = sorted(
-        candidates(names, entity_id), key=lambda c: (not look_alike(name, c[1]), c[1].casefold())
-    )
+    # Look-alikes of this name first, then A to Z, so the DM rarely needs the search. Only a name of
+    # its own family counts as a look-alike (#4553): a quest's card never puts the people in its
+    # name first, as `lookalikes.find` never groups them.
+    mine = family_of(names.entities[entity_id].type) if entity_id in names.entities else ""
+
+    def alike(c: tuple[str, str]) -> bool:
+        other = names.entities.get(c[0])
+        same = other is not None and family_of(other.type) == mine
+        return same and look_alike(name, c[1])
+
+    pool = sorted(candidates(names, entity_id), key=lambda c: (not alike(c), c[1].casefold()))
     wanted = typed.strip().casefold()
     if wanted:
         pool = [c for c in pool if wanted in c[1].casefold()]

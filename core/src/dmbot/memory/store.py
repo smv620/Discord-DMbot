@@ -62,6 +62,7 @@ from dmbot.memory import (
     standing,
     states,
     thread_parts,
+    thread_read,
     told,
     whereabouts,
     world_notes,
@@ -72,8 +73,11 @@ from dmbot.memory import lies as lies_mod
 from dmbot.memory import map_facts as mf
 from dmbot.memory import party as party_mod
 from dmbot.memory import same_person as same_person_mod
+from dmbot.memory import secret_questions as secret_questions_mod
 from dmbot.memory import short_names as short_names_mod
 from dmbot.memory import tags as tags_mod
+from dmbot.memory import thread_clues as clues_mod
+from dmbot.memory import thread_progress as tp_mod
 from dmbot.memory import threads as threads_mod
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory import worked_out as worked_out_mod
@@ -81,6 +85,7 @@ from dmbot.memory._changes import (
     ALIASES,
     ATTITUDES,
     BELIEFS,
+    BY_NAME,
     CHANGED_SINCE,
     CLAIMS,
     CORRECTIONS,
@@ -118,6 +123,7 @@ from dmbot.memory.clues import CLUE, KNOWS, NEEDS_SOMEONE, ONLY_CHARACTERS, ONLY
 from dmbot.memory.importance_rank import MET_IN_PLAY
 from dmbot.memory.list_names import split_list
 from dmbot.memory.lookalikes import Name as LookAlikeName
+from dmbot.memory.lookalikes import family_of
 from dmbot.memory.lookalikes import find as find_look_alikes
 from dmbot.memory.lookalikes import pair as not_same_pair
 from dmbot.memory.lookup import LookupData
@@ -487,6 +493,43 @@ async def _route_target(w: Changes, target_id: str, on: str) -> tuple[Table, dic
     raise ValueError(on)
 
 
+def _check_can_hide(current: Mapping[str, Any]) -> None:
+    """The rule of the DM's 👁️ Hide from players, for every way an entry is hidden."""
+    if (
+        current["type"] == PERSON
+        or current["party"]
+        or current["role"] == PLAYER_CHARACTER
+        or current["played_by"] is not None
+    ):  # a player's character is named in the transcript file and the table list
+        raise MemoryRuleError("A player's character can't be hidden from the players.")
+
+
+async def _merged_stays_public(
+    w: Changes,
+    keep_id: str,
+    gone_id: str,
+    kept: Mapping[str, Any],
+    gone: Mapping[str, Any],
+    merged: dict[str, Any],
+) -> None:
+    """Public never becomes secret by itself (#4524, ruling B): when either entry of a merge is
+    shown to the players, the merged one stays shown, and the hiding it would have taken from the
+    other is asked as a 🤫 question instead. Only the DM's own choice (`dm_chose_secret`) merges
+    into a hidden one. An entry known only to some player characters is not shown to the rest:
+    its knowers' rows move with the merge, so they keep knowing, and nothing is unhidden (that
+    would tell every player what only some know)."""
+    from dmbot.memory import secret_questions
+
+    taking = {f: True for f in ("audience_limited", "hidden_from_players") if merged[f]}
+    if not taking:
+        return
+    if not (knowers.entry_shown(dict(kept)) or knowers.entry_shown(dict(gone))):
+        return
+    for flag in taking:
+        merged[flag] = False
+    await secret_questions.ask(w, secret_questions.NARROW, "memory_entities", keep_id, taking)
+
+
 def _merged_size(kept: dict[str, Any], gone: dict[str, Any]) -> dict[str, Any]:
     """How big a merged place is (#4173): the DM's word over DMbot's read, then the kept entry's."""
     for row in sorted((kept, gone), key=lambda r: r.get("place_level_from") != place_levels.BY_DM):
@@ -715,6 +758,24 @@ UNNAMED_KINDS = frozenset({"character", "faction"})
 SAME_KIND_ONLY = "A person can only be joined to a person, and a group to a group."
 
 
+WORLD_ANSWER = "Answer this one with its own card: its reveal is made with world_reveal.answer."
+
+
+def _shown_when_said(row: Mapping[str, Any]) -> bool:
+    """Whether DMbot may show this entry to the players because the table or a 🌍 World read said
+    it (`reveal_said`, #2404, #4524): only what the DM had not made a clue only some know, the
+    party, a person at the table or a player's character, and only while it is held back."""
+    return bool(
+        row["status"] == CONFIRMED
+        and row["hidden_from_players"]
+        and not row["audience_limited"]
+        and not row["party"]
+        and row["type"] not in (PERSON, "clue")
+        and row["role"] != PLAYER_CHARACTER
+        and row["played_by"] is None
+    )
+
+
 class MemoryStore:
     """Reads and writes one campaign's memory at a time. See the module docstring."""
 
@@ -740,7 +801,13 @@ class MemoryStore:
 
     @asynccontextmanager
     async def _write(
-        self, guild_id: int, campaign_id: str, source: str, *, undoes: int | None = None
+        self,
+        guild_id: int,
+        campaign_id: str,
+        source: str,
+        *,
+        undoes: int | None = None,
+        dm_chose_secret: bool = False,
     ) -> AsyncIterator[Changes]:
         if source not in SOURCES:
             raise ValueError(f"Unknown memory source: {source!r}")
@@ -764,7 +831,7 @@ class MemoryStore:
             start = int(row["memory_version"])
             changes = Changes(
                 conn, guild_id, campaign_id, start, source=source, now=int(self._clock()),
-                undoes=undoes,
+                undoes=undoes, dm_chose_secret=dm_chose_secret,
             )  # fmt: skip
             # The DM's own fix to a name no chain linked to the party is checked later, 15 minutes
             # after the last one, when the campaign shares its story to improve DMbot (#3741). Who
@@ -783,6 +850,14 @@ class MemoryStore:
                 )
                 if fixes:
                     await graph_review.note_fixes(conn, guild_id, campaign_id, fixes, changes.now)
+            if changes.asked and changes.batch is not None:
+                # (a 🤫 question asked before the write's first logged change has no batch yet:
+                # every one it asked joins the batch, so its Undo takes them back, #4524)
+                await conn.execute(
+                    "UPDATE secret_questions SET batch = %s WHERE guild_id = %s"
+                    " AND campaign_id = %s AND id = ANY(%s)",
+                    (changes.batch, guild_id, campaign_id, changes.asked),
+                )
             if changes.relation_changes or changes.belief_additions or changes.deleted_items:
                 await self._report_fixed(conn, guild_id, campaign_id, changes)
             if changes.restored or changes.unbelieved:
@@ -1319,7 +1394,10 @@ class MemoryStore:
                 if r["id"] != entity_id:
                     # (the DM taking away DMbot's guess is a no to it: never guessed again)
                     gone_from = "declined" if r.get("setting_from") == place_levels.READ else None
-                    await w.update(ENTITIES, r["id"], {"setting": False, "setting_from": gone_from})
+                    gone: dict[str, Any] = {"setting": False, "setting_from": gone_from}
+                    if r.get("setting_from") == place_levels.READ:  # (its place too, as ✖: #4291)
+                        gone |= await _guess_place_goes(w, r)
+                    await w.update(ENTITIES, r["id"], gone)
             if entity_id is not None:  # (the DM's word: a guess of DMbot's kept is the DM's now)
                 row = await w.update(ENTITIES, entity_id, {"setting": True, "setting_from": DM})
             return Written(_entity(row) if row else None, w.batch)
@@ -1425,16 +1503,9 @@ class MemoryStore:
                 # (the DM taking away DMbot's guess is a no to it: never guessed again)
                 gone_from = "declined" if r.get("setting_from") == place_levels.READ else None
                 change: dict[str, Any] = {"setting": False, "setting_from": gone_from}
-                # (a place DMbot made for its guess goes with it, as ✖ does: it never keeps one
-                # the DM didn't ask for)
-                if r.get("source") == SETTING_GUESS_SOURCE and r.get("hidden_from_players"):
-                    tied = await w.select(
-                        RELATIONS,
-                        " AND status <> 'rejected' AND (subject_id = %s OR object_id = %s)",
-                        [r["id"], r["id"]],
-                    )
-                    if not tied:
-                        change["status"] = REJECTED
+                # (its place too, as ✖ and `set_setting` do: one rule, #4291)
+                if r.get("setting_from") == place_levels.READ:
+                    change |= await _guess_place_goes(w, r)
                 await w.update(ENTITIES, r["id"], change)
             if found:
                 place = found[0]
@@ -1500,18 +1571,7 @@ class MemoryStore:
             if not (row.get("setting") and row.get("setting_from") == place_levels.READ):
                 raise MemoryRuleError(NOT_FOUND)
             change: dict[str, Any] = {"setting": False, "setting_from": "declined"}
-            # A place DMbot made for the guess goes with it (Supervisor's review of #4299): the bot
-            # never keeps a place the DM didn't ask for. Rejected, so it leaves every list, with
-            # its declined mark kept, so the "never again" check still finds it; Undo brings it
-            # back as a guess. Only while it is still hidden and nothing else points at it.
-            if row.get("source") == SETTING_GUESS_SOURCE and row.get("hidden_from_players"):
-                tied = await w.select(
-                    RELATIONS,
-                    " AND status <> 'rejected' AND (subject_id = %s OR object_id = %s)",
-                    [entity_id, entity_id],
-                )
-                if not tied:
-                    change["status"] = REJECTED
+            change |= await _guess_place_goes(w, row)
             row = await w.update(ENTITIES, entity_id, change)
             return Written(_entity(row), w.batch)
 
@@ -1760,6 +1820,67 @@ class MemoryStore:
             row = await thread_parts.set_state(w, part_id, state)
             return Written(thread_parts.from_row(row), w.batch)
 
+    async def set_time_limit_date(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        part_id: str,
+        minute: int | None,
+        *,
+        now: int | None,
+        source: str,
+        given_by: str = thread_parts.DM_SOURCE,
+    ) -> Written[thread_parts.Part]:
+        """A time limit's game date, or None to make it words only again (quests slice 4; §8.2;
+        `thread_parts.set_due`). Only the DM: the one-tap date (`given_by` 'dm'), or DMbot's read
+        the DM kept (`given_by` 'read', slice 4c). One change, one Undo."""
+        if source != DM:
+            raise MemoryRuleError(thread_parts.ONLY_DM)
+        async with self._write(guild_id, campaign_id, source) as w:
+            row = await thread_parts.set_due(w, part_id, minute, now=now, source=given_by)
+            return Written(thread_parts.from_row(row), w.batch)
+
+    async def time_limits_to_tell(
+        self, guild_id: int, campaign_id: str, now: int, *, at: int
+    ) -> list[tuple[str, str, thread_parts.Part, str]]:
+        """After the clock moved to `now` (the group furthest ahead): the dated running limits of
+        live threads whose "soon" or "passed" mark the clock has reached and that weren't said
+        yet, each claimed now so it is said once (slice 4b, §8.4; `time_limit_told`). As (thread
+        id, thread name, the part, the stage). `at` is the wall-clock second, for the record."""
+        from dmbot.memory import time_limit_told
+        from dmbot.memory import time_limits as tl
+
+        async with self._read(guild_id, campaign_id) as scope:
+            dated = await thread_parts.dated_running(scope)
+        if not dated:
+            return []
+        async with self._db.guild(guild_id) as conn:
+            said = await time_limit_told.told(conn, guild_id, campaign_id)
+        staged = [
+            (p, stage)
+            for p in dated
+            if p.due_minute is not None
+            and (stage := tl.stage(p.due_minute, p.set_at, now)) is not None
+            and (p.first_id, p.due_minute, stage) not in said
+        ]
+        if not staged:
+            return []  # (nothing new: no threads read, however long ago a limit passed)
+        live = {
+            t.thread.id: t.thread.name
+            for t in await self.threads(guild_id, campaign_id)
+            if t.state is not None and t.state.condition in threads_mod.LIVE_STATES
+        }
+        out: list[tuple[str, str, thread_parts.Part, str]] = []
+        async with self._db.guild(guild_id) as conn:
+            for p, stage in staged:
+                if p.thread_id not in live or p.due_minute is None:
+                    continue  # (a finished or dropped thread: its limit says nothing, §8.4)
+                if await time_limit_told.claim(
+                    conn, guild_id, campaign_id, p.first_id, p.due_minute, stage, at
+                ):
+                    out.append((p.thread_id, live[p.thread_id], p, stage))
+        return out
+
     async def remove_thread_part(
         self, guild_id: int, campaign_id: str, part_id: str, *, source: str
     ) -> Written[None]:
@@ -1828,6 +1949,65 @@ class MemoryStore:
             onto = await _load_ontology(w)
             kept = await map_fact_store.keep_read(w, onto, place_id, layers)
             return Written(kept, w.batch)
+
+    # ---- A road's, pass's or bridge's condition (#4258, MapBot layers slice 4a) ---------------
+
+    async def route_conditions(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        viewer: gate.Viewer,
+        *,
+        place_ids: Sequence[str] = (),
+        relation_ids: Sequence[str] = (),
+        shown: Collection[str] | None = None,
+    ) -> dict[str, map_fact_store.Condition]:
+        """Each route's condition with what it ended, by place or connection id, as `viewer` may
+        see it (`map_fact_store.conditions_for`)."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await map_fact_store.conditions_for(
+                scope, viewer, place_ids=place_ids, relation_ids=relation_ids, shown=shown
+            )
+
+    async def set_route_condition(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        value: str | None,
+        *,
+        words: str = "",
+        place_id: str = "",
+        relation_id: str = "",
+        source: str,
+    ) -> Written[None]:
+        """The DM's 🚧 Condition for a route place or a known road between two places: one change,
+        so one Undo. A different value keeps the old one as history; None is "Not sure"."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            await map_fact_store.set_condition(
+                w, onto, value, words=words, place_id=place_id, relation_id=relation_id
+            )
+            return Written(None, w.batch)
+
+    async def keep_road_condition(
+        self, guild_id: int, campaign_id: str, relation_id: str, *, source: str
+    ) -> Written[int]:
+        """The DM's ✅ on a road's condition DMbot read: one change, so one Undo."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            return Written(await map_fact_store.keep_route(w, relation_id), w.batch)
+
+    async def show_road_condition(
+        self, guild_id: int, campaign_id: str, relation_id: str, shown: bool, *, source: str
+    ) -> Written[int]:
+        """The DM's 🙈 / 👁️ for a road's condition: one change, so one Undo."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            return Written(await map_fact_store.show_route(w, relation_id, shown), w.batch)
 
     # ---- World notes: DMbot's guesses about the world, for the DM to check (#4285) ----------
 
@@ -2031,46 +2211,185 @@ class MemoryStore:
         parts: Sequence[tuple[str, str]],
         source: str,
         suggestion_id: str = "",
+        leave_off: Collection[int] = (),
     ) -> Written[Entity]:
         """The DM keeps a story thread DMbot suggested (#4453, quests slice 1): the thread, its
         state and the people the DM left on, in ONE change, so one Undo takes it all back. A person
         merged since is followed to the entry it became; one gone since is skipped. The suggestion's
-        row is marked kept in the same transaction, with the change's number for ↩ Undo."""
+        row is marked kept in the same transaction, with the change's number for ↩ Undo.
+
+        Slice 3 (#4500): the suggestion's own parts and branches (read from its row here, never
+        from the screen) are kept with it, except the lines in `leave_off` (positions in
+        `Waiting.lines`): each part as the DM's keep with its source 'lore' (§9.6), each branch as a
+        thread of its own with its people and its `branch_of` link (§6a). A part that no longer
+        fits (the same words already there, its giver no longer a person or group) is kept without
+        what doesn't fit, or left out, never failing the keep."""
         if source != DM:
             raise MemoryRuleError("Only the DM can do that.")
         check_named(subtype, name)
         name = clean_text(name)
         async with self._write(guild_id, campaign_id, source) as w:
             onto = await _load_ontology(w)
-            if subtype not in onto.types or not onto.is_a(subtype, "thread"):
-                raise MemoryRuleError(THREAD_KINDS_ONLY)
-            onto.active_type(subtype)
-            row = await w.insert(
-                ENTITIES,
-                {
-                    "id": new_id(), "type": subtype, "name": name,
-                    "description": clean_text(aim)[:DESCRIPTION_MAX] if aim else "",
-                    "status": CONFIRMED, "merged_into": None, "source": source,
-                    "created_at": w.now, "played_by": None, "role": None, "needs_look": False,
-                    "unique_item": None, "audience_limited": False, "party": False,
-                },
-            )  # fmt: skip
-            await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", CONFIRMED, False, None))
-            await states.set_condition(w, onto, row, state, from_session_at=None)
-            for role, who in parts:
-                live = await _followed(w, who)
-                if live is None:
-                    continue  # (gone since the suggestion was made)
-                await self.add_relation_in(
-                    w, live, "in_thread", str(row["id"]), confidence=1.0, status=CONFIRMED,
-                    detail=clean_text(role),
-                )  # fmt: skip
-            if suggestion_id:
-                from dmbot.memory import thread_suggestions
+            began: int | None = None
+            from dmbot.memory import thread_suggestions
 
+            if suggestion_id:  # (one read from a session starts at that session, #4522)
+                began = await thread_suggestions.session_at_in(w, suggestion_id)
+            row = await self._new_thread_in(
+                w, onto, name, subtype, state, aim, parts, source, from_session_at=began
+            )
+            if suggestion_id:
+                reads, branches = await thread_suggestions.lines_in(w, suggestion_id)
+                clues = await thread_suggestions.clues_in(w, suggestion_id)  # (#4624 6b)
                 if not await thread_suggestions.mark_kept(w, suggestion_id, w.batch):
                     raise MemoryRuleError(thread_suggestions.GONE)
+                off = set(leave_off)
+                for i, part in enumerate(reads):
+                    if i not in off:
+                        await _keep_read_part(w, onto, str(row["id"]), part)
+                for i, branch in enumerate(branches, len(reads)):
+                    if i in off:
+                        continue
+                    made = await self._new_thread_in(
+                        w, onto, branch.name, branch.kind, branch.state, branch.aim,
+                        branch.parts, source,
+                    )  # fmt: skip
+                    await self.add_relation_in(
+                        w, str(made["id"]), threads_mod.BRANCH_OF, str(row["id"]),
+                        confidence=1.0, status=CONFIRMED,
+                    )  # fmt: skip
+                # (#4624 6b: its clues, after its branches as on the card)
+                for i, clue in enumerate(clues, len(reads) + len(branches)):
+                    if i not in off:
+                        await self._keep_read_clue(w, onto, str(row["id"]), clue)
             return Written(_entity(row), w.batch)
+
+    async def keep_thread_progress(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        line_ids: Sequence[str],
+        *,
+        source: str,
+        turn_down: Sequence[str] = (),
+    ) -> Written[int]:
+        """The DM keeps progress lines the session reader offered on threads the campaign has
+        (#4522, quests slice 5b; `thread_progress`): every line left on, in ONE change, so one
+        Undo takes them all back (`thread_progress.unkeep_in`). A new part is kept as the DM's
+        keep with its source 'session' (§9.6), a part's new state as the story moving on
+        (`thread_parts.set_state`), a thread's state as its condition from that session. A line
+        that no longer fits (its thread or part gone or changed since, the same part already
+        there) is left out, never failing the keep, and answered as turned down (never shown as
+        kept). A part and a part's new state are dated at the story's newest moment, as the DM's
+        own adds are (`thread_parts.story_now`); a thread's state at the line's session. Returns
+        how many were written (no change, and no Undo, when none); raises when none of them still
+        waited. `turn_down`: the lines the DM unticked on the same card, turned down in this same
+        change when anything is kept, so its Undo brings them back with the rest (the reviewer on
+        part 3); with nothing kept they are left for the caller. Consent is read again inside the
+        write (`consent.still_recorded`): a line quoting
+        someone no longer recorded is deleted, never kept, and the deletion stands even when
+        nothing else is left (the keep then writes nothing rather than raising, which would undo
+        the deletion)."""
+        if source != DM:
+            raise MemoryRuleError(thread_parts.ONLY_DM)
+        tp = tp_mod
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            lines = await tp.waiting_in(w, line_ids)
+            if not lines:
+                raise MemoryRuleError(tp.GONE)
+            # (consent read again inside this write, after the card's own check: a stop between
+            # the card opening and the press, even one `forget` never ran for, keeps the words of
+            # whoever stopped out of the story; #4153's way, Supervisor on #4610)
+            from dmbot.consent import still_recorded
+
+            speakers = {u for line in lines for u in line.speaker_ids}
+            allowed = await still_recorded(w.conn, guild_id, campaign_id, speakers)
+            stopped = [line.id for line in lines if not set(line.speaker_ids) <= allowed]
+            if stopped:
+                await tp.drop_in(w, stopped)
+                log.info("Story thread progress: %d line(s) dropped at keep", len(stopped))
+                lines = [line for line in lines if line.id not in stopped]
+            fits = [line.id for line in lines if await self._keep_progress_line(w, onto, line)]
+            await tp.mark_kept(w, fits, w.batch)
+            await tp.mark_unfit(w, [line.id for line in lines if line.id not in fits])
+            if fits and turn_down:  # (the DM's unticked lines, in this same change: one Undo)
+                await tp.turn_down_in(w, turn_down, w.batch)
+            return Written(len(fits), w.batch)
+
+    async def _keep_progress_line(self, w: Changes, onto: Ontology, line: tp_mod.Line) -> bool:
+        """One progress line inside `keep_thread_progress`'s write: True when it wrote, False when
+        it no longer fits. A thread merged since is followed to the one it became. Only the
+        thread rules' own refusals (`MemoryRuleError`, raised before any write) mean "no longer
+        fits"; anything else fails the keep, so a mistake is never hidden."""
+        tp = tp_mod
+        thread_id = await _followed(w, line.thread_id)
+        thread = await w.get(ENTITIES, thread_id) if thread_id is not None else None
+        if thread is None or not onto.is_a(str(thread["type"]), "thread"):
+            return False
+        thread_id = str(thread["id"])
+        change = line.change
+        try:
+            if change.kind == tp.PART:
+                # (a time limit's "when" stays the line's own words: the date is the DM's to give)
+                await thread_parts.add(
+                    w, onto, thread_id, change.part_kind, change.words,
+                    state=change.state or None, source=thread_parts.SESSION,
+                )  # fmt: skip
+            elif change.kind == tp.PART_STATE:
+                await thread_parts.set_state_in_thread(
+                    w, thread_id, str(change.part_id), change.state
+                )
+            else:
+                await states.set_condition(
+                    w, onto, thread, change.state, from_session_at=line.session_at
+                )
+        except MemoryRuleError as exc:
+            log.info("A progress line no longer fits (%s)", type(exc).__name__)
+            return False
+        return True
+
+    async def _new_thread_in(
+        self,
+        w: Changes,
+        onto: Ontology,
+        name: str,
+        subtype: str,
+        state: str,
+        aim: str,
+        parts: Sequence[tuple[str, str]],
+        source: str,
+        *,
+        from_session_at: int | None = None,
+    ) -> dict[str, Any]:
+        """A kept thread inside the caller's write: the entry, its name, its state and its people
+        (merged ones followed, gone ones skipped). For `keep_thread`, its thread and branches;
+        `from_session_at` is the session it was read from, if any."""
+        if subtype not in onto.types or not onto.is_a(subtype, "thread"):
+            raise MemoryRuleError(THREAD_KINDS_ONLY)
+        onto.active_type(subtype)
+        name = clean_text(name)
+        row = await w.insert(
+            ENTITIES,
+            {
+                "id": new_id(), "type": subtype, "name": name,
+                "description": clean_text(aim)[:DESCRIPTION_MAX] if aim else "",
+                "status": CONFIRMED, "merged_into": None, "source": source,
+                "created_at": w.now, "played_by": None, "role": None, "needs_look": False,
+                "unique_item": None, "audience_limited": False, "party": False,
+            },
+        )  # fmt: skip
+        await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", CONFIRMED, False, None))
+        await states.set_condition(w, onto, row, state, from_session_at=from_session_at)
+        for role, who in parts:
+            live = await _followed(w, who)
+            if live is None:
+                continue  # (gone since the suggestion was made)
+            await self.add_relation_in(
+                w, live, "in_thread", str(row["id"]), confidence=1.0, status=CONFIRMED,
+                detail=clean_text(role),
+            )  # fmt: skip
+        return row
 
     async def involve(
         self,
@@ -2185,6 +2504,202 @@ class MemoryStore:
                 status=CONFIRMED, from_session_at=from_session_at,
             )  # fmt: skip
             return Written(fact, w.batch)
+
+    async def tie_clue(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        thread_id: str,
+        *,
+        clue_id: str = "",
+        new_name: str = "",
+        false_lead: bool = False,
+        source: str,
+    ) -> Written[tuple[Relation, bool]]:
+        """The DM ties a clue to a kept story thread (#4624, quests slice 6a; design §3, §7): a
+        clue entry they picked, or one by its name (the campaign's clue of that name, else a new
+        one), in ONE change with one Undo. "points to it" unless they say "false lead". The tie is
+        the DM's alone: always secret, never known by a player (`Changes._dm_only_check`). A new
+        clue is kept and known by nobody yet: the table finds it when a character comes to know it,
+        so it starts hidden from the players (a clue they are shown is one the whole table has).
+        Refused when it is tied already. Returns the tie, and whether the clue was made new (the DM
+        is told it is hidden, the ux-critic)."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            thread = await _entity_row(w, thread_id)
+            if thread["status"] != CONFIRMED or not onto.is_a(str(thread["type"]), "thread"):
+                raise MemoryRuleError(thread_parts.NOT_A_THREAD)
+            fact, made_new = await self._tie_clue_in(
+                w, onto, thread_id, clue_id=clue_id, new_name=new_name, false_lead=false_lead
+            )
+            return Written((fact, made_new), w.batch)
+
+    async def _tie_clue_in(
+        self,
+        w: Changes,
+        onto: Ontology,
+        thread_id: str,
+        *,
+        clue_id: str = "",
+        new_name: str = "",
+        false_lead: bool = False,
+    ) -> tuple[Relation, bool]:
+        """`tie_clue` inside the caller's write, for it and for a kept lore suggestion's clues
+        (#4624 6b): the DM's own act both times."""
+        # (every refusal before any insert: a keep that skips a clue must leave no stray entry)
+        onto.active_predicate(clues_mod.CLUE_TO)
+        name = clean_text(new_name) if new_name.strip() else ""
+        if name:
+            check_named(clues_mod.CLUE, name)
+            # (a clue the campaign has by that name is the one meant, never a twin)
+            have = await w.select(
+                ENTITIES,
+                " AND type = 'clue' AND status = 'confirmed' AND lower(name) = lower(%s)",
+                [name],
+            )
+            clue_id = str(have[0]["id"]) if have else ""
+        made_new = bool(name) and not clue_id
+        if made_new:
+            made = await w.insert(
+                ENTITIES,
+                {
+                    "id": new_id(), "type": clues_mod.CLUE, "name": name,
+                    "description": "", "status": CONFIRMED, "merged_into": None,
+                    "source": DM, "created_at": w.now, "played_by": None, "role": None,
+                    "needs_look": False, "unique_item": None, "hidden_from_players": True,
+                },
+            )  # fmt: skip
+            await w.insert(ALIASES, _new_alias(w, made["id"], name, "full", CONFIRMED, False, None))
+            clue_id = str(made["id"])
+        clue = await _entity_row(w, clue_id)
+        if clue["status"] != CONFIRMED or not onto.is_a(str(clue["type"]), clues_mod.CLUE):
+            raise MemoryRuleError(clues_mod.ONLY_CLUES)
+        if await _live_clue_tie(w, clue_id, thread_id):
+            raise MemoryRuleError(clues_mod.ALREADY_TIED)
+        word = clues_mod.FALSE_LEAD if false_lead else clues_mod.POINTS_TO
+        fact, _flags = await self.add_relation_in(
+            w, clue_id, clues_mod.CLUE_TO, thread_id, confidence=1.0, status=CONFIRMED,
+            detail=word, by_hand=True,
+        )  # fmt: skip
+        return fact, made_new
+
+    async def _keep_read_clue(
+        self, w: Changes, onto: Ontology, thread_id: str, clue: thread_read.ReadClue
+    ) -> None:
+        """One clue of a kept lore suggestion (#4624 6b; design §7, §10): tied to the thread like
+        the DM's own (`_tie_clue_in`: the campaign's clue of that name, else a new one hidden from
+        the players). The characters the text says have it learn it and are listed as knowing it,
+        and then only they may (ruling 3 on #4624: "Only some people know this" on); with nobody
+        named, nobody has found it yet. Only a clue made new is narrowed: the campaign's own clue
+        keeps its audience as the DM set it, its holders only added (never a 🤫 question out of a
+        plain Keep, #4524). A clue tied already is left as it is; a holder gone, no longer a
+        character or refused is skipped. Never fails the keep."""
+        try:
+            fact, made_new = await self._tie_clue_in(w, onto, thread_id, new_name=clue.words)
+        except MemoryRuleError:
+            return  # (tied already, or a name that can't be a clue's: the thread is still kept)
+        clue_id = fact.subject_id
+        holders: list[str] = []
+        for who in clue.who_ids:
+            live = await _followed(w, who)
+            row = await w.get(ENTITIES, live) if live is not None else None
+            if row is not None and row["type"] == "character" and row["status"] == CONFIRMED:
+                holders.append(str(row["id"]))
+        if not holders:
+            return
+        if made_new:
+            # (switched on first, while nobody at the table knows it: once a player character
+            # does, the public guard rightly holds any narrowing for the DM to answer, #4524)
+            await w.update(ENTITIES, clue_id, {"audience_limited": True})
+        for character in dict.fromkeys(holders):
+            try:
+                await knowers.learn(w, gate.ENTRY, clue_id, character)
+                await self.add_knower_in(w, clue_id, character, None)
+            except MemoryRuleError:
+                continue  # (refused before it wrote: the rest of the keep goes ahead)
+
+    async def set_clue_word(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        thread_id: str,
+        clue_id: str,
+        *,
+        false_lead: bool,
+        source: str,
+    ) -> Written[str]:
+        """The DM marks a tied clue a false lead, or says it points to it after all (#4624). One
+        change with one Undo; the tie stays secret. Returns the word now."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            tie = await _live_clue_tie(w, clue_id, thread_id)
+            if tie is None:
+                raise MemoryRuleError(clues_mod.NOT_TIED)
+            word = clues_mod.FALSE_LEAD if false_lead else clues_mod.POINTS_TO
+            await w.update(RELATIONS, str(tie["id"]), {"detail": word})
+            return Written(word, w.batch)
+
+    async def untie_clue(
+        self, guild_id: int, campaign_id: str, thread_id: str, clue_id: str, *, source: str
+    ) -> Written[None]:
+        """ "Not a clue to this" (#4624): the tie is taken off (turned down, logged); the clue entry
+        and who knows it stay. One change with one Undo."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            tie = await _live_clue_tie(w, clue_id, thread_id)
+            if tie is None:
+                raise MemoryRuleError(clues_mod.NOT_TIED)
+            await w.update(RELATIONS, str(tie["id"]), {"status": "rejected"})
+            return Written(None, w.batch)
+
+    async def thread_clues(
+        self, guild_id: int, campaign_id: str, thread_id: str, viewer: gate.Viewer
+    ) -> list[clues_mod.ThreadClue]:
+        """A thread's clues, A to Z (#4624). The DM: every tied clue with its word and whether the
+        table has found it (one of the player characters knows it), for the count
+        (`clues_mod.found_text`). A player or the party: only the tied clues one of their
+        characters knows, through the gate, with no false-lead mark, no tie id and nothing for a
+        count (design §10)."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            ties = await scope.select(
+                RELATIONS,
+                " AND predicate = 'clue_to' AND status = 'confirmed' AND to_session_at IS NULL"
+                " AND object_id = %s",
+                [thread_id],
+            )
+            if not ties:  # (no read of who knows what: the 📋 screen and card open quickly)
+                return []
+            ids = sorted({str(r["subject_id"]) for r in ties})
+            rows = {
+                str(r["id"]): r
+                for r in await scope.select(
+                    ENTITIES, " AND id = ANY(%s) AND status = 'confirmed'", [ids]
+                )
+            }
+            # (found: known to ANY player character, ruling 2 on #4624; `the_party` is "every")
+            anyone = gate.Viewer(mode="any", party=True)
+            seen = await gate.visible_to(scope, anyone if viewer.dm else viewer)
+        out = []
+        listed: set[str] = set()
+        if not viewer.dm and not seen.knows(gate.ENTRY, thread_id):
+            return []  # (a thread the player can't see has no clues for them, §10.2)
+        for r in ties:
+            clue = rows.get(str(r["subject_id"]))
+            if clue is None or str(clue["id"]) in listed:  # (once each, whatever came before)
+                continue
+            listed.add(str(clue["id"]))
+            known = seen.knows(gate.ENTRY, str(clue["id"]))
+            if not viewer.dm and not known:
+                continue
+            false_lead = viewer.dm and clues_mod.word_of(r["detail"]) == clues_mod.FALSE_LEAD
+            tie_id = str(r["id"]) if viewer.dm else ""
+            name = str(clue["name"])
+            out.append(clues_mod.ThreadClue(str(clue["id"]), tie_id, name, false_lead, known))
+        return sorted(out, key=lambda c: (c.name.lower(), c.clue_id))
 
     async def thread_card(
         self, guild_id: int, campaign_id: str, thread_id: str
@@ -2940,23 +3455,245 @@ class MemoryStore:
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             return await _audience(scope, clue_id)
 
+    # ---- 🤫 questions: public never becomes secret by itself (#4524) -------------------------
+
+    async def secret_questions_waiting(
+        self, guild_id: int, campaign_id: str
+    ) -> list[secret_questions_mod.Question]:
+        """The 🤫 questions waiting for the DM, oldest first (`secret_questions`)."""
+        async with self._db.guild(guild_id) as conn:
+            return await secret_questions_mod.waiting(conn, guild_id, campaign_id)
+
+    async def secret_questions_count(self, guild_id: int, campaign_id: str) -> int:
+        async with self._db.guild(guild_id) as conn:
+            return await secret_questions_mod.count(conn, guild_id, campaign_id)
+
+    async def secret_questions_still_waiting(
+        self, guild_id: int, campaign_id: str, ids: Collection[str]
+    ) -> int:
+        """How many of these 🤫 questions still wait: a run's count for its note, leaving out one a
+        refused write or an Undo in the same run took back (#4524 slice 2)."""
+        if not ids:
+            return 0
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM secret_questions WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = ANY(%s) AND status = 'waiting'",
+                (guild_id, campaign_id, sorted(set(ids))),
+            )
+            row = await cur.fetchone()
+        return int(row["n"]) if row is not None else 0
+
+    async def secret_questions_asked_in(
+        self, guild_id: int, campaign_id: str, batches: Collection[int | None]
+    ) -> int:
+        """How many 🤫 questions these writes asked (the guard's count for a caller's notice: "1
+        question for you", the ruling's point 1). A change asked before is not asked again, so it
+        is not counted again. A write that changed nothing but held something back has no batch:
+        its caller reads `Changes.held_back` (or `Written` from `ask_replace`) instead."""
+        ids = sorted({b for b in batches if b is not None})
+        if not ids:
+            return 0
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT count(*) AS n FROM secret_questions WHERE guild_id = %s"
+                " AND campaign_id = %s AND batch = ANY(%s)",
+                (guild_id, campaign_id, ids),
+            )
+            row = await cur.fetchone()
+        return int(row["n"]) if row is not None else 0
+
+    async def ask_replace(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        relation_id: str,
+        *,
+        by: str,
+        end_at: int,
+        label: str,
+        batch: int | None = None,
+    ) -> Written[bool]:
+        """A backstory connection the DM just kept (`by`) would have ended this public one at
+        `end_at` (`backstory_keep.end_replaced`): it was not ended, and the DM is asked "Did this
+        change? Keep both / End the old one" instead (the ruling's E). Asked only once the new one
+        is kept, so a keep that fails asks nothing; `batch` is the keep's, so an Undo of the keep
+        takes the question back with it. True when the question is new."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            w.evidence = {"label": label}
+            new = await secret_questions_mod.ask(
+                w, secret_questions_mod.REPLACE, "memory_relations", relation_id,
+                {"end": True, "by": by, "at": int(end_at)},
+            )  # fmt: skip
+            if new and batch is not None:
+                await w.conn.execute(
+                    "UPDATE secret_questions SET batch = %s WHERE guild_id = %s"
+                    " AND campaign_id = %s AND id = ANY(%s)",
+                    (batch, *w.ids, w.asked),
+                )
+                w.asked.clear()  # (the keep's batch, not this write's)
+            return Written(new, w.batch)
+
+    async def answer_secret_question(
+        self, guild_id: int, campaign_id: str, question_id: str, make_secret: bool, *, source: str
+    ) -> Written[str]:
+        """The DM's answer to a 🤫 question. Keep it known (or Keep both) changes nothing but the
+        answer, remembered so the same change is never asked again; Make it secret (or End the
+        old one) is the DM's own choice, made with the same rules as their own buttons, in one
+        change with one ↩ Undo (which puts the question back to waiting). An item gone since, or
+        a replacement no longer kept, is only marked answered."""
+        if source != DM:
+            raise MemoryRuleError(ONLY_DM_SAYS)
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT kind, change FROM secret_questions WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s",
+                (guild_id, campaign_id, question_id),
+            )
+            found = await cur.fetchone()
+        if found is not None and found["kind"] == secret_questions_mod.REVEAL:
+            if not make_secret and "common" in (found["change"] or {}):
+                # (a 🌍 World read's reveal is made the way the read makes it, many changes with
+                # one Undo: `world_reveal.answer`, which this store can't call)
+                raise MemoryRuleError(WORLD_ANSWER)
+            # (its default is the secret: Keep it secret only records it, Let them know is the
+            # DM's own change, one ↩ Undo)
+            if not make_secret:
+                return Written(
+                    question_id, await self._apply_reveal(guild_id, campaign_id, question_id)
+                )
+            async with self._db.guild(guild_id) as conn:
+                cur = await conn.execute(
+                    "UPDATE secret_questions SET status = 'made_secret' WHERE guild_id = %s"
+                    " AND campaign_id = %s AND id = %s AND status = 'waiting'",
+                    (guild_id, campaign_id, question_id),
+                )
+                if not cur.rowcount:
+                    raise MemoryRuleError(secret_questions_mod.GONE)
+            return Written(question_id, None)
+        if make_secret:
+            return Written(
+                question_id, await self._apply_secret(guild_id, campaign_id, question_id)
+            )
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE secret_questions SET status = 'kept_known' WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s AND status = 'waiting'",
+                (guild_id, campaign_id, question_id),
+            )
+            if not cur.rowcount:
+                raise MemoryRuleError(secret_questions_mod.GONE)
+        return Written(question_id, None)
+
+    async def _apply_reveal(self, guild_id: int, campaign_id: str, question_id: str) -> int | None:
+        """Let them know (a 🤫 reveal question, #4524): the DM's secret name the players knew on a
+        merged-away entry is shown, and the who-knows rows that slept under the question wake.
+        The question is locked and answered in the same change; its Undo hides the name again,
+        puts the rows back to sleep and the question back to waiting."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            cur = await w.conn.execute(
+                "SELECT item_id, status FROM secret_questions WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s FOR UPDATE",
+                (*w.ids, question_id),
+            )
+            q = await cur.fetchone()
+            if q is None or q["status"] != secret_questions_mod.WAITING:
+                raise MemoryRuleError(secret_questions_mod.GONE)
+            alias_id = str(q["item_id"])
+            alias = await w.get(ALIASES, alias_id)
+            if alias is not None and alias["status"] != REJECTED and alias["secret"]:
+                await self._change_alias(w, alias_id, DM, None, False)
+            await knowers.wake_under(w, "alias_id", alias_id, question_id)
+            await w.conn.execute(
+                "UPDATE secret_questions SET status = 'kept_known', answered_batch = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+                (w.batch, *w.ids, question_id),
+            )
+            return w.batch
+
+    async def _apply_secret(self, guild_id: int, campaign_id: str, question_id: str) -> int | None:
+        """Make it secret / End the old one (#4524): the change a 🤫 question held back, as the
+        DM's own choice (`dm_chose_secret`), keeping the rules of the DM's own buttons (a player's
+        character is never hidden, a clue's audience needs someone, a main name is never secret).
+        The question is locked, checked and answered in the same change, so a Keep it known from
+        another screen can't cross it, and its Undo puts the question back to waiting. Returns
+        the batch; None when there was nothing left to change."""
+        async with self._write(guild_id, campaign_id, DM, dm_chose_secret=True) as w:
+            cur = await w.conn.execute(
+                "SELECT kind, item_table, item_id, change, status FROM secret_questions"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s FOR UPDATE",
+                (*w.ids, question_id),
+            )
+            q = await cur.fetchone()
+            if q is None or q["status"] != secret_questions_mod.WAITING:
+                raise MemoryRuleError(secret_questions_mod.GONE)
+            await self._make_secret(w, q)
+            await w.conn.execute(
+                "UPDATE secret_questions SET status = 'made_secret', answered_batch = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+                (w.batch, *w.ids, question_id),
+            )
+            return w.batch
+
+    async def _make_secret(self, w: Changes, q: Mapping[str, Any]) -> None:
+        """The held-back change itself, inside `_apply_secret`'s write."""
+        table = BY_NAME[str(q["item_table"])]
+        item_id = str(q["item_id"])
+        change = dict(q["change"])
+        item = await w.get(table, item_id)
+        if item is None or item.get("status") in (REJECTED, MERGED):
+            return
+        if q["kind"] == secret_questions_mod.REPLACE:
+            by = await w.get(RELATIONS, str(change.get("by", "")), lock=False)
+            if by is None or by["status"] != CONFIRMED or item["to_session_at"] is not None:
+                return  # (the new one was taken back, or the old one ended since)
+            at = int(change["at"])
+            _check_span(item["from_session_at"], at)
+            await w.update(RELATIONS, item_id, {"to_session_at": at})
+        elif "knowers_off" in change:
+            kind = {"memory_entities": "entry", "memory_relations": "connection",
+                    "memory_aliases": "alias"}[table.name]  # fmt: skip
+            await knowers.take_off(w, kind, item_id, [str(e) for e in change["knowers_off"]])
+        elif table is ALIASES:
+            if change.get("secret") and not item["secret"]:
+                await self._change_alias(w, item_id, DM, None, True)
+        elif table is ENTITIES:
+            flags: dict[str, Any] = {}
+            if change.get("hidden_from_players") and not item["hidden_from_players"]:
+                _check_can_hide(item)
+                flags["hidden_from_players"] = True
+            if change.get("audience_limited") and not item["audience_limited"]:
+                if item["type"] != CLUE:
+                    raise MemoryRuleError(ONLY_CLUES)
+                if not await _audience(w, item_id):
+                    raise MemoryRuleError(NEEDS_SOMEONE)
+                flags["audience_limited"] = True
+            if flags:
+                await w.update(ENTITIES, item_id, flags)
+        else:
+            flags = {c: True for c in ("secret", "unrevealed") if change.get(c) and not item[c]}
+            if flags:
+                await w.update(RELATIONS, item_id, flags)
+
     async def set_hidden_from_players(
-        self, guild_id: int, campaign_id: str, entity_id: str, hidden: bool, *, source: str
+        self,
+        guild_id: int,
+        campaign_id: str,
+        entity_id: str,
+        hidden: bool,
+        *,
+        source: str,
+        dm_chose_secret: bool,
     ) -> Written[Entity]:
         """The DM's switch "Players don't know this one yet" (#2321), on any entry: on, the entry
         is the DM's alone like a clue only some know; off ("Players know it now"), everyone
         sees it. Not a clue's audience (`set_audience_limited`), which has its own rules."""
         if source != DM:
             raise MemoryRuleError(ONLY_DM_SAYS)
-        async with self._write(guild_id, campaign_id, source) as w:
+        async with self._write(guild_id, campaign_id, source, dm_chose_secret=dm_chose_secret) as w:
             current = await _entity_row(w, entity_id)
-            if hidden and (
-                current["type"] == PERSON
-                or current["party"]
-                or current["role"] == PLAYER_CHARACTER
-                or current["played_by"] is not None
-            ):  # a player's character is named in the transcript file and the table list
-                raise MemoryRuleError("A player's character can't be hidden from the players.")
+            if hidden:
+                _check_can_hide(current)
             row = await w.update(ENTITIES, entity_id, {"hidden_from_players": hidden})
             return Written(_entity(row), w.batch)
 
@@ -2970,18 +3707,182 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, "scan") as w:
             shown: list[str] = []
             for row in await w.select(ENTITIES, " AND id = ANY(%s)", [sorted(set(entity_ids))]):
-                if (
-                    row["status"] == CONFIRMED
-                    and row["hidden_from_players"]
-                    and not row["audience_limited"]
-                    and not row["party"]
-                    and row["type"] not in (PERSON, "clue")
-                    and row["role"] != PLAYER_CHARACTER
-                    and row["played_by"] is None
-                ):
+                if _shown_when_said(row):
                     await w.update(ENTITIES, row["id"], {"hidden_from_players": False})
                     shown.append(str(row["id"]))
             return Written(shown, w.batch if shown else None)
+
+    async def ask_world_reveals(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        *,
+        entries: Sequence[str] = (),
+        links: Sequence[str] = (),
+        aliases: Sequence[str] = (),
+        lone: Sequence[str] = (),
+    ) -> int:
+        """A 🌍 World read that may not reveal by itself (the campaign asks first, the read was cut
+        off, or its notice could not be kept) asks instead (#4590 C): one 🤫 reveal question for
+        each hidden entry it names, connection it states and secret other name it gives with its
+        person, `{"common": true}`. And a secret other name it gives on its own (`lone`) asks
+        whether it is the same person (#4590 A), `{"common": true, "lone": true}`. Only what a
+        reveal could show is asked about (an entry by `reveal_said`'s own rule); each change is
+        asked once. Returns how many new questions."""
+        run = secret_questions_mod.current_run()
+        stamp = {secret_questions_mod.RUN: run} if run else {}
+        common = {**secret_questions_mod.COMMON, **stamp}
+        async with self._write(guild_id, campaign_id, DM) as w:
+            ask = secret_questions_mod.ask
+            new = 0
+            for row in await w.select(ENTITIES, " AND id = ANY(%s)", [sorted(set(entries))]):
+                if _shown_when_said(row):
+                    new += await ask(w, secret_questions_mod.REVEAL, ENTITIES.name, row["id"],
+                                     common)  # fmt: skip
+            for row in await w.select(RELATIONS, " AND id = ANY(%s)", [sorted(set(links))]):
+                if (
+                    row["status"] == CONFIRMED
+                    and row["to_session_at"] is None
+                    and (row["secret"] or row["unrevealed"])
+                ):
+                    new += await ask(w, secret_questions_mod.REVEAL, RELATIONS.name, row["id"],
+                                     common)  # fmt: skip
+            alone = set(lone)
+            for row in await w.select(ALIASES, " AND id = ANY(%s)", [sorted(set(aliases) | alone)]):
+                if row["status"] != REJECTED and row["secret"]:
+                    if row["id"] in alone:
+                        # (only where "yes" can be done: its person is shown, or may be)
+                        owner = await w.get(ENTITIES, row["entity_id"], lock=False)
+                        if owner is None or not (
+                            _shown_when_said(owner) or knowers.entry_shown(owner)
+                        ):
+                            continue
+                    change = (
+                        {**secret_questions_mod.LONE, **stamp} if row["id"] in alone
+                        else common
+                    )  # fmt: skip
+                    new += await ask(
+                        w, secret_questions_mod.REVEAL, ALIASES.name, row["id"], change
+                    )
+            return new
+
+    async def kept_secret_by_the_dm(
+        self, guild_id: int, campaign_id: str, items: Collection[tuple[str, str]]
+    ) -> set[tuple[str, str]]:
+        """The items (entries, connections, other names) whose 🌍 question the DM answered "Keep it
+        secret" (#4590, Supervisor's ruling 2 on #4605): a later World read never reveals them by
+        itself. The DM can still show one on Who knows this?. By (table, id), as the question
+        holds them."""
+        if not items:
+            return set()
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT DISTINCT item_table, item_id FROM secret_questions WHERE guild_id = %s"
+                " AND campaign_id = %s AND item_id = ANY(%s) AND kind = %s AND status = %s"
+                " AND change ? 'common'",
+                (
+                    guild_id,
+                    campaign_id,
+                    sorted({i for _, i in items}),
+                    secret_questions_mod.REVEAL,
+                    secret_questions_mod.MADE_SECRET,
+                ),
+            )
+            wanted = set(items)
+            found = {(str(r["item_table"]), str(r["item_id"])) for r in await cur.fetchall()}
+            return found & wanted
+
+    async def answer_waiting_world_questions(
+        self, guild_id: int, campaign_id: str, items: Collection[tuple[str, str]], batch: int
+    ) -> int:
+        """A World read showed these items by itself: the 🌍 questions still waiting about them
+        are answered by its change `batch` (#4590, ruling (b) on #4606), so the card stops
+        offering them, and an Undo of that change asks them again; a lone name's "same person?"
+        too, once a read gives that name with its person. Only an Undo of the whole read (newest
+        first, as the upload's Undo does) reaches `batch`. Returns how many it answered."""
+        if not items:
+            return 0
+        wanted = set(items)
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT id, item_table, item_id FROM secret_questions WHERE guild_id = %s"
+                " AND campaign_id = %s AND item_id = ANY(%s) AND kind = %s AND status = %s"
+                " AND change ? 'common'",
+                (
+                    guild_id,
+                    campaign_id,
+                    sorted({i for _, i in wanted}),
+                    secret_questions_mod.REVEAL,
+                    secret_questions_mod.WAITING,
+                ),
+            )
+            ids = [
+                str(r["id"])
+                for r in await cur.fetchall()
+                if (str(r["item_table"]), str(r["item_id"])) in wanted
+            ]
+            if not ids:
+                return 0
+            cur = await conn.execute(
+                "UPDATE secret_questions SET status = %s, answered_batch = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s) AND status = %s",
+                (
+                    secret_questions_mod.KEPT_KNOWN,
+                    batch,
+                    guild_id,
+                    campaign_id,
+                    ids,
+                    secret_questions_mod.WAITING,
+                ),
+            )
+            return int(cur.rowcount or 0)
+
+    async def claim_secret_questions(
+        self, guild_id: int, campaign_id: str, question_ids: Sequence[str]
+    ) -> list[secret_questions_mod.Question]:
+        """Mark these waiting 🌍 reveal questions answered before their reveal is made (#4590), so
+        a second press or another DM can't answer them twice. Returns the ones it took; give them
+        back with `unclaim_secret_questions` if the reveal fails, and record the reveal's first
+        batch with `secret_questions_answered` so its Undo puts them back to waiting."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE secret_questions SET status = %s WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = ANY(%s) AND status = %s"
+                " AND kind = %s AND change ? 'common'"
+                " RETURNING id, kind, item_table, item_id, change, label, created_at",
+                (
+                    secret_questions_mod.KEPT_KNOWN,
+                    guild_id,
+                    campaign_id,
+                    sorted(set(question_ids)),
+                    secret_questions_mod.WAITING,
+                    secret_questions_mod.REVEAL,
+                ),
+            )
+            return [secret_questions_mod._question(r) for r in await cur.fetchall()]
+
+    async def unclaim_secret_questions(
+        self, guild_id: int, campaign_id: str, question_ids: Sequence[str]
+    ) -> None:
+        """Give back questions `claim_secret_questions` took when their reveal was not made (it
+        failed, or could not show them yet): they wait again."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE secret_questions SET status = 'waiting' WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = ANY(%s) AND answered_batch IS NULL",
+                (guild_id, campaign_id, sorted(set(question_ids))),
+            )
+
+    async def secret_questions_answered(
+        self, guild_id: int, campaign_id: str, question_ids: Sequence[str], batch: int
+    ) -> None:
+        """The change that answered these questions: undoing it puts them back to waiting."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE secret_questions SET answered_batch = %s WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = ANY(%s)",
+                (batch, guild_id, campaign_id, sorted(set(question_ids))),
+            )
 
     async def split_moments(
         self, guild_id: int, campaign_id: str, times: Collection[int]
@@ -3037,13 +3938,20 @@ class MemoryStore:
         return int(row["n"]) if row else 0
 
     async def set_audience_limited(
-        self, guild_id: int, campaign_id: str, clue_id: str, limited: bool, *, source: str
+        self,
+        guild_id: int,
+        campaign_id: str,
+        clue_id: str,
+        limited: bool,
+        *,
+        source: str,
+        dm_chose_secret: bool,
     ) -> Written[Entity]:
         """The DM's switch "Only some people know this". Turned on only with at least one
         person listed, because a limited clue nobody is listed for would warn about everyone."""
         if source != DM:
             raise MemoryRuleError(ONLY_DM_SAYS)
-        async with self._write(guild_id, campaign_id, source) as w:
+        async with self._write(guild_id, campaign_id, source, dm_chose_secret=dm_chose_secret) as w:
             current = await _entity_row(w, clue_id)
             if current["type"] != CLUE:
                 raise MemoryRuleError(ONLY_CLUES)
@@ -3092,14 +4000,21 @@ class MemoryStore:
         return fact
 
     async def remove_knower(
-        self, guild_id: int, campaign_id: str, clue_id: str, character_id: str, *, source: str
+        self,
+        guild_id: int,
+        campaign_id: str,
+        clue_id: str,
+        character_id: str,
+        *,
+        source: str,
+        dm_chose_secret: bool,
     ) -> Written[tuple[Entity, bool]]:
         """Take a character off a clue's list (their `knows` fact is removed, like any
         connection, and Undo works). Returns the clue and whether the switch turned itself off
         because nobody is left."""
         if source != DM:
             raise MemoryRuleError(ONLY_DM_SAYS)
-        async with self._write(guild_id, campaign_id, source) as w:
+        async with self._write(guild_id, campaign_id, source, dm_chose_secret=dm_chose_secret) as w:
             clue = await _entity_row(w, clue_id)
             facts = await w.select(
                 RELATIONS,
@@ -4370,6 +5285,16 @@ class MemoryStore:
         """(upload key, label) of each upload one entry was read from, earliest first, including
         what was read into entries merged into it (a merge leaves their rows where they were, so
         its Undo needs nothing here). A DM-only reader: the label can name a private backstory."""
+        return [
+            (k, label)
+            for k, label, _at in await self.name_uploads(guild_id, campaign_id, entity_id)
+        ]
+
+    async def name_uploads(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> list[tuple[str, str, int]]:
+        """`name_sources` with the time each upload was first read for this entry, for "where was
+        it said?" when the sentence itself is gone (#4554). Same DM-only rule."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "WITH RECURSIVE family(id) AS ("
@@ -4382,7 +5307,9 @@ class MemoryStore:
                 " GROUP BY s.upload_key ORDER BY at, s.upload_key",
                 (entity_id, guild_id, campaign_id, guild_id, campaign_id),
             )
-            return [(str(r["upload_key"]), str(r["label"])) for r in await cur.fetchall()]
+            return [
+                (str(r["upload_key"]), str(r["label"]), int(r["at"])) for r in await cur.fetchall()
+            ]
 
     async def link_source(
         self, guild_id: int, campaign_id: str, relation_id: str
@@ -4842,6 +5769,7 @@ class MemoryStore:
         status: str = PROPOSED,
         secret: bool = False,
         used_by: str | None = None,
+        dm_chose_secret: bool = False,
     ) -> Written[Alias]:
         """Another way this entity is said or written. If it's already known, only a
         stronger status (from the DM) or secret=True is applied."""
@@ -4850,7 +5778,7 @@ class MemoryStore:
         check_status_change(None, status, source)
         text = clean_text(text)
         key = lookup_key(text)
-        async with self._write(guild_id, campaign_id, source) as w:
+        async with self._write(guild_id, campaign_id, source, dm_chose_secret=dm_chose_secret) as w:
             owner = await _entity_row(w, entity_id)
             if owner["type"] != PERSON and is_dm_word(text):
                 raise MemoryRuleError(DM_WORD_REFUSED)
@@ -4942,6 +5870,9 @@ class MemoryStore:
                 added.append(_alias(row))
             return Written(added, w.batch if added else None)
 
+    # `dm_chose_secret` on update_alias / update_relation / merge / merge_many (#4524): they change
+    # many things, so it defaults to False; the DM's own 🤫 buttons pass True. Making a public name
+    # or connection secret is otherwise held back and asked (`public_guard`), whatever the source.
     async def update_alias(
         self,
         guild_id: int,
@@ -4949,12 +5880,13 @@ class MemoryStore:
         alias_id: str,
         *,
         source: str,
+        dm_chose_secret: bool = False,
         status: str | None = None,
         secret: bool | None = None,
     ) -> Written[Alias]:
         """Confirm or reject an alias, or mark it DM-only ([🤫 Keep secret from players]).
         Only the DM confirms, or makes a secret visible again."""
-        async with self._write(guild_id, campaign_id, source) as w:
+        async with self._write(guild_id, campaign_id, source, dm_chose_secret=dm_chose_secret) as w:
             return Written(await self._change_alias(w, alias_id, source, status, secret), w.batch)
 
     async def make_name_not_secret(
@@ -5021,6 +5953,8 @@ class MemoryStore:
                     row["secret"]
                     and row["status"] == CONFIRMED
                     and row["predicate"] != threads_mod.LED_TO
+                    # (a clue's tie to a thread stays the DM's, whatever was said aloud: #4624)
+                    and row["predicate"] not in clues_mod.DM_ONLY_PREDICATES
                 ):
                     await w.update(RELATIONS, row["id"], {"secret": False})
                     shown += 1
@@ -5220,6 +6154,7 @@ class MemoryStore:
         source: str,
         dm_said_same: bool = False,
         confirm_keys: Collection[str] = (),
+        dm_chose_secret: bool = False,
     ) -> Written[Entity]:
         """Two entries are the same person or thing: move everything onto `keep_id`.
 
@@ -5233,7 +6168,7 @@ class MemoryStore:
             raise MemoryRuleError("That's the same entry.")
         if dm_said_same and source != DM:
             raise ValueError("Only a DM source can say two entries are the same")
-        async with self._write(guild_id, campaign_id, source) as w:
+        async with self._write(guild_id, campaign_id, source, dm_chose_secret=dm_chose_secret) as w:
             split: list[str] = []
             kept = await self._merge_in(
                 w,
@@ -5256,6 +6191,7 @@ class MemoryStore:
         other_ids: Sequence[str],
         *,
         source: str,
+        dm_chose_secret: bool = False,
     ) -> Written[Entity]:
         """Several entries are one: merge each of `other_ids` into `keep_id` in one write.
 
@@ -5270,7 +6206,7 @@ class MemoryStore:
             raise MemoryRuleError("Pick the other names to merge into the kept one.")
         if len(gone) > MERGE_MANY_MAX:
             raise MemoryRuleError(f"Merge up to {MERGE_MANY_MAX} names at a time.")
-        async with self._write(guild_id, campaign_id, source) as w:
+        async with self._write(guild_id, campaign_id, source, dm_chose_secret=dm_chose_secret) as w:
             split: list[str] = []  # (#4043: one per name said only in a split scene)
             for gone_id in gone:
                 # (a named entry is kept over an unnamed one, whichever way round: #2790)
@@ -5298,7 +6234,7 @@ class MemoryStore:
             row = await cur.fetchone()
             version = int(row["memory_version"]) if row else -1
             cur = await scope.conn.execute(
-                "SELECT e.id, e.name, (SELECT count(*) FROM memory_mentions m"
+                "SELECT e.id, e.name, e.type, (SELECT count(*) FROM memory_mentions m"
                 " WHERE m.guild_id = e.guild_id AND m.campaign_id = e.campaign_id"
                 " AND m.entity_id = e.id) AS heard FROM memory_entities e"
                 " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.status = 'confirmed'"
@@ -5306,7 +6242,9 @@ class MemoryStore:
                 (*scope.ids, PERSON),
             )
             names = [
-                LookAlikeName(str(r["id"]), str(r["name"]), int(r["heard"]))
+                LookAlikeName(
+                    str(r["id"]), str(r["name"]), int(r["heard"]), family_of(str(r["type"]))
+                )  # (a story thread or deed is compared only within its own family, #4553)
                 for r in await cur.fetchall()
             ]
             cur = await scope.conn.execute(
@@ -5504,9 +6442,15 @@ class MemoryStore:
                 STATES, " AND closed_at IS NULL AND entity_id = %s", [unnamed_id]
             ):
                 await w.update(STATES, state["id"], {"closed_at": w.now})
-            kept = await self._merge_in(
-                w, named_id, unnamed_id, source=DM, dm_said_same=True, join_alias=alias_id
-            )
+            # (a join makes what moves secret so the players aren't told who the stranger was: it
+            # takes nothing they knew away, so the guard lets it through, #4524)
+            w.joining = True
+            try:
+                kept = await self._merge_in(
+                    w, named_id, unnamed_id, source=DM, dm_said_same=True, join_alias=alias_id
+                )
+            finally:
+                w.joining = False
             final = await w.get(ENTITIES, kept)
             assert final is not None
             return Written(_entity(final), w.batch)
@@ -5677,6 +6621,8 @@ class MemoryStore:
                 # named entry to every character who knew it (#3037).
                 merged["audience_limited"] = kept["audience_limited"]
                 merged["hidden_from_players"] = kept["hidden_from_players"]
+            elif not w.dm_chose_secret and w.undoes is None:
+                await _merged_stays_public(w, keep_id, gone_id, kept, gone, merged)
             if merged != {k: kept[k] for k in merged}:
                 await w.update(ENTITIES, keep_id, merged)
         if gone.get("setting"):  # the campaign's setting follows the place it is (#4173)
@@ -6567,6 +7513,7 @@ class MemoryStore:
         decided: str | None = None,
         known_by: Sequence[str] = (),
         keep_flags: bool = False,
+        dm_chose_secret: bool = False,
         by_hand: bool = False,
         knows_how: str = "",
         assumed: bool = False,
@@ -6581,8 +7528,9 @@ class MemoryStore:
         holds it (#2457); the DM's to say, and kept in the order given. `keep_flags`: restating a
         fact that already exists never makes it secret (an upload never hides what the players
         were already shown, #3025); its status still upgrades as usual, and a new fact is made as
-        asked."""
-        async with self._write(guild_id, campaign_id, source) as w:
+        asked. `dm_chose_secret`: the DM's own
+        🤫 on the card (#4524), which may make an existing public one secret."""
+        async with self._write(guild_id, campaign_id, source, dm_chose_secret=dm_chose_secret) as w:
             value = await self.add_relation_in(
                 w, subject_id, predicate, object_id, confidence=confidence, status=status,
                 detail=detail, from_session_at=from_session_at, to_session_at=to_session_at,
@@ -6678,6 +7626,18 @@ class MemoryStore:
             # and may not close a loop (#1679).
             secret = True
             await _check_led_to_live(w, None, subject_id, object_id)
+        if pred.key == clues_mod.CLUE_TO:
+            # (#4624) whatever the path, the DM's alone: only their own tie (`tie_clue`, by hand;
+            # never a reader's claim kept), always secret, one of two words, one live tie per clue
+            # and thread whatever its word
+            if source != DM or not by_hand:
+                raise MemoryRuleError(ONLY_DM_SAYS)
+            if await _live_clue_tie(w, subject_id, object_id):
+                raise MemoryRuleError(clues_mod.ALREADY_TIED)
+            secret = True
+            if detail.strip() and detail.strip().lower() not in clues_mod.WORDS:
+                raise MemoryRuleError(clues_mod.NOT_A_CLUE_WORD)
+            detail = clues_mod.word_of(detail)
         if pred.key == threads_mod.BRANCH_OF:
             # (#4471) whatever the path, one bigger thread at most and never a loop. Not secret
             # (Supervisor's ruling): players see it as any connection, only when both threads are
@@ -6896,6 +7856,7 @@ class MemoryStore:
         relation_id: str,
         *,
         source: str,
+        dm_chose_secret: bool = False,
         status: str | None = None,
         to_session_at: int | None = None,
         secret: bool | None = None,
@@ -6906,7 +7867,7 @@ class MemoryStore:
         fact replaces it rather than overwriting it). `unrevealed=False` is the DM's 👁️ Reveal
         to players on a connection (#2404): both its ends must be shown to the players first.
         `end_reason` (#4115): why an `owns` or `carries` ends, given with `to_session_at`."""
-        async with self._write(guild_id, campaign_id, source) as w:
+        async with self._write(guild_id, campaign_id, source, dm_chose_secret=dm_chose_secret) as w:
             current = await w.get(RELATIONS, relation_id)
             if current is None:
                 raise MemoryRuleError(NOT_FOUND)
@@ -7101,11 +8062,12 @@ class MemoryStore:
         character_ids: Sequence[str],
         *,
         source: str,
+        dm_chose_secret: bool,
         players_only: bool = False,
     ) -> Written[list[str]]:
         """ "Who knows this?" for a hidden connection (#2935): exactly these player characters know
         it, or only the DM when none. One change, so Undo takes it back. Only the DM."""
-        async with self._write(guild_id, campaign_id, source) as w:
+        async with self._write(guild_id, campaign_id, source, dm_chose_secret=dm_chose_secret) as w:
             await beliefs.perspective_ids(w)
             chosen = await knowers.set_connection_knowers(
                 w, relation_id, character_ids, players_only=players_only
@@ -7120,11 +8082,12 @@ class MemoryStore:
         character_ids: Sequence[str],
         *,
         source: str,
+        dm_chose_secret: bool,
         players_only: bool = False,
     ) -> Written[list[str]]:
         """ "Who knows this?" for a secret other name (#2935). Only the DM. `players_only`: the
         list holds player characters only, so an NPC who knows it keeps knowing (#3197)."""
-        async with self._write(guild_id, campaign_id, source) as w:
+        async with self._write(guild_id, campaign_id, source, dm_chose_secret=dm_chose_secret) as w:
             chosen = await knowers.set_alias_knowers(
                 w, alias_id, character_ids, players_only=players_only
             )
@@ -7139,12 +8102,13 @@ class MemoryStore:
         character_ids: Sequence[str] | Mapping[str, float],
         *,
         source: str,
+        dm_chose_secret: bool,
     ) -> Written[list[str]]:
         """Who knows an entry, a property, a connection or an other name (#2995, §9b): exactly
         these characters (player characters, NPCs) or groups, each sure (a list) or with a
         certainty from 0.0 to 1.0 (a mapping); none: only the DM. One change, so Undo takes
         it back. Only the DM."""
-        async with self._write(guild_id, campaign_id, source) as w:
+        async with self._write(guild_id, campaign_id, source, dm_chose_secret=dm_chose_secret) as w:
             chosen = await knowers.set_statement_knowers(w, kind, statement_id, character_ids)
             if kind == gate.CONNECTION and chosen:
                 # (the DM saying who knows DMbot's assumed place is the DM's word on it: #4173)
@@ -7220,6 +8184,50 @@ class MemoryStore:
             await told.take_back(w, alias_id, character_id)
             return Written(True, w.batch)
 
+    async def add_common_knowledge(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        kind: str,
+        statement_ids: Sequence[str],
+        certainty: float = 1.0,
+        *,
+        source: str,
+    ) -> Written[int]:
+        """Common knowledge (#4537): these statements are known to every character, now or later
+        (`knowers.add_common`). Written by a World read and a smart guess's "world" statements;
+        only adds, one change with its own Undo. Returns how many rows it added or raised."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            added = await knowers.add_common(w, kind, statement_ids, certainty)
+            return Written(added, w.batch)
+
+    async def remove_common_knowledge(
+        self, guild_id: int, campaign_id: str, kind: str, statement_ids: Sequence[str]
+    ) -> Written[int]:
+        """The DM takes common knowledge back (#4537 slice 1b: another answer on "Who knows this?"):
+        their own choice, one change with its own Undo. Returns how many rows went."""
+        async with self._write(guild_id, campaign_id, DM, dm_chose_secret=True) as w:
+            gone = await knowers.remove_common(w, kind, statement_ids)
+            return Written(gone, w.batch)
+
+    async def common_knowledge(
+        self, guild_id: int, campaign_id: str, kind: str, statement_ids: Sequence[str]
+    ) -> set[str]:
+        """Which of these statements are common knowledge (#4537), for the DM's own page."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await knowers.common_of(scope, kind, statement_ids)
+
+    async def entries_shown(
+        self, guild_id: int, campaign_id: str, entity_ids: Sequence[str]
+    ) -> set[str]:
+        """Which of these entries the players are shown (`knowers.entry_shown`, the gate's rule):
+        🌍 Common knowledge is refused for anything that hangs off one they aren't (#4537)."""
+        if not entity_ids:
+            return set()
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            rows = await scope.select(ENTITIES, " AND id = ANY(%s)", [list(entity_ids)])
+        return {str(r["id"]) for r in rows if knowers.entry_shown(r)}
+
     async def mark_guess(
         self,
         guild_id: int,
@@ -7229,12 +8237,15 @@ class MemoryStore:
         certainty: float,
         *,
         source: str,
+        made_since: int,
     ) -> int:
         """Record that the player characters who know these statements know them as a guess
         (`certainty`, below 1.0), not as the DM's word (#2959). It changes only the certainty of
-        rows that exist: who knows what is the old flags' business until the readers move."""
+        rows that exist, and only those written from `made_since` (the caller's own keep, which ran
+        in an earlier write: #4524): who knows what is the old flags' business until the readers
+        move."""
         async with self._write(guild_id, campaign_id, source) as w:
-            return await knowers.mark_guess(w, kind, statement_ids, certainty)
+            return await knowers.mark_guess(w, kind, statement_ids, certainty, made_since)
 
     async def statement_knowers(
         self, guild_id: int, campaign_id: str, kind: str, statement_ids: Sequence[str]
@@ -7464,6 +8475,8 @@ class MemoryStore:
         # and who knows it (#2935): the list follows the statement to its new row, so new words or
         # a turn never quietly tell nobody or everybody (#4154, the reviewer's finding)
         await knowers.move_rows(w, "relation_id", relation_id, new.id)
+        # and a road's condition (#4258), as its length does
+        await map_fact_store.move_road(w, relation_id, new.id)
         check_status_change(current["status"], REJECTED, w.source)
         await w.update(RELATIONS, relation_id, {"status": REJECTED})
         return new
@@ -7976,6 +8989,7 @@ class MemoryStore:
         try:
             async with self._write(guild_id, campaign_id, source, undoes=batch) as w:
                 await undo_batch(w, batch)
+                await secret_questions_mod.undo(w, batch)
                 await _recheck_led_to_after_undo(w, batch)
                 await _settle_kinds_after_undo(w, batch)
                 if after is not None:
@@ -9714,6 +10728,15 @@ async def _move_aliases(
     keep_aliases = {a["key"]: a for a in await w.select(ALIASES, " AND entity_id = %s", [keep_id])}
     moving: list[str] = []
     confirming: list[str] = []
+    both = {
+        str(r["id"]): r for r in await w.select(ENTITIES, " AND id = ANY(%s)", [[keep_id, gone_id]])
+    }
+    # (the kept entry's main name, which everyone sees: a secret copy of it is refused below)
+    main_key = lookup_key(both[keep_id]["name"]) if keep_id in both else None
+    # (a name the players saw on the entry that goes, and the twin it meets is the DM's secret:
+    # kept secret, and asked, #4524; not for a join, which keeps who the stranger was)
+    asks = not (join or secret or w.dm_chose_secret or w.joining or w.undoes is not None)
+    gone_shown = gone_id in both and knowers.entry_shown(both[gone_id])
     for alias in await w.select(ALIASES, " AND entity_id = %s", [gone_id]):
         said = alias["key"] in confirm
         twin = keep_aliases.get(alias["key"])
@@ -9721,11 +10744,33 @@ async def _move_aliases(
             (confirming if said and alias["status"] != CONFIRMED else moving).append(alias["id"])
             continue
         status = CONFIRMED if said else alias["status"]
+        if alias["secret"] and not join and twin["key"] == main_key:
+            # The other entry's name was a secret one: the main name everyone sees must never be.
+            # Refused here, before the #4524 guard could keep it public and let the merge tell the
+            # players who the secret name was (`_merge_in` checks the same after the move).
+            raise MemoryRuleError("A secret name can't be the main name.")
         # (a join: the name Ken already had keeps its own flag, and whoever knew the copy that
         # goes knows his)
         upgrade = _upgrade(twin, status, alias["secret"] and not join, DM)
-        if join:
-            await knowers.move_rows(w, "alias_id", alias["id"], twin["id"])
+        # (a secret copy that would make a public twin secret is held by the guard in
+        # `Changes.update` and asked, #4524)
+        if asks and gone_shown and knowers.alias_shown(alias) and twin["secret"]:
+            # The players knew this name on the entry that goes, and it is the DM's own secret
+            # name of the kept one (a disguise): it stays secret, the DM's earlier choice, and is
+            # asked "Keep it secret / Let them know" (Supervisor's review of #4545). Whoever knew
+            # the copy that goes is carried over asleep under the question, so nobody sees it on
+            # the kept entry before the answer; the older per-name list has no sleep mark, so its
+            # rows go with the copy (a Let them know shows the name to everyone anyway).
+            question = await secret_questions_mod.ask_reveal(w, twin["id"])
+            await knowers.move_rows(w, "alias_id", alias["id"], twin["id"], asleep=question)
+            await w.delete(ALIASES, alias["id"])
+            if upgrade:
+                await w.update(ALIASES, twin["id"], upgrade)
+            continue
+        # (whoever knew the copy that goes knows the twin, in both lists: a join's rule, and
+        # #4524's for a merge)
+        await knowers.move_rows(w, "alias_id", alias["id"], twin["id"])
+        await knowers.move_alias_list(w, alias["id"], twin["id"])
         await w.delete(ALIASES, alias["id"])
         if upgrade:
             await w.update(ALIASES, twin["id"], upgrade)
@@ -9744,6 +10789,55 @@ async def _move_aliases(
             [confirming],
         )
     await w.update_where(ALIASES, {"used_by": keep_id}, " AND used_by = %s", [gone_id])
+
+
+async def _keep_read_part(
+    w: Changes, onto: Ontology, thread_id: str, part: thread_read.ReadPart
+) -> None:
+    """One of a kept suggestion's parts (#4500), written as the DM's keep with its source 'lore'.
+    Its giver is followed through a merge, and dropped when gone, not kept yet, or no longer a
+    person or group; a part the thread already has, or one that no longer fits a part's rules, is
+    left out (counted in the log), so one stale line never fails the DM's keep. Catching here is
+    safe inside the write: `thread_parts.add` checks everything before its one insert, so a refusal
+    leaves nothing half written (keep it that way)."""
+    who = await _followed(w, part.who_id) if part.who_id else None
+    for attempt in (who, None) if who else (None,):
+        try:
+            await thread_parts.add(
+                w, onto, thread_id, part.kind, part.words, state=part.state, who_id=attempt,
+                due=part.due, terms=part.terms, limit_kind=part.limit_kind,
+                source=thread_parts.LORE,
+            )  # fmt: skip
+            return
+        except (MemoryRuleError, ValueError) as exc:
+            if str(exc) == thread_parts.SAME_PART:
+                return  # (the thread has it already)
+            if attempt is None:
+                log.info(
+                    "A read story-thread part was left out on keeping (%s)", type(exc).__name__
+                )
+                return
+
+
+async def _guess_place_goes(w: Changes, row: Mapping[str, Any]) -> dict[str, Any]:
+    """A place DMbot made only for its guess at the setting goes with the guess (Supervisor's
+    review of #4299, and the ruling on #4291 for the DM's own pick): the bot never keeps a place
+    the DM didn't ask for. Rejected, so it leaves every list, with its declined mark kept, so the
+    "never again" check still finds it; Undo brings it back as a guess. Only while it is still
+    hidden and nothing points at it: no connection, and no land, climate, ruler or culture (a map
+    fact, #4495), open or closed, the DM's or one of DMbot's World notes, as a connection of
+    either counts. The
+    change to add, or nothing."""
+    if row.get("source") != SETTING_GUESS_SOURCE or not row.get("hidden_from_players"):
+        return {}
+    tied = await w.select(
+        RELATIONS,
+        " AND status <> 'rejected' AND (subject_id = %s OR object_id = %s)",
+        [row["id"], row["id"]],
+    )
+    if tied or await map_fact_store.ties_place(w, row["id"]):
+        return {}
+    return {"status": REJECTED}
 
 
 async def _live_led_to(
@@ -9826,6 +10920,17 @@ async def _check_led_to_live(w: Changes, relation_id: str | None, start: str, en
             raise MemoryRuleError(LED_TO_CONFIRM)
     if threads_mod.would_loop(await _live_led_to(w, skip=relation_id), start, end):
         raise MemoryRuleError(LED_TO_LOOP)
+
+
+async def _live_clue_tie(w: Changes, clue_id: str, thread_id: str) -> dict[str, Any] | None:
+    """The live `clue_to` from a clue to a thread, if any (#4624)."""
+    rows = await w.select(
+        RELATIONS,
+        " AND predicate = 'clue_to' AND status = 'confirmed' AND to_session_at IS NULL"
+        " AND subject_id = %s AND object_id = %s",
+        [clue_id, thread_id],
+    )
+    return rows[0] if rows else None
 
 
 async def _take_off_branch(w: Changes, thread_id: str) -> bool:
@@ -10107,6 +11212,8 @@ async def _move_relations(
                 # kept from the players, keep the DM's own list). Only a fact the players were
                 # shown, folding into one they were not, hands over nothing.
                 await knowers.move_rows(w, "relation_id", relation_id, folded[relation_id])
+            # a road's condition goes to its twin too (#4258), as its length does
+            await map_fact_store.move_road(w, relation_id, folded[relation_id])
         await _delete_relation(w, relation_id)
     # A place that now has a stated parent keeps no assumed one (#4173 slice 3: a merge of a place
     # with a guess and one with a stated parent)

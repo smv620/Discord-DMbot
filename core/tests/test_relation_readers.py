@@ -52,6 +52,8 @@ READERS = {
     + ": reads kept and guess connections to put a difference "
     "into the campaign's words for PlotBot; ids and names, no transcript",
     "memory/report_store.py": "only checks that the connections of a difference still exist",
+    "memory/public_guard.py": DM_ONLY + ": reads a connection's ends to say whether the players "
+    "see it, so the guard keeps it public and asks the DM (#4524); shows players nothing",
     "memory/claims.py": "DM-side: reads only the facts made by kept described-person claims of "
     "one session, to find the person they made; shows players nothing (#3431)",
     "memory/party.py": DM_ONLY + ": the party fill reads member_of ties to find the group the "
@@ -70,7 +72,13 @@ READERS = {
     "memory/lineage.py": DM_ONLY
     + ": which beliefs rest on an entry (ids and numbers, no words); live connections, proposed or"
     " confirmed, because the DM chooses what to change",
+    "memory/map_fact_store.py": "a road's condition: the DM's screens check the road (any but"
+    " rejected); a player is told a condition only on a confirmed road (`conditions_for`)",
     "memory/notify.py": DM_ONLY + ": what the DM is told",
+    "memory/world_notes.py": DM_ONLY + ": the road a condition note is on, in the DM's World notes",
+    "memory/world_reveal.py": DM_ONLY
+    + ": a World read's reveals of connections it states, and the DM's 🌍 questions about them,"
+    " asked only of confirmed ones (#4524, #4590)",
     "memory/graph_review_run.py": DM_ONLY
     + ": the DM's own fixed connections and their lore quotes, read for the careful check (#3741); "
     "the report is DM-only and never shown to players",
@@ -108,14 +116,25 @@ STORE = {
     "_audience": CONFIRMED_ONLY + ": who may be told",
     "_live_led_to": CONFIRMED_ONLY + ': only live, confirmed "led to" links, for the loop check',
     "_take_off_branch": CONFIRMED_ONLY + ': a thread\'s live "branch of" link, taken off (#4471)',
+    "ask_world_reveals": CONFIRMED_ONLY
+    + ": asks the DM about a hidden confirmed connection a World read states (#4590)",
     "bigger_thread": CONFIRMED_ONLY + ": the bigger thread one is a branch of, for the DM (#4471)",
     "thread_card": CONFIRMED_ONLY + ": a thread's live branch links, on the DM's card (#4471)",
+    "_live_clue_tie": CONFIRMED_ONLY + ": a clue's live tie to a thread, for the DM (#4624)",
+    "set_clue_word": CONFIRMED_ONLY + ": the DM marks a live tie a false lead or not (#4624)",
+    "untie_clue": CONFIRMED_ONLY + ": the DM takes a live tie off (#4624)",
+    "thread_clues": CONFIRMED_ONLY + ": a thread's live clue ties; a player gets only the clues "
+    "their characters know, with no word (#4624)",
     "_recheck_led_to_after_undo": CONFIRMED_ONLY
     + ': re-checks a "led to" link an Undo made live again',
     "_relations_touching": DM_ONLY + ": the checks, which skip guess connections themselves",
     "flag_kept": DM_ONLY + ": checks a connection the DM keeps",
     "_delete_relation": DM_ONLY + ": removal with its flags",
     "_move_relations": DM_ONLY + ": a merge; carries beliefs to the twin",
+    "ask_replace": "writes: a 🤫 question to end a public connection, the DM decides (#4524); "
+    "shows players nothing",
+    "_make_secret": "writes: the DM's own Make it secret or End the old one on a 🤫 question "
+    "(#4524), through the store's own rules; shows players nothing",
     "_met_back": "writes: moves the other's own knows up to met (#3881); never shows anything",
     "_has_parent": DM_ONLY + ": whether a place may be given an assumed parent (#4173 slice 3)",
     "_replace_assumed": "writes: a stated parent rejects the place's assumed one (#4173 slice 3)",
@@ -123,10 +142,8 @@ STORE = {
     "_reopen_moved": "writes: a link putting a place inside another reopens a moved tie (slice 5)",
     "confirm_assumed": "writes: the DM's ✅ That's right clears the assumed mark (#4173 slice 3)",
     "set_statement_knowers": DM_ONLY + ": the DM's who-knows list clears the assumed mark",
-    "decline_setting": DM_ONLY + ": a made place for a declined setting guess goes only if nothing "
-    "points at it (#4299)",
-    "choose_setting": DM_ONLY + ": a made place for a replaced setting guess goes only if nothing "
-    "points at it (#4291)",
+    "_guess_place_goes": DM_ONLY + ": a made place for a setting guess the DM replaced goes only "
+    "if nothing points at it (#4299, #4291)",
     "set_knows_how": "writes: the DM's has met / is aware of (#3881); never shows anything",
     "set_direction": DM_ONLY + ": which way a connection reads (#4154); a turn is a rewrite",
     "_replace_relation_in": DM_ONLY
@@ -211,6 +228,13 @@ class WhoReadsConnections(unittest.TestCase):
         self.assertEqual(sorted(_store_functions()), sorted(STORE))
 
 
+# Database functions that name the table but show nothing: a trigger that only refuses a bad row.
+CHECKS_ONLY = {
+    "dmbot_map_fact_known_route": "0500's trigger: a condition names a known road (#4258); it "
+    "returns no connection, so it has no confirmed filter to keep",
+}
+
+
 class TheDoors(DatabaseTest):
     async def test_every_door_that_reads_connections_filters_confirmed(self) -> None:
         """The doors as the database has them (the last definition of each, not a string in the
@@ -227,6 +251,8 @@ class TheDoors(DatabaseTest):
         keywords = {"where", "on", "join", "left", "inner", "set", "using", "as", "cross", "for"}
         loose: list[str] = []
         for name, src in doors.items():
+            if name in CHECKS_ONLY:
+                continue
             for found in re.finditer(r"memory_relations(?:\s+(?:AS\s+)?([A-Za-z_]\w*))?", src):
                 alias = found.group(1)
                 alias = None if alias is None or alias.lower() in keywords else alias

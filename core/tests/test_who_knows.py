@@ -49,7 +49,7 @@ class WhoKnows(MemoryTest):
         ids = await self.setup_table()
         link = await self.hidden_link(ids["voss"], ids["council"])
         done = await self.memory.set_connection_knowers(
-            GUILD_A, self.c, link, [ids["tavin"]], source=DM
+            GUILD_A, self.c, link, [ids["tavin"]], source=DM, dm_chose_secret=True
         )
         self.assertEqual(done.value, [ids["tavin"]])
         self.assertEqual(
@@ -65,14 +65,20 @@ class WhoKnows(MemoryTest):
         ids = await self.setup_table()
         link = await self.hidden_link(ids["voss"], ids["council"], how="unrevealed")
         both = [ids["tavin"], ids["mara"]]
-        await self.memory.set_connection_knowers(GUILD_A, self.c, link, both, source=DM)
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, link, both, source=DM, dm_chose_secret=True
+        )
         got = await self.memory.connection_knowers(GUILD_A, self.c, [link])
         self.assertEqual(sorted(got[link]), sorted(both))
-        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [ids["mara"]], source=DM)
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, link, [ids["mara"]], source=DM, dm_chose_secret=True
+        )
         self.assertEqual(
             await self.memory.connection_knowers(GUILD_A, self.c, [link]), {link: [ids["mara"]]}
         )
-        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [], source=DM)
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, link, [], source=DM, dm_chose_secret=True
+        )
         self.assertEqual(await self.memory.connection_knowers(GUILD_A, self.c, [link]), {})
 
     async def test_only_the_dm_and_only_characters_of_this_campaign(self) -> None:
@@ -92,12 +98,14 @@ class WhoKnows(MemoryTest):
         for who in ([place], [merged], [rejected], ["f" * 32]):
             with self.subTest(who=who):
                 with self.assertRaises(MemoryRuleError):
-                    await self.memory.set_connection_knowers(GUILD_A, self.c, link, who, source=DM)
+                    await self.memory.set_connection_knowers(
+                        GUILD_A, self.c, link, who, source=DM, dm_chose_secret=True
+                    )
                 with self.assertRaises(MemoryRuleError):
                     await self.memory.check_knowers(GUILD_A, self.c, who)
         with self.assertRaises(MemoryRuleError):  # a player (or the scan) cannot say who knows
             await self.memory.set_connection_knowers(
-                GUILD_A, self.c, link, [ids["tavin"]], source="character"
+                GUILD_A, self.c, link, [ids["tavin"]], source="character", dm_chose_secret=True
             )
         self.assertEqual(await self.memory.connection_knowers(GUILD_A, self.c, [link]), {})
 
@@ -107,7 +115,7 @@ class WhoKnows(MemoryTest):
         npc = await self.add("Brisa", status=CONFIRMED)
         await self.memory.check_knowers(GUILD_A, self.c, [ids["tavin"], npc])
         done = await self.memory.set_connection_knowers(
-            GUILD_A, self.c, link, [ids["tavin"], npc], source=DM
+            GUILD_A, self.c, link, [ids["tavin"], npc], source=DM, dm_chose_secret=True
         )
         self.assertEqual(done.value, [ids["tavin"], npc])
         # a player's read is unchanged: only the player characters are listed there
@@ -122,11 +130,13 @@ class WhoKnows(MemoryTest):
         )
         rows = await self.count("memory_knowers")
         await self.memory.set_connection_knowers(
-            GUILD_A, self.c, link, [ids["tavin"], npc], source=DM
+            GUILD_A, self.c, link, [ids["tavin"], npc], source=DM, dm_chose_secret=True
         )
         self.assertEqual(await self.count("memory_knowers"), rows)
         alias = await self.secret_name(ids["voss"], "Shade")
-        await self.memory.set_alias_knowers(GUILD_A, self.c, alias, [npc], source=DM)
+        await self.memory.set_alias_knowers(
+            GUILD_A, self.c, alias, [npc], source=DM, dm_chose_secret=True
+        )
         self.assertEqual(
             await self.memory.alias_knowers(GUILD_A, self.c, [alias]), {}
         )  # (the old reader lists player characters only)
@@ -142,12 +152,16 @@ class WhoKnows(MemoryTest):
             ("alias", alias, self.memory.set_alias_knowers),
         ):
             with self.subTest(kind=kind):
-                await setter(GUILD_A, self.c, thing, [ids["tavin"], npc], source=DM)
-                await setter(GUILD_A, self.c, thing, [ids["tavin"]], source=DM)
+                await setter(
+                    GUILD_A, self.c, thing, [ids["tavin"], npc], source=DM, dm_chose_secret=True
+                )
+                await setter(
+                    GUILD_A, self.c, thing, [ids["tavin"]], source=DM, dm_chose_secret=True
+                )
                 got = await self.memory.statement_knowers(GUILD_A, self.c, kind, [thing])
                 self.assertEqual(got.get(thing), [ids["tavin"]])
-                await setter(GUILD_A, self.c, thing, [npc], source=DM)
-                await setter(GUILD_A, self.c, thing, [], source=DM)
+                await setter(GUILD_A, self.c, thing, [npc], source=DM, dm_chose_secret=True)
+                await setter(GUILD_A, self.c, thing, [], source=DM, dm_chose_secret=True)
                 got = await self.memory.statement_knowers(GUILD_A, self.c, kind, [thing])
                 self.assertEqual(got.get(thing, []), [])
 
@@ -161,11 +175,23 @@ class WhoKnows(MemoryTest):
             ("alias", alias, self.memory.set_alias_knowers),
         ):
             with self.subTest(kind=kind):
-                await setter(GUILD_A, self.c, thing, [ids["tavin"], npc], source=DM)
-                await setter(GUILD_A, self.c, thing, [ids["mara"]], source=DM, players_only=True)
+                await setter(
+                    GUILD_A, self.c, thing, [ids["tavin"], npc], source=DM, dm_chose_secret=True
+                )
+                await setter(
+                    GUILD_A,
+                    self.c,
+                    thing,
+                    [ids["mara"]],
+                    source=DM,
+                    dm_chose_secret=True,
+                    players_only=True,
+                )
                 got = await self.memory.statement_knowers(GUILD_A, self.c, kind, [thing])
                 self.assertEqual(sorted(got[thing]), sorted([ids["mara"], npc]))
-                await setter(GUILD_A, self.c, thing, [], source=DM, players_only=True)
+                await setter(
+                    GUILD_A, self.c, thing, [], source=DM, dm_chose_secret=True, players_only=True
+                )
                 got = await self.memory.statement_knowers(GUILD_A, self.c, kind, [thing])
                 self.assertEqual(got[thing], [npc])
 
@@ -174,9 +200,11 @@ class WhoKnows(MemoryTest):
         link = await self.hidden_link(ids["voss"], ids["council"])
         npc = await self.add("Brisa", status=CONFIRMED)
         await self.memory.set_statement_knowers(
-            GUILD_A, self.c, "connection", link, {npc: 0.4}, source=DM
+            GUILD_A, self.c, "connection", link, {npc: 0.4}, source=DM, dm_chose_secret=True
         )
-        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [npc], source=DM)
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, link, [npc], source=DM, dm_chose_secret=True
+        )
         async with self.db.guild(GUILD_A) as conn:
             cur = await conn.execute(
                 "SELECT confidence FROM memory_knowers WHERE relation_id = %s", (link,)
@@ -187,7 +215,9 @@ class WhoKnows(MemoryTest):
         ids = await self.setup_table()
         link = await self.hidden_link(ids["voss"], ids["council"])
         npc = await self.add("Brisa", status=CONFIRMED)
-        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [npc], source=DM)
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, link, [npc], source=DM, dm_chose_secret=True
+        )
         async with self.db.guild(GUILD_A) as conn:
             cur = await conn.execute(
                 "SELECT kind FROM memory_perspectives WHERE entity_id = %s", (npc,)
@@ -202,7 +232,9 @@ class WhoKnows(MemoryTest):
             await self.memory.check_knowers(GUILD_A, self.c, crowd)
         await self.memory.check_knowers(GUILD_A, self.c, crowd[:60])
         with self.assertRaises(MemoryRuleError):
-            await self.memory.set_connection_knowers(GUILD_A, self.c, link, crowd, source=DM)
+            await self.memory.set_connection_knowers(
+                GUILD_A, self.c, link, crowd, source=DM, dm_chose_secret=True
+            )
 
     async def test_another_campaigns_character_cannot_know_this_connection(self) -> None:
         ids = await self.setup_table()
@@ -210,7 +242,9 @@ class WhoKnows(MemoryTest):
         elsewhere = (await self.campaigns.create(GUILD_A, "Elsewhere", DM_USER)).id
         stranger = await self.pc("Stranger", 1003, campaign=elsewhere)
         with self.assertRaises(MemoryRuleError):
-            await self.memory.set_connection_knowers(GUILD_A, self.c, link, [stranger], source=DM)
+            await self.memory.set_connection_knowers(
+                GUILD_A, self.c, link, [stranger], source=DM, dm_chose_secret=True
+            )
         self.assertEqual(await self.memory.connection_knowers(GUILD_A, elsewhere, [link]), {})
 
     async def test_a_connection_everyone_knows_has_nothing_to_choose(self) -> None:
@@ -223,21 +257,25 @@ class WhoKnows(MemoryTest):
         ).value[0].id  # fmt: skip
         with self.assertRaises(MemoryRuleError):
             await self.memory.set_connection_knowers(
-                GUILD_A, self.c, known, [ids["tavin"]], source=DM
+                GUILD_A, self.c, known, [ids["tavin"]], source=DM, dm_chose_secret=True
             )
 
     async def test_revealing_to_everyone_leaves_the_party_knowing_it_as_before(self) -> None:
         ids = await self.setup_table()
         link = await self.hidden_link(ids["voss"], ids["council"])
-        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [ids["tavin"]], source=DM)
-        await self.memory.update_relation(GUILD_A, self.c, link, source=DM, secret=False)
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, link, [ids["tavin"]], source=DM, dm_chose_secret=True
+        )
+        await self.memory.update_relation(
+            GUILD_A, self.c, link, source=DM, secret=False, dm_chose_secret=True
+        )
         self.assertEqual((await self.party()).get(link), 1.0)  # the existing reveal, unchanged
 
     async def test_the_change_can_be_undone(self) -> None:
         ids = await self.setup_table()
         link = await self.hidden_link(ids["voss"], ids["council"])
         done = await self.memory.set_connection_knowers(
-            GUILD_A, self.c, link, [ids["tavin"]], source=DM
+            GUILD_A, self.c, link, [ids["tavin"]], source=DM, dm_chose_secret=True
         )
         assert done.batch is not None
         await self.memory.undo(GUILD_A, self.c, done.batch, source=DM)
@@ -247,18 +285,30 @@ class WhoKnows(MemoryTest):
 
     async def secret_name(self, entity: str, text: str = "Rook") -> str:
         made = await self.memory.add_alias(
-            GUILD_A, self.c, entity, text, kind="title", secret=True, source=DM, status=CONFIRMED
+            GUILD_A,
+            self.c,
+            entity,
+            text,
+            kind="title",
+            secret=True,
+            source=DM,
+            status=CONFIRMED,
+            dm_chose_secret=True,
         )
         return str(made.value.id)
 
     async def test_an_other_name_known_by_some_characters(self) -> None:
         ids = await self.setup_table()
         alias = await self.secret_name(ids["tavin"])
-        await self.memory.set_alias_knowers(GUILD_A, self.c, alias, [ids["tavin"]], source=DM)
+        await self.memory.set_alias_knowers(
+            GUILD_A, self.c, alias, [ids["tavin"]], source=DM, dm_chose_secret=True
+        )
         self.assertEqual(
             await self.memory.alias_knowers(GUILD_A, self.c, [alias]), {alias: [ids["tavin"]]}
         )
-        await self.memory.set_alias_knowers(GUILD_A, self.c, alias, [], source=DM)
+        await self.memory.set_alias_knowers(
+            GUILD_A, self.c, alias, [], source=DM, dm_chose_secret=True
+        )
         self.assertEqual(await self.memory.alias_knowers(GUILD_A, self.c, [alias]), {})
 
     async def test_only_a_secret_name_can_be_known_by_some(self) -> None:
@@ -268,13 +318,15 @@ class WhoKnows(MemoryTest):
         )
         with self.assertRaises(MemoryRuleError):
             await self.memory.set_alias_knowers(
-                GUILD_A, self.c, public.value.id, [ids["tavin"]], source=DM
+                GUILD_A, self.c, public.value.id, [ids["tavin"]], source=DM, dm_chose_secret=True
             )
 
     async def test_who_knows_a_name_goes_with_the_name(self) -> None:
         ids = await self.setup_table()
         alias = await self.secret_name(ids["voss"], "Shade")
-        done = await self.memory.set_alias_knowers(GUILD_A, self.c, alias, [ids["mara"]], source=DM)
+        done = await self.memory.set_alias_knowers(
+            GUILD_A, self.c, alias, [ids["mara"]], source=DM, dm_chose_secret=True
+        )
         self.assertEqual(await self.count("memory_alias_knowers"), 1)
         async with self.db.guild(GUILD_A) as conn:  # the name is removed (an Undo of adding it)
             await conn.execute("DELETE FROM memory_aliases WHERE id = %s", (alias,))
@@ -284,7 +336,9 @@ class WhoKnows(MemoryTest):
     async def test_another_server_sees_none_of_it(self) -> None:
         ids = await self.setup_table()
         alias = await self.secret_name(ids["tavin"])
-        await self.memory.set_alias_knowers(GUILD_A, self.c, alias, [ids["tavin"]], source=DM)
+        await self.memory.set_alias_knowers(
+            GUILD_A, self.c, alias, [ids["tavin"]], source=DM, dm_chose_secret=True
+        )
         self.assertEqual(await self.count("memory_alias_knowers", GUILD_B), 0)
 
     async def test_a_name_made_public_has_no_knowers_and_a_public_reader_never_lists_it(
@@ -292,12 +346,18 @@ class WhoKnows(MemoryTest):
     ) -> None:
         ids = await self.setup_table()
         alias = await self.secret_name(ids["tavin"], "Shade")
-        await self.memory.set_alias_knowers(GUILD_A, self.c, alias, [ids["mara"]], source=DM)
+        await self.memory.set_alias_knowers(
+            GUILD_A, self.c, alias, [ids["mara"]], source=DM, dm_chose_secret=True
+        )
         shown = [a.text for a in await self.memory.aliases(GUILD_A, self.c)]
         self.assertNotIn("Shade", shown)  # (the plain reader hides a secret name)
-        await self.memory.update_alias(GUILD_A, self.c, alias, secret=False, source=DM)
+        await self.memory.update_alias(
+            GUILD_A, self.c, alias, secret=False, source=DM, dm_chose_secret=True
+        )
         self.assertEqual(await self.memory.alias_knowers(GUILD_A, self.c, [alias]), {})
-        await self.memory.update_alias(GUILD_A, self.c, alias, secret=True, source=DM)
+        await self.memory.update_alias(
+            GUILD_A, self.c, alias, secret=True, source=DM, dm_chose_secret=True
+        )  # (the DM's own 🤫: a public name made secret only by the DM's choice, #4524)
         self.assertEqual(
             await self.memory.alias_knowers(GUILD_A, self.c, [alias]), {alias: [ids["mara"]]}
         )
@@ -308,9 +368,11 @@ class WhoKnows(MemoryTest):
         alias = await self.secret_name(ids["tavin"], "Shade")
         for _ in range(2):
             await self.memory.set_connection_knowers(
-                GUILD_A, self.c, link, [ids["tavin"]], source=DM
+                GUILD_A, self.c, link, [ids["tavin"]], source=DM, dm_chose_secret=True
             )
-            await self.memory.set_alias_knowers(GUILD_A, self.c, alias, [ids["tavin"]], source=DM)
+            await self.memory.set_alias_knowers(
+                GUILD_A, self.c, alias, [ids["tavin"]], source=DM, dm_chose_secret=True
+            )
         self.assertEqual(await self.count("memory_alias_knowers"), 1)
         async with self.db.guild(GUILD_A) as conn:
             cur = await conn.execute(
@@ -326,8 +388,12 @@ class WhoKnows(MemoryTest):
     async def test_taking_a_character_off_keeps_the_history_and_the_party_unchanged(self) -> None:
         ids = await self.setup_table()
         link = await self.hidden_link(ids["voss"], ids["council"])
-        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [ids["tavin"]], source=DM)
-        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [], source=DM)
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, link, [ids["tavin"]], source=DM, dm_chose_secret=True
+        )
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, link, [], source=DM, dm_chose_secret=True
+        )
         self.assertEqual(await self.memory.connection_knowers(GUILD_A, self.c, [link]), {})
         self.assertNotIn(link, await self.party())
         async with self.db.guild(GUILD_A) as conn:
@@ -351,7 +417,9 @@ class WhoKnows(MemoryTest):
                 (GUILD_A, self.c, "e" * 32, ids["tavin"], ids["tavin"]),
             )
         link = await self.hidden_link(ids["voss"], ids["council"])
-        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [ids["tavin"]], source=DM)
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, link, [ids["tavin"]], source=DM, dm_chose_secret=True
+        )
         self.assertEqual(
             await self.memory.connection_knowers(GUILD_A, self.c, [link]), {link: [ids["tavin"]]}
         )
@@ -360,7 +428,7 @@ class WhoKnows(MemoryTest):
         ids = await self.setup_table()
         alias = await self.secret_name(ids["voss"], "Shade")
         done = await self.memory.set_alias_knowers(
-            GUILD_A, self.c, alias, [ids["tavin"]], source=DM
+            GUILD_A, self.c, alias, [ids["tavin"]], source=DM, dm_chose_secret=True
         )
         assert done.batch is not None
         await self.memory.undo(GUILD_A, self.c, done.batch, source=DM)
@@ -371,7 +439,9 @@ class WhoKnows(MemoryTest):
 
         ids = await self.setup_table()
         alias = await self.secret_name(ids["voss"], "Shade")
-        await self.memory.set_alias_knowers(GUILD_A, self.c, alias, [ids["tavin"]], source=DM)
+        await self.memory.set_alias_knowers(
+            GUILD_A, self.c, alias, [ids["tavin"]], source=DM, dm_chose_secret=True
+        )
         async with self.memory._write(GUILD_A, self.c, DM) as w:
             await w.delete(ALIASES, alias)
             batch = w.batch
@@ -386,7 +456,9 @@ class WhoKnows(MemoryTest):
         ids = await self.setup_table()
         twin = await self.pc("Tavin the Younger", TAVIN_PLAYER)
         alias = await self.secret_name(ids["voss"], "Shade")
-        await self.memory.set_alias_knowers(GUILD_A, self.c, alias, [twin], source=DM)
+        await self.memory.set_alias_knowers(
+            GUILD_A, self.c, alias, [twin], source=DM, dm_chose_secret=True
+        )
         await self.memory.merge(GUILD_A, self.c, ids["tavin"], twin, source=DM, dm_said_same=True)
         self.assertEqual(
             await self.memory.alias_knowers(GUILD_A, self.c, [alias]), {alias: [ids["tavin"]]}
@@ -411,8 +483,12 @@ class WhoKnows(MemoryTest):
         link = await self.hidden_link(ids["voss"], ids["council"])
         alias = await self.secret_name(ids["tavin"], "Rook")
         both = [ids["tavin"], ids["mara"]]
-        await self.memory.set_connection_knowers(GUILD_A, self.c, link, both, source=DM)
-        await self.memory.set_alias_knowers(GUILD_A, self.c, alias, [ids["tavin"]], source=DM)
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, link, both, source=DM, dm_chose_secret=True
+        )
+        await self.memory.set_alias_knowers(
+            GUILD_A, self.c, alias, [ids["tavin"]], source=DM, dm_chose_secret=True
+        )
         tavin = await self.mine(TAVIN_PLAYER)
         self.assertEqual(tavin.characters, ("Tavin",))
         (connection,) = tavin.connections
@@ -430,8 +506,12 @@ class WhoKnows(MemoryTest):
         ids = await self.setup_table()
         link = await self.hidden_link(ids["voss"], ids["council"])
         alias = await self.secret_name(ids["tavin"])
-        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [ids["tavin"]], source=DM)
-        await self.memory.set_alias_knowers(GUILD_A, self.c, alias, [ids["tavin"]], source=DM)
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, link, [ids["tavin"]], source=DM, dm_chose_secret=True
+        )
+        await self.memory.set_alias_knowers(
+            GUILD_A, self.c, alias, [ids["tavin"]], source=DM, dm_chose_secret=True
+        )
         for user in (MARA_PLAYER, 4242):  # a player whose character does not know it; no character
             seen = await self.mine(user)
             self.assertEqual((seen.connections, seen.names), ((), ()), user)
@@ -442,7 +522,9 @@ class WhoKnows(MemoryTest):
     async def test_a_connection_everyone_now_knows_is_public_and_no_longer_listed(self) -> None:
         ids = await self.setup_table()
         link = await self.hidden_link(ids["voss"], ids["council"])
-        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [ids["tavin"]], source=DM)
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, link, [ids["tavin"]], source=DM, dm_chose_secret=True
+        )
         await self.memory.reveal_exposed(GUILD_A, self.c, spellings=[], relation_ids=[link])
         self.assertEqual((await self.mine(TAVIN_PLAYER)).connections, ())
         self.assertEqual(await self.memory.connection_knowers(GUILD_A, self.c, [link]), {})
@@ -451,10 +533,12 @@ class WhoKnows(MemoryTest):
         ids = await self.setup_table()
         made = await self.memory.add_alias(
             GUILD_A, self.c, ids["tavin"], "Rook", kind="nickname", source=DM,
-            status=CONFIRMED, secret=True,
+            status=CONFIRMED, secret=True, dm_chose_secret=True,
         )  # fmt: skip
         alias = str(made.value.id)
-        await self.memory.set_alias_knowers(GUILD_A, self.c, alias, [ids["tavin"]], source=DM)
+        await self.memory.set_alias_knowers(
+            GUILD_A, self.c, alias, [ids["tavin"]], source=DM, dm_chose_secret=True
+        )
         await self.memory.reveal_exposed(
             GUILD_A, self.c, spellings=[spelling_key("Rook")], relation_ids=[]
         )
@@ -463,10 +547,17 @@ class WhoKnows(MemoryTest):
     async def test_a_proposed_name_a_merged_owner_and_a_proposed_link_never_show(self) -> None:
         ids = await self.setup_table()
         made = await self.memory.add_alias(
-            GUILD_A, self.c, ids["tavin"], "Rook", kind="nickname", source=DM, secret=True
+            GUILD_A,
+            self.c,
+            ids["tavin"],
+            "Rook",
+            kind="nickname",
+            source=DM,
+            secret=True,
+            dm_chose_secret=True,
         )  # (not confirmed: it is still only proposed)
         await self.memory.set_alias_knowers(
-            GUILD_A, self.c, str(made.value.id), [ids["tavin"]], source=DM
+            GUILD_A, self.c, str(made.value.id), [ids["tavin"]], source=DM, dm_chose_secret=True
         )
         self.assertEqual((await self.mine(TAVIN_PLAYER)).names, ())
         # a character who knows nothing still gets their name in the line
@@ -477,7 +568,9 @@ class WhoKnows(MemoryTest):
         ids = await self.setup_table()
         second = await self.pc("Brann", TAVIN_PLAYER)
         link = await self.hidden_link(ids["voss"], ids["council"])
-        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [second], source=DM)
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, link, [second], source=DM, dm_chose_secret=True
+        )
         seen = await self.mine(TAVIN_PLAYER)
         self.assertEqual(seen.characters, ("Brann", "Tavin"))
         self.assertEqual(len(seen.connections), 1)
@@ -485,15 +578,21 @@ class WhoKnows(MemoryTest):
     async def test_an_ended_connection_is_not_shown(self) -> None:
         ids = await self.setup_table()
         link = await self.hidden_link(ids["voss"], ids["council"])
-        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [ids["tavin"]], source=DM)
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, link, [ids["tavin"]], source=DM, dm_chose_secret=True
+        )
         await self.memory.update_relation(GUILD_A, self.c, link, source=DM, status="rejected")
         self.assertEqual((await self.mine(TAVIN_PLAYER)).connections, ())
 
     async def test_what_the_dm_took_back_is_gone_from_the_players_view(self) -> None:
         ids = await self.setup_table()
         link = await self.hidden_link(ids["voss"], ids["council"])
-        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [ids["tavin"]], source=DM)
-        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [], source=DM)
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, link, [ids["tavin"]], source=DM, dm_chose_secret=True
+        )
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, link, [], source=DM, dm_chose_secret=True
+        )
         self.assertEqual((await self.mine(TAVIN_PLAYER)).connections, ())
 
     # ---- backups ----
@@ -502,8 +601,12 @@ class WhoKnows(MemoryTest):
         ids = await self.setup_table()
         link = await self.hidden_link(ids["voss"], ids["council"])
         alias = await self.secret_name(ids["tavin"])
-        await self.memory.set_connection_knowers(GUILD_A, self.c, link, [ids["tavin"]], source=DM)
-        await self.memory.set_alias_knowers(GUILD_A, self.c, alias, [ids["mara"]], source=DM)
+        await self.memory.set_connection_knowers(
+            GUILD_A, self.c, link, [ids["tavin"]], source=DM, dm_chose_secret=True
+        )
+        await self.memory.set_alias_knowers(
+            GUILD_A, self.c, alias, [ids["mara"]], source=DM, dm_chose_secret=True
+        )
         raw = encode_backup(await self.campaigns.export(GUILD_A, self.c))
         restored = await self.campaigns.import_backup(GUILD_B, decode_backup(raw), DM_USER)
         self.assertEqual(await self.count("memory_alias_knowers", GUILD_B), 1)

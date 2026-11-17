@@ -80,12 +80,10 @@ class DiscordSender:
     async def send(self, user_id: int, text: str) -> int | None:
         view = discord.ui.View(timeout=None)
         view.add_item(NotNowButton())
-        # The two links (#3663): the Questions page, and the message's own address, edited in
-        # once it is sent (never fatal).
+        # The website link (#3663). No "Open in Discord": a private message never links to itself.
         site = dm_links.questions_link(self.bot.settings.site_url)
         shown = dm_links.add_links(view, site_url=site)
         sent = await self.bot._dm_message(user_id, text, shown)
-        await dm_links.point_at_itself(sent, shown)
         return None if sent is None else sent.id
 
     async def board(
@@ -108,10 +106,7 @@ class DiscordSender:
             if message_id is not None:
                 try:
                     kept = channel.get_partial_message(message_id)
-                    # (its address is known before the edit, so it goes in the same edit)
-                    linked = dm_links.add_links(
-                        view, discord_url=dm_links.jump_link(kept), site_url=site
-                    )
+                    linked = dm_links.add_links(view, site_url=site)  # (no link to itself)
                     await kept.edit(content=content, view=linked)
                     return message_id, kept.jump_url
                 except discord.NotFound:
@@ -120,7 +115,6 @@ class DiscordSender:
                 return None, ""
             linked = dm_links.add_links(view, site_url=site) or view
             sent = await channel.send(content, view=linked, allowed_mentions=NO_PINGS)
-            await dm_links.point_at_itself(sent, linked)
             return sent.id, sent.jump_url
         except discord.HTTPException as exc:
             log.info("Questions: couldn't show the list to a DM (%s)", type(exc).__name__)
@@ -153,6 +147,7 @@ def build_round(bot: DMBot) -> Round | None:
         rule_sets=sets,
         packs=sets if isinstance(sets, PackUpdateStore) else None,
         agreed=bot.consent.consenting,
+        recorded=bot.consent.recorded_in,
     )
     return Round(
         sources=sources,

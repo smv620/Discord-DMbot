@@ -11,7 +11,14 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 
-from dmbot.memory.link_edits import EVERYONE, ONLY_THE_DM, SOME_CHARACTERS, WHO_KNOWS, keep_batch
+from dmbot.memory.link_edits import (
+    EVERYONE,
+    ONLY_THE_DM,
+    SOME_CHARACTERS,
+    WHO_KNOWS,
+    keep_batch,
+    with_common,
+)
 from dmbot.memory.models import DM, Alias, MemoryRuleError, Written
 from dmbot.memory.store import MemoryStore
 
@@ -26,6 +33,41 @@ def who_knows_now(alias: Alias, knowers: Sequence[str]) -> str:
 
 
 async def set_who_knows(
+    memory: MemoryStore,
+    guild_id: int,
+    campaign_id: str,
+    alias: Alias,
+    who: str,
+    characters: Sequence[str] = (),
+    *,
+    players_only: bool = False,
+    made: list[int] | None = None,
+) -> Written[object]:
+    """ "Who knows this?" for one other name, with its fourth answer, 🌍 Common knowledge (#4537
+    slice 1b): `link_edits.with_common`, with this name's own flags (`_set_flags`)."""
+    shown = alias.entity_id in await memory.entries_shown(guild_id, campaign_id, [alias.entity_id])
+    entry = None if shown else await memory.entity(guild_id, campaign_id, alias.entity_id)
+
+    async def flags(answer: str, chosen: Sequence[str], log: list[int]) -> Written[object]:
+        return await _set_flags(
+            memory, guild_id, campaign_id, alias, answer, chosen,
+            players_only=players_only, made=log,
+        )  # fmt: skip
+
+    return await with_common(
+        memory, guild_id, campaign_id, "alias", alias.id,
+        shown=not alias.secret,
+        cannot_show=(
+            ""
+            if shown
+            else f"Show {entry.name if entry else 'its entry'} to the players first: common "
+            "knowledge is something they see."
+        ),
+        who=who, characters=characters, set_flags=flags, made=made,
+    )  # fmt: skip
+
+
+async def _set_flags(
     memory: MemoryStore,
     guild_id: int,
     campaign_id: str,
@@ -53,18 +95,32 @@ async def set_who_knows(
             keep_batch(
                 log,
                 await memory.set_alias_knowers(
-                    guild_id, campaign_id, alias.id, [], source=DM, players_only=players_only
+                    guild_id,
+                    campaign_id,
+                    alias.id,
+                    [],
+                    source=DM,
+                    players_only=players_only,
+                    dm_chose_secret=True,
                 ),
             )
         try:
             return keep_batch(
                 log,
-                await memory.update_alias(guild_id, campaign_id, alias.id, secret=False, source=DM),
+                await memory.update_alias(
+                    guild_id, campaign_id, alias.id, secret=False, source=DM, dm_chose_secret=True
+                ),
             )
         except MemoryRuleError:
             if before:
                 await memory.set_alias_knowers(
-                    guild_id, campaign_id, alias.id, before, source=DM, players_only=players_only
+                    guild_id,
+                    campaign_id,
+                    alias.id,
+                    before,
+                    source=DM,
+                    players_only=players_only,
+                    dm_chose_secret=True,
                 )
             raise
     chosen = list(characters) if who == SOME_CHARACTERS else []
@@ -73,12 +129,20 @@ async def set_who_knows(
     if not alias.secret:
         hidden = keep_batch(
             log,
-            await memory.update_alias(guild_id, campaign_id, alias.id, secret=True, source=DM),
+            await memory.update_alias(
+                guild_id, campaign_id, alias.id, secret=True, source=DM, dm_chose_secret=True
+            ),
         )
     knew = keep_batch(
         log,
         await memory.set_alias_knowers(
-            guild_id, campaign_id, alias.id, chosen, source=DM, players_only=players_only
+            guild_id,
+            campaign_id,
+            alias.id,
+            chosen,
+            source=DM,
+            players_only=players_only,
+            dm_chose_secret=True,
         ),
     )
     # (keeping it secret with no one to know it is the only change: Undo takes that back, #4159)

@@ -75,7 +75,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { WorldLanguageNote, WorldPlaceNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint } from "./api";
+import type { StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
@@ -1050,6 +1050,38 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     languages: [{ id: `language:${"b1".repeat(16)}`, entityId: "n3", name: "Brother Venn", language: "Giant", from: "lore", fromSession: null }],
   };
   const worldBatches = new Map<number, { places: WorldPlaceNote[]; languages: WorldLanguageNote[] }>();
+  // The story threads DMbot found in an upload (#4482), waiting for the DM; a keep or a 🚫 takes one out, and Undo puts it back.
+  const storyThreadList: StoryThreadSuggestion[] = [
+    {
+      id: "a1".repeat(16), kind: "quest", name: "Find the heir", aim: "Bring the heir home before the pass closes.",
+      quote: "Garret needs his heir brought back by the new moon.", upload: "Notes, 9 Nov",
+      people: [{ index: 0, role: "quest giver", name: "Keegan Velryn" }, { index: 1, role: "target", name: "Garret Velryn" }],
+      lines: [{ words: "Find the heir", what: "a step", branch: false }, { words: "The old pass", what: "a branch", branch: true }],
+      session: false,
+      heard: [],
+    },
+    {
+      id: "b2".repeat(16), kind: "hook", name: "Ask about the bell", aim: "A lead nobody has taken up yet.",
+      quote: "", upload: "Notes, 9 Nov", people: [],
+      lines: [{ words: "Ask the sexton", what: "a step", branch: false }, { words: "The bell tower", what: "a branch", branch: true }],
+      session: false,
+      heard: [],
+    },
+    {
+      id: "c3".repeat(16), kind: "hook", name: "Keegan's cap", aim: "Where the cap went.",
+      quote: "", upload: "the session of 14 Nov 2026", people: [{ index: 0, role: "quest giver", name: "Keegan Velryn" }],
+      lines: [], session: true, heard: ["Keegan wrings his cap.", "We'll find him."],
+    },
+  ];
+  const storyThreadBatches = new Map<number, StoryThreadSuggestion>();
+  // A character's languages (#4621): the DM's and the ones DMbot found, and a character with a sheet's (read only).
+  let lastLanguageId = 10;
+  let lastLanguageBatch = 0;
+  const charLanguages = new Map<string, { hasSheet: boolean; languages: { id?: string; name: string; source: "sheet" | "dm" | "read" }[] }>([
+    ["lang-dm", { hasSheet: false, languages: [{ id: "l1", name: "Common", source: "dm" }, { id: "l2", name: "Giant", source: "read" }] }],
+    ["lang-sheet", { hasSheet: true, languages: [{ name: "Elvish", source: "sheet" }, { name: "Dwarvish", source: "sheet" }] }],
+  ]);
+  const storyThreadTurnedDown = new Map<string, StoryThreadSuggestion>();
   // The Maps page (#4347): the pictures a DM or a player added. A DM sees them all; a player sees the shown usable ones and their own.
   let mapList: { id: string; title: string; addedBy: string; via: "website" | "discord"; mine: boolean; shown: boolean; state: "usable" | "waiting" | "declined" }[] = [
     { id: "m1", title: "Icewind Dale", addedBy: "Ana", via: "discord", mine: false, shown: true, state: "usable" },
@@ -2705,6 +2737,88 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const named = memory.find((n) => n.id === placeId);
       if (!named || named.kind !== "place") throw new ApiError("not-found");
       return { level: worldLevel(named.name), form: null, rows: (worldRows.get(placeId) ?? []).map((r) => ({ ...r })), groups: worldGroups.map((g) => ({ ...g })) };
+    },
+    // The quest sheet of the mock's kept thread (#4547): the example the spec gives, for its one thread node.
+    async threadCard(ref, thread) {
+      calls.push(`threadCard:${ref}:${thread}`);
+      if (thread !== "thread-heir") throw new ApiError("not-found");
+      const part = (id: string, kind: string, words: string, state: string, extra: Partial<ThreadCardPart> = {}): ThreadCardPart => ({
+        id, kind, words, state, underId: null, who: null, about: null, amount: null, unit: "", owed: null, due: "",
+        terms: "", limitKind: "", dated: false, dateWords: "", fromRead: false, tableKnows: false, ...extra,
+      });
+      return {
+        thread: { id: thread, name: "Bring the heir home", kind: "Quest", state: "active", stateWords: "Happening now", description: "Bring the heir home." },
+        people: [
+          { id: "n-keegan", name: "Keegan Velryn", role: "quest giver" },
+          { id: "n-garret", name: "Garret Velryn", role: "target" },
+        ],
+        waiting: 2,
+        done: 1,
+        of: 2,
+        parts: [
+          part("p1", "reward", "50 gold", "owed", { amount: 50, unit: "gold", owed: 0, due: "up_front" }),
+          part("p2", "reward", "A route map", "owed"),
+          part("p3", "help", "A team of sleds", "to_keep"),
+          part("p4", "objective", "Find the heir", "done"),
+          part("p5", "objective", "Cross the pass", "to_do"),
+          part("p6", "time_limit", "Before the new moon", "running"),
+        ],
+        bigger: null,
+        branches: [],
+      };
+    },
+    // The quest sheet's edit controls (#4562): each press is recorded, and an Undo gives back no batch.
+    async changeThreadParts(ref, thread, change) {
+      calls.push(`changeThreadParts:${ref}:${thread}:${JSON.stringify(change)}`);
+      if (thread !== "thread-heir") throw new ApiError("not-found");
+      if (change.action === "undo") return { batch: null };
+      // The mock has no game clock for day 13 (the spec's example): a date that day is refused as the bot would (#4503).
+      if (change.action === "date" && change.days === 13) throw new ApiError("no-clock");
+      return { batch: 1 };
+    },
+    // The story threads DMbot found (#4482): two suggestions, each with one step and one branch as a line; a keep, a turn-down and their Undo
+    // are recorded and change the list as the bot would.
+    async storyThreads(ref) {
+      calls.push(`storyThreads:${ref}`);
+      return { suggestions: storyThreadList.map((t) => ({ ...t, people: t.people.map((p) => ({ ...p })), lines: t.lines.map((l) => ({ ...l })) })) };
+    },
+    async changeStoryThreads(ref, change) {
+      calls.push(`changeStoryThreads:${ref}:${JSON.stringify(change)}`);
+      if (change.action === "undo") {
+        const back = "keep" in change ? storyThreadBatches.get(change.keep) : storyThreadTurnedDown.get(change.not);
+        if (!back) throw new ApiError("gone");
+        if ("keep" in change) storyThreadBatches.delete(change.keep);
+        else storyThreadTurnedDown.delete(change.not);
+        storyThreadList.push(back);
+        return { batch: null };
+      }
+      const at = storyThreadList.findIndex((t) => t.id === change.id);
+      if (at < 0) throw new ApiError("gone");
+      const [gone] = storyThreadList.splice(at, 1);
+      if (change.action === "not") {
+        storyThreadTurnedDown.set(change.id, gone!);
+        return { batch: null };
+      }
+      const batch = ++lastBatch;
+      storyThreadBatches.set(batch, gone!);
+      return { batch };
+    },
+    // A character's languages (#4621): one with the DM's and DMbot's (ids), one with a sheet (read only).
+    async characterLanguages(ref, entity) {
+      calls.push(`characterLanguages:${ref}:${entity}`);
+      const row = charLanguages.get(entity);
+      if (!row) throw new ApiError("not-allowed");
+      return { hasSheet: row.hasSheet, languages: row.languages.map((l) => ({ ...l })) };
+    },
+    async changeCharacterLanguages(ref, entity, change) {
+      calls.push(`changeCharacterLanguages:${ref}:${entity}:${JSON.stringify(change)}`);
+      const row = charLanguages.get(entity);
+      if (!row) throw new ApiError("not-allowed");
+      if (change.action === "undo") return { batch: null };
+      if (change.action === "add") row.languages.push({ id: `l${++lastLanguageId}`, name: change.name, source: "dm" });
+      if (change.action === "remove") row.languages = row.languages.filter((l) => l.id !== change.language);
+      if (change.action === "check") row.languages = row.languages.map((l) => (l.source === "read" ? { ...l, source: "dm" as const } : l));
+      return { batch: ++lastLanguageBatch };
     },
     async worldNotes(ref) {
       calls.push(`worldNotes:${ref}`);

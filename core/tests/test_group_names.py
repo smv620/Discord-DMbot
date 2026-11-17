@@ -160,7 +160,9 @@ class GroupOfNames(_Base):
         await self.relate(tavin, "member_of", pack, status=CONFIRMED)
         hints = await self.memory.group_hints(GUILD_A, self.c, await self.waiting("Tavin and Mira"))
         self.assertEqual([h.group_id for h in hints], [wolves, pack])  # all of them, then one
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, wolves, True, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, wolves, True, source="dm", dm_chose_secret=True
+        )
         hints = await self.memory.group_hints(GUILD_A, self.c, await self.waiting("Mira and Tavin"))
         self.assertEqual([h.group_id for h in hints], [pack])
 

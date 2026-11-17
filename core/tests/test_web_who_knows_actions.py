@@ -25,6 +25,12 @@ class TheText(unittest.TestCase):
         self.assertEqual(who_text({"who": "everyone", "characters": []}), "everyone")
         self.assertEqual(who_text({"who": "some", "characters": [a, b]}), f"some {a} {b}")
 
+    def test_common_knowledge_is_a_word_with_no_characters(self) -> None:
+        self.assertEqual(who_text({"who": "common"}), "common")
+        self.assertEqual(who_text({"who": "common", "characters": []}), "common")
+        with self.assertRaises(RecapError):
+            who_text({"who": "common", "characters": ["a" * 32]})
+
     def test_a_bad_answer_is_refused_before_the_door(self) -> None:
         a = "a" * 32
         bodies: list[dict[str, Any]] = [
@@ -83,6 +89,21 @@ class TheDoor(Web):
             ),
         )
 
+    async def test_a_dm_can_queue_common_knowledge_and_the_door_takes_no_characters_with_it(
+        self,
+    ) -> None:
+        await self.link_who({"who": "common"})
+        self.assertEqual([r["text"] for r in await self.rows()], ["common"])
+        async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
+            cur = await conn.execute(
+                "SELECT dmbot_web_name_action_add(%s, %s, %s, 'link-who', %s, '', %s, false) AS r",
+                (self.g, self.one.id, None, self.links["mira-rook"], f"common {self.rook}"),
+            )
+            found = await cur.fetchone()
+        assert found is not None
+        self.assertNotEqual(found["r"]["status"], "ok")  # (common carries no characters)
+
     async def test_a_player_and_a_stranger_cannot_queue_one(self) -> None:
         self.assertEqual(await self.refused_who({"who": "dm"}, who=self.player), "not_allowed")
         self.assertEqual(await self.rows(), [])
@@ -110,7 +131,7 @@ class TheDoor(Web):
     async def test_an_other_name_is_asked_of_the_name_it_belongs_to(self) -> None:
         made = await self.memory.add_alias(
             self.g, self.one.id, self.keep, "the old fort", kind="nickname",
-            source=DM_SOURCE, status="confirmed", secret=True,
+            source=DM_SOURCE, status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         alias = made.value.id
         body = {"action": "alias-who", "alias": alias, "who": "some", "characters": [self.npc]}
@@ -139,7 +160,7 @@ class TheDoor(Web):
         )
         made = await self.memory.add_alias(
             self.g, self.one.id, self.keep, "the old fort", kind="nickname",
-            source=DM_SOURCE, status="confirmed", secret=True,
+            source=DM_SOURCE, status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         body = {"action": "alias-who", "alias": made.value.id, "who": "some"}
         with self.assertRaises(RecapError) as bad:  # a character the campaign does not have
@@ -189,6 +210,48 @@ class TheBotAppliesIt(Editing):
         await self.apply_all()
         self.assertFalse((await self.stored(link)).secret)
 
+    async def is_common(self, link: str) -> bool:
+        found = await self.memory.common_knowledge(self.g, self.one.id, "connection", [link])
+        return link in found
+
+    async def test_common_knowledge_shows_a_secret_connection_first_and_undo_takes_both_back(
+        self,
+    ) -> None:
+        link = self.links["mira-rook"]
+        await self.edit(link, action="who", who="dm")
+        await self.apply_all()
+        self.assertTrue((await self.stored(link)).secret)
+        await self.edit(link, action="who", who="common")
+        (done,) = await self.apply_all()
+        self.assertEqual(done.error, "")
+        self.assertFalse((await self.stored(link)).secret)
+        self.assertTrue(await self.is_common(link))
+        self.assertEqual(len(done.batches), 2)  # (shown, then common: one Undo takes both back)
+        for batch in reversed(done.batches):
+            await self.memory.undo(self.g, self.one.id, batch)
+        self.assertFalse(await self.is_common(link))
+        self.assertTrue((await self.stored(link)).secret)
+
+    async def test_another_answer_on_a_common_connection_takes_common_knowledge_back(self) -> None:
+        link = self.links["mira-rook"]
+        await self.edit(link, action="who", who="common")
+        await self.apply_all()
+        self.assertTrue(await self.is_common(link))
+        await self.edit(link, action="who", who="some", characters=[self.rook])
+        await self.apply_all()
+        self.assertFalse(await self.is_common(link))
+        self.assertEqual(await self.knowers(link), [self.rook])
+
+    async def test_common_knowledge_is_refused_while_an_end_is_kept_from_the_players(self) -> None:
+        link = self.links["mira-rook"]
+        await self.memory.set_hidden_from_players(
+            self.g, self.one.id, self.mira, True, source=DM_SOURCE, dm_chose_secret=True
+        )
+        await self.edit(link, action="who", who="common")
+        (done,) = await self.apply_all()
+        self.assertEqual(done.error, "cannot_show")
+        self.assertFalse(await self.is_common(link))
+
     async def test_the_same_answer_again_writes_nothing(self) -> None:
         link = self.links["mira-rook"]
         await self.edit(link, action="who", who="some", characters=[self.rook])
@@ -232,7 +295,7 @@ class TheBotAppliesIt(Editing):
     async def test_a_secret_other_name(self) -> None:
         made = await self.memory.add_alias(
             self.g, self.one.id, self.keep, "the old fort", kind="nickname",
-            source=DM_SOURCE, status="confirmed", secret=True,
+            source=DM_SOURCE, status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         alias = made.value.id
         body = {"action": "alias-who", "alias": alias, "who": "some", "characters": [self.rook]}
@@ -274,7 +337,7 @@ class TheBotAppliesIt(Editing):
     async def secret_name(self, *, secret: bool = True) -> str:
         made = await self.memory.add_alias(
             self.g, self.one.id, self.keep, "the old fort", kind="nickname",
-            source=DM_SOURCE, status="confirmed", secret=secret,
+            source=DM_SOURCE, status="confirmed", secret=secret, dm_chose_secret=True,
         )  # fmt: skip
         return made.value.id
 
@@ -307,6 +370,22 @@ class TheBotAppliesIt(Editing):
         await self.alias_who(alias, who="some", characters=[self.rook])
         self.assertEqual([(o.error, o.batches) for o in await self.apply_all()], [("", ())])
         self.assertEqual(await self.memory.version(self.g, self.one.id), before)
+
+    async def test_the_websites_answer_on_a_common_name_takes_common_knowledge_back(self) -> None:
+        """#4537 slice 1b: the website's 🤫 / 👥 / 👁️ use the same calls, so a name a World upload
+        made common knowledge stops being common, and the page's Undo puts all of it back."""
+        alias = await self.secret_name(secret=False)
+        await self.memory.add_common_knowledge(
+            self.g, self.one.id, "alias", [alias], source=DM_SOURCE
+        )
+        await self.alias_who(alias, who="dm")
+        (done,) = await self.apply_all()
+        self.assertEqual((done.error, len(done.batches)), ("", 2))  # (common taken back, hidden)
+        common = self.memory.common_knowledge
+        self.assertEqual(await common(self.g, self.one.id, "alias", [alias]), set())
+        for batch in reversed(done.batches):
+            await self.memory.undo(self.g, self.one.id, batch)
+        self.assertEqual(await common(self.g, self.one.id, "alias", [alias]), {alias})
 
     async def test_a_name_from_a_non_dm_sender_is_refused(self) -> None:
         alias = await self.secret_name()

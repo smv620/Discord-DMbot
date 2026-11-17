@@ -209,8 +209,16 @@ NOT_IN_BACKUP: dict[str, str] = {
     "recap_name_checks": _WAIT,
     "backstory_links": _WAIT,
     "backstory_which": _WAIT,
-    "thread_suggestions": _WAIT,  # (the lore reader's story threads, #4453: a re-read rebuilds it)
+    # (story threads waiting for the DM, #4453, #4522: a lore re-read rebuilds the lore ones, and a
+    # session's point at its lines by when they began, which a restore into another server may not
+    # match, and quote people whose consent a backup doesn't carry; the kept threads are in it)
+    "thread_suggestions": _WAIT,
+    "time_limit_told": _WAIT,  # (#4448: which messages were said; a restore tells afresh)
     "secret_exposures": _WAIT,
+    # (the 🤫 questions waiting for the DM, #4524: point at items by id, and quote people whose
+    # consent a backup doesn't carry; what the DM answered is in the items themselves)
+    "secret_questions": _WAIT,
+    "thread_progress": _WAIT,  # (a re-read rebuilds it: #4522 5b, ruling A)
     "name_actions": _WAIT,
     "setting_actions": _WAIT,
     "said_as_listens": _WAIT,  # a DM's clip while it becomes letters, gone in an hour (#2316)
@@ -305,4 +313,6 @@ SERVER_BOUND_COLUMNS: dict[str, str] = {
     "upload_notices.message_id": "left: as its channel",
     "memory_thread_parts.thread_id": "not Discord's: a story thread entry of the campaign's memory "
     "(#4471), which moves with the campaign like every entry",
+    "thread_progress.thread_id": "not Discord's: a story thread entry of the campaign's memory "
+    "(#4522 5b), which moves with the campaign like every entry",
 }

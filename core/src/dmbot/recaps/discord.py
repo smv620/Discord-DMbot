@@ -39,6 +39,7 @@ import discord
 from dmbot import ai_feed
 from dmbot.audio.segmenter import Utterance
 from dmbot.campaigns import Campaign
+from dmbot.dm_screen import upkeep
 from dmbot.dm_screen.recap_panel import PlanFacts, audio_how
 from dmbot.entitlements import RECAP_AUDIO_PLANS
 from dmbot.logs import log_context
@@ -362,8 +363,6 @@ class RecapFeatures:
             user_id: int,
             text: str,
             view: discord.ui.View | None = None,
-            *,
-            link_to_itself: bool = False,
         ) -> str: ...
 
     def recap_tasks(self) -> list[asyncio.Task[None]]:
@@ -502,7 +501,6 @@ class RecapFeatures:
                 user_id,
                 stopped,
                 _recap_links(self.settings, campaign, job.session_at),
-                link_to_itself=True,  # (both buttons, like every private message, #3663)
             )
             return True
         sorted_ = await recap_feedback.sort_feedback(self.recap_feedback_ai, text)
@@ -513,9 +511,7 @@ class RecapFeatures:
             shown = dm_links.add_links(
                 view, site_url=_recap_site(self.settings, campaign, job.session_at)
             )
-            sent = await self._dm_message(user_id, message, shown)
-            await dm_links.point_at_itself(sent, shown)
-            return sent
+            return await self._dm_message(user_id, message, shown)
 
         await recap_feedback_screen.present(send, sorted_, self.recaps, campaign, job.session_at)
         return True
@@ -1591,8 +1587,8 @@ class RecapFeatures:
         The flag says it is the DM Bot channel, which the campaign's people can read, so the
         words there are counts only: no recap title, no names."""
         if campaign.dm_bot_channel_id:
-            return campaign.dm_bot_channel_id, True
-        return campaign.dm_screen_channel_id, False
+            return upkeep.channel_for(campaign), True
+        return upkeep.channel_for(campaign), False
 
     async def recap_told(self, gid: int, cid: str, job: Job) -> None:
         """Tell the DM that their recap is ready, or could not be written. A ready recap goes in
@@ -1731,12 +1727,11 @@ class RecapFeatures:
                 )
                 or base
             )
-            sent = await user.send(
+            await user.send(
                 recap_names_text(added),
                 view=view,
                 allowed_mentions=discord.AllowedMentions.none(),
             )
-            await dm_links.point_at_itself(sent, view)
         except discord.Forbidden:
             log.info("Recap: the DM's private messages are closed (names note)")
         except Exception:
@@ -2581,7 +2576,7 @@ class RecapFeatures:
         if self.memory is None:
             return ()
         try:
-            found = await secret_connections(self.memory, gid, cid)
+            found = await secret_connections(self.memory, gid, cid, dm_only=True)
         except Exception:
             log.exception("Recap: couldn't read the secret connections")
             return ()
