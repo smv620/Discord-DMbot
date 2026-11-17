@@ -42,6 +42,22 @@ describe("the words", () => {
   });
 });
 
+describe("the hidden things made known to everyone (#4589)", () => {
+  it("says it as Discord's notice does, one and many", () => {
+    expect(w.revealed(3)).toBe("🌍 3 hidden things are now known to everyone.");
+    expect(w.revealed(1)).toBe("🌍 1 hidden thing is now known to everyone.");
+  });
+  it("shows the line for an upload that revealed something and not for one that did not", async () => {
+    show("100.cmp1.autoadd-revealed");
+    expect(await screen.findByText(w.revealed(3))).toBeTruthy();
+    cleanup();
+    show("100.cmp1.autoadd");
+    await screen.findByRole("status");
+    expect(screen.queryByText(w.revealed(0), { exact: false })).toBeNull();
+    expect(screen.queryByText("hidden", { exact: false })).toBeNull();
+  });
+});
+
 describe("the notice", () => {
   it("shows the counts, the links and the questions left, and never a name", async () => {
     show("100.cmp1.autoadd");
@@ -81,6 +97,14 @@ describe("Undo this upload", () => {
     expect(await screen.findByText(w.tookBack(60, 110))).toBeTruthy();
     expect(api.calls.filter((c) => c.startsWith("undoUpload"))).toHaveLength(1);
     expect(screen.queryByRole("button", { name: w.undo })).toBeNull();
+  });
+  it("takes the hidden-things line away once the upload is undone", async () => {
+    show("100.cmp1.autoadd-revealed");
+    expect(await screen.findByText(w.revealed(3))).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: w.undo }));
+    fireEvent.click(screen.getByRole("button", { name: w.undoYes }));
+    expect(await screen.findByText(w.tookBack(60, 110))).toBeTruthy();
+    expect(screen.queryByText(w.revealed(3))).toBeNull();
   });
   const failWith = async (error: ApiError): Promise<void> => {
     const api = mockApi("table");

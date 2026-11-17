@@ -53,7 +53,7 @@ class UploadNoticeRead(Script):
         self.assertEqual(got["label"], "The Sunken Keep")
         self.assertEqual(
             got["counts"],
-            {"names": 54, "byKind": {"npc": 30, "place": 24}, "connections": 48},
+            {"names": 54, "byKind": {"npc": 30, "place": 24}, "connections": 48, "revealed": 0},
         )
         self.assertIsNone(got["undone"])
         # seven days from the upload, as the bot's own rule
@@ -70,11 +70,23 @@ class UploadNoticeRead(Script):
         got = await self.read("import")
         self.assertEqual((got["counts"]["names"], got["counts"]["byKind"]), (1, {"npc": 1}))
 
+    async def test_the_hidden_things_a_read_made_known_are_a_count_beside_the_names(self) -> None:
+        """#4589: a 🌍 Common knowledge read's reveals, as Discord's notice says them."""
+        await self.notices.add(
+            THURSDAY.id, self.one.id, "The Sunken Keep", {"npc": 2, "revealed": 3}, [1],
+            source_kind="lore", source_id="up9",
+        )  # fmt: skip
+        got = await self.read("lore", "up9")
+        self.assertEqual(got["counts"]["revealed"], 3)
+        self.assertEqual((got["counts"]["names"], got["counts"]["byKind"]), (2, {"npc": 2}))
+
     async def test_another_upload_or_kind_is_not_this_notice(self) -> None:
         await self.add("up1", "lore")
         none = await self.read("lore", "up2")
         self.assertEqual(none["state"], "none")
-        self.assertEqual(none["counts"], {"names": 0, "byKind": {}, "connections": 0})
+        self.assertEqual(
+            none["counts"], {"names": 0, "byKind": {}, "connections": 0, "revealed": 0}
+        )
         self.assertIsNone(none["undone"])
         self.assertIsNone(none["undoUntil"])
         self.assertEqual((await self.read("import", "up1"))["state"], "none")
