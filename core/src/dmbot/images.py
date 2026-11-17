@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 from collections.abc import Callable, Sequence
 from contextlib import AbstractContextManager, nullcontext
@@ -556,7 +557,12 @@ def _grid(value: object) -> MapGrid | None:
 
 def _north(value: object) -> float | None:
     """North's angle from a drawn compass, 0 to under 360, or None (no compass is -1)."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or value < 0:
+    if (
+        isinstance(value, bool)
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)  # (JSON may carry NaN or Infinity)
+        or value < 0
+    ):
         return None
     return float(value) % 360.0
 

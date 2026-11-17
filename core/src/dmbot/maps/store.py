@@ -237,6 +237,7 @@ class MapStore:
                     "right_at": now, "use_ok": True if uploader_is_dm else None,
                     "use_by": uploader_id if uploader_is_dm else None,
                     "use_at": now if uploader_is_dm else None, "as_of": None, "replaces": None,
+                    "grid_from": None,
                     "created_at": now,
                 },
             )  # fmt: skip

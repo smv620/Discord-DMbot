@@ -109,14 +109,28 @@ async def record_in(
     row = await w.get(MAPS, map_id)
     if row is None:
         return done
-    have = await w.select(MAP_FEATURES, " AND map_id = %s AND status <> 'rejected'", [map_id])
+    # (a turned-down pin counts as there: a read never puts back what the DM or a merge took off)
+    have = await w.select(MAP_FEATURES, " AND map_id = %s", [map_id])
     pinned = {str(f["place_id"]) for f in have if f["place_id"] is not None}
     labelled = {name_key(str(f["label"])) for f in have if f["label"]}
+    loose = {
+        name_key(str(f["label"])): f
+        for f in have
+        if f["place_id"] is None and f["relation_id"] is None and f["fact_id"] is None
+        and f["shape"] == PIN and f["status"] != "rejected"
+    }  # fmt: skip
     for place in read.places:
         if place.at is None:
             continue  # (no position, no pin: "where" words stay in the note)
         key = name_key(place.name)
         target = names.get(key)
+        if target is not None and target not in pinned and key in loose:
+            # (an earlier read's unmatched pin with this name: tied now, never doubled)
+            await w.update(MAP_FEATURES, str(loose.pop(key)["id"]), {"place_id": target})
+            pinned.add(target)
+            done.kept += 1
+            done.matched += 1
+            continue
         if (target is not None and target in pinned) or (target is None and key in labelled):
             done.kept += 1
             continue
@@ -146,11 +160,14 @@ async def record_in(
     if scale is not None and row["scale_from"] is None:
         change.update(scale_value=scale.per_px, scale_unit=scale.unit, scale_from=READ_SOURCE)
         done.scale = True
-    if read.grid is not None and row["grid_kind"] == "none" and row["width"]:
+    if read.grid is not None and row["grid_from"] is None and row["width"]:
+        # (a cell's distance has no unit of its own: kept only in the map's scale unit)
+        unit = change.get("scale_unit", row["scale_unit"])
         change.update(
             grid_kind=read.grid.kind,
             grid_cell_px=row["width"] / read.grid.across,
-            grid_cell_distance=read.grid.distance or None,
+            grid_cell_distance=read.grid.distance if read.grid.unit == unit else None,
+            grid_from=READ_SOURCE,
         )
         done.grid = True
     if read.north is not None and row["north_from"] == "assumed":
@@ -164,48 +181,63 @@ async def record_in(
 async def rematch_in(w: Changes, entity_id: str, is_place: Any) -> int:
     """The DM kept a place (or its other name): an unmatched pin whose label is that name, on any
     map, is tied to it now (ruling 2), through the change log. Only when the name points at this
-    one kept place, and only where the map has no open pin for it yet. How many were tied."""
-    loose = await w.select(
-        MAP_FEATURES, " AND place_id IS NULL AND relation_id IS NULL AND fact_id IS NULL"
-        " AND shape = 'pin' AND status <> 'rejected'", [],
-    )  # fmt: skip
-    if not loose:  # (the common case: one read, and the keep goes on)
-        return 0
+    one kept place, and only where the map has no pin for it yet. How many were tied. Reads only
+    this entry's names and the pins with them first; the whole names list only when one fits."""
     entity = await w.get(ENTITIES, entity_id)
     if entity is None or entity["status"] != CONFIRMED or not is_place(str(entity["type"])):
         return 0
-    entities = await w.select(ENTITIES, " AND status = %s", [CONFIRMED])
-    aliases = await w.select(ALIASES, " AND status = %s", [CONFIRMED])
-    names = place_names(entities, aliases, is_place)
-    keys = {k for k, v in names.items() if v == entity_id}
-    if not keys:
+    own = await w.select(ALIASES, " AND entity_id = %s AND status = %s", [entity_id, CONFIRMED])
+    keys = {name_key(str(entity["name"]))} | {name_key(str(a["text"])) for a in own}
+    unmatched = await w.select(
+        MAP_FEATURES,
+        " AND place_id IS NULL AND relation_id IS NULL AND fact_id IS NULL"
+        " AND shape = 'pin' AND status <> 'rejected'",
+        [],
+    )
+    loose = [f for f in unmatched if name_key(str(f["label"])) in keys]
+    if not loose:  # (the common case: nothing on a map carries this name)
         return 0
+    names = place_names(
+        await w.select(ENTITIES, " AND status = %s", [CONFIRMED]),
+        await w.select(ALIASES, " AND status = %s", [CONFIRMED]),
+        is_place,
+    )
     tied = 0
     for f in loose:
-        if name_key(str(f["label"])) not in keys:
-            continue
-        taken = await w.select(
-            MAP_FEATURES,
-            " AND map_id = %s AND place_id = %s AND status <> 'rejected'",
-            [f["map_id"], entity_id],
-        )
-        if taken:
-            continue
+        if names.get(name_key(str(f["label"]))) != entity_id:
+            continue  # (the name is another place's too: never a pick between two)
+        if await w.select(
+            MAP_FEATURES, " AND map_id = %s AND place_id = %s", [f["map_id"], entity_id]
+        ):
+            continue  # (the map has a pin for it already, even a turned-down one)
         await w.update(MAP_FEATURES, str(f["id"]), {"place_id": entity_id})
         tied += 1
     return tied
 
 
+def _weight(f: Mapping[str, Any]) -> int:
+    """Which of two pins for one place on one map stays: the DM's (or a confirmed one) over an
+    import's over a read's (§7.1)."""
+    return 2 if f["source"] == "dm" or f["status"] == CONFIRMED else int(f["source"] == "import")
+
+
 async def move_on_merge(w: Changes, keep_id: str, gone_id: str) -> None:
     """Two places said to be one (§4.1): the gone place's pins move to the kept one. On a map where
-    the kept place has its own pin already, the gone one's is taken off (rejected, logged), so one
-    open pin per place per map holds."""
+    both have a pin, the weaker one is taken off (rejected, logged; the DM's own pin always stays,
+    the reviewer's point), so one open pin per place per map holds."""
     for f in await w.select(MAP_FEATURES, " AND place_id = %s", [gone_id]):
-        if f["status"] != "rejected" and await w.select(
-            MAP_FEATURES,
-            " AND map_id = %s AND place_id = %s AND status <> 'rejected'",
-            [f["map_id"], keep_id],
-        ):
+        theirs = (
+            []
+            if f["status"] == "rejected"
+            else await w.select(
+                MAP_FEATURES,
+                " AND map_id = %s AND place_id = %s AND status <> 'rejected'",
+                [f["map_id"], keep_id],
+            )
+        )
+        if theirs and _weight(theirs[0]) >= _weight(f):
             await w.update(MAP_FEATURES, str(f["id"]), {"status": "rejected"})
             continue
+        for other in theirs:  # (the gone place's pin is the DM's: the kept one's read goes)
+            await w.update(MAP_FEATURES, str(other["id"]), {"status": "rejected"})
         await w.update(MAP_FEATURES, str(f["id"]), {"place_id": keep_id})

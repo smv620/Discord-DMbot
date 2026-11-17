@@ -13,8 +13,10 @@ from dmbot.migrations._shared import _isolate
 # pairs, so they survive a resize; a place entry never has a coordinate of its own.
 # - What it marks: at most one of a place entry, a `route_to` connection or a `map_facts` row (one
 #   CHECK). None is a label DMbot read and hasn't matched to a kept name (Supervisor's ruling 2: a
-#   waiting name is never a target). A target that goes away leaves the feature unmatched
-#   (`SET NULL` on that one column), so a map never loses what was read on it.
+#   waiting name is never a target). Every write goes through the change log, and a logged delete
+#   of a place, a connection, a layer row or a map is refused while a feature points at it
+#   (`_changes.DEPENDENTS`), so nothing changes behind an Undo; the `SET NULL` on the one column is
+#   the floor for anything else, so a map never loses what was read on it.
 # - `label`: the words as written on the map. `status`: read, confirmed or rejected. `source`:
 #   read (the AI), dm (placed on the website, slice 5) or import (slice 11).
 # - Deleting a map deletes its features (the store does it through the change log first, so an
@@ -22,6 +24,8 @@ from dmbot.migrations._shared import _isolate
 # - One open pin for each place on each map (the unique index), so a re-read never doubles one.
 # Ids, numbers and the map's own label words only; nothing a player said.
 #
+# `campaign_maps.grid_from`: where the grid came from, as `scale_from` and `north_from` say for
+# theirs, so a DM's "no grid" (slice 5) is never written over by a read; NULL: nobody set it.
 # `campaign_maps.pins_read_at` (Supervisor's ruling 1): when the map's pins, scale and north were
 # last read. A map read closely before this slice has none, and the one-time re-read (at most 5 a
 # day per server) takes those. Housekeeping like `close_read_at` (0488): not in the change log.
@@ -42,6 +46,7 @@ SQL = r"""
         points          DOUBLE PRECISION[] NOT NULL CHECK (
             cardinality(points) % 2 = 0
             AND cardinality(points) BETWEEN 2 AND 2000
+            AND array_position(points, NULL) IS NULL
             AND 0 <= ALL(points) AND 1 >= ALL(points)),
         place_id        TEXT,
         relation_id     TEXT,
@@ -82,7 +87,9 @@ SQL = r"""
         BEFORE INSERT OR UPDATE ON map_features
         FOR EACH ROW EXECUTE FUNCTION dmbot_stamp_commit();
 
-    ALTER TABLE campaign_maps ADD COLUMN pins_read_at BIGINT;
+    ALTER TABLE campaign_maps
+        ADD COLUMN pins_read_at BIGINT,
+        ADD COLUMN grid_from TEXT CHECK (grid_from IN ('read', 'dm', 'import'));
     """ + _isolate("map_features")
 
 ISOLATED_TABLES: tuple[str, ...] = ("map_features",)

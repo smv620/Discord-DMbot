@@ -11,11 +11,13 @@ import math
 import unittest
 from typing import Any
 
+import psycopg
+
 from dmbot import images
 from dmbot.campaigns import CampaignStore
 from dmbot.maps import positions
 from dmbot.maps.store import MapStore
-from dmbot.memory.models import name_key
+from dmbot.memory.models import MemoryRuleError, name_key
 from dmbot.memory.store import MemoryStore
 from dmbot.pictures.store import PictureStore
 from tests import test_map_store as base
@@ -141,8 +143,11 @@ class TheSums(unittest.TestCase):
 
 class Pins(DatabaseTest):
     # (`test_map_store.Maps`'s set-up and helpers, without running its tests again)
-    picture = base.Maps.picture
-    add = base.Maps.add
+    async def picture(self, campaign: str, n: int) -> int:
+        return await base.Maps.picture(self, campaign, n)  # type: ignore[arg-type]
+
+    async def add(self, pic: int, **more: Any) -> str:
+        return await base.Maps.add(self, pic, **more)  # type: ignore[arg-type]
 
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
@@ -256,12 +261,98 @@ class Pins(DatabaseTest):
         await self.maps.release_pins(GUILD_A, self.one.id, self.map_id)  # (put off)
         self.assertEqual(len(await self.maps.pins_waiting(GUILD_A)), 1)
 
-    async def test_another_campaign_sees_no_pin(self) -> None:
+    async def test_a_place_added_already_kept_ties_its_pin(self) -> None:
+        await self.record()
+        bryn = await self.place("Bryn Shander")
+        self.assertEqual((await self.features())[0]["place_id"], bryn)
+
+    async def test_a_kept_other_name_ties_its_pin(self) -> None:
+        await self.record()
+        town = await self.place("Brynshander Town")
+        await self.memory.add_alias(
+            GUILD_A, self.one.id, town, "Bryn Shander", kind="title", status="confirmed",
+            source="dm",
+        )  # fmt: skip
+        self.assertEqual((await self.features())[0]["place_id"], town)
+
+    async def test_a_name_two_places_share_ties_nothing(self) -> None:
+        await self.record()
+        await self.place("Bryn Shander")
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute("UPDATE map_features SET place_id = NULL")
+        await self.place("Bryn Shander")  # (now two kept places have the name)
+        self.assertIsNone((await self.features())[0]["place_id"])
+
+    async def test_an_earlier_unmatched_pin_is_tied_not_doubled(self) -> None:
+        await self.record()
+        waiting = await self.place("Bryn Shander", status="proposed")
+        async with self.db.guild(GUILD_A) as conn:  # (kept by a path that missed the pin)
+            await conn.execute(
+                "UPDATE memory_entities SET status = 'confirmed' WHERE id = %s", (waiting,)
+            )
+        await self.record()
+        bryn = (await self.features())[0]
+        self.assertEqual(len(await self.features()), 2)
+        self.assertEqual(bryn["place_id"], waiting)
+
+    async def test_a_turned_down_pin_is_never_put_back(self) -> None:
         await self.record()
         async with self.db.guild(GUILD_A) as conn:
-            cur = await conn.execute(
-                "SELECT count(*) AS n FROM map_features WHERE campaign_id = %s", (self.two.id,)
+            await conn.execute("UPDATE map_features SET status = 'rejected'")
+        got = await self.record()
+        self.assertEqual(got.pins, 0)
+        self.assertEqual({f["status"] for f in await self.features()}, {"rejected"})
+
+    async def test_a_merge_keeps_the_dms_own_pin(self) -> None:
+        await self.record()
+        other = await self.place("Old Targos")
+        async with self.db.guild(GUILD_A) as conn:  # (the DM placed Old Targos on this map)
+            await conn.execute(
+                "INSERT INTO map_features (guild_id, campaign_id, id, map_id, shape, points,"
+                " place_id, label, status, source, created_at) VALUES (%s, %s, %s, %s, 'pin',"
+                " '{0.3,0.3}', %s, 'Old Targos', 'confirmed', 'dm', 1)",
+                (GUILD_A, self.one.id, "e" * 32, self.map_id, other),
             )
-            row = await cur.fetchone()
-        assert row is not None
-        self.assertEqual(row["n"], 0)
+        await self.memory.merge(
+            GUILD_A, self.one.id, other, self.targos, source="dm", dm_said_same=True
+        )
+        rows = {f["label"]: f for f in await self.features()}
+        self.assertEqual(rows["Old Targos"]["status"], "confirmed")
+        self.assertEqual(rows["Targos"]["status"], "rejected")
+
+    async def test_undo_of_a_places_add_is_refused_while_a_pin_points_at_it(self) -> None:
+        bryn = await self.memory.add_entity(
+            GUILD_A, self.one.id, name="Bryn Shander", type="place", status="confirmed",
+            source="dm",
+        )  # fmt: skip
+        await self.record()
+        assert bryn.batch is not None
+        with self.assertRaises(MemoryRuleError):  # (nothing changes behind the log)
+            await self.memory.undo(GUILD_A, self.one.id, bryn.batch, source="dm")
+        self.assertEqual((await self.features())[0]["place_id"], bryn.value.id)
+
+    async def test_the_table_refuses_a_bad_feature(self) -> None:
+        bad = [
+            ("pin", "{0.1,0.2,0.3,0.4}", self.targos, None),  # (a pin is one point)
+            ("pin", "{1.5,0.2}", None, None),  # (outside the picture)
+            ("pin", "{0.1,NULL}", None, None),
+            ("pin", "{0.1,0.2}", self.targos, self.map_id),  # (two targets: fact_id is not a fact)
+        ]
+        for shape, points, place, fact in bad:
+            with self.subTest(points=points), self.assertRaises(psycopg.Error):
+                async with self.db.guild(GUILD_A) as conn:
+                    await conn.execute(
+                        "INSERT INTO map_features (guild_id, campaign_id, id, map_id, shape,"
+                        " points, place_id, fact_id, status, source, created_at) VALUES"
+                        " (%s, %s, %s, %s, %s, %s, %s, %s, 'read', 'read', 1)",
+                        (GUILD_A, self.one.id, "d" * 32, self.map_id, shape, points, place,
+                         fact),
+                    )  # fmt: skip
+
+    async def test_keeping_a_name_in_another_campaign_leaves_this_pin_alone(self) -> None:
+        await self.record()
+        await self.memory.add_entity(
+            GUILD_A, self.two.id, name="Bryn Shander", type="place", status="confirmed",
+            source="dm",
+        )  # fmt: skip
+        self.assertIsNone((await self.features())[0]["place_id"])

@@ -4274,6 +4274,8 @@ class MemoryStore:
                 await record_name_session(w, str(row["id"]), session_started_at)
             if role == PLAYER_CHARACTER and played_by is not None:
                 await _sync_plays(w, row["id"])
+            if status == CONFIRMED:  # (added already kept: a map's pin with its name, #4670)
+                await _rematch_pins(w, str(row["id"]))
             return Written(_entity(row), w.batch)
 
     async def name_met(
@@ -6056,10 +6058,14 @@ class MemoryStore:
                 if old["kind"] == "old" and kind != "old":
                     upgrade = {**upgrade, "kind": kind}  # asked for by name: listened for again
                 row = await w.update(ALIASES, old["id"], upgrade) if upgrade else old
+                if row["status"] == CONFIRMED:  # (a kept other name: its map pin, #4670)
+                    await _rematch_pins(w, entity_id)
                 return Written(_alias(row), w.batch)
             row = await w.insert(
                 ALIASES, _new_alias(w, entity_id, text, kind, status, secret, used_by)
             )
+            if status == CONFIRMED:
+                await _rematch_pins(w, entity_id)
             return Written(_alias(row), w.batch)
 
     async def add_short_names(
