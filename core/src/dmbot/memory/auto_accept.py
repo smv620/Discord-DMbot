@@ -73,27 +73,29 @@ _LIST_MARK = re.compile(r",|;|\band\b", re.I)
 
 
 async def listed_towns(
-    memory: MemoryStore, guild: int, campaign: str, every: list[Waiting]
+    memory: MemoryStore,
+    guild: int,
+    campaign: str,
+    every: list[Waiting],
+    whole: list[Waiting] | None = None,
 ) -> set[str]:
     """The waiting worked-out connections the sure step keeps (#4636 part 3, Supervisor's ruling,
     the keys' one exception to "inferred = offered, never extracted"): each is
     - `in`, from a kept place to a kept place (a region or bigger place);
     - rated sure by the reader (`inferred_sure`, only ever on such a one);
-    - from a list: its quote is a list, and at least `LIST_MIN` of them from the same upload put
-      places in that same region;
-    - for a place with no other parent, kept or waiting, stated or worked out.
-    A secret one and a hand-over never are. Everything else worked out stays a question ("lives
-    in", roads, a guess). Read only."""
+    - from a list: its quote names the place and another of the region's listed places in one
+      sentence with a list mark between them, and at least `LIST_MIN` of them from the same
+      upload put places in that same region;
+    - for a place with no other parent: kept, or waiting from any upload (`whole`, the whole
+      list; `every` when not given), stated or worked out. A parent DMbot only assumed from where
+      the story was is no other parent: a stated one replaces it (`store._replace_assumed`).
+    A secret one never is. Everything else worked out stays a question ("lives in", roads, a
+    guess). Whether the region is the bigger place is the reader's word (its ' | sure' asks for a
+    region's own list): no place level is checked here. Read only."""
     found = [
         w
         for w in every
-        if w.inferred
-        and w.inferred_sure
-        and w.predicate == NESTS
-        and w.ready
-        and not w.secret
-        and not w.hand_over
-        and _LIST_MARK.search(w.quote)
+        if w.inferred and w.inferred_sure and w.predicate == NESTS and w.ready and not w.secret
     ]
     if not found:
         return set()
@@ -102,17 +104,44 @@ async def listed_towns(
         if e.type == "place"
     }  # fmt: skip
     parents: dict[str, set[str]] = defaultdict(set)
-    for w in every:
+    for w in every if whole is None else whole:
         if w.predicate == NESTS:
             parents[w.subject_id].add(w.object_id)
     for r in await memory.relations(guild, campaign, include_secret=True):
-        if r.predicate == NESTS and r.status != "rejected":
+        if r.predicate == NESTS and r.status != "rejected" and not r.assumed:
             parents[r.subject_id].add(r.object_id)
-    lists: dict[tuple[str, str], list[str]] = defaultdict(list)
+    groups: dict[tuple[str, str], list[Waiting]] = defaultdict(list)
     for w in found:
         if {w.subject_id, w.object_id} <= places and parents[w.subject_id] <= {w.object_id}:
-            lists[(w.object_id, w.upload)].append(w.id)
-    return {i for ids in lists.values() if len(ids) >= LIST_MIN for i in ids}
+            groups[(w.object_id, w.upload)].append(w)
+    out: set[str] = set()
+    for group in groups.values():
+        if len(group) < LIST_MIN:
+            continue
+        names = [w.subject for w in group]
+        out |= {w.id for w in group if _in_the_list(w.quote, w.subject, names)}
+    return out
+
+
+def _in_the_list(quote: str, name: str, listed: list[str]) -> bool:
+    """Whether `name` sits in a list in `quote`: one sentence of it names this place and another
+    of the region's listed places with a list mark (a comma, "and", ";") between them. A place
+    named only after the list ends ("…and Dunhollow. Eastpeak rises over them") is not in it."""
+    key = name.casefold()
+    for sentence in re.split(r"(?<=[.!?])\s+", quote):
+        low = sentence.casefold()
+        at = low.find(key)
+        if at < 0:
+            continue
+        for other in listed:
+            o = other.casefold()
+            there = low.find(o)
+            if o == key or there < 0:
+                continue
+            lo, hi = sorted((at, there))
+            if _LIST_MARK.search(low[lo : hi + len(o)]):
+                return True
+    return False
 
 
 def _words(text: str) -> str:
@@ -240,15 +269,13 @@ async def accept_connections(
     name and date as the DM saw them); None for all."""
     onto = await memory.ontology(guild, campaign)
     symmetric = {p.key for p in onto.predicates.values() if p.symmetric}
-    every = [
-        w
-        for w in await links.waiting(guild, campaign, symmetric=symmetric)
-        if upload is None or w.upload == upload
-    ]
+    whole = await links.waiting(guild, campaign, symmetric=symmetric)
+    every = [w for w in whole if upload is None or w.upload == upload]
     # (one DMbot inferred is never kept unasked: it waits for the DM's own press, #2959 item 5,
     # except a region's listed town, #4636 part 3; nor a hand-over, which ends what someone else
     # holds, #4115)
-    listed = await listed_towns(memory, guild, campaign, every)
+    # (another parent waiting from any upload counts: the whole list, not this upload's)
+    listed = await listed_towns(memory, guild, campaign, every, whole)
     ready = []
     for w in every:
         why = why_waiting(w, listed)

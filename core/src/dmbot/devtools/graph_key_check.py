@@ -501,13 +501,18 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
         right_as_description = any(_plain(name) in {_plain(x) for x in names[s]} for s in strict)
         if graph.named([name]) or (not right_as_description and graph.described([name])):
             report.violations.append(name)
+    # A must-not-make row (#4636 part 3): every row, whichever document (a near-miss is false in
+    # either); a kept one is counted here only, never again as an extra tie
     for t in key.get("must_not_ties", []):
-        a, b = (
-            lookup(t["a"]) if t["a"] in names else set(),
-            lookup(t["b"]) if t["b"] in names else set(),
-        )
-        if a and b and _tie_status(t, graph, a, b, kinds)[0] == FOUND:
+        if t["a"] not in names or t["b"] not in names:
+            continue
+        a, b = lookup(t["a"]), lookup(t["b"])
+        if not a or not b:
+            continue
+        status, _why, used_here = _tie_status(t, graph, a, b, kinds)
+        if status == FOUND:
             report.false_ties.append(str(t["id"]))
+            used_relations |= used_here
     for r in graph.relations:
         if (
             str(r["subject_id"]) in matched_ids

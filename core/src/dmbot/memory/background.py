@@ -1477,6 +1477,7 @@ def keep_connections(
                 c.words,
                 decided=c.decided,
                 inferred=c.inferred,
+                inferred_sure=c.inferred_sure,  # (a region's listed town, #4636 part 3)
             )
             if c.change:  # (who it came from is a name DMbot has, and no end, or no hand-over)
                 prev_end, no_prev = speaker_end(c.from_holder, speaker)
@@ -1552,7 +1553,7 @@ def keep_connections(
                     held_words = out[held_at].words
                     if out[held_at].inferred and not c.inferred:
                         # (the text states what DMbot had only inferred: it is stated now)
-                        out[held_at] = replace(out[held_at], inferred="")
+                        out[held_at] = replace(out[held_at], inferred="", inferred_sure=False)
                         lost["inferred_stated"] += 1
                     if c.inferred:  # (an inferred feeling is never added to a stated line)
                         lost["same_pair"] += 1
@@ -1585,7 +1586,7 @@ def keep_connections(
                     at = inferred_at.pop(once, None)
                     if at is not None and not c.inferred:
                         # (the text states what DMbot had only inferred: it is stated now)
-                        out[at] = replace(out[at], inferred="")
+                        out[at] = replace(out[at], inferred="", inferred_sure=False)
                         lost["inferred_stated"] += 1
                     lost["same_pair"] += 1
                     continue

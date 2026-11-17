@@ -55,6 +55,23 @@ class TheRead(unittest.TestCase):
         got = bg.read_connections(reply(line("knows", WHY, True)), TEXT)
         self.assertFalse(any(c.inferred_sure for c in got))
 
+    def test_sure_survives_the_keep_step_an_upload_goes_through(self) -> None:
+        """The reviewer's blocking find: `keep_connections` builds each line again, and must
+        carry `inferred_sure` on, or no upload ever stores one as sure."""
+        names = [bg.Found(n, "place", (), (), LIST) for n in ("Nine Burgs", "Ashford")]
+        (read,) = bg.read_connections(reply(line("in", WHY, True)), TEXT)
+        (kept,) = bg.keep_connections([[read]], names, {})
+        self.assertTrue(kept.inferred_sure)
+
+    def test_a_stated_twin_clears_sure_in_the_keep_step(self) -> None:
+        names = [bg.Found(n, "place", (), (), LIST) for n in ("Nine Burgs", "Ashford")]
+        guessed = bg.Connection(
+            "Ashford", "located_in", "Nine Burgs", LIST, inferred=WHY, inferred_sure=True
+        )
+        stated = bg.Connection("Ashford", "located_in", "Nine Burgs", LIST)
+        (kept,) = bg.keep_connections([[guessed, stated]], names, {})
+        self.assertEqual((kept.inferred, kept.inferred_sure), ("", False))
+
     def test_the_answer_shape_asks_for_sure(self) -> None:
         item = bg.SCHEMA["properties"]["connections"]["items"]
         self.assertIn("sure", item["required"])
@@ -77,17 +94,24 @@ class Base(DatabaseTest):
         )
         return written.value.id
 
-    async def queue(self, *towns: str, sure: bool = True, quote: str = LIST, **kw: Any) -> None:
+    async def queue(
+        self,
+        *towns: str,
+        sure: bool = True,
+        quote: str = LIST,
+        upload: str = "Burgs, 1 Jan",
+        **kw: Any,
+    ) -> None:
         await self.links.add(
             GUILD, self.c,
-            [NewLink(t, "located_in", self.region, quote, upload="Burgs, 1 Jan", inferred=WHY,
+            [NewLink(t, "located_in", self.region, quote, upload=upload, inferred=WHY,
                      inferred_sure=sure, **kw) for t in towns],
         )  # fmt: skip
 
-    async def keep(self) -> auto_accept.Tally:
+    async def keep(self, upload: str | None = "Burgs, 1 Jan", **kw: Any) -> auto_accept.Tally:
         tally = auto_accept.Tally()
         await auto_accept.accept_connections(
-            self.memory, self.links, GUILD, self.c, tally, upload="Burgs, 1 Jan"
+            self.memory, self.links, GUILD, self.c, tally, upload=upload, **kw
         )
         return tally
 
@@ -176,6 +200,48 @@ class TheSureStep(Base):
         self.assertEqual(tally.accepted[auto_accept.CONNECTIONS], 3)
         self.assertEqual(tally.waiting_why[auto_accept.WORKED_OUT], 1)
 
+    async def test_another_parent_waiting_from_another_upload_counts(self) -> None:
+        other = await self.place("Old Kingdom")
+        await self.links.add(
+            GUILD, self.c,
+            [NewLink(self.towns[0], "located_in", other, "Ashford, in the Old Kingdom",
+                     upload="Kingdom, 2 Jan")],
+        )  # fmt: skip
+        extra = await self.place("Dunhollow")
+        await self.queue(*self.towns, extra)
+        await self.keep()
+        self.assertEqual(await self.kept_in(), {*self.towns[1:], extra})
+
+    async def test_a_parent_dmbot_only_assumed_is_no_other_parent(self) -> None:
+        other = await self.place("Old Kingdom")
+        await self.memory.add_relation(
+            GUILD, self.c, self.towns[0], "located_in", other, source="worked_out",
+            confidence=0.5, assumed=True,
+        )  # fmt: skip
+        await self.queue(*self.towns)
+        await self.keep()
+        self.assertIn(self.towns[0], await self.kept_in())
+
+    async def test_a_list_split_across_two_uploads_is_no_list(self) -> None:
+        await self.queue(*self.towns[:2])
+        await self.queue(self.towns[2], upload="Burgs again, 3 Jan")
+        await self.keep(upload=None)  # (every upload at once, as the sample run's step)
+        self.assertEqual(await self.kept_in(), set())
+
+    async def test_a_place_named_after_the_list_ends_is_not_in_it(self) -> None:
+        """A near-miss with a list-like quote: the peak beside the towns, in the next sentence."""
+        peak = await self.place("Eastpeak")
+        await self.queue(*self.towns)
+        await self.queue(peak, quote="Coldmere and Dunhollow. Eastpeak rises over them")
+        await self.keep()
+        self.assertEqual(await self.kept_in(), set(self.towns))
+
+    async def test_a_dry_run_counts_them_and_keeps_nothing(self) -> None:
+        await self.queue(*self.towns)
+        tally = await self.keep(dry_run=True)
+        self.assertEqual(tally.accepted[auto_accept.CONNECTIONS], 3)
+        self.assertEqual(await self.kept_in(), set())
+
     async def test_discord_s_keep_all_still_leaves_them(self) -> None:
         from dmbot.memory import backstory_keep
 
@@ -213,6 +279,7 @@ class TheScore(unittest.TestCase):
         self.assertEqual([r.status for r in report.ties], [gkc.FOUND])
         self.assertEqual(report.false_ties, ["n1"])
         self.assertIn("Must-not-make ties kept as facts: 1", gkc.render(report))
+        self.assertEqual(report.extra_ties, 0)  # (counted once, as a false tie)
 
     def test_a_near_miss_only_offered_is_no_false_tie(self) -> None:
         rows = [rel("x2", "k", "located_in", "r", status="proposed")]
