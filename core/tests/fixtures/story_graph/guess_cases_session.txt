@@ -1,0 +1,16 @@
+[0:00:05] DM: You stand in the square beside the Old Well. The water smells of bitter almonds.
+[0:00:20] player_ist: Cerric kneels by the well. I think Mira Vell poisoned the Old Well. Who else knows that much about poisons?
+[0:00:41] player_jac: No, it was Captain Rusk! Belleros says it to his face: you poisoned the Old Well, Captain.
+[0:00:55] DM: Captain Rusk scowls and says nothing.
+[0:01:10] player_owe: Maybe the goat poisoned the well, ha!
+[0:01:18] player_eri: Ha. Did Elder Hobb poison it, though?
+[0:01:30] DM: You notice Captain Rusk and Mira Vell exchange a quick look.
+[0:01:45] player_eri: Okthandom isn't sure. It's unlikely, but maybe Oswin poisoned the Old Well. The mill is upstream.
+[0:02:02] player_owe: Claude thinks Mira Vell works for Brother Aldo. She sells his blessed remedies.
+[0:02:20] player_jac: Belleros thinks Captain Rusk hired the ratcatcher Snitch Barrow to do the dirty work.
+[0:02:40] player_ist: Here's what I think happened: Brother Aldo hired Oswin to poison it, so the shrine could sell cures.
+[0:02:52] player_jac: Agreed.
+[0:02:58] player_eri: Agreed, that fits.
+[0:03:05] player_owe: Yes, we all agree on that one.
+[0:03:20] player_eri: Let's ask Oswin about the mill tomorrow.
+[0:03:35] DM: Elder Hobb thanks you and offers you beds at the inn for the night.
