@@ -12956,8 +12956,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     session_at=queued[-1],
                     also=missed,
                 )
-            elif reasons:
-                await self.post(channel, f"📜 {missed}")
+            elif reasons:  # (fixed reasons, no words of the story: the DM Bot channel, #3874 E1)
+                await self.post(campaign.dm_bot_channel_id or channel, f"📜 {missed}")
 
     async def _add_sure_import(
         self,
