@@ -24,6 +24,7 @@ from dmbot.ui.dmbot_commands import (
 )
 from dmbot.ui.name_card import _spoken_recaps
 from dmbot.ui.names import _campaign_for, _md, _memory, changed, sees_secrets
+from dmbot.ui.private_server import guild_id_for
 
 log = logging.getLogger(__name__)
 
@@ -78,12 +79,12 @@ class SaidAsReview(_Menu):
 
     async def current_text(self, interaction: discord.Interaction) -> str | None:
         memory = _memory(interaction)
-        guild = interaction.guild
-        if memory is None or guild is None:
+        guild_id = await guild_id_for(interaction, self.campaign_id)  # (a private chat has none)
+        if memory is None or guild_id is None:
             return None
         waiting = [
             s
-            for s in await memory.said_as_suggestions(guild.id, self.campaign_id)
+            for s in await memory.said_as_suggestions(guild_id, self.campaign_id)
             if s.entity_id not in self.later
         ]
         self.clear_items()
@@ -111,7 +112,7 @@ class SaidAsReview(_Menu):
     async def _may_answer(self, interaction: discord.Interaction) -> bool:
         """Is this person a DM of the campaign (checked on every press and every submit)?"""
         campaign = await _campaign_for(interaction, self.campaign_id)
-        if campaign is None or interaction.guild is None:
+        if campaign is None:
             return False
         if not sees_secrets(campaign, interaction.user.id):
             await _tell(interaction, ONLY_DMS)
@@ -130,9 +131,9 @@ class SaidAsReview(_Menu):
     ) -> None:
         """Answer offer `s` (the one the press or form was for, not whatever is shown now)."""
         memory = _memory(interaction)
-        if memory is None or interaction.guild is None or not await self._may_answer(interaction):
+        guild_id = await guild_id_for(interaction, self.campaign_id)
+        if memory is None or guild_id is None or not await self._may_answer(interaction):
             return
-        guild_id = interaction.guild.id
         try:
             await memory.answer_said_as(guild_id, self.campaign_id, s.entity_id, spelling)
         except MemoryRuleError as exc:
