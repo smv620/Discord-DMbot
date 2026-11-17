@@ -43,6 +43,7 @@ EVERY_ACTION = (
     "thread-keep", "thread-not", "thread-undo",  # story threads DMbot found (#4457)
     "secret-keep", "secret-make", "secret-undo",  # 🤫 Known or secret? questions (#4598)
     "progress-keep", "progress-none", "progress-undo",  # Progress to check (#4616)
+    "clue-add", "clue-word", "clue-off", "clue-undo",  # a story thread's clues (#4625)
 )  # fmt: skip
 
 

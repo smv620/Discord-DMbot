@@ -96,6 +96,7 @@ from dmbot.web import (
     support,
     theatre_script,
     thread_card,
+    thread_clues,
     thread_progress,
     thread_suggestions,
     timeline,
@@ -2795,6 +2796,33 @@ def create_app(
             body = None
         try:
             return {"answer": await secret_questions.change(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/threads/{thread}/clues")
+    async def me_campaign_thread_clues(ref: str, thread: str, signed: Signed) -> dict[str, Any]:
+        """A story thread's clues and how many are found (#4625): DM only, nothing for anyone
+        else (a clue's tie, its false-lead word and the count are the DM's alone)."""
+        session, _token = signed
+        try:
+            return await thread_clues.read(db, session, ref, thread)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/threads/{thread}/clues/change", status_code=202)
+    async def me_campaign_thread_clues_change(
+        ref: str, thread: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """One change to a thread's clues (#4625); polled at `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await thread_clues.change(db, session, ref, thread, body)}
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

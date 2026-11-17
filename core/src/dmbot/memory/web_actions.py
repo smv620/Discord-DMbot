@@ -25,6 +25,7 @@ from dmbot.db import Database
 from dmbot.memory import backstory_keep as keep
 from dmbot.memory import beliefs, evidence, link_edits, map_uploads, name_edits, placing, told
 from dmbot.memory import claims as claims_mod
+from dmbot.memory import thread_clues as clues_mod
 from dmbot.memory import time_limits as tl
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import ALREADY_UNDONE, CLAIMS, Changes
@@ -168,6 +169,9 @@ SECRET_ACTIONS = ("secret-keep", "secret-make", "secret-undo")
 # The "Progress to check" answers from the website (#4616): the same store calls as Discord's 🧵
 # card (`keep_thread_progress`, `turn_down`, `unturn`), a keep is one change and one Undo.
 PROGRESS_ACTIONS = ("progress-keep", "progress-none", "progress-undo")
+# A story thread's clues from the website (#4625): the same store calls as Discord's 🔎 Clues
+# screen (`tie_clue`, `set_clue_word`, `untie_clue`), each one change and one Undo.
+CLUE_ACTIONS = ("clue-add", "clue-word", "clue-off", "clue-undo")
 # The Maps page's presses (#4347): a DM's yes or no to using a map (`<map id> yes|no`), Show to
 # the table or Hide (`<map id> shown|hidden`), Remove (`<map id>`), a poster's Take it back
 # (`<map id>`), and ↩ Undo of one of those (the text is its change number). Filed under no name.
@@ -532,6 +536,26 @@ class ActionStore:
             )
             return await cur.fetchone() is not None
 
+    async def clue_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int
+    ) -> bool:
+        """Whether `batch` is the change this DM's own done clue action made from the website
+        (#4625), so the page's Undo can only take back what they did themselves."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action = ANY(%s) AND state = 'done'"
+                " AND %s = ANY (result_batches) LIMIT 1",
+                (
+                    guild_id,
+                    campaign_id,
+                    user_id,
+                    [a for a in CLUE_ACTIONS if a != "clue-undo"],
+                    batch,
+                ),
+            )
+            return await cur.fetchone() is not None
+
     async def map_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, batch: int, *, own_only: bool = False
     ) -> bool:
@@ -699,6 +723,10 @@ async def apply(
         if actions is None and action.action == "secret-undo":
             return _failed(FAILED)
         return await _secrets(memory, actions, guild_id, cid, action)
+    if action.action in CLUE_ACTIONS:
+        if actions is None and action.action == "clue-undo":
+            return _failed(FAILED)
+        return await _clues(memory, actions, guild_id, cid, action)
     if action.action in PROGRESS_ACTIONS:
         if actions is None and action.action == "progress-undo":
             return _failed(FAILED)
@@ -1275,6 +1303,46 @@ async def _secrets(
         if a.action == "secret-undo":
             return _failed(CHANGED)
         return _failed(GONE if str(exc) == sq.GONE else BAD_TARGET)
+
+
+async def _clues(
+    memory: MemoryStore, actions: ActionStore | None, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """A change to a story thread's clues from the page (#4625), through the store calls Discord's
+    🔎 Clues screen makes: `clue-add` ties the campaign's clue of that name or makes a new one
+    hidden from the players (`tie_clue`), `clue-word` marks it a false lead or not
+    (`set_clue_word`), `clue-off` takes it off the thread (`untie_clue`), each one change with one
+    Undo. The door checked the text's shape; the store checks the rest again: a thread or clue gone
+    meanwhile, or no longer tied, is `gone`; a rule (not a thread, not a clue, already on the
+    thread) is `bad_target`. ↩ Undo takes back only a change this DM's own done clue action made,
+    read again here. Words and ids only; a clue's name is the DM's own and is never logged."""
+    try:
+        if a.action == "clue-undo":
+            assert actions is not None  # (checked by the caller)
+            batch = int(a.text)
+            if not await actions.clue_batch_made(guild_id, cid, a.user_id, batch):
+                return _failed(GONE)
+            await memory.undo(guild_id, cid, batch)
+            return Outcome()
+        thread, _, rest = a.text.partition(" ")
+        if a.action == "clue-add":
+            made = await memory.tie_clue(guild_id, cid, thread, new_name=rest, source=DM)
+            return _changed(made.batch)
+        clue, _, word = rest.partition(" ")
+        if a.action == "clue-word":
+            set_ = await memory.set_clue_word(
+                guild_id, cid, thread, clue, false_lead=word == "false", source=DM
+            )
+            return _changed(set_.batch)
+        off = await memory.untie_clue(guild_id, cid, thread, clue, source=DM)
+        return _changed(off.batch)
+    except MemoryRuleError as exc:  # (TooLateToUndo is one: something done since is in the way)
+        if str(exc) == ALREADY_UNDONE:
+            return Outcome()  # (a second Undo of the same change: done, as a retry is)
+        if a.action == "clue-undo":
+            return _failed(CHANGED)
+        gone = (STORE_NOT_FOUND, clues_mod.NOT_TIED)
+        return _failed(GONE if str(exc) in gone else BAD_TARGET)
 
 
 async def _progress(
