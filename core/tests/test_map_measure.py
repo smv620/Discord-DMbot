@@ -328,7 +328,7 @@ class WhoSeesWhat(
         self.bryn = await self.place("Bryn Shander")
         await self.record()  # (Targos and Bryn Shander pinned, a scale bar read)
 
-    async def ask(self, question: str, *, dm: bool) -> str | None:
+    async def ask(self, question: str, *, dm: bool) -> Any:  # (words, NOT_SHOWN or None)
         asked = measure_phrase.read(question)
         assert asked is not None
         return await self.maps.measure(GUILD_A, self.one.id, asked, dm=dm)
