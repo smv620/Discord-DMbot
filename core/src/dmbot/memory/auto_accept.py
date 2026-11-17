@@ -37,7 +37,7 @@ from dmbot.memory.models import (
     MemoryRuleError,
 )
 from dmbot.memory.ontology import resolve_kind, rules_word_for
-from dmbot.memory.store import MemoryStore
+from dmbot.memory.store import NO_KIN_TIE, MemoryStore
 from dmbot.names.not_names import CREATURE_KINDS
 
 log = logging.getLogger(__name__)
@@ -204,6 +204,9 @@ async def _accept_kin(
         for entity in ready:
             left.remove(entity)
             if dry_run:
+                if not await memory.has_kin_tie(guild, campaign, entity.id):
+                    tally.waiting[NAMES] += 1  # (as the live run: no stated tie, it waits)
+                    continue
                 tally.accepted[NAMES] += 1
                 tally.kinds[NPC] += 1
                 kept_people.add(entity.id)
@@ -216,7 +219,12 @@ async def _accept_kin(
                 tally.kinds[NPC] += 1
                 tally.add_batch(written.batch)
                 kept_people.add(entity.id)
-            except Exception as exc:  # a rule, or anything else: counted, the run goes on
+            except MemoryRuleError as exc:
+                if str(exc) != NO_KIN_TIE:
+                    refused(tally, NAMES, exc)
+                else:  # (no stated tie: its relation is only its label's reading, so it waits)
+                    tally.waiting[NAMES] += 1
+            except Exception as exc:  # anything else: counted, the run goes on
                 refused(tally, NAMES, exc)
     tally.waiting[NAMES] += len(left)
 

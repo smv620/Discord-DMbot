@@ -389,6 +389,10 @@ MERGE_LED_TO_LOOP = (
     "would make a loop. Take away one of those “led to” links first."
 )
 
+# An unnamed relative kept as kin with no stated tie to its character (#4636 part 1): it stays a
+# question, and the sure step counts it as waiting, never refused.
+NO_KIN_TIE = "Nothing in your notes says how they're connected yet, so it's still a question."
+
 # The refusals of `add_relation` and `add_unnamed` that may be written to the log (#4161): fixed
 # sentences with no name, alias, role or detail in them, defined above (or `_changes.NOT_FOUND`).
 # Anything else, a message built from a value, is logged as "unlisted rule" and its class: logs hold
@@ -4848,7 +4852,10 @@ class MemoryStore:
             before = await _entity_row(w, entity_id)
             check_named(asked, before["name"])
             # (only an unnamed person is kept as kin: a named entry passed in is left as it is)
-            hide = as_kin and bool(before["unnamed"]) and await _kin_hidden(w, before)
+            kin = as_kin and bool(before["unnamed"])
+            if kin and not await _kin_ties(w, before):
+                raise MemoryRuleError(NO_KIN_TIE)
+            hide = kin and await _kin_hidden(w, before)
             # A session's new name said only while the party was split: kept from the players who
             # weren't there (#4037), in this same update (one change per entry, one Undo).
             scene = (
@@ -4881,8 +4888,84 @@ class MemoryStore:
             )
             row = await _entity_row(w, entity_id)
             await _sync_plays(w, entity_id)
+            if kin:  # (its stated tie to its character, in this same change: #4636 part 1)
+                await self._keep_kin_ties(w, before)
             said = "" if scene is None else "group" if learned else "unknown"
             return Written(_entity(row), w.batch, split=said)
+
+    async def has_kin_tie(self, guild_id: int, campaign_id: str, entity_id: str) -> bool:
+        """Whether an unnamed relative has a stated tie to its character (`_kin_ties`): what a
+        dry run of the sure step counts by, as `confirm_entity(as_kin=True)` checks it. Read
+        only."""
+        async with self._read(guild_id, campaign_id) as scope:
+            row = await scope.get(ENTITIES, entity_id, lock=False)
+            return row is not None and await _kin_ties(scope, row) > 0  # type: ignore[arg-type]
+
+    async def _keep_kin_ties(self, w: Changes, row: Mapping[str, Any]) -> int:
+        """Keep an unnamed relative's stated ties to its character with it, in its keep's own
+        write (#4636 part 1, Supervisor's send-back): so the DM is not asked the tie instead of the
+        name, and one Undo takes both back. Each waiting one is kept as the backstory keep keeps
+        it (`backstory_keep.keep_all`): the DM's, unrevealed (the relative is the DM's alone until
+        named, so the table has not said it), secret when the line was, known by the backstory's
+        own character, its family role's direction kept. A waiting connection already in the
+        graph is kept (its status upgraded, never made secret). One DMbot worked out, assumed or
+        handed over stays a question. The waiting rows are taken off the list in this same write.
+        How many were kept."""
+        anchor_id = str(row["unnamed_anchor"])
+        pair = (*w.ids, row["id"], anchor_id, anchor_id, row["id"])
+        between = (
+            " WHERE guild_id = %s AND campaign_id = %s"
+            " AND ((subject_id = %s AND object_id = %s) OR (subject_id = %s AND object_id = %s))"
+        )
+        kept = 0
+        cur = await w.conn.execute(
+            "SELECT id, subject_id, predicate, object_id, quote, secret, detail, decided, known_by,"
+            " upload FROM backstory_links" + between + " AND inferred_reason = ''"
+            " AND NOT assumed AND hand_over = '' ORDER BY created_at",
+            pair,
+        )
+        for link in await cur.fetchall():
+            made, _flags = await self.add_relation_in(
+                w, str(link["subject_id"]), str(link["predicate"]), str(link["object_id"]),
+                confidence=1.0, status=CONFIRMED, detail=str(link["detail"]),
+                secret=bool(link["secret"]), unrevealed=True,
+                directional=kin.directional(str(link["detail"])),
+                decided=str(link["decided"]) or None, keep_flags=True,
+            )  # fmt: skip
+            known_by = str(link["known_by"])
+            if known_by and not link["secret"]:
+                # (the uploader's character knows it from the start, as `add_relation` does)
+                try:
+                    held = (await knowers.connection_knowers(w, [made.id])).get(made.id, [])
+                    if known_by not in held:
+                        await knowers.set_connection_knowers(w, made.id, [*held, known_by])
+                except MemoryRuleError:
+                    log.info("A kept tie's first knower was refused")
+            if link["upload"]:  # (where it came from, for the DM's "Why?", #2946)
+                await w.conn.execute(
+                    "INSERT INTO memory_link_sources (guild_id, campaign_id, relation_id, label,"
+                    " quote, created_at, inferred_reason) VALUES (%s, %s, %s, %s, %s, %s, '')"
+                    " ON CONFLICT DO NOTHING",
+                    (*w.ids, made.id, str(link["upload"])[:120], str(link["quote"])[:240], w.now),
+                )
+            # (answered: off the list in this same write, as the DM's own keep takes it off)
+            await w.conn.execute(
+                "DELETE FROM backstory_links WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+                (*w.ids, link["id"]),
+            )
+            kept += 1
+        for rel in await w.select(
+            RELATIONS,
+            " AND status = %s AND ((subject_id = %s AND object_id = %s)"
+            " OR (subject_id = %s AND object_id = %s))",
+            [PROPOSED, row["id"], anchor_id, anchor_id, row["id"]],
+        ):
+            await self.add_relation_in(
+                w, str(rel["subject_id"]), str(rel["predicate"]), str(rel["object_id"]),
+                confidence=1.0, status=CONFIRMED, detail=str(rel["detail"]), keep_flags=True,
+            )  # fmt: skip
+            kept += 1
+        return kept
 
     async def confirm_kinds(
         self,
@@ -10635,6 +10718,30 @@ async def _live_led_to(
         [predicate],
     )
     return [(r["subject_id"], r["object_id"]) for r in live if r["id"] != skip]
+
+
+async def _kin_ties(w: Changes, row: Mapping[str, Any]) -> int:
+    """How many stated ties an unnamed relative has to its character (#4636 part 1): waiting
+    ones the text states (not worked out, assumed or a hand-over) and connections in the graph,
+    not turned down. With none, its relation comes from its label alone, so it stays a question
+    (Supervisor's ruling: a reading is never kept)."""
+    anchor_id = row.get("unnamed_anchor")
+    if not anchor_id:
+        return 0
+    pair = (*w.ids, row["id"], anchor_id, anchor_id, row["id"])
+    between = (
+        " WHERE guild_id = %s AND campaign_id = %s"
+        " AND ((subject_id = %s AND object_id = %s) OR (subject_id = %s AND object_id = %s))"
+    )
+    cur = await w.conn.execute(
+        "SELECT (SELECT count(*) FROM backstory_links" + between + " AND inferred_reason = ''"
+        " AND NOT assumed AND hand_over = '') + (SELECT count(*) FROM memory_relations"
+        + between
+        + " AND status <> 'rejected') AS n",
+        (*pair, *pair),
+    )
+    found = await cur.fetchone()
+    return int(found["n"]) if found is not None else 0
 
 
 async def _kin_hidden(w: Changes, row: Mapping[str, Any]) -> bool:
