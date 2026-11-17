@@ -30,7 +30,7 @@ TOWNS = ("Ashford", "Bramlow", "Coldmere")
 
 
 def reply(*links: dict[str, Any]) -> str:
-    names = [
+    names: list[dict[str, Any]] = [
         {"name": n, "kind": "place", "also": [], "secret": [], "quote": n}
         for n in ("Nine Burgs", "Ashford", "Bramlow", "Coldmere", "Dunhollow")
     ]
