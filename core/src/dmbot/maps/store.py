@@ -28,6 +28,7 @@ from dmbot.pictures.store import MB, Usage, _lock, _usage
 if TYPE_CHECKING:
     from dmbot.maps.disagree import Direction, Distance
     from dmbot.maps.measure import MapInfo, Pin
+    from dmbot.maps.measure_words import NotShown
     from dmbot.maps.said_phrases import Said
     from dmbot.memory._changes import Changes
 
@@ -598,15 +599,20 @@ class MapStore:
             )
         return done
 
-    async def measure(self, guild_id: int, campaign_id: str, asked: Any, *, dm: bool) -> str | None:
+    async def measure(
+        self, guild_id: int, campaign_id: str, asked: Any, *, dm: bool
+    ) -> str | NotShown | None:
         """The words of a "how far" or "which way" answer (#4670 4b, `measure.answer`), or None
         when the usual answer should go on instead: the two names are not both kept places the
         asker may know, or (for "how far") the story or the DM has stated a length between them,
         which beats a measured one (§9). `dm`: every map DMbot may use; otherwise only the table's
         maps, and places the players have been shown, worked out as every list does (the knowledge
         gate; with no party, `gate.public_entries`), so a DM-only map's pins, scale and distances
-        never reach a player (Supervisor's condition)."""
+        never reach a player (Supervisor's condition). `NOT_SHOWN` (#4692): not `dm`, and both
+        names are kept places to the DM, but one is not shown to the players (hidden, limited,
+        not yet known, or named by a secret other name): a DM's question then goes privately."""
         from dmbot.maps import measure, measure_phrase, positions
+        from dmbot.maps.measure_words import NOT_SHOWN
         from dmbot.memory import gate
         from dmbot.memory._changes import ALIASES, ENTITIES
         from dmbot.memory.models import name_key
@@ -641,6 +647,22 @@ class MapStore:
                 return None
 
             a, b = place(asked.a), place(asked.b)
+            if not dm and (a is None or b is None):
+                # (both kept places to the DM, one not shown to the table: say so, never what)
+                every = await scope.select(ALIASES, " AND status = 'confirmed'")
+                to_dm = positions.place_names(
+                    entities, every, lambda kind: onto.is_a(kind, "place")
+                )
+
+                def dm_place(said: str) -> str | None:
+                    for key in (name_key(said), name_key(measure_phrase.without_article(said))):
+                        if key in to_dm:
+                            return to_dm[key]
+                    return None
+
+                da, db = dm_place(asked.a), dm_place(asked.b)
+                if da is not None and db is not None and da != db:
+                    return NOT_SHOWN
             if a is None or b is None or a == b:
                 return None
             if asked.kind == measure_phrase.FAR:

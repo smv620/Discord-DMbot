@@ -225,12 +225,12 @@ class TheLayer(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((private.in_game, public.in_game), (False, True))
 
     async def private_case(
-        self, asker: int, table_says: str = "I can't find Bc on any map yet."
+        self, asker: int, table_says: Any = "I can't find Bc on any map yet."
     ) -> Any:
         self.dms = []
         campaign = SimpleNamespace(dm_user_ids=frozenset({7}))
 
-        async def measured(_c: Any, _asked: Any, dm: bool) -> str | None:
+        async def measured(_c: Any, _asked: Any, dm: bool) -> Any:
             self.dms.append(dm)
             return "About 40 miles …" if dm else table_says
 
@@ -251,6 +251,19 @@ class TheLayer(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(got.in_game)  # (never written to the raw transcript)
             self.assertEqual(got.text, table_says)  # (the table's own words, as a fallback)
             self.assertEqual(self.dms, [False])
+
+    async def test_a_place_not_shown_goes_to_the_dm_privately_and_a_player_the_usual_way(
+        self,
+    ) -> None:
+        # (#4692: the DM's table question goes privately, re-asked with every map; a player's goes
+        # to the engine, with no hint and no read of the DM's maps)
+        got = await self.private_case(asker=7, table_says=words.NOT_SHOWN)
+        self.assertTrue(got.one_for_dm)
+        self.assertFalse(got.in_game)
+        self.assertEqual(self.dms, [False])
+        got = await self.private_case(asker=9, table_says=words.NOT_SHOWN)
+        self.assertEqual(got, "engine")
+        self.assertEqual(self.dms, [False])
 
     async def test_a_dms_table_question_the_tables_maps_answer_stays_at_the_table(self) -> None:
         got = await self.private_case(asker=7, table_says="About 40 miles …")
@@ -341,8 +354,22 @@ class WhoSeesWhat(
         await self.memory.set_hidden_from_players(
             GUILD_A, self.one.id, self.bryn, True, source="dm", dm_chose_secret=True
         )
-        self.assertIsNone(await self.ask("how far is Targos from Bryn Shander?", dm=False))
+        # (#4692: the table's view says only that a kept place isn't shown, never what or where)
+        self.assertIs(
+            await self.ask("how far is Targos from Bryn Shander?", dm=False), words.NOT_SHOWN
+        )
         self.assertIsNotNone(await self.ask("how far is Targos from Bryn Shander?", dm=True))
+
+    async def test_a_secret_other_name_is_not_shown_and_a_stranger_is_none(self) -> None:
+        await self.memory.add_alias(
+            GUILD_A, self.one.id, self.bryn, "the Hidden Hold", kind="nickname", source="dm",
+            secret=True, status="confirmed",
+        )  # fmt: skip
+        await self.maps.set_audience(GUILD_A, self.one.id, self.map_id, "table")
+        self.assertIs(
+            await self.ask("how far is Targos from the Hidden Hold?", dm=False), words.NOT_SHOWN
+        )
+        self.assertIsNone(await self.ask("how far is Targos from Luskan?", dm=False))
 
     async def test_names_that_are_not_kept_places_go_the_usual_way(self) -> None:
         self.assertIsNone(await self.ask("how far is Luskan from Targos?", dm=True))
@@ -357,7 +384,9 @@ class WhoSeesWhat(
         await self.memory.set_hidden_from_players(
             GUILD_A, self.one.id, self.bryn, True, source="dm", dm_chose_secret=True
         )
-        self.assertIsNone(await self.ask("how far is Targos from Bryn Shander?", dm=False))
+        self.assertIs(
+            await self.ask("how far is Targos from Bryn Shander?", dm=False), words.NOT_SHOWN
+        )
 
     async def test_a_stated_length_beats_the_measured_one(self) -> None:
         await self.memory.add_relation(

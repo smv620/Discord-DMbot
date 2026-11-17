@@ -9837,7 +9837,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             notice_channel=table.screen_channel_id,
         )
 
-    async def _map_measure(self, campaign: Any, asked: Any, dm: bool) -> str | None:
+    async def _map_measure(self, campaign: Any, asked: Any, dm: bool) -> str | Any | None:
         """A map question's words (#4670 4b), or None (no maps yet: the usual answer)."""
         store = self.map_store
         if store is None:
