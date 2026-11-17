@@ -92,12 +92,17 @@ def named(connections: Sequence[SecretConnection], texts: Iterable[str]) -> dict
 
 
 async def secret_connections(
-    memory: MemoryStore, guild_id: int, campaign_id: str
+    memory: MemoryStore, guild_id: int, campaign_id: str, *, dm_only: bool = False
 ) -> list[SecretConnection]:
     """This campaign's confirmed secret connections between confirmed, live entries, with every
     name of each end, read for this server and campaign only. A connection that has a player or
     DM entry (`type = 'person'`) at an end is not looked for: those entries are the table's own
-    people, whose connections are not story secrets."""
+    people, whose connections are not story secrets.
+
+    `dm_only` (#4624): with it, a clue's tie to a story thread too. Off for the after-session
+    exposures (saying both names aloud never shows players a tie the DM alone may know, and the
+    tie can't be made public); on for the recap's guard, which is right to be stricter."""
+    skip = "" if dm_only else " AND r.predicate <> 'clue_to'"
     async with memory._read(guild_id, campaign_id) as scope:
         cur = await scope.conn.execute(
             "SELECT r.id AS rid, r.subject_id AS s, r.object_id AS o FROM memory_relations r"
@@ -107,7 +112,7 @@ async def secret_connections(
             "  AND b.id = r.object_id"
             " WHERE r.guild_id = %s AND r.campaign_id = %s AND r.secret AND r.status = 'confirmed'"
             " AND a.status = 'confirmed' AND b.status = 'confirmed'"
-            " AND a.type <> 'person' AND b.type <> 'person' ORDER BY r.id",
+            " AND a.type <> 'person' AND b.type <> 'person'" + skip + " ORDER BY r.id",
             scope.ids,
         )
         found = await cur.fetchall()
@@ -214,7 +219,7 @@ async def describe(
                 " LEFT JOIN memory_predicates p ON p.guild_id = r.guild_id"
                 " AND p.campaign_id = r.campaign_id AND p.key = r.predicate"
                 " WHERE r.guild_id = %s AND r.campaign_id = %s AND r.id = ANY(%s) AND r.secret"
-                " AND r.predicate <> 'led_to'"
+                " AND r.predicate NOT IN ('led_to', 'clue_to')"
                 " AND r.status = 'confirmed'",
                 (*scope.ids, wanted),
             )  # fmt: skip
