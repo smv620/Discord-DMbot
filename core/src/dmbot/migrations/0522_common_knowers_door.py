@@ -33,7 +33,7 @@ def _shown(entry: str) -> str:
     return (
         "EXISTS (SELECT 1 FROM memory_entities xe WHERE xe.guild_id = g AND xe.campaign_id = c "
         f"AND xe.id = {entry} AND xe.status = 'confirmed' "
-        "AND NOT (xe.hidden_from_players OR xe.audience_limited OR xe.unnamed))"
+        "AND NOT (xe.hidden_from_players OR xe.unnamed OR xe.audience_limited))"
     )
 
 
@@ -42,7 +42,7 @@ def _end_shown(entry: str) -> str:
     return (
         "EXISTS (SELECT 1 FROM memory_entities xe WHERE xe.guild_id = g AND xe.campaign_id = c "
         f"AND xe.id = {entry} "
-        "AND NOT (xe.hidden_from_players OR xe.audience_limited OR xe.unnamed))"
+        "AND NOT (xe.hidden_from_players OR xe.unnamed OR xe.audience_limited))"
     )
 
 

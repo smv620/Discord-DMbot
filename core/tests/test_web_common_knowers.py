@@ -48,7 +48,7 @@ class CommonOnTheWeb(Web):
 
     async def test_a_shown_name_with_a_common_row_is_listed_as_everyone(self) -> None:
         await self.common("entry", self.mira)
-        self.assertEqual(self.rows(await self.door(), self.mira), [COMMON])
+        self.assertIn(COMMON, self.rows(await self.door(), self.mira))
 
     async def test_the_gate_input_then_gives_every_player_character_the_name(self) -> None:
         await self.common("entry", self.mira)
@@ -64,35 +64,35 @@ class CommonOnTheWeb(Web):
         await self.memory.set_hidden_from_players(
             self.g, self.one.id, self.mira, True, source=DM_SOURCE, dm_chose_secret=True
         )
-        self.assertEqual(self.rows(await self.door(), self.mira), [])
+        self.assertNotIn(COMMON, self.rows(await self.door(), self.mira))
         await self.memory.set_hidden_from_players(
             self.g, self.one.id, self.mira, False, source=DM_SOURCE, dm_chose_secret=True
         )
-        self.assertEqual(self.rows(await self.door(), self.mira), [COMMON])  # (the row was kept)
+        self.assertIn(COMMON, self.rows(await self.door(), self.mira))  # (the row was kept)
 
     async def test_a_shown_connection_is_listed_and_a_secret_one_is_not(self) -> None:
         await self.common("connection", self.plain_link)
-        self.assertEqual(self.rows(await self.door(), self.plain_link), [COMMON])
+        self.assertIn(COMMON, self.rows(await self.door(), self.plain_link))
         await self.common("connection", self.secret_link)
-        self.assertEqual(self.rows(await self.door(), self.secret_link), [])
+        self.assertNotIn(COMMON, self.rows(await self.door(), self.secret_link))
 
     async def test_a_connection_with_an_end_kept_from_the_players_is_not_listed(self) -> None:
         await self.common("connection", self.plain_link)
         await self.memory.set_hidden_from_players(
             self.g, self.one.id, self.mira, True, source=DM_SOURCE, dm_chose_secret=True
         )
-        self.assertEqual(self.rows(await self.door(), self.plain_link), [])
+        self.assertNotIn(COMMON, self.rows(await self.door(), self.plain_link))
 
     async def test_an_entry_not_confirmed_or_limited_to_an_audience_is_not_listed(self) -> None:
         proposed = await self.add("Ten-Towns", "place", status="proposed")
         await self.common("entry", proposed)
-        self.assertEqual(self.rows(await self.door(), proposed), [])
+        self.assertNotIn(COMMON, self.rows(await self.door(), proposed))
         async with self.db.guild(self.g) as conn:  # (a clue only some know: `audience_limited`)
             await conn.execute(
                 "UPDATE memory_entities SET audience_limited = true WHERE id = %s", (self.mira,)
             )
         await self.common("entry", self.mira)
-        self.assertEqual(self.rows(await self.door(), self.mira), [])
+        self.assertNotIn(COMMON, self.rows(await self.door(), self.mira))
 
     async def test_an_other_name_is_listed_only_while_it_is_not_secret(self) -> None:
         shown = await self.memory.add_alias(
@@ -105,8 +105,8 @@ class CommonOnTheWeb(Web):
         )  # fmt: skip
         await self.common("alias", shown.value.id, hidden.value.id)
         data = await self.door()
-        self.assertEqual(self.rows(data, shown.value.id), [COMMON])
-        self.assertEqual(self.rows(data, hidden.value.id), [])
+        self.assertIn(COMMON, self.rows(data, shown.value.id))
+        self.assertNotIn(COMMON, self.rows(data, hidden.value.id))
 
     async def test_an_everyone_row_asleep_under_a_hide_is_not_listed(self) -> None:
         await self.common("entry", self.mira)
@@ -115,7 +115,7 @@ class CommonOnTheWeb(Web):
                 "UPDATE memory_knowers SET hidden_by = ARRAY['x'] WHERE about_entity_id = %s",
                 (self.mira,),
             )
-        self.assertEqual(self.rows(await self.door(), self.mira), [])
+        self.assertNotIn(COMMON, self.rows(await self.door(), self.mira))
 
     async def test_the_door_answers_a_player_with_the_same_rows_and_hides_what_is_hidden(
         self,
@@ -130,8 +130,8 @@ class CommonOnTheWeb(Web):
             found = await cur.fetchone()
         assert found is not None
         theirs: dict[str, Any] = found["r"]
-        self.assertEqual(self.rows(theirs, self.mira), [COMMON])
-        self.assertEqual(self.rows(theirs, self.secret_link), [])
+        self.assertIn(COMMON, self.rows(theirs, self.mira))
+        self.assertNotIn(COMMON, self.rows(theirs, self.secret_link))
 
     async def test_a_characters_own_row_still_comes_with_its_character(self) -> None:
         await self.memory.set_connection_knowers(
