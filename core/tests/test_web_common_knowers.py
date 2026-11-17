@@ -10,7 +10,7 @@ from typing import Any
 from dmbot.memory import gate
 from dmbot.memory.gate import COMMON, ENTRY, Viewer
 from dmbot.memory.models import DM as DM_SOURCE
-from dmbot.web import graph_view
+from dmbot.web import graph_view, relationships
 from dmbot.web.recaps import _scoped
 from tests.test_web_relationships import Web
 
@@ -135,6 +135,24 @@ class CommonOnTheWeb(Web):
         theirs: dict[str, Any] = found["r"]
         self.assertIn(COMMON, self.rows(theirs, self.mira))
         self.assertNotIn(COMMON, self.rows(theirs, self.secret_link))
+
+    async def know_word_of(self, link: str) -> dict[str, Any]:
+        page: dict[str, Any] = {
+            "nodes": [],
+            "tray": [],
+            "edges": [{"links": [{"id": link, "secret": False, "revealed": True}]}],
+        }
+        await relationships.with_know_words(self.web, self.session, self.cref, page)
+        got: dict[str, Any] = page["edges"][0]["links"][0]
+        return got
+
+    async def test_the_pages_who_says_common_for_a_common_connection_and_all_otherwise(
+        self,
+    ) -> None:
+        self.assertEqual((await self.know_word_of(self.plain_link))["who"], "all")
+        await self.common("connection", self.plain_link)
+        got = await self.know_word_of(self.plain_link)
+        self.assertEqual((got["who"], got["knownBy"]), ("common", []))
 
     async def test_a_characters_own_row_still_comes_with_its_character(self) -> None:
         await self.memory.set_connection_knowers(

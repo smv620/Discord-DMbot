@@ -86,7 +86,8 @@ FEELING_TEXT = "feeling:"
 # migration).
 KNOWS_HOW_ACTION = "link-knows-how"
 # "Who knows this?" on a connection and on a secret other name (#2999): text `dm`, `everyone` or
-# `some <ids>` (web/who_knows.py); the door checks its shape and that the ids are this campaign's.
+# `common` (🌍, #4559) or `some <ids>` (web/who_knows.py); the door checks its shape and that the
+# ids are this campaign's.
 LINK_WHO, ALIAS_WHO = "link-who", "alias-who"
 # Which way a connection reads, the DM's choice (#4154): `text` "a-b" (from the pair's first name
 # by id, the edge's `a` on the page), "b-a", or "both"
@@ -95,6 +96,7 @@ RIGHT_ACTION = "link-right"  # ✅ That's right on a place's assumed parent (#43
 DIRECTIONS = ("a-b", "b-a", "both")
 BAD_TARGET = "bad_target"  # a merge, a secret or a removal the rules refuse
 NAMES_NOT_SHOWN = "names_not_shown"  # a connection to a name still held back (#3426)
+CANNOT_SHOW = "cannot_show"  # 🌍 Common knowledge asked for what the players are not shown (#4559)
 NAME_UNNAMED = "name_unnamed"  # ... or to a person the story never named (#3426)
 FAILED = "failed"  # anything unexpected; the action can be sent again
 GONE = "gone"  # a waiting question that is not waiting any more
@@ -881,6 +883,14 @@ async def _spelling(
     return Outcome(result_id=entity_id) if a.action == "spelling-no" else _failed(GONE)
 
 
+def _is_cannot_show(exc: MemoryRuleError) -> bool:
+    """The refusal `link_edits.with_common` makes when 🌍 Common knowledge is asked for an item the
+    players are not shown (and the item can't be shown by this answer): "Show X to the players
+    first: common knowledge is something they see." The page tells the DM to show it first."""
+    reason = str(exc)
+    return reason.startswith("Show ") and reason.endswith("common knowledge is something they see.")
+
+
 def _who_of(text: str) -> tuple[str, list[str]]:
     """The website's answer as the door let it through: `dm`, `everyone` or `some <ids>`. An
     empty one is "" (the store refuses it as no answer)."""
@@ -913,8 +923,8 @@ async def _alias_who(
         await name_edits.set_who_knows(
             memory, guild_id, campaign_id, alias, who, characters, made=made
         )
-    except MemoryRuleError:
-        return _failed(BAD_TARGET)
+    except MemoryRuleError as exc:
+        return _failed(CANNOT_SHOW if _is_cannot_show(exc) else BAD_TARGET)
     return Outcome(result_id=entity_id, batches=tuple(made))
 
 
@@ -1752,6 +1762,8 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
         # Showing a connection is refused until its names are shown: say which case it is, so the
         # page can tell the DM what to do first (#3426). The rule itself is unchanged.
         reason = str(exc)
+        if _is_cannot_show(exc):
+            return _failed(CANNOT_SHOW)
         if reason == NAMES_NOT_SHOWN_WORDS:
             return _failed(NAMES_NOT_SHOWN)
         if reason == unnamed_mod.NAME_BEFORE_SHOWING:
