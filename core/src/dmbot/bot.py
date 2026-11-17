@@ -5485,10 +5485,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # campaign's DMs are checked again inside, as the one that counts. A line waiting for
             # its speaker label waits for it there: one said as an NPC is no note, #4690)
             if table.is_dm(utterance.user_id) and said_phrases.may_state(line):
-                labelled_at = utterance.start_ms if labelling else None
-                self._track(
-                    self._map_check(table, utterance.user_id, line, labelled_at), "map-check"
+                # (registered now, before anything awaits, so no labelling of it ends unseen)
+                waiter = (
+                    self._label_waiter(table, (utterance.user_id, utterance.start_ms))
+                    if labelling
+                    else None
                 )
+                self._track(self._map_check(table, utterance.user_id, line, waiter), "map-check")
         saving = (
             table.test_session is not None
             and self.test_voice is not None
@@ -7108,7 +7111,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 lines = table.speakers.take()  # (maybe this line, maybe it is already on its way)
                 if lines and not self._closing:
                     await self._label_speakers(table, lines)
-                entity = await waiter
+                entity = await asyncio.shield(waiter)  # (shared: never cancel it, #4690)
         except Exception:
             log.info("Sidebar: couldn't wait for the speaker label; asking without it")
         finally:
@@ -7519,7 +7522,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 log.exception("The live heads-up failed")
 
     async def _map_check(
-        self, table: Table, speaker: int, line: str, labelled_at: int | None = None
+        self,
+        table: Table,
+        speaker: int,
+        line: str,
+        label: asyncio.Future[str] | None = None,
     ) -> None:
         """MapBot's live note (#4670 4c-2; design §9; Supervisor's ruling on #4670): the DM said a
         distance or direction between two kept places that a kept map's is far from. One private
@@ -7527,24 +7534,22 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         a session. Only the campaign's DMs' own lines, only while they are recorded (asked again
         after every wait), while the session runs, on a plan with story memory, and while the
         campaign's "Map checks" is on. Nothing is stored or changed. A failure costs the note,
-        never the line. `labelled_at`: the line is waiting for its speaker label (#4690); it is
+        never the line. `label`: the line is waiting for its speaker label (#4690); it is
         waited for, bounded, and a line said as a named NPC (`voiced_by_npc`) is no note: it can be
         a lie or a mistake in the story, not the DM's word. No label in time: the DM's own words.
         """
         from dmbot.ui import map_checks
 
-        if labelled_at is not None:
-            key = (speaker, labelled_at)
-            waiter = self._label_waiter(table, key)
+        if label is not None:
+            # (shared with a look-up: shielded, never cancelled. Unanswered at the timeout, it
+            # stays in `label_waits` until the window answers every line, "" at worst; a leftover
+            # on shutdown goes with its Table)
             try:
                 async with asyncio.timeout(table.speakers.window_s + TOPIC_CALL_TIMEOUT_S * 2 + 2):
-                    entity = await asyncio.shield(waiter)
+                    entity = await asyncio.shield(label)
             except TimeoutError:
                 entity = ""  # (as if it had no label: the DM's own words)
-            finally:
-                if table.label_waits.get(key) is waiter and waiter.done():
-                    del table.label_waits[key]
-            if voiced_by_npc(entity):
+            if label.cancelled() or voiced_by_npc(entity):
                 return
         gid, cid = table.guild_id, table.campaign_id
         if (
