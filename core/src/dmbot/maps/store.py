@@ -386,13 +386,15 @@ class MapStore:
     ) -> Written[Map]:
         """A DM's yes or no to "A map from <player>: use it?". A no ends DMbot's use of the map:
         what it said goes by the deletion rule (`_forget_said`, §7.5; Supervisor's ruling 1 on
-        #4694, #4695) in the same write, one Undo. DMbot's reads resting only on it go and the
-        DM's word stays; the map row stays, refused, so a second DM is told the first answer, the
-        poster still sees it as theirs, and nothing reads it again. The caller has checked that
-        `dm_id` is a DM of this campaign. Answering again changes the answer, and the later one
-        stands, unless `first_only`: then an answered map is left as it is and `AlreadyAnswered`
-        says so (two DMs pressing at once: the first answer stands). The check and the write are
-        one step, under the picture store's lock."""
+        #4694, #4695) in the same write, one Undo. DMbot's reads resting only on it go, the DM's
+        word on a place stays, and every pin on it goes (the DM's own too: a refused map is never
+        shown; Undo brings them back). The map row stays, refused, so a second DM is told the
+        first answer, the poster still sees it as theirs, and nothing reads it again. The caller
+        has checked that `dm_id` is a DM of this campaign. Without `first_only` (no caller today)
+        answering again changes the answer; a Yes after a No brings nothing back, only Undo does.
+        With `first_only` an answered map is left as it is and `AlreadyAnswered` says so (two DMs
+        pressing at once: the first answer stands). The check and the write are one step, under
+        the picture store's lock."""
         async with self._memory.map_write(guild_id, campaign_id) as w:
             await _lock(w.conn, guild_id, campaign_id)
             current = await w.get(MAPS, map_id)
@@ -637,6 +639,11 @@ class MapStore:
 
         async with self._memory._write(guild_id, campaign_id, "extractor") as w:
             await _lock(w.conn, guild_id, campaign_id)
+            current = await w.get(MAPS, map_id)
+            if current is None or current["use_ok"] is not True:
+                # (asked again under the lock: a No that landed since the caller's check has
+                # already forgotten what the map said, and nothing may be written onto it, #4695)
+                return positions.Recorded()
             onto = await _load_ontology(w)
             entities = await w.select(ENTITIES, " AND status = 'confirmed'")
             aliases = await w.select(ALIASES, " AND status = 'confirmed'")

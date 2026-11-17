@@ -14,7 +14,7 @@ from tests.test_map_pins import PinsBase
 from tests.test_map_store import GUILD_A
 
 
-class TheRule(PinsBase):
+class Facts(PinsBase):
     async def fact(self, value: str, *, status: str, source: str, also_text: bool) -> str:
         fact_id = uuid.uuid4().hex
         async with self.db.guild(GUILD_A) as conn:
@@ -52,6 +52,8 @@ class TheRule(PinsBase):
         dms = await self.fact("forest", status="confirmed", source="map", also_text=False)
         return only_map, text_too, dms
 
+
+class TheRule(Facts):
     async def test_each_of_the_three_cases(self) -> None:
         only_map, text_too, dms = await self.three()
         await self.maps.remove_map(GUILD_A, self.one.id, self.map_id)
@@ -115,11 +117,14 @@ class TheRule(PinsBase):
         )
 
 
-class TheNo(TheRule):
+class TheNo(Facts):
     """A DM's No to a map runs the rule on what it said (#4695; Supervisor's ruling 1 on #4694):
     the map row stays, refused, and one Undo puts everything back."""
 
     async def test_yes_then_no_runs_the_rule_and_keeps_the_refused_map(self) -> None:
+        await self.record()  # (pins on the map, to come back with the Undo)
+        pins = await self.features()
+        self.assertTrue(pins)
         only_map, text_too, dms = await self.three()
         written = await self.maps.answer_use(GUILD_A, self.one.id, self.map_id, dm_id=7, yes=False)
         self.assertIsNone(await self.row(only_map))
@@ -142,6 +147,15 @@ class TheNo(TheRule):
             self.assertEqual(
                 await self.row(fact_id), {"status": status, "source": "map", "map_id": self.map_id}
             )
+        self.assertEqual(await self.features(), pins)  # (the pins back as they were)
+        self.assertIs((await self.map_row())["use_ok"], True)  # (and the answer before the No)
+
+    async def test_a_read_finishing_after_the_no_writes_nothing(self) -> None:
+        # (the caller's check came before the No: asked again under the lock)
+        await self.maps.answer_use(GUILD_A, self.one.id, self.map_id, dm_id=7, yes=False)
+        got = await self.record()
+        self.assertEqual(got.pins, 0)
+        self.assertEqual(await self.features(), [])
 
     async def test_a_refused_map_gives_no_pins_no_layers_and_no_how_far(self) -> None:
         # (Supervisor's condition on #4695: everything goes through `may_use_map`)
