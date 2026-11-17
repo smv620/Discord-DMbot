@@ -822,9 +822,17 @@ async def show_card(
                 if dated(parts)
                 else None
             )
-            lines_of_thread += card_lines(
-                parts, part_names, bigger, branches, most=CARD_PARTS, clock=clock
+            from dmbot.memory import gate
+            from dmbot.memory.thread_clues import found_text
+
+            # (#4624: the count of its clues, the DM's alone like the rest of this block)
+            clues = await memory.thread_clues(
+                campaign.guild_id, campaign.id, entity_id, gate.Viewer.the_dm()
             )
+            lines_of_thread += card_lines(
+                parts, part_names, bigger, branches, most=CARD_PARTS, clock=clock,
+                clues=found_text(clues),
+            )  # fmt: skip
     elif entity is not None and secrets and entity.type in ("clue", "event"):
         # A clue's or an event's "Led to" / "Came from" (#1679): the DM's word, so the DM's card.
         from dmbot.memory.threads import names_line

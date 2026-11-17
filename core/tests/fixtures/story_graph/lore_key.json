@@ -11,7 +11,8 @@
   "line": "the line of the document's plain-text export that supports it (blank lines count)",
   "map_facts": "a place's land, climate or ruler (#4256): layer terrain, climate or control; value a word of that layer's list, or the ruling group's key name; scored per layer as found, wrong, missed and extra (a row the key does not list)",
   "languages": "a character's languages are a property of the character, never a tie (owner, 2026-11-14; #4229): {character, language, line, note}; scored as found, missed, and extra (a language the key does not list)",
-  "threads": "a story thread (quests design, #4450 §9.3; #4453): kind quest, hook or mystery; giver, target and taker (who takes it on, for a pursuit that is one character's own) are key names; missing and in_danger list who the thread is about. The party is never named: a thread is the party's unless it has a taker. hint = a question the text leaves open, counted when found and never missed. Scored as found, missed, wrong (another kind), doubles and extra (a thread the key does not list)"
+  "threads": "a story thread (quests design, #4450 §9.3; #4453): kind quest, hook or mystery; giver, target and taker (who takes it on, for a pursuit that is one character's own) are key names; missing and in_danger list who the thread is about. The party is never named: a thread is the party's unless it has a taker. hint = a question the text leaves open, counted when found and never missed. Scored as found, missed, wrong (another kind), doubles and extra (a thread the key does not list)",
+  "clues": "a clue to a thread (#4624, quests 6b; design \u00a77, \u00a79.3): found when a clue tied with clue_to to the backup thread its key thread matched has a name holding one of words (casefold); wrong thread when tied only elsewhere; must_not_clues name a thread that must have no clue tied. Who has a clue is not scored yet (the text's holders are the DM's to confirm)"
  },
  "players": {
   "Cerric Vanya'elen": "player_ist",
@@ -1984,5 +1985,16 @@
   {"id": "lq04", "kind": "quest", "name": "Hlin's contract on Sephek Kaltro", "giver": "Hlin Trollbane", "target": "Sephek Kaltro", "taker": "", "missing": [], "in_danger": [], "parts": [{"kind": "objective", "words": ["capture or eliminate"], "line": 59, "note": "one objective with the text's own 'or', never two"}], "must_find": true, "hint": false, "line": 73, "note": "an ask and a taker; replaces l069 'the party works for Hlin' (§6); capture or eliminate, one objective"},
   {"id": "lq05", "kind": "quest", "name": "Speaker Masthew's bounty on the mine", "giver": "Speaker Masthew", "target": "The gemstone mine", "taker": "", "missing": [], "in_danger": [], "parts": [{"kind": "objective", "words": ["mine"], "line": 84, "note": "clear out the gemstone mine"}, {"kind": "reward", "words": ["gold"], "line": 84, "note": "50 gold offered (line 84), raised to 250 in all (line 93)"}], "must_find": false, "hint": false, "line": 84, "note": "an ask and a taker, already paid (line 93); replaces l076; not one of §9.3's four, so a good find"},
   {"id": "lq06", "kind": "quest", "name": "Find Garret Velryn", "giver": "Keegan Velryn", "target": "Garret Velryn", "taker": "", "missing": [], "in_danger": [], "parts": [{"kind": "objective", "words": ["Garret"], "line": 102, "note": "locate Garret"}, {"kind": "reward", "words": ["50 gold"], "line": 102, "note": "offering 50 gold pieces"}, {"kind": "help", "words": ["map"], "line": 102, "note": "the route map: help to keep (§9.3)"}, {"kind": "help", "words": ["sled", "dogs"], "line": 102, "note": "two dog sleds with eight dogs from Jebidiah; the lore doesn't say lent, so to keep (§5b)"}], "must_find": true, "hint": false, "line": 102, "note": "an ask and a taker (Belleros agrees for the party); replaces l118"}
+ ],
+ "clues": [
+  {"thread": "lq01", "words": ["tome"], "must_find": true, "line": 27, "doc": "lore", "note": "the warning in the locked azure tome"},
+  {"thread": "lq01", "words": ["coming", "Wit"], "must_find": false, "line": 27, "doc": "lore", "note": "Wit's warning that they are coming (a good find)"},
+  {"thread": "lq03", "words": ["journal"], "must_find": true, "line": 36, "doc": "lore", "note": "the ancestral journal"},
+  {"thread": "lq03", "words": ["campsite", "camp"], "must_find": false, "line": 36, "doc": "lore", "note": "the blood-stained campsite (a good find)"},
+  {"thread": "lq03", "words": ["whisper"], "must_find": false, "line": 36, "doc": "lore", "note": "the whispers Nyssara hears (a good find)"}
+ ],
+ "must_not_clues": [
+  {"thread": "lq04", "note": "Hlin's contract has no clue in this passage"},
+  {"thread": "lq06", "note": "the route map and the sleds are Find Garret's help, never its clues"}
  ]
 }

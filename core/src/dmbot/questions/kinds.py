@@ -51,7 +51,7 @@ LABELS: Final[dict[str, str]] = {
     CONNECTIONS: "Connections waiting",
     WHICH: "Which one?",
     FAMILY: "Family ties",
-    TRAITS: "Lineage and class",
+    TRAITS: "Character details",
     WORLD: "World notes",
     THREADS: "Story threads to check",
     SECRETS: "Known or secret?",

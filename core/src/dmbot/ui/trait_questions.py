@@ -1,4 +1,5 @@
-"""🧬 Lineage and class (#3926): a lore upload said something about a character the campaign has
+"""🧬 Character details (#3926; lineage, class and languages): a lore upload said something about a
+character the campaign has
 already ("Torvin is a dwarf") that would change them, so DMbot asks instead of changing them
 silently. ✅ Keep it writes it as the DM's own change (a new lineage replaces the old one; a class
 adds to theirs), with Undo right after. ❌ Not this is remembered, so DMbot never asks it again.
@@ -25,12 +26,14 @@ from dmbot.ui.names import _md, _memory
 
 log = logging.getLogger(__name__)
 
-HEADING = "🧬 **Lineage and class**"
+HEADING = "🧬 **Character details**"  # (languages joined lineage and class: #4271)
 LANGUAGE_HEADING = "🗣️ **Languages**"  # a language question's own heading (#4229 slice 1c)
-LABEL = "🧬 Lineage and class"
+LABEL = "🧬 Character details"
 WHY = "DMbot never changes a character without asking you."
 # (not "Keep it": on DMbot's other cards that is the answer that changes nothing; ux-critic)
 YES, NO, UNDO = "✅ Yes, change it", "❌ No, leave it", "↩️ Undo"
+# a language is only added: nothing is changed (the ux-critic, #4271)
+YES_ADD = "✅ Yes, add it"
 GONE_NOW = "Already answered. Showing what is left."
 NOTHING_LEFT = (
     "✅ Nothing left to answer. If a lore upload finds more, it shows in ❓ Questions for you."
@@ -91,7 +94,8 @@ def card_text(offer: Offer, waiting: int) -> str:
     lines += [
         f"_{WHY}_",
         "",
-        f"_{YES}: {yes} {NO}: {no}, and DMbot won't ask this again._",
+        f"_{YES_ADD if offer.trait.kind == LANGUAGE else YES}: {yes} {NO}: {no}, and DMbot won't"
+        " ask this again._",
     ]
     return "\n".join(lines)
 
@@ -165,7 +169,8 @@ class TraitQuestions(_Menu):
             return None
         self.current = waiting[0]
         self.clear_items()
-        self.add_item(_Button(self._keep, label=YES, style=discord.ButtonStyle.success))
+        yes_label = YES_ADD if waiting[0].trait.kind == LANGUAGE else YES
+        self.add_item(_Button(self._keep, label=yes_label, style=discord.ButtonStyle.success))
         self.add_item(_Button(self._not_this, label=NO, style=discord.ButtonStyle.danger))
         if self.undo_batch is not None:
             self.add_item(_Button(self._undo, label=UNDO, style=discord.ButtonStyle.secondary))
@@ -228,7 +233,7 @@ class TraitQuestionsButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=r"dmbot:traits:ask:(?P<campaign>[0-9a-f]{32})",
 ):
-    """🧬 Lineage and class, from the Questions message or an upload's notice; works after a
+    """🧬 Character details, from the Questions message or an upload's notice; works after a
     restart (the campaign is in the button's ID). The card opens privately, for a DM only."""
 
     def __init__(self, campaign_id: str) -> None:
