@@ -11,6 +11,12 @@ Rules kept here (the owner's, 2026-11-12):
   whose north was read or set, never assumed.
 - **Within those limits is silence.** A stated travel time is never compared (§9: time is only ever
   suggested), so only a stated length in miles or feet is.
+- **A range is checked at its low end** (`route_length` keeps the lower end of "20-30 miles"), so
+  a range whose top reaches the map's figure can still be flagged. Accepted: the note changes
+  nothing and the DM keeps the length with one ✅.
+
+The direction check (`check_direction`, `angle_of`) is for 4c-2's live note: no stated direction is
+stored anywhere, so only the table's talk gives one.
 """
 
 from __future__ import annotations
@@ -136,3 +142,12 @@ def check_direction(
     if deg is None or not direction_off(stated, deg):
         return None
     return Direction(used, measure.direction(deg))
+
+
+def amount(d: Distance) -> str:
+    """The map's figure as said: "35 miles", or in feet below a mile ("2110 feet"), so a short
+    stated length is set beside a figure that shows the difference (never "about 0")."""
+    said = measure.rounded(d.measured_miles, "miles")
+    if said is not None:
+        return said
+    return measure.rounded(d.measured_miles * FEET_PER_MILE, "feet") or measure.SMALLEST["feet"]
