@@ -233,7 +233,7 @@ class TheStoryWatchButtonsInAPrivateChat(unittest.IsolatedAsyncioTestCase):
         it.client = self.bot()
         got = await story_watch._dm_and_watch(it, CAMPAIGN)
         self.assertIsNotNone(got)
-        self.assertEqual(it.client.campaigns.get.await_args.args[0], GUILD)
+        self.assertEqual(it.client.campaigns.get.await_args_list[-1].args[0], GUILD)
 
     async def test_someone_who_is_not_a_dm_is_refused_in_a_private_chat(self) -> None:
         from dmbot.ui import story_watch
@@ -242,7 +242,7 @@ class TheStoryWatchButtonsInAPrivateChat(unittest.IsolatedAsyncioTestCase):
         it.client = self.bot()
         with patch.object(story_watch, "_tell", AsyncMock()) as tell:
             self.assertIsNone(await story_watch._dm_and_watch(it, CAMPAIGN))
-        self.assertEqual(tell.await_args.args[1], story_watch.ONLY_DM)
+        self.assertEqual(tell.await_args_list[-1].args[1], story_watch.ONLY_DM)
 
     async def test_a_campaign_that_is_gone_says_so(self) -> None:
         from dmbot.ui import story_watch
@@ -251,4 +251,4 @@ class TheStoryWatchButtonsInAPrivateChat(unittest.IsolatedAsyncioTestCase):
         it.client = self.bot(found=False)
         with patch.object(story_watch, "_tell", AsyncMock()) as tell:
             self.assertIsNone(await story_watch._dm_and_watch(it, CAMPAIGN))
-        self.assertEqual(tell.await_args.args[1], story_watch.ONLY_DM)
+        self.assertEqual(tell.await_args_list[-1].args[1], story_watch.ONLY_DM)
