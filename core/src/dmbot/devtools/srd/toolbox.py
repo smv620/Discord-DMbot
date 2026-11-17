@@ -909,8 +909,11 @@ _PACE_ROW = re.compile(r"\b(Fast|Normal|Slow) (\d+) feet (\d+) miles (\d+) miles
 
 def travel_pace_table(pages: Sequence[Sequence[Line]]) -> Rule:
     """The three rows of the Travel Pace table (Fast, Normal, Slow: feet a minute, miles an hour
-    and miles a day), from the first page that has all three. Anything else stops the build."""
+    and miles a day), from the first page with the "Travel Pace" heading and all three rows.
+    Anything else stops the build."""
     for number, lines in enumerate(pages, 1):
+        if not any(_clean(line.text) == "Travel Pace" for line in lines):
+            continue
         rows = {m[1]: m for m in _PACE_ROW.finditer(" ".join(line.text for line in lines))}
         if set(rows) == {"Fast", "Normal", "Slow"}:
             text = "\n".join(

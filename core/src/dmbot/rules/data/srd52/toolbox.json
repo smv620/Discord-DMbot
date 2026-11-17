@@ -401,7 +401,8 @@
    "tag": "Playing the Game",
    "text": "Fast: 400 feet a minute; 4 miles an hour; 30 miles a day\nNormal: 300 feet a minute; 3 miles an hour; 24 miles a day\nSlow: 200 feet a minute; 2 miles an hour; 18 miles a day",
    "page": 12,
-   "see_also": []
+   "see_also": [],
+   "section": "Playing the Game"
   },
   {
    "kind": "rule",

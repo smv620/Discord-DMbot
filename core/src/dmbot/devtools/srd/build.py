@@ -246,10 +246,11 @@ def build_files(
     after_toolbox_at = first_page_of(pages, AFTER_TOOLBOX_HEADING, after=toolbox_at)
     toolbox_lines = lines_between(pages, toolbox_at, after_toolbox_at)
     gameplay = toolbox.parse_toolbox(toolbox_lines)
-    pace_table = toolbox.travel_pace_table(pages[: spells_at - 1])  # ("Playing the Game", #4260)
     dropped = toolbox.left_out(toolbox_lines)
     if dropped != toolbox.EXPECTED_LEFT_OUT:
         raise parse.SrdError(f"The Gameplay Toolbox's left-out sections changed: {dropped}")
+    # "Playing the Game"'s Travel Pace table (#4260): that chapter comes before the spells
+    pace_table = toolbox.travel_pace_table(pages[: spells_at - 1])
     classes_at = first_page_of(pages, CLASSES_HEADING, after=CONTENTS_PAGES)
     origins_at = first_page_of(pages, AFTER_CLASSES_HEADING, after=classes_at)
     features = classes.parse_features(lines_between(pages, classes_at, origins_at))
@@ -305,7 +306,11 @@ def build_files(
             **header("toolbox", TOOLBOX_SECTION),
             "entries": [
                 *({"kind": "rule", **asdict(r) | {"see_also": []}} for r in gameplay.rules),
-                {"kind": "rule", **asdict(pace_table) | {"see_also": []}},
+                # (its own section, so it is cited where it is and is not the DM's chapter)
+                {
+                    "kind": "rule",
+                    **asdict(pace_table) | {"see_also": [], "section": toolbox.PLAYING},
+                },
                 # The Magic Items rules say their own section (the players' are not the DM's).
                 *({"kind": "rule", **asdict(m) | {"see_also": []}} for m in gameplay.magic),
                 *({"kind": "poison", **asdict(p)} for p in gameplay.poisons),

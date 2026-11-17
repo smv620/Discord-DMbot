@@ -875,7 +875,7 @@ class TheData(unittest.TestCase):
         self.assertEqual(self.data["section"], "Gameplay Toolbox")
         for e in self.data["entries"]:
             if e["name"] == toolbox.TRAVEL_PACE_TABLE:  # (from "Playing the Game", #4260)
-                self.assertEqual((e["tag"], e["page"]), (toolbox.PLAYING, 12))
+                self.assertEqual((e["section"], e["page"]), (toolbox.PLAYING, 12))
                 continue
             self.assertGreaterEqual(e["page"], 192)
             self.assertLessEqual(e["page"], 208)  # the Magic Items section ends there
@@ -926,10 +926,6 @@ class TheData(unittest.TestCase):
         self.assertEqual(taken & mine, set())
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TheTravelPaceTable(unittest.TestCase):
     """#4260: the numbers and labels of "Playing the Game"'s Travel Pace table, as one rule."""
 
@@ -956,6 +952,19 @@ class TheTravelPaceTable(unittest.TestCase):
             toolbox.travel_pace_table(
                 [[at(60.0, 184.0, "Fast 400 feet 4 miles 30 miles", page=12)]]
             )
+        with self.assertRaises(SrdError):  # (one page must have the heading and all three)
+            toolbox.travel_pace_table(
+                [
+                    [
+                        at(60.0, 100.0, "Travel Pace", page=1),
+                        at(60.0, 112.0, "Fast 400 feet 4 miles 30 miles", page=1),
+                    ],
+                    [
+                        at(60.0, 100.0, "Normal 300 feet 3 miles 24 miles", page=2),
+                        at(60.0, 112.0, "Slow 200 feet 2 miles 18 miles", page=2),
+                    ],
+                ]
+            )
 
     def test_the_kept_file_has_it(self) -> None:
         import dmbot.rules
@@ -964,3 +973,21 @@ class TheTravelPaceTable(unittest.TestCase):
         names = {e["name"]: e for e in json.loads(data.read_text(encoding="utf-8"))["entries"]}
         self.assertIn("30 miles a day", names[toolbox.TRAVEL_PACE_TABLE]["text"])
         self.assertEqual(names[toolbox.TRAVEL_PACE_TABLE]["page"], 12)
+
+
+class TheIndexReadsIt(unittest.TestCase):  # (#4260: cited where it is, and not the DM's chapter)
+    def test_cited_in_playing_the_game_and_found_by_its_name(self) -> None:
+        from dmbot.rules.index import DATA, Index, load_folder
+
+        index = Index(load_folder(DATA / "srd52") + load_folder(DATA / "srd51"))
+        hit = index.lookup("travel pace table", "2024", "2014", kind="rule")
+        assert hit is not None
+        self.assertEqual(hit.entry.citation, "SRD 5.2.1, Playing the Game, p. 12")
+        self.assertFalse(hit.entry.dm_side)
+        toolbox_rule = index.lookup("travel pace", "2024", "2014", kind="rule")
+        assert toolbox_rule is not None  # (the toolbox's own Travel Pace is still "travel pace")
+        self.assertEqual(toolbox_rule.entry.name, "Travel Pace")
+
+
+if __name__ == "__main__":
+    unittest.main()
