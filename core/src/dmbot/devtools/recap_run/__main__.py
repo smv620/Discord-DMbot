@@ -49,7 +49,7 @@ import shutil
 import sys
 import tempfile
 import time
-from collections.abc import Awaitable, Callable, Collection, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -911,19 +911,21 @@ async def _score_recap(args: argparse.Namespace) -> int:
             print(f"recap_run: {path} is not a file", file=sys.stderr)
             return 2
     if not args.yes:
-        print("One AI call to score the recap. Nothing was run. Add --yes to spend the money.")
+        print("Two AI calls to score the recap. Nothing was run. Add --yes to spend the money.")
         return 0
     got = clients_from_env()
     if got is None:
         return 2
-    _, careful, _ = got
+    _, careful, models = got
+    scoring = Counting(careful, models[1])
     try:
         recap_text, beats_text = await asyncio.to_thread(sc.read_texts, recap, beats)
-        lines = await sc.score_recap_file(recap_text, beats_text, [], careful)
+        lines = await sc.score_recap_file(recap_text, beats_text, [], scoring)
     except OSError as exc:  # the kind only: never the path's contents
         print(f"recap_run: could not read a file ({type(exc).__name__})", file=sys.stderr)
         return 2
     print("\n".join(lines))
+    print("\n" + scoring_line(scoring, prices_of(args.price, models)))
     return 0
 
 
@@ -1115,7 +1117,7 @@ async def _session(
             return 3
         print("\n".join(lines))  # the paid text report first: nothing below can lose it
         if args.score:
-            print("\n".join(await _score(out, careful)))
+            print("\n".join(await _scored(out, careful, prices)))
         folder = Path(args.out) if args.out else None
         if folder is not None:  # the text is saved before the audio can fail
             save_text(folder, out, lines, names_given=False)
@@ -1288,7 +1290,7 @@ async def _transcript(
         return 3
     print("\n".join(lines))  # the paid text report first: nothing below can lose it
     if args.score:
-        print("\n".join(await _score(out, careful)))
+        print("\n".join(await _scored(out, careful, prices)))
     printed = list(lines)
     if out.job.state == "ready":
         cues = _cue_lines(out)
@@ -1343,6 +1345,27 @@ def _tolerated(transcript: tf.Transcript) -> str:
 def voice_tags_on() -> bool:
     """DMBOT_RECAP_VOICE_TAGS as the bot reads it (on unless 0/false/off)."""
     return os.environ.get("DMBOT_RECAP_VOICE_TAGS", "1").lower() in ("1", "true", "on")
+
+
+def scoring_line(scoring: Counting, prices: Mapping[str, tuple[float, float]]) -> str:
+    """The scoring's own calls, tokens and spend (#4556): the report's "Calls" line is the recap's
+    and is printed before the scoring runs, so the scoring says its own. Numbers only."""
+    spend = dollars(
+        prices.get(scoring.model), scoring.input_tokens, scoring.output_tokens, scoring.model
+    )
+    return (
+        f"Scoring: {scoring.calls} calls; tokens in {scoring.input_tokens}, "
+        f"out {scoring.output_tokens}; spend {spend}"
+    )
+
+
+async def _scored(
+    out: Outcome, careful: Client, prices: Mapping[str, tuple[float, float]]
+) -> list[str]:
+    """`_score`, with its calls counted and a line saying what they cost."""
+    scoring = Counting(careful, out.careful.model)
+    lines = await _score(out, scoring)
+    return [*lines, "", scoring_line(scoring, prices)]
 
 
 async def _score(out: Outcome, careful: Client) -> list[str]:

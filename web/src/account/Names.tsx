@@ -21,6 +21,7 @@ import { WORLD_NOTES_LIVE } from "../content/world-notes-switch";
 import { THREADS_LIVE } from "../content/threads-switch";
 import { PLACE_ROUTES_LIVE } from "../content/place-routes-switch";
 import { PLACE_WORLD_LIVE } from "../content/place-world-switch";
+import { LANGUAGES_LIVE } from "../content/languages-switch";
 import { PLACE_FACTS_LIVE } from "../content/place-switch";
 import { PLAYERS_LINE_LIVE } from "../content/players-line-switch";
 import { notNamedWords as notNamed } from "../content/not-named-words";
@@ -1016,6 +1017,9 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
 
       {PLACE_WORLD_LIVE && row.kind === "place" && api.placeWorld && (
         <LazyPanel load={() => import("./PlaceWorld")} what="the place's land, climate and ruler" props={{ api, refId, row, act: (change: NameChange, ok: string) => act(row, change, ok) }} />
+      )}
+      {LANGUAGES_LIVE && (row.kind === "npc" || row.kind === "player_character") && api.characterLanguages && api.changeCharacterLanguages && (
+        <LazyPanel load={() => import("./CharacterLanguages")} what="the character's languages" props={{ api, refId, row }} />
       )}
 
       {PLACE_FACTS_LIVE && row.kind === "place" && row.placeLevel !== undefined && (
