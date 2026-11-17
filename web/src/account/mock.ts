@@ -3218,7 +3218,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const looks = (autoLooks.get(source.id) ?? 0) + 1;
       autoLooks.set(source.id, looks);
       const base = { label: "Lore, 24 Oct", serverNow: now, questionsLeft: 3, undone: undoneUploads.get(source.id) ?? null };
-      const counts = { names: 62, byKind: { npc: 30, place: 24, group: 8 }, connections: 48 };
+      const counts = { names: 62, byKind: { npc: 30, place: 24, group: 8 }, connections: 48, revealed: /\.autoadd-revealed$/.test(ref) ? 3 : 0 };
       if (/\.autoadd-none$/.test(ref)) return { ...base, state: "none", counts: { names: 0, byKind: {}, connections: 0 }, undoUntil: null };
       if (/\.autoadd-applying$/.test(ref) && looks <= 2) {
         return { ...base, state: "applying", counts, undoUntil: null, progress: { stage: "adding", done: looks * 20, total: 110, unit: "names", startedAt: now - 30, updatedAt: now - 2, serverNow: now, state: "running" } };

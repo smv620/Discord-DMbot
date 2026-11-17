@@ -103,6 +103,7 @@ export default function UploadNotice({ api, campaignRef, source, onChanged }: { 
   return (
     <div class="stack">
       <p role="status">{w.added(notice.counts.names, notice.counts.byKind, notice.counts.connections, notice.label)}</p>
+      {(notice.counts.revealed ?? 0) > 0 && <p>{w.revealed(notice.counts.revealed ?? 0)}</p>}
       <ul class="plain-list">
         <li>
           <a href={names}>{fromId ? w.seeNames : w.seeAllNames}</a>

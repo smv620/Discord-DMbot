@@ -42,6 +42,22 @@ describe("the words", () => {
   });
 });
 
+describe("the hidden things made known to everyone (#4589)", () => {
+  it("says it as Discord's notice does, one and many", () => {
+    expect(w.revealed(3)).toBe("🌍 3 hidden things are now known to everyone.");
+    expect(w.revealed(1)).toBe("🌍 1 hidden thing is now known to everyone.");
+  });
+  it("shows the line for an upload that revealed something and not for one that did not", async () => {
+    show("100.cmp1.autoadd-revealed");
+    expect(await screen.findByText(w.revealed(3))).toBeTruthy();
+    cleanup();
+    show("100.cmp1.autoadd");
+    await screen.findByRole("status");
+    expect(screen.queryByText(w.revealed(0), { exact: false })).toBeNull();
+    expect(screen.queryByText("hidden", { exact: false })).toBeNull();
+  });
+});
+
 describe("the notice", () => {
   it("shows the counts, the links and the questions left, and never a name", async () => {
     show("100.cmp1.autoadd");
