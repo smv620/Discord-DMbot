@@ -1300,6 +1300,48 @@ class TheEdits(Editing):
         await self.agree(7)
         self.assertEqual(len((await self.waiting_now())["claims"]), 1)
 
+    async def confirmed(self, user: int, *, removed: bool = False) -> None:
+        """An import's uploader confirmed this person for the campaign (0526, #4603)."""
+        from dmbot.consent import TERMS_VERSION
+
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO import_consents (guild_id, campaign_id, id, import_id, user_id, basis,"
+                " confirmed_by, confirmed_at, terms_version, removed_at)"
+                " VALUES (%s, %s, %s, 'imp', %s, 'uploader_confirmed', 1, 0, %s, %s)",
+                (self.g, self.one.id, f"{user:032x}", user, TERMS_VERSION, 5 if removed else None),
+            )
+
+    async def test_an_import_confirmed_speaker_with_no_consent_row_is_listed(self) -> None:
+        """#4603: Discord counts an import's confirmed speaker as recorded, so the website does."""
+        await self.claim()
+        await self.stop(7)
+        self.assertEqual((await self.waiting_now())["claims"], [])
+        await self.confirmed(7)
+        self.assertEqual((await self.waiting_now())["counts"]["claims"], 1)
+
+    async def test_a_taken_back_or_refused_confirmation_is_not_listed(self) -> None:
+        await self.claim()
+        await self.stop(7)
+        await self.confirmed(7, removed=True)
+        self.assertEqual((await self.waiting_now())["claims"], [])
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE import_consents SET removed_at = NULL WHERE guild_id = %s", (self.g,)
+            )
+            await conn.execute(
+                "INSERT INTO consent_refusals (guild_id, user_id, kind, refused_at)"
+                " VALUES (%s, %s, 'stopped', 1)",
+                (self.g, 7),
+            )
+        self.assertEqual((await self.waiting_now())["claims"], [])
+
+    async def test_a_speaker_without_discord_never_blocks_a_claim(self) -> None:
+        """A negative id is never in `consent`: the missing row is not a stop for them."""
+        await self.claim("Mira Voss", "Far Hall", speaker=-3)
+        await self.stop(-3)  # (`claim` agrees for its speaker: there is no consent row to find)
+        self.assertEqual((await self.waiting_now())["counts"]["claims"], 1)
+
     async def test_the_website_counts_what_the_bot_lists_for_who_is_recorded_now(self) -> None:
         """The bot's own count (`ClaimStore.waiting_for_check`, read-only, with who the consent
         source says is recorded) equals the website's, as the speaker stops, is on older
