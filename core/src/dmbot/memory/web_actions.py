@@ -165,6 +165,9 @@ LANG_ACTIONS = ("lang-add", "lang-remove", "lang-check", "lang-undo")
 # The 🤫 Known or secret? answers from the website (#4598): the same store call as Discord's card
 # (`answer_secret_question`), a make is one change and one Undo.
 SECRET_ACTIONS = ("secret-keep", "secret-make", "secret-undo")
+# The "Progress to check" answers from the website (#4616): the same store calls as Discord's 🧵
+# card (`keep_thread_progress`, `turn_down`, `unturn`), a keep is one change and one Undo.
+PROGRESS_ACTIONS = ("progress-keep", "progress-none", "progress-undo")
 # The Maps page's presses (#4347): a DM's yes or no to using a map (`<map id> yes|no`), Show to
 # the table or Hide (`<map id> shown|hidden`), Remove (`<map id>`), a poster's Take it back
 # (`<map id>`), and ↩ Undo of one of those (the text is its change number). Filed under no name.
@@ -515,6 +518,20 @@ class ActionStore:
             )
             return await cur.fetchone() is not None
 
+    async def progress_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int
+    ) -> bool:
+        """Whether `batch` is the change this DM's own done "Progress to check" keep made from the
+        website (#4616), so the page's Undo can only take back what they did themselves."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action = 'progress-keep' AND state = 'done'"
+                " AND %s = ANY (result_batches) LIMIT 1",
+                (guild_id, campaign_id, user_id, batch),
+            )
+            return await cur.fetchone() is not None
+
     async def map_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, batch: int, *, own_only: bool = False
     ) -> bool:
@@ -682,6 +699,10 @@ async def apply(
         if actions is None and action.action == "secret-undo":
             return _failed(FAILED)
         return await _secrets(memory, actions, guild_id, cid, action)
+    if action.action in PROGRESS_ACTIONS:
+        if actions is None and action.action == "progress-undo":
+            return _failed(FAILED)
+        return await _progress(memory, actions, guild_id, cid, action)
     if action.action in THREAD_ACTIONS:
         if actions is None and action.action == "thread-undo":
             return _failed(FAILED)
@@ -1254,6 +1275,70 @@ async def _secrets(
         if a.action == "secret-undo":
             return _failed(CHANGED)
         return _failed(GONE if str(exc) == sq.GONE else BAD_TARGET)
+
+
+async def _progress(
+    memory: MemoryStore, actions: ActionStore | None, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """A "Progress to check" answer from the page (#4616), through the store calls Discord's 🧵
+    card makes. `progress-keep` keeps the ticked lines and turns the unticked down in one change
+    (one Undo); `progress-none` turns the lines down; `progress-undo` takes back only a keep this
+    DM's own done action made (`keep <change>`), or puts turned-down lines back to waiting
+    (`none <ids>`, open to any DM of the campaign, as Discord's ↩ is). The lines are read again
+    here: every one must still wait and belong to one thread, or the answer is `gone` (answered
+    meanwhile) or `bad_target` (lines of two threads, which no card ever sends). A speaker who
+    stopped being recorded is checked inside the keep, which then keeps nothing (`changed`).
+    Ids only; nothing is logged but counts."""
+    from dmbot.memory import thread_progress as tprog
+
+    store = tprog.ThreadProgressStore(memory._db)
+    try:
+        if a.action == "progress-undo":
+            assert actions is not None  # (checked by the caller)
+            how, _, ref = a.text.partition(" ")
+            if how == "keep":
+                if not (ref.isascii() and ref.isdigit()) or len(ref) > 15:
+                    return _failed(GONE)
+                batch = int(ref)
+                if not await actions.progress_batch_made(guild_id, cid, a.user_id, batch):
+                    return _failed(GONE)
+                await memory.undo(guild_id, cid, batch, after=tprog.unkeep_in(batch))
+                return Outcome()
+            await store.unturn(guild_id, cid, ref.split(","))
+            return Outcome()
+        on_text, _, off_text = (
+            a.text.partition(" ") if a.action == "progress-keep" else ("", "", "")
+        )
+        on = [] if on_text in ("", "-") else on_text.split(",")
+        off = [] if off_text in ("", "-") else off_text.split(",")
+        ids = on + off if a.action == "progress-keep" else a.text.split(",")
+        waiting = {x.id: x for x in await store.waiting(guild_id, cid)}
+        if len(set(ids)) != len(ids) or any(i not in waiting for i in ids):
+            return _failed(GONE)
+        if len({waiting[i].thread_id for i in ids}) != 1:
+            return _failed(BAD_TARGET)
+        if a.action == "progress-none":
+            await store.turn_down(guild_id, cid, ids)
+            return Outcome()
+        moved_batch: int | None = None
+        if on:  # (the unticked ones are turned down inside the keep: one change)
+            moved = await memory.keep_thread_progress(guild_id, cid, on, source=DM, turn_down=off)
+            moved_batch = moved.batch
+            if moved_batch is None:
+                # (they no longer fit the thread, or a speaker stopped: nothing was kept; the
+                # unticked still mean it didn't happen, as on Discord's card)
+                await store.turn_down(guild_id, cid, off)
+                return _failed(CHANGED)
+            return _changed(moved_batch)
+        # (nothing ticked: unticked means it didn't happen)
+        await store.turn_down(guild_id, cid, off)
+        return Outcome()
+    except MemoryRuleError as exc:  # (TooLateToUndo is one: something done since is in the way)
+        if str(exc) == ALREADY_UNDONE:
+            return Outcome()  # (a second Undo of the same keep: done, as a retry is)
+        if a.action == "progress-undo":
+            return _failed(CHANGED)
+        return _failed(GONE if str(exc) == tprog.GONE else BAD_TARGET)
 
 
 async def _thread(
