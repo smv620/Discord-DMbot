@@ -11,7 +11,7 @@ from dmbot.memory import thread_parts as parts
 from dmbot.memory import thread_progress as tp
 from dmbot.memory import web_actions as wa
 from dmbot.memory.models import DM, GOING, OPEN
-from dmbot.web import thread_progress
+from dmbot.web import relationships, thread_progress
 from dmbot.web.recaps import RecapError, _scoped
 from tests.agreed import agree
 from tests.test_recap_web import BOB
@@ -56,6 +56,14 @@ class Progress(Acting):
 
     async def waiting_ids(self) -> list[str]:
         return [x.id for x in await self.progress.waiting(self.g, self.one.id)]
+
+    async def waiting_of(self, kind: str) -> str:
+        """The one waiting line of this kind (lines offered together share a second, so their
+        order is not the order they were offered in)."""
+        (found,) = [
+            x.id for x in await self.progress.waiting(self.g, self.one.id) if x.change.kind == kind
+        ]
+        return found
 
     async def queue_one(self, action: str, text: str, who: Any = None) -> Any:
         session = who or self.session
@@ -133,7 +141,7 @@ class TheAnswers(Progress):
             tp.Change(tp.PART, parts.COMPLICATION, "the cave is trapped"),
             tp.Change(tp.THREAD_STATE, state=GOING),
         )
-        trap, going = await self.waiting_ids()
+        trap, going = await self.waiting_of(tp.PART), await self.waiting_of(tp.THREAD_STATE)
         done = await self.act("progress-keep", f"{trap} {going}")
         self.assertFalse(done.error)
         (batch,) = done.batches
@@ -224,3 +232,61 @@ class TheAnswers(Progress):
             self.web, self.session, self.cref, {"action": "keep", "on": [line], "off": []}
         )
         self.assertEqual(len(queued), 32)
+
+
+class TheEdges(Progress):
+    async def test_a_speaker_who_stopped_between_the_list_and_the_keep_keeps_nothing(self) -> None:
+        await self.offer(tp.Change(tp.PART, parts.COMPLICATION, "the cave is trapped"),
+                         speakers=(BEL, KIA))  # fmt: skip
+        await self.offer(tp.Change(tp.THREAD_STATE, state=GOING))
+        trap, going = await self.waiting_of(tp.PART), await self.waiting_of(tp.THREAD_STATE)
+        await self.sql("DELETE FROM consent WHERE guild_id = %s AND user_id = %s", self.g, KIA)
+        done = await self.act("progress-keep", f"{trap} {going}")
+        self.assertEqual(done.error, wa.CHANGED)
+        self.assertNotIn("the cave is trapped", [p.words for p in await self.parts_now()])
+        # (the unticked one is turned down, as Discord's card does when nothing is kept)
+        self.assertNotIn(going, await self.waiting_ids())
+
+    async def test_another_campaigns_lines_are_not_ours(self) -> None:
+        await self.offer(tp.Change(tp.THREAD_STATE, state=GOING))
+        (line,) = await self.waiting_ids()
+        other_ref = f"{self.g}.{self.two.id}"
+        with self.assertRaises(RecapError) as refused:
+            await thread_progress.read(self.web, self.session, other_ref)
+        self.assertEqual(refused.exception.code, "not_allowed")
+        self.assertEqual(await self.progress.waiting(self.g, self.two.id), [])
+        self.assertIn(line, await self.waiting_ids())
+
+    async def test_a_thread_shows_at_most_25_lines_and_says_how_many_more(self) -> None:
+        await self.offer(
+            *(tp.Change(tp.PART, parts.OBJECTIVE, f"step number {n}") for n in range(30))
+        )
+        (one,) = await self.listed()
+        self.assertEqual((len(one["lines"]), one["more"]), (25, 5))
+
+    async def test_a_keep_of_25_lines_goes_through_the_door_with_its_long_text(self) -> None:
+        await self.offer(
+            *(tp.Change(tp.PART, parts.OBJECTIVE, f"step number {n}") for n in range(25))
+        )
+        ids = await self.waiting_ids()
+        self.assertEqual(len(ids), 25)
+        done = await self.act("progress-keep", f"{','.join(ids[:20])} {','.join(ids[20:])}")
+        self.assertFalse(done.error)
+        self.assertEqual(len(done.batches), 1)
+        self.assertEqual(await self.waiting_ids(), [])
+
+    async def test_the_answer_poll_knows_a_progress_keep_and_its_change(self) -> None:
+        await self.offer(tp.Change(tp.THREAD_STATE, state=GOING))
+        (line,) = await self.waiting_ids()
+        queued = await thread_progress.change(
+            self.web, self.session, self.cref, {"action": "keep", "on": [line], "off": []}
+        )
+        claimed = await self.actions.claim_next(self.g)
+        assert claimed is not None
+        outcome = await wa.apply(self.memory, self.g, {ALICE.id}, claimed, actions=self.actions)
+        await self.actions.finish(
+            self.g, claimed, error=outcome.error, result_batches=outcome.batches
+        )
+        got = await relationships.read_answer(self.web, self.session, self.cref, queued)
+        self.assertEqual(got["state"], "done")
+        self.assertIsInstance(got["batch"], int)

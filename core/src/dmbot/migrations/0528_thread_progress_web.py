@@ -66,6 +66,13 @@ _QUEUE_SWAPS = (
     ),
     # filed under no name
     (f"{_LIST}) THEN", f"{_NEW_LIST}) THEN", 1),
+    # the long text limit list in the door (the function's own check, beside the table's)
+    (
+        "'maps-add', 'thread-keep', 'part-add', 'part-fix')",
+        "'maps-add', 'thread-keep', 'part-add', 'part-fix', 'progress-keep', 'progress-none',"
+        " 'progress-undo')",
+        1,
+    ),
 )
 
 _RECORDED = (

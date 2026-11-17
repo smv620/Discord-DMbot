@@ -1286,8 +1286,9 @@ async def _progress(
     DM's own done action made (`keep <change>`), or puts turned-down lines back to waiting
     (`none <ids>`, open to any DM of the campaign, as Discord's ↩ is). The lines are read again
     here: every one must still wait and belong to one thread, or the answer is `gone` (answered
-    meanwhile, or a speaker stopped being recorded and the sweep took the line) or `bad_target`
-    (lines of two threads, which no card ever sends). Ids only; nothing is logged but counts."""
+    meanwhile) or `bad_target` (lines of two threads, which no card ever sends). A speaker who
+    stopped being recorded is checked inside the keep, which then keeps nothing (`changed`).
+    Ids only; nothing is logged but counts."""
     from dmbot.memory import thread_progress as tprog
 
     store = tprog.ThreadProgressStore(memory._db)
@@ -1324,7 +1325,10 @@ async def _progress(
             moved = await memory.keep_thread_progress(guild_id, cid, on, source=DM, turn_down=off)
             moved_batch = moved.batch
             if moved_batch is None:
-                return _failed(CHANGED)  # (they no longer fit the thread: nothing was kept)
+                # (they no longer fit the thread, or a speaker stopped: nothing was kept; the
+                # unticked still mean it didn't happen, as on Discord's card)
+                await store.turn_down(guild_id, cid, off)
+                return _failed(CHANGED)
             return _changed(moved_batch)
         # (nothing ticked: unticked means it didn't happen)
         await store.turn_down(guild_id, cid, off)
