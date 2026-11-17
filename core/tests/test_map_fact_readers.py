@@ -35,8 +35,8 @@ ALLOWED = {
     "migrations/0530_map_features.py": "a pin's foreign key to a row; nothing reads it (#4670)",
     "migrations/0531_map_pins_web.py": "a DM-only web door, read only: an area pin's words (#4672)",
     "migrations/0481_world_notes_door.py": "World notes, DM-only: NULL for anyone else (#4285)",
-    "migrations/0534_forget_map_reads.py": "account deletion: deletes and unpoints rows, never reads (#4693)",
-    "migrations/0536_forget_map_version.py": "account deletion: re-points, deletes and unpoints rows (#4711)",
+    "migrations/0534_forget_map_reads.py": "account deletion: deletes and unpoints rows (#4693)",
+    "migrations/0536_forget_map_version.py": "account deletion: re-points and bumps (#4711)",
 }
 NAMES = re.compile(r"memory_map_facts|\bMAP_FACTS\b")
 
