@@ -183,9 +183,10 @@ MAP_FACTS = Table(
     "id",
     ("id", "entity_id", "layer", "value", "words", "faction_id", "how", "part",
      "from_session_at", "to_session_at", "from_game_time", "to_game_time", "status", "source",
-     "also_text", "table_knows", "created_at", "culture_id", "relation_id"),
-    # (a named culture, #4257 slice 3b; a road's condition on a known `route_to`, #4258)
-    defaults={"culture_id": None, "relation_id": None},
+     "also_text", "table_knows", "created_at", "culture_id", "relation_id", "map_id"),
+    # (a named culture, #4257 slice 3b; a road's condition on a known `route_to`, #4258; the map
+    # a row rests on, #4259 slice 8b, so a map's removal and its Undo carry it)
+    defaults={"culture_id": None, "relation_id": None, "map_id": None},
 )  # fmt: skip
 # One map: a kept picture DMbot knows is a map (#4344, MapBot layers slice 3a). It is in the log so
 # that each DM action on a map (keep, yes or no to using it, show to the table, remove) is one Undo
@@ -1101,6 +1102,8 @@ class Changes(Scope):
 # (#1189): a fact written before definitions were versioned was written under version 1.
 _ADDED_LATER: dict[str, dict[str, Any]] = {
     "campaign_maps": {"grid_from": None},  # (0530: nobody had set a grid before)
+    # (a row logged before #4259 rested on no map: nothing wrote `map_id` before slice 8)
+    "memory_map_facts": {"map_id": None},
     "memory_relations": {
         "definition_version": 1,
         "unrevealed": False,
