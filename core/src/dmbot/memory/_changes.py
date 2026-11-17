@@ -29,7 +29,7 @@ _DM_ONLY_COLUMNS: dict[str, frozenset[str]] = {
 }
 ALREADY_UNDONE = "That was already undone."
 CHANGED_SINCE = "That was changed again since, so it can't be undone on its own."
-MAP_PICTURE_GONE = "That map's picture was deleted, so nothing could be put back."
+MAP_PICTURE_GONE = "Not undone: that map's picture was deleted since."
 
 
 @dataclass(frozen=True, slots=True)
