@@ -10645,15 +10645,23 @@ async def _reopen_claims_after_undo(w: Changes, batch: int) -> None:
     """A kept claim whose fact this Undo took away waits again (#4636 part 2). Claims are not in
     the change log, so the Undo cannot put them back itself: keeping a name keeps the DM's own
     words about it in the same change, and the name's Undo, from any screen, takes those facts
-    too, so their questions come back with it. A claim's own Undo already does this
-    (`ClaimStore.reopen_in`, which only touches a kept claim, so twice is the same as once)."""
+    too, so their questions come back with it. A fact is taken away when the batch made it (its
+    row is gone now) or when it turned a connection already there into a kept one (a waiting one
+    from an upload, a turned-down twin), which the Undo has put back to what it was. A connection
+    the batch only changed, and that is still kept after the Undo, stands, and so does its claim.
+    A claim's own Undo already does this (`ClaimStore.reopen_in`, which only touches a kept
+    claim, so twice is the same as once). A redo (Undo of this Undo) brings the fact back but
+    leaves its question waiting: saying yes to it again is harmless."""
     from dmbot.memory.claims import ClaimStore  # (claims builds on this module)
 
     cur = await w.conn.execute(
         "SELECT c.id FROM memory_claims c WHERE c.guild_id = %s AND c.campaign_id = %s"
-        " AND c.status = %s AND c.fact_id IN (SELECT row_id FROM memory_changes"
-        " WHERE guild_id = %s AND campaign_id = %s AND batch = %s AND op = 'insert')",
-        (*w.ids, CLAIM_CONFIRMED, *w.ids, batch),
+        " AND c.status = %s AND EXISTS (SELECT 1 FROM memory_changes m"
+        " WHERE m.guild_id = c.guild_id AND m.campaign_id = c.campaign_id AND m.batch = %s"
+        " AND m.row_id = c.fact_id AND (m.op = 'insert' OR (m.table_name = 'memory_relations'"
+        " AND NOT EXISTS (SELECT 1 FROM memory_relations r WHERE r.guild_id = c.guild_id"
+        " AND r.campaign_id = c.campaign_id AND r.id = c.fact_id AND r.status = 'confirmed'))))",
+        (*w.ids, CLAIM_CONFIRMED, batch),
     )
     for row in await cur.fetchall():
         await ClaimStore.reopen_in(w, str(row["id"]))

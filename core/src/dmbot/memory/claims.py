@@ -13,6 +13,7 @@ the numbers show how often, but it is never asked about and never a fact.
 
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import re
@@ -20,6 +21,8 @@ from collections import Counter
 from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any
+
+import psycopg
 
 from dmbot.memory import (
     descriptions,
@@ -2196,8 +2199,10 @@ class ClaimStore:
         from dmbot.consent import still_recorded
 
         ids = set(entity_ids)
+        if not ids:
+            return 0
         rows = await w.select(CLAIMS, " AND status = %s AND how = %s", [CLAIM_PROPOSED, HOW_DM])
-        if not ids or not rows:
+        if not rows:
             return 0
         cur = await w.conn.execute(
             "SELECT user_id FROM campaign_dms WHERE guild_id = %s AND campaign_id = %s",
@@ -2212,7 +2217,7 @@ class ClaimStore:
                 ALIASES, " AND entity_id = ANY(%s) AND status <> 'rejected'", [list(ids)]
             )
         }
-        kept = 0
+        ready: list[Claim] = []
         for row in rows:
             claim = claim_of(row)
             about = bool({claim.subject_picked, claim.object_picked} & ids) or bool(
@@ -2221,7 +2226,9 @@ class ClaimStore:
             if (
                 not about
                 or claim.reading is not None
-                or claim.reason in (WAITING_NAME_REASON, DESCRIBED_REASON)
+                # (a name still waiting, a described person, or one that could be two entries:
+                # the DM's own answer is needed, DMbot never guesses which one)
+                or claim.reason in (WAITING_NAME_REASON, DESCRIBED_REASON, UNPLACED_REASON)
                 or not claim.speaker_ids
                 or not set(claim.speaker_ids) <= dms
             ):
@@ -2230,17 +2237,30 @@ class ClaimStore:
                 claim.subject, claim.relationship, claim.object, claim.details, claim.lines,
                 claim.how,
             )  # fmt: skip
-            if injection_like(wording):
-                continue
-            allowed = await still_recorded(w.conn, w.guild_id, w.campaign_id, claim.speaker_ids)
+            if not injection_like(wording):
+                ready.append(claim)
+        if not ready:
+            return 0
+        # (consent read once for everyone cited, inside this write)
+        allowed = await still_recorded(
+            w.conn, w.guild_id, w.campaign_id, sorted({s for c in ready for s in c.speaker_ids})
+        )
+        kept = 0
+        for claim in ready:
             if not set(claim.speaker_ids) <= allowed:
                 continue  # (someone stopped: the sweep deletes it, never kept here)
+            saved = _held(w)
             try:
                 async with w.conn.transaction():  # (a savepoint: a refusal leaves nothing)
                     await self._confirm_in(w, claim)
                 kept += 1
-            except MemoryRuleError:
-                continue
+            except (MemoryRuleError, psycopg.Error) as exc:
+                # (the savepoint took back the rows; what the write holds in memory goes back too,
+                # so the name's keep and the next claim never build on a rolled-back row. A
+                # database error in one claim leaves it a question, never fails the DM's keep.)
+                _restore(w, saved)
+                if not isinstance(exc, MemoryRuleError):
+                    logger.warning("a DM claim was not kept with its name (%s)", type(exc).__name__)
         return kept
 
     async def _confirm_in(
@@ -2255,8 +2275,9 @@ class ClaimStore:
         """`confirm`'s work inside a write the caller holds (#4636: a name's keep keeps the DM's
         own claims about it in its own change): the names are read and each end asked again
         against what is known now, then the fact is written and the claim told which fact it
-        became. Refusals raise before anything is written. The caller has made the checks that
-        come before (a reading, a plan, an odd claim, consent)."""
+        became. Most refusals raise before anything is written; one that comes after (a connection
+        rule) leaves the caller to roll back, as `keep_dm_claims_in` does with a savepoint. The
+        caller has made the checks that come before (a reading, a plan, an odd claim, consent)."""
         claim_id = claim.id
         wording = Extracted(
             claim.subject, claim.relationship, claim.object, claim.details, claim.lines, claim.how
@@ -2416,3 +2437,20 @@ class ClaimStore:
             {"status": CLAIM_CONFIRMED, "decided_at": w.now, "fact_id": fact_id},
         )
         return Confirmed(claim_of(row), tuple(flags), w.batch, shown, held, split, scene)
+
+
+# What a write holds in memory beside its rows (`Changes`): saved before a savepoint and put back
+# when it rolls back (#4636), since rolling back a savepoint takes back the rows only.
+_HELD = (
+    "version", "batch", "tables", "relation_changes", "entity_changes", "belief_additions",
+    "asked", "held_back", "revived", "deleted_items", "evidence", "player_views", "perspectives",
+)  # fmt: skip
+
+
+def _held(w: Changes) -> dict[str, Any]:
+    return {k: copy.copy(getattr(w, k)) for k in _HELD}
+
+
+def _restore(w: Changes, saved: dict[str, Any]) -> None:
+    for k, v in saved.items():
+        setattr(w, k, v)
