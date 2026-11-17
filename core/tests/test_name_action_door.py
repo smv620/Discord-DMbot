@@ -44,6 +44,7 @@ EVERY_ACTION = (
     "secret-keep", "secret-make", "secret-undo",  # 🤫 Known or secret? questions (#4598)
     "progress-keep", "progress-none", "progress-undo",  # Progress to check (#4616)
     "clue-add", "clue-word", "clue-off", "clue-undo",  # a story thread's clues (#4625)
+    "claim-some",  # keeps a waiting claim for the ticked characters only (#4680)
 )  # fmt: skip
 
 
