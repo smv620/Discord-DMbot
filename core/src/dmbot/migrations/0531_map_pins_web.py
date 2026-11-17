@@ -15,7 +15,9 @@ from __future__ import annotations
 # - `features`: the marks not turned down (`status` 'read' or 'confirmed'), oldest first, each
 #   `{id, shape, points (fractions 0 to 1, across then down, in pairs), label, status, source,
 #   targetKind ('place' | 'road' | 'area' | null), target}`: `target` is the place's name, or a
-#   road's two ends ("A to B"), or an area fact's words; null for a label DMbot read but could not
+#   road's two ends by name, alphabetically ("A to B": a road runs both ways; only while the road
+#   is a kept connection: a road still waiting for the DM reads as no target), or an area fact's
+#   words; null for a label DMbot read but could not
 #   match to a kept name ("Not matched to a name yet"). No entry id leaves the door.
 # Nothing is shown to the table by this door: it answers only a DM of the campaign, whatever the
 # map's audience, and a table-visible map's pins are not made visible by it (4b's answers are,
@@ -54,14 +56,18 @@ SQL = r"""
                     'id', f.id, 'shape', f.shape, 'points', to_jsonb(f.points),
                     'label', f.label, 'status', f.status, 'source', f.source,
                     'targetKind', CASE WHEN f.place_id IS NOT NULL THEN 'place'
-                                       WHEN f.relation_id IS NOT NULL THEN 'road'
+                                       WHEN f.relation_id IS NOT NULL AND EXISTS (
+                                           SELECT 1 FROM memory_relations r
+                                           WHERE r.guild_id = g AND r.campaign_id = c
+                                             AND r.id = f.relation_id
+                                             AND r.status = 'confirmed') THEN 'road'
                                        WHEN f.fact_id IS NOT NULL THEN 'area' END,
                     'target', CASE
                         WHEN f.place_id IS NOT NULL THEN (
                             SELECT e.name FROM memory_entities e
                             WHERE e.guild_id = g AND e.campaign_id = c AND e.id = f.place_id)
                         WHEN f.relation_id IS NOT NULL THEN (
-                            SELECT s.name || ' to ' || t.name
+                            SELECT LEAST(s.name, t.name) || ' to ' || GREATEST(s.name, t.name)
                             FROM memory_relations r
                             JOIN memory_entities s ON s.guild_id = r.guild_id
                                 AND s.campaign_id = r.campaign_id AND s.id = r.subject_id

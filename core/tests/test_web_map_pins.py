@@ -94,3 +94,52 @@ class TheDoor(Pins):
             with self.assertRaises(RecapError) as refused:
                 await self.features(map_id, who=bob)
             self.assertEqual(refused.exception.code, "not_allowed")
+
+
+class TheTargets(Pins):
+    async def road(self, status: str = "confirmed", campaign: str | None = None) -> tuple[str, str]:
+        a = await self.add("Targos", "place")
+        b = await self.add("Bryn Shander", "place")
+        made = await self.memory.add_relation(
+            self.g, campaign or self.one.id, a, "route_to", b, source="dm", confidence=1.0,
+            status=status,
+        )  # fmt: skip
+        return made.value[0].id, a
+
+    async def road_pin(self, relation: str, n: int = 1) -> None:
+        await self.sql(
+            "INSERT INTO map_features (guild_id, campaign_id, id, map_id, shape, points,"
+            " relation_id, label, status, source, created_at)"
+            " VALUES (%s, %s, %s, %s, 'path', %s, %s, 'Road', 'read', 'read', 100)",
+            self.g, self.one.id, f"{n:032x}", self.dm_map, [0.1, 0.1, 0.9, 0.9], relation,
+        )  # fmt: skip
+
+    async def test_a_kept_road_names_its_two_ends_and_is_a_path(self) -> None:
+        relation, _ = await self.road()
+        await self.road_pin(relation)
+        (road,) = (await self.features())["features"]
+        self.assertEqual((road["shape"], road["points"]), ("path", [0.1, 0.1, 0.9, 0.9]))
+        self.assertEqual((road["targetKind"], road["target"]), ("road", "Bryn Shander to Targos"))
+
+    async def test_a_road_still_waiting_for_the_dm_has_no_target(self) -> None:
+        relation, _ = await self.road(status="proposed")
+        await self.road_pin(relation)
+        (road,) = (await self.features())["features"]
+        self.assertEqual((road["targetKind"], road["target"]), (None, None))
+
+    async def test_another_campaigns_map_is_not_found_even_with_a_real_id(self) -> None:
+        added = await self.pictures.add(
+            self.g, self.two.id, poster_id=self.session.user_id, session_id="", line_id=None,
+            message_id=99, description="", consent_version=7, right_granted_at=900,
+            sha256=f"{99:064x}", object_key=f"{self.g}/{self.two.id}/{99:064x}.png",
+            preview_key="", size_bytes=1, preview_bytes=0, storage_mb=10,
+        )  # fmt: skip
+        assert added.picture is not None
+        made = await self.maps.add_map(
+            self.g, self.two.id, picture_id=added.picture.id, uploader_id=self.session.user_id,
+            uploader_is_dm=True, right_to_use=True, kind="region", came_from="website",
+            storage_mb=10, title="Elsewhere",
+        )  # fmt: skip
+        with self.assertRaises(RecapError) as missing:
+            await self.features(made.value.id)  # (a real map, but not this campaign's)
+        self.assertEqual(missing.exception.code, "not_found")
