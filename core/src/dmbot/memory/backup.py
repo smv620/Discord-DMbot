@@ -606,6 +606,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         by_tag[raw["table"]].append(raw)
     _tidy_evidence(by_tag)
     _check_terms(by_tag)
+    _check_placed_readings(by_tag)
     # A sheet belongs to the player playing the character, as everywhere else (#723).
     # One left from another player, or on an entry with no player (an undone merge), is
     # shown nowhere: dropped, not a reason to refuse the backup. One for an entry not in
@@ -1354,6 +1355,15 @@ def _check_story_languages(rows: Sequence[Mapping[str, Any]], characters: set[st
         seen.add(key)
 
 
+def _check_placed_readings(by_tag: dict[str, list[dict[str, Any]]]) -> None:
+    """A placed reading (#4663) names the connection it was placed on, and the file holds it: a
+    file can't pass a reading off as answered with nothing it became."""
+    held = {str(r["id"]) for r in by_tag["relation"]}
+    for c in by_tag["claim"]:
+        if c["reading"] is not None and c["status"] == "confirmed" and c["fact_id"] not in held:
+            raise CampaignError(DAMAGED)
+
+
 def _check_claim(row: Mapping[str, Any]) -> None:
     """A claim in a file: a status a claim can have, a fact only when it was confirmed, and
     never a plan that someone says is waiting for the DM (a plan is never asked)."""
@@ -1361,8 +1371,12 @@ def _check_claim(row: Mapping[str, Any]) -> None:
         raise CampaignError(DAMAGED)
     if not _reading_ok(row["reading"]):
         raise CampaignError(DAMAGED)
-    if row["reading"] is not None and row["status"] == "confirmed":
-        raise CampaignError(DAMAGED)  # a reading is placed as a belief, never kept as a fact
+    if row["reading"] is not None and row["status"] == "confirmed" and row["fact_id"] is None:
+        # A reading is placed as a belief, never kept as a fact: the DM's place answers it as
+        # "confirmed" with the connection it became (`fact_id`, which `_check_placed_readings`
+        # finds in the file). Before #4663 every placed reading was refused here, so a campaign
+        # whose DM had placed one could not be restored.
+        raise CampaignError(DAMAGED)
     if row["fact_id"] is not None and row["status"] != "confirmed":
         raise CampaignError(DAMAGED)
     if row["status"] == "proposed" and row["how"] == "plan":
