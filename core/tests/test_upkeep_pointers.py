@@ -18,6 +18,7 @@ from dmbot.dm_screen.upkeep_pointers import (
     secrets_pointer,
     session_names_pointer,
     session_summary_pointer,
+    story_watch_pointer,
 )
 
 FILE = "Mirelle Vane's secrets.pdf"
@@ -52,6 +53,11 @@ class ThePointers(unittest.TestCase):
         self.assertIn("4 people recorded", text)
         self.assertIn("private message", text)
         self.assertIn("1 person recorded", session_summary_pointer(1, 1))
+
+    def test_the_story_watch_pointer_counts_what_is_shown_and_what_waits(self) -> None:
+        self.assertIn("1 thing the table changed", story_watch_pointer(1, 0))
+        self.assertIn("5 things", story_watch_pointer(3, 2))
+        self.assertIn("private message", story_watch_pointer(1, 0))
 
     def test_a_finished_read_names_the_file_only_where_it_is_private(self) -> None:
         done = SimpleNamespace(status="done", stop_reason="", percent=100)
