@@ -37,7 +37,7 @@ KNOWN = [GARRET, OTHER]
 
 
 def said(**kw: str) -> sp.SaidProgress:
-    base = {
+    base: dict[str, Any] = {
         "thread": "T1", "change": sp.PART_MOVES, "part_kind": "", "part": "T1.P1",
         "state": "done", "words": "Garret found", "due": "", "quote": "We found him",
     }  # fmt: skip
