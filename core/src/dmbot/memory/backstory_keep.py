@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass, field
 
 from dmbot.memory import kin, knows_how, lore_knowledge, route_length, route_words, secret_questions
@@ -353,10 +353,13 @@ async def keep_all(
     keep_flags: bool = True,
     one_press: bool = False,
     players: str = "",
+    listed: Collection[str] = (),
 ) -> KeptAll:
     """Keep each of these ready connections. A refused one stays in the list. A connection DMbot
     inferred (#2959 item 5) is never kept by Keep all or the sure step: only by the DM's press on
-    that one (`one_press`), so it is left out and stays waiting (not counted as refused).
+    that one (`one_press`), so it is left out and stays waiting (not counted as refused). The one
+    exception is `listed`, the waiting ids the sure step found to be a region's listed towns
+    (#4636 part 3, `auto_accept.listed_towns`).
     `progress(done, total)` is told before the first and after each one (kept or refused: tried),
     for the website's "12 of 50" (#2924); counts only. `keep_flags`: keeping a connection that
     already exists never makes it secret, so a secret spelling in the text never hides what the
@@ -370,7 +373,9 @@ async def keep_all(
         raise ValueError("One press keeps one connection.")
     if not one_press:
         # (nor a hand-over, #4115: it ends what someone else holds, so it is seen before it is kept)
-        links = [c for c in links if not c.inferred and not c.hand_over]
+        links = [
+            c for c in links if (not c.inferred or (listed and c.id in listed)) and not c.hand_over
+        ]
     elif players not in ("", "hide", "show"):
         raise ValueError("players is hide, show or empty.")
     total = len(links)

@@ -3033,6 +3033,7 @@ async def queue_links(
                 or known_by,
                 world,
                 inferred=c.inferred,  # (DMbot's inference waits for the DM's own press, #2959)
+                inferred_sure=c.inferred_sure,  # (a region's listed town, #4636 part 3)
                 # (who DMbot guesses knows it, written once it is kept: #2959 slice 3)
                 npc_guesses=dict(
                     (npc_guesses or {}).get((name_key(c.a), c.how, name_key(c.b)), {})

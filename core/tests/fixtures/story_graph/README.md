@@ -101,7 +101,7 @@ Run it after any deploy that changes what the story reader or the story graph do
 
 **The script check (#3385, once the resolver is deployed):** after step 4, make the session's script (the "Make a script of this session" button) and read it. Count, and record in the log (counts only): lines where a form of address or title is followed by a bracket (the sample's tavern line should read like "Hello, Friend [Belleros]"), brackets turned into `[unknown]`, and that **no entry or other name was added** by the run. A form of address must never show up in the names list.
 
-A tie found only as a **waiting suggestion** counts as found-waiting: the reader proposed it and the DM has not said yes. A tie marked **inferred** in the key should only ever be offered; one that is already confirmed is counted so a person can look.
+A tie found only as a **waiting suggestion** counts as found-waiting: the reader proposed it and the DM has not said yes. A tie marked **inferred** in the key should only ever be offered; one that is already confirmed is counted so a person can look. **One exception** (#4636 part 3, Supervisor's ruling): a place the text lists as one of a region's ("the ten towns: …") is `in` that region, rated sure by the reader, with no other parent, and an upload's sure step keeps it; the key's rows for those are stated, so a kept one counts as found. The key's `must_not_ties` rows ("Kelvin's Cairn in Ten-Towns") are the near-misses that must never be kept: one kept as a fact is counted under "Must-not-make ties kept as facts". The before and after figures on #3545 must show no rise in false ties, or this goes back to being a question.
 
 ### Story threads and the quest cases (#4453, quests slice 1)
 

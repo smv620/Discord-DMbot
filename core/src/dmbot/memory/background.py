@@ -203,11 +203,23 @@ def schema(own: Mapping[str, str] | None = None) -> dict[str, Any]:
                         "b": {"type": "string"},
                         "quote": {"type": "string"},
                         "inferred": {"type": "string"},
+                        # (the reader is sure of a worked-out `in` from a list, #4636 part 3)
+                        "sure": {"type": "boolean"},
                         # (who had the item before, and how it moved, #4115: "" for none)
                         "from": {"type": "string"},
                         "change": {"type": "string", "enum": ["", *HAND_OVERS]},
                     },
-                    "required": ["a", "how", "words", "b", "quote", "inferred", "from", "change"],
+                    "required": [
+                        "a",
+                        "how",
+                        "words",
+                        "b",
+                        "quote",
+                        "inferred",
+                        "sure",
+                        "from",
+                        "change",
+                    ],
                     "additionalProperties": False,
                 },
             },
@@ -251,6 +263,10 @@ class Connection:
     # Why DMbot inferred it (#2959 item 5): the text implies it without saying it. "" for a stated
     # connection. Never kept without the DM's own press on it.
     inferred: str = ""
+    # The reader is sure of it (#4636 part 3): only on a worked-out `in` from a place to a bigger
+    # place, from a list in the text naming the place as one of that place's ("the ten towns:
+    # Bryn Shander, Targos, …"). An upload's sure step may keep such a one; nothing else.
+    inferred_sure: bool = False
     # A hand-over (#4115): who had the item before (a name as written, then the name it stands
     # for) and how it moved, one of HAND_OVERS. "" for none. Only on an `owns` or `carries`.
     from_holder: str = ""
@@ -1143,6 +1159,7 @@ def read_connections(
             variant_a=seen[0] if seen[0] != a else "",
             variant_b=seen[1] if seen[1] != b else "",
             inferred=inferred,
+            inferred_sure=bool(inferred) and how == "located_in" and item.get("sure") is True,
             # (checked once the quote is settled: `_handed`)
             from_holder=" ".join(str(item.get("from") or "").split())
             if how in ("owns", "carries")

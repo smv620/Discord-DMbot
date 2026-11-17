@@ -7,7 +7,7 @@
  },
  "order": "the lore is read first, then the session; where they disagree about what is current, the session wins",
  "how_to_read": {
-  "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted); needs_context = only readable with the lore or the recap (for example 'she' is Keegan); recap_only = only in the 'Previously' recap on line 1, so background and never this session's event; by_rule = made by a rule, not read",
+  "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted; one exception, #4636 part 3: a place the text lists as one of a region's, 'in', sure, with no other parent, is kept by an upload's sure step, and the key's row for it is stated); needs_context = only readable with the lore or the recap (for example 'she' is Keegan); recap_only = only in the 'Previously' recap on line 1, so background and never this session's event; by_rule = made by a rule, not read",
   "relation": "parent_of, grandparent_of, sibling, spouse, uncle_of, apprentice_of, mentor_of, owns, carries, knows (+ one of nine feeling words), member, leads, works_for, enemy_of, rival_of, held_captive_by, found, associate; place ties by word: lives_in, lived_in, works_in, comes_from, last_seen_in (a character, creature or group), kept_in, was_kept_in (an item); in (only a place inside a place); route (a road or way between two places, either way round, #4255)",
   "direction": "a to b: parent_of (a is the parent), owns (a owns b), leads (a leads b), member (a belongs to b), in (a place is inside place b); sibling, spouse and rival_of read the same both ways",
   "must_find": "false = a good find if present, not a miss if absent; an inferred tie that must be found is scored as an offered suggestion",
@@ -4065,6 +4065,10 @@
   "Glyph travels with the party (travels_with, #3176)",
   "who a marching order puts ahead of whom is not a tie",
   "the road ambush as a deed ('attacked'), until session events have their own design note"
+ ],
+ "must_not_ties": [
+  {"id": "nl01", "a": "Kelvin's Cairn", "relation": "in", "b": "Ten-Towns", "note": "a mountain beside the towns, not one of them: a region's listed towns (#4636 part 3) never reach a place the list doesn't name"},
+  {"id": "nl02", "a": "Maer Dualdon", "relation": "in", "b": "Ten-Towns", "note": "the lake some of the towns stand on, not one of them (#4636 part 3)"}
  ],
  "must_not_find": [
   "a kind of creature is not an entry (#3373 rule, Supervisor 2026-11-04): no entry or tie for the white roc, ice kobolds, grell, electric eel or owlbears; one particular creature is (the mind flayer whose skull held the Psi crystal)",

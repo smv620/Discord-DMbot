@@ -131,6 +131,9 @@ class Report:
     extra_ties: int = 0
     violations: list[str] = field(default_factory=list)
     inferred_confirmed: list[str] = field(default_factory=list)
+    # `must_not_ties` rows kept as facts (#4636 part 3): a near-miss a list was over-applied to,
+    # "Kelvin's Cairn in Ten-Towns". Offered (waiting) is fine; kept is a false tie.
+    false_ties: list[str] = field(default_factory=list)
     events_in_backup: int = 0
     events_expected: int = 0
     players_found: int = 0  # the key's player characters that are entries with that role (#3553)
@@ -498,6 +501,13 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
         right_as_description = any(_plain(name) in {_plain(x) for x in names[s]} for s in strict)
         if graph.named([name]) or (not right_as_description and graph.described([name])):
             report.violations.append(name)
+    for t in key.get("must_not_ties", []):
+        a, b = (
+            lookup(t["a"]) if t["a"] in names else set(),
+            lookup(t["b"]) if t["b"] in names else set(),
+        )
+        if a and b and _tie_status(t, graph, a, b, kinds)[0] == FOUND:
+            report.false_ties.append(str(t["id"]))
     for r in graph.relations:
         if (
             str(r["subject_id"]) in matched_ids
@@ -867,6 +877,7 @@ def summarize(report: Report) -> dict[str, Any]:
         "extra_ties": report.extra_ties,
         "violations": len(report.violations),
         "inferred_confirmed": len(report.inferred_confirmed),
+        "false_ties": len(report.false_ties),
         "event_entries": {"expected": report.events_expected, "in_backup": report.events_in_backup},
         "player_characters": {"found": report.players_found, "expected": report.players_expected},
         "map_facts": {layer: dict(c) for layer, c in sorted(report.map_facts.items())},
@@ -952,6 +963,9 @@ def render(report: Report, counts_only: bool = False) -> str:
         "Inferred ties already confirmed as facts (they should be offered; a yes from the DM "
         f"is fine): {len(report.inferred_confirmed)}"
     )
+    lines.append(f"Must-not-make ties kept as facts: {len(report.false_ties)}")
+    if report.false_ties and not counts_only:
+        lines.append("  " + ", ".join(report.false_ties))
     lines.append("")
     for label, status in (
         ("Must-find ties missing", MISSING),

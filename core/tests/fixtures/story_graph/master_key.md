@@ -366,6 +366,13 @@ How far a road is, as the session says it (#4255): a property of the road, never
 | Targos | Bryn Shander | 1 hour | 283 | 'It's only 1 hour to Bryn Shander' on the party's journey |
 | Targos | Easthaven | five hours | 192 | 'take the dogsled five hours to Easthaven'; read only if that journey is walked |
 
+## Must not make (ties)
+
+A tie the reader must never keep as a fact (#4636 part 3): the near-misses of a region's listed towns. Offered as a question is fine; kept is counted as a false tie.
+
+- nl01: Kelvin's Cairn in Ten-Towns: a mountain beside the towns, not one of them
+- nl02: Maer Dualdon in Ten-Towns: the lake some of the towns stand on, not one of them
+
 ## Must not find
 
 - a kind of creature is not an entry (#3373 rule, Supervisor 2026-11-04): no entry or tie for the white roc, ice kobolds, grell, electric eel or owlbears; one particular creature is (the mind flayer whose skull held the Psi crystal)
