@@ -950,6 +950,81 @@ class StoryThreads(unittest.TestCase):
         )  # fmt: skip
         self.assertIn("Thread parts found: objective 1/1, complication 1/1", gkc.render(report))
 
+    def test_clues_on_the_matched_thread(self) -> None:
+        """#4624, quests 6b: a clue tied to the matched thread by words, one on another thread,
+        a good find missed, an extra tie, and a must-not thread with a tie (false)."""
+        key = {
+            "nodes": [{"name": n, "kind": "person", "aliases": [], "note": ""}
+                      for n in ("Hlin", "Sephek", "Cerric")],
+            "pairs": [],
+            "threads": [
+                {"id": "t1", "kind": "quest", "name": "x", "giver": "Hlin", "target": "Sephek",
+                 "taker": "", "missing": [], "in_danger": [], "must_find": True, "hint": False},
+                {"id": "t2", "kind": "quest", "name": "y", "giver": "", "target": "",
+                 "taker": "Cerric", "missing": [], "in_danger": [], "must_find": True,
+                 "hint": False},
+            ],
+            "clues": [
+                {"thread": "t2", "words": ["Tome"]},
+                {"thread": "t2", "words": ["journal"]},
+                {"thread": "t2", "words": ["whisper"], "must_find": False},
+            ],
+            "must_not_clues": [{"thread": "t1"}],
+        }  # fmt: skip
+        people = [("h", "Hlin", "npc"), ("s", "Sephek", "npc"), ("c", "Cerric", "npc")]
+        things = [("q1", "Hlin's job", "quest"), ("q2", "Cerric's search", "quest"),
+                  ("k1", "the warning in the azure tome", "clue"), ("k2", "his journal", "clue"),
+                  ("k3", "a strange mark", "clue")]  # fmt: skip
+
+        def tie(i: str, clue: str, thread: str) -> dict[str, Any]:
+            return {"table": "relation", "id": i, "subject_id": clue, "predicate": "clue_to",
+                    "object_id": thread, "status": "confirmed"}  # fmt: skip
+
+        rows = [
+            self.rel("r1", "h", "q1", "quest giver"), self.rel("r2", "s", "q1", "target"),
+            self.rel("r3", "c", "q2", "takes it on"),
+            tie("c1", "k1", "q2"), tie("c2", "k2", "q1"), tie("c3", "k3", "q2"),
+        ]  # fmt: skip
+        report = gkc.check(backup(people + things, rows), key)
+        self.assertEqual(
+            dict(report.clues),
+            {"found": 1, "wrong thread": 1, "good finds missed": 1, "extra": 1, "false": 1},
+        )
+        self.assertIn("Clues: found 1, missed 0, wrong thread 1", gkc.render(report))
+        self.assertEqual(report.extra_entries["clue"], 0)  # (a tied clue is scored here only)
+
+    def test_a_clue_answers_one_row_and_words_match_from_their_start(self) -> None:
+        key = {
+            "nodes": [{"name": "Cerric", "kind": "person", "aliases": [], "note": ""}],
+            "pairs": [],
+            "threads": [{"id": "t2", "kind": "quest", "name": "y", "giver": "", "target": "",
+                         "taker": "Cerric", "missing": [], "in_danger": [], "must_find": True,
+                         "hint": False}],
+            "clues": [
+                {"thread": "t2", "words": ["coming"], "must_find": False},
+                {"thread": "t2", "words": ["tome"]},  # (must-find rows are answered first)
+                {"thread": "t2", "words": ["Wit"]},  # ("with" is not "Wit": missed)
+                {"thread": "t9", "words": ["map"]},  # (no such thread: missed)
+            ],
+        }  # fmt: skip
+        things = [("c", "Cerric", "npc"), ("q2", "Cerric's search", "quest"),
+                  ("k1", "the tome's warning: they are coming, with blood", "clue")]  # fmt: skip
+        rows = [
+            self.rel("r3", "c", "q2", "takes it on"),
+            {"table": "relation", "id": "c1", "subject_id": "k1", "predicate": "clue_to",
+             "object_id": "q2", "status": "confirmed"},
+        ]  # fmt: skip
+        report = gkc.check(backup(things, rows), key)
+        got = {k: n for k, n in report.clues.items() if n}
+        self.assertEqual(got, {"found": 1, "missed": 2, "good finds missed": 1})
+
+    def test_the_keys_clue_rows_name_their_threads(self) -> None:
+        for name in ("lore_key.json", "master_key.json"):
+            key = load(name)
+            ids = {t["id"] for t in key["threads"]}
+            for c in [*key["clues"], *key["must_not_clues"]]:
+                self.assertIn(c["thread"], ids)
+
     def test_progress_on_the_matched_thread(self) -> None:
         """#4522, quests 5c: what the session moved on a lore thread, read off the backup thread
         its key thread matched: the thread's open state, a part's state now, a session's new part
