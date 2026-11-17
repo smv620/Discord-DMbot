@@ -98,6 +98,14 @@ describe("Undo this upload", () => {
     expect(api.calls.filter((c) => c.startsWith("undoUpload"))).toHaveLength(1);
     expect(screen.queryByRole("button", { name: w.undo })).toBeNull();
   });
+  it("takes the hidden-things line away once the upload is undone", async () => {
+    show("100.cmp1.autoadd-revealed");
+    expect(await screen.findByText(w.revealed(3))).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: w.undo }));
+    fireEvent.click(screen.getByRole("button", { name: w.undoYes }));
+    expect(await screen.findByText(w.tookBack(60, 110))).toBeTruthy();
+    expect(screen.queryByText(w.revealed(3))).toBeNull();
+  });
   const failWith = async (error: ApiError): Promise<void> => {
     const api = mockApi("table");
     api.undoUpload = async () => {
