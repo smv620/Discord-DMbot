@@ -490,8 +490,8 @@ class MapStore:
         asker may know, or (for "how far") the story or the DM has stated a length between them,
         which beats a measured one (§9). `dm`: every map DMbot may use; otherwise only the table's
         maps, and places the players have been shown, worked out as every list does (the knowledge
-        gate, else the entry's flags), so a DM-only map's pins, scale and distances never reach a
-        player (Supervisor's condition)."""
+        gate; with no party, `gate.public_entries`), so a DM-only map's pins, scale and distances
+        never reach a player (Supervisor's condition)."""
         from dmbot.maps import measure, measure_phrase, positions
         from dmbot.memory import gate
         from dmbot.memory._changes import ALIASES, ENTITIES
@@ -514,15 +514,10 @@ class MapStore:
                     if statements.player_characters:
                         full = gate.visible(gate.Viewer.the_party(), statements)
                         seen = frozenset(i for (k, i) in full.sureness if k == gate.ENTRY)
-                shown = (
-                    set(seen)
-                    if seen is not None
-                    else {
-                        str(e["id"])
-                        for e in entities
-                        if not (e["hidden_from_players"] or e["audience_limited"] or e["unnamed"])
-                    }
-                )
+                if seen is None:  # (no party yet: the names every player may read)
+                    every_name = await scope.select(ALIASES, " AND status = 'confirmed'")
+                    seen = gate.public_entries(entities, every_name)
+                shown = set(seen)
 
             def place(said: str) -> str | None:
                 for key in (name_key(said), name_key(measure_phrase.without_article(said))):
