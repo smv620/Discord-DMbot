@@ -28,6 +28,8 @@ ALLOWED = {
     "ui/place_size.py": "the route place's card line; its buttons are the DM's, checked again",
     "ui/connection_edit.py": "the DM's edit page only (`found.secrets`)",
     "maps/disagree.py": "only names `route_length` in its docstring: a pure check, shows nothing",
+    "maps/said_phrases.py": "parses words the DM just said with `route_length.parse`; reads no "
+    "stored length, shows nothing (#4670 4c-2)",
     "maps/store.py": "a stated length beats a measured one (4b), and a kept road's length is "
     "checked against the DM's maps for the DM alone (#4670 4c); shows players nothing",
     "memory/world_notes.py": "World notes, the DM's list only: lists DMbot's read of a length a "

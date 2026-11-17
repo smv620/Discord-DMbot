@@ -350,6 +350,7 @@ _SETTABLE = frozenset(
         "recaps_email",
         "ask_before_adding",
         "channels_visibility",
+        "map_checks",
     }
 )
 RECAP_SWITCHES = ("text", "audio", "email")  # the DM's recap choices (#1421)
@@ -1000,6 +1001,12 @@ class CampaignStore:
         (Add all) as it always did; off (the default), what DMbot is sure of is added by itself.
         Who may change it is checked by the caller (the campaign's DMs)."""
         return await self._set(guild_id, campaign_id, "ask_before_adding", bool(on))
+
+    async def set_map_checks(self, guild_id: int, campaign_id: str, on: bool) -> Campaign:
+        """ "Map checks" (#4670 4c-2): on (the default), DMbot may tell the DM privately, once per
+        pair of places a session, when a distance or direction they say is far off a kept map's;
+        off, it never does. Who may change it is checked by the caller (the campaign's DMs)."""
+        return await self._set(guild_id, campaign_id, "map_checks", bool(on))
 
     async def set_channels_visibility(
         self, guild_id: int, campaign_id: str, choice: str
@@ -1848,6 +1855,7 @@ class CampaignStore:
                 "recaps_audio": campaign.recaps_audio,
                 "recaps_email": campaign.recaps_email,
                 "ask_before_adding": campaign.ask_before_adding,
+                "map_checks": campaign.map_checks,
                 "channels_visibility": campaign.channels_visibility,
                 "dndbeyond_invite": campaign.dndbeyond_invite,
                 # Only the switch (#1118): a channel ID means nothing in another server.
@@ -2082,6 +2090,11 @@ class CampaignStore:
             await conn.execute(
                 "UPDATE campaigns SET ask_before_adding = %s WHERE guild_id = %s AND id = %s",
                 (info["ask_before_adding"], guild_id, campaign_id),
+            )
+            # "Map checks" (#4670 4c-2); a backup from before it says nothing: on, the default.
+            await conn.execute(
+                "UPDATE campaigns SET map_checks = %s WHERE guild_id = %s AND id = %s",
+                (info["map_checks"], guild_id, campaign_id),
             )
             # A restore keeps the stamp each row was made with, NULL included, and never stamps a
             # row with the build that loaded it (#3739, `dmbot.lineage`).
@@ -2450,6 +2463,7 @@ def _to_campaign(row: dict[str, Any], roster: _Roster) -> Campaign:
         recaps_email=bool(row.get("recaps_email", True)),
         channels_visibility=clean_channels(row.get("channels_visibility")),
         ask_before_adding=bool(row.get("ask_before_adding", False)),  # (older schemas: off)
+        map_checks=bool(row.get("map_checks", True)),  # (older schemas: on, the default)
         paused=bool(row.get("paused", False)),
         retention_warned_stage=int(row.get("retention_warned_stage", 0) or 0),
         retention_warned_for=(
@@ -2716,6 +2730,10 @@ def _validate_backup(
     ask_before_adding = campaign.get("ask_before_adding", False)
     if not isinstance(ask_before_adding, bool):
         raise CampaignError(DAMAGED)
+    # Backups made before "Map checks" (#4670 4c-2) have it on, the default.
+    map_checks = campaign.get("map_checks", True)
+    if not isinstance(map_checks, bool):
+        raise CampaignError(DAMAGED)
 
     # Backups made before the invite link existed have none. A link that isn't one is damage.
     invite = campaign.get("dndbeyond_invite")
@@ -2754,6 +2772,7 @@ def _validate_backup(
         "dndbeyond_invite": invite,
         "table_chat": table_chat,
         "ask_before_adding": ask_before_adding,
+        "map_checks": map_checks,
         "channels_visibility": channels_visibility,
     }
     return info, {name: list(rows) for name, rows in sections.items()}

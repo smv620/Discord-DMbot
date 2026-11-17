@@ -151,6 +151,7 @@ def settings_text(
     offer: HandoverOffer | None = None,
     viewer: int | None = None,
     setting: SettingField | None = None,
+    map_checks: bool = False,
 ) -> str:
     """The ⚙️ Manage DMbot card (only the person who opened it sees it): only what needs Discord
     to be there (#2986), with the rest listed as not on the website yet. `offer`, `viewer`: kept
@@ -175,8 +176,23 @@ def settings_text(
                 if viewer in campaign.dm_user_ids
                 else []
             ),
+            # (#4670 4c-2: the button's line, beside it whenever it is drawn; the ux-critic's words)
+            *(
+                [_map_checks_line(campaign)]
+                if map_checks and viewer in campaign.dm_user_ids
+                else []
+            ),
             f"**Not on the website yet:** {NOT_ON_WEBSITE}.",
         ]
+    )
+
+
+def _map_checks_line(campaign: Campaign) -> str:
+    """The card's line for 🗺️ Map checks (#4670 4c-2; the ux-critic's words)."""
+    return (
+        f"• **Map checks:** {'on' if campaign.map_checks else 'off'}. When a distance or direction"
+        " you say at the table is far off a map, DMbot tells you privately, once per pair of"
+        " places. Change it with 🗺️ Map checks."
     )
 
 
@@ -249,6 +265,7 @@ def settings_view(
     site_url: str = "",
     questions: int | None = None,
     setting: SettingField | None = None,
+    map_checks: bool = False,
 ) -> discord.ui.View:
     """The ⚙️ Manage DMbot card's buttons (#2986). `viewer`: who it's for (it's private).
     Rows 0 and 1 hold only what needs Discord to be there: how much DMbot says, who can see the DM
@@ -289,6 +306,8 @@ def settings_view(
             if setting.guessed and setting.entity_id:  # (DMbot's guess waits for the DM's yes)
                 view.add_item(_row(KeepSettingButton(campaign.id, setting.entity_id), 4))
             view.add_item(_row(PickButton(campaign.id, has_setting=bool(setting.entity_id)), 4))
+        if map_checks:  # (only while the map answers are on, #4670 4c-2: else it does nothing)
+            view.add_item(_row(MapChecksButton(campaign.id, campaign.map_checks), 4))
     return view
 
 
@@ -353,6 +372,11 @@ async def _may(
     )
 
 
+def _map_checks(interaction: discord.Interaction) -> bool:
+    """Whether the card offers "Map checks" (#4670 4c-2): only while the map answers are on."""
+    return bool(getattr(getattr(interaction.client, "settings", None), "map_measure_on", False))
+
+
 def _site(interaction: discord.Interaction) -> str:
     """The website address the bot was set up with (empty: none)."""
     return str(getattr(getattr(interaction.client, "settings", None), "site_url", "") or "")
@@ -366,6 +390,7 @@ def _drawn(
     site_url: str = "",
     questions: int | None = None,
     setting: SettingField | None = None,
+    map_checks: bool = False,
 ) -> tuple[str, discord.ui.View]:
     """A card as the campaign is now: "settings", "visibility" or "management"."""
     if card == "visibility":
@@ -374,8 +399,8 @@ def _drawn(
         return channel_sync_ui.channels_text(campaign), channel_sync_ui.channels_view(campaign)
     if card == "management":
         return management_text(campaign, offer, viewer), management_view(campaign, offer, viewer)
-    return settings_text(campaign, offer, viewer, setting), settings_view(
-        campaign, offer, viewer, site_url, questions, setting
+    return settings_text(campaign, offer, viewer, setting, map_checks), settings_view(
+        campaign, offer, viewer, site_url, questions, setting, map_checks
     )
 
 
@@ -397,8 +422,9 @@ async def _redraw(
     questions = await questions_board.total_for(interaction, campaign.id)
     setting = await _setting_for(interaction, campaign, card)
     text, view = _drawn(
-        campaign, offer, interaction.user.id, card, _site(interaction), questions, setting
-    )
+        campaign, offer, interaction.user.id, card, _site(interaction), questions, setting,
+        _map_checks(interaction),
+    )  # fmt: skip
     try:
         await interaction.edit_original_response(content=text, view=view, allowed_mentions=NO_PINGS)
     except discord.HTTPException:
@@ -444,9 +470,15 @@ class SettingsButton(
             return
         setting = await _setting_for(interaction, campaign, "settings")
         await interaction.response.send_message(
-            settings_text(campaign, offer, interaction.user.id, setting),
+            settings_text(campaign, offer, interaction.user.id, setting, _map_checks(interaction)),
             view=settings_view(
-                campaign, offer, interaction.user.id, _site(interaction), questions, setting
+                campaign,
+                offer,
+                interaction.user.id,
+                _site(interaction),
+                questions,
+                setting,
+                _map_checks(interaction),
             ),
             ephemeral=True,
             allowed_mentions=NO_PINGS,
@@ -933,6 +965,65 @@ class AskBeforeAddingButton(
         await _redraw(interaction, saved)
 
 
+class MapChecksButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
+    template=rf"dmbot:mapchecks:{_ID}:(?P<to>on|off)",
+):
+    """🗺️ Map checks: On or Off, one tap changes it (#4670 4c-2). On (the default), DMbot may tell
+    the DM privately, once per pair of places a session, when a distance or direction they say is
+    far off a kept map's; the note's 🔕 Stop map checks turns it off, and this turns it back on
+    (every choice visible and revocable). Only the campaign's DMs have it."""
+
+    def __init__(self, campaign_id: str, on: bool) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=f"Map checks: {'on' if on else 'off'}",
+                emoji="🗺️",
+                style=discord.ButtonStyle.primary if on else discord.ButtonStyle.secondary,
+                row=4,
+                custom_id=f"dmbot:mapchecks:{campaign_id}:{'off' if on else 'on'}",
+            )
+        )
+        self.campaign_id = campaign_id
+        self.turn_on = not on  # what a press does
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> MapChecksButton:
+        return cls(match["campaign"], on=match["to"] == "off")  # "to off" means it is on now
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        set_log_context(guild_id=interaction.guild_id)
+        store = getattr(interaction.client, "campaigns", None)
+        guild = interaction.guild
+        campaign: Campaign | None = None
+        if store is not None and guild is not None:
+            try:
+                campaign = await store.get(guild.id, self.campaign_id)
+            except Exception:
+                log.exception("Couldn't load a campaign for the map-checks choice")
+                await interaction.response.send_message(LOAD_FAILED, ephemeral=True)
+                return
+        if campaign is None:
+            await interaction.response.send_message(GONE, ephemeral=True)
+            return
+        if interaction.user.id not in campaign.dm_user_ids:  # checked on every press
+            await interaction.response.send_message(ONLY_DMS, ephemeral=True)
+            return
+        await interaction.response.defer()
+        assert store is not None  # (a campaign was loaded from it)
+        try:
+            saved: Campaign = await store.set_map_checks(
+                campaign.guild_id, campaign.id, self.turn_on
+            )
+        except Exception:
+            log.exception("Couldn't change the map-checks choice")
+            await interaction.followup.send(FAILED, ephemeral=True)
+            return
+        await _redraw(interaction, saved)
+
+
 class LevelButton(
     discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
     template=rf"dmbot:level:{_ID}:(?P<level>{'|'.join(DM_SCREEN_LEVELS_OFFERED)})",
@@ -1085,8 +1176,9 @@ async def _open_card(interaction: discord.Interaction, campaign_id: str, card: s
     questions = await questions_board.total_for(interaction, campaign_id)
     setting = await _setting_for(interaction, campaign, card)
     text, view = _drawn(
-        campaign, offer, interaction.user.id, card, _site(interaction), questions, setting
-    )
+        campaign, offer, interaction.user.id, card, _site(interaction), questions, setting,
+        _map_checks(interaction),
+    )  # fmt: skip
     try:
         await interaction.response.edit_message(content=text, view=view, allowed_mentions=NO_PINGS)
     except discord.HTTPException:  # the card is too old to edit: say so, don't leave "failed"
