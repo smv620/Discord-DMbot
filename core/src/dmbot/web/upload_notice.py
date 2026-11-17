@@ -49,7 +49,7 @@ async def read(
         return {
             "state": "none",
             "label": "",
-            "counts": {"names": 0, "byKind": {}, "connections": 0},
+            "counts": {"names": 0, "byKind": {}, "connections": 0, "revealed": 0},
             "undoUntil": None,
             "undone": None,
             "questionsLeft": 0,
@@ -64,6 +64,9 @@ async def read(
             "names": sum(by_kind.values()),
             "byKind": by_kind,
             "connections": stored.get("connections", 0),
+            # (a 🌍 Common knowledge read's hidden things now known to everyone, #4589: a count
+            # only, as the upload's notice in Discord says it)
+            "revealed": stored.get("revealed", 0),
         },
         "undoUntil": got.get("undoUntil"),
         # A past Undo says nothing here: how many it took back is not kept, and "took back 0 of 0"
@@ -82,6 +85,9 @@ async def read(
             "names": sum(by_kind.values()),
             "byKind": by_kind,
             "connections": stored.get("connections", 0),
+            # (a 🌍 Common knowledge read's hidden things now known to everyone, #4589: a count
+            # only, as the upload's notice in Discord says it)
+            "revealed": stored.get("revealed", 0),
         },
         "undoUntil": got.get("undoUntil"),
         # An Undo already done: how many it took back is not kept, so no numbers (`took` 0 of 0 is
