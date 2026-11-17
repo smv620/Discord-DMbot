@@ -116,6 +116,11 @@ class Fit(unittest.TestCase):
         with self.assertRaises(SampleError):
             cli.fit_parallel(5.0, 0.0, 2)
 
+    def test_the_default_run_cost_fits_five_runs_at_about_nine_dollars(self) -> None:
+        # (#4652: at $3.00 a run, five runs needed $15 and `--parallel 5` ran one at a time)
+        budget = 9.0 - cli.RECAP_RESERVE_USD - cli.MAP_RESERVE_USD
+        self.assertEqual(cli.fit_parallel(budget, cli.RUN_USD, 5), 5)
+
 
 class Parallel(unittest.TestCase):
     def go(
@@ -179,7 +184,7 @@ class Parallel(unittest.TestCase):
             )
             # 8 - 0.75 recap = 7.25 -> 3 at a time; the second batch is sized from what run cost
             self.assertEqual(done["peak"], 3)
-            self.assertIn("Only 3 of 5 runs fit at once", "\n".join(said))
+            self.assertIn("Only 3 at once fit", "\n".join(said))
             self.assertEqual(len(started), 5)
 
     def test_not_even_one_fitting_stops_before_anything_is_made(self) -> None:
