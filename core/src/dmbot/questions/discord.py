@@ -143,6 +143,7 @@ def build_round(bot: DMBot) -> Round | None:
         claims=_claims(bot),
         backstory=bot.backstory_links,
         maps=bot.map_store,
+        map_roads=bot.settings.map_measure_on,
         heard=bot.heard_questions,
         rule_sets=sets,
         packs=sets if isinstance(sets, PackUpdateStore) else None,
