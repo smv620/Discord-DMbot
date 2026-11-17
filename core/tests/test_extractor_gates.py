@@ -202,6 +202,7 @@ class Gates(unittest.IsolatedAsyncioTestCase):
             settings=SimpleNamespace(
                 story_extractor_on=True,
                 story_readings_on=False,
+                story_threads_on=False,
                 story_deeds_on=False,
                 story_reveals_on=False,
                 story_reveals_precheck=False,

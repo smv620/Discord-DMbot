@@ -53,7 +53,17 @@ from dmbot.memory.met_reading import PROMPT_SUFFIX as MET_SUFFIX
 from dmbot.memory.met_store import speakers_of
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import Tally
-from dmbot.memory.readings import READING_SYSTEM, as_claim, parse_readings, proposals
+from dmbot.memory.readings import (
+    MYSTERIES_SHOWN,
+    READING_SYSTEM,
+    RULES,
+    THEORY_RULE,
+    as_claim,
+    mysteries_block,
+    parse_readings,
+    proposals,
+    reading_system,
+)
 from dmbot.memory.reveal_proposals import RevealProposals
 from dmbot.memory.reveal_reading import (
     REVEAL_SYSTEM,
@@ -552,6 +562,8 @@ async def run(
     after_ms: int = 0,
     count_call: Callable[[], Awaitable[None]] | None = None,
     readings: bool = False,
+    theories: bool = False,
+    mysteries: Sequence[tuple[str, str]] = (),
     deeds: bool = False,
     deed_store: DeedProposals | None = None,
     reveals: bool = False,
@@ -584,6 +596,12 @@ async def run(
     what a session may spend. Its answers wait as claims that carry a reading and are placed by
     the DM, never written.
 
+    `theories` (#4655, quests slice 7b; DMBOT_STORY_THREADS): the same second question, asking for
+    theories alone when `readings` is off (the other three kinds stay behind DMBOT_STORY_READINGS:
+    Supervisor's ruling 3). With it, `mysteries` (the open mysteries, as (thread id, name), the
+    most recently touched first) are shown after the transcript by label, and a theory that names
+    one carries that thread's id in its reading, for the DM's place to tie the guess to it.
+
     `deeds` (#3175 slice 4): after each batch's claims, ask a third question of the same lines,
     which deeds the party did (`deed_reading.py`), inside the same ceilings and counted like any
     call. What comes back is only *proposed* (`Report.deed_proposals`, held for the DM's press);
@@ -615,7 +633,20 @@ async def run(
     by `met_store` (`memory_met`, apart from the names, so quiet) under `session_id` after the
     claims. Never in `family_only`."""
     report = Report()
-    readings = readings and not family_only
+    # (theories are the first kind of reading: asked when either switch is on, the rest only with
+    # the readings switch)
+    rules = RULES if readings else (THEORY_RULE,)
+    shown = list(mysteries[:MYSTERIES_SHOWN]) if theories else []
+    labels = {f"M{i}": thread_id for i, (thread_id, _name) in enumerate(shown, start=1)}
+    reading_prompt = (  # (the prompt it always was, unless one of the two changes it)
+        READING_SYSTEM
+        if readings and not shown
+        else reading_system(theories_only=not readings, mysteries=bool(shown))
+    )
+    reading_version = (
+        READING_PROMPT_VERSION + ("" if readings else "+theories") + ("+mysteries" if shown else "")
+    )
+    readings = (readings or theories) and not family_only
     deeds = deeds and not family_only
     reveals = reveals and not family_only
     met = met and not family_only
@@ -738,7 +769,12 @@ async def run(
                 log.warning("Story extractor: couldn't count a call (%s)", type(exc).__name__)
         try:
             second = await asyncio.wait_for(
-                client.complete(READING_SYSTEM, transcript_of(rows), max_tokens=MAX_TOKENS),
+                client.complete(
+                    reading_prompt,
+                    transcript_of(rows)
+                    + ("\n\n" + mysteries_block([n for _i, n in shown]) if shown else ""),
+                    max_tokens=MAX_TOKENS,
+                ),
                 CALL_TIMEOUT_S,
             )
         except AIOutOfFunds:
@@ -751,8 +787,9 @@ async def run(
             report.readings_failed += 1
             continue
         kept, refused = parse_readings(
-            second.text, speakers.keys(), dm_lines=dm_lines, cut=second.cut
-        )
+            second.text, speakers.keys(), dm_lines=dm_lines, cut=second.cut, rules=rules,
+            mysteries=labels.keys(),
+        )  # fmt: skip
         report.readings_refused += refused
         report.readings += len(kept)
         if second.cut:
@@ -768,6 +805,10 @@ async def run(
             # moments they were spoken at, so no clock log can say what time they had)
             if spoken > 0 and claim.reading is not None and not imported:
                 claim = replace(claim, reading={**claim.reading, "spoken_at": spoken // 1000})
+            if belief.mystery in labels and claim.reading is not None:  # (#4655: which mystery)
+                claim = replace(
+                    claim, reading={**claim.reading, "thread_id": labels[belief.mystery]}
+                )
             believed.append(claim)
         everyone.update(speakers)
         heard.update((number, text) for number, _who, text in rows)
@@ -889,7 +930,7 @@ async def run(
                 everyone,
                 said=heard,
                 opted_in=agreed,
-                prompt_version=READING_PROMPT_VERSION,
+                prompt_version=reading_version,
                 model=answered_by or model(),
                 session_started_at=session_started_at,
                 malformed=0,

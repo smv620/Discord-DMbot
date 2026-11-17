@@ -62,6 +62,7 @@ class Base(DatabaseTest):
             story_extractor_max_calls=10,
             story_extractor_max_calls_day=50,
             story_readings_on=False,
+            story_threads_on=False,
             story_deeds_on=False,
             story_reveals_on=False,
             story_reveals_precheck=False,

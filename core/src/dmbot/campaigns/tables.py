@@ -36,6 +36,7 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
         "memory_told",
         "memory_beliefs",
         "memory_evidence",
+        "memory_thread_guesses",  # which mystery a table's guess is about (#4655)
         "memory_impressions",
         "memory_attitudes",
         "memory_corrections",
@@ -313,6 +314,8 @@ SERVER_BOUND_COLUMNS: dict[str, str] = {
     "upload_notices.message_id": "left: as its channel",
     "memory_thread_parts.thread_id": "not Discord's: a story thread entry of the campaign's memory "
     "(#4471), which moves with the campaign like every entry",
+    "memory_thread_guesses.thread_id": "not Discord's: a story thread entry of the campaign's "
+    "memory (#4655 7b), which moves with the campaign like every entry",
     "thread_progress.thread_id": "not Discord's: a story thread entry of the campaign's memory "
     "(#4522 5b), which moves with the campaign like every entry",
 }

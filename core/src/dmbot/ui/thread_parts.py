@@ -208,6 +208,7 @@ def card_lines(
     most: int | None = None,
     clock: tuple[int, Any] | None = None,
     clues: str = "",
+    guesses: Sequence[str] = (),
 ) -> list[str]:
     """What a thread's card shows of its steps, rewards and more, and its branches (§10.1; the
     ux-critic's layout). Standing parts only; finished obstacles, help and time limits fold into one
@@ -283,6 +284,7 @@ def card_lines(
         lines.append(f"Also: {said}. Tap 📋 to see them.")
     if clues:  # (#4624: the count, worked out by the caller; the DM's card only)
         lines.append(f"🔎 **Clues:** {clues}")
+    lines += guesses  # (#4655: the table's guesses, `thread_guesses.card_lines`, the DM's view)
     if branches:
         lines.append("🌿 **Branches:** " + ", ".join(_name(names, b) for b in branches))
     if bigger is not None:
@@ -364,10 +366,19 @@ async def open_parts(
     from dmbot.memory.thread_clues import found_text
 
     dm = gate.Viewer.the_dm()
+    from dmbot.memory.thread_guesses import card_lines as guess_lines
+
     clues = await memory.thread_clues(campaign.guild_id, campaign.id, thread_id, dm)
-    lines = card_lines(parts, names, bigger, branches, clock=clock, clues=found_text(clues)) or [
-        "Nothing yet. Pick ➕ Add… to start."
-    ]
+    guesses = await memory.thread_guesses(campaign.guild_id, campaign.id, thread_id, dm)
+    lines = card_lines(
+        parts,
+        names,
+        bigger,
+        branches,
+        clock=clock,
+        clues=found_text(clues),
+        guesses=guess_lines(guesses),
+    ) or ["Nothing yet. Pick ➕ Add… to start."]
     head = f"📋 **{_md(thread.name)}**"
     text = "\n".join(([note, ""] if note else []) + [head, *lines])
     await _replace(

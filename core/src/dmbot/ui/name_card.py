@@ -829,9 +829,15 @@ async def show_card(
             clues = await memory.thread_clues(
                 campaign.guild_id, campaign.id, entity_id, gate.Viewer.the_dm()
             )
+            # (#4655: the table's guesses at it, every one, as the card is the DM's)
+            from dmbot.memory.thread_guesses import summary_lines as guess_lines
+
+            guesses = await memory.thread_guesses(
+                campaign.guild_id, campaign.id, entity_id, gate.Viewer.the_dm()
+            )
             lines_of_thread += card_lines(
                 parts, part_names, bigger, branches, most=CARD_PARTS, clock=clock,
-                clues=found_text(clues),
+                clues=found_text(clues), guesses=guess_lines(guesses),
             )  # fmt: skip
     elif entity is not None and secrets and entity.type in ("clue", "event"):
         # A clue's or an event's "Led to" / "Came from" (#1679): the DM's word, so the DM's card.
