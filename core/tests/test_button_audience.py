@@ -214,6 +214,8 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.settings.LevelButton",
             "dm_screen.settings.RulesCardsButton",
             "dm_screen.settings.AskBeforeAddingButton",
+            "dm_screen.settings.MapChecksButton",  # (map checks on or off, #4670 4c-2)
+            "ui.map_checks.StopMapChecksButton",  # (the live note's one button, #4670 4c-2)
             "dm_screen.setting_field.KeepSettingButton",  # (the setting's guess, #4291)
             "dm_screen.setting_field.PickButton",
             "dm_screen.setting_field.WorldMenu",

@@ -78,6 +78,7 @@ class WhatTheDMSaid(PinsBase):  # (Postgres: Targos and Bryn Shander 60 miles ap
     async def test_a_distance_far_shorter_than_the_map(self) -> None:
         (found,) = await self.said("Targos is 20 miles from Bryn Shander.")
         self.assertEqual((found.a_name, found.b_name), ("Targos", "Bryn Shander"))
+        assert isinstance(found.off, disagree.Distance)
         self.assertEqual(disagree.amount(found.off), "60 miles")
         self.assertEqual(await self.said("Targos is 55 miles from Bryn Shander."), [])
         self.assertEqual(await self.said("Targos is 90 miles from Bryn Shander."), [])
@@ -88,6 +89,7 @@ class WhatTheDMSaid(PinsBase):  # (Postgres: Targos and Bryn Shander 60 miles ap
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute("UPDATE campaign_maps SET north_from = 'dm'")
         (found,) = await self.said("Targos is north of Bryn Shander.")
+        assert isinstance(found.off, disagree.Direction)
         self.assertEqual(found.off.map_way, "west")
         self.assertEqual(await self.said("Targos is west of Bryn Shander."), [])
 

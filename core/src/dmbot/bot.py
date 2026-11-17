@@ -7535,7 +7535,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     return
                 found = await self.map_store.said_off(gid, cid, line)
                 for item in found:
-                    pair = (item.said.kind, *sorted((item.said.a_id, item.said.b_id)))
+                    first, second = sorted((item.said.a_id, item.said.b_id))
+                    pair = (item.said.kind, first, second)
                     if pair in live.map_pairs:
                         continue
                     if (
