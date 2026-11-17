@@ -3846,6 +3846,7 @@ class SaveAndResume(SessionTests):
         # #109: the last words used to vanish when the DM pressed stop.
         await self.consent.grant(GUILD, PLAYER)
         table, sent = await self.joined_with_transcript()
+        self.bot.ask_privately = AsyncMock(return_value=True)  # type: ignore[method-assign]
         release = await self.slow_worker("Last words before we stop.")
         self.queue_speech(table)
         await self.bot.stop_table(GUILD, "test")
@@ -3854,8 +3855,9 @@ class SaveAndResume(SessionTests):
         text = "\n".join(sent)
         self.assertIn("Last words before we stop.", text)
         self.assertLess(text.index("Last words"), text.index("Session ended"))
-        posted: Any = self.bot.post
-        summaries = [c.args[1] for c in posted.await_args_list if "Session ended:" in c.args[1]]
+        # (#3874 E1: the summary names who spoke, so it goes to the DMs privately)
+        asked: Any = self.bot.ask_privately
+        summaries = [c.args[2] for c in asked.await_args_list if "Session ended:" in c.args[2]]
         self.assertEqual(len(summaries), 1)
         self.assertIn("under a minute", summaries[0])
         self.assertIn("Everything DMbot heard was written down", summaries[0])

@@ -287,6 +287,8 @@ from dmbot.dm_screen.upkeep_pointers import (
     names_fixed_pointer,
     secrets_pointer,
     session_names_pointer,
+    session_summary_pointer,
+    story_watch_pointer,
 )
 from dmbot.dm_waiting import WaitingChecks, WaitingSent, asks_for
 from dmbot.ears.protocol import (
@@ -3492,8 +3494,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def post_session_summary(
         self, table: Table, ended_at: int, caught_up: bool, downloads_sent: int
     ) -> None:
-        """One plain summary in the DM screen (#109): how long, who was recorded and how
-        much, and anything that went wrong. Never anything that was said."""
+        """One plain summary for the DMs (#109): how long, who was recorded and how much, and
+        anything that went wrong. Never anything that was said. It goes to the DMs privately (it
+        names who spoke), with a numbers-only pointer in the DM Bot channel; the DM screen
+        otherwise (#3874 E1)."""
         gid = table.guild_id
         spoke = [
             screen_messages.Spoke(
@@ -3540,7 +3544,38 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 waiting,
             ),
         )
-        if session_id is not None and self.suggestions is not None:
+        # The summary names who spoke, so it goes to the DMs privately; the DM Bot channel (read by
+        # the campaign's people) gets numbers only, after a private message really went out. With
+        # no private message it is on the DM screen as before (#3874 E1).
+        try:
+            campaign = (
+                await self.campaigns.get(gid, table.campaign_id)
+                if table.campaign_id is not None
+                else None
+            )
+        except Exception:  # (the summary still goes to the table's screen below)
+            log.exception("Couldn't read the campaign for the session summary")
+            campaign = None
+        with_fix = session_id is not None and self.suggestions is not None
+        if campaign is not None:
+            fixes = session_id
+            if await pointer_note.send(
+                self,
+                campaign,
+                text,
+                lambda: (
+                    fix_line_view(gid, fixes, dm=True)
+                    if with_fix and fixes is not None
+                    else discord.ui.View()
+                ),
+                session_summary_pointer(
+                    max(0, (ended_at - (table.started_at or ended_at)) // 60), len(spoke)
+                ),
+                note=True,
+            ):
+                return
+            # (no DM could be messaged and the campaign has no screen saved: the table's own)
+        if with_fix and session_id is not None:
             # With ✏️ Fix a line (#1499): the DM can correct any line, from the same picker.
             await self.post_message(
                 table.screen_channel_id, text, fix_line_view(gid, session_id, dm=True)
@@ -11025,9 +11060,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if self.transcripts is not None:
                 sessions = await self.transcripts.sessions(guild_id, campaign_id, limit=100)
                 numbers = {x.started_at: x.number for x in sessions}  # (the recent ones)
-            posted = await self.post(
-                channel_id, message_text(found, numbers), view=watch_view(campaign_id, found)
-            )
+            # The words name people and places, so they go to the DMs privately; the DM Bot channel
+            # gets a count only, after a private message really went out. With none, the channel
+            # the caller gave (the DM screen) as before (#3874 E1).
+            words = message_text(found, numbers)
+            # (the caller's channel is the campaign's DM screen, which `pointer_note` tries first)
+            posted = await pointer_note.send(
+                self,
+                campaign,
+                words,
+                functools.partial(watch_view, campaign_id, found),
+                story_watch_pointer(len(found.shown), found.more),
+                note=True,
+            ) or await self.post(channel_id, words, view=watch_view(campaign_id, found))
             if not posted:  # Discord was down: let the next check tell them rather than lose them
                 await self.watch.retract(guild_id, campaign_id, [c.id for c in found.shown])
 
@@ -12903,9 +12948,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             queued = self._import_queued.pop(cid, [])
             reasons = self._import_unhonoured.pop(cid, [])
             campaign = await self.campaigns.get(gid, cid)
-            if campaign is None or campaign.dm_screen_channel_id is None:
+            if campaign is None or (
+                campaign.dm_screen_channel_id is None and campaign.dm_bot_channel_id is None
+            ):
                 continue
-            channel = campaign.dm_screen_channel_id
+            channel = campaign.dm_screen_channel_id or campaign.dm_bot_channel_id or 0
             missed = ""
             if reasons:
                 head = (
@@ -12923,8 +12970,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     session_at=queued[-1],
                     also=missed,
                 )
-            elif reasons:
-                await self.post(channel, f"📜 {missed}")
+            elif reasons:  # (fixed reasons, no words of the story: the DM Bot channel, #3874 E1)
+                await self.post(campaign.dm_bot_channel_id or channel, f"📜 {missed}")
 
     async def _add_sure_import(
         self,
