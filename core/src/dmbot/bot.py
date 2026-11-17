@@ -3650,6 +3650,25 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return False
         return await self.post(channel, text)
 
+    async def _post_after_session(
+        self, table: Table, text: str, view: discord.ui.View | None = None
+    ) -> bool:
+        """An after-session note that is a count and a button only the DM can use (#3874 E1): in
+        the DM Bot channel when the campaign has one, else on the DM screen as before. The DM
+        Bot channel is read by the campaign's people, so `text` holds counts and never a name;
+        the button checks the presser is a DM on every press and opens its list privately."""
+        campaign = (
+            await self.campaigns.get(table.guild_id, table.campaign_id)
+            if table.campaign_id is not None
+            else None
+        )
+        channel = (
+            self._upkeep_channel(campaign)[0] if campaign is not None else table.screen_channel_id
+        )
+        if channel is None:
+            return False
+        return await self.post(channel, text, view)
+
     async def _tell_admin(self, user_id: int, text: str) -> None:
         """A private message to one of DMbot's admins (#972). Raises if it can't be sent, so
         the watch tries again later and doesn't count it as told."""
@@ -9447,7 +9466,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         from dmbot.memory import session_threads
         from dmbot.memory.thread_progress import ThreadProgressStore
         from dmbot.memory.thread_suggestions import ThreadSuggestionStore
-        from dmbot.ui.name_background import progress_inputs, thread_inputs
+        from dmbot.ui.name_background import clue_finders, progress_inputs, thread_inputs
         from dmbot.ui.thread_questions import session_label
 
         memory, transcripts, ai = self.memory, self.transcripts, self.extractor_ai
@@ -9484,6 +9503,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     return
                 have, entries, names, known = await thread_inputs(memory, gid, cid)
                 moving = await progress_inputs(memory, gid, cid)  # (5b: progress on these)
+                finders = await clue_finders(memory, gid, cid) if moving else None  # (6c)
 
                 async def count_call() -> None:
                     await transcripts.record_extraction(
@@ -9496,6 +9516,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     ai, lines, dm_ids=dm_ids, entries=entries, names=names, have=have,
                     known=known, consenting=consenting, max_calls=allowed,
                     max_tokens=OUTPUT_FLOOR, count_call=count_call, progress=moving,
+                    finders=finders,
                 )  # fmt: skip
                 store = ThreadSuggestionStore(memory._db)
                 # (the consent re-check just before storing: who stopped meanwhile is never kept)
@@ -10871,10 +10892,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 written.not_private,
             )
             # (counts only; a re-read finds the same scenes again and says nothing new)
-            if written.new and table.screen_channel_id is not None:
+            if written.new:
                 try:
-                    await self.post(
-                        table.screen_channel_id,
+                    await self._post_after_session(
+                        table,
                         private_scenes_ui.notice(written.new),
                         view=private_scenes_ui.notice_view(cid),
                     )
@@ -10922,8 +10943,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 "on" if report.ready else "not enough story yet",
             )  # fmt: skip
             if report.conflicts:
-                await self.post(
-                    table.screen_channel_id,
+                await self._post_after_session(
+                    table,
                     continuity_waiting_text(
                         len(report.conflicts), sum(1 for c in report.conflicts if c.pinned)
                     ),
@@ -10981,8 +11002,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             quiet = [t for t in found if t.stalled]
             log.info("Threads: %d, %d stalled", len(found), len(quiet))  # counts, never names
             if quiet:
-                await self.post(
-                    table.screen_channel_id,
+                await self._post_after_session(
+                    table,
                     threads_waiting_text(
                         len(quiet),
                         min(t.quiet_sessions for t in quiet),

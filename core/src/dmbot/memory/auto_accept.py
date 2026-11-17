@@ -14,18 +14,22 @@ sample for dev1: the tool calls these functions with `narrow=False`, which keeps
 - a name that is a rules word or a kind of creature ("Owlbear", "Goodberries"): the readers refuse
   those, and one that slips through is a question, not a fact.
 "Which one?" and same-person questions are not answered here at all, and nor are the family links
-DMbot worked out (they stay in their own question). Counts only; never a name or a word of a text.
+DMbot worked out (they stay in their own question). A connection DMbot worked out waits for the
+DM too, with one exception (#4636 part 3): a place the text lists as one of a region's
+(`listed_towns`). Counts only; never a name or a word of a text.
 """
 
 from __future__ import annotations
 
 import logging
-from collections import Counter
+import re
+from collections import Counter, defaultdict
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 
 from dmbot.memory import backstory_keep
 from dmbot.memory.backstory_links import BackstoryLinks, Waiting
+from dmbot.memory.checks import NESTS
 from dmbot.memory.claims import ClaimStore
 from dmbot.memory.models import (
     CONFIRMED,
@@ -50,15 +54,95 @@ ON_A_NAME, WORKED_OUT, HAND_OVER = "waiting on a name", "worked out by DMbot", "
 WHY_WAITING = (ON_A_NAME, WORKED_OUT, HAND_OVER)
 
 
-def why_waiting(link: Waiting) -> str | None:
-    """Why this waiting connection stays a question, or None when it is ready to keep."""
+def why_waiting(link: Waiting, listed: Collection[str] = ()) -> str | None:
+    """Why this waiting connection stays a question, or None when it is ready to keep. `listed`:
+    the ids of worked-out ones that are a region's listed towns (`listed_towns`), the one kind of
+    worked-out connection the sure step keeps (#4636 part 3)."""
     if not link.ready:
         return ON_A_NAME
-    if link.inferred:
+    if link.inferred and link.id not in listed:
         return WORKED_OUT
     if link.hand_over:
         return HAND_OVER
     return None
+
+
+# A region's listed towns (#4636 part 3, Supervisor's ruling): a list names at least this many of
+# the region's places, so one place said to be "in" a region is never taken as a list of one.
+LIST_MIN = 3
+_LIST_MARK = re.compile(r",|;|\band\b", re.I)
+
+
+async def listed_towns(
+    memory: MemoryStore,
+    guild: int,
+    campaign: str,
+    every: list[Waiting],
+    whole: list[Waiting] | None = None,
+) -> set[str]:
+    """The waiting worked-out connections the sure step keeps (#4636 part 3, Supervisor's ruling,
+    the keys' one exception to "inferred = offered, never extracted"): each is
+    - `in`, from a kept place to a kept place (a region or bigger place);
+    - rated sure by the reader (`inferred_sure`, only ever on such a one);
+    - from a list: its quote names the place and another of the region's listed places in one
+      sentence with a list mark between them, and at least `LIST_MIN` of them from the same
+      upload put places in that same region;
+    - for a place with no other parent: kept, or waiting from any upload (`whole`, the whole
+      list; `every` when not given), stated or worked out. A parent DMbot only assumed from where
+      the story was is no other parent: a stated one replaces it (`store._replace_assumed`).
+    A secret one never is. Everything else worked out stays a question ("lives in", roads, a
+    guess). Whether the region is the bigger place is the reader's word (its ' | sure' asks for a
+    region's own list): no place level is checked here. Read only."""
+    found = [
+        w
+        for w in every
+        if w.inferred and w.inferred_sure and w.predicate == NESTS and w.ready and not w.secret
+    ]
+    if not found:
+        return set()
+    places = {
+        e.id for e in await memory.entities(guild, campaign, statuses=("confirmed",))
+        if e.type == "place"
+    }  # fmt: skip
+    parents: dict[str, set[str]] = defaultdict(set)
+    for w in every if whole is None else whole:
+        if w.predicate == NESTS:
+            parents[w.subject_id].add(w.object_id)
+    for r in await memory.relations(guild, campaign, include_secret=True):
+        if r.predicate == NESTS and r.status != "rejected" and not r.assumed:
+            parents[r.subject_id].add(r.object_id)
+    groups: dict[tuple[str, str], list[Waiting]] = defaultdict(list)
+    for w in found:
+        if {w.subject_id, w.object_id} <= places and parents[w.subject_id] <= {w.object_id}:
+            groups[(w.object_id, w.upload)].append(w)
+    out: set[str] = set()
+    for group in groups.values():
+        if len(group) < LIST_MIN:
+            continue
+        names = [w.subject for w in group]
+        out |= {w.id for w in group if _in_the_list(w.quote, w.subject, names)}
+    return out
+
+
+def _in_the_list(quote: str, name: str, listed: list[str]) -> bool:
+    """Whether `name` sits in a list in `quote`: one sentence of it names this place and another
+    of the region's listed places with a list mark (a comma, "and", ";") between them. A place
+    named only after the list ends ("…and Dunhollow. Eastpeak rises over them") is not in it."""
+    key = name.casefold()
+    for sentence in re.split(r"(?<=[.!?])\s+", quote):
+        low = sentence.casefold()
+        at = low.find(key)
+        if at < 0:
+            continue
+        for other in listed:
+            o = other.casefold()
+            there = low.find(o)
+            if o == key or there < 0:
+                continue
+            lo, hi = sorted((at, there))
+            if _LIST_MARK.search(low[lo : hi + len(o)]):
+                return True
+    return False
 
 
 def _words(text: str) -> str:
@@ -271,16 +355,16 @@ async def accept_connections(
     name and date as the DM saw them); None for all."""
     onto = await memory.ontology(guild, campaign)
     symmetric = {p.key for p in onto.predicates.values() if p.symmetric}
-    every = [
-        w
-        for w in await links.waiting(guild, campaign, symmetric=symmetric)
-        if upload is None or w.upload == upload
-    ]
-    # (one DMbot inferred is never kept unasked: it waits for the DM's own press, #2959 item 5;
-    # nor a hand-over, which ends what someone else holds, #4115)
+    whole = await links.waiting(guild, campaign, symmetric=symmetric)
+    every = [w for w in whole if upload is None or w.upload == upload]
+    # (one DMbot inferred is never kept unasked: it waits for the DM's own press, #2959 item 5,
+    # except a region's listed town, #4636 part 3; nor a hand-over, which ends what someone else
+    # holds, #4115)
+    # (another parent waiting from any upload counts: the whole list, not this upload's)
+    listed = await listed_towns(memory, guild, campaign, every, whole)
     ready = []
     for w in every:
-        why = why_waiting(w)
+        why = why_waiting(w, listed)
         if why is None:
             ready.append(w)
         else:
@@ -290,7 +374,7 @@ async def accept_connections(
         tally.accepted[CONNECTIONS] += len(ready)
         return
     try:
-        done = await backstory_keep.keep_all(memory, links, guild, campaign, ready)
+        done = await backstory_keep.keep_all(memory, links, guild, campaign, ready, listed=listed)
     except Exception as exc:  # the connections kept before it stay kept
         tally.refused[CONNECTIONS] += len(ready)
         log.warning("auto_accept: keeping connections stopped (%s)", type(exc).__name__)

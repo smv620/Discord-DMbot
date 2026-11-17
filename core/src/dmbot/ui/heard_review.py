@@ -17,6 +17,7 @@ from dmbot.transcript.cleaner import own_name
 from dmbot.transcript.waiting_questions import Waiting
 from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _replace, _send, _tell
 from dmbot.ui.names import _campaign_for, _md
+from dmbot.ui.private_server import guild_id_for
 
 NOTHING_WAITING = "✅ All checked. DMbot will ask after a session if it isn't sure of a name."
 ONLY_DMS = "Only the campaign's DM can check these. Ask your DM."
@@ -112,24 +113,24 @@ class HeardReview(_Menu):
     async def current_text(self, interaction: discord.Interaction) -> str | None:
         """The next waiting question with its buttons set, or None when none is left."""
         bot: Any = _bot(interaction)
-        guild = interaction.guild
+        guild_id = await guild_id_for(interaction, self.campaign_id)  # (a private chat has none)
         store = bot.heard_questions
-        if store is None or guild is None or bot.lookup is None:
+        if store is None or guild_id is None or bot.lookup is None:
             return None
-        campaign = await bot.campaigns.get(guild.id, self.campaign_id)
+        campaign = await bot.campaigns.get(guild_id, self.campaign_id)
         if campaign is None or interaction.user.id not in campaign.dm_user_ids:
             return None  # checked at every redraw: a DM role taken away mid-review ends it
         waiting = [
             w
-            for w in await store.waiting(guild.id, self.campaign_id)
-            if w.id not in self.later and bot.consent.has_consent(guild.id, w.speaker_id)
+            for w in await store.waiting(guild_id, self.campaign_id)
+            if w.id not in self.later and bot.consent.has_consent(guild_id, w.speaker_id)
         ]  # (a speaker who stopped being recorded is never shown)
         self.clear_items()
         if not waiting:
             self.shown = None
             return None
         self.shown = first = waiting[0]
-        lookup = await bot.lookup.get(guild.id, self.campaign_id)
+        lookup = await bot.lookup.get(guild_id, self.campaign_id)
         offered: set[str] = set()
         for number, entity_id in enumerate(first.option_ids):
             name = own_name(lookup, entity_id)
@@ -147,7 +148,7 @@ class HeardReview(_Menu):
         self.add_item(_Button(self._type, label=questions.TYPE_LABEL, row=1))
         self.add_item(_Button(self._keep, label=questions.keep_label(first.heard), row=1))
         self.add_item(_Button(self._later, label="⏳ Later", row=1))
-        who = bot.name_of(guild.id, first.speaker_id)
+        who = bot.name_of(guild_id, first.speaker_id)
         speaker = "a player" if who.startswith("<@") else _md(who)
         more = f"\n{len(waiting) - 1} more after this." if len(waiting) > 1 else ""
         return (
@@ -167,13 +168,13 @@ class HeardReview(_Menu):
         """Save an answer and move to the next question; a private note says why not when it
         can't be saved."""
         shown = self.shown
-        guild = interaction.guild
-        if shown is None or guild is None:
+        guild_id = await guild_id_for(interaction, self.campaign_id)
+        if shown is None or guild_id is None:
             await _tell(interaction, FAILED)
             return
         try:
             answer, done = await _bot(interaction).answer_waiting_question(
-                guild.id, shown.id, pick, interaction.user.id, typed
+                guild_id, shown.id, pick, interaction.user.id, typed
             )
         except Exception:
             await _tell(interaction, FAILED)

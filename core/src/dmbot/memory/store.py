@@ -131,6 +131,7 @@ from dmbot.memory.models import (
     AFFECTED,
     ALIAS_KINDS,
     BACKGROUND_SOURCE,
+    CLAIM_CONFIRMED,
     CLAIM_DROPPED,
     CLAIM_PROPOSED,
     CLASS,
@@ -2335,6 +2336,8 @@ class MemoryStore:
                 await thread_parts.set_state_in_thread(
                     w, thread_id, str(change.part_id), change.state
                 )
+            elif change.kind == tp.CLUE:
+                return await self._keep_found_clue(w, onto, thread_id, change)
             else:
                 await states.set_condition(
                     w, onto, thread, change.state, from_session_at=line.session_at
@@ -2342,6 +2345,75 @@ class MemoryStore:
         except MemoryRuleError as exc:
             log.info("A progress line no longer fits (%s)", type(exc).__name__)
             return False
+        return True
+
+    async def _keep_found_clue(
+        self, w: Changes, onto: Ontology, thread_id: str, change: tp_mod.Change
+    ) -> bool:
+        """A session's "clue found" inside the progress keep's write (#4624, quests slice 6c; the
+        ruled plan and rulings 2 and 3): the clue is tied to the thread like the DM's own
+        (`_tie_clue_in`: the campaign's clue, by id or by name, else a new one hidden from the
+        players; one tied already stays as it is), and each finder learns it and is listed as
+        knowing it. Finders are the line's player characters still in the campaign (merged ones
+        followed); with none left the line no longer fits and nothing is written. A clue made
+        new that only some of the table found is theirs alone ("Only some people know this"),
+        switched on before anyone learns it; the campaign's own clue keeps the audience the DM
+        set, its finders only added (never a 🤫 question out of a plain Keep, #4524). False when
+        it no longer fits."""
+        finders: list[str] = []
+        for who in change.finder_ids:
+            live = await _followed(w, who)
+            row = await w.get(ENTITIES, live) if live is not None else None
+            if (
+                row is not None
+                and row["type"] == "character"
+                and row["status"] == CONFIRMED
+                and row["role"] == PLAYER_CHARACTER
+                and not row["party"]
+            ):
+                finders.append(str(row["id"]))
+        finders = list(dict.fromkeys(finders))
+        if not finders:
+            return False
+        made_new = False
+        if change.clue_id is not None:
+            clue_id = await _followed(w, change.clue_id) or ""
+            # (a clue the DM took off this thread since the read is never tied back by a plain
+            # Keep: "Not a clue to this" stands, and the line no longer fits)
+            if not clue_id or await _live_clue_tie(w, clue_id, thread_id) is None:
+                return False
+        else:
+            try:
+                fact, made_new = await self._tie_clue_in(w, onto, thread_id, new_name=change.words)
+                clue_id = fact.subject_id
+            except MemoryRuleError as exc:
+                if str(exc) != clues_mod.ALREADY_TIED:
+                    raise  # (a name that can't be a clue's: the line no longer fits)
+                # (the campaign's clue of that name, tied already: `_tie_clue_in`'s own lookup)
+                have = await w.select(
+                    ENTITIES,
+                    " AND type = 'clue' AND status = 'confirmed' AND lower(name) = lower(%s)",
+                    [clean_text(change.words)],
+                )
+                clue_id = str(have[0]["id"])
+        if made_new:
+            party = await w.select(
+                ENTITIES,
+                " AND type = 'character' AND status = 'confirmed' AND role = %s AND NOT party",
+                [PLAYER_CHARACTER],
+            )
+            if {str(r["id"]) for r in party} - set(finders):  # (only some of the table)
+                await w.update(ENTITIES, clue_id, {"audience_limited": True})
+        learned = 0
+        for character in finders:
+            try:
+                await knowers.learn(w, gate.ENTRY, clue_id, character)
+                await self.add_knower_in(w, clue_id, character, None)
+                learned += 1
+            except MemoryRuleError:
+                continue  # (the rules refused this one: the others still learn it)
+        if not learned:  # (can't happen for checked player characters; counted, never hidden)
+            log.info("A found clue was kept with no finder learning it")
         return True
 
     async def _new_thread_in(
@@ -5033,7 +5105,9 @@ class MemoryStore:
         as_kin: bool = False,
     ) -> Written[Entity]:
         """The DM says a suggested name is real: what it is (and, for a character, its
-        role), confirmed with all its names, in one change (one undo, one reload).
+        role), confirmed with all its names, in one change (one undo, one reload). The DM's own
+        stated claims about it whose other end is kept are kept in that same change (#4636,
+        `ClaimStore.keep_dm_claims_in`).
 
         `as_kin` (#4636 part 1): an unnamed person kept because the character it hangs off is
         kept ("Brewner's daughter"). An unnamed person is the DM's alone anyway, but once the DM
@@ -5092,6 +5166,11 @@ class MemoryStore:
             await _sync_plays(w, entity_id)
             if kin:  # (its stated tie to its character, in this same change: #4636 part 1)
                 await self._keep_kin_ties(w, before)
+            # (#4636: the DM's own words about it, once its other end is kept too, in this same
+            # change, never asked as questions any more)
+            from dmbot.memory.claims import ClaimStore
+
+            await ClaimStore(self).keep_dm_claims_in(w, [entity_id])
             said = "" if scene is None else "group" if learned else "unknown"
             return Written(_entity(row), w.batch, split=said)
 
@@ -5252,6 +5331,10 @@ class MemoryStore:
                     " AND status = 'proposed' AND entity_id = ANY(%s)",
                     [ids],
                 )
+            # (#4636: the DM's own words about each, as `confirm_entity` keeps them)
+            from dmbot.memory.claims import ClaimStore
+
+            await ClaimStore(self).keep_dm_claims_in(w, [str(i) for i in ids])
             return Written(len(ids), w.batch, split_counts=(heard, not_told))
 
     async def known_keys(self, guild_id: int, campaign_id: str) -> set[str]:
@@ -9075,6 +9158,7 @@ class MemoryStore:
                 await secret_questions_mod.undo(w, batch)
                 await _recheck_led_to_after_undo(w, batch)
                 await _settle_kinds_after_undo(w, batch)
+                await _reopen_claims_after_undo(w, batch)
                 if after is not None:
                     await after(w)
                 return Written(None, w.batch)
@@ -10994,6 +11078,32 @@ async def _kin_hidden(w: Changes, row: Mapping[str, Any]) -> bool:
             ties += int(found["n"])
             shown = shown and bool(found["shown"])
     return not (ties and shown)
+
+
+async def _reopen_claims_after_undo(w: Changes, batch: int) -> None:
+    """A kept claim whose fact this Undo took away waits again (#4636 part 2). Claims are not in
+    the change log, so the Undo cannot put them back itself: keeping a name keeps the DM's own
+    words about it in the same change, and the name's Undo, from any screen, takes those facts
+    too, so their questions come back with it. A fact is taken away when the batch made it (its
+    row is gone now) or when it turned a connection already there into a kept one (a waiting one
+    from an upload, a turned-down twin), which the Undo has put back to what it was. A connection
+    the batch only changed, and that is still kept after the Undo, stands, and so does its claim.
+    A claim's own Undo already does this (`ClaimStore.reopen_in`, which only touches a kept
+    claim, so twice is the same as once). A redo (Undo of this Undo) brings the fact back but
+    leaves its question waiting: saying yes to it again is harmless."""
+    from dmbot.memory.claims import ClaimStore  # (claims builds on this module)
+
+    cur = await w.conn.execute(
+        "SELECT c.id FROM memory_claims c WHERE c.guild_id = %s AND c.campaign_id = %s"
+        " AND c.status = %s AND EXISTS (SELECT 1 FROM memory_changes m"
+        " WHERE m.guild_id = c.guild_id AND m.campaign_id = c.campaign_id AND m.batch = %s"
+        " AND m.row_id = c.fact_id AND (m.op = 'insert' OR (m.table_name = 'memory_relations'"
+        " AND NOT EXISTS (SELECT 1 FROM memory_relations r WHERE r.guild_id = c.guild_id"
+        " AND r.campaign_id = c.campaign_id AND r.id = c.fact_id AND r.status = 'confirmed'))))",
+        (*w.ids, CLAIM_CONFIRMED, batch),
+    )
+    for row in await cur.fetchall():
+        await ClaimStore.reopen_in(w, str(row["id"]))
 
 
 async def _settle_kinds_after_undo(w: Changes, batch: int) -> None:

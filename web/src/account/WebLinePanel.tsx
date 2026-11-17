@@ -109,7 +109,7 @@ export function WhoKnows({
   api: AccountApi;
   refId: string;
   link: WebEdge["links"][number];
-  act: (change: WebLinkChange, ok: string) => Promise<string | null>;
+  act: (change: WebLinkChange, ok: string, own?: Partial<Record<string, string>>) => Promise<string | null>;
 }) {
   const [picking, setPicking] = useState(false);
   const [chosen, setChosen] = useState<Set<string>>(new Set());
@@ -161,17 +161,22 @@ export function WhoKnows({
           ? words.whoStateSome(words.whoNames(holders.map((h) => h.name)))
           : current === "all"
             ? words.whoStateAll
-            : words.whoStateDm;
+            : current === "common"
+              ? words.whoStateCommon
+              : words.whoStateDm;
 
-  /** Only the DM, or everyone at the table: sent at once. Pressing the answer already set says so, and sends nothing. */
-  async function choose(who: "dm" | "everyone"): Promise<void> {
+  /** Only the DM, everyone at the table, or 🌍 common knowledge: sent at once. Pressing the answer already set says so, and sends nothing. */
+  async function choose(who: "dm" | "everyone" | "common"): Promise<void> {
     if (busy) return;
-    const now = current === "dm" ? "dm" : current === "all" ? "everyone" : null;
+    const now = current === "dm" ? "dm" : current === "all" ? "everyone" : current === "common" ? "common" : null;
     setAlready("");
     if (now === who) return setAlready(words.whoAlready);
     setBusy(true);
     try {
-      setProblem(await act({ action: "who", id: link.id, who }, who === "dm" ? words.whoDoneDm : words.whoDoneAll));
+      const done = who === "dm" ? words.whoDoneDm : who === "common" ? words.whoDoneCommon : words.whoDoneAll;
+      // A refusal of common knowledge says what to do first: the names are shown to the players, then the answer is sent again.
+      const own = who === "common" ? { "cannot-show": words.whoCannotShow } : undefined;
+      setProblem(await act({ action: "who", id: link.id, who }, done, own));
     } finally {
       setBusy(false);
     }
@@ -231,6 +236,9 @@ export function WhoKnows({
         <button type="button" class="button secondary" aria-pressed={current === "all"} disabled={busy} onClick={() => void choose("everyone")}>
           {words.whoEveryone}
         </button>
+        <button type="button" class="button secondary" aria-pressed={current === "common"} disabled={busy} onClick={() => void choose("common")}>
+          {words.whoCommon}
+        </button>
       </div>
       <SavingWait active={busy} />
       {already && <p role="status">{already}</p>}
@@ -289,7 +297,7 @@ function LinkRow({
   a: string;
   b: string;
   canEdit: boolean;
-  act: (change: WebLinkChange, ok: string) => Promise<string | null>;
+  act: (change: WebLinkChange, ok: string, own?: Partial<Record<string, string>>) => Promise<string | null>;
   reveal: (target: WebRevealTarget) => Promise<string | null>;
   revealing: Set<string>;
   api: AccountApi;

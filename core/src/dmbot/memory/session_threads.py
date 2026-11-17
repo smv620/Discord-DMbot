@@ -199,11 +199,13 @@ async def run(
     max_tokens: int,
     count_call: Callable[[], Awaitable[None]] | None = None,
     progress: Sequence[session_progress.KnownThread] = (),
+    finders: session_progress.Finders | None = None,
 ) -> tuple[list[Suggestion], Report]:
     """Read the session's readable lines (`extractor.readable`, recap left out by the caller) for
     new threads, window by window. With `progress` (the open threads and their standing parts,
     #4522 5b), the same calls also read what the talk changed on them (`session_progress`), kept
-    in `Report.progress`. Never raises: out of funds is reported as a stop."""
+    in `Report.progress`. `finders` (#4624 6c): who may have found a clue, for a "clue found"
+    line. Never raises: out of funds is reported as a stop."""
     from dmbot.ai import AIOutOfFunds
 
     report = Report()
@@ -260,8 +262,9 @@ async def run(
         lines_moved: list[tuple[str, thread_progress.Change, tuple[int, ...], tuple[int, ...]]] = []
         if progress and raw:
             lines_moved, why = session_progress.check(
-                session_progress.parse(raw[0]), window, progress, where=where, seen=moved
-            )
+                session_progress.parse(raw[0]), window, progress, where=where, seen=moved,
+                finders=finders,
+            )  # fmt: skip
             for k, v in why.items():
                 report.dropped[f"progress_{k}"] = report.dropped.get(f"progress_{k}", 0) + v
         agreed = set(await consenting())  # (and after the answer: who stopped meanwhile drops it)

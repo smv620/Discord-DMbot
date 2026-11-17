@@ -27,9 +27,11 @@ import { checkBuild, table } from "./weight.mjs";
 // work in #4155 already moved its banner and button into lazy files), and a website feature's API methods must be named in
 // `NAMES_METHODS` in the first download (here `metList`, `answerMet`: about 22 bytes). Nothing else on the page grew; the list
 // itself is in a lazy file.
+// Raised on 2026-11-17 (#4559) to 187 KB: the Story Graph page's 🌍 Common knowledge button, its state line and refusal words (about
+// 0.3 KB) are in the first download; the page was 185.9 KB. Nothing else on the page changed, so nothing was trimmed.
 export const budgets = {
   htmlKB: 52,
-  totalKB: 186,
+  totalKB: 187,
   onDemandKB: 45, // the most one chunk loaded on demand may weigh (#2690)
   imageKB: 150, // no picture bigger than this: resize or recompress it, don't drop it
 };
