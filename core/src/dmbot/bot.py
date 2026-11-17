@@ -16352,7 +16352,7 @@ async def _send_map_note(bot: Any, gid: int, cid: str, text: str, view: Any) -> 
     campaign = await bot.campaigns.get(gid, cid)
     if campaign is None:
         return
-    for dm in sorted(campaign.dm_user_ids):
+    for dm in sorted(campaign.dm_accounts):  # (one message per DM account, not per login, #2533)
         await bot._dm_message(dm, text, view)
 
 
