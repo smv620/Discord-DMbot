@@ -1,0 +1,195 @@
+{
+ "campaign": "guess cases (invented)",
+ "source": "guess_cases_lore.txt and guess_cases_session.txt in this folder: invented text for DMbot's tests, written for #4655 (quests slice 7; design docs/design/quests.md §7). Every name and line is made up; the four player characters are the sample's, by name only, so sample_run can say who plays each.",
+ "version": 1,
+ "how_to_read": {
+  "readings": "the table's guesses read from the session (#4655): who holds it ('party' when the whole table agreed out loud, else the player character's name), the statement as subject, relationship and object (names as in the key; the relationship's word is not scored), and the mystery it answers. Found: a guess (a theory or an accusation) in that point of view, kept as a belief or waiting as a reading. Wrong holder: the same statement in another point of view. Missed: neither.",
+  "must_not_readings": "lines that must make no guess in any point of view: a joke, a question, the DM's own hint and a plan. One kept or waiting is counted as false.",
+  "line": "the line of the session file (or the lore, for nodes and threads) that holds it; blank lines count"
+ },
+ "nodes": [
+  {
+   "name": "Thornwick",
+   "kind": "place",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Old Well",
+   "kind": "place",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Dun river",
+   "kind": "place",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Brother Aldo",
+   "kind": "person",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Mira Vell",
+   "kind": "person",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Captain Rusk",
+   "kind": "person",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Oswin",
+   "kind": "person",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Cerric Vanya'elen",
+   "kind": "person",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Belleros Stormgrace",
+   "kind": "person",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Okthandom Korran",
+   "kind": "person",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Claude Ambere",
+   "kind": "person",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Snitch Barrow",
+   "kind": "person",
+   "aliases": [],
+   "note": "named only in the session, in Belleros's theory"
+  }
+ ],
+ "pairs": [],
+ "events": [],
+ "threads": [
+  {
+   "id": "gq1",
+   "kind": "mystery",
+   "name": "Who poisoned the Old Well of Thornwick?",
+   "giver": "",
+   "target": "",
+   "taker": "",
+   "missing": [],
+   "in_danger": [],
+   "must_find": true,
+   "hint": false,
+   "line": 5,
+   "note": "the mystery every guess answers"
+  }
+ ],
+ "must_not_threads": [],
+ "readings": [
+  {
+   "id": "g01",
+   "who": "Cerric Vanya'elen",
+   "subject": "Mira Vell",
+   "relationship": "poisoned",
+   "object": "Old Well",
+   "mystery": "gq1",
+   "line": 2,
+   "note": "one character's theory"
+  },
+  {
+   "id": "g02",
+   "who": "Belleros Stormgrace",
+   "subject": "Captain Rusk",
+   "relationship": "poisoned",
+   "object": "Old Well",
+   "mystery": "gq1",
+   "line": 3,
+   "note": "an accusation, said to his face"
+  },
+  {
+   "id": "g03",
+   "who": "Okthandom Korran",
+   "subject": "Oswin",
+   "relationship": "poisoned",
+   "object": "Old Well",
+   "mystery": "gq1",
+   "line": 8,
+   "note": "'unlikely': the opposite of Cerric's guess"
+  },
+  {
+   "id": "g04",
+   "who": "Claude Ambere",
+   "subject": "Mira Vell",
+   "relationship": "works for",
+   "object": "Brother Aldo",
+   "mystery": "gq1",
+   "line": 9,
+   "note": "a theory about two people"
+  },
+  {
+   "id": "g05",
+   "who": "Belleros Stormgrace",
+   "subject": "Captain Rusk",
+   "relationship": "hired",
+   "object": "Snitch Barrow",
+   "mystery": "gq1",
+   "line": 10,
+   "note": "about a name the campaign doesn't have yet"
+  },
+  {
+   "id": "g06",
+   "who": "party",
+   "subject": "Brother Aldo",
+   "relationship": "hired",
+   "object": "Oswin",
+   "mystery": "gq1",
+   "line": 11,
+   "note": "the whole table agreed out loud (lines 12 to 14)"
+  }
+ ],
+ "must_not_readings": [
+  {
+   "id": "gn1",
+   "subject": "goat",
+   "object": "Old Well",
+   "line": 5,
+   "note": "a joke"
+  },
+  {
+   "id": "gn2",
+   "subject": "Brother Aldo",
+   "object": "Old Well",
+   "line": 6,
+   "note": "a question, not a theory"
+  },
+  {
+   "id": "gn3",
+   "subject": "Captain Rusk",
+   "object": "Oswin",
+   "line": 7,
+   "note": "the DM's own hint (the muddy boots), never the table's guess"
+  },
+  {
+   "id": "gn4",
+   "subject": "Okthandom Korran",
+   "object": "Oswin",
+   "line": 15,
+   "note": "a plan to ask him"
+  }
+ ]
+}

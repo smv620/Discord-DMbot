@@ -166,6 +166,10 @@ class Report:
     # matched backup thread: found, missed (must-find only), good finds missed, and false (a
     # `must_not_progress` row that holds)
     progress: Counter[str] = field(default_factory=Counter)
+    # The table's guesses (#4655, quests slice 7a): found (in the key's point of view, kept as a
+    # belief or waiting as a reading), missed, wrong holder (the statement in another point of
+    # view), and false (a `must_not_readings` row that became a guess anywhere)
+    readings: Counter[str] = field(default_factory=Counter)
 
 
 def _live(row: Mapping[str, Any]) -> bool:
@@ -539,6 +543,7 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
         1 for e in graph.entities.values() if e["type"] in ("event", "deed")
     )
     _score_map_facts(report, graph, key, names)
+    _score_readings(report, graph, key, names)
     _score_threads(report, graph, key, names)
     _score_languages(report, graph, key, names, wanted)
     _score_route_lengths(report, graph, key, names, wanted)
@@ -667,6 +672,83 @@ def _score_map_facts(
 THREAD_TYPES = frozenset({"thread", "quest", "mystery", "hook", "goal", "promise"})
 # The key's people of a thread, by the part word `in_thread` carries (`thread_read`)
 THREAD_ROLES = {"giver": "quest giver", "target": "target", "taker": "takes it on"}
+
+
+GUESS_STATUSES = frozenset({"theory", "accusation"})
+
+
+def _guesses(graph: Graph) -> list[tuple[str, frozenset[str], frozenset[str]]]:
+    """Every guess in the backup as (holder, subject's name keys, object's name keys): kept as a
+    belief (a theory or an accusation in the party's or a character's point of view), or waiting
+    as a claim's reading. The holder is "party" or a name key of the character."""
+    keys: dict[str, set[str]] = {}
+    for key, ids in graph.by_key.items():
+        for i in ids:
+            keys.setdefault(i, set()).add(key)
+    views = {str(p["id"]): p for p in graph.tables.get("perspective", ())}
+    relations = {str(r["id"]): r for r in graph.tables.get("relation", ())}
+    out: list[tuple[str, frozenset[str], frozenset[str]]] = []
+    for b in graph.tables.get("belief", ()):
+        view, rel = (
+            views.get(str(b.get("perspective_id"))),
+            relations.get(str(b.get("relation_id"))),
+        )
+        if view is None or rel is None or str(b.get("status")) not in GUESS_STATUSES:
+            continue
+        if view.get("kind") == "party":
+            holder = {"party"}
+        elif view.get("entity_id"):
+            holder = keys.get(str(view["entity_id"]), set())
+        else:
+            continue  # (The truth, or everyone: never a guess)
+        ends = (keys.get(str(rel["subject_id"]), set()), keys.get(str(rel["object_id"]), set()))
+        out += [(h, frozenset(ends[0]), frozenset(ends[1])) for h in holder]
+    for c in graph.tables.get("claim", ()):
+        reading = c.get("reading")
+        if c.get("status") != "proposed" or not isinstance(reading, Mapping):
+            continue
+        if str(reading.get("status")) not in GUESS_STATUSES:
+            continue
+        said = str(reading.get("view") or "")
+        holder_key = "party" if said == "party" else name_key(said.removeprefix("pc:"))
+        out.append((
+            holder_key,
+            frozenset({name_key(str(c.get("subject") or ""))}),
+            frozenset({name_key(str(c.get("object") or ""))}),
+        ))  # fmt: skip
+    return out
+
+
+def _score_readings(
+    report: Report, graph: Graph, key: Mapping[str, Any], names: Mapping[str, list[str]]
+) -> None:
+    """The table's guesses against the key (#4655): each `readings` row is found (the statement,
+    either way round, in the key's point of view), wrong holder (only in another one) or missed;
+    each `must_not_readings` row that is a guess anywhere is false. The relationship's word is not
+    scored: the model says it in its own words. Counts only."""
+    rows, nots = key.get("readings", []), key.get("must_not_readings", [])
+    if not rows and not nots:
+        return
+    guesses = _guesses(graph)
+
+    def ends(name: str) -> frozenset[str]:
+        return frozenset(name_key(n) for n in names.get(name, [name]))
+
+    def holds(row: Mapping[str, Any]) -> list[str]:
+        a, b = ends(str(row["subject"])), ends(str(row["object"]))
+        return [h for h, s, o in guesses if (s & a and o & b) or (s & b and o & a)]
+
+    for row in rows:
+        held = holds(row)
+        who = "party" if row["who"] == "party" else None
+        wanted = {who} if who else ends(str(row["who"]))
+        if set(held) & wanted:
+            report.readings["found"] += 1
+        elif held:
+            report.readings["wrong holder"] += 1
+        else:
+            report.readings["missed"] += 1
+    report.readings["false"] += sum(1 for row in nots if holds(row))
 
 
 def _score_threads(
@@ -945,6 +1027,7 @@ def summarize(report: Report) -> dict[str, Any]:
         **({"thread_parts": dict(report.thread_parts)} if report.thread_parts else {}),
         **({"clues": dict(report.clues)} if report.clues else {}),
         **({"progress": dict(report.progress)} if report.progress else {}),
+        **({"readings": dict(report.readings)} if report.readings else {}),
         **({"languages": dict(report.languages)} if report.languages else {}),
         **({"route_lengths": dict(report.route_lengths)} if report.route_lengths else {}),
     }
@@ -1019,6 +1102,12 @@ def render(report: Report, counts_only: bool = False) -> str:
         lines.append(
             f"Thread progress: found {c['found']}, missed {c['missed']}, false {c['false']} "
             f"(good finds missed {c['good finds missed']})"
+        )
+    if report.readings:  # (#4655: the table's guesses, quests slice 7a)
+        c = report.readings
+        lines.append(
+            f"Readings: found {c['found']}, missed {c['missed']}, "
+            f"wrong holder {c['wrong holder']}, false {c['false']}"
         )
     if report.route_lengths:  # (#4255: a road's length, a property of the road, not a tie)
         c = report.route_lengths
