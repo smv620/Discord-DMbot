@@ -189,12 +189,29 @@ class TheAnswers(Questions):
         self.assertEqual(done.error, wa.BAD_TARGET)
 
     async def test_an_undo_of_a_change_that_is_not_the_dms_own_answer_is_gone(self) -> None:
-        other = await self.memory.update_relation(
-            self.g, self.one.id, self.tie.id, secret=False, source=DM
+        other = await self.memory.add_alias(
+            self.g, self.one.id, self.bob, "Tamsin", kind="nickname", source=DM, status=CONFIRMED
         )
-        batch = other.batch if getattr(other, "batch", None) is not None else 1
-        done = await self.act("secret-undo", str(batch))
+        self.assertIsNotNone(other.batch)
+        done = await self.act("secret-undo", str(other.batch))
         self.assertEqual(done.error, wa.GONE)
+
+    async def test_another_dm_cannot_undo_this_dms_answer(self) -> None:
+        made = await self.act("secret-make", self.question.id)
+        (batch,) = made.batches
+        self.assertTrue(await self.actions.secret_batch_made(self.g, self.one.id, ALICE.id, batch))
+        self.assertFalse(await self.actions.secret_batch_made(self.g, self.one.id, 999, batch))
+
+    async def test_another_campaigns_questions_are_not_listed_and_its_batch_is_not_ours(
+        self,
+    ) -> None:
+        other_ref = f"{self.g}.{self.two.id}"
+        with self.assertRaises(RecapError) as refused:  # (a DM of one campaign is no DM of another)
+            await secret_questions.read(self.web, self.session, other_ref)
+        self.assertEqual(refused.exception.code, "not_allowed")
+        made = await self.act("secret-make", self.question.id)
+        (batch,) = made.batches
+        self.assertFalse(await self.actions.secret_batch_made(self.g, self.two.id, ALICE.id, batch))
 
     async def test_the_door_refuses_a_bad_shape_and_a_player(self) -> None:
         def refused(got: Any) -> bool:

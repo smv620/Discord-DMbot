@@ -47,8 +47,8 @@ def gone(kind: str) -> dict[str, Any]:
     keep, make = _buttons(kind)
     return {
         "heading": GONE_LINE,
-        "keep": {"label": keep, "says": ""},
-        "make": {"label": make, "says": ""},
+        "keep": {"label": keep, "says": "", "done": ""},
+        "make": {"label": make, "says": "", "done": ""},
     }
 
 

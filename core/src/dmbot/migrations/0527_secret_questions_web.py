@@ -14,7 +14,8 @@ from __future__ import annotations
 # NULL when the item is gone, which the page words as Discord does), `limits` (a clue made known to
 # some only), `knowers` (the names of the player characters a narrowing would take off), and for a
 # replace question `new`, the connection that replaces it. A 🌍 World read's question (its change
-# says `common`) is left out: it is answered one upload at a time in Discord. The label is the
+# says `common`; only a reveal ever does, `ui/secret_questions.is_world`) is left out: it is
+# answered one upload at a time in Discord. The label is the
 # DM's own upload or session label; the evidence is never words of a transcript. Read only.
 #
 # The three actions go on the queue door as 0519's did, filed under no name with no target and no
