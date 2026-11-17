@@ -262,7 +262,7 @@ class TheSpeakerLabel(TheBot):  # (#4690: a line said as a named NPC is no note)
         bot._dm_message.assert_not_awaited()
 
     async def test_narration_or_the_dm_gets_the_note(self) -> None:
-        from dmbot.sidebar.ask import NARRATING
+        from dmbot.transcript.models import NARRATING
 
         for entity in ("", NARRATING):
             bot = await self.labelled(entity)
