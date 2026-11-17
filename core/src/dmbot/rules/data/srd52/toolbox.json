@@ -397,6 +397,14 @@
   },
   {
    "kind": "rule",
+   "name": "Travel Pace Table",
+   "tag": "Playing the Game",
+   "text": "Fast: 400 feet a minute; 4 miles an hour; 30 miles a day\nNormal: 300 feet a minute; 3 miles an hour; 24 miles a day\nSlow: 200 feet a minute; 2 miles an hour; 18 miles a day",
+   "page": 12,
+   "see_also": []
+  },
+  {
+   "kind": "rule",
    "name": "Magic Items",
    "tag": "Magic Items",
    "text": "Magic items are gleaned from the hoards of felled monsters or discovered in long-lost vaults. Such items grant capabilities a character could rarely have otherwise, or they complement their owner’s capabilities in wondrous ways.",

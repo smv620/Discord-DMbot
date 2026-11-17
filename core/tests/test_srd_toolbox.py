@@ -840,7 +840,7 @@ class TheData(unittest.TestCase):
         kinds = [e["kind"] for e in self.data["entries"]]
         self.assertEqual(
             {k: kinds.count(k) for k in ("rule", "poison", "trap", "curse")},
-            {"rule": 87, "poison": 14, "trap": 8, "curse": 1},
+            {"rule": 88, "poison": 14, "trap": 8, "curse": 1},  # (88: the pace table, #4260)
         )
 
     def test_two_poisons_with_their_type_and_price(self) -> None:
@@ -874,6 +874,9 @@ class TheData(unittest.TestCase):
     def test_every_entry_says_where_it_is_and_the_file_is_the_dms_chapter(self) -> None:
         self.assertEqual(self.data["section"], "Gameplay Toolbox")
         for e in self.data["entries"]:
+            if e["name"] == toolbox.TRAVEL_PACE_TABLE:  # (from "Playing the Game", #4260)
+                self.assertEqual((e["tag"], e["page"]), (toolbox.PLAYING, 12))
+                continue
             self.assertGreaterEqual(e["page"], 192)
             self.assertLessEqual(e["page"], 208)  # the Magic Items section ends there
             self.assertTrue(e["text"].strip())
@@ -925,3 +928,39 @@ class TheData(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TheTravelPaceTable(unittest.TestCase):
+    """#4260: the numbers and labels of "Playing the Game"'s Travel Pace table, as one rule."""
+
+    def test_the_three_rows(self) -> None:
+        page = [
+            at(60.0, 112.0, "Travel Pace", page=12),
+            at(60.0, 124.0, "Distance Traveled Per …", page=12),
+            at(60.0, 136.0, "Pace Minute Hour Day", page=12),
+            at(60.0, 148.0, "Fast 400 feet 4 miles 30 miles", page=12),
+            at(60.0, 160.0, "Normal 300 feet 3 miles 24 miles", page=12),
+            at(60.0, 172.0, "Slow 200 feet 2 miles 18 miles", page=12),
+        ]
+        rule = toolbox.travel_pace_table([[], page])
+        self.assertEqual((rule.name, rule.page), (toolbox.TRAVEL_PACE_TABLE, 2))
+        self.assertEqual(
+            rule.text,
+            "Fast: 400 feet a minute; 4 miles an hour; 30 miles a day\n"
+            "Normal: 300 feet a minute; 3 miles an hour; 24 miles a day\n"
+            "Slow: 200 feet a minute; 2 miles an hour; 18 miles a day",
+        )
+
+    def test_a_missing_row_stops_the_build(self) -> None:
+        with self.assertRaises(SrdError):
+            toolbox.travel_pace_table(
+                [[at(60.0, 184.0, "Fast 400 feet 4 miles 30 miles", page=12)]]
+            )
+
+    def test_the_kept_file_has_it(self) -> None:
+        import dmbot.rules
+
+        data = Path(dmbot.rules.__file__).parent / "data" / "srd52" / "toolbox.json"
+        names = {e["name"]: e for e in json.loads(data.read_text(encoding="utf-8"))["entries"]}
+        self.assertIn("30 miles a day", names[toolbox.TRAVEL_PACE_TABLE]["text"])
+        self.assertEqual(names[toolbox.TRAVEL_PACE_TABLE]["page"], 12)

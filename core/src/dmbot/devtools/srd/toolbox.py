@@ -898,3 +898,25 @@ def left_out(lines: Sequence[Line]) -> dict[str, int]:
     if missing:
         raise SrdError(f"Left-out titles that are not in the chapter: {', '.join(missing)}")
     return found
+
+
+# The travel pace table of "Playing the Game" (#4260; Supervisor's ruling (a)): its numbers and
+# labels only, as one rule of the toolbox file, so "how long will it take?" cites SRD 5.2's miles.
+TRAVEL_PACE_TABLE = "Travel Pace Table"
+PLAYING = "Playing the Game"  # (its section, as tags name a section in this file)
+_PACE_ROW = re.compile(r"\b(Fast|Normal|Slow) (\d+) feet (\d+) miles (\d+) miles\b")
+
+
+def travel_pace_table(pages: Sequence[Sequence[Line]]) -> Rule:
+    """The three rows of the Travel Pace table (Fast, Normal, Slow: feet a minute, miles an hour
+    and miles a day), from the first page that has all three. Anything else stops the build."""
+    for number, lines in enumerate(pages, 1):
+        rows = {m[1]: m for m in _PACE_ROW.finditer(" ".join(line.text for line in lines))}
+        if set(rows) == {"Fast", "Normal", "Slow"}:
+            text = "\n".join(
+                f"{pace}: {rows[pace][2]} feet a minute; {rows[pace][3]} miles an hour;"
+                f" {rows[pace][4]} miles a day"
+                for pace in ("Fast", "Normal", "Slow")
+            )
+            return Rule(name=TRAVEL_PACE_TABLE, tag=PLAYING, text=text, page=number, see_also=())
+    raise SrdError("The Travel Pace table (Fast, Normal and Slow rows) wasn't found")
