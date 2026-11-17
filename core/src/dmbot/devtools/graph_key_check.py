@@ -686,7 +686,8 @@ def _guesses(graph: Graph) -> list[tuple[str, frozenset[str], frozenset[str]]]:
         for i in ids:
             keys.setdefault(i, set()).add(key)
     views = {str(p["id"]): p for p in graph.tables.get("perspective", ())}
-    relations = {str(r["id"]): r for r in graph.tables.get("relation", ())}
+    # (live connections only: a guess the DM turned down is no guess)
+    relations = {str(r["id"]): r for r in graph.relations}
     out: list[tuple[str, frozenset[str], frozenset[str]]] = []
     for b in graph.tables.get("belief", ()):
         view, rel = (
@@ -710,13 +711,20 @@ def _guesses(graph: Graph) -> list[tuple[str, frozenset[str], frozenset[str]]]:
         if str(reading.get("status")) not in GUESS_STATUSES:
             continue
         said = str(reading.get("view") or "")
-        holder_key = "party" if said == "party" else name_key(said.removeprefix("pc:"))
-        out.append((
-            holder_key,
-            frozenset({name_key(str(c.get("subject") or ""))}),
-            frozenset({name_key(str(c.get("object") or ""))}),
-        ))  # fmt: skip
+        holders = {"party"} if said == "party" else _said_keys(said.removeprefix("pc:"))
+        subject = _said_keys(str(c.get("subject") or ""))
+        obj = _said_keys(str(c.get("object") or ""))
+        out += [(h, subject, obj) for h in holders]
     return out
+
+
+_ARTICLE = re.compile(r"^(?:the|a|an)\s+", re.I)
+
+
+def _said_keys(words: str) -> frozenset[str]:
+    """A waiting reading's name as the model wrote it, with and without a leading "the" ("the Old
+    Well"), as name keys: the key lists each entry's short forms as aliases."""
+    return frozenset({name_key(words), name_key(_ARTICLE.sub("", words.strip()))})
 
 
 def _score_readings(

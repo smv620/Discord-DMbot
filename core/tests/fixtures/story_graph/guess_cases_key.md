@@ -1,6 +1,6 @@
 # Guess cases key (invented, #4655)
 
-Made-up text for scoring the table's guesses (quests slice 7). The session is `guess_cases_session.txt`, its lore `guess_cases_lore.txt`; the check reads `guess_cases_key.json`. Names and short words only.
+Made-up text for scoring the table's guesses (quests slice 7). The session is `guess_cases_session.txt`, its lore `guess_cases_lore.txt`; the check reads `guess_cases_key.json`. Names and short words only. Direction is not scored, and a guess in the party's view where the key has a character's (or the other way round) is a wrong holder.
 
 ## The mystery
 
@@ -22,6 +22,6 @@ Made-up text for scoring the table's guesses (quests slice 7). The session is `g
 | id | not a guess | line | why |
 |---|---|---|---|
 | gn1 | goat / Old Well | 5 | a joke |
-| gn2 | Brother Aldo / Old Well | 6 | a question, not a theory |
-| gn3 | Captain Rusk / Oswin | 7 | the DM's own hint (the muddy boots), never the table's guess |
+| gn2 | Elder Hobb / Old Well | 6 | a question, not a theory |
+| gn3 | Captain Rusk / Mira Vell | 7 | the DM's own hint (the look they exchange), never the table's guess |
 | gn4 | Okthandom Korran / Oswin | 15 | a plan to ask him |

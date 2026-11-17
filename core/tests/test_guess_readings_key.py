@@ -63,8 +63,8 @@ def claim(cid: str, view: str, subject: str, obj: str, status: str = "theory") -
 
 VIEWS: list[dict[str, Any]] = [
     {"table": "perspective", "id": "v-party", "kind": "party", "entity_id": None},
-    {"table": "perspective", "id": "v-cerric", "kind": "character", "entity_id": "cerric"},
-    {"table": "perspective", "id": "v-bel", "kind": "character", "entity_id": "bel"},
+    {"table": "perspective", "id": "v-cerric", "kind": "pc", "entity_id": "cerric"},
+    {"table": "perspective", "id": "v-bel", "kind": "pc", "entity_id": "bel"},
 ]
 
 
@@ -82,8 +82,8 @@ class TheScore(unittest.TestCase):
             # g06: the party's guess, but kept in Cerric's view only: wrong holder
             rel("r2", "aldo", "hired", "oswin", status="proposed"),
             belief("b2", "v-cerric", "r2"),
-            # gn2: the question "did Brother Aldo poison it?" made a guess: false
-            claim("c2", "pc:Belleros Stormgrace", "Brother Aldo", "Old Well"),
+            # gn2: the question "did Elder Hobb poison it?" made a guess: false
+            claim("c2", "pc:Belleros Stormgrace", "Elder Hobb", "Old Well"),
         ]
         report = self.score(rows)
         self.assertEqual(
@@ -101,6 +101,37 @@ class TheScore(unittest.TestCase):
             belief("b1", "v-truth", "r1", status="secret_plot"),
         ]
         self.assertEqual(self.score(rows).readings["found"], 0)
+
+    def test_a_short_name_as_the_model_wrote_it_is_found(self) -> None:
+        rows = [claim("c1", "pc:Belleros", "Captain Rusk", "the Old Well", "accusation")]
+        self.assertEqual(self.score(rows).readings["found"], 1)
+
+    def test_a_party_reading_waiting_is_found(self) -> None:
+        rows = [claim("c1", "party", "Brother Aldo", "Oswin the miller")]
+        self.assertEqual(self.score(rows).readings["found"], 1)
+
+    def test_a_guess_the_dm_turned_down_is_not_counted(self) -> None:
+        rows = [
+            rel("r1", "mira", "poisoned", "well", status="rejected"),
+            belief("b1", "v-cerric", "r1"),
+        ]
+        report = self.score(rows)
+        self.assertEqual((report.readings["found"], report.readings["missed"]), (0, 6))
+
+    def test_a_guess_in_everyone_s_view_is_no_table_guess(self) -> None:
+        everyone: dict[str, Any] = {
+            "table": "perspective", "id": "v-all", "kind": "everyone", "entity_id": None
+        }  # fmt: skip
+        rows = [everyone, rel("r1", "mira", "poisoned", "well"), belief("b1", "v-all", "r1")]
+        report = self.score(rows)
+        self.assertEqual(report.readings["found"] + report.readings["false"], 0)
+
+    def test_must_not_rows_name_a_line_of_the_session(self) -> None:
+        nodes = {n["name"] for n in KEY["nodes"]}
+        for r in KEY["must_not_readings"]:
+            said = SESSION[r["line"] - 1].lower()
+            named = [n for n in (r["subject"], r["object"]) if n in nodes]
+            self.assertTrue(any(n.split()[-1].lower() in said for n in named), r["id"])
 
     def test_a_key_without_readings_prints_no_line(self) -> None:
         key = {k: v for k, v in KEY.items() if k not in ("readings", "must_not_readings")}

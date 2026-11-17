@@ -3,7 +3,7 @@
  "source": "guess_cases_lore.txt and guess_cases_session.txt in this folder: invented text for DMbot's tests, written for #4655 (quests slice 7; design docs/design/quests.md §7). Every name and line is made up; the four player characters are the sample's, by name only, so sample_run can say who plays each.",
  "version": 1,
  "how_to_read": {
-  "readings": "the table's guesses read from the session (#4655): who holds it ('party' when the whole table agreed out loud, else the player character's name), the statement as subject, relationship and object (names as in the key; the relationship's word is not scored), and the mystery it answers. Found: a guess (a theory or an accusation) in that point of view, kept as a belief or waiting as a reading. Wrong holder: the same statement in another point of view. Missed: neither.",
+  "readings": "the table's guesses read from the session (#4655): who holds it ('party' when the whole table agreed out loud, else the player character's name), the statement as subject, relationship and object (names as in the key; the relationship's word is not scored), and the mystery it answers. Found: a guess (a theory or an accusation) in that point of view, kept as a belief or waiting as a reading. Wrong holder: the same statement in another point of view. Missed: neither. The direction of the statement is not scored (either way round matches), and a guess held by the party where the key has a character (or the other way round) counts as wrong holder.",
   "must_not_readings": "lines that must make no guess in any point of view: a joke, a question, the DM's own hint and a plan. One kept or waiting is counted as false.",
   "line": "the line of the session file (or the lore, for nodes and threads) that holds it; blank lines count"
  },
@@ -17,67 +17,98 @@
   {
    "name": "Old Well",
    "kind": "place",
-   "aliases": [],
+   "aliases": [
+    "the Old Well",
+    "the well"
+   ],
    "note": ""
   },
   {
    "name": "Dun river",
    "kind": "place",
-   "aliases": [],
+   "aliases": [
+    "the Dun"
+   ],
    "note": ""
   },
   {
    "name": "Brother Aldo",
    "kind": "person",
-   "aliases": [],
+   "aliases": [
+    "Aldo"
+   ],
    "note": ""
   },
   {
    "name": "Mira Vell",
    "kind": "person",
-   "aliases": [],
+   "aliases": [
+    "Mira"
+   ],
    "note": ""
   },
   {
    "name": "Captain Rusk",
    "kind": "person",
-   "aliases": [],
+   "aliases": [
+    "Rusk"
+   ],
    "note": ""
   },
   {
    "name": "Oswin",
    "kind": "person",
-   "aliases": [],
+   "aliases": [
+    "Oswin the miller"
+   ],
+   "note": ""
+  },
+  {
+   "name": "Elder Hobb",
+   "kind": "person",
+   "aliases": [
+    "the elder"
+   ],
    "note": ""
   },
   {
    "name": "Cerric Vanya'elen",
    "kind": "person",
-   "aliases": [],
+   "aliases": [
+    "Cerric"
+   ],
    "note": ""
   },
   {
    "name": "Belleros Stormgrace",
    "kind": "person",
-   "aliases": [],
+   "aliases": [
+    "Belleros"
+   ],
    "note": ""
   },
   {
    "name": "Okthandom Korran",
    "kind": "person",
-   "aliases": [],
+   "aliases": [
+    "Okthandom"
+   ],
    "note": ""
   },
   {
    "name": "Claude Ambere",
    "kind": "person",
-   "aliases": [],
+   "aliases": [
+    "Claude"
+   ],
    "note": ""
   },
   {
    "name": "Snitch Barrow",
    "kind": "person",
-   "aliases": [],
+   "aliases": [
+    "Snitch"
+   ],
    "note": "named only in the session, in Belleros's theory"
   }
  ],
@@ -172,7 +203,7 @@
   },
   {
    "id": "gn2",
-   "subject": "Brother Aldo",
+   "subject": "Elder Hobb",
    "object": "Old Well",
    "line": 6,
    "note": "a question, not a theory"
@@ -180,16 +211,16 @@
   {
    "id": "gn3",
    "subject": "Captain Rusk",
-   "object": "Oswin",
+   "object": "Mira Vell",
    "line": 7,
-   "note": "the DM's own hint (the muddy boots), never the table's guess"
+   "note": "the DM's own hint (the look they exchange), never the table's guess"
   },
   {
    "id": "gn4",
    "subject": "Okthandom Korran",
    "object": "Oswin",
    "line": 15,
-   "note": "a plan to ask him"
+   "note": "a plan to ask him (a cheap row: a plan read as a guess is more likely Oswin poisoned the well, which g03 then catches as a wrong holder)"
   }
  ]
 }
