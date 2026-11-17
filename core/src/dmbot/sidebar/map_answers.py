@@ -11,8 +11,8 @@ Who sees what (the ruling's condition): a question asked at the table (`table=Tr
 from the table's maps and the places shown to the players only, whoever asked it, so a DM-only
 map's pins, scale and distances never reach a player; a DM's private question uses every map
 DMbot may use, and carries the Maps page's link. The one exception (#4676): the DM's own table
-question that only a DM-only map can answer is answered to the DM privately (`one_for_dm`), and the
-table hears only that it was sent."""
+question that the table's maps can't answer is answered to the DM privately (`one_for_dm`), and
+the table hears only that it was sent, whether or not a hidden map has the answer."""
 
 from __future__ import annotations
 
@@ -72,18 +72,17 @@ class MapMeasuring:
                         and not words.measured(text)
                         and asker_id in getattr(campaign, "dm_user_ids", ())
                     ):
-                        # (#4676: the DM asked at the table and the table's maps can't answer;
-                        # if a DM-only map can, the answer is the DM's alone. The sidebar sends
-                        # it privately, as for any question that needs the DM's side, and the
-                        # table hears only "Sent to the DM privately", never that a map exists.)
-                        theirs = await self._measure(campaign, asked, True)
-                        if theirs is not None and words.measured(theirs):
-                            # (the table's own miss as the text: should the table's DM list
-                            # and the campaign's ever differ, the table gets its usual words)
-                            return Answer(
-                                text=text, in_game=False, question=_restated(asked), model="",
-                                prompt_version=PROMPT_VERSION, one_for_dm=True, parts=(text,),
-                            )  # fmt: skip
+                        # (#4676, Supervisor's ruling on #4691: the DM asked at the table and the
+                        # table's maps can't answer. Always the DM's alone, whatever the DM's maps
+                        # hold: the sidebar re-asks privately with every map DMbot may use (the
+                        # figure, or the DM's own miss words with the fix), and the table hears
+                        # only "Sent to the DM privately", the same whether or not a hidden map
+                        # exists. The table's own miss is the text, should the table's DM list
+                        # and the campaign's ever differ.)
+                        return Answer(
+                            text=text, in_game=False, question=_restated(asked), model="",
+                            prompt_version=PROMPT_VERSION, one_for_dm=True, parts=(text,),
+                        )  # fmt: skip
                 except Exception as exc:  # (never fatal: the usual answer goes on)
                     log.warning("Map answer failed (%s)", type(exc).__name__)
             if text is not None:

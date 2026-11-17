@@ -224,51 +224,38 @@ class TheLayer(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual((private.in_game, public.in_game), (False, True))
 
-    async def private_case(self, asker: int) -> Any:
+    async def private_case(
+        self, asker: int, table_says: str = "I can't find Bc on any map yet."
+    ) -> Any:
         self.dms = []
         campaign = SimpleNamespace(dm_user_ids=frozenset({7}))
 
         async def measured(_c: Any, _asked: Any, dm: bool) -> str | None:
-            self.dms.append(dm)  # (only a DM-only map has both: the table's answer is a miss)
-            return "About 40 miles …" if dm else "I can't find Bc on any map yet."
+            self.dms.append(dm)
+            return "About 40 miles …" if dm else table_says
 
         layer = MapMeasuring(Inner(), measured, on=lambda: True)
         return await layer.answer(
             campaign, "how far is Ab from Bc?", asker_id=asker, scene="", table=True
         )
 
-    async def test_a_dms_table_question_only_a_dm_map_answers_goes_privately(self) -> None:
-        # (#4676: the sidebar sends it to the DM; the table hears only "Sent to the DM privately")
-        got = await self.private_case(asker=7)
-        self.assertTrue(got.one_for_dm)
-        self.assertFalse(got.in_game)  # (never written to the raw transcript)
-        self.assertEqual(got.text, "I can't find Bc on any map yet.")  # (the table's own words)
-        self.assertEqual(self.dms, [False, True])
-
-    async def test_a_dms_table_question_both_miss_or_both_answer(self) -> None:
-        campaign = SimpleNamespace(dm_user_ids=frozenset({7}))
-        for table_says, dm_says, reads, private in (
-            (
-                "I can't find Bc on any map yet.",
-                "I can't find Bc on any map yet.",
-                [False, True],
-                False,
-            ),
-            ("About 40 miles …", "About 40 miles …", [False], False),
+    async def test_a_dms_table_question_the_tables_maps_miss_always_goes_privately(self) -> None:
+        # (#4676, Supervisor's ruling on #4691: the table hears "Sent to the DM privately" whether
+        # or not a hidden map has the answer; the DM's maps are read on the private path only)
+        for table_says in (
+            "I can't find Bc on any map yet.",
+            "I don't have a map with both Ab and Bc on it.",
         ):
-            self.dms = []
+            got = await self.private_case(asker=7, table_says=table_says)
+            self.assertTrue(got.one_for_dm)
+            self.assertFalse(got.in_game)  # (never written to the raw transcript)
+            self.assertEqual(got.text, table_says)  # (the table's own words, as a fallback)
+            self.assertEqual(self.dms, [False])
 
-            async def measured(
-                _c: Any, _a: Any, dm: bool, t: str = table_says, d: str = dm_says
-            ) -> str:
-                self.dms.append(dm)
-                return d if dm else t
-
-            layer = MapMeasuring(Inner(), measured, on=lambda: True)
-            got = await layer.answer(
-                campaign, "how far is Ab from Bc?", asker_id=7, scene="", table=True
-            )
-            self.assertEqual((got.one_for_dm, got.text, self.dms), (private, table_says, reads))
+    async def test_a_dms_table_question_the_tables_maps_answer_stays_at_the_table(self) -> None:
+        got = await self.private_case(asker=7, table_says="About 40 miles …")
+        self.assertFalse(got.one_for_dm)
+        self.assertEqual((got.text, self.dms), ("About 40 miles …", [False]))
 
     async def test_a_players_table_question_gets_the_tables_words(self) -> None:
         got = await self.private_case(asker=8)
