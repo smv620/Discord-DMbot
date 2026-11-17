@@ -3774,7 +3774,6 @@ class ConnectionOffer(_Menu):
         self.add_item(self.toggle)
         # 👥 Some know (#4534): only the ticked player characters learn it; the rest of the table
         # hears it when it is said. The picker's Save hands its ticks straight to `_answer`.
-        self.saved_note = ""  # "👤 Known to: Cerric." above the next card, shown once
         self.some = _Button(self._some, label=SOME_KNOW, style=grey, row=1)
         self.add_item(self.some)
         self.add_item(_Button(self._skip, label="⏭️ Skip the rest", style=grey, row=2))
@@ -3892,13 +3891,13 @@ class ConnectionOffer(_Menu):
             return plain
         return link_words(r.predicate, r.detail, r.directional, feeling=True, knows_how=r.knows_how)
 
-    def text(self) -> str:
+    def text(self, note: str = "") -> str:
         """The card, with the walk's part line above it when this is inside "Check everything",
-        and, once, who the last 👥 Some know saved it for (#4682)."""
+        and `note` (who the last 👥 Some know saved it for, #4682) above both."""
         if self.walk is None or self.current is None:
-            return self.saved_note + self._card()
+            return note + self._card()
         done = self.kept + self.left_out + 1
-        return self.saved_note + progress(self.walk, done, max(self.total, done)) + self._card()
+        return note + progress(self.walk, done, max(self.total, done)) + self._card()
 
     def _card(self) -> str:
         c = self.current
@@ -4007,12 +4006,13 @@ class ConnectionOffer(_Menu):
             f"{others}: {decide}.\n"
         )
 
-    async def _show(self, interaction: discord.Interaction, ready: list[Waiting]) -> None:
+    async def _show(
+        self, interaction: discord.Interaction, ready: list[Waiting], note: str = ""
+    ) -> None:
         self._set(ready)
         if self.current is None:
             self.stop()
-        text = self.text()
-        self.saved_note = ""  # (said once, with the card that follows the save)
+        text = self.text(note)  # (the note is said once, with the card that follows the save)
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
                 content=text,
@@ -4215,11 +4215,13 @@ class ConnectionOffer(_Menu):
                     log.info("A kept connection could not be pinned")
             changed(interaction, campaign)
             await store.remove(campaign.guild_id, campaign.id, c)
+            saved = ""
             if knowers is not None:
-                names = [self.characters.get(k, "") for k in knowers if k in self.characters]
-                self.saved_note = f"{knower_icon(len(names))} Known to: {names_joined(names)}.\n"
+                names = [self.characters[k] for k in knowers if k in self.characters]
+                if names:
+                    saved = f"{knower_icon(len(names))} Known to: {names_joined(names)}.\n"
             self.kept += 1
-            await self._show(interaction, await self._ready(interaction, campaign))
+            await self._show(interaction, await self._ready(interaction, campaign), saved)
 
     async def _no(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()

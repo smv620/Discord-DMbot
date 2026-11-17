@@ -233,10 +233,6 @@ class TheStore(DatabaseTest):
         self.assertFalse(row.truth)
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class TheGuessLine(unittest.TestCase):
     """(#4682) the card says before the answer who DMbot thinks knows, with the icon for one"""
 
@@ -258,3 +254,7 @@ class TheGuessLine(unittest.TestCase):
     def test_no_guess_means_no_guess_line(self) -> None:
         self.assertNotIn("DMbot thinks", self.card("", {"e1": "Cerric"}))
         self.assertNotIn("DMbot thinks", self.card("e2", {"e1": "Cerric"}))  # (not a character)
+
+
+if __name__ == "__main__":
+    unittest.main()
