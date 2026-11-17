@@ -66,6 +66,11 @@ STAMPED_MEMORY = (
     "memory_role_codes", "memory_roles", "memory_flags", "memory_rule_links", "memory_report_runs",
     "backstory_links", "backstory_which", "waiting_name_questions", "name_pass_fixes",
     "name_pass_reports", "rel_ties", "lore_uploads", "memory_reveal_proposals",
+    "memory_name_sources", "memory_name_sessions",
+    "memory_npc_guesses", "memory_trait_offers", "memory_met", "memory_private_scenes",
+    "memory_private_scene_entries",
+    "memory_hand_over_both",
+    "memory_story_languages", "memory_map_facts", "memory_cultures", "memory_thread_parts",
 )  # fmt: skip
 # Part 2: recaps and the theatre script (migration 0380).
 STAMPED_RECAPS = (
@@ -98,6 +103,15 @@ _PLUMBING = "bookkeeping, not something DMbot generated"
 # Campaign tables that are never stamped, each with why. A new campaign table must be stamped or
 # be added here with its reason (the catalog test, `tests/test_lineage_catalog.py`).
 NOT_STAMPED: dict[str, str] = {
+    # (#4453: a wait for the DM, rebuilt by reading the lore again; the thread a keep makes is an
+    # entry and carries the stamp)
+    "thread_suggestions": "a suggestion waiting for the DM; the kept thread is stamped",
+    "thread_progress": "a progress line waiting for the DM; the kept parts are stamped",
+    # (#4524: the DM's 🤫 questions; what an answer changes is an entry, name or connection, which
+    # carries the stamp, and the question keeps its own evidence label)
+    "secret_questions": "a question waiting for the DM; what an answer changes is stamped",
+    # (#4448: which time-limit messages were said; the limit itself is a stamped part)
+    "time_limit_told": "a record of a private message said, not story; the limit is stamped",
     **dict.fromkeys(
         (
             "campaign_dms",
@@ -143,6 +157,7 @@ NOT_STAMPED: dict[str, str] = {
             "secret_exposures",
             "recap_holds",
             "pc_icons",  # the DM's or the player's own choice of a picture
+            "campaign_maps",  # a person's yes and the DM's yes (#4344); the reading comes later
             "plot_fine",
             "pack_suggestions",
             "rule_set_suggestions",
@@ -158,8 +173,14 @@ NOT_STAMPED: dict[str, str] = {
         (
             "name_actions",
             "setting_actions",
+            "sheet_waits",  # the DM's wizard sheet link, waiting for its character's player
             "said_as_hears",
             "said_as_listens",
+            "script_makes",
+            "trait_answers",
+            "hand_over_answers",
+            "hand_over_questions",
+            "upload_undos",
             "web_backup_parts",
             "web_backups",
             "web_house_file_actions",
@@ -178,6 +199,7 @@ NOT_STAMPED: dict[str, str] = {
     **dict.fromkeys(
         (
             "active_sessions",
+            "ai_credit_spend",  # counts of AI cost kept per call, not made by a commit (#4005)
             "adventure_reads",
             "dm_waiting_sent",
             "game_clock_group_log",
@@ -196,6 +218,7 @@ NOT_STAMPED: dict[str, str] = {
             "transcript_respells",  # positions kept so one Undo can put a spelling fix back
             "session_usage",
             "graph_review_pending",
+            "memory_story_chain",  # where the story is: the reader's working state (#4173 4)
         ),
         _PLUMBING,
     ),

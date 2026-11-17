@@ -252,6 +252,10 @@ class WebRole(DatabaseTest):
         with self.assertRaises(errors.InsufficientPrivilege):
             async with self.web.user(ALICE.id, session=session.id_hash) as conn:
                 await conn.execute("SELECT * FROM owner_hours")
+        for table in ("owner_credits", "ai_credit_spend"):  # (the AI credits ledger, #4005)
+            with self.assertRaises(errors.InsufficientPrivilege):
+                async with self.web.user(ALICE.id, session=session.id_hash) as conn:
+                    await conn.execute(f"SELECT * FROM {table}")
 
     async def _grant(self, privilege: str) -> None:
         """Give the website's role `privilege` on the offers table for this test's schema (only

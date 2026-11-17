@@ -49,7 +49,14 @@ class WithChecks(Base):
         )
         if secret:
             await self.memory.add_alias(
-                GUILD, self.one.id, written.value.id, name, kind="full", source="dm", secret=True
+                GUILD,
+                self.one.id,
+                written.value.id,
+                name,
+                kind="full",
+                source="dm",
+                secret=True,
+                dm_chose_secret=True,
             )
         return written.value.id
 
@@ -100,7 +107,14 @@ class TheCampaignList(WithChecks):
     async def test_a_name_with_a_secret_spelling_is_not_counted(self) -> None:
         hidden = await self.suggest("Brannoch")
         await self.memory.add_alias(
-            GUILD, self.one.id, hidden, "Brannoch", kind="full", source="dm", secret=True
+            GUILD,
+            self.one.id,
+            hidden,
+            "Brannoch",
+            kind="full",
+            source="dm",
+            secret=True,
+            dm_chose_secret=True,
         )
         got = await web.read_campaign_checks(self.web, self.session, self.cref())
         self.assertEqual(got, {"recaps": []})
@@ -217,7 +231,14 @@ class TheList(WithChecks):
     async def test_a_secret_name_is_never_listed_nor_offered(self) -> None:
         secret = await self.suggest("Vecnor")
         await self.memory.add_alias(
-            GUILD, self.one.id, secret, "Vecnor", kind="full", source="scan", secret=True
+            GUILD,
+            self.one.id,
+            secret,
+            "Vecnor",
+            kind="full",
+            source="scan",
+            secret=True,
+            dm_chose_secret=True,
         )
         await self.known("The Hidden Keep", secret=True)
         await self.known("Oakmere")
@@ -232,7 +253,14 @@ class TheList(WithChecks):
         keep = await self.known("Oakmere")
         hidden = await self.known("Brother Aldric")
         await self.memory.add_alias(
-            GUILD, self.one.id, hidden, "The Lich", kind="full", source="dm", secret=True
+            GUILD,
+            self.one.id,
+            hidden,
+            "The Lich",
+            kind="full",
+            source="dm",
+            secret=True,
+            dm_chose_secret=True,
         )  # (a secret spelling that is not its main name)
         got = await self.listed()
         self.assertEqual([k["id"] for k in got["known"]], [keep])
@@ -492,7 +520,14 @@ class TheBot(WithChecks):
         mira = await self.suggest("Mirelle")
         await self.ask(mira, action="explain", text="the innkeeper's sister")
         await self.memory.add_alias(
-            GUILD, self.one.id, mira, "Mirelle", kind="full", source="scan", secret=True
+            GUILD,
+            self.one.id,
+            mira,
+            "Mirelle",
+            kind="full",
+            source="scan",
+            secret=True,
+            dm_chose_secret=True,
         )
         self.assertEqual(await self.apply_next(), na.GONE)
 

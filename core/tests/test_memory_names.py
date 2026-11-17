@@ -1007,7 +1007,7 @@ class NameCards(NamesTest):
             GUILD, self.campaign.id, before.id, status=CONFIRMED, source=DM_SOURCE
         )
         await self.memory.update_relation(
-            GUILD, self.campaign.id, before.id, secret=True, source=DM_SOURCE
+            GUILD, self.campaign.id, before.id, secret=True, source=DM_SOURCE, dm_chose_secret=True
         )
         it = self.it()
         await undo.callback(it)
@@ -1187,7 +1187,7 @@ class NameCards(NamesTest):
         await page._who(it)
         self.assertIn("Players can see this connection.", it.response.edited[0][0])
         await self.memory.update_relation(
-            GUILD, self.campaign.id, rel.id, secret=True, source=DM_SOURCE
+            GUILD, self.campaign.id, rel.id, secret=True, source=DM_SOURCE, dm_chose_secret=True
         )
         self.fresh()
         page = await self.page_of(corin.id, rel.id)
@@ -1466,7 +1466,7 @@ class NameCards(NamesTest):
         for k in range(n):
             await self.memory.add_alias(
                 GUILD, self.campaign.id, self.bell.id, f"{'Hush' if secret else 'Bell'} {k:02d}",
-                kind="nickname", source="dm", status=CONFIRMED, secret=secret,
+                kind="nickname", source="dm", status=CONFIRMED, secret=secret, dm_chose_secret=True,
             )  # fmt: skip
         self.fresh()
 
@@ -2626,8 +2626,8 @@ class Lists(NamesTest):
 
         self.bot.background_ai = SimpleNamespace(complete=AsyncMock())  # type: ignore[assignment]
         self.fresh()
-        name_lists._link_busy.add(GUILD)
-        self.addCleanup(name_lists._link_busy.discard, GUILD)
+        name_lists._link_busy.add((GUILD, ""))
+        self.addCleanup(name_lists._link_busy.discard, (GUILD, ""))
         it = self.it()
         with patch("dmbot.fetch.fetch", AsyncMock()) as fetched:
             await name_lists.take_link(it, self.campaign.id, "https://example.com/a")
@@ -2639,7 +2639,12 @@ class Lists(NamesTest):
         self.assertEqual(got, (None, name_lists.LINK_BUSY))
         fetched.assert_not_called()
         # The place is freed even when reading fails.
-        name_lists._link_busy.discard(GUILD)
+        name_lists._link_busy.discard((GUILD, ""))
+        # A website read of another campaign does not hold Discord's place, nor another campaign's.
+        name_lists._link_busy.add((GUILD, "a"))
+        self.assertFalse(name_lists.link_is_busy(GUILD))
+        self.assertFalse(name_lists.link_is_busy(GUILD, "b"))
+        name_lists._link_busy.discard((GUILD, "a"))
         with (
             patch("dmbot.fetch.fetch", AsyncMock(side_effect=RuntimeError("boom"))),
             self.assertRaises(RuntimeError),
@@ -2878,6 +2883,55 @@ class Review(NamesTest):
         aliases = await self.memory.aliases(GUILD, self.campaign.id, entity_id=hrothgar.id)
         self.assertEqual({a.status for a in aliases}, {CONFIRMED})
 
+    async def test_a_kind_pick_answers_discord_before_it_saves(self) -> None:
+        # The owner's "DMbot didn't respond in time": saving can take over 3 seconds, so every
+        # answer on the card must answer Discord first, then edit the same message.
+        await self.suggest("Hrothgar")
+        view, _ = await self.review()
+        await view._yes(self.it())
+        view.kind = SimpleNamespace(values=["npc"])  # type: ignore[assignment]
+        it = self.it()
+        saw_done: list[bool] = []
+        real = self.memory.confirm_entity
+
+        async def slow_confirm(*args: Any, **kw: Any) -> Any:
+            saw_done.append(it.response.is_done())
+            await asyncio.sleep(0.05)
+            return await real(*args, **kw)
+
+        with patch.object(self.memory, "confirm_entity", side_effect=slow_confirm):
+            await view._kind_picked(it)
+        self.assertEqual(saw_done, [True])
+        it.edit_original_response.assert_awaited()
+
+    async def test_pick_kind_same_and_back_answer_discord_first(self) -> None:
+        # Reading the campaign can take over 3 seconds: each of these answers Discord first.
+        # "Same as" needs a known name to offer, as in test_same_as_folds_it_into_a_known_name.
+        await ui.save_name(self.memory, self.campaign, "Belleros", "npc", [], [])
+        for press in ("_pick_kind", "_same", "_back"):
+            await self.suggest(f"Name{press[1:]}")
+            view, _ = await self.review()
+            it = self.it()
+            saw_done: list[bool] = []
+            real = view._current
+
+            async def probe(interaction: Any, real: Any = real, saw: list[bool] = saw_done) -> Any:
+                saw.append(interaction.response.is_done())  # at the first store read
+                return await real(interaction)
+
+            with patch.object(view, "_current", probe):
+                await getattr(view, press)(it)
+            self.assertEqual(saw_done, [True], press)
+            it.edit_original_response.assert_awaited()
+
+    async def test_yes_no_and_later_answer_discord_before_they_save(self) -> None:
+        for press in ("_yes", "_no", "_later"):
+            await self.suggest(f"Name{press[1:]}")
+            view, _ = await self.review()
+            it = self.it()
+            await getattr(view, press)(it)
+            self.assertTrue(it.response.is_done(), press)
+
     async def test_same_as_folds_it_into_a_known_name(self) -> None:
         belleros = await ui.save_name(self.memory, self.campaign, "Belleros", "npc", [], [])
         await self.suggest("Bellaros")
@@ -3099,8 +3153,9 @@ class Review(NamesTest):
         bot: Any = SimpleNamespace(
             memory=self.memory,
             consent=SimpleNamespace(consenting=AsyncMock(return_value={speller})),
+            transcripts=None,  # (no stored session: no session start to record, #4043)
         )
-        for name in ("_note_spelling", "_record_spelled", "suggest_spelled"):
+        for name in ("_note_spelling", "_record_spelled", "suggest_spelled", "_session_start"):
             setattr(bot, name, getattr(DMBot, name).__get__(bot))
         table = SimpleNamespace(
             spelling=SpellingWatcher(),
@@ -3110,6 +3165,7 @@ class Review(NamesTest):
             hint_parts=None,
             guild_id=GUILD,
             campaign_id=self.campaign.id,
+            transcript_session_id=None,
         )
         for who, line in (
             (1, "ask Brenoch"),
@@ -3164,7 +3220,7 @@ class Review(NamesTest):
                 "🚫 Not a name",
                 "⏳ Later",
                 "✏️ Change the words",
-                "📜 Where was it said?",
+                # (no "Where was it said?": nothing is kept for a name added by hand, #4227)
             ],
         )
         self.assertTrue(all(len(label) <= ui.REVIEW_LABEL_MAX for label in labels))
@@ -3552,7 +3608,9 @@ class AfterSession(NamesTest):
         await self.bot.post_new_names(table)
         self.assertEqual(table.new_names, [])  # told once
         text = posted.await_args.args[1]  # type: ignore[union-attr]
-        self.assertIn("1 new name to check** from this session: **Bryn Shander**", text)
+        # (#3874) no DM could be reached privately here, so the fallback post is counts only
+        self.assertIn("1 new name to check** from your last session", text)
+        self.assertNotIn("Bryn Shander", text)
         self.assertIsInstance(posted.await_args.kwargs["view"], discord.ui.View)  # type: ignore[union-attr]
 
     async def test_new_names_question_goes_to_the_dms_private_chat(self) -> None:

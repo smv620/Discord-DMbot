@@ -18,6 +18,7 @@ from dmbot.recaps import beats as bt
 from dmbot.recaps import coverage as covg
 from dmbot.recaps import draft as rd
 from dmbot.recaps import must_haves
+from dmbot.recaps import storytelling as st
 from dmbot.recaps.pipeline import Client
 
 
@@ -51,6 +52,20 @@ def format_score(
     return out
 
 
+async def story_score(summary: str, examples: Sequence[str], client: Client) -> list[str]:
+    """Ask the storytelling judge about a finished recap (#4556): four numbers and fixed reasons."""
+    try:
+        reply = await client.complete(
+            st.SYSTEM,
+            st.message(examples, rd.sentences_of(summary)),
+            max_tokens=st.ROOM,
+            schema=st.SCHEMA,
+        )
+    except Exception as exc:  # the type only: never the text
+        return ["", f"Storytelling: the judge failed ({type(exc).__name__})"]
+    return st.lines(st.parse(reply.text), examples=len(examples))
+
+
 async def score(
     summary: str,
     sheet: Sequence[dict[str, Any]] | None,
@@ -58,10 +73,13 @@ async def score(
     checks: Sequence[tuple[str, bool, str]] | None,
     client: Client,
     script: str = "",
+    examples: Sequence[str] | None = None,
 ) -> list[str]:
-    """Ask the coverage check about a finished recap and format the counts. A recap that is not
-    ready has nothing to score: the caller does not ask. `script`: the session's script, given to
-    the check as the live path gives it (#3901), so the score can be run with and without it."""
+    """Ask the coverage check about a finished recap and format the counts, then (when the caller
+    gives the campaign's recap examples, even an empty list) the storytelling judge. A recap that
+    is not ready has nothing to score: the caller does not ask. `script`: the session's script,
+    given to the check as the live path gives it (#3901), so the score can be run with and
+    without it."""
     wanted = must_list(musts)
     beats = bt.from_json(sheet) if sheet else []
     sentences = rd.sentences_of(summary)
@@ -73,8 +91,14 @@ async def score(
             schema=covg.SCHEMA,
         )
     except Exception as exc:  # the type only: never the text
-        return ["", f"Must-haves: the coverage check failed ({type(exc).__name__})"]
-    return format_score(covg.parse(reply.text, len(wanted)), len(wanted), checks)
+        failed = ["", f"Must-haves: the coverage check failed ({type(exc).__name__})"]
+        return failed + (
+            await story_score(summary, examples, client) if examples is not None else []
+        )
+    report = format_score(covg.parse(reply.text, len(wanted)), len(wanted), checks)
+    if examples is not None:
+        report += await story_score(summary, examples, client)
+    return report
 
 
 def recap_from_file(text: str) -> str:
@@ -115,4 +139,6 @@ async def score_recap_file(
         return ["", "Must-haves: that file has no recap in it."]
     if beats is None:
         return ["", "Must-haves: the beats file is not a saved beat sheet (beats.json)."]
-    return await score(recap, beats, musts, None, client, script)
+    from dmbot.recaps.style import defaults  # (a file has no campaign: the built-in examples)
+
+    return await score(recap, beats, musts, None, client, script, examples=defaults())

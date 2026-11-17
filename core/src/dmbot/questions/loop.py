@@ -28,7 +28,8 @@ from dmbot.questions.timer import next_step
 log = logging.getLogger(__name__)
 
 ROUND_S = 60
-HEAVY = frozenset({"lookalikes", "connections"})  # worked out in Python: counted every 5th round
+# worked out in Python, or a wider read (World notes: three selects, #4285): every 5th round
+HEAVY = frozenset({"lookalikes", "connections", "world_notes"})
 HEAVY_EVERY = 5
 
 

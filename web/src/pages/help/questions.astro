@@ -1,0 +1,26 @@
+---
+// The quick answers, moved off /help to keep that page under its size budget (#4235). Each step keeps the address it had
+// on /help (game-master-N), so the counter starts after the DM steps.
+import Base from "../../layouts/Base.astro";
+import HelpShell from "../../components/HelpShell.astro";
+import { stepCounter, sectionIds } from "../../content/help-anchors";
+import { backToTop, dmSteps, quickAnswers, quickAnswersHeading } from "../../content/help";
+
+const step = stepCounter(sectionIds.gameMaster, dmSteps.length);
+---
+
+<Base title="Quick answers" description="What DMbot knows when you ask it, in a few words each.">
+  <HelpShell>
+    <Fragment slot="top">
+      <h1 id="top">{quickAnswersHeading}</h1>
+      <p class="muted"><a href="/help">Back to all of Help</a>.</p>
+    </Fragment>
+    <section aria-labelledby="quick-heading">
+      <h2 id="quick-heading" class="visually-hidden">{quickAnswersHeading}</h2>
+      <ul>
+        {quickAnswers.map((s) => <li id={step()}>{s.text}</li>)}
+      </ul>
+      <p class="back"><a href="#top">{backToTop}</a></p>
+    </section>
+  </HelpShell>
+</Base>

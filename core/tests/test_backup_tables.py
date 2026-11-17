@@ -22,6 +22,10 @@ from tests.pg import DatabaseTest
 
 GUILD, OTHER, DM, SPEAKER = 111, 222, 9, 31
 A, B = sorted((new_id(), new_id()))  # two names ("a" sorts first, as some tables require)
+PLACE = new_id()  # a place, for its land, climate or ruler (#4256)
+QUEST = new_id()  # a story thread, for its parts (#4471)
+# a sub-step whose id sorts before its objective's, so the restore must load the objective first
+STEP, OBJECTIVE = "0" * 32, "f" * 32
 REL, ST, DOC = new_id(), new_id(), new_id()
 
 
@@ -34,7 +38,8 @@ class EveryClaimedTableComesBack(DatabaseTest):
             forget_audio=lambda g, c: None,
             consenting=cast(
                 Callable[[int], Awaitable[frozenset[int]]],
-                AsyncMock(return_value=frozenset({SPEAKER})),
+                # (4242: a private scene's second speaker, so its entries come back, #4110)
+                AsyncMock(return_value=frozenset({SPEAKER, 4242})),
             ),
         )
         self.campaign = await self.store.create(GUILD, "Frostmaiden", DM)
@@ -71,8 +76,10 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " status, source, created_at, played_by, role)"
                 " VALUES (%s, %s, %s, 'character', 'Aaa', '', 'confirmed', 'dm', 1, NULL, NULL),"
                 " (%s, %s, %s, 'character', 'Bbb', '', 'confirmed', 'dm', 1, %s,"
-                " 'player_character')",
-                (g, c, A, g, c, B, DM),
+                " 'player_character'),"
+                " (%s, %s, %s, 'place', 'Ccc', '', 'confirmed', 'dm', 1, NULL, NULL),"
+                " (%s, %s, %s, 'quest', 'Ddd', '', 'confirmed', 'dm', 1, NULL, NULL)",
+                (g, c, A, g, c, B, DM, g, c, PLACE, g, c, QUEST),
             ),
             "memory_relations": (
                 "INSERT INTO memory_relations (guild_id, campaign_id, id, subject_id, predicate,"
@@ -182,6 +189,33 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " VALUES (%s, %s, %s, %s, 'species', 'srd', 'Goblin', true, 1)",
                 (g, c, new_id(), A),
             ),
+            "memory_story_languages": (  # an NPC's language from the story (#4229)
+                "INSERT INTO memory_story_languages (guild_id, campaign_id, id, entity_id, name,"
+                " name_key, srd, given_by, created_at)"
+                " VALUES (%s, %s, %s, %s, 'Elvish', 'elvish', true, 'dm', 1)",
+                (g, c, new_id(), A),
+            ),
+            "memory_cultures": (  # a named culture (#4257 slice 3b)
+                "INSERT INTO memory_cultures (guild_id, campaign_id, id, name, name_key, status,"
+                " source, created_at) VALUES (%s, %s, %s, 'Illuskan', 'illuskan', 'confirmed',"
+                " 'dm', 1)",
+                (g, c, new_id()),
+            ),
+            "memory_thread_parts": (  # an objective and its sub-step (#4471)
+                "INSERT INTO memory_thread_parts (guild_id, campaign_id, id, thread_id, first_id,"
+                " kind, words, state, under_id, status, source, created_at) VALUES"
+                " (%s, %s, %s, %s, %s, 'objective', 'find Sephek', 'to_do', NULL, 'confirmed',"
+                " 'dm', 1),"
+                " (%s, %s, %s, %s, %s, 'objective', 'ask around', 'to_do', %s, 'confirmed', 'dm',"
+                " 1)",
+                (g, c, OBJECTIVE, QUEST, OBJECTIVE, g, c, STEP, QUEST, STEP, OBJECTIVE),
+            ),
+            "memory_map_facts": (  # a place's climate (#4256)
+                "INSERT INTO memory_map_facts (guild_id, campaign_id, id, entity_id, layer, value,"
+                " status, source, created_at) VALUES (%s, %s, %s, %s, 'climate', 'cold',"
+                " 'confirmed', 'dm', 1)",
+                (g, c, new_id(), PLACE),
+            ),
             "character_sheets": (
                 "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, url, sheet, source,"
                 " fetched_at, player_id, ask_mismatch) VALUES (%s, %s, %s,"
@@ -230,12 +264,29 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " 'reveals-1', 'm', 'proposed', 5)",
                 (g, c, "e" * 32, A, A, SPEAKER),
             ),
+            "memory_private_scenes": (
+                "INSERT INTO memory_private_scenes (guild_id, campaign_id, id, first_id,"
+                " second_id, session_started_at, from_ms, to_ms, line_count, speaker_ids, status,"
+                " created_at) VALUES (%s, %s, %s, %s, %s, 100, 1000, 2000, 2,"
+                " ARRAY[%s::bigint, 4242], 'kept', 5)",
+                (g, c, "d" * 32, A, B, SPEAKER),
+            ),
+            "memory_private_scene_entries": (
+                "INSERT INTO memory_private_scene_entries (guild_id, campaign_id, scene_id,"
+                " entity_id) VALUES (%s, %s, %s, %s)",
+                (g, c, "d" * 32, A),
+            ),
             "memory_scenes": (
                 "INSERT INTO memory_scenes (guild_id, campaign_id, subject_kind, subject_id,"
                 " scene, lines_n, speaker_ids, session_started_at, prompt_version, model,"
                 " created_at) VALUES (%s, %s, 'entity', %s, 'A scene.', 2, ARRAY[%s::bigint], 100,"
                 " 'scenes-1', 'm', 5)",
                 (g, c, A, SPEAKER),
+            ),
+            "memory_story_chain": (
+                "INSERT INTO memory_story_chain (guild_id, campaign_id, chain, rank, entity_id,"
+                " updated_at) VALUES (%s, %s, 'main', 0, %s, 5)",
+                (g, c, A),
             ),
             "memory_kind_offers": (
                 "INSERT INTO memory_kind_offers (guild_id, campaign_id, words_key, state, seen,"

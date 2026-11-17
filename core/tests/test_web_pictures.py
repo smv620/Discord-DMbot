@@ -24,6 +24,8 @@ from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, NOW, Base
 from tests.test_web_api import ALICE, API, THURSDAY, FakeDiscord, settings
 
+CAROL = type(BOB)(id=3003, name="Carol", email="carol@example.com")  # in the server, no part in it
+
 START = 1_700_000_000
 MB = 1024 * 1024
 
@@ -46,6 +48,13 @@ class Kept(Base):
             await conn.execute(
                 "UPDATE transcript_sessions SET speaker_names = %s WHERE id = %s",
                 (Jsonb({str(ALICE.id): "Mira", str(BOB.id): "Cerric"}), self.sid),
+            )
+            # These tests read the gallery as plain members of the server. Since #3891 its poster
+            # names and image text are the campaign's people's unless its channels are open to
+            # everyone, so they say so; `TheGalleryPeople` tests the rule itself.
+            await conn.execute(
+                "UPDATE campaigns SET channels_visibility = 'everyone' WHERE guild_id = %s",
+                (THURSDAY.id,),
             )
 
     async def session_with_lines(self, at: int) -> str:
@@ -587,3 +596,65 @@ class TheActionRoute(Kept):
         ) as client:
             got = await self.post(client, link, {"action": "private"})
         self.assertEqual(got.status_code, 401)
+
+
+class TheGalleryPeople(Kept):
+    """The gallery follows the campaign's-people rule (#4403, #3891)."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET channels_visibility = 'people' WHERE guild_id = %s",
+                (THURSDAY.id,),
+            )
+        self.theirs = await self.keep(poster=ALICE.id, description="the keep's map")
+        self.bobs = await self.keep(poster=BOB.id, description="my sketch")
+        self.carol = await self.signed_in(CAROL)
+
+    async def codes(self, who: Any) -> set[str]:
+        return {p["code"] for p in (await self.gallery(who))["pictures"]}
+
+    async def test_a_member_outside_the_people_sees_only_their_own_and_no_names(self) -> None:
+        await self.keep(poster=CAROL.id, description="carol's own")
+        got = await self.gallery(self.carol)
+        self.assertEqual([p["description"] for p in got["pictures"]], ["carol's own"])
+        self.assertEqual((got["posters"], got["sessions"], got["more"]), ([], [], False))
+        self.assertNotIn("the keep's map", repr(got))
+
+    async def test_the_dm_sees_the_gallery(self) -> None:
+        self.assertEqual(await self.codes(self.session), {self.theirs, self.bobs})
+
+    async def test_someone_a_dm_added_by_hand_sees_the_gallery(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "INSERT INTO campaign_channel_people (guild_id, campaign_id, user_id, added_by,"
+                " added_at) VALUES (%s, %s, %s, %s, 0)",
+                (THURSDAY.id, self.one.id, CAROL.id, ALICE.id),
+            )
+        self.assertEqual(await self.codes(self.carol), {self.theirs, self.bobs})
+
+    async def test_with_everyone_any_member_sees_it(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE campaigns SET channels_visibility = 'everyone' WHERE guild_id = %s",
+                (THURSDAY.id,),
+            )
+        self.assertEqual(await self.codes(self.carol), {self.theirs, self.bobs})
+
+    async def test_others_newest_pictures_do_not_hide_an_outsiders_older_own(self) -> None:
+        # (the door pages before the cut: more than a page of other people's newer pictures)
+        mine = await self.keep(poster=CAROL.id, description="carol's old one", at=START + 5)
+        for n in range(pictures.PAGE + 5):
+            await self.keep(poster=ALICE.id, description=f"theirs {n}", at=START + 100 + n)
+        got = await self.gallery(self.carol)
+        self.assertEqual([p["code"] for p in got["pictures"]], [mine])
+
+    async def test_a_search_or_a_poster_filter_shows_an_outsider_no_one_elses_picture(self) -> None:
+        await self.keep(poster=CAROL.id, description="carol's own")
+        for filters in ({"q": "keep"}, {"poster": "Mira"}, {"q": "map", "poster": "Cerric"}):
+            with self.subTest(filters=filters):
+                got = await self.gallery(self.carol, **filters)
+                self.assertEqual(
+                    [p["mine"] for p in got["pictures"]], [True] * len(got["pictures"])
+                )

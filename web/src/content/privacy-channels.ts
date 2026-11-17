@@ -2,6 +2,7 @@
 // feature is live, with the same switch as its Help steps and What's new entry (help.ts), so the page
 // never states something that isn't true yet. Session notes (#3027) have no Help step yet: their line
 // follows SESSION_NOTES_LIVE, the switch of its What's new entry. Plain words: a few lines each, no technical terms.
+import { REMEMBERED_PLAYERS_LIVE } from "./remembered-players-switch";
 import { INITIATIVE_STYLE_LIVE, STORY_STATES_LIVE } from "./help";
 import { IMPORT_CONFIRM_LIVE } from "./import-words";
 import { PC_ICONS_LIVE } from "./pc-icons-switch";
@@ -44,4 +45,15 @@ export const pcIconsLine = {
   live: PC_ICONS_LIVE,
   lead: "Pictures of player characters.",
   text: "On a campaign's Story Graph (the map of names and how they connect), a player's character can show that player's Discord profile picture, if they said yes to being recorded, or the portrait from its dndbeyond.com sheet. Anyone who can see that character on the graph sees the picture. DMbot keeps only the link, never the picture: your browser loads it from Discord or dndbeyond.com when you open the graph, and they can see that you did. The player whose character it is, or the game master, can hide it. If the player presses Stop recording me, their Discord picture stops showing. A backup keeps only the choice, never a picture, and deleting the campaign deletes the choices.",
+};
+
+/** In "What we keep": the list a DM keeps of the players they have played with (#4226; owner, 2026-11-12). The list starts when the
+ * database change (0450) is deployed, not when the page that edits it opens, so the line is always on the privacy page and only its
+ * last sentence waits for REMEMBERED_PLAYERS_LIVE (Supervisor, on #4252). */
+export const rememberedPlayersLine = {
+  live: true,
+  lead: "Who you have played with.",
+  text: `A DM you play with keeps your Discord name on a list, so they can add you to their next campaign. The list holds only your name, when you first played and how many campaigns, never a character or a story, and only that DM can see it. If you delete your DMbot account, you are removed from every DM's list.${
+    REMEMBERED_PLAYERS_LIVE ? " You can also remove yourself from any DM's list at any time, on the People you play with page." : ""
+  }`,
 };

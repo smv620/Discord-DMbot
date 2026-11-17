@@ -4,7 +4,9 @@ answered. Invented names only."""
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
+from unittest.mock import patch
 
 from dmbot.memory.models import PROPOSED
 from dmbot.ui import logic
@@ -145,3 +147,76 @@ class SplitButton(NamesTest):
             any(a.text == "Tavin and Mira" and a.entity_id == group for a in data.aliases)
         )  # it is another name of the group now
         self.assertEqual(view.queue, [])  # nothing left to ask: the review is over
+
+    def answers_first(self, method: str, saw: list[bool], it: Any) -> Any:
+        """Slow down one save and record whether Discord was answered when it starts."""
+        real = getattr(self.memory, method)
+
+        async def slow(*args: Any, **kw: Any) -> Any:
+            saw.append(it.response.is_done())
+            await asyncio.sleep(0.05)
+            return await real(*args, **kw)
+
+        return patch.object(self.memory, method, side_effect=slow)
+
+    async def test_split_answers_discord_before_it_saves(self) -> None:
+        # Saving can take over 3 seconds; Discord gives up then (#537), so the split answers first.
+        await self.waiting("Aldmoor, Quillgate, Fenwick")
+        view, _it = await self.card()
+        it = self.it()
+        saw: list[bool] = []
+        with self.answers_first("split_waiting_name", saw, it):
+            await self.button(view, SPLIT).callback(it)
+        self.assertEqual(saw, [True])
+        self.assertEqual(await self.waiting_names(), ["Aldmoor", "Fenwick", "Quillgate"])
+
+    async def test_yes_group_answers_discord_before_it_saves(self) -> None:
+        cid = self.campaign.id
+
+        async def entity(name: str, kind: str, status: str) -> str:
+            written = await self.memory.add_entity(
+                GUILD, cid, type=kind, name=name, source="dm", status=status
+            )
+            return written.value.id
+
+        group = await entity("The Ash Wolves", "faction", "confirmed")
+        for member in ("Tavin", "Mira"):
+            mid = await entity(member, "character", "confirmed")
+            await self.memory.add_relation(
+                GUILD, cid, mid, "member_of", group, source="dm", confidence=1.0,
+                status="confirmed",
+            )  # fmt: skip
+        await entity("Tavin and Mira", "character", PROPOSED)
+        view, _it = await self.card()
+        it = self.it()
+        saw: list[bool] = []
+        with self.answers_first("join_group", saw, it):
+            await self.button(view, YES_GROUP).callback(it)
+        self.assertEqual(saw, [True])
+        self.assertEqual(await self.waiting_names(), [])
+
+    async def test_undo_split_answers_discord_before_it_undoes(self) -> None:
+        await self.waiting("Aldmoor, Quillgate, Fenwick")
+        view, _it = await self.card()
+        await self.button(view, SPLIT).callback(self.it())
+        it = self.it()
+        saw: list[bool] = []
+        with self.answers_first("undo_split", saw, it):
+            await self.button(view, UNDO).callback(it)
+        self.assertEqual(saw, [True])
+        self.assertEqual(await self.waiting_names(), ["Aldmoor, Quillgate, Fenwick"])
+
+    async def test_two_quick_undo_presses_undo_the_split_once(self) -> None:
+        # Both presses answer Discord before they save; only one may take the undo.
+        await self.waiting("Aldmoor, Quillgate, Fenwick")
+        view, _it = await self.card()
+        await self.button(view, SPLIT).callback(self.it())
+        saw: list[bool] = []
+        with self.answers_first("undo_split", saw, self.it()):
+            await asyncio.gather(
+                self.button(view, UNDO).callback(self.it()),
+                self.button(view, UNDO).callback(self.it()),
+            )
+        self.assertEqual(len(saw), 1)
+        self.assertEqual(await self.waiting_names(), ["Aldmoor, Quillgate, Fenwick"])
+        self.assertEqual(len(view.queue), len(set(view.queue)))

@@ -703,12 +703,12 @@ class CharactersTest(unittest.TestCase):
     def test_each_player_gets_their_character(self) -> None:
         self.assertEqual(characters(lookup()), {MIA: "Cerric"})
 
-    def test_the_newest_of_two(self) -> None:
+    def test_two_characters_are_both_named_oldest_first(self) -> None:
         names = lookup(
             more=(entity(MAREN, "Maren", "player_character", played_by=MIA, created_at=5),),
             more_aliases=(alias(MAREN, "Maren"),),
         )
-        self.assertEqual(characters(names), {MIA: "Maren"})
+        self.assertEqual(characters(names), {MIA: "Cerric / Maren"})  # (Cerric was made first)
 
     def test_only_confirmed_and_never_secret(self) -> None:
         names = lookup(

@@ -24,6 +24,9 @@ class TheRules(unittest.TestCase):
         self.assertEqual(ir.floor(False, 0), ir.BACKGROUND)
         self.assertEqual(ir.floor(False, 1), ir.BACKGROUND)  # (one session is not recurring)
         self.assertEqual(ir.floor(False, 2), ir.RECURRING)
+        # (#4110: said in a kept private scene between two player characters)
+        self.assertEqual(ir.floor(False, 0, private_scene=True), ir.RECURRING)
+        self.assertEqual(ir.floor(True, 0, private_scene=True), ir.PLAYER)
 
     def test_a_rank_is_never_read_below_the_floor(self) -> None:
         self.assertEqual(ir.effective(ir.RECURRING, ir.MINOR), ir.RECURRING)

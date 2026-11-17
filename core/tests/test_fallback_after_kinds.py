@@ -7,6 +7,7 @@ import unittest
 
 from dmbot.memory.claims import place_relationship, resolve_relationship
 from dmbot.memory.ontology import FALLBACK_PREDICATE, Ontology
+from dmbot.memory.thread_clues import DM_ONLY_PREDICATES
 
 ONTO = Ontology.build()
 
@@ -24,6 +25,8 @@ class ExistingKindsFirst(unittest.TestCase):
     def test_every_word_a_kind_names_is_placed_on_it_never_on_the_catch_all(self) -> None:
         for term in ONTO.predicates.values():
             if term.status != "active" or term.key == FALLBACK_PREDICATE:
+                continue
+            if term.key in DM_ONLY_PREDICATES:  # (never read from a text: the DM's alone, #4624)
                 continue
             for word in (term.label, *term.synonyms):  # (the inverse words are a different path)
                 with self.subTest(term=term.key, word=word):

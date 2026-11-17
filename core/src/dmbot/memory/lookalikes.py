@@ -13,6 +13,12 @@ spaces, hyphens and marks removed), they
 
 A group is every name joined to another by one of those, so "Belleros", "Beleros" and
 "Bel Eros the Elder" can be one group though the last two are not close to each other.
+
+Names are compared only within their family (#4553, the owner's report): a story thread (a quest,
+mystery, hook, goal or promise) only with other threads, a deed only with deeds, and everything
+else (characters, groups, places, items) only with each other. A quest's name is full of the names
+of the people, groups and items it is about ("Keegan Velryn's job: Garret Velryn"), and those are
+never another spelling of the quest.
 """
 
 from __future__ import annotations
@@ -23,6 +29,7 @@ from collections.abc import Collection, Iterable
 from dataclasses import dataclass
 
 from dmbot.memory.link import same_name, within
+from dmbot.memory.models import DEED, THREAD_TYPES
 from dmbot.memory.sounds import sound_codes
 
 MIN_LETTERS = 5  # shorter names are matched only when they are the same letters
@@ -32,13 +39,27 @@ ARTICLES = ("the", "a", "an")
 SMALL_WORDS = frozenset(ARTICLES) | {"of", "and"}  # not enough to tie a name to another
 
 
+THREADS, DEEDS = "threads", "deeds"  # the families compared apart from everything else (#4553)
+
+
+def family_of(entity_type: str) -> str:
+    """Which family an entry's name is compared within: story threads, deeds, or "" (the rest)."""
+    if entity_type in THREAD_TYPES:
+        return THREADS
+    if entity_type == DEED:
+        return DEEDS
+    return ""
+
+
 @dataclass(frozen=True, slots=True)
 class Name:
-    """One confirmed name: its id, its spelling, and how often it was heard."""
+    """One confirmed name: its id, its spelling, how often it was heard, and its family
+    (`family_of` its entry's type), which it is only compared within."""
 
     id: str
     name: str
     mentions: int = 0
+    family: str = ""
 
 
 def _fold(text: str) -> str:
@@ -162,7 +183,18 @@ def find(names: Iterable[Name], *, apart: Collection[tuple[str, str]] = ()) -> l
     """Groups of two or more names that may be one: the biggest group first, and inside a group
     the most heard name first. `apart` holds the pairs (as `pair` orders them) the DM said are
     not the same: they are never joined directly, though two names may still land in one group
-    through a third."""
+    through a third. Each family (`Name.family`) is grouped on its own, so a quest is never
+    joined to the people in its name, not even through a third (#4553)."""
+    families: dict[str, list[Name]] = {}
+    for n in names:
+        families.setdefault(n.family, []).append(n)
+    found = [g for members in families.values() for g in _groups(members, apart)]
+    found.sort(key=lambda g: (-len(g), -sum(n.mentions for n in g), _fold(g[0].name)))
+    return found
+
+
+def _groups(names: Iterable[Name], apart: Collection[tuple[str, str]]) -> list[list[Name]]:
+    """`find` within one family."""
     items = by_use(names)
     tidy = [_tidy(n.name) for n in items]
     parent = list(range(len(items)))
@@ -225,6 +257,4 @@ def find(names: Iterable[Name], *, apart: Collection[tuple[str, str]] = ()) -> l
     together: dict[int, list[Name]] = {}
     for i, item in enumerate(items):
         together.setdefault(root(i), []).append(item)
-    found = [g for g in together.values() if len(g) > 1]
-    found.sort(key=lambda g: (-len(g), -sum(n.mentions for n in g), _fold(g[0].name)))
-    return found
+    return [g for g in together.values() if len(g) > 1]

@@ -97,6 +97,17 @@ AUDIENCE: dict[str, str] = {
             # gets "not yours" before anything is shown (#1957).
             "ui.looked_at.LookedButton",
             "ui.looked_at.OpenCard",
+            # Only the person who posted the map; read from the database on every press (#4344).
+            "ui.map_question.NoButton",
+            "ui.map_question.PosterUndoButton",  # their own change only, read from the log
+            "ui.map_question.TakeBackButton",
+            "ui.map_question.YesButton",
+            # A map the person sent themselves (#4372): only the person it is held for, by its
+            # token, read from the bot's memory on every press.
+            "ui.map_send.MenuSelect",
+            "ui.map_send.NoButton",
+            "ui.map_send.PickButton",
+            "ui.map_send.YesButton",
         ],
         SELF,
     ),
@@ -124,6 +135,8 @@ AUDIENCE: dict[str, str] = {
             "ui.transcripts.DownloadButton",
             # A name card: `show_card` leaves secret names out unless the presser is a DM.
             "ui.sheets.OpenCardButton",
+            # The quest's card from a time-limit message (#4448): `show_card`, as above.
+            "ui.time_limit_alerts.OpenThread",
         ],
         ANYONE,
     ),
@@ -143,6 +156,11 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.adventure_card.SeeButton",
             "dm_screen.backstory_button.BackstoryButton",
             "dm_screen.links_ready.ReadyButton",
+            "ui.map_show.ActButton",  # _dm_campaign re-checked on every press (#4414)
+            "ui.map_show.BackButton",  # the same
+            "ui.map_show.CampaignSelect",  # the same
+            "ui.map_show.MapSelect",  # the same
+            "ui.map_show.UndoButton",  # the same
             "ui.theatre_button.ScriptButton",  # press() checks dm_user_ids (#3244)
             "ui.theatre_button.OldScriptButton",  # the same checks, then the new question (#3478)
             "ui.kind_offer.OpenButton",  # _is_dm on every press (#3033)
@@ -196,6 +214,9 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.settings.LevelButton",
             "dm_screen.settings.RulesCardsButton",
             "dm_screen.settings.AskBeforeAddingButton",
+            "dm_screen.setting_field.KeepSettingButton",  # (the setting's guess, #4291)
+            "dm_screen.setting_field.PickButton",
+            "dm_screen.setting_field.WorldMenu",
             "dm_screen.channel_sync_ui.ChannelsMenuButton",
             "dm_screen.channel_sync_ui.ChannelsChoiceButton",
             "dm_screen.channel_sync_ui.PeopleButton",
@@ -217,7 +238,12 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.transcript_keep.KeepYesButton",
             "dm_screen.transcript_keep.TranscriptsButton",
             "ui.claims_review.ClaimsReviewButton",
+            "ui.check_everything.WalkButton",  # `begin` asks `_campaign_for` first (#4192)
             "ui.family_ties.FamilyTiesButton",  # `_campaign_for` before anything is shown
+            "ui.trait_questions.TraitQuestionsButton",  # the same DM check (`_dm_campaign`)
+            "ui.world_notes.WorldNotesButton",  # the screen asks `sees_secrets` first (#4285)
+            "ui.thread_questions.ThreadQuestionsButton",  # `_dm_campaign` first (#4453)
+            "ui.secret_questions.SecretQuestionsButton",  # `_dm_campaign` first (#4524)
             "questions.board.LookAlikesButton",  # the screen it opens asks `sees_secrets`
             "questions.board.QuestionsButton",  # checks `dm_user_ids` before sending the list
             "ui.continuity.ContinuityButton",
@@ -230,6 +256,12 @@ AUDIENCE: dict[str, str] = {
             "ui.kept_pictures.DeleteButton",
             "ui.kept_pictures.DeleteYesButton",
             "ui.kept_pictures.PrivateButton",
+            # Only the person who posted the picture; read from the database on every press, so a
+            # forwarded card or a made-up number finds nothing (#4344).
+            # A DM of the campaign, read from the database on every press (`_dm_campaign`) (#4344).
+            "ui.map_answer.ActButton",
+            "ui.map_answer.OpenButton",
+            "ui.map_answer.UndoButton",
             "ui.line_fix.FixLineButton",
             "ui.line_fix.LineFixButton",
             "ui.name_card.UndoButton",
@@ -244,6 +276,8 @@ AUDIENCE: dict[str, str] = {
             "ui.exposure_summary.SeenButton",
             "ui.names.RecapNamesButton",
             "ui.names.ReviewButton",
+            "ui.met_list.MetListButton",  # (the "Met but not named" list, #4045)
+            "ui.private_scenes_list.PrivateScenesButton",  # (#2996 rule 5)
             "ui.people_review.PeopleReviewButton",
             "ui.live_heads_up.LiveHeadsUpButton",
             "ui.recap_again.AgainButton",
@@ -279,6 +313,7 @@ CHECKED_ELSEWHERE: dict[str, list[str]] = {
     "ui.name_card.UndoManyButton": [
         "dmbot.ui.names:_campaign_for"
     ],  # the same press as UndoButton: its callback asks it
+    "ui.check_everything.WalkButton": ["dmbot.ui.names:_campaign_for"],  # (via `begin`, #4192)
     "dm_screen.clock.ClockUndoButton": ["dmbot.timebot.store:ClockStore.change_named"],
     "dm_screen.clock.CombatUndoButton": ["dmbot.timebot.store:ClockStore.change_named"],
     "dm_screen.clock.SplitUndoButton": [
@@ -301,6 +336,7 @@ CHECKED_ELSEWHERE: dict[str, list[str]] = {
     "dm_screen.handover.TakeOnButton": ["dmbot.campaigns.store:CampaignStore.take_ownership"],
     "dm_screen.rules_cards.RulesCardButton": ["dmbot.dm_screen.rules_cards:press"],
     "ui.sheets.OpenCardButton": ["dmbot.ui.name_card:show_card"],
+    "ui.time_limit_alerts.OpenThread": ["dmbot.ui.name_card:show_card"],
     # The names home asks `logic.can_run` (the campaign's DMs and server managers) when it opens.
     "dm_screen.names_button.NamesButton": ["dmbot.ui.names:_campaign_for"],
     # The menu it opens asks for the campaign's DMs on every open and on every press inside it.

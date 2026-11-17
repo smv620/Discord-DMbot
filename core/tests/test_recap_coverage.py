@@ -66,5 +66,13 @@ class Pure(unittest.TestCase):
         self.assertIn("never", covg.SYSTEM)
         self.assertIn("not_given", covg.SYSTEM)
 
+    def test_an_encounter_without_its_outcome_is_missed_and_a_cutoff_is_the_cliffhanger(
+        self,
+    ) -> None:
+        # must-have 14 (#3632): the check reads the outcome, not just the mention
+        text = covg.SYSTEM.lower()
+        for phrase in ("says how it ended", "stopped first", "invent", "every name it uses"):
+            self.assertIn(phrase, text)
+
     def test_a_campaign_with_must_haves_may_spend_one_more_call_when_waiting(self) -> None:
         self.assertEqual(cr.wait_budget(10, True), cr.wait_budget(10) + 1)

@@ -129,9 +129,14 @@ class WebSettings:
     # The owner's own Discord accounts: free access, no caps (#771). Never logged.
     free_users: frozenset[int] = field(default=frozenset(), repr=False)
     free_guilds: frozenset[int] = field(default=frozenset(), repr=False)
+    # Keys the hash kept of a Discord ID after an account is deleted (#4145); empty: none stored.
+    person_key: str = field(default="", repr=False)
     # The same switch as the bot's: when on, the site's hand-over accept checks the campaign
     # cap too, so the two never disagree (#437 part 2c).
     enforce_plans: bool = False
+    # The same DMBOT_THEATRE_ON as the bot's: off, the website's "Make the script" offers nothing
+    # and queues nothing (#3899), as Discord's button does.
+    theatre_on: bool = False
     # Importing older sessions (#2105): the routes answer 404 until dev1 has checked a real
     # import (DMBOT_IMPORTS=1). Off by default so the API is not live before that.
     imports_on: bool = False
@@ -210,6 +215,28 @@ class WebSettings:
     cloudflare_account_id: str = ""
     cloudflare_ai_token: str = field(default="", repr=False)
     site_ask_daily: int = 1500
+    # Where the Maps page stages a sent picture (#4347): a SEPARATE staging bucket with its own
+    # write key and a 1-day lifecycle rule, never a write key to the pictures bucket
+    # (`pictures_r2_*`, read-only here). R2 tokens scope to a bucket, not to a prefix, so a write
+    # key to the pictures bucket could let a compromised website overwrite or delete every
+    # campaign's kept pictures; a staging bucket holds only what waits for the bot, which copies it
+    # into the pictures bucket. The account is the pictures bucket's. All three blank: an upload
+    # answers `uploads_off`.
+    maps_staging_r2_bucket: str = ""
+    maps_staging_r2_key: str = field(default="", repr=False)
+    maps_staging_r2_secret: str = field(default="", repr=False)
+
+    @property
+    def uploads_ready(self) -> bool:
+        """The staging bucket and its key for a sent map are all set (#4347)."""
+        return all(
+            (
+                self.pictures_r2_account,
+                self.maps_staging_r2_bucket,
+                self.maps_staging_r2_key,
+                self.maps_staging_r2_secret,
+            )
+        )
 
     @property
     def site_ask_on(self) -> bool:
@@ -517,7 +544,11 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         cloudflare_account_id=get("CLOUDFLARE_ACCOUNT_ID"),
         cloudflare_ai_token=get("CLOUDFLARE_AI_TOKEN"),
         site_ask_daily=_site_ask_daily(get("DMBOT_SITE_ASK_DAILY")),
+        maps_staging_r2_bucket=get("WEB_MAPS_STAGING_R2_BUCKET"),
+        maps_staging_r2_key=get("WEB_MAPS_STAGING_R2_KEY"),
+        maps_staging_r2_secret=get("WEB_MAPS_STAGING_R2_SECRET"),
         enforce_plans=enforce_raw in ("1", "true", "on"),
+        theatre_on=(get("DMBOT_THEATRE_ON") or "0").lower() in ("1", "true", "on"),
         imports_on=imports_raw in ("1", "true", "on"),
         imports_servers=imports_servers,
         discord_client_id=get("DISCORD_CLIENT_ID"),
@@ -530,6 +561,7 @@ def load_web_settings(env: Mapping[str, str] | None = None) -> WebSettings:
         session_days=session_days,
         free_users=free_users,
         free_guilds=free_guilds,
+        person_key=get("DMBOT_PERSON_KEY"),
         payment_provider=provider,
         payment_webhook_secret=webhook_secret.encode("utf-8"),
         stripe=stripe,

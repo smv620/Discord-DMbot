@@ -13,16 +13,18 @@ from __future__ import annotations
 
 import logging
 import time
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass, field
 
-from dmbot.memory import kin, knows_how, lore_knowledge
+from dmbot.memory import kin, knows_how, lore_knowledge, route_length, route_words, secret_questions
 from dmbot.memory import reputation_words as feeling_words
+from dmbot.memory.background import SALES
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink, Waiting
 from dmbot.memory.checks import conflicts
 from dmbot.memory.clues import KNOWS as KNOWS_PREDICATE
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
+    BACKGROUND_SOURCE,
     CONFIRMED,
     DM,
     PLAYER_CHARACTER,
@@ -43,6 +45,9 @@ class KeptAll:
     kept: list[tuple[Waiting, int | None]] = field(default_factory=list)  # (link, batch)
     # the batches that ended an old connection for each kept change (same order as `kept`)
     ended: list[list[int | None]] = field(default_factory=list)
+    # the batches written on top of the kept connection itself (its stated length, #4255), taken
+    # back before it, since Undo refuses a row changed since (same order as `kept`)
+    on_top: list[list[int | None]] = field(default_factory=list)
     refused: int = 0  # the rules refused it: it stays waiting, to be answered by hand
     worked_out: int = 0  # every worked-out family link waiting for the DM's yes after this keep
 
@@ -67,6 +72,7 @@ def replaced_by(onto: Ontology, link: Waiting, existing: Sequence[Relation]) -> 
     pair = {link.subject_id, link.object_id}
     if pred is None:
         return []
+    handed = hand_over_ties(link, existing)
     # A feeling on "knows" (#3175) is what friend and enemy used to say: against a friendship
     # stored the old way, "enemies" is a change, and the other way round.
     opposite = (
@@ -83,7 +89,29 @@ def replaced_by(onto: Ontology, link: Waiting, existing: Sequence[Relation]) -> 
             or r.predicate == opposite
             or _feeling_changed(link, r)
         )
+    ] + handed
+
+
+def hand_over_ties(link: Waiting, existing: Sequence[Relation]) -> list[Relation]:
+    """What a hand-over ends (#4115; Supervisor's ruling, 2026-11-10): the one it came from's live
+    `owns` and `carries` of the item after a sale, a gift or a trade; only their `carries` after a
+    theft or a loss (they still own it). Never a "found" or any other tie. Pure."""
+    if not link.hand_over or not link.hand_over_from:
+        return []
+    kinds = ("owns", "carries") if link.hand_over in SALES else ("carries",)
+    return [
+        r
+        for r in existing
+        if r.to_session_at is None
+        and r.status != REJECTED
+        and r.subject_id == link.hand_over_from
+        and r.object_id == link.object_id
+        and r.predicate in kinds
     ]
+
+
+def _hidden(r: Relation) -> bool:
+    return r.secret or r.unrevealed
 
 
 def _feeling_changed(link: Waiting, held: Relation) -> bool:
@@ -164,18 +192,50 @@ def kept_unrevealed(c: Waiting, secret: bool, shown: set[str]) -> bool:
 
 
 async def mark_guess(
-    memory: MemoryStore, guild_id: int, campaign_id: str, kind: str, written_ids: Sequence[str]
+    memory: MemoryStore,
+    guild_id: int,
+    campaign_id: str,
+    kind: str,
+    written_ids: Sequence[str],
+    *,
+    made_since: int,
 ) -> None:
     """A statement kept because the AI guessed the players know it is recorded at 0.75, not as the
-    DM's word. Any failure is logged: the connection is kept either way."""
+    DM's word: only the rows written from `made_since` (the keep's own start, #4524), never a
+    player character already sure of it. Any failure is logged: the connection is kept either
+    way."""
     if not written_ids:
         return
     try:
         await memory.mark_guess(
-            guild_id, campaign_id, kind, written_ids, lore_knowledge.GUESS_CERTAINTY, source=DM
-        )
+            guild_id, campaign_id, kind, written_ids, lore_knowledge.GUESS_CERTAINTY,
+            source=DM, made_since=made_since,
+        )  # fmt: skip
     except Exception:  # a database trouble: the knowing stays at sure, the keep stays made
         log.exception("A guess could not be recorded as a guess")
+
+
+async def common_connection(
+    memory: MemoryStore, guild_id: int, campaign_id: str, c: Waiting, made: Relation, now: int
+) -> int | None:
+    """A kept connection the upload calls world knowledge (a World read, or a smart guess's
+    "world" statement) is common knowledge (#4537): known to every character, now or later, at the
+    guess's certainty for a guess. Only one the players are shown (the gate counts it only while
+    its flags show it), and only one made by this keep (`now`, its start): an older twin's knowers
+    are the DM's. Its batch, for the keep's Undo; never a reason to lose the connection."""
+    if c.world not in (lore_knowledge.SURE, lore_knowledge.GUESS) or made.secret or made.unrevealed:
+        return None
+    if made.created_at < now:
+        return None
+    sure = 1.0 if c.world == lore_knowledge.SURE else lore_knowledge.GUESS_CERTAINTY
+    try:
+        written = await memory.add_common_knowledge(
+            guild_id, campaign_id, "connection", [made.id], sure, source=DM
+        )
+    except Exception as exc:
+        log.warning("A kept connection was not made common knowledge (%s)", type(exc).__name__)
+        return None
+    return written.batch
 
 
 def change_start(old: Sequence[Relation], now: int) -> int:
@@ -192,29 +252,94 @@ async def end_replaced(
     old: Sequence[Relation],
     start: int,
     ended: list[int | None],
+    *,
+    held: list[str],
+    link: Waiting | None = None,
+    hidden: bool = False,
+    dm_chose_secret: bool = False,
 ) -> None:
     """End these connections as of `start` (never deleted, so the history and the timeline keep
     them). Each one's batch is appended to `ended` as it is done, so a caller whose later step
-    fails can take back exactly what was ended (`undo_batches`)."""
+    fails can take back exactly what was ended (`undo_batches`). A hand-over's (`link`, #4115)
+    end with its reason; when what is kept is `hidden` (secret, or not said at the table yet), a
+    hand-over never ends a tie the players can see: that would tell them the item moved
+    (`whereabouts`' rule, Supervisor on #4123).
+
+    Public never becomes secret by itself (#4524, ruling E): when what is kept is `hidden` and an
+    old connection is one the players can see, it is not ended: its id goes in `held`, and once the
+    new one is kept the caller asks the DM "Did this change? Keep both / End the old one"
+    (`ask_held`), so a keep that fails asks nothing. The DM's own hide on the card
+    (`dm_chose_secret`: 🤫, or Players: hide) ends it as before."""
+    handed = {r.id for r in hand_over_ties(link, old)} if link is not None else set()
     for r in old:
+        reason = link.hand_over if link is not None and r.id in handed else None
+        if r.id in handed and hidden and not _hidden(r):
+            continue
+        if hidden and not _hidden(r) and not dm_chose_secret:
+            held.append(r.id)
+            continue
         written = await memory.update_relation(
-            guild_id, campaign_id, r.id, source=DM, to_session_at=start
+            guild_id, campaign_id, r.id, source=DM, to_session_at=start, end_reason=reason
         )
         ended.append(written.batch)
 
 
+async def ask_held(
+    memory: MemoryStore,
+    guild_id: int,
+    campaign_id: str,
+    held: Sequence[str],
+    *,
+    by: str,
+    start: int,
+    label: str,
+    batch: int | None,
+) -> None:
+    """The kept connection `by` would have ended these public ones (`end_replaced`'s `held`): one
+    "Did this change?" question each, with the upload as evidence, tied to the keep's `batch` so
+    an Undo of the keep takes it back. Never a reason to lose the keep: a failure is logged by its
+    type."""
+    for relation_id in held:
+        try:
+            await memory.ask_replace(
+                guild_id, campaign_id, relation_id, by=by, end_at=start, label=label, batch=batch
+            )
+        except Exception as exc:
+            log.warning("A replace question could not be asked (%s)", type(exc).__name__)
+
+
 async def undo_batches(
     memory: MemoryStore, guild_id: int, campaign_id: str, batches: Sequence[int | None]
-) -> None:
-    """Take back these writes, newest first. One that cannot be reversed (changed since) is
-    logged and skipped: the rest still go back."""
+) -> bool:
+    """Take back these writes, newest first. One that cannot be reversed (changed since, too
+    late, already undone) is logged and skipped: the rest still go back. True when every one
+    went back, so a caller can say when only part of it did."""
+    every = True
     for batch in reversed(batches):
         if batch is None:
             continue
         try:
             await memory.undo(guild_id, campaign_id, batch, source=DM)
         except MemoryRuleError:
+            every = False
             log.info("A write of a change could not be taken back")
+    return every
+
+
+async def keep_guesses(
+    memory: MemoryStore, guild_id: int, campaign_id: str, c: Waiting, made: Relation, now: int
+) -> None:
+    """DMbot's guesses of which NPCs and groups know a connection the DM just kept (#2959 slice 3),
+    written as knowers below 1.0. Only for a connection made just now (an older twin's knowers are
+    the DM's), and never a reason to lose the connection: a failure is logged by its type."""
+    if not c.npc_guesses or made.created_at < now:
+        return
+    try:
+        await memory.add_guessed_knowers(
+            guild_id, campaign_id, "connection", made.id, c.npc_guesses, source=DM
+        )
+    except Exception as exc:
+        log.warning("DMbot's guesses for a kept connection were not kept (%s)", type(exc).__name__)
 
 
 async def keep_all(
@@ -226,96 +351,179 @@ async def keep_all(
     progress: Callable[[int, int], Awaitable[None]] | None = None,
     *,
     keep_flags: bool = True,
+    one_press: bool = False,
+    players: str = "",
+    listed: Collection[str] = (),
 ) -> KeptAll:
-    """Keep each of these ready connections. A refused one stays in the list. `progress(done,
-    total)` is told before the first and after each one (kept or refused: tried), for the
-    website's "12 of 50" (#2924); counts only. `keep_flags`: keeping a connection that already
-    exists never makes it secret, so a secret spelling in the text never hides what the players
-    were shown (#3025); False only when the DM pressed 🤫 Keep as secret, which is their own word.
+    """Keep each of these ready connections. A refused one stays in the list. A connection DMbot
+    inferred (#2959 item 5) is never kept by Keep all or the sure step: only by the DM's press on
+    that one (`one_press`), so it is left out and stays waiting (not counted as refused). The one
+    exception is `listed`, the waiting ids the sure step found to be a region's listed towns
+    (#4636 part 3, `auto_accept.listed_towns`).
+    `progress(done, total)` is told before the first and after each one (kept or refused: tried),
+    for the website's "12 of 50" (#2924); counts only. `keep_flags`: keeping a connection that
+    already exists never makes it secret, so a secret spelling in the text never hides what the
+    players were shown (#3025); False only when the DM pressed 🤫 Keep as secret, their own word.
+    `players` (one press only, #4432): what the DM chose about the players on the card: "hide",
+    "show", or "" for how it is now (a connection it replaces that is hidden stays hidden, one the
+    players see stays seen); a secret name always stays hidden, whatever was chosen.
     """
     done = KeptAll()
+    if one_press and len(links) != 1:
+        raise ValueError("One press keeps one connection.")
+    if not one_press:
+        # (nor a hand-over, #4115: it ends what someone else holds, so it is seen before it is kept)
+        links = [
+            c for c in links if (not c.inferred or (listed and c.id in listed)) and not c.hand_over
+        ]
+    elif players not in ("", "hide", "show"):
+        raise ValueError("players is hide, show or empty.")
     total = len(links)
     if progress is not None:
         await progress(0, total)
     onto = await memory.ontology(guild_id, campaign_id) if links else None
     shown = await shown_entry_ids(memory, guild_id, campaign_id) if links else set()
     for tried, c in enumerate(links, 1):
-        now = int(time.time())
-        old = (
-            replaced_by(onto, c, await memory.relations(guild_id, campaign_id, include_secret=True))
-            if onto is not None
-            else []
-        )
-        ended: list[int | None] = []
-        start = change_start(old, now)
-        try:
-            await end_replaced(memory, guild_id, campaign_id, old, start, ended)
-            written = await memory.add_relation(
-                guild_id, campaign_id, c.subject_id, c.predicate, c.object_id,
-                source=DM, confidence=1.0, status=CONFIRMED, secret=c.secret, detail=c.detail,
-                directional=kin.directional(c.detail),  # a family role keeps who holds it
-                unrevealed=kept_unrevealed(c, c.secret, shown), decided=c.decided or None,
-                # the uploader's character knows it, unless it uses a secret name (#2935)
-                # (a disguise is secret by nature, yet its character knows it, #3091)
-                known_by=(
-                    [c.known_by]
-                    if c.known_by and (not c.secret or c.predicate == DISGUISED_AS)
-                    else ()
-                ),
-                from_session_at=start if old else None,  # (starts as the old one ends)
-                keep_flags=keep_flags,
-                # whether they've met, from the quote's own words (#3881)
-                knows_how=kept_how(c, old),
+        # (a 🤫 question a keep asks cites this connection's upload: #4524)
+        with secret_questions.evidence(c.upload or ""):
+            now = int(time.time())
+            old = (
+                replaced_by(
+                    onto, c, await memory.relations(guild_id, campaign_id, include_secret=True)
+                )
+                if onto is not None
+                else []
+            )
+            ended: list[int | None] = []
+            held: list[str] = []
+            on_top: list[int | None] = []
+            start = change_start(old, now)
+            secret, unrevealed, flags = c.secret, kept_unrevealed(c, c.secret, shown), keep_flags
+            pair = [r for r in old if {r.subject_id, r.object_id} == {c.subject_id, c.object_id}]
+            if one_press and not c.secret and (players or pair):
+                # the card's Players line (#4432): the choice, else how the connection it replaces
+                # is
+                now_hidden = bool(pair) and all(r.secret or r.unrevealed for r in pair)
+                hide = players == "hide" or (not players and now_hidden)
+                if hide:
+                    keeps_secret = players == "hide" or any(r.secret for r in pair)
+                    secret, unrevealed = keeps_secret, not keeps_secret
+                    flags = flags and players != "hide"  # the DM's own hide beats an old twin
+                else:
+                    secret, unrevealed = False, False
+                    flags = flags and not now_hidden  # a shown one is not hidden by an old flag
+            try:
+                await end_replaced(
+                    memory, guild_id, campaign_id, old, start, ended, held=held, link=c,
+                    hidden=secret or unrevealed,
+                # (the same choice as the keep's own below: 🤫 Keep as secret, or Players: hide)
+                dm_chose_secret=not keep_flags or players == "hide",
+                )  # fmt: skip
+                written = await memory.add_relation(
+                    guild_id, campaign_id, c.subject_id, c.predicate, c.object_id,
+                    source=DM, confidence=1.0, status=CONFIRMED, secret=secret, detail=c.detail,
+                    directional=kin.directional(c.detail),  # a family role keeps who holds it
+                    unrevealed=unrevealed, decided=c.decided or None,
+                    # the uploader's character knows it, unless it uses a secret name (#2935)
+                    # (a disguise is secret by nature, yet its character knows it, #3091)
+                    known_by=(
+                        [c.known_by]
+                        if c.known_by and (not secret or c.predicate == DISGUISED_AS)
+                        else ()
+                    ),
+                    from_session_at=start if old else None,  # (starts as the old one ends)
+                    keep_flags=flags,
+                    # (🤫 Keep as secret or Players: hide is the DM's own word, #4524)
+                    dm_chose_secret=not keep_flags or players == "hide",
+                    # whether they've met, from the quote's own words (#3881)
+                    knows_how=kept_how(c, old),
+                )  # fmt: skip
+            except Exception as exc:
+                # the change is whole or not at all, whatever went wrong
+                await undo_batches(memory, guild_id, campaign_id, ended)
+                if not isinstance(exc, MemoryRuleError):
+                    raise
+                done.refused += 1
+                if progress is not None:
+                    await progress(tried, total)
+                continue
+            made = written.value[0]
+            await ask_held(
+                memory, guild_id, campaign_id, held, by=made.id, start=start,
+                label=c.upload or "", batch=written.batch,
             )  # fmt: skip
-        except Exception as exc:
-            # the change is whole or not at all, whatever went wrong
-            await undo_batches(memory, guild_id, campaign_id, ended)
-            if not isinstance(exc, MemoryRuleError):
-                raise
-            done.refused += 1
+            # Where it came from, for the graph's line panel (#2946): only a connection made just
+            # now (an older twin's rows are not this upload's), and never a reason to lose the
+            # connection.
+            if c.upload and made.created_at >= now:
+                try:
+                    await memory.record_link_source(
+                        guild_id, campaign_id, made.id, c.upload, c.quote, inferred=c.inferred
+                    )
+                except Exception as exc:
+                    log.warning(
+                        "A kept connection's source could not be stored (%s)", type(exc).__name__
+                    )
+            await keep_guesses(memory, guild_id, campaign_id, c, made, now)
+            # A feeling kept with a "knows" (#3175) is how the first name feels about the second:
+            # the DM's press stores it as a reputation from the story (a standing the DM set still
+            # wins). Its batch joins the ones Undo takes back, so one press and one Undo cover both.
+            word = feeling_words.word_of(c.detail) if c.predicate == "knows" else None
+            score = feeling_words.score_of(word) if word is not None else None
+            if score is not None:
+                try:
+                    batch = await memory.add_feeling(
+                        guild_id, campaign_id, c.subject_id, c.object_id, score
+                    )
+                except Exception as exc:  # the connection is kept whatever happens to the feeling
+                    log.warning(
+                        "A kept connection's feeling could not be stored (%s)", type(exc).__name__
+                    )
+                    batch = None
+                if batch is not None:
+                    ended.append(batch)
+            # A route's stated length, from the route's own quote by set phrases only (#4255): kept
+            # as DMbot's read (only the DM's ✅ makes it what players may see), in the same Undo.
+            # Only on a route made just now: an older twin's length is the DM's or an earlier read's
+            if (
+                made.predicate == route_words.ROUTE_TO
+                and not made.route_state
+                and c.quote
+                and made.created_at >= now
+            ):
+                words = route_length.find(c.quote, places=(c.subject, c.object))
+                if words:
+                    try:
+                        said = await memory.set_route_length(
+                            guild_id,
+                            campaign_id,
+                            made.id,
+                            words,
+                            on="connection",
+                            source=BACKGROUND_SOURCE,
+                        )
+                        on_top.append(said.batch)
+                    except Exception as exc:  # the connection is kept whatever the length does
+                        log.warning(
+                            "A kept route's length could not be stored (%s)", type(exc).__name__
+                        )
+            # (only a connection made just now: an older twin's rows are the DM's, not this guess's)
+            if c.world == lore_knowledge.GUESS and not made.unrevealed and made.created_at >= now:
+                await mark_guess(
+                    memory, guild_id, campaign_id, "connection", [made.id], made_since=now
+                )
+            on_top.append(await common_connection(memory, guild_id, campaign_id, c, made, now))
+            if c.truth and not c.inferred:  # (DMbot's inference is never pinned as 100% truth)
+                try:
+                    await memory.pin(guild_id, campaign_id, written.value[0].id, True, source=DM)
+                except MemoryRuleError:  # kept all the same: pinning is one tap on its card
+                    log.info("A kept connection could not be pinned")
+            await store.remove(guild_id, campaign_id, c)
+            done.kept.append((c, written.batch))
+            done.ended.append(ended)
+            done.on_top.append(on_top)
             if progress is not None:
                 await progress(tried, total)
-            continue
-        made = written.value[0]
-        # Where it came from, for the graph's line panel (#2946): only a connection made just now
-        # (an older twin's rows are not this upload's), and never a reason to lose the connection.
-        if c.upload and made.created_at >= now:
-            try:
-                await memory.record_link_source(guild_id, campaign_id, made.id, c.upload, c.quote)
-            except Exception as exc:
-                log.warning(
-                    "A kept connection's source could not be stored (%s)", type(exc).__name__
-                )
-        # A feeling kept with a "knows" (#3175) is how the first name feels about the second: the
-        # DM's press stores it as a reputation from the story (a standing the DM set still wins).
-        # Its batch joins the ones Undo takes back, so one press and one Undo cover both.
-        word = feeling_words.word_of(c.detail) if c.predicate == "knows" else None
-        score = feeling_words.score_of(word) if word is not None else None
-        if score is not None:
-            try:
-                batch = await memory.add_feeling(
-                    guild_id, campaign_id, c.subject_id, c.object_id, score
-                )
-            except Exception as exc:  # the connection is kept whatever happens to the feeling
-                log.warning(
-                    "A kept connection's feeling could not be stored (%s)", type(exc).__name__
-                )
-                batch = None
-            if batch is not None:
-                ended.append(batch)
-        # (only a connection made just now: an older twin's rows are the DM's, not this guess's)
-        if c.world == lore_knowledge.GUESS and not made.unrevealed and made.created_at >= now:
-            await mark_guess(memory, guild_id, campaign_id, "connection", [made.id])
-        if c.truth:
-            try:
-                await memory.pin(guild_id, campaign_id, written.value[0].id, True, source=DM)
-            except MemoryRuleError:  # kept all the same: pinning is one tap on its card
-                log.info("A kept connection could not be pinned")
-        await store.remove(guild_id, campaign_id, c)
-        done.kept.append((c, written.batch))
-        done.ended.append(ended)
-        if progress is not None:
-            await progress(tried, total)
     done.worked_out = await rework_family(memory, guild_id, campaign_id, [c for c, _ in done.kept])
     return done
 
@@ -354,9 +562,11 @@ async def _undo_all(
     memory: MemoryStore, store: BackstoryLinks, guild_id: int, campaign_id: str, done: KeptAll
 ) -> int:
     back = 0
-    for (c, batch), ended in reversed(list(zip(done.kept, done.ended, strict=True))):
+    rows = list(zip(done.kept, done.ended, done.on_top, strict=True))
+    for (c, batch), ended, on_top in reversed(rows):
         if batch is None and not ended:
             continue
+        await undo_batches(memory, guild_id, campaign_id, on_top)  # (first: it changed the row)
         # (the old connections come back whatever happens to the new one, and the link waits
         # again once the new one is gone: nothing is lost half way)
         if batch is not None:
@@ -379,8 +589,38 @@ async def _undo_all(
                     c.truth,
                     known_by=c.known_by,
                     world=c.world,
+                    # (back with who had it before, so keeping it again ends their part, #4115)
+                    hand_over_from=c.hand_over_from,
+                    hand_over=c.hand_over,
                 )
             ],
         )
         back += 1
     return back
+
+
+async def keep_assumed(
+    memory: MemoryStore, store: BackstoryLinks, guild_id: int, campaign_id: str
+) -> int:
+    """Keep each place's parent DMbot assumed from where the story was (#4173 slice 3) whose two
+    places are both kept now: never a question (Supervisor: "stored, not asked"), so nothing waits
+    for a press. Kept with the mark, held back from the players, as one change each. One whose place
+    has a parent that was said by now is dropped (the said one stands), and so is a refused one;
+    a waiting name leaves it waiting, and a turned-down name takes it away (the queue's own
+    clean-up). Returns how many were kept."""
+    kept = 0
+    for c in await store.waiting(guild_id, campaign_id, assumed=True):
+        if not c.ready:
+            continue
+        try:
+            await memory.add_relation(
+                guild_id, campaign_id, c.subject_id, c.predicate, c.object_id,
+                source=DM, confidence=1.0, status=CONFIRMED, assumed=True,
+            )  # fmt: skip
+            kept += 1
+        except (MemoryRuleError, ValueError):
+            # (a parent said meanwhile, one the DM turned down, or an end no longer a place: the
+            # guess is not needed, and is dropped so it never fails a later look)
+            pass
+        await store.remove(guild_id, campaign_id, c)
+    return kept

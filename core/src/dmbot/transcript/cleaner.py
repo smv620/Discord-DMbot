@@ -54,6 +54,7 @@ from dmbot.transcript.close_calls import CloseCalls
 
 log = logging.getLogger(__name__)
 
+CHARACTER_JOIN = " / "  # a player with several characters is labelled with all of them (#4004)
 MAX_REBUILDS = 8  # the line as written is rebuilt at most this often, then left as heard
 MAX_JOINED = 3  # a name split into at most this many words ("Ka Zeth", "Bry N Shander")
 MIN_LETTERS = 4  # shorter words sound like too many names
@@ -208,19 +209,22 @@ def own_name(lookup: CampaignLookup, entity_id: str, *, typed: bool = False) -> 
 
 
 def characters(lookup: CampaignLookup) -> dict[int, str]:
-    """Each player's character (Discord user ID → name), from the campaign's confirmed
-    player characters. A player with more than one gets the newest."""
-    newest: dict[int, tuple[int, str]] = {}
+    """Each player's character label (Discord user ID → name), from the campaign's confirmed
+    player characters. A player with more than one gets all of them, in the order they were made,
+    joined with " / " ("Mara / Bryn"): DMbot never guesses which of them spoke (#4004), and the
+    player's own name would hide that it was in-character speech."""
+    made: dict[int, list[tuple[int, str, str]]] = {}
     for entity in lookup.entities.values():
         if not entity.is_player_character or entity.played_by is None:
             continue
         name = own_name(lookup, entity.id)
         if name is None:
             continue
-        best = newest.get(entity.played_by)
-        if best is None or entity.created_at > best[0]:
-            newest[entity.played_by] = (entity.created_at, name)
-    return {player: name for player, (_, name) in newest.items()}
+        made.setdefault(entity.played_by, []).append((entity.created_at, entity.id, name))
+    return {
+        player: CHARACTER_JOIN.join(name for _, _, name in sorted(found))
+        for player, found in made.items()
+    }
 
 
 def clean(

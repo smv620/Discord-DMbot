@@ -19,7 +19,17 @@ export interface QuestionKindWords {
 export const questionsPage = {
   heading: "Questions for you",
   loading: "Loading…",
-  intro: "DMbot is waiting on these answers, campaign by campaign. The oldest question comes first.",
+  intro: "DMbot needs your answers on these, campaign by campaign. Check everything takes you through them in order: names, then what was said, then the connections.",
+  // One walk through everything that can be answered here (#4193), as Discord's ✅ Check everything.
+  checkEverything: (total: number): string => `✅ Check everything (${total})`,
+  carryOn: (left: number): string => `✅ Carry on (${left} left)`,
+  stopForNow: "Stop for now",
+  nextPart: (label: string, count: number): string => `Next: ${label} (${count})`,
+  finishWalk: "Done",
+  partLine: (label: string, part: number, parts: number, count: number): string => `${label}, part ${part} of ${parts} · ${count} waiting`,
+  partDone: (done: string, next: string, count: number): string => `${done} done. Next: ${next} (${count}).`,
+  walkStopped: "Stopped. Your answers are kept.",
+  walkEnded: "That's everything you can answer here for now. 🎉",
   // Said once, under the list; each Discord-only kind then needs only the short line.
   discordWhere: "Some questions are answered in Discord: open ⚙️ Manage DMbot, then 📬 Questions for you.",
   nothing: "Nothing waiting for you. 🎉",
@@ -48,6 +58,16 @@ export const questionsPage = {
     which: { label: "Which one?", how: "here", to: "graph", link: "Open the Story Graph" },
     // Answered in the Story Graph's waiting list ("Which one?" card for a kept fact, #3463) and in Discord.
     family: { label: "Family ties", how: "here", to: "graph", link: "Open the Story Graph" },
+    // A lineage or class the lore gives a character the DM has (#3926): asked in Discord only until the website's card.
+    traits: { label: "Character details", how: "discord" },
+    // DMbot's guesses about places and languages (#4285): checked in Discord until the website's page (slice 1c).
+    world_notes: { label: "World notes", how: "discord" },
+    // Story threads the lore holds, to keep or turn down (#4453): in Discord until the website's card.
+    threads: { label: "Story threads to check", how: "discord" },
+    // What the players know that sounded like a secret (#4524): answered in Discord until the website's card.
+    secrets: { label: "Known or secret?", how: "discord" },
+    // A map a player kept, waiting for a DM's yes (#4344): asked in Discord until the Maps page (#4347).
+    maps: { label: "Maps waiting for your yes", how: "discord" },
     claims: { label: "Facts to check", how: "here", to: "graph", link: "Open the Story Graph" },
     readings: { label: "What people believe", how: "here", to: "graph", link: "Open the Story Graph" },
     plot: { label: "Plot check", how: "link", to: "recaps", link: "Open the recaps" },

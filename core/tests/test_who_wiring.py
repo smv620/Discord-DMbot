@@ -7,8 +7,9 @@ from __future__ import annotations
 
 import unittest
 import unittest.mock
+from functools import partial
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 from dmbot.bot import DMBot
@@ -42,7 +43,7 @@ class Wiring(unittest.IsolatedAsyncioTestCase):
             mentions=AsyncMock(return_value=[("s:1000:8", 1)]),
             lookup_data=AsyncMock(side_effect=AssertionError("not read when nothing waits")),
         )
-        return SimpleNamespace(
+        me = SimpleNamespace(
             settings=SimpleNamespace(
                 story_extractor_max_calls=480, story_extractor_max_calls_day=960, **on
             ),
@@ -53,6 +54,8 @@ class Wiring(unittest.IsolatedAsyncioTestCase):
             plan_allows=AsyncMock(return_value=True),
             consent=SimpleNamespace(consenting=AsyncMock(return_value=frozenset({8}))),
         )
+        me._upkeep_channel = partial(DMBot._upkeep_channel, cast(Any, me))
+        return me
 
     def table(self) -> Any:
         return SimpleNamespace(
@@ -175,13 +178,13 @@ class Asking(Wiring):
         report.joined = joined
         return report
 
-    async def test_a_count_of_joins_is_posted_on_the_dm_screen_only_when_there_were_some(
+    async def test_a_count_of_joins_is_posted_in_the_dm_bot_channel_only_when_there_were_some(
         self,
     ) -> None:
         for joined, posts in ((0, 0), (3, 1)):
             me = self.fake(story_who_apply_on=True)
             me.campaigns.get = AsyncMock(
-                return_value=SimpleNamespace(id="c", dm_screen_channel_id=77)
+                return_value=SimpleNamespace(id="c", dm_screen_channel_id=77, dm_bot_channel_id=88)
             )
             me.post = AsyncMock()
             with self.patches():
@@ -190,11 +193,13 @@ class Asking(Wiring):
             self.assertEqual(me.post.await_count, posts)
             if posts:
                 channel, text = me.post.await_args.args
-                self.assertEqual(channel, 77)
+                self.assertEqual(channel, 88)  # the DM Bot channel (#3874), not the DM screen
                 self.assertIn("matched 3 names on its own", text)
                 self.assertNotIn("Vale", text)  # (counts only)
         me = self.fake(story_who_apply_on=True)
-        me.campaigns.get = AsyncMock(return_value=SimpleNamespace(id="c", dm_screen_channel_id=77))
+        me.campaigns.get = AsyncMock(
+            return_value=SimpleNamespace(id="c", dm_screen_channel_id=77, dm_bot_channel_id=88)
+        )
         me.post = AsyncMock(side_effect=RuntimeError("down"))
         with self.patches():
             self.step_run.side_effect = lambda *_a, **kw: self.count_joins(kw, 1)

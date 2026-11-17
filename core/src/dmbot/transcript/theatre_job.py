@@ -23,6 +23,7 @@ from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
+from dmbot import credits
 from dmbot.db import Database
 from dmbot.memory import theatre as th
 from dmbot.transcript import theatre_run as tr
@@ -54,6 +55,18 @@ def estimate_calls(lines: int, scene_size: int = th.SCENE_LINES) -> int:
 def estimate_line(lines: int, scene_size: int = th.SCENE_LINES) -> str:
     n = estimate_calls(lines, scene_size)
     return f"This will take about {n} AI call{'' if n == 1 else 's'}."
+
+
+def credit_line(imported: bool) -> str:
+    """What the script costs in AI credits, for an imported session only (#4005): its script is paid
+    with credits, while a live session's is paid by the hours and says nothing about credits."""
+    if not imported:
+        return ""
+    # The cost only: the "left this month" sentence needs the DM's own allowance, which this
+    # question does not hold, so it is never built here (a made-up balance would be shown).
+    est = credits.estimate("script", 1, allowance=0, used=0)
+    unit = "credit" if est.credits == 1 else "credits"
+    return f"About {est.credits:,} AI {unit} for the script."
 
 
 def stopped_text(part: int, of: int) -> str:

@@ -15,14 +15,17 @@ whatever happened, and a claimed row that stalled is picked up again.
 from __future__ import annotations
 
 import logging
+import re
 import time
 from collections.abc import Awaitable, Callable, Collection, Sequence
 from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any
 
 from dmbot.db import Database
 from dmbot.memory import backstory_keep as keep
-from dmbot.memory import beliefs, evidence, link_edits, placing, told
+from dmbot.memory import beliefs, evidence, link_edits, map_uploads, name_edits, placing, told
 from dmbot.memory import claims as claims_mod
+from dmbot.memory import time_limits as tl
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import ALREADY_UNDONE, CLAIMS, Changes
 from dmbot.memory._changes import NOT_FOUND as STORE_NOT_FOUND
@@ -47,11 +50,16 @@ from dmbot.memory.models import (
     REJECTED,
     MemoryRuleError,
     Relation,
+    TooLateToUndo,
     lookup_key,
     name_key,
 )
 from dmbot.memory.store import INT64_MAX, PERSON, MemoryStore
 from dmbot.memory.store import NAMES_NOT_SHOWN as NAMES_NOT_SHOWN_WORDS
+
+if TYPE_CHECKING:
+    from dmbot.maps.store import MapStore
+    from dmbot.memory.map_uploads import MapUploads
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
 
 log = logging.getLogger(__name__)
@@ -77,11 +85,25 @@ FEELING_TEXT = "feeling:"
 # through `MemoryStore.set_knows_how`. The door's allowed-actions list holds it (WebDev's
 # migration).
 KNOWS_HOW_ACTION = "link-knows-how"
+# "Who knows this?" on a connection and on a secret other name (#2999): text `dm`, `everyone` or
+# `common` (🌍, #4559) or `some <ids>` (web/who_knows.py); the door checks its shape and that the
+# ids are this campaign's.
+LINK_WHO, ALIAS_WHO = "link-who", "alias-who"
+# Which way a connection reads, the DM's choice (#4154): `text` "a-b" (from the pair's first name
+# by id, the edge's `a` on the page), "b-a", or "both"
+DIRECTION_ACTION = "link-direction"
+RIGHT_ACTION = "link-right"  # ✅ That's right on a place's assumed parent (#4304)
+DIRECTIONS = ("a-b", "b-a", "both")
 BAD_TARGET = "bad_target"  # a merge, a secret or a removal the rules refuse
 NAMES_NOT_SHOWN = "names_not_shown"  # a connection to a name still held back (#3426)
+CANNOT_SHOW = "cannot_show"  # 🌍 Common knowledge asked for what the players are not shown (#4559)
 NAME_UNNAMED = "name_unnamed"  # ... or to a person the story never named (#3426)
 FAILED = "failed"  # anything unexpected; the action can be sent again
 GONE = "gone"  # a waiting question that is not waiting any more
+NO_CLOCK = "no_clock"  # a time limit's date asked for with no game clock to count on (#4503)
+CHANGED = "changed"  # an Undo refused: something done since is in the way (#4156)
+TOO_LATE = "too_late"  # an Undo past the store's limit (#4156)
+LINK_UNDO = "link-undo"  # takes back the change batch of one of the DM's own connection edits
 NAME_FIRST = "name_first"  # a new name in it has to be answered first (in Check new names)
 STOPPED = "stopped_recording"  # someone whose words it holds is no longer recorded
 CANNOT_WRITE = "cannot_write"  # the rules refuse to write that fact now
@@ -96,6 +118,9 @@ WAITING = (
     "claim-unpick",
     "claim-undo",  # takes back one fact of an "All true" / "All secret" press (#3645)
     "backstory-keep",
+    # "Let players see it" (#4432): a keep that also lets the players see a connection it replaces
+    # that was hidden (`keep_all(players="show")`, #4438). The plain `backstory-keep` never does.
+    "backstory-keep-show",
     "backstory-skip",
     "backstory-keep-all",
     "backstory-which-pick",
@@ -118,6 +143,60 @@ TOLD_ACTIONS = ("told-add", "told-remove")
 # DMbot's own matches (#3602, slice 4b): the DM says a name DMbot matched on its own is right, or
 # takes it back. Filed under no name; the target is the match's batch, in digits.
 MATCH_ACTIONS = ("match-confirm", "match-undo")
+# A place's land, climate and ruler, and the switch for showing them to players (#4287): the text is
+# "<value> <shade>", or "<group id> <how>" for the ruler, or blank for "Not sure".
+MAP_ACTIONS = ("map-terrain", "map-climate", "map-control", "map-show")
+# World notes (#4285, slice 1c): ✅ on the lines the page showed (their ids, space-separated), 🚫 on
+# one line, or ↩ Undo of one of those (the text is its change number). Filed under no name.
+WORLD_ACTIONS = ("world-keep", "world-not", "world-undo")
+# The story threads DMbot found in an upload (#4457, quests slice 1): the same store calls as
+# Discord's 📜 card, so each keep is one change and one Undo.
+THREAD_ACTIONS = ("thread-keep", "thread-not", "thread-undo")
+LINES_WORD = re.compile(r"\+(-|[0-9]{1,2}(,[0-9]{1,2}){0,49})")  # (a keep's lines left on, #4501)
+# The changes to a kept thread's parts and branches (#4476, quests slice 2): the same store calls as
+# Discord's 🧵 "📋 Steps, rewards and more", each one change and one Undo.
+PART_ACTIONS = (
+    "part-add", "part-fix", "part-state", "part-show", "part-remove", "branch-move", "branch-not",
+    "part-undo", "part-date",
+)  # fmt: skip
+# A character's languages from the website (#4271, #4229 slice 1b): the same store calls as
+# Discord's 🗣️ Languages screen, each one change and one Undo.
+LANG_ACTIONS = ("lang-add", "lang-remove", "lang-check", "lang-undo")
+# The Maps page's presses (#4347): a DM's yes or no to using a map (`<map id> yes|no`), Show to
+# the table or Hide (`<map id> shown|hidden`), Remove (`<map id>`), a poster's Take it back
+# (`<map id>`), and ↩ Undo of one of those (the text is its change number). Filed under no name.
+# Only a DM may use, show or remove; the poster alone may take their own map back, so these run
+# before the "sender is a DM" check, which a player is never meant to pass. (`MAP_ACTIONS` above
+# is the place's land, climate and ruler.)
+MAPS_PAGE_ACTIONS = (
+    "maps-use", "maps-show", "maps-remove", "maps-takeback", "maps-undo", "maps-add",
+)  # fmt: skip
+# What a campaign's player (not a DM) may do on the Maps page: send a map, take back their own, and
+# Undo one of those two; the map store checks it is their own map (#4347)
+PLAYER_MAPS_ACTIONS = ("maps-add", "maps-takeback", "maps-undo")
+
+
+async def _map_fact(
+    memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a: Action
+) -> Outcome:
+    """Run one of `MAP_ACTIONS` through the store's own rules (which place, which layer, which
+    group), so the website can never write what Discord's menus refuse."""
+    try:
+        if a.action == "map-show":
+            await memory.show_map_facts(guild_id, cid, entity_id, a.flag, source=DM)
+        else:
+            first, _, how = a.text.partition(" ")
+            await memory.set_map_fact(
+                guild_id, cid, entity_id, a.action[4:], first or None, how=how, source=DM
+            )
+    except MemoryRuleError as exc:  # gone since it was queued, not a place, or not allowed there
+        return _failed(NOT_FOUND if str(exc) == STORE_NOT_FOUND else BAD_TARGET)
+    return Outcome(result_id=entity_id)
+
+
+# The "Met but not named" list (#4045): `entity_id` names the list's row (memory_met), not an entry.
+MET_ACTIONS = ("met-name", "met-join", "met-remove")
+MET_WAITING = "met_waiting"  # the name is still waiting in the name check: check it there first
 NAMES_FIXED_ACTIONS = ("names-fixed-undo",)  # the recap page puts a name-pass fix back (#2684)
 # What the page is told when a reading cannot be kept (the words are `placing`'s and `beliefs`').
 READING_REFUSALS = {
@@ -329,6 +408,114 @@ class ActionStore:
             row = await cur.fetchone()
         return None if row is None else int(row["result_other"])
 
+    async def link_batches_with(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int
+    ) -> list[int]:
+        """Every change of the one connection edit, by this DM, done, that made `batch` (#4156;
+        one edit can make two, #4159), so an Undo can only take back what they did themselves from
+        the website, and all of it. Empty: no such edit."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT result_batches FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action LIKE 'link-%%' AND action <> 'link-undo'"
+                " AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
+                (guild_id, campaign_id, user_id, batch),
+            )
+            row = await cur.fetchone()
+        return [int(b) for b in row["result_batches"]] if row is not None else []
+
+    async def world_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int
+    ) -> bool:
+        """Whether `batch` is the change this DM's own done World notes ✅ or 🚫 made from the
+        website (#4285), so the page's Undo can only take back what they did themselves."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action IN ('world-keep', 'world-not')"
+                " AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
+                (guild_id, campaign_id, user_id, batch),
+            )
+            return await cur.fetchone() is not None
+
+    async def thread_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int
+    ) -> bool:
+        """Whether `batch` is the change this DM's own done story-thread ✅ made from the website
+        (#4457), so the page's Undo can only take back what they did themselves."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action = 'thread-keep'"
+                " AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
+                (guild_id, campaign_id, user_id, batch),
+            )
+            return await cur.fetchone() is not None
+
+    async def part_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int
+    ) -> bool:
+        """Whether `batch` is the change this DM's own done part or branch action made from the
+        website (#4476), so the page's Undo can only take back what they did themselves."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action = ANY(%s) AND state = 'done'"
+                " AND %s = ANY (result_batches) LIMIT 1",
+                (
+                    guild_id,
+                    campaign_id,
+                    user_id,
+                    [a for a in PART_ACTIONS if a != "part-undo"],
+                    batch,
+                ),
+            )
+            return await cur.fetchone() is not None
+
+    async def lang_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int
+    ) -> bool:
+        """Whether `batch` is the change this DM's own done language action made from the website
+        (#4271), so the page's Undo can only take back what they did themselves."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action = ANY(%s) AND state = 'done'"
+                " AND %s = ANY (result_batches) LIMIT 1",
+                (
+                    guild_id,
+                    campaign_id,
+                    user_id,
+                    [a for a in LANG_ACTIONS if a != "lang-undo"],
+                    batch,
+                ),
+            )
+            return await cur.fetchone() is not None
+
+    async def map_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int, *, own_only: bool = False
+    ) -> bool:
+        """Whether `batch` is the change this person's own done Maps press made from the website
+        (#4347: a DM's use, show or remove, or a poster's take-back), so the page's Undo can only
+        take back what they did themselves."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action = ANY(%s) AND state = 'done'"
+                " AND %s = ANY (result_batches) LIMIT 1",
+                (
+                    guild_id,
+                    campaign_id,
+                    user_id,
+                    # `own_only`: a person who is not a DM may Undo only what a player may do
+                    ["maps-add", "maps-takeback"]
+                    if own_only
+                    else ["maps-use", "maps-show", "maps-remove", "maps-takeback", "maps-add"],
+                    batch,
+                ),
+            )
+            return await cur.fetchone() is not None
+
     async def claim_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, claim_id: str, batch: int
     ) -> bool:
@@ -427,8 +614,14 @@ async def apply(
     look_up: PlayerLookupFn | None = None,
     actions: ActionStore | None = None,
     clock: ClockChoiceFn | None = None,
+    maps: MapStore | None = None,
+    uploads: MapUploads | None = None,
+    reads: Callable[[int], Awaitable[bool]] | None = None,
+    game_now: GameNowFn | None = None,
 ) -> Outcome:
     """Do one action the way Discord's name card does. Nothing here logs the DM's words."""
+    if action.action in MAPS_PAGE_ACTIONS:
+        return await _maps(memory, maps, actions, guild_id, dm_user_ids, action, uploads, reads)
     if action.user_id not in dm_user_ids:
         return _failed(NOT_ALLOWED)
     cid = action.campaign_id
@@ -450,6 +643,30 @@ async def apply(
         return await _confirm(memory, actions, guild_id, cid, action)
     if action.action in MATCH_ACTIONS:
         return await _match(memory, guild_id, cid, action)
+    if action.action in WORLD_ACTIONS:
+        if actions is None and action.action == "world-undo":
+            return _failed(FAILED)
+        return await _world(memory, actions, guild_id, cid, action)
+    if action.action in PART_ACTIONS:
+        if actions is None and action.action == "part-undo":
+            return _failed(FAILED)
+        return await _parts(memory, actions, guild_id, cid, action, game_now)
+    if action.action in LANG_ACTIONS:
+        if actions is None and action.action == "lang-undo":
+            return _failed(FAILED)
+        return await _languages(memory, actions, guild_id, cid, action)
+    if action.action in THREAD_ACTIONS:
+        if actions is None and action.action == "thread-undo":
+            return _failed(FAILED)
+        return await _thread(memory, actions, guild_id, cid, action)
+    if action.action == LINK_UNDO:
+        if actions is None:
+            return _failed(FAILED)
+        return await _link_undo(memory, actions, guild_id, cid, action)
+    if action.action in MET_ACTIONS:
+        if waiting is None and action.action != "met-remove":
+            return _failed(FAILED)  # (naming or joining needs who is recorded now)
+        return await _met(memory, guild_id, cid, action, waiting)
     if action.action in UNNAMED_ACTIONS:
         try:
             return await _unnamed(memory, guild_id, cid, action, named_batch)
@@ -508,6 +725,44 @@ async def apply(
         return await _do(memory, guild_id, cid, entity.id, entity.name, action, look_up)
     except MemoryRuleError:
         return _failed(NOT_FOUND)  # the name changed under us (another DM, or Discord)
+
+
+async def _met(
+    memory: MemoryStore, guild_id: int, cid: str, a: Action, waiting: Waiting | None
+) -> Outcome:
+    """The website's "Met but not named" list (#4045): `entity_id` is the list's row. Name it (a
+    new entry; a name the campaign has is EXISTS, so the page offers Same as…), join it to the
+    entry `target_id`, or remove it. The same store calls as Discord's list, so each is one write
+    (the entry, its rank 0 and the row's removal together)."""
+    from dmbot.memory.met_store import MetStore
+    from dmbot.memory.store import MET_GONE, MET_NAME_TAKEN, MET_NAME_WAITING
+
+    try:
+        if a.action == "met-remove":
+            # (gone already is done too: a row taken again after a first run that removed it)
+            await MetStore(memory._db).remove(guild_id, cid, a.entity_id)
+            return Outcome()
+        assert waiting is not None  # (checked by the caller for these two)
+        recorded = await waiting.opted_in()  # (read now: the consent re-check at use, #4045)
+        if a.action == "met-join":
+            written = await memory.join_met(
+                guild_id, cid, a.entity_id, a.target_id, opted_in=recorded
+            )
+            return Outcome(result_id=written.value.id)
+        made = await memory.name_met(
+            guild_id, cid, a.entity_id, " ".join(a.text.split()), opted_in=recorded
+        )
+        # met while the party was split (#4086): counted as the names' splits are, for the page
+        split = {"group": "names_split_group:1", "unknown": "names_split_unknown:1"}
+        return Outcome(result_id=made.value.id, counts=split.get(made.split, ""))
+    except MemoryRuleError as exc:
+        if str(exc) == MET_NAME_TAKEN:
+            return _failed(EXISTS)
+        if str(exc) == MET_NAME_WAITING:
+            return _failed(MET_WAITING)
+        if str(exc) == MET_GONE:
+            return _failed(GONE)
+        return _failed(NOT_FOUND if a.action == "met-join" else BAD_NAME)
 
 
 async def _unnamed(
@@ -628,6 +883,51 @@ async def _spelling(
     return Outcome(result_id=entity_id) if a.action == "spelling-no" else _failed(GONE)
 
 
+def _is_cannot_show(exc: MemoryRuleError) -> bool:
+    """The refusal `link_edits.with_common` makes when 🌍 Common knowledge is asked for an item the
+    players are not shown (and the item can't be shown by this answer): "Show X to the players
+    first: common knowledge is something they see." The page tells the DM to show it first."""
+    reason = str(exc)
+    return reason.startswith("Show ") and reason.endswith("common knowledge is something they see.")
+
+
+def _who_of(text: str) -> tuple[str, list[str]]:
+    """The website's answer as the door let it through: `dm`, `everyone`, `common` or
+    `some <ids>`. An empty one is "" (the store refuses it as no answer)."""
+    words = text.split()
+    return (words[0], words[1:]) if words else ("", [])
+
+
+async def _alias_who(
+    memory: MemoryStore, guild_id: int, campaign_id: str, entity_id: str, a: Action
+) -> Outcome:
+    """ "Who knows this?" for a secret other name of this entry (#2999, #4159): the name card's
+    call, `name_edits.set_who_knows`, with the website's whole list of who knows it. A refusal (no
+    character picked, one who isn't a confirmed character of this campaign, a name that can't be
+    shown yet) is the page's "bad target", never a half change."""
+    alias = next(
+        (
+            x
+            for x in await memory.aliases(
+                guild_id, campaign_id, entity_id=entity_id, include_secret=True
+            )
+            if x.id == a.target_id
+        ),
+        None,
+    )
+    if alias is None:
+        return _failed(NOT_FOUND)
+    who, characters = _who_of(a.text)
+    made: list[int] = []
+    try:  # (the same answer again writes nothing: the store only changes what differs)
+        await name_edits.set_who_knows(
+            memory, guild_id, campaign_id, alias, who, characters, made=made
+        )
+    except MemoryRuleError as exc:
+        return _failed(CANNOT_SHOW if _is_cannot_show(exc) else BAD_TARGET)
+    return Outcome(result_id=entity_id, batches=tuple(made))
+
+
 async def _told(
     memory: MemoryStore, guild_id: int, campaign_id: str, entity_id: str, a: Action
 ) -> Outcome:
@@ -722,6 +1022,376 @@ async def _match(memory: MemoryStore, guild_id: int, cid: str, a: Action) -> Out
     return Outcome()
 
 
+async def _world(
+    memory: MemoryStore, actions: ActionStore | None, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """World notes from the page (#4285), the same store calls as Discord's screen: ✅ keeps the
+    lines the page showed (never one added since: the ids are the page's own), 🚫 takes one out,
+    each one change, so one Undo. The store checks every line again, so one checked meanwhile (in
+    Discord, or a second press) is `gone`. ↩ Undo takes back only a change this DM's own World
+    notes action made, read again here (a made-up number must never reach `undo`)."""
+    if a.action == "world-undo":
+        assert actions is not None  # (checked by the caller)
+        return await _world_undo(memory, actions, guild_id, cid, a)
+    try:
+        if a.action == "world-keep":
+            written = await memory.keep_world_notes(guild_id, cid, a.text.split(), source=DM)
+            return Outcome(
+                counts=f"kept:{written.value}",
+                batches=(written.batch,) if written.batch is not None else (),
+            )
+        done = await memory.turn_down_world_note(guild_id, cid, a.text, source=DM)
+    except MemoryRuleError:
+        return _failed(GONE)
+    return Outcome(batches=(done.batch,) if done.batch is not None else ())
+
+
+def _changed(batch: int | None) -> Outcome:
+    """The change a website action made, for the page's Undo (none when nothing changed)."""
+    return Outcome(batches=(batch,) if batch is not None else ())
+
+
+def _none(word: str) -> str | None:
+    """A `-` in a part action's text is "none" or "clear"."""
+    return None if word == "-" else word
+
+
+async def _parts(
+    memory: MemoryStore,
+    actions: ActionStore | None,
+    guild_id: int,
+    cid: str,
+    a: Action,
+    game_now: GameNowFn | None = None,
+) -> Outcome:
+    """A change to a kept thread's parts or branches from the page (#4476), through the same store
+    calls as Discord's 🧵 card (`add_thread_part`, `correct_thread_part`, `set_thread_part_state`,
+    `show_thread_part`, `remove_thread_part`, `branch_of`, `not_a_branch`), so each is one change
+    and one Undo. The door checked the text's shape; the store checks the rest again, so a part or
+    thread gone meanwhile is `gone`, and a refusal by the rules (a loop of branches, a thread no
+    longer kept, a name that is not allowed) is `bad_target`. ↩ Undo takes back only a change this
+    DM's own done part action made, read again here."""
+    from dmbot.memory import thread_parts as tp
+
+    try:
+        if a.action == "part-undo":
+            assert actions is not None  # (checked by the caller)
+            batch = int(a.text)
+            if not await actions.part_batch_made(guild_id, cid, a.user_id, batch):
+                return _failed(GONE)
+            await memory.undo(guild_id, cid, batch)
+            return Outcome()
+        words = a.text.split(" ")
+        if a.action == "part-date":
+            # N game days from the clock's now, counted here and never sent by the page, so the
+            # website cannot write a date the clock would not; `-` clears (#4503).
+            now = await game_now(cid) if game_now is not None else None
+            if words[1] != "-" and now is None:
+                return _failed(NO_CLOCK)
+            minute = None if words[1] == "-" else tl.days_from(now or 0, int(words[1]))
+            dated = await memory.set_time_limit_date(
+                guild_id, cid, words[0], minute, now=now, source=DM
+            )
+            return _changed(dated.batch)
+        if a.action == "part-add":
+            thread, kind, state, due, limit, who, about, under = words[:8]
+            made = await memory.add_thread_part(
+                guild_id, cid, thread, kind, " ".join(words[8:]), source=DM, state=_none(state),
+                due=_none(due) or "", limit_kind=_none(limit) or "", who_id=_none(who),
+                about_id=_none(about), under_id=_none(under),
+            )  # fmt: skip
+            return Outcome(
+                result_id=made.value.id, batches=(made.batch,) if made.batch is not None else ()
+            )
+        if a.action == "part-fix":
+            part, field, value = a.text.split(" ", 2)
+            changes: dict[str, Any] = {}
+            if field in ("words", "words_story"):
+                changes["words"] = value
+            elif field == "terms":
+                changes["terms"] = "" if value == "-" else value
+            elif field == "due":
+                changes["due"] = _none(value) or ""
+            elif field == "limit":
+                changes["limit_kind"] = _none(value) or ""
+            else:  # who, about, under
+                changes[f"{field}_id"] = _none(value)
+            done = await memory.correct_thread_part(
+                guild_id, cid, part, source=DM, in_story=field == "words_story", **changes
+            )
+            return Outcome(batches=(done.batch,) if done.batch is not None else ())
+        if a.action == "part-state":
+            set_to = await memory.set_thread_part_state(
+                guild_id, cid, words[0], words[1], source=DM
+            )
+            return _changed(set_to.batch)
+        if a.action == "part-show":
+            shown = await memory.show_thread_part(
+                guild_id, cid, words[0], words[1] == "1", source=DM
+            )
+            return _changed(shown.batch)
+        if a.action == "part-remove":
+            removed = await memory.remove_thread_part(guild_id, cid, words[0], source=DM)
+            return _changed(removed.batch)
+        if a.action == "branch-move":
+            moved = await memory.branch_of(
+                guild_id, cid, words[0], words[1], source=DM, move=words[-1] == "move"
+            )
+            return _changed(moved.batch)
+        off = await memory.not_a_branch(guild_id, cid, words[0], source=DM)  # branch-not
+        return _changed(off.batch)
+    except MemoryRuleError as exc:  # (TooLateToUndo is one: something done since is in the way)
+        if str(exc) == ALREADY_UNDONE:
+            return Outcome()  # (a second Undo of the same change: done, as a retry is)
+        if a.action == "part-undo":
+            return _failed(CHANGED)
+        return _failed(GONE if str(exc) == tp.GONE else BAD_TARGET)
+    except ValueError:  # (a kind or state the store does not know)
+        return _failed(BAD_TARGET)
+
+
+async def _languages(
+    memory: MemoryStore, actions: ActionStore | None, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """A change to a character's languages from the page (#4271), through the store calls Discord's
+    🗣️ Languages screen makes (`add_story_language`, `remove_story_language`,
+    `check_story_languages`), so each is one change and one Undo. The door checked the text's shape;
+    the store checks the rest again: a character or language gone meanwhile is `gone`, a rule (not
+    a character, or one with a sheet: its languages are the sheet's) is `bad_target`. ↩ Undo takes
+    back only a change this DM's own done language action made, read again here. Words and ids
+    only; the language's name is the DM's own and is never logged."""
+    from dmbot.memory import language_rows
+
+    try:
+        if a.action == "lang-undo":
+            assert actions is not None  # (checked by the caller)
+            batch = int(a.text)
+            if not await actions.lang_batch_made(guild_id, cid, a.user_id, batch):
+                return _failed(GONE)
+            await memory.undo(guild_id, cid, batch)
+            return Outcome()
+        if a.action == "lang-add":
+            entity, _, name = a.text.partition(" ")
+            added = await memory.add_story_language(guild_id, cid, entity, name, source=DM)
+            return _changed(added.batch)
+        if a.action == "lang-remove":
+            removed = await memory.remove_story_language(guild_id, cid, a.text, source=DM)
+            return _changed(removed.batch)
+        checked = await memory.check_story_languages(guild_id, cid, a.text, source=DM)
+        return _changed(checked.batch)
+    except MemoryRuleError as exc:  # (TooLateToUndo is one: something done since is in the way)
+        if str(exc) == ALREADY_UNDONE:
+            return Outcome()  # (a second Undo of the same change: done, as a retry is)
+        if a.action == "lang-undo":
+            return _failed(CHANGED)
+        return _failed(GONE if str(exc) in (STORE_NOT_FOUND, language_rows.GONE) else BAD_TARGET)
+
+
+async def _thread(
+    memory: MemoryStore, actions: ActionStore | None, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """A story thread DMbot found, from the page (#4457), the same store calls as Discord's 📜
+    card (`ui/thread_questions`): ✅ keeps it with the people the DM left on (by their place in the
+    suggestion's own list, so no name or id is ever typed) and, if the DM renamed it, that name;
+    🚫 turns it down for good. The suggestion is read again here, so one answered meanwhile (in
+    Discord, or a second press) is `gone`. ↩ Undo takes back only a keep this DM's own done action
+    made; putting a turned-down suggestion back to waiting is open to any DM of the campaign, as
+    Discord's ↩ is (it only makes the suggestion wait again). Words and counts only."""
+    from dmbot.memory.thread_suggestions import GONE as SUGGESTION_GONE
+    from dmbot.memory.thread_suggestions import ThreadSuggestionStore, unkeep_in
+
+    store = ThreadSuggestionStore(memory._db)
+    try:
+        if a.action == "thread-undo":
+            assert actions is not None  # (checked by the caller)
+            how, _, ref = a.text.partition(" ")
+            if how == "keep":
+                if not (ref.isascii() and ref.isdigit()) or len(ref) > 15:
+                    return _failed(GONE)
+                batch = int(ref)
+                if not await actions.thread_batch_made(guild_id, cid, a.user_id, batch):
+                    return _failed(GONE)
+                await memory.undo(guild_id, cid, batch, after=unkeep_in(batch))
+                return Outcome()
+            return Outcome() if await store.unturn(guild_id, cid, ref) else _failed(GONE)
+        suggestion_id, _, rest = a.text.partition(" ")
+        if a.action == "thread-not":
+            return (
+                Outcome() if await store.turn_down(guild_id, cid, suggestion_id) else _failed(GONE)
+            )
+        shown = next((s for s in await store.waiting(guild_id, cid) if s.id == suggestion_id), None)
+        if shown is None:
+            return _failed(GONE)
+        on_text, _, renamed = rest.partition(" ")
+        on = set() if on_text == "-" else {int(i) for i in on_text.split(",")}
+        # The lines left on come as `+<n,n,...>` (or `+-`) between the people and the name; a keep
+        # without it (an older page) keeps none of the lines (#4501)
+        lines_on: set[int] = set()
+        first, _, after = renamed.partition(" ")
+        if LINES_WORD.fullmatch(first):
+            lines_on = set() if first == "+-" else {int(i) for i in first[1:].split(",")}
+            renamed = after
+        done = await memory.keep_thread(
+            guild_id, cid, " ".join(renamed.split()) or shown.name, shown.kind, shown.state,
+            aim=shown.aim, parts=[p for i, p in enumerate(shown.parts) if i in on],
+            source=DM, suggestion_id=shown.id,
+            # (only the lines the page showed and the DM left on are kept; nothing the DM didn't
+            # see is kept, §9.6, so a keep that names no lines keeps none)
+            leave_off=[i for i in range(len(shown.lines)) if i not in lines_on],
+        )  # fmt: skip
+    except MemoryRuleError as exc:  # (TooLateToUndo is one: a name was changed since)
+        if str(exc) == ALREADY_UNDONE:
+            return Outcome()  # (a second Undo of the same keep: done, as a retry is)
+        if a.action == "thread-undo":
+            return _failed(CHANGED)  # (something done since is in the way)
+        # A keep the store refuses for the DM's own name is not "answered meanwhile".
+        return _failed(GONE if str(exc) == SUGGESTION_GONE else BAD_TARGET)
+    return Outcome(
+        result_id=str(done.value.id),
+        batches=(done.batch,) if done.batch is not None else (),
+    )
+
+
+async def _maps(
+    memory: MemoryStore,
+    maps: MapStore | None,
+    actions: ActionStore | None,
+    guild_id: int,
+    dm_user_ids: Collection[int],
+    a: Action,
+    uploads: MapUploads | None = None,
+    reads: Callable[[int], Awaitable[bool]] | None = None,
+) -> Outcome:
+    """One press on the Maps page (#4347), through the map store's own calls (as Discord's buttons,
+    #4373 and #4390), so each is one change and one Undo. A DM may answer a map's use, show or hide
+    it and remove it; only a map's poster takes it back; ↩ Undo takes back only a change this
+    person's own done Maps action made, read again here. The store rechecks the map, so one gone
+    meanwhile answers `gone`. Words and ids only."""
+    from dmbot.maps.store import (  # (a late import: no cycle)
+        NOT_YOURS,
+        AlreadyAnswered,
+        MapError,
+        Viewer,
+    )
+
+    if maps is None or actions is None:
+        return _failed(FAILED)
+    cid = a.campaign_id
+    is_dm = a.user_id in dm_user_ids
+    # The door lets anyone who passes the campaign's people rule queue the player actions; the bot
+    # asks the very same rule (`reads`: `channel_sync.reads_campaign`, with "still in the server")
+    # and the store checks the map is theirs. Without the rule at hand, nobody but a DM is let in.
+    if (
+        a.action in PLAYER_MAPS_ACTIONS
+        and not is_dm
+        and (reads is None or not await reads(a.user_id))
+    ):
+        return _failed(NOT_ALLOWED)
+    if a.action == "maps-add":
+        return await map_uploads.add(uploads, guild_id, cid, is_dm=is_dm, a=a)
+    if a.action == "maps-undo":
+        if not (a.text.isascii() and a.text.isdigit()) or len(a.text) > 15:
+            return _failed(GONE)  # ("²" is a digit to Python and int() refuses it)
+        batch = int(a.text)
+        # A DM may Undo their own presses; anyone else only their own add or take-back
+        if not await actions.map_batch_made(guild_id, cid, a.user_id, batch, own_only=not is_dm):
+            return _failed(GONE)
+        try:
+            await memory.undo(guild_id, cid, batch)
+        except TooLateToUndo:
+            return _failed(TOO_LATE)
+        except MemoryRuleError as exc:
+            if str(exc) == ALREADY_UNDONE:
+                return Outcome()  # (taken back already: a retried Undo)
+            return _failed(GONE if str(exc) == STORE_NOT_FOUND else CHANGED)
+        return Outcome()
+    if a.action not in PLAYER_MAPS_ACTIONS and not is_dm:
+        return _failed(NOT_ALLOWED)
+    map_id, _, word = a.text.partition(" ")
+    made: int | None  # the change the press made, for the page's Undo (none when nothing changed)
+    try:
+        if a.action == "maps-use":
+            made = (
+                await maps.answer_use(
+                    guild_id, cid, map_id, dm_id=a.user_id, yes=word == "yes", first_only=True
+                )
+            ).batch
+        elif a.action == "maps-show":
+            made = (
+                await maps.set_audience(guild_id, cid, map_id, "table" if word == "shown" else "dm")
+            ).batch
+        elif a.action == "maps-remove":
+            made = (await maps.remove_map(guild_id, cid, map_id)).batch
+        else:
+            found = await maps.get(guild_id, cid, map_id, Viewer(dm=True))
+            if found is None:
+                return _failed(GONE)
+            made = (await maps.take_back(guild_id, cid, found.picture_id, a.user_id)).batch
+    except AlreadyAnswered:
+        return Outcome()  # (the first answer stands: done, with no change to undo)
+    except MapError as exc:
+        # a map gone meanwhile, or not the sender's to take back
+        return _failed(NOT_ALLOWED if str(exc) == NOT_YOURS else GONE)
+    return Outcome(batches=(made,) if made is not None else ())
+
+
+async def _world_undo(
+    memory: MemoryStore, actions: ActionStore, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """↩ Undo of one World notes ✅ or 🚫 from the page, as `_link_undo` does it: the number is read
+    again in this DM's own done rows (the queue keeps them about an hour, so the page's Undo lasts
+    that long, then says `gone`). A retried Undo is done; `changed`/`too_late` as there."""
+    if not (a.text.isascii() and a.text.isdigit()) or len(a.text) > 15:
+        return _failed(GONE)  # ("²" is a digit to Python and int() refuses it)
+    batch = int(a.text)
+    if not await actions.world_batch_made(guild_id, cid, a.user_id, batch):
+        return _failed(GONE)
+    try:
+        await memory.undo(guild_id, cid, batch)
+    except TooLateToUndo:
+        return _failed(TOO_LATE)
+    except MemoryRuleError as exc:
+        if str(exc) == ALREADY_UNDONE:
+            return Outcome()  # (taken back already: a retried Undo)
+        return _failed(GONE if str(exc) == STORE_NOT_FOUND else CHANGED)
+    return Outcome()
+
+
+async def _link_undo(
+    memory: MemoryStore, actions: ActionStore, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """Take back one connection edit from the page's ↩ Undo (#4156): the store's own `undo`, as
+    Discord's Undo button does. Only a batch this DM's own done edit of this campaign made (read
+    again here, as the door checked it before; a made-up number must never reach `undo`, which would
+    undo any change). `gone`: already undone or no longer remembered; `changed`: something done
+    since is in the way; `too_late`: past the store's limit. The queue keeps a row about an hour
+    (the door prunes older ones), so in practice the page's Undo lasts about that long and then says
+    `gone`; a retried edit that finds its work already done carries no batch, so offers no Undo."""
+    if not (a.target_id.isascii() and a.target_id.isdigit()) or len(a.target_id) > 15:
+        return _failed(GONE)  # ("²" is a digit to Python and int() refuses it)
+    batch = int(a.target_id)
+    together = await actions.link_batches_with(guild_id, cid, a.user_id, batch)
+    if not together:
+        return _failed(GONE)
+    # Every change the one edit made, newest first (#4159: "Who knows this?" can be two), so the
+    # connection is as it was before the edit, never half of it. One already taken back (a retried
+    # Undo) is skipped; a later refusal stops there and says why.
+    undone = 0
+    for each in sorted(together, reverse=True):
+        try:
+            await memory.undo(guild_id, cid, each)
+        except TooLateToUndo:
+            return _failed(TOO_LATE)
+        except MemoryRuleError as exc:
+            if str(exc) == ALREADY_UNDONE:
+                continue
+            if undone == 0 and str(exc) == STORE_NOT_FOUND:
+                return _failed(GONE)
+            return _failed(CHANGED)
+        undone += 1
+    return Outcome() if undone else _failed(GONE)
+
+
 async def _confirm_undo(
     memory: MemoryStore, actions: ActionStore, guild_id: int, cid: str, a: Action
 ) -> Outcome:
@@ -756,6 +1426,10 @@ class PlayerLookup:
 # function (it needs the Discord client to move and redraw the clock); the offer row carries the
 # outcome.
 ClockChoiceFn = Callable[[str, str, bool, int], Awaitable[None]]
+
+# The campaign's game clock now, in minutes (the group furthest ahead while the party is split),
+# or None with no clock: what a time limit's date is counted from (#4503). The bot's own function.
+GameNowFn = Callable[[str], Awaitable[int | None]]
 
 # Asks Discord about one ID: None when Discord does not know it. A failed lookup raises, so it is
 # never read as "unknown" (and nothing is linked without the name having been shown).
@@ -798,6 +1472,20 @@ async def _player_lookup(a: Action, look_up: PlayerLookupFn | None) -> Outcome:
     return Outcome(result_other=("i" if found.in_server else "o") + found.name[:31])
 
 
+def _answer_counts(confirmed: claims_mod.Confirmed) -> str:
+    """What the bot did beside the yes, for the page to say: "shown:1" (the players can see it
+    now, #3963 c), "held:1" (kept hidden beside another hidden one, #3979), "scene:1" (said while
+    the party was split; the group there knows it) or "split:1" (which group can't be told), #2996.
+    Never two at once."""
+    if confirmed.shown:
+        return "shown:1"
+    if confirmed.held:
+        return "held:1"
+    if confirmed.split:
+        return "scene:1" if confirmed.scene else "split:1"
+    return ""
+
+
 async def _player_character(
     memory: MemoryStore,
     guild_id: int,
@@ -812,6 +1500,7 @@ async def _player_character(
     the server yet. The ID is asked again here, so a bot or an unknown ID is never linked."""
     if not a.text:
         await memory.set_entity_type(guild_id, cid, entity_id, PLAYER_CHARACTER, source=DM)
+        await memory.party_on_assignment(guild_id, cid)  # its player "pending": a member (#3995)
         return Outcome(result_id=entity_id)
     user_id = _player_id(a.text)
     if user_id is None or not a.flag:  # nothing links without the confirmation
@@ -883,20 +1572,48 @@ async def _do(
     if a.action == "players-line":  # the line the players are told (#3568); a blank clears it
         await memory.set_players_text(guild_id, cid, entity_id, a.text, source=DM)
         return Outcome(result_id=entity_id)
+    if a.action == "place-setting":  # the campaign's setting (#4173 slice 2): the flag says which
+        try:  # ("remove" clears only this place's mark, never another place's: `only_if`)
+            await memory.set_setting(
+                guild_id, cid, entity_id if a.flag else None, source=DM, only_if=entity_id
+            )
+        except MemoryRuleError as exc:  # gone since it was queued, or not a place big enough
+            return _failed(NOT_FOUND if str(exc) == STORE_NOT_FOUND else BAD_TARGET)
+        return Outcome(result_id=entity_id)
+    if a.action == "place-size":  # how big a place is (#4173); a blank is "Not sure"
+        try:
+            await memory.set_place_level(guild_id, cid, entity_id, a.text or None, source=DM)
+        except MemoryRuleError as exc:  # gone since it was queued, or not a place
+            return _failed(NOT_FOUND if str(exc) == STORE_NOT_FOUND else BAD_TARGET)
+        return Outcome(result_id=entity_id)
+    if a.action == "place-form":  # land, water or a road (#4173 slice 6a); a blank is land
+        try:
+            await memory.set_place_form(guild_id, cid, entity_id, a.text or None, source=DM)
+        except MemoryRuleError as exc:  # gone since it was queued, or not a place
+            return _failed(NOT_FOUND if str(exc) == STORE_NOT_FOUND else BAD_TARGET)
+        return Outcome(result_id=entity_id)
+    if a.action in MAP_ACTIONS:  # a place's land, climate and ruler (#4287); blank is "Not sure"
+        return await _map_fact(memory, guild_id, cid, entity_id, a)
     if a.action in TOLD_ACTIONS:
         return await _told(memory, guild_id, cid, entity_id, a)
+    if a.action == ALIAS_WHO:
+        return await _alias_who(memory, guild_id, cid, entity_id, a)
     if a.action == "secret":  # one of its other names
         alias_id = await _other(memory, guild_id, cid, entity_id, name, a.text)
         if alias_id is None:
             return _failed(NOT_FOUND)
         try:
-            await memory.update_alias(guild_id, cid, alias_id, source=DM, secret=a.flag)
+            await memory.update_alias(
+                guild_id, cid, alias_id, source=DM, secret=a.flag, dm_chose_secret=True
+            )
         except MemoryRuleError:
             return _failed(BAD_TARGET)
         return Outcome(result_id=entity_id)
     if a.action == "hide":  # "Players don't know this one yet", the whole entry
         try:
-            await memory.set_hidden_from_players(guild_id, cid, entity_id, a.flag, source=DM)
+            await memory.set_hidden_from_players(
+                guild_id, cid, entity_id, a.flag, source=DM, dm_chose_secret=True
+            )
         except MemoryRuleError:
             return _failed(BAD_TARGET)
         return Outcome(result_id=entity_id)
@@ -953,14 +1670,15 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
         # "has a niece" typed on Aldric's card is stored as "Mira kin_of Aldric, niece" (#2457)
         first, second = (other.id, entity_id) if swapped else (entity_id, other.id)
         try:
-            await memory.add_relation(
+            added = await memory.add_relation(
                 guild_id, cid, first, predicate, second, source=DM, confidence=1.0,
                 status=CONFIRMED, detail=detail[:100], secret=a.flag,
                 directional=predicate == "kin_of" and bool(detail), by_hand=True,
             )  # fmt: skip
         except MemoryRuleError:
             return _failed(BAD_TARGET)
-        return Outcome(result_id=entity_id, result_other=other.id)
+        # the change it made, for the page's Undo (#4156); none when it was already known
+        return Outcome(result_id=entity_id, result_other=other.id, batches=_batch_of(added.batch))
     # the others name one connection, filed under its first name
     link = await memory.relation(guild_id, cid, a.target_id)
     if link is None or entity_id not in (link.subject_id, link.object_id):
@@ -972,24 +1690,25 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
         if link.status == REJECTED and await _already(memory, guild_id, cid, link, a):
             return pair
         return _failed(NOT_FOUND)
+    batch: int | None = None  # the change the edit made, for the page's Undo (#4156)
     try:
         if a.action == "link-secret":
-            await link_edits.set_secret(memory, guild_id, cid, link, a.flag)
+            batch = (await link_edits.set_secret(memory, guild_id, cid, link, a.flag)).batch
         elif a.action == "link-pin":
             # 📌 100% truth (#2447): the card's own call. A retried job finds it already so.
             if (link.id in await memory.pinned_connections(guild_id, cid)) != a.flag:
-                await memory.pin(guild_id, cid, link.id, a.flag, source=DM)
+                batch = (await memory.pin(guild_id, cid, link.id, a.flag, source=DM)).batch
         elif a.action == "link-remove":
             if not a.flag:
                 return _failed(BAD_TARGET)
-            await link_edits.remove(memory, guild_id, cid, link)
+            batch = (await link_edits.remove(memory, guild_id, cid, link)).batch
         elif a.action == "link-words":
             picked = a.text.startswith(FEELING_TEXT)
             if picked and link.predicate != "knows":
                 return _failed(BAD_TARGET)  # the picker is for a knows line only (#3606)
             predicate, detail, swapped = predicate_for_either(_words_of(a.text))
             other_end = link.object_id if entity_id == link.subject_id else link.subject_id
-            await link_edits.change_words(
+            changed = await link_edits.change_words(
                 memory,
                 guild_id,
                 cid,
@@ -999,6 +1718,21 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
                 first=other_end if swapped else entity_id,
                 dm_feeling=picked,  # (the DM's Reputation follows the picked feeling, #3642)
             )  # (a family role is said from the name it belongs to, #2457)
+            batch = None if changed is None else changed.batch  # (None: the same words already)
+        elif a.action == DIRECTION_ACTION:
+            # the page names the two ends as its edge does, by id order (`relationships.edges_from`)
+            if a.text not in DIRECTIONS:
+                return _failed(BAD_TARGET)
+            low, high = sorted((link.subject_id, link.object_id))
+            reads_from = None if a.text == "both" else (low if a.text == "a-b" else high)
+            # (a retried job finds it already so: the store writes nothing, and there is no batch;
+            # a turn is written anew in one batch, so the page's Undo puts the old row back, #4156)
+            turned = await memory.set_direction(guild_id, cid, link.id, reads_from, source=DM)
+            batch = turned.batch
+        elif a.action == RIGHT_ACTION:
+            # the DM's ✅ That's right: the call Discord's card makes. A retried job finds the mark
+            # already gone, which writes nothing and has no batch.
+            batch = (await memory.confirm_assumed(guild_id, cid, link.id, source=DM)).batch
         elif a.action == KNOWS_HOW_ACTION:
             # whether two people have met (#3881, #3882): the DM's word, either way, through the
             # call the Discord edit page's menu makes. `text` is "met", "aware" or "" (clears it).
@@ -1007,19 +1741,40 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
             if link.predicate != "knows" or a.text not in KNOWS_HOWS:
                 return _failed(BAD_TARGET)
             if link.knows_how != a.text:  # a retried job finds it already so: nothing to write
-                await memory.set_knows_how(guild_id, cid, link.id, a.text, source=DM)
+                batch = (
+                    await memory.set_knows_how(guild_id, cid, link.id, a.text, source=DM)
+                ).batch
+        elif a.action == LINK_WHO:
+            # "Who knows this?" (#2999, never applied until #4159): Discord's call. The website's
+            # pick is the whole list (any confirmed character, as its door checks), not Discord's
+            # player-characters-only menu, so it replaces every knower.
+            # (the same answer again writes nothing: the store only changes what differs, so a
+            # retried job is done with no change.) One answer can be two changes (hide it, then
+            # who knows it): the page's Undo takes back every one (`link_batches_with`).
+            # A job stopped between the two and retried carries only the second.
+            who, characters = _who_of(a.text)
+            made: list[int] = []
+            await link_edits.set_who_knows(memory, guild_id, cid, link, who, characters, made=made)
+            return replace(pair, batches=tuple(made))
         else:
             return _failed(FAILED)
     except MemoryRuleError as exc:
         # Showing a connection is refused until its names are shown: say which case it is, so the
         # page can tell the DM what to do first (#3426). The rule itself is unchanged.
         reason = str(exc)
+        if _is_cannot_show(exc):
+            return _failed(CANNOT_SHOW)
         if reason == NAMES_NOT_SHOWN_WORDS:
             return _failed(NAMES_NOT_SHOWN)
         if reason == unnamed_mod.NAME_BEFORE_SHOWING:
             return _failed(NAME_UNNAMED)
         return _failed(BAD_TARGET)
-    return pair
+    return replace(pair, batches=_batch_of(batch))
+
+
+def _batch_of(batch: int | None) -> tuple[int, ...]:
+    """The change batches an outcome carries: the one a write made, or none (nothing changed)."""
+    return () if batch is None else (batch,)
 
 
 async def _answer_which_one(guild_id: int, cid: str, a: Action, w: Waiting) -> Outcome:
@@ -1126,6 +1881,11 @@ async def _answer_waiting(
         return Outcome(
             result_id=confirmed.claim.fact_id or "",
             result_other="" if confirmed.batch is None else str(confirmed.batch),
+            # a held-back connection the table stated is shown now, for the page to say (#3963 c)
+            # and one kept hidden beside a hidden one, for the page to point at 👁️ Reveal (#3979)
+            # and one said while the party was split: "scene" (the group there knows it) or
+            # "split" (which group can't be told), #2996
+            counts=_answer_counts(confirmed),
         )
     if a.action in READING_ACTIONS:
         return await _answer_reading(memory, guild_id, cid, a, w)
@@ -1183,9 +1943,15 @@ async def _answer_waiting(
     link = next((x for x in ready if x.id == a.target_id), None)
     if link is None:
         return _failed(NOT_FOUND)
+    # (a hand-over is kept here too, #4122: the website's list says what keeping it ends, as the
+    # Discord card does, and the same keep ends the previous holder's part; a hidden keep never
+    # ends what the players see. Keep all still leaves it out: only its own press keeps it.)
     one = replace(link, secret=link.secret or a.flag)  # "keep as secret" only ever hides more
     # (the DM's own "Keep as secret" press hides an existing public twin; a spelling does not)
-    kept = await keep.keep_all(memory, w.backstory, guild_id, cid, [one], keep_flags=not a.flag)
+    kept = await keep.keep_all(
+        memory, w.backstory, guild_id, cid, [one], keep_flags=not a.flag, one_press=True,
+        players="show" if a.action == "backstory-keep-show" else "",
+    )  # fmt: skip
     return Outcome(result_id="1") if kept.kept else _failed(BAD_TARGET)
 
 

@@ -83,6 +83,7 @@ class ReviewTextTest(unittest.TestCase):
     def test_two_rows_so_a_phone_never_cuts_the_labels(self) -> None:
         view = ui.SuggestionReview("c" * 32, ["a" * 32])
         view.match = Match("b" * 32, "Hrothgar")
+        view.refs = [("s" * 32, 12)]  # somewhere it was said, so the lookup button shows
         view._buttons()
         rows = [(b.label, b.row) for b in view.children]  # type: ignore[attr-defined]
         self.assertEqual(
@@ -102,6 +103,17 @@ class ReviewTextTest(unittest.TestCase):
         view._buttons()
         # with no kind guessed, the picker is the first row (#2937), the buttons below it
         self.assertEqual([b.row for b in view.children], [0, 1, 1, 1, 1, 2])
+
+    def test_where_was_it_said_shows_only_with_something_behind_it(self) -> None:
+        # #4227: a name with no kept place and no held sentence from an upload has no lookup
+        view = ui.SuggestionReview("c" * 32, ["a" * 32])
+        view._buttons()
+        labels = [getattr(b, "label", "") for b in view.children]
+        self.assertNotIn("📜 Where was it said?", labels)
+        view.lore_kept = True
+        view._buttons()
+        labels = [getattr(b, "label", "") for b in view.children]
+        self.assertIn("📜 Where was it said?", labels)
 
     def test_names_are_shown_as_written(self) -> None:
         text = ui.suggestion_text(suggested("*Star*"), 1, match=Match("b" * 32, "*Sun*"))

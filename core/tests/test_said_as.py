@@ -77,7 +77,7 @@ class SaidAs(MemoryTest):
                 "UPDATE memory_aliases SET said_as = 'Grey' WHERE id = %s", (alias.value.id,)
             )
         await self.memory.update_alias(
-            GUILD_A, self.c, alias.value.id, source=DM_SOURCE, secret=True
+            GUILD_A, self.c, alias.value.id, source=DM_SOURCE, secret=True, dm_chose_secret=True
         )
         async with self.db.guild(GUILD_A) as conn:
             cur = await conn.execute(
@@ -101,7 +101,14 @@ class SaidAs(MemoryTest):
                 "UPDATE memory_aliases SET said_as = 'Zet' WHERE id = %s", (alias.value.id,)
             )
         again = await self.memory.add_alias(
-            GUILD_A, self.c, self.kazeth, "Zeth", kind="short", source=DM_SOURCE, secret=True
+            GUILD_A,
+            self.c,
+            self.kazeth,
+            "Zeth",
+            kind="short",
+            source=DM_SOURCE,
+            secret=True,
+            dm_chose_secret=True,
         )
         self.assertTrue(again.value.secret)
         self.assertIsNone(again.value.said_as)
@@ -134,6 +141,7 @@ class SaidAs(MemoryTest):
             kind="title",
             source=DM_SOURCE,
             secret=True,
+            dm_chose_secret=True,
         )
         backup = await self.campaigns.export(GUILD_A, self.c)
         for row in backup["sections"]["memory"]:
@@ -162,7 +170,7 @@ class ReachingTheNarrator(MemoryTest):
         vael = await self.add("Vaelithor", status="confirmed")
         await self.memory.add_alias(
             GUILD_A, self.c, vael, "the Grey Voice", kind="title", source=DM_SOURCE, secret=True,
-            status="confirmed",
+            status="confirmed", dm_chose_secret=True,
         )  # fmt: skip
         got = await self.inputs()
         rules = nm.rules(got.names)

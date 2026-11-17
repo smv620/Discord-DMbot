@@ -206,7 +206,9 @@ class TheWorkedOutLinks(ConfirmedMemoryTest):
     async def test_a_source_made_secret_later_makes_the_suggestion_secret(self) -> None:
         _, sister = await self.mother_and_sisters()
         await self.memory.rework_family(GUILD_A, self.c)
-        await self.memory.update_relation(GUILD_A, self.c, sister.id, source="dm", secret=True)
+        await self.memory.update_relation(
+            GUILD_A, self.c, sister.id, source="dm", secret=True, dm_chose_secret=True
+        )
         await self.memory.rework_family(GUILD_A, self.c)
         (mine,) = await self.mine()
         self.assertTrue(mine.secret)
@@ -230,14 +232,18 @@ class TheWorkedOutLinks(ConfirmedMemoryTest):
     async def test_an_unrevealed_source_makes_the_suggestion_secret(self) -> None:
         await self.state(self.aldric, "mother", self.bryn)
         sister = await self.state(self.bryn, "sister", self.mira)
-        await self.memory.update_relation(GUILD_A, self.c, sister.id, source="dm", unrevealed=True)
+        await self.memory.update_relation(
+            GUILD_A, self.c, sister.id, source="dm", unrevealed=True, dm_chose_secret=True
+        )
         await self.memory.rework_family(GUILD_A, self.c)
         (mine,) = await self.mine()
         self.assertTrue(mine.secret)
 
     async def test_a_hidden_middle_name_makes_the_suggestion_secret(self) -> None:
         await self.mother_and_sisters()
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.bryn, True, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, self.bryn, True, source="dm", dm_chose_secret=True
+        )
         await self.memory.rework_family(GUILD_A, self.c)
         (mine,) = await self.mine()
         self.assertTrue(mine.secret)
@@ -245,7 +251,9 @@ class TheWorkedOutLinks(ConfirmedMemoryTest):
     async def test_a_source_made_unrevealed_later_upgrades_the_suggestion(self) -> None:
         mother, _ = await self.mother_and_sisters()
         await self.memory.rework_family(GUILD_A, self.c)
-        await self.memory.update_relation(GUILD_A, self.c, mother.id, source="dm", unrevealed=True)
+        await self.memory.update_relation(
+            GUILD_A, self.c, mother.id, source="dm", unrevealed=True, dm_chose_secret=True
+        )
         await self.memory.rework_family(GUILD_A, self.c)
         (mine,) = await self.mine()
         self.assertTrue(mine.secret)
@@ -261,7 +269,9 @@ class TheWorkedOutLinks(ConfirmedMemoryTest):
 
     async def test_players_are_never_told_a_confirmed_link_from_a_hidden_source(self) -> None:
         await self.mother_and_sisters()
-        await self.memory.set_hidden_from_players(GUILD_A, self.c, self.bryn, True, source="dm")
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, self.bryn, True, source="dm", dm_chose_secret=True
+        )
         await self.memory.rework_family(GUILD_A, self.c)
         (mine,) = await self.mine()
         await self.confirm(mine)

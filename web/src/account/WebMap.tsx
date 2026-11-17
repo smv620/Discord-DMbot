@@ -33,6 +33,7 @@ import {
   type SimNode,
 } from "./webForce";
 import { PC_ICONS_LIVE } from "../content/pc-icons-switch";
+import { QUEST_SHEET_LIVE } from "../content/quest-sheet-switch";
 import { pcIconWords } from "../content/pc-icon-words";
 import LazyPanel from "./LazyPanel";
 import { DEFAULT_LOOK, readMode, readPlaces, saveMode, savePlaces, type GraphLook } from "./webPrefs";
@@ -66,9 +67,10 @@ export function lineWidthOf(count: number, on: boolean, chosen: boolean): { stro
 const NUDGE = 24; // how far an arrow key moves the name it is on
 
 /** Who knows a line, from its connections (#3809): "all" when every one is fully revealed, "dm" when every one is hidden from
- * every player, else "some". A connection from an older API has no `who`: it counts as "all" unless it is secret. */
+ * every player, else "some". A connection from an older API has no `who`: it counts as "all" unless it is secret. A 🌍 common
+ * knowledge connection (#4559) is known to everyone, so it counts as "all". */
 function knowOf(edge: WebEdge): "all" | "some" | "dm" {
-  const each = edge.links.map((l) => l.who ?? (l.secret ? "dm" : "all"));
+  const each = edge.links.map((l) => (l.who === "common" ? "all" : (l.who ?? (l.secret ? "dm" : "all"))));
   if (each.every((w) => w === "all")) return "all";
   if (each.every((w) => w === "dm")) return "dm";
   return "some";
@@ -184,6 +186,9 @@ export default function WebMap({
   onCenter,
   onLine,
   onNodePick,
+  pairFrom = null,
+  onPair,
+  onJump,
   onIcon,
   iconUndo = null,
   look = DEFAULT_LOOK,
@@ -207,6 +212,12 @@ export default function WebMap({
   onLine: (a: string, b: string) => void;
   /** Told when a name is picked, so a line that was chosen gives the panel back to the name. */
   onNodePick?: () => void;
+  /** The first name picked to be joined to a second (#4155), if one is; the next tap on a name is the second. */
+  pairFrom?: string | null;
+  /** A name was chosen for joining: the first (Ctrl/⌘+click, or "Connect to…") or the second. */
+  onPair?: ((id: string) => void) | undefined;
+  /** A connection in a name's panel was pressed: open its pair with that connection open. */
+  onJump?: ((a: string, b: string, linkId: string) => void) | undefined;
   /** Choose a player character's icon (#3622): a plain-words problem, or null when it was saved. */
   onIcon?: ((id: string, choice: IconChoice) => Promise<string | null>) | undefined;
   /** The id of the character whose last icon change can be taken back, and the Undo itself. */
@@ -418,7 +429,14 @@ export default function WebMap({
   // is let go (below), not from the browser's `click`: the names keep drifting while the layout settles, and a
   // `click` is only sent to a name when the pointer is let go over the same element it went down on, so a name that
   // moved a little under the pointer got no click, and so no panel and no double click.
+  const modKey = useRef(false); // Ctrl or ⌘ was held as the pointer went down on a name (#4155)
   const tap = (id: string): void => {
+    // Joining two names: the first with Ctrl/⌘ held, the second with any tap, so no edit hides behind a double tap.
+    if (onPair && (pairFrom !== null || modKey.current)) {
+      lastTap.current = null;
+      onPair(id);
+      return;
+    }
     // A finger leaves no hover behind: the panel follows the pick, not the last name touched.
     if (touched.current) setFocus(null);
     const now = Date.now();
@@ -592,11 +610,13 @@ export default function WebMap({
         .flatMap((x) =>
           x.links.map((l) => ({
             id: l.id,
+            a: x.a,
+            b: x.b,
             kind: l.kind,
             secret: l.secret,
             ...(l.knowWord ? { knowWord: l.knowWord } : {}),
             belief: l.belief,
-            text: words.linkText(byId.get(x.a)?.name ?? "", byId.get(x.b)?.name ?? "", l.words, l.direction),
+            text: words.linkText(byId.get(x.a)?.name ?? "", byId.get(x.b)?.name ?? "", l.words, l.direction, l.pairWords),
           })),
         )
     : [];
@@ -699,7 +719,7 @@ export default function WebMap({
             const tip =
               edge.links.length > 1
                 ? [
-                    ...ordered.slice(0, TIP_LINKS).map((l, i) => `${theory && i === 0 ? `${words.theoryMark} ` : ""}${words.linkText(aName, bName, l.words, l.direction)}`),
+                    ...ordered.slice(0, TIP_LINKS).map((l, i) => `${theory && i === 0 ? `${words.theoryMark} ` : ""}${words.linkText(aName, bName, l.words, l.direction, l.pairWords)}`),
                     ...(ordered.length > TIP_LINKS ? [words.plusMore(ordered.length - TIP_LINKS)] : []),
                   ].join("\n")
                 : text;
@@ -778,6 +798,7 @@ export default function WebMap({
                 onPointerDown={(ev) => {
                   ev.stopPropagation();
                   touched.current = ev.pointerType === "touch";
+                  modKey.current = ev.ctrlKey || ev.metaKey;
                   if (pointers.current.size > 1) return; // a second finger: a pinch, not a drag of this name
                   if (ev.button !== 0) return; // a right or middle press opens a menu or scrolls: not a tap or a drag
                   dragName.current = { id: n.id, x: ev.clientX, y: ev.clientY, moved: false };
@@ -787,12 +808,13 @@ export default function WebMap({
                 onPointerLeave={() => setFocus((f) => (f === n.id ? null : f))}
                 onFocus={() => setFocus(n.id)}
                 onBlur={() => setFocus((f) => (f === n.id ? null : f))}
-                onClick={() => {
+                onClick={(ev) => {
                   if (tapped.current) return; // (this click was already counted when the pointer was let go)
                   if (dragged.current) {
                     lastTap.current = null; // (the end of a drag is neither a click nor half of a double click)
                     return;
                   }
+                  modKey.current = ev.ctrlKey || ev.metaKey;
                   tap(n.id);
                 }}
                 onKeyDown={(ev) => {
@@ -808,7 +830,8 @@ export default function WebMap({
                     nudge(n.id, by[0], by[1]);
                   } else if (ev.key === "Enter" || ev.key === " ") {
                     ev.preventDefault();
-                    setPicked(n.id); // (the panel's "Put it in the middle" button is the keyboard's double click)
+                    if (onPair && (pairFrom !== null || ev.ctrlKey || ev.metaKey)) onPair(n.id);
+                    else setPicked(n.id); // (the panel's "Put it in the middle" button is the keyboard's double click)
                   }
                 }}
               >
@@ -825,6 +848,9 @@ export default function WebMap({
           })}
         </g>
       </svg>
+      {pairFrom !== null && onPair && (
+        <LazyPanel load={() => import("./WebPairing")} what="the joining" props={{ kind: "banner" as const, name: byId.get(pairFrom)?.name ?? "", onPair, id: pairFrom }} />
+      )}
       {selected && children ? (
         <div class="web-side">{children}</div>
       ) : detail && (
@@ -844,15 +870,35 @@ export default function WebMap({
           {sideLines.length === 0 ? (
             <p class="small">{words.sideNone}</p>
           ) : (
+            <>
+            {onJump && canEdit && <p class="small muted">{words.tapConnection}</p>}
             <ul class="stack small">
               {sideLines.map((l) => (
                 <li key={l.id}>
                   {markSecret(l) && <span aria-hidden="true">{words.secretMark} </span>}
                   {l.belief && <span aria-hidden="true">{words.theoryMark} </span>}
-                  {l.text}
+                  {onJump && canEdit ? (
+                    <button type="button" class="link-button" aria-label={words.openConnection(l.text)} onClick={() => onJump(l.a, l.b, l.id)}>
+                      {l.text}
+                    </button>
+                  ) : (
+                    l.text
+                  )}
                 </li>
               ))}
             </ul>
+            </>
+          )}
+          {onPair && canEdit && (
+            <LazyPanel load={() => import("./WebPairing")} what="the joining" props={{ kind: "button" as const, name: "", onPair, id: detail.id }} />
+          )}
+          {QUEST_SHEET_LIVE && canEdit && detail.kind === "thread" && api && api.threadCard !== undefined && (
+            <LazyPanel
+              key={detail.id}
+              load={() => import("./QuestSheet")}
+              what="the quest sheet"
+              props={{ api, refId, thread: { id: detail.id, name: detail.name }, onSelect: (id: string) => setPicked(id) }}
+            />
           )}
           <button
             type="button"

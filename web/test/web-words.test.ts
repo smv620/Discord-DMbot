@@ -2,7 +2,7 @@
 // on the Story Graph or the Names page (Supervisor, #2670).
 import { describe, expect, it } from "vitest";
 
-import { kindWords } from "../src/content/web-words";
+import { kindWords, webPage as words } from "../src/content/web-words";
 
 describe("kind words", () => {
   it("calls the characters NPCs and PCs", () => {
@@ -18,5 +18,21 @@ describe("kind words", () => {
 
   it("shows a kind it does not know as it comes", () => {
     expect(kindWords("starship")).toBe("starship");
+  });
+});
+
+// A two-way connection reads from the API's pair words (#4196); one-way rows and an older API are as before.
+describe("a connection's line", () => {
+  it("reads a two-way connection with its pair words", () => {
+    expect(words.linkText("Cerric Vanya'elen", "Wit", "is a rival of", "both", "are rivals")).toBe("Cerric Vanya'elen and Wit are rivals");
+  });
+
+  it("keeps the old line when the API sends no pair words", () => {
+    expect(words.linkText("Cerric", "Wit", "is a rival of", "both")).toBe("Cerric and Wit: is a rival of");
+  });
+
+  it("leaves a one-way connection as it was, pair words or not", () => {
+    expect(words.linkText("Cerric", "Wit", "is a rival of", "a-b", "are rivals")).toBe("Cerric is a rival of Wit");
+    expect(words.linkText("Cerric", "Wit", "has as a member", "b-a")).toBe("Wit has as a member Cerric");
   });
 });

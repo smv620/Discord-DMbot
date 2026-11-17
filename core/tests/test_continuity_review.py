@@ -109,12 +109,17 @@ class Review(ConfirmedMemoryTest):
         return SimpleNamespace(guild_id=GUILD_A, campaign_id=self.c, screen_channel_id=5)
 
     def bot(self) -> Any:
-        return SimpleNamespace(
+        fake: Any = SimpleNamespace(
             memory=self.memory,
             post=AsyncMock(),
             settings=SimpleNamespace(continuity=SMALL),
             consent=SimpleNamespace(consenting=AsyncMock(return_value={7})),
+            campaigns=SimpleNamespace(
+                get=AsyncMock(return_value=None)
+            ),  # (no campaign: the screen)
         )
+        fake._post_after_session = lambda *a, **k: DMBot._post_after_session(fake, *a, **k)
+        return fake
 
     async def test_the_dm_screen_says_how_many_and_never_what(self) -> None:
         fake = self.bot()

@@ -8,6 +8,7 @@ from __future__ import annotations
 from typing import Any
 from unittest.mock import patch
 
+from dmbot import consent_dm
 from dmbot.consent import TERMS_VERSION, ConsentStore
 from dmbot.transcript import uploader_words as uw
 from dmbot.web import imports
@@ -163,7 +164,7 @@ class Confirming(WithImports):
     async def test_the_consent_words_come_with_their_version(self) -> None:
         got = imports.consent_words(cloud=True, company="Deepgram")
         self.assertEqual(got["version"], TERMS_VERSION)
-        self.assertIn("Anyone in this server can read and download that text", got["text"])
+        self.assertIn(consent_dm.WHO_CAN_READ, got["text"])
         self.assertIn("Deepgram", got["text"])  # (and what the server sends out, as in Discord)
 
     async def test_the_speakers_list_has_names_and_line_counts_for_a_dm_only(self) -> None:
@@ -408,6 +409,38 @@ class Confirming(WithImports):
         self.assertNotIn(TOMAS, await consent.recorded_in(THURSDAY.id, self.one.id))
         await consent.grant(THURSDAY.id, TOMAS)  # and saying yes again clears the no
         self.assertIn(TOMAS, await consent.recorded_in(THURSDAY.id, self.one.id))
+
+    async def test_a_stop_whose_revoke_failed_is_never_read_again_in_an_import(self) -> None:
+        # (#3964) `stop_now` holds the person back at once; if saving the "no" then fails, nothing
+        # is in `consent_refusals`, so the held-back list alone must keep them out of `recorded_in`
+        consent = ConsentStore(self.db)
+        mapping: dict[str, Any] = {"Tomas (tomas#1)": {"confirmed": True, "member": str(TOMAS)}}
+        await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", CRAIG))
+        self.assertIn(TOMAS, await consent.recorded_in(THURSDAY.id, self.one.id))
+        consent.stop_now(THURSDAY.id, TOMAS)
+        async with self.db.guild(THURSDAY.id) as conn:  # (the revoke never got saved)
+            cur = await conn.execute(
+                "SELECT 1 FROM consent_refusals WHERE guild_id = %s", (THURSDAY.id,)
+            )
+            self.assertEqual(await cur.fetchall(), [])
+        self.assertNotIn(TOMAS, await consent.recorded_in(THURSDAY.id, self.one.id))
+        self.assertIn(MIRA, await consent.recorded_in(THURSDAY.id, self.one.id))  # others stay
+        await consent.grant(THURSDAY.id, TOMAS)  # saying yes again lifts the hold
+        self.assertIn(TOMAS, await consent.recorded_in(THURSDAY.id, self.one.id))
+
+    async def test_a_stop_that_arrives_while_the_read_runs_still_wins(self) -> None:
+        consent = ConsentStore(self.db)
+        mapping: dict[str, Any] = {"Tomas (tomas#1)": {"confirmed": True, "member": str(TOMAS)}}
+        await self.confirm(plan(mapping, consentVersion=TERMS_VERSION), ("a.txt", CRAIG))
+        real = consent.consenting
+
+        async def stop_during(guild_id: int) -> frozenset[int]:
+            consent.stop_now(guild_id, TOMAS)
+            consent._held_back[guild_id].discard(TOMAS)  # (its revoke finished meanwhile)
+            return await real(guild_id)
+
+        consent.consenting = stop_during  # type: ignore[method-assign]
+        self.assertNotIn(TOMAS, await consent.recorded_in(THURSDAY.id, self.one.id))
 
 
 class TheBackup(WithImports):

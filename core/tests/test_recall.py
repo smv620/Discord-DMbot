@@ -254,11 +254,15 @@ class Recalling(MemoryTest):
         secret flag gave, before and after a reveal and a hide, and for a reworded connection."""
         before = await self.recall(PLAYERS, "Mira", hops=2)
         self.assertNotIn(self.secret, self.ids(before))
-        await self.memory.update_relation(GUILD_A, self.c, self.secret, source="dm", secret=False)
+        await self.memory.update_relation(
+            GUILD_A, self.c, self.secret, source="dm", secret=False, dm_chose_secret=True
+        )
         shown = await self.recall(PLAYERS, "Mira", hops=2)
         self.assertIn(self.secret, self.ids(shown))
         self.assertIn("Ulfgar", self.texts(shown))
-        await self.memory.update_relation(GUILD_A, self.c, self.secret, source="dm", secret=True)
+        await self.memory.update_relation(
+            GUILD_A, self.c, self.secret, source="dm", secret=True, dm_chose_secret=True
+        )
         hidden = await self.recall(PLAYERS, "Mira", hops=2)
         self.assertEqual(self.ids(hidden), self.ids(before))
         self.assertNotIn("Ulfgar", self.texts(hidden))
@@ -282,16 +286,20 @@ class Recalling(MemoryTest):
     ) -> None:
         """#2409: the NPC list and pages tie Mira and Ulfgar only while the players know it."""
         self.assertEqual((await self.roster_ties()).get("Mira", ()), ())
-        await self.memory.update_relation(GUILD_A, self.c, self.secret, source="dm", secret=False)
+        await self.memory.update_relation(
+            GUILD_A, self.c, self.secret, source="dm", secret=False, dm_chose_secret=True
+        )
         self.assertEqual((await self.roster_ties())["Mira"], ("Ulfgar",))
-        await self.memory.update_relation(GUILD_A, self.c, self.secret, source="dm", secret=True)
+        await self.memory.update_relation(
+            GUILD_A, self.c, self.secret, source="dm", secret=True, dm_chose_secret=True
+        )
         self.assertEqual((await self.roster_ties()).get("Mira", ()), ())
         hidden = await self.memory.change_relation_words(  # a hidden one reworded stays hidden
             GUILD_A, self.c, self.secret, "enemy_of", "", source="dm"
         )
         self.assertEqual((await self.roster_ties()).get("Mira", ()), ())
         await self.memory.update_relation(
-            GUILD_A, self.c, hidden.value.id, source="dm", secret=False
+            GUILD_A, self.c, hidden.value.id, source="dm", secret=False, dm_chose_secret=True
         )
         await self.memory.change_relation_words(  # a shown one reworded stays shown
             GUILD_A, self.c, hidden.value.id, "kin_of", "", source="dm"
@@ -317,6 +325,37 @@ class Recalling(MemoryTest):
             await self.memory.update_relation(
                 GUILD_A, self.c, link.id, source="dm", status="rejected"
             )
+
+    async def test_a_one_way_kind_the_dm_made_two_way_is_given_as_a_pair(self) -> None:
+        """#4164: the AI is given the card's own pair words for it, never one-way words."""
+        names = {e.name: e.id for e in await self.memory.entities(GUILD_A, self.c)}
+        made = await self.memory.add_relation(
+            GUILD_A, self.c, names["Mira"], "serves", names["Ulfgar"], source="dm",
+            confidence=1.0, status="confirmed",
+        )  # fmt: skip
+        before = self.texts(await self.recall(PLAYERS, "Ulfgar", hops=1))
+        self.assertIn("Mira serves Ulfgar", before)  # (the fact is there, one way)
+        self.assertNotIn("Mira and Ulfgar", before)
+        await self.memory.set_direction(GUILD_A, self.c, made.value[0].id, None, source="dm")
+        after = self.texts(await self.recall(PLAYERS, "Ulfgar", hops=1))
+        self.assertIn("Mira and Ulfgar are connected (“works for”)", after)
+
+    async def test_a_campaigns_own_two_way_kind_keeps_its_label(self) -> None:
+        """#4388: its rows carry the two-way mark now; the AI still reads the kind's own words."""
+        from dmbot.memory.ontology import PredicateTerm
+
+        term = PredicateTerm(
+            "oath_kin_of", "is oath-bound to", "Two sworn to each other.", ("character",),
+            ("character",), symmetric=True, core=False,
+        )  # fmt: skip
+        await self.memory.add_predicate(
+            GUILD_A, self.c, term, examples=["Mira is oath-bound to Ulfgar."],
+            reason="the table uses it", source="dm",
+        )  # fmt: skip
+        await self.fact(self.mira, "oath_kin_of", self.ulfgar)
+        text = self.texts(await self.recall(PLAYERS, "Ulfgar", hops=1))
+        self.assertIn("is oath-bound to", text)
+        self.assertNotIn("are connected (“oath kin of”)", text)
 
     async def test_a_two_way_family_role_stored_undirected_keeps_its_role(self) -> None:
         """#3111: a sibling, cousin or spouse is true of both names, so the roster tie and the
@@ -350,11 +389,15 @@ class Recalling(MemoryTest):
         self.assertNotIn(self.secret, shown)
         self.assertIn(self.secret, secret)
         self.assertIn(self.member, shown)
-        await self.memory.update_relation(GUILD_A, self.c, self.secret, source="dm", secret=False)
+        await self.memory.update_relation(
+            GUILD_A, self.c, self.secret, source="dm", secret=False, dm_chose_secret=True
+        )
         shown, secret = await self.lookup_ids()
         self.assertIn(self.secret, shown)
         self.assertNotIn(self.secret, secret)
-        await self.memory.update_relation(GUILD_A, self.c, self.secret, source="dm", secret=True)
+        await self.memory.update_relation(
+            GUILD_A, self.c, self.secret, source="dm", secret=True, dm_chose_secret=True
+        )
         moved = await self.memory.change_relation_words(
             GUILD_A, self.c, self.secret, "enemy_of", "", source="dm"
         )
@@ -371,8 +414,12 @@ class Recalling(MemoryTest):
         (the lookup, a join) are two spellings of one question."""
         from dmbot.memory.beliefs import party_id, party_knows, party_knows_by
 
-        await self.memory.update_relation(GUILD_A, self.c, self.secret, source="dm", secret=False)
-        await self.memory.update_relation(GUILD_A, self.c, self.member, source="dm", secret=True)
+        await self.memory.update_relation(
+            GUILD_A, self.c, self.secret, source="dm", secret=False, dm_chose_secret=True
+        )
+        await self.memory.update_relation(
+            GUILD_A, self.c, self.member, source="dm", secret=True, dm_chose_secret=True
+        )
         async with self.memory._read(GUILD_A, self.c) as scope:
             party = await party_id(scope)
             ids = []
@@ -400,7 +447,7 @@ class Recalling(MemoryTest):
     async def test_a_secret_name_means_nothing_to_players(self) -> None:
         await self.memory.add_alias(
             GUILD_A, self.c, self.mira, "The Hooded Stranger", kind="nickname", source="dm",
-            status="confirmed", secret=True,
+            status="confirmed", secret=True, dm_chose_secret=True,
         )  # fmt: skip
         players = await self.recall(PLAYERS, "The Hooded Stranger")
         self.assertEqual((players.items, players.seeds), ((), ()))
@@ -412,7 +459,7 @@ class Recalling(MemoryTest):
         neither the entry nor its facts, by name, by id or through a neighbour."""
         await self.memory.add_alias(
             GUILD_A, self.c, self.mira, "Mira", kind="full", source="dm", status="confirmed",
-            secret=True,
+            secret=True, dm_chose_secret=True,
         )  # fmt: skip
         by_name = await self.recall(PLAYERS, "Mira")
         by_id = await self.recall(PLAYERS, self.mira)

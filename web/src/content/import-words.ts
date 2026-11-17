@@ -115,6 +115,7 @@ export const importPage = {
   findHint: "Type part of a name to see more people.",
   leaveOut: "Leave out",
   notAgreedMark: "hasn't agreed",
+  playedBeforeMark: "played with you before",
   lines: (n: number): string => `${n} ${n === 1 ? "line" : "lines"}`,
   suggestedBecause: (why: string): string =>
     why === "remembered" ? "From an earlier import." : "Matches their name.",

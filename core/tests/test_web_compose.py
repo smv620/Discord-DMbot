@@ -131,6 +131,17 @@ class CloudflareTunnel(unittest.TestCase):
         for name in ("web-api", "postgres"):
             self.assertNotIn("CLOUDFLARE_TUNNEL_TOKEN", service_block(name), name)
 
+    def test_the_person_key_reaches_core_and_the_api_but_never_ears(self) -> None:
+        # core reads all of .env; ears blanks it; the API lists it by name; nobody else sees it
+        # (#4145).
+        self.assertRegex(service_block("ears"), r'DMBOT_PERSON_KEY: ""')
+        self.assertNotIn('DMBOT_PERSON_KEY: ""', service_block("core"))
+        self.assertIn("DMBOT_PERSON_KEY: ${DMBOT_PERSON_KEY:-}", service_block("web-api"))
+        for name in ("postgres", "cloudflared"):
+            self.assertNotIn("DMBOT_PERSON_KEY", service_block(name), name)
+        text = ENV_EXAMPLE.read_text("utf-8")
+        self.assertRegex(text, r"(?m)^DMBOT_PERSON_KEY=$")  # (where scripts/set-key finds it)
+
     def test_the_client_address_header_is_passed_through_to_web_api(self) -> None:
         # Only the tunnel reaches it from outside, so CF-Connecting-IP can be trusted there.
         self.assertIn("WEB_CLIENT_IP_HEADER: ${WEB_CLIENT_IP_HEADER:-}", service_block("web-api"))

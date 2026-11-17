@@ -19,6 +19,7 @@ from dmbot import fetch
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen import house_sync as hs
 from dmbot.dm_screen import settings as screen_settings
+from dmbot.memory.name_documents import max_bytes_for
 from dmbot.rules import house, house_file, house_file_sync
 from dmbot.rules.house import HouseRule, HouseRuleError
 from dmbot.rules.house_file_link import FileLink
@@ -35,6 +36,14 @@ FILE = "House rules: Frostmaiden\n1. Keep\n2. New words\n9. Fresh\n"  # vs Keep 
 
 def campaign(dms: frozenset[int] = frozenset({DM})) -> Campaign:
     return Campaign(C1, GUILD, "Frostmaiden", 1, 1, "2024", "2014", True, dms, None, 50, "peek")
+
+
+def on_screen() -> Campaign:
+    """The campaign with its DM screen set: a house-file note goes to the DMs privately and falls
+    back to the screen when none can be reached (#3874)."""
+    from dataclasses import replace
+
+    return replace(campaign(), dm_screen_channel_id=SCREEN)
 
 
 class FileLinkRepr(unittest.TestCase):
@@ -101,10 +110,18 @@ class SyncTest(unittest.IsolatedAsyncioTestCase):
     def interaction(self, user_id: int = DM, guild_id: int = GUILD) -> Any:
         user = MagicMock(spec=discord.Member)
         user.id = user_id
+        response = FakeResponse()
+
+        async def edit_original(*, content: str = "", view: Any = None, **_: Any) -> None:
+            response.edited.append(
+                (content, view)
+            )  # (the card changes, whichever way it is edited)
+
         return SimpleNamespace(
             client=self.bot, guild_id=guild_id, guild=SimpleNamespace(id=guild_id), user=user,
-            response=FakeResponse(), followup=SimpleNamespace(send=AsyncMock()),
-            message=SimpleNamespace(content="offer"),
+            response=response, followup=SimpleNamespace(send=AsyncMock()),
+            edit_original_response=edit_original, extras={},
+            message=SimpleNamespace(content="offer", components=[]),
         )  # fmt: skip
 
     @staticmethod
@@ -195,7 +212,7 @@ class Pressing(SyncTest):
         it = self.interaction()
         await self.button(view, "Accept all").callback(it)
         self.assertEqual(sorted(r.number for r in self.store.rules), [1, 2, 9])
-        content, new_view = it.response.edited[0]
+        content, new_view = it.response.edited[-1]
         self.assertIsNone(new_view)
         for words in ("Added house rule 9.", "Changed house rule 2.", "Removed house rule 3."):
             self.assertIn(words, content)
@@ -220,7 +237,7 @@ class Pressing(SyncTest):
         fingerprint = house_file_sync.fingerprint(house_file.parse(FILE).rules)
         self.assertEqual(self.links.calls, [("ignore", DM, fingerprint)])
         self.assertEqual(len(self.store.rules), 3)
-        self.assertIn("Left as it is", it.response.edited[0][0])
+        self.assertIn("Left as it is", it.response.edited[-1][0])
 
     async def test_ignoring_an_upload_remembers_nothing(self) -> None:
         _, view = await self.offer(from_link=False)
@@ -231,7 +248,7 @@ class Pressing(SyncTest):
         _, view = await self.offer()
         it = self.interaction()
         await self.button(view, "Review").callback(it)
-        text, step = it.response.edited[0]
+        text, step = it.response.edited[-1]
         self.assertIn("Review 1 of 3", text)
         self.assertIn("Add as a new rule: 9. Fresh", text)
         self.assertEqual(
@@ -241,18 +258,18 @@ class Pressing(SyncTest):
         accepted = self.interaction()
         await self.button(step, "Accept").callback(accepted)
         self.assertIn(9, [r.number for r in self.store.rules])
-        text, step = accepted.response.edited[0]
+        text, step = accepted.response.edited[-1]
         self.assertIn("Review 2 of 3", text)
         self.assertIn("House rule 2 is different", text)
         skipped = self.interaction()
         await self.button(step, "Skip").callback(skipped)
         self.assertEqual({r.number: r.rule for r in self.store.rules}[2], "Old")  # left alone
-        text, step = skipped.response.edited[0]
+        text, step = skipped.response.edited[-1]
         self.assertIn("Review 3 of 3", text)
         self.assertEqual([str(b.item.label) for b in step.children], ["Accept", "Skip"])
         last = self.interaction()
         await self.button(step, "Skip").callback(last)
-        content, done_view = last.response.edited[0]
+        content, done_view = last.response.edited[-1]
         self.assertIsNone(done_view)
         self.assertIn("Added house rule 9.", content)
         self.assertEqual(sorted(r.number for r in self.store.rules), [1, 2, 3, 9])
@@ -262,18 +279,18 @@ class Pressing(SyncTest):
         _, view = await self.offer()
         it = self.interaction()
         await self.button(view, "Review").callback(it)
-        step = it.response.edited[0][1]
+        step = it.response.edited[-1][1]
         skip = self.interaction()
         await self.button(step, "Skip").callback(skip)  # skips the new rule
         rest = self.interaction()
-        await self.button(skip.response.edited[0][1], "Accept this and the rest").callback(rest)
+        await self.button(skip.response.edited[-1][1], "Accept this and the rest").callback(rest)
         self.assertEqual(sorted(r.number for r in self.store.rules), [1, 2])
 
     async def test_a_press_on_an_old_step_is_told_it_is_done(self) -> None:
         _, view = await self.offer()
         review = self.interaction()
         await self.button(view, "Review").callback(review)
-        step = review.response.edited[0][1]
+        step = review.response.edited[-1][1]
         await self.button(step, "Skip").callback(self.interaction())
         again = self.interaction()
         await self.button(step, "Accept").callback(again)  # the first step's button, again
@@ -318,7 +335,10 @@ class Pressing(SyncTest):
             self.button(view, "Accept all").callback(first),
             self.button(view, "Accept all").callback(second),
         )
-        self.assertEqual(len(first.response.edited) + len(second.response.edited), 1)
+        # (one press did the work: its card showed "working", then the result;
+        # the other was told the offer was closed)
+        self.assertEqual(len(first.response.edited) + len(second.response.edited), 2)
+        self.assertEqual(len(first.response.sent) + len(second.response.sent), 1)
         self.assertEqual(sorted(r.number for r in self.store.rules), [1, 2, 9])
 
     async def test_a_rule_another_dm_changed_meanwhile_is_left_and_said(self) -> None:
@@ -329,14 +349,14 @@ class Pressing(SyncTest):
         self.assertEqual(
             self.store.rules[1].rule if self.store.rules[1].number == 2 else "", "Their words"
         )
-        self.assertIn("Rule 2 was left as it is", it.response.edited[0][0])
+        self.assertIn("Rule 2 was left as it is", it.response.edited[-1][0])
 
     async def test_a_store_that_breaks_is_said_and_nothing_more_is_changed(self) -> None:
         _, view = await self.offer()
         self.store.add = AsyncMock(side_effect=RuntimeError("down"))  # type: ignore[method-assign]
         it = self.interaction()
         await self.button(view, "Accept all").callback(it)
-        content = it.response.edited[0][0]
+        content = it.response.edited[-1][0]
         self.assertIn("Rule 9 couldn't be done just now; it was left as it is.", content)
         self.assertIn("Changed house rule 2.", content)  # the rest still went through
 
@@ -363,7 +383,7 @@ class Safeguards(SyncTest):
         self.assertEqual([str(b.item.label) for b in view.children], ["Review", "Not now"])
         it = self.interaction()
         await self.button(view, "Review").callback(it)
-        steps = [str(b.item.label) for b in it.response.edited[0][1].children]
+        steps = [str(b.item.label) for b in it.response.edited[-1][1].children]
         self.assertEqual(steps, ["Accept", "Skip"])  # not even Accept the rest
         self.assertEqual(len(self.store.rules), 8)
 
@@ -384,6 +404,25 @@ class Safeguards(SyncTest):
         await self.button(old, "Accept all").callback(it)
         self.assertEqual(it.response.sent[0][0], hs.CLOSED)
         self.assertEqual(len(self.store.rules), 3)
+
+    async def test_an_offer_can_be_answered_from_the_dms_private_chat(self) -> None:
+        """The offer goes to the DM privately first: a press there has no server (#3874)."""
+        _, view = await self.offer()
+        it = self.interaction()
+        it.guild_id = None
+        it.guild = None
+        await self.button(view, "Accept all").callback(it)
+        self.assertNotIn(hs.CLOSED, [text for text, *_ in it.response.sent])
+        self.assertIn("Fresh", [r.rule for r in self.store.rules])
+
+    async def test_a_private_chat_press_from_a_non_dm_changes_nothing(self) -> None:
+        _, view = await self.offer()
+        before = len(self.store.rules)
+        it = self.interaction(user_id=DM + 5)
+        it.guild_id = None
+        it.guild = None
+        await self.button(view, "Accept all").callback(it)
+        self.assertEqual(len(self.store.rules), before)
 
     async def test_accepting_once_retires_the_other_offers_so_nothing_is_added_twice(self) -> None:
         _, view = await self.offer()
@@ -418,7 +457,7 @@ class Safeguards(SyncTest):
         self.store.add = flaky  # type: ignore[method-assign]
         it = self.interaction()
         await self.button(view, "Accept all").callback(it)
-        content = it.response.edited[0][0]
+        content = it.response.edited[-1][0]
         self.assertIn("1 left alone", content)
         self.assertIn("couldn't be done just now", content)
         self.assertIn("Added house rule 6.", content)
@@ -439,24 +478,97 @@ class Safeguards(SyncTest):
         self.store.add = slow  # type: ignore[method-assign]
         it = self.interaction()
         it.edit_original_response = AsyncMock()
-        real_defer = it.response.defer
+        real_edit = it.response.edit_message
 
-        async def defer(**kw: Any) -> None:
-            order.append("defer")
-            await real_defer(**kw)
+        async def edit(**kw: Any) -> None:
+            order.append("answer")
+            await real_edit(**kw)
 
-        it.response.defer = defer
+        it.response.edit_message = edit
         await self.button(view, "Accept all").callback(it)
-        self.assertEqual(order[0], "defer")
+        self.assertEqual(
+            order[0], "answer"
+        )  # (Discord is answered with "working" before any change)
         self.assertEqual(order.count("add"), 8)
         it.edit_original_response.assert_awaited()
         self.assertIn("Done: 8 changed.", it.edit_original_response.await_args.kwargs["content"])
+
+    async def test_accept_shows_working_at_once_before_the_rule_is_added(self) -> None:
+        _, view = await self.offer()
+        it = self.interaction()
+        await self.button(view, "Review").callback(it)
+        step = it.response.edited[-1][1]
+        accepted = self.interaction()
+        order: list[str] = []
+        real_add, real_edit = self.store.add, accepted.response.edit_message
+
+        async def add(*args: Any, **kwargs: Any) -> Any:
+            order.append("add")
+            return await real_add(*args, **kwargs)
+
+        async def edit(**kw: Any) -> None:
+            order.append("working")
+            await real_edit(**kw)
+
+        self.store.add = add  # type: ignore[method-assign]
+        accepted.response.edit_message = edit
+        await self.button(step, "Accept").callback(accepted)
+        self.assertEqual(order[:2], ["working", "add"])
+        self.assertIn(hs.WORKING, accepted.response.edited[0][0])
+        self.assertIn("offer", accepted.response.edited[0][0])  # (the card as it was, kept)
+
+    async def test_a_failure_puts_the_card_back_so_it_can_be_pressed_again(self) -> None:
+        _, view = await self.offer()
+        it = self.interaction()
+        with patch.object(house_file_sync, "apply", AsyncMock(side_effect=RuntimeError("x"))):
+            await self.button(view, "Accept all").callback(it)
+        self.assertIn(hs.WORKING, it.response.edited[0][0])
+        self.assertEqual(it.response.edited[-1][0], "offer")  # (the card as it was)
+        it.followup.send.assert_awaited_with(hs.FAILED, ephemeral=True)
+
+    async def test_a_card_that_cannot_be_put_back_says_so(self) -> None:
+        _, view = await self.offer()
+        it = self.interaction()
+
+        async def broken(**kw: Any) -> None:
+            raise discord.HTTPException(SimpleNamespace(status=404, reason="x"), "gone")
+
+        it.edit_original_response = broken
+        with patch.object(house_file_sync, "apply", AsyncMock(side_effect=RuntimeError("x"))):
+            await self.button(view, "Accept all").callback(it)
+        it.followup.send.assert_awaited_with(hs.FAILED + hs.STUCK, ephemeral=True)
+
+    async def test_a_failure_after_the_result_is_shown_does_not_bring_the_old_card_back(
+        self,
+    ) -> None:
+        _, view = await self.offer()
+        it = self.interaction()
+        with patch.object(
+            file_ui, "send_after_change", AsyncMock(side_effect=RuntimeError("late"))
+        ):
+            await self.button(view, "Accept all").callback(it)
+        last = it.response.edited[-1][0]
+        self.assertIn(
+            "Added house rule 9.", last
+        )  # (the result stays; the old card is not put back)
+        self.assertNotEqual(last, "offer")
+        it.followup.send.assert_awaited_with(hs.FAILED, ephemeral=True)
+
+    async def test_a_long_card_keeps_the_working_line(self) -> None:
+        _, view = await self.offer()
+        it = self.interaction()
+        it.message.content = "x" * 1990
+        await self.button(view, "Accept all").callback(it)
+        self.assertTrue(it.response.edited[0][0].endswith(hs.WORKING))
+        self.assertLessEqual(len(it.response.edited[0][0]), 2000)
 
     async def test_a_few_changes_are_answered_in_one_step(self) -> None:
         _, view = await self.offer()
         it = self.interaction()
         await self.button(view, "Accept all").callback(it)
-        self.assertEqual(len(it.response.edited), 1)
+        # ("working" at once, then the result in the same card)
+        self.assertEqual(len(it.response.edited), 2)
+        self.assertIn(hs.WORKING, it.response.edited[0][0])
 
 
 class Reading(SyncTest):
@@ -637,11 +749,13 @@ class Menu(SyncTest):
 
 
 class Uploading(SyncTest):
-    def form(self, data: bytes | None, size: int | None = None) -> Any:
+    def form(
+        self, data: bytes | None, size: int | None = None, filename: str = "our-rules.txt"
+    ) -> Any:
         form = file_ui.UploadForm(campaign())
         attachment = SimpleNamespace(
             size=size or len(data or b""),
-            filename="our-rules.txt",
+            filename=filename,
             read=AsyncMock(return_value=data),
         )
         form.file.component._values = [attachment] if data is not None else []  # type: ignore[attr-defined]
@@ -677,11 +791,17 @@ class Uploading(SyncTest):
         none = self.interaction()
         await self.form(None).on_submit(none)
         self.assertIn("No file was added", none.followup.send.await_args.args[0])
-        big = self.form(b"x", size=file_ui.MAX_UPLOAD_BYTES + 1)
+        big = self.form(b"x", size=max_bytes_for("rules.txt") + 1)
         it = self.interaction()
         await big.on_submit(it)
         self.assertEqual(it.followup.send.await_args.args[0], hs.TOO_BIG)
         big.attachment.read.assert_not_awaited()
+        # a PDF has its own, larger limit, and its own words (#4001)
+        pdf_big = self.form(b"x", size=max_bytes_for("rules.pdf") + 1, filename="rules.pdf")
+        it = self.interaction()
+        await pdf_big.on_submit(it)
+        self.assertEqual(it.followup.send.await_args.args[0], hs.TOO_BIG_PDF)
+        pdf_big.attachment.read.assert_not_awaited()
 
     async def test_a_matching_file_and_a_junk_file_are_told(self) -> None:
         same = self.interaction()
@@ -716,6 +836,7 @@ class SessionStart(SyncTest):
             return object()
 
         self.real.post_message = post_message  # type: ignore[method-assign,assignment]
+        self.real.ask_privately = AsyncMock(return_value=False)  # type: ignore[method-assign]
 
     async def settle(self) -> None:
         for task in list(asyncio.all_tasks() - {asyncio.current_task()}):
@@ -726,7 +847,7 @@ class SessionStart(SyncTest):
         self.links.link = DOC
         got = fetch.Fetched(FILE.encode(), "link.txt")
         with patch.object(fetch, "fetch", AsyncMock(return_value=got)):
-            self.real._check_house_file(campaign(), SCREEN)
+            self.real._check_house_file(on_screen(), SCREEN)
             await self.settle()
         ((channel, text, view),) = self.posts
         self.assertEqual(channel, SCREEN)
@@ -735,18 +856,18 @@ class SessionStart(SyncTest):
         self.assertEqual(len(self.store.rules), 3)  # nothing changed by itself
 
     async def test_no_link_and_no_difference_post_nothing(self) -> None:
-        self.real._check_house_file(campaign(), SCREEN)
+        self.real._check_house_file(on_screen(), SCREEN)
         await self.settle()
         self.links.link = DOC
         same = fetch.Fetched(b"1. Keep\n2. Old\n3. Gone\n", "link.txt")
         with patch.object(fetch, "fetch", AsyncMock(return_value=same)):
-            self.real._check_house_file(campaign(), SCREEN)
+            self.real._check_house_file(on_screen(), SCREEN)
             await self.settle()
         self.assertEqual(self.posts, [])
 
     async def test_without_the_store_nothing_happens(self) -> None:
         self.real.house_file_links = None
-        self.real._check_house_file(campaign(), SCREEN)
+        self.real._check_house_file(on_screen(), SCREEN)
         await self.settle()
         self.assertEqual(self.posts, [])
 
@@ -754,12 +875,14 @@ class SessionStart(SyncTest):
         self.links.link = DOC
         error = fetch.LinkError("It isn't shared.")
         with patch.object(fetch, "fetch", AsyncMock(side_effect=error)):
-            self.real._check_house_file(campaign(), SCREEN)
+            self.real._check_house_file(on_screen(), SCREEN)
             await self.settle()
         ((_, text, view),) = self.posts
         self.assertIn("I couldn't read your house-rules file", text)
         self.assertNotIn(DOC, text)
-        self.assertIsNone(view)
+        self.assertEqual(
+            len(view.children), 0
+        )  # (no buttons: an empty view, as private_note sends)
 
 
 class Wiring(unittest.TestCase):
@@ -787,3 +910,32 @@ class Wiring(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class SessionStartPointer(SessionStart):
+    """With a DM Bot channel: the differences go privately, the channel gets a pointer only."""
+
+    async def test_the_channel_gets_a_pointer_and_the_dm_the_differences(self) -> None:
+        from dataclasses import replace
+
+        from dmbot.dm_screen.house_sync import HOUSE_FILE_POINTER
+
+        self.real.ask_privately = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        told: list[tuple[int, str]] = []
+
+        async def post(channel_id: int, text: str, **_: Any) -> bool:
+            told.append((channel_id, text))
+            return True
+
+        self.real.post = post  # type: ignore[method-assign,assignment]
+        self.links.link = DOC
+        got = fetch.Fetched(FILE.encode(), "link.txt")
+        mine = replace(campaign(), dm_screen_channel_id=SCREEN, dm_bot_channel_id=77)
+        with patch.object(fetch, "fetch", AsyncMock(return_value=got)):
+            self.real._check_house_file(mine, SCREEN)
+            await self.settle()
+        self.assertEqual(self.posts, [])  # (nothing on the screen)
+        asked = self.real.ask_privately.await_args
+        assert asked is not None
+        self.assertIn("1 to add", asked.args[2])
+        self.assertEqual(told, [(77, HOUSE_FILE_POINTER)])

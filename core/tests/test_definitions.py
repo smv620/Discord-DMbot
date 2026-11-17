@@ -47,6 +47,8 @@ RELEASED = {
     ("promised_by", 1): "614c63ec0cd9acef",  # who made a promise (#1674)
     ("promised_to", 1): "e1cb64b67f87e7be",  # who it was made to (#1674)
     ("in_thread", 1): "cbc940251441c3b4",  # who is in a story thread (#1662)
+    ("branch_of", 1): "8ea28c4a2882b241",  # a branch of a bigger thread (#4471)
+    ("clue_to", 1): "32514239fe9c3976",  # a clue to a story thread, the DM's alone (#4624)
     ("advances", 1): "fa3b7b2b0aae2deb",  # an event moved a thread (#1662)
     ("resolves", 1): "aa8c8c7d656fce4e",  # an event ended a thread (#1662)
     ("associated_with", 1): "9b1afee4b882cde9",  # the catch-all for a refused term (#1303)
@@ -61,6 +63,8 @@ RELEASED = {
     ("founded", 1): "453344314eeb9f97",
     ("captive_of", 1): "60efcb060e24ab3f",
     ("contains", 1): "c50a7cc648af878b",
+    ("next_to", 1): "511ce390352a2d8b",  # two places beside each other (#4173 slice 6a)
+    ("route_to", 1): "f853ef8028cf0b55",  # two places with a way between them (#4173 slice 6d)
     ("disguised_as", 1): "be30056c2bb8d27f",  # one character posing as another (#3091)
     ("travels_with", 1): "fc30c06e5f1d3759",  # a companion goes with a PC or the party (#3176)
 }

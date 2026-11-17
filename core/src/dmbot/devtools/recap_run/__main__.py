@@ -49,7 +49,7 @@ import shutil
 import sys
 import tempfile
 import time
-from collections.abc import Awaitable, Callable, Collection, Sequence
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
@@ -415,6 +415,28 @@ def names_a_secret_anywhere(job: Job, inputs: pl.Inputs) -> bool:
     return names_a_secret(text, inputs.secret_names, inputs.allowed_names)
 
 
+WHY_MAX = 160  # characters of the reason a stopped run says on stderr
+
+
+def why_stopped(out: Outcome) -> str:
+    """One line for stderr when a run did not finish (#4543): the state, the stage's reason and
+    nothing of the session. The report says the same on stdout, which a caller (the sample run)
+    swallows because it holds the recap's words; this line holds none of them, so it shows.
+    `last_error` and `stopped` are fixed words today (the pipeline's own sentences, the check kinds
+    and the allowance line): they must stay that way, or this line would carry story words."""
+    said = out.stopped or out.job.last_error or "no reason recorded"
+    reason = " ".join(said.split())[:WHY_MAX]
+    return f"recap_run: the recap did not finish (state {out.job.state}): {reason}"
+
+
+def exit_code(out: Outcome) -> int:
+    """0 for a recap that is ready, else 1 after saying why on stderr (#4543)."""
+    if out.job.state == "ready":
+        return 0
+    print(why_stopped(out), file=sys.stderr)
+    return 1
+
+
 def report(out: Outcome, prices: dict[str, tuple[float, float]], *, show: bool = True) -> list[str]:
     """The terminal report. A recap that names a secret is refused, not printed."""
     job = out.job
@@ -669,6 +691,12 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "call that the estimate does not include. Counts only, so it can be posted; run on the "
         "fixed set before and after a writer change (#3328)",
     )  # fmt: skip
+    parser.add_argument(
+        "--by-rank", action="store_true",
+        help="with --session: pick the beats by the names' importance rank first, as the bot does "
+        "with DMBOT_RECAP_BY_RANK on (#3172). For the before-and-after, score the fixed set once "
+        "without it and once with it",
+    )  # fmt: skip
     parser.add_argument("--audio", action="store_true", help="also make the narration and music")
     parser.add_argument("--keep", action="store_true", help="keep the result as a draft recap row")
     parser.add_argument("--yes", action="store_true", help="spend the money")
@@ -720,6 +748,8 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         args.score and (args.compare or args.review or args.golden)
     ):
         parser.error("--score goes with --session or --transcript only")
+    if args.by_rank and not args.session:
+        parser.error("--by-rank goes with --session only (a file has no story memory to rank)")
     if args.out and not (args.transcript or args.compare or args.session):
         parser.error("--out goes with --session, --transcript or --compare")
     if args.hours is not None and not 0.25 <= args.hours <= 24:
@@ -867,6 +897,8 @@ async def _main_async(args: argparse.Namespace) -> int:
             return 0
         rows, clean = await run_golden(fast, careful, models, prices)
         print("\n".join(rows))
+        if not clean:
+            print("recap_run: the golden set had a failure: see the rows above", file=sys.stderr)
         return 0 if clean else 1
     if args.transcript:
         return await _transcript(args, fast, careful, models, prices)
@@ -884,12 +916,13 @@ async def _score_recap(args: argparse.Namespace) -> int:
             print(f"recap_run: {path} is not a file", file=sys.stderr)
             return 2
     if not args.yes:
-        print("One AI call to score the recap. Nothing was run. Add --yes to spend the money.")
+        print("Two AI calls to score the recap. Nothing was run. Add --yes to spend the money.")
         return 0
     got = clients_from_env()
     if got is None:
         return 2
-    _, careful, _ = got
+    _, careful, models = got
+    scoring = Counting(careful, models[1])
     try:
         recap_text, beats_text = await asyncio.to_thread(sc.read_texts, recap, beats)
         script_text = (
@@ -897,11 +930,12 @@ async def _score_recap(args: argparse.Namespace) -> int:
             if args.script
             else ""
         )
-        lines = await sc.score_recap_file(recap_text, beats_text, [], careful, script_text)
+        lines = await sc.score_recap_file(recap_text, beats_text, [], scoring, script_text)
     except OSError as exc:  # the kind only: never the path's contents
         print(f"recap_run: could not read a file ({type(exc).__name__})", file=sys.stderr)
         return 2
     print("\n".join(lines))
+    print("\n" + scoring_line(scoring, prices_of(args.price, models)))
     return 0
 
 
@@ -967,11 +1001,13 @@ def _golden_inputs(session: object) -> pl.Inputs:
     )  # fmt: skip
 
 
-async def inputs_for(db: Any, gid: int, cid: str, at: int) -> pl.Inputs:
+async def inputs_for(db: Any, gid: int, cid: str, at: int, *, by_rank: bool = False) -> pl.Inputs:
     """The recap inputs of one stored session, read the way the bot reads them (every store on
-    this one database, each read scoped to the server by `Database.guild`). Raises `NotLoaded` with
-    the reason (#2680)."""
+    this one database, each read scoped to the server by `Database.guild`), the names' connection
+    scores included (#2411). `by_rank`: also each name's importance rank, as the bot does with
+    DMBOT_RECAP_BY_RANK on (#3172 slice 4). Raises `NotLoaded` with the reason (#2680)."""
     from dmbot.campaigns.store import CampaignStore
+    from dmbot.memory.importance import ImportanceCache
     from dmbot.memory.lookup import LookupCache
     from dmbot.memory.store import MemoryStore
     from dmbot.recaps.inputs import load_inputs_or_why
@@ -980,9 +1016,10 @@ async def inputs_for(db: Any, gid: int, cid: str, at: int) -> pl.Inputs:
     from dmbot.timebot.store import ClockStore
     from dmbot.transcript.store import TranscriptStore
 
+    memory = MemoryStore(db)
     return await load_inputs_or_why(
         campaigns=CampaignStore(db),
-        lookup=LookupCache(MemoryStore(db)),
+        lookup=LookupCache(memory),
         transcripts=TranscriptStore(db),
         recaps=RecapStore(db),
         clocks=ClockStore(db),
@@ -991,6 +1028,7 @@ async def inputs_for(db: Any, gid: int, cid: str, at: int) -> pl.Inputs:
         session_at=at,
         styles=StyleStore(db),
         musts=MustStore(db),
+        importance=ImportanceCache(memory, ranks_on=by_rank),
     )
 
 
@@ -1041,7 +1079,7 @@ async def _session(
         recaps = RecapStore(db)
         campaigns = CampaignStore(db)
         try:
-            inputs = await inputs_for(db, gid, cid, at)
+            inputs = await inputs_for(db, gid, cid, at, by_rank=args.by_rank)
         except NotLoaded as why:
             print(f"recap_run: {not_loaded_line(why, gid, cid, at)}", file=sys.stderr)
             return 2
@@ -1085,10 +1123,11 @@ async def _session(
         lines = report(out, prices)
         if lines == [REFUSED]:
             print(REFUSED)
+            print("recap_run: the recap named a secret and was not printed", file=sys.stderr)
             return 3
         print("\n".join(lines))  # the paid text report first: nothing below can lose it
         if args.score:
-            print("\n".join(await _score(out, careful)))
+            print("\n".join(await _scored(out, careful, prices)))
         folder = Path(args.out) if args.out else None
         if folder is not None:  # the text is saved before the audio can fail
             save_text(folder, out, lines, names_given=False)
@@ -1109,7 +1148,7 @@ async def _session(
                 if made
                 else "A recap of that session already exists; not changed."
             )
-        return 0 if out.job.state == "ready" else 1
+        return exit_code(out)
     finally:
         await db.close()
 
@@ -1243,7 +1282,7 @@ async def _transcript(
     except EOFError:  # nobody is there to answer (a pipe, a scheduled run): that is a no
         answer = ""
     if not tf.consent_given(answer):
-        print("recap_run: stopped. Nothing was sent to any service.")
+        print("recap_run: stopped. Nothing was sent to any service.", file=sys.stderr)
         return 4
     folder = Path(args.out) if args.out else None
     if folder is not None and folder.is_dir():
@@ -1257,10 +1296,11 @@ async def _transcript(
     lines = report(out, prices)
     if lines == [REFUSED]:
         print(REFUSED)
+        print("recap_run: the recap named a secret and was not printed", file=sys.stderr)
         return 3
     print("\n".join(lines))  # the paid text report first: nothing below can lose it
     if args.score:
-        print("\n".join(await _score(out, careful)))
+        print("\n".join(await _scored(out, careful, prices)))
     printed = list(lines)
     if out.job.state == "ready":
         cues = _cue_lines(out)
@@ -1278,7 +1318,7 @@ async def _transcript(
     if folder is not None:
         save_text(folder, out, printed, names_given=bool(names))
         print(f"\nReview page: {rv.write_page(folder)} (open it in a browser).")
-    return 0 if out.job.state == "ready" else 1
+    return exit_code(out)
 
 
 def _length_line(args: argparse.Namespace, transcript: tf.Transcript, inputs: pl.Inputs) -> str:
@@ -1317,6 +1357,27 @@ def voice_tags_on() -> bool:
     return os.environ.get("DMBOT_RECAP_VOICE_TAGS", "1").lower() in ("1", "true", "on")
 
 
+def scoring_line(scoring: Counting, prices: Mapping[str, tuple[float, float]]) -> str:
+    """The scoring's own calls, tokens and spend (#4556): the report's "Calls" line is the recap's
+    and is printed before the scoring runs, so the scoring says its own. Numbers only."""
+    spend = dollars(
+        prices.get(scoring.model), scoring.input_tokens, scoring.output_tokens, scoring.model
+    )
+    return (
+        f"Scoring: {scoring.calls} calls; tokens in {scoring.input_tokens}, "
+        f"out {scoring.output_tokens}; spend {spend}"
+    )
+
+
+async def _scored(
+    out: Outcome, careful: Client, prices: Mapping[str, tuple[float, float]]
+) -> list[str]:
+    """`_score`, with its calls counted and a line saying what they cost."""
+    scoring = Counting(careful, out.careful.model)
+    lines = await _score(out, scoring)
+    return [*lines, "", scoring_line(scoring, prices)]
+
+
 async def _score(out: Outcome, careful: Client) -> list[str]:
     """`--score`: the must-have counts of a recap that is ready (#3328)."""
     from dmbot.devtools.recap_run import score as sc
@@ -1325,7 +1386,12 @@ async def _score(out: Outcome, careful: Client) -> list[str]:
         return ["", "Must-haves: nothing to score, the run did not finish."]
     sheet = out.job.beats if isinstance(out.job.beats, list) else None  # what it was written from
     return await sc.score(
-        out.job.summary, sheet, out.inputs.musts, final_checks(out.job, out.inputs), careful
+        out.job.summary,
+        sheet,
+        out.inputs.musts,
+        final_checks(out.job, out.inputs),
+        careful,
+        examples=list(out.inputs.style),
     )
 
 

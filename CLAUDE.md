@@ -135,10 +135,13 @@ CI runs all of the above on every pull request. Never merge red CI.
   had no branch to run on, so merges went one per CI cycle). It is never merged or deployed: it
   only carries the CI run, and the PRs then merge as themselves.
   **Supervisor's own docs-only PRs** (owner, 2026-10-10): a PR by Supervisor that changes
-  only `docs/PLAN.md`, `docs/STORY_MEMORY.md` or `CLAUDE.md` merges on Supervisor's
+  only documentation merges on Supervisor's
   "Supervisor review: approved" on its current head, plus RepoManager's compliance check
   and green CI. That approval is the design review: never hold it as "self-approval", and
   don't wait for the owner. A compliance problem goes back to Supervisor like any send-back.
+  **Documentation is Supervisor's to update** (owner, 2026-11-15): `docs/` (everything except the three
+  testing logs, which stay dev1's, and `docs/design/`, which is the Expert's), `README.md` and `CLAUDE.md`.
+  Code, tests and website words stay with the developers, and Supervisor reviews them.
   **How an approval is recorded** (owner, 2026-10-10, after approvals were misread):
   Supervisor's verdict is a **PR review** (event COMMENT) on the exact head commit, whose
   body starts "Supervisor review: approved" or "Supervisor review: changes needed", plus the
@@ -243,6 +246,26 @@ dev1 as a note on the issue.
   CloudDev-lead keeps the rest of `core/`. Before working in a file the other owns, each checks
   the other's open PRs there and agrees the order on the issue.
 
+- **Expert** (owner, 2026-11-12; label `session: Expert`): an **on-demand architect and design
+  consultant** on the most capable (and most expensive) model. It **guides the designs** and is
+  consulted for **major design changes**: architecture-level decisions where a wrong choice means
+  rework (the MapBot map layers, graph and data modelling, ML pipelines). **Never** for debugging,
+  reviews, management or smaller issues: those stay with the leads and Supervisor. **It has no
+  schedule and is woken only by Supervisor's message**; no other session messages it.
+  - **Design notes:** it answers a question with one note on the issue Supervisor names
+    ("Expert design note: …"); Supervisor rules on it as for any design note.
+  - **Design basis documents:** it writes the guidance the developers then follow, as Markdown in
+    **`docs/design/`** (one file per topic, for example `docs/design/mapbot_layers.md`): the problem,
+    the decision and its reasons, the alternatives rejected, the rules developers must keep, the
+    slice order, and the open questions. It opens them as **docs-only PRs** that change nothing but
+    `docs/design/`. Supervisor reads each until it is clearly understood (asking the Expert on the PR
+    when not), records the ruling, and approves; it merges on Supervisor's approval, RepoManager's
+    compliance check and green CI, like Supervisor's own docs-only PRs. Once merged, a design basis
+    is binding: a design note or PR that departs from it says so and needs Supervisor's ruling, and
+    a major change goes back to the Expert to revise the document first.
+  - It writes no application code, reviews or merges nothing and manages nobody. Supervisor still
+    oversees the project and decides when the Expert is worth its cost.
+
 - **Supervisor** (Claude Code in the cloud; took over from the Master Web Session,
   `session: web`, on 2026-10-08): **runs the project and is the owner's point of
   contact.** It owns the architecture, the design, `docs/PLAN.md` and this file, the
@@ -253,7 +276,8 @@ dev1 as a note on the issue.
   "Supervisor review: changes needed" with a numbered list. A send-back says what is
   wrong, where, why it matters, what to change and how to prove it. Scope questions from
   any session go in the issue; Supervisor answers there. **Supervisor writes no
-  application code:** anything that needs code becomes an issue for a developer. It
+  application code:** anything that needs code becomes an issue for a developer. It keeps the
+  documentation up to date itself (see "Documentation is Supervisor's to update" above). It
   never deploys, touches the live server or merges code PRs (log-only PRs excepted).
   **Nothing waits on the owner except live testing at a table with real people and
   recordings the owner makes on their own time.** Architecture, design, scope,
@@ -571,6 +595,13 @@ terminal output or Discord screenshots copied to it.
     DMbot keeps one copy per address, and campaigns point to it. A pack may carry these pointers; a
     following campaign must approve each site first. Every entry records its source. See
     docs/PLAN.md, "Homebrew (part 2)".
+  - **Maps and pictures** (owner, 2026-11-12; `docs/design/mapbot_layers.md`, section 3): when a
+    map is found, in Discord or on the website, its uploader is asked once whether they may use it
+    and let DMbot keep it in this campaign. DMbot does no review of its own and goes by the answer;
+    who said yes and when is recorded on the map. No keeps nothing but the transcript line. A
+    player's yes stores the map, but DMbot reads it into the graph, positions or answers only after a
+    DM's yes. A map stays in that one campaign, a DM can remove it, and it goes with the campaign or
+    with its poster's own deletion. The terms page says the same (#4275).
   - **Everything else:** without that confirmation, nothing is bulk-copied into the
     database or prompts; send only short, relevant excerpts per query (rules lookups
     without a shared rulebook, D&D Beyond).

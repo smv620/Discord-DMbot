@@ -36,9 +36,14 @@ const SCRIPTED = new Set([
   "account/campaigns.html", // a campaign's own page (#2416)
   "account/npc.html", // an NPC's page and my notes (#2266)
   "account/pictures.html", // the Pictures page (#3276)
+  "account/maps.html", // the Maps page (#4347)
+  "account/players.html", // People you play with (#4226)
+  "new.html", // the start-up wizard (#3956)
   "handover.html", // the hand-over accept page (#2534)
   "r.html", // a shared recap (#2119): the island that reads the recap by its link
   "help.html",
+  "help/questions.html", // the same search box (#4235)
+  "help/snags.html", // the same search box (#4235)
   "hello.html",
   "admin.html",
   "pricing.html",
@@ -82,4 +87,4 @@ if (problems.length > 0) {
   console.error(problems.join("\n"));
   process.exit(1);
 }
-console.log("Every inline script is allowed by its hash; only /account, /account/recaps, /account/house-rules, /account/homebrew, /account/sharing, /account/timeline, /account/transcripts, /account/import, /account/lore, /account/recap-style, /account/names, /account/questions, /account/web, /account/campaigns, /account/npc, /account/pictures, /handover, /hello, /help, /admin, /pricing and /unsubscribe have scripts.");
+console.log("Every inline script is allowed by its hash; only /account, /account/recaps, /account/house-rules, /account/homebrew, /account/sharing, /account/timeline, /account/transcripts, /account/import, /account/lore, /account/recap-style, /account/names, /account/questions, /account/web, /account/campaigns, /account/npc, /account/pictures, /account/maps, /handover, /hello, /help, /admin, /pricing and /unsubscribe have scripts.");

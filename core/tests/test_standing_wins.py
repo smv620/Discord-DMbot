@@ -185,7 +185,7 @@ class TheStoreReader(NamesTest):
         )
         for eid in (self.bel, self.cer):  # (players know both, so a player is shown the card)
             await self.memory.set_hidden_from_players(
-                GUILD, self.campaign.id, eid, False, source="dm"
+                GUILD, self.campaign.id, eid, False, source="dm", dm_chose_secret=True
             )
         lookup = CampaignLookup.build(await self.memory.lookup_data(GUILD, self.campaign.id))
         links = await self.memory.relations(GUILD, self.campaign.id, entity_id=self.bel)

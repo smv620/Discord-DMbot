@@ -134,6 +134,26 @@ TOLD_EXPIRED = (
     "**{name}** didn't answer your offer of **{campaign}** within {days} days, so it ended. "
     + _OFFER_AGAIN
 )
+# An offer closed because a Discord account was added to or taken off an account (#2533, slice 3;
+# Supervisor's words, 2026-11-15). The pair is chosen by whose account changed. Nothing moved.
+_OFFER_AGAIN_BUTTON = "To offer it again, press 🤝 Hand over."
+CLOSED_DM_TO_DM = (
+    "📪 Your offer to hand over **{campaign}** was closed, because the Discord accounts on your "
+    "DMbot account changed. Nothing moved. " + _OFFER_AGAIN_BUTTON
+)
+CLOSED_DM_TO_RECEIVER = (
+    "📪 The offer to hand over **{campaign}** to you was closed, because the Discord accounts on "
+    "the DM's DMbot account changed. Nothing moved. Ask the DM to offer it again if you still "
+    "want it."
+)
+CLOSED_RECEIVER_TO_DM = (
+    "📪 Your offer to hand over **{campaign}** was closed, because the Discord accounts on the "
+    "other person's DMbot account changed. Nothing moved. " + _OFFER_AGAIN_BUTTON
+)
+CLOSED_RECEIVER_TO_RECEIVER = (
+    "📪 The offer to hand over **{campaign}** to you was closed, because the Discord accounts on "
+    "your DMbot account changed. Nothing moved. Ask the DM to offer it again if you still want it."
+)
 # An offer made by email (#2532; PLAN): there is no name, and the campaign never moved.
 TOLD_EXPIRED_EMAIL = (
     "They didn't answer within {days} days, so the offer ended. The campaign is still yours. "
@@ -639,20 +659,28 @@ async def _tell_person(guild: discord.Guild, user_id: int, text: str) -> None:
         await member.send(text, allowed_mentions=NO_PINGS)
 
 
+# What the DM Bot channel hears of a hand-over's answer (#3874): the fact, never who or which.
+HANDOVER_POINTER = "🔁 A campaign hand-over was answered. The details are in your private message."
+
+
 async def _tell_screen(interaction: discord.Interaction, campaign: Campaign, text: str) -> None:
-    """The outcome in the campaign's #dm-screen as well (best effort: the answer stands
-    either way). Only from a process that serves the server: another one has no copy of
-    the channel, and the private message to the owner still says it."""
-    post = getattr(interaction.client, "post", None)
-    if campaign.dm_screen_channel_id is None or post is None:
-        return
+    """The outcome noted for the campaign's DMs as well (best effort: the answer stands either
+    way). It names people, so the DMs get it privately and the DM Bot channel a pointer (#3874);
+    the #dm-screen only where the client has no such sender. Only from a process that serves the
+    server: another one has no copy of the channel, and the private message to the owner still
+    says it. The DMs include the two people already told: this is the campaign's record."""
     if interaction.client.get_guild(campaign.guild_id) is None:  # served elsewhere
         return
+    note = getattr(interaction.client, "tell_dms_with_pointer", None)
+    post = getattr(interaction.client, "post", None)
     try:
-        await post(campaign.dm_screen_channel_id, text)  # logs a Discord failure itself
+        if note is not None:
+            await note(campaign, text, HANDOVER_POINTER)
+        elif post is not None and campaign.dm_screen_channel_id is not None:
+            await post(campaign.dm_screen_channel_id, text)  # logs a Discord failure itself
     except Exception:
         with log_context(guild_id=campaign.guild_id, campaign_id=campaign.id):
-            log.warning("Couldn't note a hand-over answer on the DM screen", exc_info=True)
+            log.warning("Couldn't note a hand-over answer to the DMs", exc_info=True)
 
 
 async def _offer_guild(interaction: discord.Interaction, guild_id: int) -> discord.Guild | None:

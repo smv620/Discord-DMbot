@@ -140,7 +140,12 @@ class AudienceMenu(_Menu):
             return
         try:
             await memory.set_audience_limited(
-                campaign.guild_id, campaign.id, self.clue_id, not clue.audience_limited, source=DM
+                campaign.guild_id,
+                campaign.id,
+                self.clue_id,
+                not clue.audience_limited,
+                source=DM,
+                dm_chose_secret=True,
             )
         except MemoryRuleError as exc:
             await show_audience(interaction, self.campaign_id, self.clue_id, note=f"⚠️ {exc}")
@@ -161,7 +166,7 @@ class AudienceMenu(_Menu):
         name = self.who.get(who, "They")
         try:
             written = await memory.remove_knower(
-                campaign.guild_id, campaign.id, self.clue_id, who, source=DM
+                campaign.guild_id, campaign.id, self.clue_id, who, source=DM, dm_chose_secret=True
             )
         except MemoryRuleError as exc:
             await show_audience(interaction, self.campaign_id, self.clue_id, note=f"⚠️ {exc}")

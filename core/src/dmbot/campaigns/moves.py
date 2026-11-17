@@ -83,6 +83,9 @@ LOCKED_TABLES = (
     "setting_actions",
     "said_as_hears",
     "said_as_listens",
+    "script_makes",
+    "trait_answers",
+    "upload_undos",
     "picture_actions",
     "speaker_removals",
 )
@@ -95,6 +98,9 @@ WORKED_TABLES = (
     "setting_actions",
     "said_as_hears",
     "said_as_listens",
+    "script_makes",
+    "trait_answers",
+    "upload_undos",
     "picture_actions",
     "speaker_removals",
 )
@@ -332,7 +338,11 @@ class HandoverMover:
         if await cur.fetchone() is not None:
             raise Refused(SHARES_RULES)
         # The plan is checked now, not when they accepted: it may have lapsed since.
-        if not await campaign_cap.has_paid_room_for_one_more(conn, offer.to_user_id, now):
+        # (their plan is the account's: the offer may name any login of it, #2533)
+        to_account = await self._store.account_for(conn, offer.to_user_id)
+        if to_account is None or not await campaign_cap.has_paid_room_for_one_more(
+            conn, to_account, now
+        ):
             raise Refused(NO_PAID_ROOM)
         # The offer has done its work and goes (it is keyed to the campaign, which leaves).
         await conn.execute(

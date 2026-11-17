@@ -146,7 +146,14 @@ class TheWorker(NamesTest):
         shaped = [ctx.step for shaping, ctx in seen if shaping]
         self.assertTrue(first and shaped)
         self.assertTrue(all(step.startswith("Reading it.") for step in first))
-        self.assertTrue(all(step.startswith("Finding names. (part ") for step in shaped))
+        # (the shaping calls, and the story threads' one call at the end, #4453)
+        self.assertTrue(
+            all(
+                step.startswith(("Finding names. (part ", "Finding how they connect."))
+                for step in shaped
+            )
+        )
+        self.assertTrue(any(step.startswith("Finding names. (part ") for step in shaped))
         self.assertIsNone(ai_feed._current.get())
 
     def test_the_step_words_are_the_pages_and_hold_counts_only(self) -> None:
@@ -187,6 +194,14 @@ class TheWorker(NamesTest):
         self.bot.background_ai = None
         await self.work()
         self.assertEqual((await self.row(uid))["error"], q.NO_AI)
+
+    async def test_a_campaign_with_a_read_running_is_skipped_and_others_are_not(self) -> None:
+        """(#4551: several reads on one server, one a campaign)"""
+        await self.add()
+        self.assertIsNone(await self.queue.claim_next(GUILD, not_campaigns=[self.campaign.id]))
+        claim = await self.queue.claim_next(GUILD, not_campaigns=["f" * 32])
+        assert claim is not None
+        self.assertEqual(claim.campaign_id, self.campaign.id)
 
     async def test_a_claim_taken_again_is_not_read_twice(self) -> None:
         uid = await self.add()

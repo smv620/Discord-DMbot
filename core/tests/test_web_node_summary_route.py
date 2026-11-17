@@ -59,7 +59,7 @@ class NodeSummary(Web):
         """Say exactly who knows one entry or connection (new things start out told to the player
         characters, so the tests set it themselves)."""
         await self.memory.set_statement_knowers(
-            self.g, self.one.id, kind, statement, who, source=DM_SOURCE
+            self.g, self.one.id, kind, statement, who, source=DM_SOURCE, dm_chose_secret=True
         )
 
     async def from_nothing(self) -> None:

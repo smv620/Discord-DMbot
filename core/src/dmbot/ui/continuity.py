@@ -50,8 +50,9 @@ _FINAL = (GONE, STOPPED_NOW, ODD_NOW)  # answers that end a heads-up without a c
 
 
 def waiting_text(count: int, pinned: int = 0) -> str:
-    """For the DM screen after a session: how many, never what. `pinned`: how many of them go
-    against something the DM pinned as 100% truth (#2447), said as a number only."""
+    """For the DM Bot channel (else the DM screen) after a session: how many, never what.
+    `pinned`: how many of them go against something the DM pinned as 100% truth (#2447), said as
+    a number only."""
     what = "heads-up" if count == 1 else "heads-ups"
     off = f" 📌 {pinned} {'goes' if pinned == 1 else 'go'} against a pin." if pinned else ""
     return (

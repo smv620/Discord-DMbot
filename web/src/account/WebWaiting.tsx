@@ -8,8 +8,9 @@
 // is read again after, so what shows is always the API's own.
 import { useEffect, useRef, useState } from "preact/hooks";
 
-import { waitingWords as w } from "../content/web-waiting";
-import { ApiError, type AccountApi, type Waiting, type WaitingAnswer, type WaitingLook } from "./api";
+import { handBracket, handKeeps } from "../content/hand-over-words";
+import { differs, waitingWords as w } from "../content/web-waiting";
+import { ApiError, type AccountApi, type Waiting, type WaitingAnswer, type WaitingBackstory, type WaitingLook } from "./api";
 import { currentItem, itemDomId, openItem, pairFromItem } from "./itemLink";
 import WaitingBulk from "./WaitingBulk";
 import { itemWords } from "../content/item-words";
@@ -42,9 +43,41 @@ function waitShown(sending: { since: number; stage: string; keepAll: boolean; lo
 /** Capitalises a line that opens a sentence, so "she grew up with Rook" reads "She grew up with Rook". */
 const startCap = (line: string): string => line.charAt(0).toUpperCase() + line.slice(1);
 
+/** The bracket for an item that changed hands, "Claude sold it", or "" for a plain connection or a previous holder the page cannot name. */
+const bracketOf = (b: Waiting["backstory"][number]): string => (b.handOver && b.handOverName ? handBracket(b.handOver, b.handOverName) : "");
+/** The "Proposed:" line (#4429): on an update only the words that differ from "Now" are bold and the names are plain; on a new card the names are
+ * bold and the connection plain, as nothing is compared. */
+function proposedOf(b: WaitingBackstory, hand: string) {
+  if (!b.now) {
+    return (
+      <>
+        {w.proposedLabel}
+        <strong>{b.subject}</strong> {b.how} <strong>{b.object}</strong>
+        {hand}
+      </>
+    );
+  }
+  const d = differs(b.now.how, b.how);
+  return (
+    <>
+      {w.proposedLabel}
+      {b.subject} {d.before && `${d.before} `}
+      {d.bold && <strong>{d.bold}</strong>}
+      {d.bold && d.after && " "}
+      {d.after && (d.bold ? d.after : `${d.after} `)}
+      {d.bold && " "}
+      {b.object}
+      {hand}
+    </>
+  );
+}
+
+const handOf = bracketOf; // (no switch: the fields only arrive with the door that sends them, 0436)
 const KEEP_ALL_MAX = 50; // the API keeps at most this many named in one Keep all
 
-type Said = { ok: boolean; text: string; n: number } | null;
+type Said = { ok: boolean; text: string; n: number; more?: string } | null;
+/** What an answer said back: how many it kept, and whether the bot showed or kept hidden the connection (#3974, #3986). */
+type Answered = { kept?: number; shown?: number; held?: number; scene?: number; split?: number };
 
 const errorWords = (error: unknown): string => {
   if (error instanceof ApiError) return w.errors[error.kind] ?? w.errors.other!;
@@ -63,6 +96,8 @@ export default function WebWaiting({
 }) {
   const [list, setList] = useState<Waiting | null>(null);
   const [failed, setFailed] = useState(false);
+  // The DM's change to "can players see it?" on a connection card, by item id; nothing is saved until Add it or Update it (#4430).
+  const [flip, setFlip] = useState<Record<string, boolean>>({});
   const [sending, setSending] = useState<{ since: number; stage: string; keepAll: boolean; look: WaitingLook | null } | null>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   // A private message's "Open on the website" names one waiting item (#3663): it is opened once the list is here, or the page
@@ -117,7 +152,7 @@ export default function WebWaiting({
 
   async function send(
     answer: WaitingAnswer,
-    ok: string | ((kept?: number) => string),
+    ok: string | ((got: Answered) => string),
     stage: string = w.savingStage,
   ): Promise<void> {
     if (!api.answerWaiting || inFlight.current) return;
@@ -127,7 +162,11 @@ export default function WebWaiting({
     setSaid(null);
     try {
       const got = await api.answerWaiting(campaignRef, answer, (look) => setSending((now) => (now ? { ...now, look } : now)));
-      setSaid({ ok: true, text: typeof ok === "function" ? ok(got.kept) : ok, n: ++counter.current });
+      // A yes on one connection says whether it was shown to the players or kept hidden (the second line).
+      const more = answer.kind === "claim" && answer.action === "confirm"
+        ? got.shown ? w.shownOne : got.held ? w.heldOne : got.scene ? w.sceneOne : got.split ? w.splitOne : undefined
+        : undefined;
+      setSaid({ ok: true, text: typeof ok === "function" ? ok(got) : ok, n: ++counter.current, ...(more ? { more } : {}) });
       onChanged?.();
     } catch (error) {
       setSaid({ ok: false, text: errorWords(error), n: ++counter.current });
@@ -192,6 +231,11 @@ export default function WebWaiting({
       <p class={said?.ok ? "ok" : "visually-hidden"} role="status">
         {said?.ok ? <span key={said.n}>{said.text}</span> : ""}
       </p>
+      {said?.ok && said.more ? (
+        <p class="ok" role="status">
+          <span key={`${said.n}-more`}>{said.more}</span>
+        </p>
+      ) : null}
       <p class={said && !said.ok ? "warn" : "visually-hidden"} role="alert">
         {said && !said.ok ? <span key={said.n}>{said.text}</span> : ""}
       </p>
@@ -455,7 +499,8 @@ export default function WebWaiting({
           <h4>{w.backstoryHeading}</h4>
           <p class="small">{w.backstoryNote}</p>
           {uploads.map((u) => {
-            const ready = u.items.filter((b) => b.ready);
+            // (Keep all leaves out a hand-over and DMbot's own guess: only the DM's own press keeps those, as on Discord)
+            const ready = u.items.filter((b) => b.ready && !handOf(b) && !b.guess);
             const ids = ready.slice(0, KEEP_ALL_MAX).map((b) => b.id);
             const left = ready.length - ids.length;
             return (
@@ -469,73 +514,68 @@ export default function WebWaiting({
                       disabled={busy}
                       onClick={() =>
                         void send({ kind: "backstory", action: "keep_all", ids },
-                          (kept) => (left > 0 && kept !== undefined ? w.keepAllCut(kept, left) : w.kept(kept)),
+                          (got) => (left > 0 && got.kept !== undefined ? w.keepAllCut(got.kept, left) : w.kept(got.kept)),
                           w.keepingStage(ids.length),
                         )
                       }
                     >
                       {w.keepAll(ids.length)}
                     </button>
+                    <span class="small muted">{w.keepAllPlayers}</span>
                   </div>
                 )}
-                {u.items.map((b) => (
+                {u.items.map((b) => {
+                  // Q2 (#4430): who sees it. A secret name is always hidden; an update starts as it is now; a new one starts shown.
+                  const hidden = b.secret ? true : (flip[b.id] ?? b.now?.hidden ?? false);
+                  const answer = (action: "keep" | "skip") =>
+                    action === "skip"
+                      ? ({ kind: "backstory", action: "skip", id: b.id } as const)
+                      : ({ kind: "backstory", action: "keep", id: b.id, ...(b.secret ? {} : hidden ? { secret: true } : b.now?.hidden ? { secret: false } : {}) } as const);
+                  return (
                   <div key={b.id} class="panel" id={itemDomId(b.id)} tabIndex={-1}>
-                    <p id={`wb-${b.id}`}>{`${b.subject} ${b.how} ${b.object}`}</p>
+                    {b.now && <p class="small">{w.nowLine(b.subject, b.now.how, b.object)}</p>}
+                    <p id={`wb-${b.id}`}>{proposedOf(b, handOf(b) ? ` (${handOf(b)})` : "")}</p>
                     {b.check && <p class="small muted">{w.checkLine(b.check)}</p>}
-                    {b.quote && <p class="muted small">“{b.quote}”</p>}
-                    {b.secret && <p class="small">{w.secretNote}</p>}
+                    {b.guess && <p class="small">{w.guessLine(b.guess)}</p>}
+                    {b.quote && <p class="muted small">{w.fromText(b.quote)}</p>}
+                    {handOf(b) && b.ready && <p class="small">{handKeeps(b.handOver!, b.handOverName!, b.secret)}</p>}
+                    <p class="small">{b.secret ? w.playersSecretName : b.now ? w.playersUpdate(b.now.hidden, hidden) : w.playersNew(hidden)}</p>
                     {b.ready ? (
-                      <div class="row">
-                        <button
-                          type="button"
-                          class="button"
-                          disabled={busy}
-                          aria-describedby={`wb-${b.id}`}
-                          onClick={() => void send({ kind: "backstory", action: "keep", id: b.id }, w.done.keep)}
-                        >
-                          {b.secret ? w.keepIsSecret : w.keep}
-                        </button>
-                        {!b.secret && (
-                          <button
-                            type="button"
-                            class="button secondary"
-                            disabled={busy}
-                            aria-describedby={`wb-${b.id}`}
-                            onClick={() =>
-                              void send({ kind: "backstory", action: "keep", id: b.id, secret: true }, w.done.keepSecret)
-                            }
-                          >
-                            {w.keepSecret}
+                      <>
+                        <p class="small">{b.now ? w.nothingChangesUpdate : w.nothingChangesAdd}</p>
+                        <div class="row">
+                          <button type="button" class="button" disabled={busy} aria-describedby={`wb-${b.id}`}
+                            onClick={() => void send(answer("keep"), hidden ? w.done.keepSecret : w.done.keep)}>
+                            {b.now ? w.updateIt : w.addIt}
                           </button>
+                          <button type="button" class="button secondary" disabled={busy} aria-describedby={`wb-${b.id}`}
+                            onClick={() => void send(answer("skip"), b.now ? w.done.leftAsIs : w.done.leftOut)}>
+                            {b.now ? w.leaveAsIs : w.leaveOut}
+                          </button>
+                        </div>
+                        {!b.secret && (
+                          <div class="row">
+                            <button type="button" class="button secondary" disabled={busy} aria-describedby={`wb-${b.id}`}
+                              onClick={() => setFlip({ ...flip, [b.id]: !hidden })}>
+                              {hidden ? w.letPlayersSee : w.hideFromPlayers}
+                            </button>
+                          </div>
                         )}
-                        <button
-                          type="button"
-                          class="button secondary"
-                          disabled={busy}
-                          aria-describedby={`wb-${b.id}`}
-                          onClick={() => void send({ kind: "backstory", action: "skip", id: b.id }, w.done.skip)}
-                        >
-                          {w.skip}
-                        </button>
-                      </div>
+                      </>
                     ) : (
                       <>
                         <p class="small">{w.waitingOn(b.waitingOn)}</p>
                         <div class="row">
-                          <button
-                            type="button"
-                            class="button secondary"
-                            disabled={busy}
-                            aria-describedby={`wb-${b.id}`}
-                            onClick={() => void send({ kind: "backstory", action: "skip", id: b.id }, w.done.skip)}
-                          >
+                          <button type="button" class="button secondary" disabled={busy} aria-describedby={`wb-${b.id}`}
+                            onClick={() => void send({ kind: "backstory", action: "skip", id: b.id }, w.done.skip)}>
                             {w.skip}
                           </button>
                         </div>
                       </>
                     )}
                   </div>
-                ))}
+                  );
+                })}
               </div>
             );
           })}

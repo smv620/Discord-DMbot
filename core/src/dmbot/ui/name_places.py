@@ -222,6 +222,9 @@ async def more_places(
 
 REMOVED = "That line was removed."
 NOTHING_KEPT = "No place is kept for this name."
+# The button was drawn for the sentence from the DM's upload, which DMbot holds only for a while
+# after reading it (#2561): gone by the press (#4227).
+LORE_GONE = "That sentence from your upload is gone: DMbot only keeps it for a while after reading."
 TRY_AGAIN = "Couldn't read the transcript just now. Try again in a moment."
 SHOWN_BEHIND_BUTTON = 3  # "📜 Where was it said?" shows this many, newest first (#3384)
 
@@ -236,6 +239,7 @@ async def where_said(
     *,
     lore: str = "",
     lore_source: str = "",
+    extra: Sequence[str] = (),
 ) -> str:
     """The answer to "Where was it said?": up to three places, newest first, each with a line
     either side; a line that is gone says so. A sentence from the DM's lore comes with the
@@ -281,6 +285,7 @@ async def where_said(
         source = f" ({_plain(lore_source)})" if lore_source else ""
         shown = discord.utils.escape_markdown(lore, ignore_links=False)
         parts.append(f"_From your lore{source}_\n> “{shown}”")
+    parts.extend(extra)  # where the entry came from when no sentence is kept (#4554)
     if not parts:
         return NOTHING_KEPT
     if len(pointers) > SHOWN_BEHIND_BUTTON:  # first, so a long message never cuts it off

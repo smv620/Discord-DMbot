@@ -33,6 +33,11 @@ def _user(raw: object) -> bool:
     return isinstance(raw, str) and raw.isascii() and raw.isdigit() and 0 < int(raw) <= _INT64
 
 
+def _author(raw: object) -> bool:
+    """A person, or 0: someone who has left (their account was deleted, #4141)."""
+    return raw == "0" or _user(raw)
+
+
 def _num(raw: object, low: int, high: int = _INT64) -> bool:
     return isinstance(raw, int) and not isinstance(raw, bool) and low <= raw <= high
 
@@ -101,7 +106,7 @@ class RuleSetsSection:
                 or not isinstance(name, str)
                 or not 1 <= len(name) <= NAME_MAX
                 or row["status"] not in ("shared", "unshared")
-                or not _user(row["by"])
+                or not _author(row["by"])
                 or not _num(row["at"], 0)
                 or not isinstance(row["versions"], list)
                 or not 1 <= len(row["versions"]) <= VERSIONS_MAX
@@ -118,7 +123,7 @@ class RuleSetsSection:
                     or set(v) != _VERSION_KEYS
                     or not _num(v["version"], 1, 2**31 - 1)
                     or v["version"] in numbers
-                    or not _user(v["by"])
+                    or not _author(v["by"])
                     or not _num(v["at"], 0)
                     or v["source"] not in _SOURCES
                 ):
@@ -136,7 +141,7 @@ class RuleSetsSection:
                     or set(e) != _EDITOR_KEYS
                     or not _user(e["user"])
                     or e["user"] in people
-                    or not _user(e["by"])
+                    or not _author(e["by"])
                     or not _num(e["at"], 0)
                 ):
                     raise CampaignError(DAMAGED)

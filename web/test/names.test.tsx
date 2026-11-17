@@ -245,12 +245,18 @@ describe("what a DM can do", () => {
 
   describe("making a name a player character (#2985)", () => {
     const PLAYER_ID = "123456789012345678";
+    // The player is picked by name; the typed ID box is behind "Someone else: type their Discord ID…" (#4225).
+    const someoneElse = async (row: ReturnType<typeof within>) => {
+      fireEvent.focus(await row.findByLabelText(w.playerPickLabel));
+      fireEvent.click(await row.findByRole("option", { name: w.playerElsewhere }));
+      return row.findByLabelText(w.playerLabel);
+    };
     const pick = async () => {
       const api = open();
       await ready();
       const row = await edit("Gorrak");
       fireEvent.change(row.getByLabelText(w.kindChange), { target: { value: "player_character" } });
-      await row.findByLabelText(w.playerLabel);
+      await someoneElse(row);
       return { api, row };
     };
 
@@ -260,7 +266,10 @@ describe("what a DM can do", () => {
       const row = await edit("Gorrak");
       expect(row.queryByLabelText(w.playerLabel)).toBeNull();
       fireEvent.change(row.getByLabelText(w.kindChange), { target: { value: "player_character" } });
-      expect(await row.findByLabelText(w.playerLabel)).toBeTruthy();
+      // The server's members are offered by name, with no ID box until "Someone else" is chosen.
+      expect(await row.findByLabelText(w.playerPickLabel)).toBeTruthy();
+      expect(row.queryByLabelText(w.playerLabel)).toBeNull();
+      expect(await someoneElse(row)).toBeTruthy();
       expect(row.getByText(w.playerNote)).toBeTruthy();
       fireEvent.click(row.getByRole("button", { name: w.saveKind }));
       // No ID: the same message as before, no `player` in it.
@@ -338,11 +347,40 @@ describe("what a DM can do", () => {
       await ready();
       const row = await edit("Gorrak");
       fireEvent.change(row.getByLabelText(w.kindChange), { target: { value: "player_character" } });
+      await someoneElse(row);
       await typeId(row, PLAYER_ID);
       fireEvent.click(row.getByRole("button", { name: w.playerCheck }));
       expect(await row.findByText(w.playerStage["waiting"] ?? "")).toBeTruthy();
       expect(await row.findByText(w.playerConfirm("SomeUser"))).toBeTruthy();
       expect(row.queryByText(w.playerStage["waiting"] ?? "")).toBeNull();
+    });
+
+    it("picks a player by name, the DM's own first and marked, and checks them like a typed ID (#4225)", async () => {
+      const api = open();
+      await ready();
+      const row = await edit("Gorrak");
+      fireEvent.change(row.getByLabelText(w.kindChange), { target: { value: "player_character" } });
+      fireEvent.focus(await row.findByLabelText(w.playerPickLabel));
+      const options = within(await row.findByRole("listbox")).getAllByRole("option").map((o) => o.textContent);
+      expect(options[0]).toBe("Not set yet");
+      expect(options.some((o) => o?.includes("Mira") && o.includes("played with you before"))).toBe(true); // (the mock marks Mira; the door lists them first)
+      expect(options[options.length - 1]).toBe(w.playerElsewhere);
+      fireEvent.click(within(row.getByRole("listbox")).getByRole("option", { name: /Mira/ }));
+      expect(row.queryByLabelText(w.playerLabel)).toBeNull(); // (no Discord ID is shown or typed)
+      fireEvent.click(row.getByRole("button", { name: w.playerCheck }));
+      await waitFor(() => expect(calls(api, "nameThem").pop()).toContain('"player":"3"'));
+    });
+
+    it("falls back to the typed ID when the members can't be listed (#4225)", async () => {
+      const api = mockApi("table");
+      api.importMembers = async () => {
+        throw new Error("down");
+      };
+      open(DM, api);
+      await ready();
+      const row = await edit("Gorrak");
+      fireEvent.change(row.getByLabelText(w.kindChange), { target: { value: "player_character" } });
+      expect(await row.findByLabelText(w.playerLabel)).toBeTruthy();
     });
 
     it("has an (i) that opens and closes the hint on how to find an ID", async () => {

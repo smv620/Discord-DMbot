@@ -92,6 +92,27 @@ class TheMessage(WithImports):
         self.assertEqual(me.post.await_args.args[0], 77)
         self.assertIn("allow messages", me.post.await_args.args[1].lower())
 
+    async def test_a_dm_without_a_private_chat_gets_it_in_the_dm_bot_channel_not_the_screen(
+        self,
+    ) -> None:
+        me = fake_bot(self, [WaitingChecks(names=3)], private=False)
+        me.campaigns.get = AsyncMock(
+            return_value=SimpleNamespace(dm_screen_channel_id=77, dm_bot_channel_id=88)
+        )
+        self.assertTrue(await me.tell_dm_waiting(GUILD, self.campaign.id, "lore:1", where="x"))
+        me.post.assert_awaited_once()
+        self.assertEqual(me.post.await_args.args[0], 88)  # (upkeep: not the DM screen, 77)
+        self.assertIn("allow messages", me.post.await_args.args[1].lower())
+
+    async def test_a_failed_campaign_lookup_still_falls_back_to_the_screen(self) -> None:
+        me = fake_bot(self, [WaitingChecks(names=3)], private=False)
+        looked = AsyncMock(
+            side_effect=[SimpleNamespace(dm_screen_channel_id=77), RuntimeError("down")]
+        )
+        me.campaigns.get = looked
+        self.assertTrue(await me.tell_dm_waiting(GUILD, self.campaign.id, "lore:1", where="x"))
+        self.assertEqual(me.post.await_args.args[0], 77)
+
     async def test_when_it_cannot_be_sent_anywhere_the_key_is_given_back_for_the_next_round(
         self,
     ) -> None:
@@ -108,7 +129,9 @@ class TheMessage(WithImports):
         self.assertTrue(await me.tell_dm_waiting(GUILD, cid, "lore:1", where="your upload"))
         self.assertTrue(await me.tell_dm_waiting(GUILD, cid, "lore:2", where="your upload"))
         text = me.ask_privately.await_args_list[0].args[2]
-        self.assertIn("2 questions** about your upload:", text)
+        self.assertIn(
+            "2 things to check** from your upload:", text
+        )  # (the walk button's total, #4528)
 
     async def test_a_send_that_raises_gives_the_key_back(self) -> None:
         me = fake_bot(self, [WaitingChecks(names=1)] * 2)
@@ -172,16 +195,19 @@ class TheSummaryLink(WithImports):
         with_channel(me, summary)
         return summary
 
-    async def test_with_a_known_summary_the_two_buttons_are_link_buttons_to_it(self) -> None:
+    async def test_with_a_known_summary_two_kinds_make_exactly_one_check_button(self) -> None:
         me = fake_bot(self, [WaitingChecks(names=3, connections=2)])
         summary = self.known(me, 3)
         await self.told(me)
         _guild, _cid, _text, view, *rest = me.ask_privately.await_args.args
         links = rest[0] if rest else None
+        # Two kinds wait: exactly one check button, "✅ Check everything" (#4192). The summary's
+        # two links are gone (the walk opens Add all itself): one button, not three.
         self.assertEqual(
-            [c.label for c in view.children], ["📝 Check new names", "📜 Check the connections"]
+            [getattr(getattr(c, "item", c), "label", None) for c in view.children],
+            ["✅ Check everything (5)"],
         )
-        self.assertTrue(all(c.url == summary.jump_url for c in view.children))
+        self.assertFalse(any(getattr(c, "url", None) for c in view.children))
         # ...and "Open in Discord" points at the summary too, not at the question itself
         assert links is not None
         self.assertEqual(links.discord_url, summary.jump_url)

@@ -97,6 +97,22 @@ async def perspective_ids(w: Changes) -> dict[str, str]:
     return w.perspectives
 
 
+async def everyone_id(w: Scope) -> str:
+    """The id of the campaign's "everyone" point of view, common knowledge (#4537): made the first
+    time it is needed, with a plain statement the change log does not see (like The truth and The
+    party, never inside a change a DM could undo), since migration 0513 gave one to every campaign
+    that existed and a newer one has none until a write needs it."""
+    found = await w.select(PERSPECTIVES, " AND kind = 'everyone'")
+    if found:
+        return str(found[0]["id"])
+    await w.conn.execute(
+        "INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind, created_at)"
+        " VALUES (%s, %s, %s, 'everyone', %s) ON CONFLICT DO NOTHING",
+        (*w.ids, new_id(), int(time.time())),
+    )
+    return str((await w.select(PERSPECTIVES, " AND kind = 'everyone'"))[0]["id"])
+
+
 async def _newest(
     scope: Scope, relation_ids: Sequence[str]
 ) -> dict[tuple[str, str], dict[str, Any]]:
@@ -611,6 +627,14 @@ async def carry(
             continue
         if perspective_id == party and (new["secret"] or new["unrevealed"]):
             continue  # (the flag decides what the players know; see `follow`)
+        if (
+            perspective_id == ids[TRUTH]
+            and belief["status"] == SECRET_PLOT
+            and not (new["secret"] or new["unrevealed"])
+        ):
+            # (a secret fact folded into a twin the players see, kept public by #4524's guard: The
+            # truth's word on it follows the twin's flag, as The party's does, and stays its own)
+            continue
         if (
             perspective_id == party
             and mine is not None

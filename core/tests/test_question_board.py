@@ -70,6 +70,13 @@ class TheButtons(unittest.TestCase):
             ],
         )
 
+    def test_world_notes_get_their_own_button(self) -> None:
+        # (#4285, Supervisor's ruling: a 🌍 line on this message, opening the World notes screen)
+        view = board.view(GUILD, CAMPAIGN, found(world_notes=3))
+        self.assertEqual(ids(view), [f"dmbot:questions:world:{CAMPAIGN}"])
+        text = board.text("Frostmaiden", found(world_notes=3))
+        self.assertIn("• World notes: **3**", text)
+
     def test_family_ties_get_their_own_button(self) -> None:
         view = board.view(GUILD, CAMPAIGN, found(family=2, claims=1))
         self.assertEqual(
@@ -86,9 +93,11 @@ class TheButtons(unittest.TestCase):
         self.assertEqual(ids(board.view(GUILD, CAMPAIGN, found(names=0))), [])
         self.assertEqual(ids(board.view(GUILD, CAMPAIGN, found(plot=3, rules=1))), [])
 
-    def test_the_most_buttons_fit_two_rows(self) -> None:
+    def test_the_most_buttons_fit_three_rows(self) -> None:
+        """Three rows of five since 🤫 Known or secret? (#4524), with room left under Discord's
+        five for the website link `dm_links.add_links` puts on its own row."""
         everything = found(**{k: 1 for k in kinds.ORDER})
-        self.assertLessEqual(len(board.view(GUILD, CAMPAIGN, everything).children), 10)
+        self.assertLessEqual(len(board.view(GUILD, CAMPAIGN, everything).children), 15)
 
     def test_the_look_alikes_button_carries_the_campaign_for_a_restart(self) -> None:
         item = board.LookAlikesButton(CAMPAIGN)
@@ -327,9 +336,9 @@ class TheCardButtonsPress(unittest.IsolatedAsyncioTestCase):
 
 
 class TheLinks(unittest.IsolatedAsyncioTestCase):
-    """The Questions list message carries both link buttons (#3663)."""
+    """The Questions list message carries the website button, never a link to itself (#4528)."""
 
-    async def test_an_existing_list_gets_its_own_address_and_the_questions_page_in_the_same_edit(
+    async def test_an_existing_list_gets_the_questions_page_and_no_link_to_itself(
         self,
     ) -> None:
         from types import SimpleNamespace
@@ -347,7 +356,4 @@ class TheLinks(unittest.IsolatedAsyncioTestCase):
         await DiscordSender(bot).board(7, campaign, {}, 5, create=False)  # type: ignore[arg-type]
         view = kept.edit.await_args.kwargs["view"]
         urls = [getattr(c, "url", None) for c in view.children if getattr(c, "url", None)]
-        self.assertEqual(
-            urls,
-            ["https://discord.com/channels/@me/2/3", "https://dmbot.example.com/account/questions"],
-        )
+        self.assertEqual(urls, ["https://dmbot.example.com/account/questions"])

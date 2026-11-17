@@ -7,7 +7,27 @@
 // confirmed and one "Which Mara?" answered from the site.
 export const WEB_WAITING_LIVE = false;
 
+/** Where "Proposed" differs from "Now" (#4429, the owner, 2026-11-15): the connection phrases are compared word by word, from the front and
+ * from the back; what is left in the middle of the proposed one is bold. A wholly new phrase ("ally of" for "knows") is bold whole. The names
+ * never differ on this card, so they are not compared. */
+export function differs(now: string, proposed: string): { before: string; bold: string; after: string } {
+  const a = now.split(" ").filter(Boolean);
+  const b = proposed.split(" ").filter(Boolean);
+  let head = 0;
+  while (head < a.length && head < b.length && a[head] === b[head]) head++;
+  let tail = 0;
+  while (tail < a.length - head && tail < b.length - head && a[a.length - 1 - tail] === b[b.length - 1 - tail]) tail++;
+  const join = (words: string[]): string => words.join(" ");
+  return { before: join(b.slice(0, head)), bold: join(b.slice(head, b.length - tail)), after: join(b.slice(b.length - tail)) };
+}
+
 export const waitingWords = {
+  // The line under a yes: the bot showed it to the players, or kept it hidden beside another hidden connection (#3974, #3986).
+  shownOne: "👁️ Your players can see this now: it was said at the table.",
+  heldOne: "🙈 Kept hidden from your players, so it can't give away another hidden connection between these two names. To show it, use “👁️ Reveal to players” on the Story Graph.",
+  // The party was split when it was said: the bot kept it for the characters who were there, or could not tell who heard it (#4035).
+  sceneOne: "👁️ Only the characters who were there know this: the party was split.",
+  splitOne: "🙈 Kept hidden from your players: the party was split, and DMbot can't tell which group heard it. To choose who knows it, use “Who knows this?” on the Story Graph.",
   heading: "Waiting for you",
   count: (n: number): string => (n === 1 ? "1 thing is waiting for you." : `${n} things are waiting for you.`),
   none: "Nothing is waiting for you.",
@@ -25,6 +45,33 @@ export const waitingWords = {
   fromUpload: (label: string): string => `From ${label}`,
   fromEarlier: "From an earlier upload",
   keep: "Keep",
+  // The connection card asks two questions apart (#4430, words from #4429): Q1 update or add it, Q2 can players see it.
+  nowLine: (subject: string, how: string, object: string): string => `Now: ${subject} ${how} ${object}`,
+  proposedLine: (subject: string, how: string, object: string, hand: string): string => `Proposed: ${subject} ${how} ${object}${hand}`,
+  proposedLabel: "Proposed: ",
+  nowLabel: "Now: ",
+  guessLine: (guess: string): string => `🤔 DMbot's guess (your text doesn't say it outright): ${guess}.`,
+  fromText: (quote: string): string => `From your text: “${quote}”`,
+  // The Players line: how it is now and how it will be after (an update), or how it will be (a new one).
+  playersNew: (hidden: boolean): string => (hidden ? "🤫 Hidden from players." : "👁️ Players will see it."),
+  playersUpdate: (nowHidden: boolean, hidden: boolean): string =>
+    !nowHidden && !hidden
+      ? "👁️ Players can see it now, and still will after the update."
+      : nowHidden && hidden
+        ? "🤫 Hidden from players now, and still will be after the update."
+        : !nowHidden
+          ? "🤫 Players can see it now. After the update it will be hidden."
+          : "👁️ Hidden from players now. After the update they will see it.",
+  playersSecretName: "🤫 Hidden from players: it uses a secret name.",
+  hideFromPlayers: "🤫 Hide from players",
+  letPlayersSee: "👁️ Let players see it",
+  updateIt: "✅ Update it",
+  addIt: "✅ Add it",
+  leaveAsIs: "❌ Leave it as it is",
+  leaveOut: "❌ Leave it out",
+  nothingChangesUpdate: "Nothing changes until you press ✅ Update it.",
+  nothingChangesAdd: "Nothing is added until you press ✅ Add it.",
+  keepAllPlayers: "Keep all uses what each card says about players.",
   keepSecret: "Keep as secret",
   keepIsSecret: "Keep (secret)",
   skip: "Skip",
@@ -78,6 +125,8 @@ export const waitingWords = {
     keep: "Kept.",
     keepSecret: "Kept as a secret.",
     skip: "Skipped.",
+    leftAsIs: "Left as it is.",
+    leftOut: "Left out.",
     pick: "Picked. It now shows under From your backstory.",
     neither: "Neither. No connection was made.",
     tiesPick: "Saved your choice. The fact is now in the list below. Press Keep to add it to your story.",

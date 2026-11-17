@@ -82,6 +82,7 @@ services:
       DEEPGRAM_API_KEY: ""
       DISCORD_CLIENT_SECRET: ""     # the website API's secrets stay in web-api
       WEB_SECRET_KEY: ""
+      DMBOT_PERSON_KEY: ""          # core and the website API hold it, ears never does (#4145)
       PAYMENT_WEBHOOK_SECRET: ""
       DMBOT_WEB_DB_PASSWORD: ""
       CLOUDFLARE_TUNNEL_TOKEN: ""   # only the tunnel container holds it (#836)
@@ -110,6 +111,7 @@ services:
       DISCORD_CLIENT_ID: ${DISCORD_CLIENT_ID:-}
       DISCORD_CLIENT_SECRET: ${DISCORD_CLIENT_SECRET:-}
       WEB_SECRET_KEY: ${WEB_SECRET_KEY:-}
+      DMBOT_PERSON_KEY: ${DMBOT_PERSON_KEY:-}   # keys the hash kept after an account is deleted (#4145)
       WEB_SITE_URL: ${WEB_SITE_URL:-}
       WEB_API_URL: ${WEB_API_URL:-}
       WEB_API_PORT: ${WEB_API_PORT:-8080}
@@ -128,6 +130,8 @@ services:
       # The bot's switch for "🎤 Say it" (#2316), so the route can say it is off. The model's
       # folder (SAID_AS_MODEL) stays with the bot.
       SAID_AS_VOICE: ${SAID_AS_VOICE:-0}
+      # The bot's switch for scripts (#3244), so the route can say "Make the script" is off (#3899).
+      DMBOT_THEATRE_ON: ${DMBOT_THEATRE_ON:-0}
       # The website search bar's short answer (#3856): off unless DMBOT_SITE_ASK=1 and both
       # Cloudflare settings are set. The token is a secret, read here and nowhere else.
       DMBOT_SITE_ASK: ${DMBOT_SITE_ASK:-0}
@@ -240,6 +244,13 @@ services:
       WEB_PICTURES_R2_BUCKET: ${WEB_PICTURES_R2_BUCKET:-}
       WEB_PICTURES_R2_KEY: ${WEB_PICTURES_R2_KEY:-}
       WEB_PICTURES_R2_SECRET: ${WEB_PICTURES_R2_SECRET:-}
+      # A map sent from the website (#4347) is staged in a SEPARATE staging bucket (1-day lifecycle
+      # rule) with its own write key. Never a write key to the pictures bucket: R2 tokens scope to a
+      # bucket, so that key could overwrite every campaign's pictures. The bot copies a staged file
+      # into the pictures bucket. Blank: an upload answers "uploads_off".
+      WEB_MAPS_STAGING_R2_BUCKET: ${WEB_MAPS_STAGING_R2_BUCKET:-}
+      WEB_MAPS_STAGING_R2_KEY: ${WEB_MAPS_STAGING_R2_KEY:-}
+      WEB_MAPS_STAGING_R2_SECRET: ${WEB_MAPS_STAGING_R2_SECRET:-}
     volumes:
       - recap-audio:/recap-audio:ro
       - bot-status:/status:ro

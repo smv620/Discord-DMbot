@@ -63,6 +63,10 @@ export default function WaitingBulk({
     const since = Math.floor(Date.now() / 1000);
     setRun({ done: 0, total: todo.length, since, moved: since });
     let kept = 0;
+    let shown = 0; // how many the bot showed to the players, and how many it kept hidden (#3974, #3986)
+    let held = 0;
+    let scene = 0; // how many were kept for the characters who were there, or hidden because the party was split (#4035)
+    let split = 0;
     let tried = 0;
     const refused = new Map<string, number>(); // the plain reason, and how many were refused for it
     const undoable: { id: string; batch: number }[] = [];
@@ -73,6 +77,10 @@ export default function WaitingBulk({
         try {
           const got = await api.answerWaiting(campaignRef, { kind: "claim", action: "confirm", id: claim.id, ...(secret ? { secret: true } : {}) });
           kept += 1;
+          shown += got.shown ?? 0;
+          held += got.held ?? 0;
+          scene += got.scene ?? 0;
+          split += got.split ?? 0;
           if (typeof got.batch === "number") undoable.push({ id: claim.id, batch: got.batch });
         } catch (error) {
           // A refusal is counted with its plain reason; a lost connection or sign-in stops the rest.
@@ -90,6 +98,10 @@ export default function WaitingBulk({
           ...[...refused].map(([reason, n]) => w.refused(n, reason)),
           tried < todo.length ? w.stoppedEarly(todo.length - tried) : "",
           kept > 0 ? (secret ? w.markedSecret(kept) : w.markedTrue(kept)) : "",
+          shown > 0 ? w.shownMany(shown) : "",
+          held > 0 ? w.heldMany(held) : "",
+          scene > 0 ? w.sceneMany(scene) : "",
+          split > 0 ? w.splitMany(split) : "",
           secret && left > 0 ? w.skipped(left) : "",
           kept > 0 && undoable.length === 0 ? w.noUndo : "",
         ].filter((x) => x !== ""),

@@ -43,6 +43,7 @@ from dmbot.timebot import durations, effects, split, where_are_we
 from dmbot.timebot.clock import Clock
 from dmbot.timebot.store import GONE as GROUP_GONE
 from dmbot.timebot.store import MOVED_ON, ClockStore, Rejoined, Stored
+from dmbot.ui import time_limit_alerts
 
 log = logging.getLogger(__name__)
 
@@ -270,6 +271,8 @@ async def press(
     )
     result.before, result.after, result.group = before, after, group
     result.changed = after is not None and after != before
+    if result.changed:  # (every clock move checks the quests' time limits: slice 4b, §8.4)
+        await time_limit_alerts.after_clock(client, guild_id, campaign_id)
     if (
         action in ENDS_COMBAT
         and before is not None
@@ -1342,6 +1345,7 @@ async def run_rejoin(
         except CampaignError as exc:
             await _reply(interaction, str(exc))
             return None
+        await time_limit_alerts.after_clock(client, campaign.guild_id, campaign.id)
         stored = await client.clocks.get(campaign.guild_id, campaign.id)
         if stored is None:
             await _reply(interaction, FAILED)
@@ -1482,6 +1486,8 @@ class SplitUndoButton(
                 if not done:
                     await _reply(interaction, MOVED_ON if self.kind == "split" else SPLIT_GONE)
                     return
+                # (an Undo of a rejoin brings back groups that may be further ahead: slice 4b)
+                await time_limit_alerts.after_clock(client, guild.id, campaign.id)
                 stored = await client.clocks.get(guild.id, campaign.id)
                 if stored is not None:
                     await show(client, campaign, stored)
@@ -1685,6 +1691,7 @@ class CombatUndoButton(
                 "**End combat** instead.",
             )
             return
+        await time_limit_alerts.after_clock(client, guild_id, campaign.id)
         stored = await client.clocks.get(guild_id, campaign.id)
         if stored is not None:
             await show(client, campaign, stored)
@@ -1803,6 +1810,7 @@ class ClockUndoButton(
                 "Use **Rests & time…** to fix it.",
             )
             return
+        await time_limit_alerts.after_clock(client, guild.id, campaign.id)
         stored = await client.clocks.get(guild.id, campaign.id)
         if stored is not None:
             await show(client, campaign, stored)

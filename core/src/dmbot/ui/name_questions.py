@@ -41,6 +41,15 @@ log = logging.getLogger(__name__)
 
 PERSON_YES, PERSON_NO = "✅ Yes, the same person", "❌ No, someone else"
 PLACE_YES, PLACE_NO = "✅ Yes, the same place", "❌ No, two places"
+# A place known by an epithet (not a spelling of it): the place words, but No does not make a
+# second place (#4097).
+EPITHET_PLACE_YES, EPITHET_PLACE_NO = "✅ Yes, the same place", "❌ No, somewhere else"
+# Any other kind (a group, a thing): neither a person nor a place (#4097).
+OTHER_YES, OTHER_NO = "✅ Yes, the same one", "❌ No, a different one"
+# An item (an object the party has): "thing" words (#4097).
+ITEM_YES, ITEM_NO = "✅ Yes, the same thing", "❌ No, a different thing"
+# The kinds a person is asked about, as `Entity.kind_key` names them (a character with no role too).
+PERSON_KINDS = ("player_character", "npc", "character")
 
 
 class NameQuestions(_Menu):
@@ -86,20 +95,32 @@ class NameQuestions(_Menu):
         place. Read for the one card on show; anything unclear keeps the person words."""
         memory = memory_of(interaction) if interaction is not None else None
         if self.current is None or memory is None:
+            # (no card to ask about: the person words, never a stale card's)
+            self.yes_button.label, self.no_button.label = PERSON_YES, PERSON_NO
             return
         alias, entry = self.current
         try:
             entity = await memory.resolve(self.guild_id, self.campaign_id, alias.entity_id)
-        except Exception:  # a failed read costs the place words, nothing else
+        except Exception:  # a failed read keeps the person words, as an unknown kind does
             log.exception("The kind of a suggested name could not be read")
-            return
+            entity = None
         self.spelling = (
             entity is not None
             and entity.type == place_spellings.PLACE
             and place_spellings.place_key(alias.text) == place_spellings.place_key(entry)
         )
-        self.yes_button.label = PLACE_YES if self.spelling else PERSON_YES
-        self.no_button.label = PLACE_NO if self.spelling else PERSON_NO
+        # The words follow the kind of the entry, so a card after a place card is set again here.
+        if self.spelling:
+            yes, no = PLACE_YES, PLACE_NO
+        elif entity is not None and entity.type == place_spellings.PLACE:
+            yes, no = EPITHET_PLACE_YES, EPITHET_PLACE_NO
+        elif entity is None or entity.kind_key in PERSON_KINDS:
+            yes, no = PERSON_YES, PERSON_NO
+        elif entity.kind_key == "item":
+            yes, no = ITEM_YES, ITEM_NO
+        else:
+            yes, no = OTHER_YES, OTHER_NO
+        self.yes_button.label, self.no_button.label = yes, no
 
     async def load(self, interaction: discord.Interaction) -> bool:
         campaign = await campaign_for(interaction, self.campaign_id)

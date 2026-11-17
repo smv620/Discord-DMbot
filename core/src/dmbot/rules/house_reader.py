@@ -28,6 +28,7 @@ from dmbot.memory.name_documents import (
     DocumentError,
     decode_text,
     text_of,
+    too_big_words,
 )
 
 CELL_JOIN = " | "  # between a row's filled cells, as in an Excel file's text
@@ -86,7 +87,7 @@ def house_text_of(filename: str, raw: bytes) -> str:
 def _text_of(filename: str, raw: bytes) -> str:
     if PurePath(filename).suffix.casefold() == ".csv":
         if len(raw) > MAX_DOCUMENT_BYTES:
-            raise DocumentError("That file is too big (up to 10 MB). Split it into smaller files.")
+            raise DocumentError(too_big_words(filename))
         text = csv_text(raw).replace("\x00", "")
         if not text.strip():
             raise DocumentError(NO_TEXT)

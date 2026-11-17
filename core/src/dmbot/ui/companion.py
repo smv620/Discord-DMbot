@@ -14,7 +14,7 @@ import discord
 
 from dmbot.memory.link_words import connection_words
 from dmbot.memory.lookup import CampaignLookup
-from dmbot.memory.models import CONFIRMED, DM, PARTY_SOURCE, PLAYER_CHARACTER, MemoryRuleError
+from dmbot.memory.models import CONFIRMED, DM, PLAYER_CHARACTER, MemoryRuleError
 from dmbot.memory.store import TRAVELS_WITH
 from dmbot.ui.dmbot_commands import (
     _answer_first,
@@ -71,7 +71,7 @@ def choices(lookup: CampaignLookup, own_id: str) -> list[tuple[str, str]]:
     party = [
         (e.id, PARTY_LABEL)  # (whatever the DM renamed it to, it is "The party" here)
         for e in lookup.entities.values()
-        if e.type == "faction" and e.source == PARTY_SOURCE and e.status == CONFIRMED
+        if e.type == "faction" and e.party and e.status == CONFIRMED
         and not e.merged_into
     ]  # fmt: skip
     return [*found[: MENU_MAX - len(party[:1])], *party[:1]]
@@ -186,5 +186,5 @@ async def save(
         await _tell(interaction, f"Couldn't save that. {exc}")
         return
     changed(interaction, campaign)
-    note = saved_note(own.name, other.name, other.source == PARTY_SOURCE)
+    note = saved_note(own.name, other.name, other.party)
     await show_card(interaction, campaign.id, entity_id, replace=True, note=note)

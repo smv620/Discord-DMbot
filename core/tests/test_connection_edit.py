@@ -13,7 +13,8 @@ import discord
 from dmbot.memory.models import CONFIRMED
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.memory.ontology import FALLBACK_PREDICATE
-from dmbot.ui import connection_edit, name_card, who_knows
+from dmbot.memory.store import LENGTH_CHANGED
+from dmbot.ui import connection_edit, name_card, place_size, who_knows
 from dmbot.ui import names as ui
 from tests import test_memory_names as base
 
@@ -274,7 +275,8 @@ class Cards(base.NamesTest):
         it = self.it()
         await page.words.callback(it)
         self.assertIn(
-            "Changed to: Belleros is an enemy of Kesh. Wrong? Press **Undo**",
+            # (#4154: a two-way line is said of both names)
+            "Changed to: Belleros and Kesh are enemies. Wrong? Press **Undo**",
             it.response.edited[0][0],
         )
         (now,) = await self.relations()
@@ -300,7 +302,8 @@ class Cards(base.NamesTest):
             it = self.it()
             await page.words.callback(it)
             self.assertIn(
-                f"Changed to: Belleros is an enemy of {other.name}. Wrong?",
+                # (#4154: a two-way line is said of both, the card's name first)
+                f"Changed to: Belleros and {other.name} are enemies. Wrong?",
                 it.response.edited[0][0],
             )
 
@@ -494,6 +497,151 @@ class Cards(base.NamesTest):
         await view._only_me(it)  # already only the DM's: nothing to undo or write
         self.assertIn("Already like that", str(it.response.sent or it.followup.send.await_args))
 
+    async def test_common_knowledge_shows_it_to_everyone_and_undo_puts_it_back(self) -> None:
+        """🌍 Common knowledge (#4537): a hidden connection is shown, every character knows it (NPCs
+        too), the page says so with ↩ Undo, and Undo puts it back as it was."""
+        await self.know("Kesh", secret=True)
+        await self.pc("Mara", 1001)
+        _, view = await self.who_page()
+        it = self.it()
+        await view._common(it)
+        text, page = it.response.edited[0]
+        self.assertIn(who_knows.COMMON_DONE_SHOWN, text)
+        self.assertIn("Common knowledge: every character knows it", text)
+        (link,) = await self.relations()
+        self.assertFalse(link.secret)
+        self.assertEqual(
+            await self.memory.common_knowledge(GUILD, self.campaign.id, "connection", [link.id]),
+            {link.id},
+        )
+        success = discord.ButtonStyle.success
+        green = [c.label for c in page.children if getattr(c, "style", None) == success]
+        self.assertEqual(green, ["🌍 Common knowledge"])
+        (undo,) = [c for c in page.children if getattr(c, "label", "") == "↩ Undo"]
+        it = self.it()
+        await undo.callback(it)
+        self.assertIn(who_knows.UNDONE, it.response.edited[0][0])
+        (back,) = await self.relations()
+        self.assertTrue(back.secret)
+        self.assertEqual(
+            await self.memory.common_knowledge(GUILD, self.campaign.id, "connection", [back.id]),
+            set(),
+        )
+        self.assertNotIn("↩ Undo", self.labels(it.response.edited[0][1]))
+
+    async def test_another_answer_takes_common_knowledge_back_and_says_so(self) -> None:
+        await self.know("Kesh")
+        _, view = await self.who_page()
+        await view._common(self.it())
+        text, view = await self.who_page()
+        self.assertIn("Common knowledge", text)
+        it = self.it()
+        await view._common(it)  # (already common: nothing to write)
+        self.assertIn("Already like that", str(it.response.sent or it.followup.send.await_args))
+        it = self.it()
+        await view._only_me(it)
+        self.assertIn(who_knows.NO_LONGER_COMMON, it.response.edited[0][0])
+        (link,) = await self.relations()
+        self.assertTrue(link.secret)
+        self.assertEqual(
+            await self.memory.common_knowledge(GUILD, self.campaign.id, "connection", [link.id]),
+            set(),
+        )
+
+    async def test_a_manager_cannot_make_it_common_knowledge(self) -> None:
+        await self.know("Kesh", secret=True)
+        _, view = await self.who_page()
+        await view._common(self.it(MANAGER))
+        (link,) = await self.relations()
+        self.assertTrue(link.secret)
+        self.assertEqual(
+            await self.memory.common_knowledge(GUILD, self.campaign.id, "connection", [link.id]),
+            set(),
+        )
+
+    async def test_everyone_on_a_common_connection_says_players_still_see_it_and_undo_works(
+        self,
+    ) -> None:
+        await self.know("Kesh")
+        _, view = await self.who_page()
+        await view._common(self.it())
+        _, view = await self.who_page()
+        it = self.it()
+        await view._everyone(it)
+        text, page = it.response.edited[0]
+        self.assertIn(who_knows.NO_LONGER_COMMON, text)
+        self.assertIn("Players still see it", text)
+        self.assertNotIn("Undo** within", text)  # (no promise of the card's one-change Undo)
+        (link,) = await self.relations()
+        self.assertFalse(link.secret)
+        common = self.memory.common_knowledge
+        self.assertEqual(await common(GUILD, self.campaign.id, "connection", [link.id]), set())
+        (undo,) = [c for c in page.children if getattr(c, "label", "") == "↩ Undo"]
+        await undo.callback(self.it())
+        self.assertEqual(await common(GUILD, self.campaign.id, "connection", [link.id]), {link.id})
+        again = self.it()
+        await undo.callback(again)  # (the same page pressed twice: nothing more is undone)
+        self.assertIn(
+            who_knows.NOTHING_TO_UNDO, str(again.response.sent or again.followup.send.await_args)
+        )
+
+    async def test_an_undo_that_cannot_take_all_of_it_back_says_so(self) -> None:
+        await self.know("Kesh", secret=True)
+        _, view = await self.who_page()
+        it = self.it()
+        await view._common(it)
+        (undo,) = [
+            c for c in it.response.edited[0][1].children if getattr(c, "label", "") == "↩ Undo"
+        ]
+        with patch.object(connection_edit, "undo_batches", AsyncMock(return_value=False)):
+            it = self.it()
+            await undo.callback(it)
+        self.assertIn(who_knows.UNDONE_PARTLY, it.response.edited[0][0])
+
+    async def test_a_refused_pick_on_a_common_connection_writes_nothing(self) -> None:
+        await self.know("Kesh")
+        npc = await ui.save_name(self.memory, self.campaign, "Old Mill", "place", [], [])
+        _, view = await self.who_page()
+        await view._common(self.it())
+        before = await self.memory.version(GUILD, self.campaign.id)
+        _, view = await self.who_page()
+        view.picked = [npc.id]  # forged: not a character
+        it = self.it()
+        await view._some(it)
+        self.assertIn("Couldn't change that", str(it.response.sent or it.followup.send.await_args))
+        self.assertEqual(await self.memory.version(GUILD, self.campaign.id), before)
+        (link,) = await self.relations()
+        self.assertEqual(
+            await self.memory.common_knowledge(GUILD, self.campaign.id, "connection", [link.id]),
+            {link.id},
+        )
+
+    async def test_common_knowledge_is_refused_while_an_end_is_hidden(self) -> None:
+        kesh = await self.know("Kesh", secret=True)
+        await self.memory.set_hidden_from_players(
+            GUILD, self.campaign.id, kesh.id, True, source=DM_SOURCE, dm_chose_secret=True
+        )
+        self.fresh()
+        _, view = await self.who_page()
+        it = self.it()
+        await view._common(it)
+        said = str(it.response.sent or it.followup.send.await_args)
+        self.assertIn("Show Kesh to the players first", said)
+        (link,) = await self.relations()
+        self.assertTrue(link.secret)
+
+    async def test_a_manager_cannot_press_undo(self) -> None:
+        await self.know("Kesh", secret=True)
+        _, view = await self.who_page()
+        it = self.it()
+        await view._common(it)
+        (undo,) = [
+            c for c in it.response.edited[0][1].children if getattr(c, "label", "") == "↩ Undo"
+        ]
+        await undo.callback(self.it(MANAGER))
+        (link,) = await self.relations()
+        self.assertFalse(link.secret)  # still shown and common: the manager's press did nothing
+
     async def test_the_menu_holds_no_more_than_the_server_accepts(self) -> None:
         await self.know("Kesh")
         for k in range(14):
@@ -685,7 +833,11 @@ class Cards(base.NamesTest):
         page = await self.page_of_relation(secret.id)
         await page._new_words(self.it(), "enemy_of", "")
         mine = await self.relations()
-        self.assertEqual([(r.predicate, r.secret) for r in mine], [("enemy_of", True)])
+        # (the players already know "enemy of": public stays public, and the DM is asked instead,
+        # #4524; nothing secret became public, as the secret words were folded into known ones)
+        self.assertEqual([(r.predicate, r.secret) for r in mine], [("enemy_of", False)])
+        (asked,) = await self.memory.secret_questions_waiting(GUILD, self.campaign.id)
+        self.assertEqual((asked.item_id, asked.change), (mine[0].id, {"secret": True}))
 
     async def test_only_the_capitals_changed_keeps_the_connection(self) -> None:
         await self.know("Kesh")
@@ -723,3 +875,149 @@ class Cards(base.NamesTest):
         await undo.callback(self.it())
         (back,) = await self.relations()  # exactly one connection again
         self.assertEqual((back.id, back.predicate), (old.id, "knows"))
+
+    # ---- a route's stated length (#4255) ----
+
+    async def road_page(self, who: int = DM, *, read: str = "") -> Any:
+        """Targos's road to Bryn Shander, on Targos's edit page; `read` gives it DMbot's length."""
+        targos = await ui.save_name(self.memory, self.campaign, "Targos", "place", [], [])
+        bryn = await ui.save_name(self.memory, self.campaign, "Bryn Shander", "place", [], [])
+        made = await self.memory.add_relation(
+            GUILD, self.campaign.id, targos.id, "route_to", bryn.id,
+            source="dm", confidence=1.0, status=CONFIRMED, detail="road",
+        )  # fmt: skip
+        self.made = made.value[0]
+        if read:
+            await self.memory.set_route_length(
+                GUILD, self.campaign.id, self.made.id, read, on="connection", source="background"
+            )
+        self.fresh()
+        found = await connection_edit._find(self.it(who), self.campaign.id, targos.id, self.made.id)
+        assert found is not None
+        return connection_edit.OneConnection(self.campaign.id, targos.id, found)
+
+    async def road(self) -> Any:
+        got = await self.memory.relation(GUILD, self.campaign.id, self.made.id)
+        assert got is not None
+        return got
+
+    def told(self, it: Any) -> str:
+        return str(it.response.edited or it.response.sent or it.followup.send.await_args)
+
+    async def test_a_route_has_a_length_button_and_the_dms_words_are_kept(self) -> None:
+        page = await self.road_page()
+        self.assertIn(place_size.LENGTH_BUTTON, self.labels(page))
+        self.assertNotIn(place_size.KEEP_LENGTH_BUTTON, self.labels(page))
+        it = self.it()
+        await page._set_length(it, "two days by cart")
+        self.assertIn("🛣️ Length saved: **two days by cart**. Wrong? Press **Undo**", self.told(it))
+        road = await self.road()
+        self.assertEqual((road.length_words, road.length_amount, road.length_from),
+                         ("two days by cart", 2.0, "dm"))  # fmt: skip
+        again = self.it()
+        await page._set_length(again, "two days by cart")
+        self.assertIn(place_size.NOTHING_CHANGED, self.told(again))
+        undo_it = self.it()
+        await page._set_length(undo_it, "twenty miles")
+        _, card = undo_it.response.edited[0]
+        (undo,) = [c for c in card.children if isinstance(c, name_card.UndoConnectionButton)]
+        await undo.callback(self.it())  # (the card's Undo takes a length change back)
+        self.assertEqual((await self.road()).length_words, "two days by cart")
+        off = self.it()
+        await page._set_length(off, "")
+        self.assertIn("🛣️ Length taken off.", self.told(off))
+        self.assertIsNone((await self.road()).length_words)
+
+    async def test_a_connection_that_is_not_a_route_has_no_length(self) -> None:
+        await self.know("Kesh")
+        self.assertNotIn(place_size.LENGTH_BUTTON, self.labels(await self.page()))
+
+    async def test_length_is_right_keeps_dmbots_read_once(self) -> None:
+        page = await self.road_page(read="a day by cart")
+        self.assertIn(place_size.KEEP_LENGTH_BUTTON, self.labels(page))
+        it = self.it()
+        await page._keep_length(it)
+        self.assertIn("🛣️ Length kept: **a day by cart**.", self.told(it))
+        self.assertEqual((await self.road()).length_from, "dm")
+        stale = self.it()
+        await page._keep_length(stale)  # (the stale page still offers it)
+        self.assertIn(LENGTH_CHANGED, self.told(stale))
+
+    async def test_a_manager_cannot_change_a_length(self) -> None:
+        page = await self.road_page(read="a day by cart")
+        await page._set_length(self.it(MANAGER), "twenty miles")
+        await page._keep_length(self.it(MANAGER))
+        road = await self.road()
+        self.assertEqual((road.length_words, road.length_from), ("a day by cart", "read"))
+        self.assertNotIn(place_size.LENGTH_BUTTON, self.labels(await self.road_page_again(MANAGER)))
+
+    async def road_page_again(self, who: int) -> Any:
+        found = await connection_edit._find(
+            self.it(who), self.campaign.id, self.made.subject_id, self.made.id
+        )
+        assert found is not None
+        return connection_edit.OneConnection(self.campaign.id, self.made.subject_id, found)
+
+    async def route_place(self, read: str = "") -> Any:
+        east = await ui.save_name(self.memory, self.campaign, "The Eastway", "place", [], [])
+        await self.memory.set_place_form(GUILD, self.campaign.id, east.id, "route", source="dm")
+        if read:
+            await self.memory.set_route_length(
+                GUILD, self.campaign.id, east.id, read, on="place", source="background"
+            )
+        self.fresh()
+        return east
+
+    async def place_card(self, place: Any, who: int = DM) -> tuple[str, Any]:
+        it = self.it(who)
+        await name_card.show_card(it, self.campaign.id, place.id)
+        text, kw = it.response.sent[0]
+        return text, kw["view"]
+
+    async def test_a_route_places_card_shows_dmbots_read_to_the_dm_only(self) -> None:
+        east = await self.route_place(read="a day by cart")
+        text, view = await self.place_card(east)
+        self.assertIn(
+            "🛣️ **Length:** a day by cart (DMbot read this. Players see it once you press "
+            "✅ Length is right.)",
+            text,
+        )
+        self.assertIn(place_size.LENGTH_BUTTON, self.labels(view))
+        self.assertIn(place_size.KEEP_LENGTH_BUTTON, self.labels(view))
+        text, view = await self.place_card(east, MANAGER)
+        self.assertNotIn("a day by cart", text)
+        self.assertNotIn(place_size.LENGTH_BUTTON, self.labels(view))
+
+    async def test_the_dm_keeps_or_changes_a_route_places_length(self) -> None:
+        east = await self.route_place(read="a day by cart")
+        it = self.it()
+        await place_size.set_length(it, self.campaign.id, east.id, "", keep=True)
+        self.assertIn("🛣️ Length kept: **a day by cart**.", self.told(it))
+        stale = self.it()
+        await place_size.set_length(stale, self.campaign.id, east.id, "", keep=True)
+        self.assertIn(place_size.LENGTH_CLASH, self.told(stale))
+        text, _ = await self.place_card(east, MANAGER)  # (kept: the players see it now)
+        self.assertIn("🛣️ **Length:** a day by cart\n", text + "\n")
+        changed = self.it()
+        await place_size.set_length(changed, self.campaign.id, east.id, "two days by cart")
+        self.assertIn("🛣️ Length saved: **two days by cart**.", self.told(changed))
+        same = self.it()
+        await place_size.set_length(same, self.campaign.id, east.id, "two days by cart")
+        self.assertIn(place_size.NOTHING_CHANGED, self.told(same))
+        await place_size.set_length(self.it(MANAGER), self.campaign.id, east.id, "")
+        place = await self.memory.entity(GUILD, self.campaign.id, east.id)
+        assert place is not None
+        self.assertEqual((place.length_words, place.length_from), ("two days by cart", "dm"))
+
+    async def test_a_place_that_is_not_a_route_has_no_length(self) -> None:
+        town = await ui.save_name(self.memory, self.campaign, "Targos", "place", [], [])
+        self.fresh()
+        _, view = await self.place_card(town)
+        self.assertNotIn(place_size.LENGTH_BUTTON, self.labels(view))
+
+    async def test_a_manager_is_told_only_the_dm_sets_a_length_before_the_form(self) -> None:
+        page = await self.road_page()
+        it = self.it(MANAGER)
+        await page._length(it)
+        self.assertIn(place_size.ONLY_DM_LENGTH, self.told(it))
+        self.assertIsNone(getattr(it.response, "modal", None))  # (no form to type into)

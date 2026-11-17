@@ -29,6 +29,7 @@ from email.message import EmailMessage
 from email.utils import formatdate, make_msgid, parseaddr
 from typing import Literal
 
+from dmbot import person_key
 from dmbot.account_id import to_dmbot_id
 from dmbot.alerts import Problem, raise_alert
 from dmbot.db import Database
@@ -230,15 +231,17 @@ class Mailer:
     async def is_unsubscribed(self, user_id: int) -> bool:
         async with self._db.unscoped() as conn:
             cur = await conn.execute(
-                "SELECT 1 AS ok FROM email_unsubscribed WHERE user_id = %s", (user_id,)
+                "SELECT 1 AS ok FROM email_unsubscribed WHERE user_id = %s OR person_key = %s",
+                (user_id, person_key.key_for(user_id)),
             )
             return await cur.fetchone() is not None
 
     async def already_sent(self, user_id: int, kind: str) -> bool:
         async with self._db.unscoped() as conn:
             cur = await conn.execute(
-                "SELECT 1 AS ok FROM sent_emails WHERE user_id = %s AND kind = %s",
-                (user_id, kind),
+                "SELECT 1 AS ok FROM sent_emails WHERE kind = %s"
+                " AND (user_id = %s OR person_key = %s)",
+                (kind, user_id, person_key.key_for(user_id)),
             )
             return await cur.fetchone() is not None
 
@@ -302,8 +305,15 @@ class Mailer:
         # given back below so the next run retries it.
         async with self._db.unscoped() as conn:
             cur = await conn.execute(
-                "SELECT dmbot_claim_email(%s, %s, %s, %s, %s) AS status",
-                (user_id, kind, offer, self._s.mail_cap, self._s.offer_cap),
+                "SELECT dmbot_claim_email(%s, %s, %s, %s, %s, %s) AS status",
+                (
+                    user_id,
+                    kind,
+                    offer,
+                    self._s.mail_cap,
+                    self._s.offer_cap,
+                    person_key.key_for(user_id),
+                ),
             )
             row = await cur.fetchone()
         status = row["status"] if row else "refused"
@@ -350,7 +360,10 @@ class Mailer:
         """Give back the claim of an offer that didn't go, so the next run retries it."""
         try:
             async with self._db.unscoped() as conn:
-                await conn.execute("SELECT dmbot_release_email(%s, %s)", (user_id, kind))
+                await conn.execute(
+                    "SELECT dmbot_release_email(%s, %s, %s)",
+                    (user_id, kind, person_key.key_for(user_id)),
+                )
         except Exception:
             log.error("Couldn't give back a %s email's claim", kind)
 
@@ -411,8 +424,9 @@ async def unsubscribe(db: Database, user_id: int, *, now: int) -> None:
     the website's role may insert here but not read the list (migration 0064)."""
     async with db.unscoped() as conn:
         await conn.execute(
-            "INSERT INTO email_unsubscribed (user_id, at) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-            (user_id, now),
+            "INSERT INTO email_unsubscribed (user_id, at, person_key) VALUES (%s, %s, %s)"
+            " ON CONFLICT DO NOTHING",
+            (user_id, now, person_key.key_for(user_id)),
         )
 
 

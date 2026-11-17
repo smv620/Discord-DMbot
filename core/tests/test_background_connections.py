@@ -19,6 +19,7 @@ from dmbot.memory.models import CONFIRMED, REJECTED, MemoryRuleError, NewName, n
 from dmbot.memory.ontology import PredicateTerm
 from dmbot.ui import name_background as ui_bg
 from dmbot.ui import names as names_ui
+from dmbot.ui.name_background import HIDE_PLAYERS
 from dmbot.ui.name_lists import Upload, _ai_busy, _ai_reads
 from tests import lore_fake
 from tests.test_memory_names import DM, GUILD, MANAGER, NamesTest
@@ -535,7 +536,7 @@ class ThePath(NamesTest):
             for it in pressed
             for c in it.followup.send.await_args_list
         ]
-        self.assertTrue(any("Keep this?" in text for text in said), said)
+        self.assertTrue(any("🙋❓ **PROPOSED:**" in text for text in said), said)
 
     async def test_the_end_of_check_new_names_offers_them(self) -> None:
         await self.read()
@@ -545,7 +546,7 @@ class ThePath(NamesTest):
         offered = it.followup.send.await_args
         self.assertIsNotNone(offered)
         self.assertIn(
-            "Keep this?",
+            "🙋❓ **PROPOSED:**",
             offered.args[0] if offered.args else offered.kwargs.get("content", ""),
         )
 
@@ -586,14 +587,72 @@ class ThePath(NamesTest):
         _, view = await self.offer()
         self.assertIn("From your text:", view.text())
         self.assertIn("Connection 1 of 3", view.text())
-        await self.button(view, "✅ Keep").callback(self.it())
+        await self.button(view, "✅ Add it").callback(self.it())
         (rel,) = await self.relations()
         self.assertEqual((rel.status, rel.secret), (CONFIRMED, False))
         self.assertEqual(len(await self.waiting()), 2)
 
+    async def test_a_refused_keep_logs_the_fixed_rule_sentence_and_never_a_names_words(
+        self,
+    ) -> None:
+        """#4161: "couldn't keep that one" left nothing to go on. A refusal that is one of the fixed
+        rule sentences is logged as it is; any other message (one built from a value) is logged as
+        "unlisted rule" and its class. The card still says only what to do."""
+        from unittest.mock import patch
+
+        from dmbot.memory.models import MemoryRuleError
+        from dmbot.memory.store import COMPANION_TARGET
+
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
+        card = view.current
+        built = f"{card.subject} is not one of {card.object}'s friends."
+        for raised, logged_as in (
+            (COMPANION_TARGET, COMPANION_TARGET),
+            (built, "unlisted rule (MemoryRuleError)"),
+        ):
+            press = self.it()
+            with (
+                patch.object(
+                    type(self.memory), "add_relation", side_effect=MemoryRuleError(raised)
+                ),
+                self.assertLogs("dmbot.ui.name_background", level="INFO") as logged,
+            ):
+                await self.button(view, "✅ Add it").callback(press)
+            line = next(m for m in logged.output if "was refused" in m)
+            self.assertIn(logged_as, line)
+            self.assertNotIn(card.subject, line)  # (the log never has the names)
+            self.assertNotIn(card.object, line)
+            said = press.followup.send.await_args.args[0]
+            self.assertIn("couldn't keep that one", said)
+            self.assertNotIn("companion", said)  # (the card says what to do, not the rule's words)
+        self.assertEqual(await self.relations(), [])  # (nothing was kept)
+        self.assertEqual(len(await self.waiting()), 3)  # (and it stays waiting)
+
+    async def test_a_real_refusal_of_a_travels_with_between_two_non_players_is_loggable(
+        self,
+    ) -> None:
+        """The rule behind #4161's likely case, through the real store: its sentence is on the
+        allowlist, so the log can say it."""
+        from dmbot.memory.models import DM as DM_SOURCE
+        from dmbot.memory.models import MemoryRuleError
+        from dmbot.memory.store import COMPANION_TARGET, refusal_for_log
+
+        await self.read()
+        await self.confirm_all()
+        ids = await self.ids()
+        first, second = sorted(ids)[:2]
+        with self.assertRaises(MemoryRuleError) as caught:
+            await self.memory.add_relation(
+                GUILD, self.campaign.id, ids[first], "travels_with", ids[second],
+                source=DM_SOURCE, confidence=1.0, status=CONFIRMED,
+            )  # fmt: skip
+        self.assertEqual(refusal_for_log(caught.exception), COMPANION_TARGET)
+
     async def test_keep_leaves_a_public_twin_alone_and_the_dms_secret_press_does_not(self) -> None:
         # (#3025) what each button hands the store: only the DM's own 🤫 may hide an old fact
-        for label, flags in (("✅ Keep", True), ("🤫 Keep as secret", False)):
+        for label, flags in (("✅ Add it", True), (HIDE_PLAYERS, False)):
             with self.subTest(label):
                 await self.asyncTearDown()
                 await self.asyncSetUp()
@@ -610,7 +669,9 @@ class ThePath(NamesTest):
                     return await _real(*args, **kw)
 
                 with patch.object(self.memory, "add_relation", spy):
-                    await self.button(view, label).callback(self.it())
+                    if label != "✅ Add it":  # hide first, then save
+                        await self.button(view, label).callback(self.it())
+                    await self.button(view, "✅ Add it").callback(self.it())
                 self.assertEqual(seen, [flags])
 
     async def test_a_truth_upload_pins_what_is_kept_and_an_asserted_one_does_not(self) -> None:
@@ -629,7 +690,7 @@ class ThePath(NamesTest):
             await offer._read(self.it())
             await self.confirm_all()
             _, view = await self.offer()
-            await self.button(view, "✅ Keep").callback(self.it())
+            await self.button(view, "✅ Add it").callback(self.it())
             (rel,) = await self.relations()
             pinned = await self.memory.pinned_connections(GUILD, self.campaign.id)
             self.assertEqual(pinned, {rel.id} if truth else set())
@@ -662,7 +723,9 @@ class ThePath(NamesTest):
         await self.read()
         await self.confirm_all()
         _, view = await self.offer()
-        await self.button(view, "🤫 Keep as secret").callback(self.it())
+        await self.button(view, HIDE_PLAYERS).callback(self.it())
+        self.assertIn("🤫 Hidden from players.", view.text())
+        await self.button(view, "✅ Add it").callback(self.it())
         (rel,) = await self.relations()
         self.assertTrue(rel.secret)
         self.assertEqual(await self.memory.relations(GUILD, self.campaign.id), [])  # not public
@@ -671,7 +734,7 @@ class ThePath(NamesTest):
         await self.read()
         await self.confirm_all()
         _, first = await self.offer()
-        await self.button(first, "❌ No").callback(self.it())
+        await self.button(first, "❌ Leave it out").callback(self.it())
         _, again = await self.offer()  # as after a restart: a new view reads the store
         self.assertIn("Connection 1 of 2", again.text())
 
@@ -679,7 +742,7 @@ class ThePath(NamesTest):
         await self.read()
         await self.confirm_all()
         _, view = await self.offer()
-        await self.button(view, "❌ No").callback(self.it())
+        await self.button(view, "❌ Leave it out").callback(self.it())
         await self.button(view, "⏭️ Skip the rest").callback(self.it())
         self.assertEqual(view.text(), "📜 Done. Kept 0 connections. Left out 3.")
         self.assertEqual(await self.waiting(), [])
@@ -689,7 +752,7 @@ class ThePath(NamesTest):
         await self.read()
         await self.confirm_all()
         _, view = await self.offer()
-        for label in ("✅ Keep", "🤫 Keep as secret", "❌ No", "⏭️ Skip the rest"):
+        for label in ("✅ Add it", HIDE_PLAYERS, "❌ Leave it out", "⏭️ Skip the rest"):
             await self.button(view, label).callback(self.it(MANAGER))
         self.assertEqual(len(await self.waiting()), 3)
         self.assertEqual(await self.relations(), [])
@@ -752,10 +815,10 @@ class ThePath(NamesTest):
         _, view = await self.offer()
         it = self.it()
         with patch.object(self.memory, "add_relation", side_effect=MemoryRuleError("raw words")):
-            await self.button(view, "✅ Keep").callback(it)
+            await self.button(view, "✅ Add it").callback(it)
         said = it.followup.send.await_args.args[0]
         self.assertNotIn("raw words", said)
-        self.assertIn("❌ No", said)
+        self.assertIn("the ❌ button", said)
         self.assertEqual(len(await self.waiting()), 3)
 
     # ---- a lasting way back, and what the wiring must keep ------------------------------------
@@ -767,7 +830,7 @@ class ThePath(NamesTest):
         await names_ui.start_review(it, self.campaign.id)
         asked = it.followup.send.await_args
         self.assertIsNotNone(asked)
-        self.assertIn("Keep this?", asked.args[0])
+        self.assertIn("🙋❓ **PROPOSED:**", asked.args[0])
 
     async def test_the_names_card_carries_a_lasting_button_while_any_wait(self) -> None:
         from dmbot.memory.lookup import LookupCache
@@ -784,7 +847,7 @@ class ThePath(NamesTest):
         await next(
             b for b in view.children if getattr(b, "label", "") == "📜 Check the connections (3)"
         ).callback(pressed)
-        self.assertIn("Keep this?", pressed.followup.send.await_args.args[0])
+        self.assertIn("🙋❓ **PROPOSED:**", pressed.followup.send.await_args.args[0])
 
     async def test_the_names_card_has_no_such_button_when_none_wait(self) -> None:
         from dmbot.memory.lookup import LookupCache
@@ -804,9 +867,9 @@ class ThePath(NamesTest):
         ids = await self.ids()
         for name in (shown.subject, shown.object):  # one end becomes a name the players don't know
             await self.memory.set_hidden_from_players(
-                GUILD, self.campaign.id, ids[name], True, source="dm"
+                GUILD, self.campaign.id, ids[name], True, source="dm", dm_chose_secret=True
             )
-        await self.button(view, "✅ Keep").callback(self.it())
+        await self.button(view, "✅ Add it").callback(self.it())
         (rel,) = await self.relations()
         # not secret (the names are only not shown yet), but never shown to players before both are
         self.assertEqual((rel.secret, rel.unrevealed), (False, True))
@@ -885,6 +948,117 @@ class ThePath(NamesTest):
             {("Tavin", "located_in", "Aldmoor"): "works in",
              ("Rusty Anchor", "located_in", "Aldmoor"): ""},
         )  # fmt: skip
+
+    async def test_two_places_side_by_side_keep_how_they_sit(self) -> None:
+        # (#4173 slice 6a) "on the shore of" is kept as said; plain "next to" keeps no word, and
+        # a word off the list is dropped with the link kept
+        text = (
+            "Targos lies on the shore of Maer Dualdon. Bryn Shander is next to Termalaine. "
+            "Easthaven hugs Lac Dinneshere."
+        )
+        names = [
+            name("Targos", "place", "Targos lies"),
+            name("Maer Dualdon", "place", "of Maer Dualdon"),
+            name("Bryn Shander", "place", "Bryn Shander is"),
+            name("Termalaine", "place", "to Termalaine"),
+            name("Easthaven", "place", "Easthaven hugs"),
+            name("Lac Dinneshere", "place", "Lac Dinneshere"),
+        ]
+        links = [
+            {**link("Targos", "next to", "Maer Dualdon",
+                    "Targos lies on the shore of Maer Dualdon"), "words": "on the shores of"},
+            link("Bryn Shander", "next to", "Termalaine", "Bryn Shander is next to Termalaine"),
+            {**link("Easthaven", "next to", "Lac Dinneshere", "Easthaven hugs Lac Dinneshere"),
+             "words": "hugs"},
+        ]  # fmt: skip
+        lore_fake.set_answer(self.ai, {"names": names, "connections": links})
+        it = self.it()
+        await ui_bg.offer(it, self.campaign.id, Upload(text, "your notes"))
+        await it.response.sent[0][1]["view"]._read(self.it())
+        got = {(w.subject, w.predicate, w.object): w.detail for w in await self.waiting()}
+        self.assertEqual(
+            {k: v for k, v in got.items() if k[1] == "next_to"},
+            {("Targos", "next_to", "Maer Dualdon"): "on the shore of",
+             ("Bryn Shander", "next_to", "Termalaine"): "",
+             ("Easthaven", "next_to", "Lac Dinneshere"): ""},
+        )  # fmt: skip
+
+    async def test_two_places_with_a_way_between_them_keep_the_way(self) -> None:
+        # (#4173 slice 6d) a means on the list is kept as its one word; a way off the list keeps
+        # the text's own words only when they are the quote's; anything else is a plain route
+        text = (
+            "A highway runs from Targos to Bryn Shander. Mule trains link Easthaven and "
+            "Caer-Dineval. Termalaine and Lonelywood trade by magic."
+        )
+        names = [
+            name("Targos", "place", "to Targos"),
+            name("Bryn Shander", "place", "to Bryn Shander"),
+            name("Easthaven", "place", "link Easthaven"),
+            name("Caer-Dineval", "place", "and Caer-Dineval"),
+            name("Termalaine", "place", "Termalaine and"),
+            name("Lonelywood", "place", "and Lonelywood"),
+        ]
+        links = [
+            {**link("Targos", "route to", "Bryn Shander",
+                    "A highway runs from Targos to Bryn Shander"), "words": "highway"},
+            {**link("Easthaven", "route to", "Caer-Dineval",
+                    "Mule trains link Easthaven and Caer-Dineval"), "words": "mule trains"},
+            {**link("Termalaine", "route to", "Lonelywood",
+                    "Termalaine and Lonelywood trade by magic"), "words": "a secret tunnel"},
+        ]  # fmt: skip
+        lore_fake.set_answer(self.ai, {"names": names, "connections": links})
+        it = self.it()
+        await ui_bg.offer(it, self.campaign.id, Upload(text, "your notes"))
+        await it.response.sent[0][1]["view"]._read(self.it())
+        got = {(w.subject, w.predicate, w.object): w.detail for w in await self.waiting()}
+        routes = {frozenset((k[0], k[2])): v for k, v in got.items() if k[1] == "route_to"}
+        self.assertEqual(
+            routes,
+            {frozenset(("Targos", "Bryn Shander")): "road",
+             frozenset(("Easthaven", "Caer-Dineval")): "mule trains",
+             frozenset(("Termalaine", "Lonelywood")): ""},
+        )  # fmt: skip
+
+    async def test_a_road_and_a_river_between_one_pair_are_two_offers(self) -> None:
+        # (#4173 slice 6d part 2, Supervisor's test) both are offered; the same road twice is one
+        text = (
+            "A highway runs from Targos to Bryn Shander. Boats go downriver from Targos to Bryn "
+            "Shander. The road from Targos reaches Bryn Shander."
+        )
+        names = [
+            name("Targos", "place", "from Targos"),
+            name("Bryn Shander", "place", "to Bryn Shander"),
+        ]
+        links = [
+            {**link("Targos", "route to", "Bryn Shander",
+                    "A highway runs from Targos to Bryn Shander"), "words": "highway"},
+            {**link("Targos", "route to", "Bryn Shander",
+                    "Boats go downriver from Targos to Bryn Shander"), "words": "downriver"},
+            {**link("Bryn Shander", "route to", "Targos",
+                    "The road from Targos reaches Bryn Shander"), "words": "road"},
+        ]  # fmt: skip
+        lore_fake.set_answer(self.ai, {"names": names, "connections": links})
+        it = self.it()
+        await ui_bg.offer(it, self.campaign.id, Upload(text, "your notes"))
+        await it.response.sent[0][1]["view"]._read(self.it())
+        got = sorted(w.detail for w in await self.waiting() if w.predicate == "route_to")
+        self.assertEqual(got, ["river", "road"])
+
+    def test_two_places_read_as_inside_and_beside_each_other_keep_the_in(self) -> None:
+        # (#4173 slice 6a) never both: the "in" is offered, as before, until 6b's question asks
+        found = [bg.Found(n, "place", (), (), "") for n in ("Targos", "Ten-Towns", "Maer Dualdon")]
+        lines = [
+            bg.Connection("Targos", "next_to", "Ten-Towns", "q"),
+            bg.Connection("Targos", "located_in", "Ten-Towns", "q"),
+            bg.Connection("Targos", "next_to", "Maer Dualdon", "q", words="on the shore of"),
+        ]
+        lost: bg.Dropped = Counter()
+        kept = bg.keep_connections([lines], found, {}, dropped=lost)
+        self.assertEqual(
+            [(c.how, c.b) for c in kept],
+            [("located_in", "Ten-Towns"), ("next_to", "Maer Dualdon")],
+        )
+        self.assertEqual(lost["in_and_next_to"], 1)
 
     def test_two_place_words_for_one_pair_are_both_kept_by_the_reader(self) -> None:
         # (#3363) lived in and lives in the same town are two readings; the same word twice is
@@ -1097,8 +1271,8 @@ class ThePath(NamesTest):
     async def test_plain_keep_is_off_for_a_connection_that_uses_a_secret_name(self) -> None:
         view = ui_bg.ConnectionOffer(self.campaign.id)
         view._set([Waiting("a", "knows", "b", "q", True, "Belleros", "Waterdeep", True)])
-        self.assertTrue(view.keep.disabled)
-        self.assertIn("Only 🤫 Keep as secret works", view.text())
+        self.assertTrue(view.toggle.disabled)
+        self.assertIn("🤫 Hidden from players: it uses a secret name.", view.text())
 
     # ---- the reading --------------------------------------------------------------------------
 
@@ -1139,7 +1313,7 @@ class ThePath(NamesTest):
         self.assertEqual((queued.predicate, queued.detail), ("associated_with", "pays"))
         _, view = await self.offer()
         self.assertIn("pays", view.text())
-        await self.button(view, "✅ Keep").callback(self.it())
+        await self.button(view, "✅ Add it").callback(self.it())
         (rel,) = await self.relations()
         self.assertEqual((rel.predicate, rel.detail), ("associated_with", "pays"))
 
@@ -1162,7 +1336,7 @@ class ThePath(NamesTest):
         self.assertEqual((queued.predicate, queued.detail), ("kin_of", "parent"))
         _, view = await self.offer()
         self.assertIn("is the parent of", view.text())  # not "is family of"
-        await self.button(view, "✅ Keep").callback(self.it())
+        await self.button(view, "✅ Add it").callback(self.it())
         (rel,) = await self.relations()
         self.assertEqual((rel.predicate, rel.detail, rel.directional), ("kin_of", "parent", True))
         ids = await self.ids()
@@ -1267,7 +1441,7 @@ class TheStore(NamesTest):
         # A name the players don't know yet is not a secret one (#2404): the kept connection is
         # unrevealed instead, and waits for both names.
         await self.memory.set_hidden_from_players(
-            GUILD, self.campaign.id, self.oakmere, True, source="dm"
+            GUILD, self.campaign.id, self.oakmere, True, source="dm", dm_chose_secret=True
         )
         (unseen,) = await self.store.waiting(GUILD, self.campaign.id)
         self.assertFalse(unseen.secret)

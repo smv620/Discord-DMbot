@@ -13,6 +13,8 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, PropertyMock, patch
 
+import discord
+
 from dmbot.memory import background as bg
 from dmbot.memory import lore_read
 from dmbot.memory.models import CONFIRMED, PROPOSED
@@ -267,7 +269,8 @@ class TheReader(unittest.TestCase):
         self.assertEqual(bg.cost_text(401), "about $4.01")
 
     def test_the_estimate_is_at_least_a_cent_and_grows(self) -> None:
-        self.assertEqual(bg.estimate_cents(100), 1)
+        self.assertGreaterEqual(bg.estimate_cents(100), 1)  # (never free; a few cents when small)
+        self.assertLessEqual(bg.estimate_cents(100), 3)
         self.assertGreater(bg.estimate_cents(200_000), bg.estimate_cents(10_000))
 
     def test_the_document_goes_to_the_ai_as_quoted_data(self) -> None:
@@ -430,16 +433,20 @@ class ThePath(NamesTest):
     async def test_the_offer_says_what_it_costs_and_what_it_is_for(self) -> None:
         it, view = await self.offer()
         text = it.response.sent[0][0]
-        self.assertIn("Cost: about", text)
+        self.assertRegex(text, r"About [\d,]+ AI credits? for the lore\.")
+        self.assertNotIn("cent", text)  # (the old cents wording is gone)
         self.assertIn("not a published book", text)
         self.assertIn("does not keep it, only a short line", text)
         self.assertEqual(
             [b.label for b in view.children],
             ["🤖 Find names", ui_bg.TRUTH_OFF, "Cancel", ui_bg.KNOWS_LABELS["world"]],
         )
-        # (#3098, owner 2026-10-31: the form starts on "Everyone knows it", marked Default)
-        self.assertIn("Everyone knows it", text)
+        # (#3098, owner 2026-10-31: the form starts on "🌍 Common knowledge", marked Default)
+        self.assertIn("🌍 Common knowledge", text)
         self.assertIn("(Default)", ui_bg.KNOWS_TEXT["world"])
+        # (the owner's words for the World choice, everywhere: #4537)
+        self.assertEqual(ui_bg.KNOWS_LABELS["world"], "🌍 Common knowledge")
+        self.assertIn("Everyone in the world knows this.", ui_bg.KNOWS_TEXT["world"])
         self.assertNotIn("(Default)", ui_bg.KNOWS_TEXT["spoilers"])
         self.assertIn("Tap the Players button to switch", text)
         self.ai.complete.assert_not_awaited()  # nothing is sent until the DM presses
@@ -664,8 +671,45 @@ class ThePath(NamesTest):
         (entity,) = await self.entities()
         self.assertEqual(entity.description, "From your background")
 
+    async def test_a_name_read_from_a_picture_keeps_its_own_note(self) -> None:  # (#4003)
+        from dmbot.memory.models import name_key
+
+        held = bg.Found("Red Larch", "place", (), (), "", "")
+        note = 'Read from a picture on page 3 as "Red Larch". Check the spelling.'
+        made: dict[str, str] = {}
+        await ui_bg.store(self.memory, self.campaign, [held], notes={name_key("Red Larch"): note},
+                          made=made)  # fmt: skip
+        (entity,) = await self.entities()
+        self.assertEqual((entity.description, entity.id), (note, made[name_key("Red Larch")]))
+
+    async def test_held_picture_names_are_stored_alone_unsplit_and_never_folded(self) -> None:
+        """#4003, the reviewer's two holes: a list-shaped picture name is one name to check (never
+        split into parts with no note), and a held "North Haven" beside the text's "Northhaven" is
+        its own name to check (never folded into the text's place as an other name)."""
+        from dmbot.memory.picture_names import ToCheck
+        from dmbot.memory.picture_read import Held, Sorted
+
+        text_place = bg.Found("Northhaven", "place", (), (), "")
+        sorted_ = Sorted(held=[
+            Held(bg.Found("Aldmoor, Quillgate, Fenwick", "place", (), (), ""), ToCheck(), 3, ""),
+            Held(bg.Found("North Haven", "place", (), (), ""), ToCheck("Northhaven"), 4, ""),
+        ])  # fmt: skip
+        stored = await ui_bg.store(self.memory, self.campaign, [text_place])
+        held = await ui_bg._store_held(
+            self.memory, self.campaign, sorted_, set(), [text_place], stored, "map.pdf"
+        )
+        self.assertEqual(len(held), 2)
+        entities = {e.name: e for e in await self.entities()}
+        self.assertEqual(
+            set(entities), {"Northhaven", "Aldmoor, Quillgate, Fenwick", "North Haven"}
+        )
+        self.assertIn("Is this Northhaven?", entities["North Haven"].description)
+        self.assertEqual({entities[n].id for n in ("North Haven", "Aldmoor, Quillgate, Fenwick")},
+                         held)  # fmt: skip
+        self.assertEqual(ui_bg.not_held(stored, held), {"place": [entities["Northhaven"].id]})
+
     async def test_the_players_line_comes_only_from_an_upload_they_all_know(self) -> None:
-        """#2967 slice a: "Everyone knows it" stores the read's line; a spoilers upload, a smart
+        """#2967 slice a: "🌍 Common knowledge" stores the read's line; a spoilers upload, a smart
         guess or a backstory never does; a line past the column's 120 letters is left to the DM,
         never cut; the DM's own note is never where it comes from."""
         about = "a dwarf merchant who leads a caravan"
@@ -831,6 +875,106 @@ class ThePath(NamesTest):
         both = ui_bg.BulkConfirm(self.campaign.id, {"place": ["a"], "npc": ["b", "c"]})
         self.assertEqual(str(getattr(both.children[0], "label", "")), "✅ Add all 3")
 
+    async def test_the_card_says_what_was_added_and_what_is_left_and_the_counts_add_up(
+        self,
+    ) -> None:
+        # (#4427) 8 names: 5 guessed, 2 not guessed, 1 that sounds like a known name
+        first = "📝 **8 new names to check.** DMbot guessed what 5 of them are."
+        view = ui_bg.BulkConfirm(
+            self.campaign.id,
+            {"place": ["a", "b", "c"], "npc": ["d", "e"]},
+            first_words=first,
+            total=8,
+            extra_left=3,
+            look_alike=1,
+        )
+        self.assertEqual(view._card_words(), first)  # nothing added yet: the first words
+        view.ids = {}  # the press added the 5
+        view.added = 5
+        words = view._card_words()
+        self.assertEqual(
+            words,
+            "✅ Added 5 of 8. 3 are left for you to check one by one. "
+            "1 of them sounds like one you know.",
+        )
+        self.assertEqual(view.added + view.left_to_check(), view.total)  # the counts add up
+        view.added = 0  # Undo: back to the first words, and the five wait again
+        view.ids = {"place": ["a", "b", "c"], "npc": ["d", "e"]}
+        self.assertEqual(view._card_words(), first)
+        self.assertEqual(view.added + view.left_to_check(), view.total)  # still adds up
+
+    async def test_while_another_add_all_button_remains_nothing_is_left_to_check(self) -> None:
+        # (#4427, two kinds) a press of one kind says what is still waiting and opens nothing
+        first = "📝 **7 new names to check.** DMbot guessed what 5 of them are."
+        view = ui_bg.BulkConfirm(
+            self.campaign.id,
+            {"place": ["a", "b", "c"], "npc": ["d", "e"]},
+            first_words=first,
+            total=7,
+            extra_left=2,
+        )
+        view.ids = {"npc": ["d", "e"]}  # the places were added by their button
+        view.added = 3
+        self.assertEqual(view._card_words(), "✅ Added 3 of 7. 4 still waiting.")
+        self.assertTrue(view._addable())  # (the people's button is still there)
+        view.ids = {}  # then the people's button too
+        view.added = 5
+        self.assertEqual(
+            view._card_words(), "✅ Added 5 of 7. 2 are left for you to check one by one."
+        )
+        self.assertFalse(view._addable())
+
+    async def test_with_nothing_left_the_card_says_so(self) -> None:
+        view = ui_bg.BulkConfirm(
+            self.campaign.id, {}, first_words="first", total=5, extra_left=0, look_alike=0
+        )
+        view.added = 5
+        self.assertEqual(view._card_words(), "✅ Added 5. Nothing else to check.")
+
+    async def test_a_card_with_no_count_keeps_its_words(self) -> None:
+        view = ui_bg.BulkConfirm(self.campaign.id, {"place": ["a"]})
+        self.assertIs(view._ending(), discord.utils.MISSING)
+
+    async def test_after_add_the_real_card_changes_its_words_and_offers_the_rest_last(self) -> None:
+        press = await self.read()
+        view = press.edit_original_response.await_args.kwargs["view"]
+        (button,) = [b for b in view.children if getattr(b, "label", "") == "✅ Add all 2 places"]
+        it = self.it()
+        await button.callback(it)
+        words = str(it.edit_original_response.await_args.kwargs["content"])
+        # (#4427) other kinds still have their own "Add all": nothing is "left" yet, nothing opens
+        self.assertTrue(words.startswith("✅ Added 2 of 5. "), words)
+        self.assertTrue(words.endswith(" still waiting."), words)
+        self.assertNotIn("one by one", words)
+        self.assertNotIn("Nothing is added until you", words)
+        self.assertFalse([x for x in it.response.sent if "view" in x[1]])  # (no cards opened)
+        self.assertEqual(view.added + view.left_to_check(), view.total)
+        # pressing the others until none remain: then the words say what is left, and it is offered
+        last = it
+        while True:
+            more = [
+                b for b in view.children if str(getattr(b, "label", "")).startswith("✅ Add all")
+            ]
+            if not more:
+                break
+            last = self.it()
+            await more[0].callback(last)
+        said = str(last.edit_original_response.await_args.kwargs["content"])
+        self.assertTrue(
+            said.startswith("✅ Added 5")
+            and ("Nothing else to check" in said or "one by one" in said),
+            said,
+        )
+        self.assertEqual(view.added + view.left_to_check(), view.total)
+        undo = [b for b in view.children if str(getattr(b, "label", "")).startswith("↩️ Undo")]
+        (undo_button,) = undo
+        back = self.it()
+        await undo_button.callback(back)
+        said = str(back.edit_original_response.await_args.kwargs["content"])
+        self.assertTrue(
+            said.startswith("✅ Added ") or "Nothing is added until you" in said, said
+        )  # (the last press only: the earlier ones stay added)
+
     async def test_ideas_are_not_in_the_overall_count(self) -> None:
         view = ui_bg.BulkConfirm(self.campaign.id, {"concept": ["a", "b"], "place": ["c"]})
         labels = [str(getattr(b, "label", "")) for b in view.children]
@@ -957,9 +1101,9 @@ class ThePath(NamesTest):
 
     async def test_a_busy_server_and_the_daily_limit_stop_it(self) -> None:
         _, view = await self.offer()
-        _ai_busy.add(GUILD)
+        _ai_busy[GUILD] = {""}
         await view._read(self.it())
-        _ai_busy.discard(GUILD)
+        _ai_busy.pop(GUILD, None)
         day = datetime.fromtimestamp(time.time(), UTC).strftime("%Y-%m-%d")
         _ai_reads[(GUILD, day)] = AI_READS_PER_DAY
         _, view = await self.offer()

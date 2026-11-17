@@ -7,18 +7,24 @@ import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { copiedText, couldNotCopy, linkTo, wireCopy } from "../scripts/helplinks.mjs";
 import { applySearch, wire } from "../scripts/helpsearch.mjs";
-import { anchorAliases, aliasesFor, knownAnchors, sectionIds, stepCounter } from "../src/content/help-anchors";
-import { emailSteps, gettingHelp, snags } from "../src/content/help";
+import { anchorAliases, aliasesFor, knownAnchors, movedIds, sectionIds, stepCounter } from "../src/content/help-anchors";
+import { dmSteps, emailSteps, gettingHelp, quickAnswers, snags } from "../src/content/help";
 import { RECAPS_LIVE } from "../src/content/recap-words";
 import help from "../src/pages/help.astro";
+import questionsPage from "../src/pages/help/questions.astro";
+import snagsPage from "../src/pages/help/snags.astro";
 import { parsePage } from "./dom";
 
 let html = "";
+let questionsHtml = "";
+let snagsHtml = "";
 beforeAll(async () => {
   const container = await AstroContainer.create({
     renderers: await loadRenderers([getContainerRenderer()]),
   });
   html = await container.renderToString(help, { request: new Request("https://dmbot.example/help") });
+  questionsHtml = await container.renderToString(questionsPage, { request: new Request("https://dmbot.example/help/questions") });
+  snagsHtml = await container.renderToString(snagsPage, { request: new Request("https://dmbot.example/help/snags") });
 });
 
 describe("addresses on the Help page", () => {
@@ -48,7 +54,8 @@ describe("addresses on the Help page", () => {
   it("gives each section an address from its words, and each step one from its section and place", () => {
     const doc = parsePage(html);
     for (const id of Object.values(sectionIds)) {
-      expect(doc.getElementById(id)?.tagName, id).toBe("SECTION");
+      // The snags section moved to /help/snags (#4235); /help keeps an empty mark under its old id.
+      expect(doc.getElementById(id)?.tagName, id).toBe(id === sectionIds.snags ? "SPAN" : "SECTION");
     }
     expect(sectionIds.gettingHelp).toBe(gettingHelp.id);
     const steps = [...doc.querySelectorAll("main section li")];
@@ -58,7 +65,9 @@ describe("addresses on the Help page", () => {
     }
     // Numbered from 1 in page order, with no gap, inside each section.
     for (const section of doc.querySelectorAll("main section")) {
-      const numbers = [...section.querySelectorAll("li")].map((li) => Number(li.id.split("-").pop()));
+      let numbers = [...section.querySelectorAll("li")].map((li) => Number(li.id.split("-").pop()));
+      // The recaps list counts on from where the quick answers (now on their own page) end.
+      if (section.id === sectionIds.gameMaster) numbers = numbers.slice(0, dmSteps.length);
       expect(numbers, section.id).toEqual(numbers.map((_, i) => i + 1));
     }
   });
@@ -68,7 +77,29 @@ describe("addresses on the Help page", () => {
     expect(doc.getElementById("game-master-1")?.textContent).toContain("Add DMbot to your Discord server");
     expect(doc.getElementById("players-1")?.textContent).toBeTruthy();
     expect(doc.getElementById("emails-1")?.textContent).toContain(emailSteps[0]!.text.slice(0, 30));
-    expect(doc.getElementById("snags-1")?.textContent).toContain(snags[0]!.question);
+    expect(parsePage(snagsHtml).getElementById("snags-1")?.textContent).toContain(snags[0]!.question);
+    expect(parsePage(questionsHtml).getElementById(`game-master-${dmSteps.length + 1}`)?.textContent).toContain(quickAnswers[0]!.text.slice(0, 30));
+  });
+
+  it("answers an old address of a moved step on /help, and the step is on exactly one new page (#4235)", () => {
+    const doc = parsePage(html);
+    const pages = { "/help/questions": parsePage(questionsHtml), "/help/snags": parsePage(snagsHtml) };
+    const moved = movedIds(dmSteps.length, quickAnswers.length, snags.length);
+    expect(moved.length).toBe(quickAnswers.length + snags.length + 3);
+    for (const { id, page } of moved) {
+      const mark = doc.getElementById(id);
+      expect(mark?.getAttribute("data-moved-to"), `#${id} on /help`).toBe(page);
+      // The step itself is on its new page and nowhere else.
+      const where = Object.entries(pages).filter(([, d]) => d.getElementById(id) !== null).map(([p]) => p);
+      expect(where, `#${id}`).toEqual([page]);
+    }
+  });
+
+  it("keeps the new pages free of repeated addresses", () => {
+    for (const h of [questionsHtml, snagsHtml]) {
+      const ids = [...parsePage(h).querySelectorAll("[id]")].map((e) => e.id);
+      expect(ids.filter((id, i) => ids.indexOf(id) !== i)).toEqual([]);
+    }
   });
 
   it("numbers steps in the order they are drawn", () => {
@@ -81,7 +112,7 @@ describe("without JavaScript", () => {
   it("makes each section heading a link to its own section", () => {
     const doc = parsePage(html);
     const sections = [...doc.querySelectorAll("main section")];
-    expect(sections.length).toBe(Object.keys(sectionIds).length);
+    expect(sections.length).toBe(Object.keys(sectionIds).length - 1); // (the snags moved to their own page)
     for (const section of sections) {
       const link = section.querySelector("h2 > a");
       expect(link?.getAttribute("href"), section.id).toBe(`#${section.id}`);
@@ -92,7 +123,7 @@ describe("without JavaScript", () => {
   it("keeps the Copy link buttons out of sight, named for what they do", () => {
     const doc = parsePage(html);
     const buttons = [...doc.querySelectorAll("[data-copy-link]")];
-    expect(buttons).toHaveLength(Object.keys(sectionIds).length);
+    expect(buttons).toHaveLength(Object.keys(sectionIds).length - 1);
     for (const b of buttons) {
       expect(b.hasAttribute("hidden")).toBe(true);
       expect(b.getAttribute("aria-label")).toMatch(/^Copy link to this section: \S/);

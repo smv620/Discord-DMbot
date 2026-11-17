@@ -20,7 +20,7 @@ from __future__ import annotations
 import logging
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -161,8 +161,8 @@ class PictureStore:
         line_id: int | None,
         message_id: int,
         description: str,
-        consent_version: int,
-        right_granted_at: int,
+        consent_version: int | None,
+        right_granted_at: int | None,
         sha256: str,
         object_key: str,
         preview_key: str,
@@ -335,6 +335,14 @@ class PictureStore:
             if row is None:
                 return "That picture isn't kept any more."
             pic = _picture(row)
+            if not permanent:  # a map's picture stays kept while it is a map (#4344)
+                cur = await conn.execute(
+                    "SELECT 1 FROM campaign_maps WHERE guild_id = %s AND campaign_id = %s"
+                    " AND picture_id = %s",
+                    (guild_id, campaign_id, picture_id),
+                )
+                if await cur.fetchone() is not None:
+                    return "It's a map, so it stays. Remove the map first."
             if permanent and not pic.permanent:
                 usage = await _usage(conn, guild_id, campaign_id, storage_mb)
                 if usage.permanent_bytes + pic.stored_bytes > usage.permanent_limit_bytes:
@@ -347,7 +355,58 @@ class PictureStore:
             )
             return None
 
-    async def delete(self, guild_id: int, campaign_id: str, picture_id: int) -> Picture | None:
+    async def mark_map_asked(self, guild_id: int, campaign_id: str, picture_id: int) -> None:
+        """The poster was just asked whether this picture is a map they may use (#4344). Set once;
+        asking again for the same picture does not move it."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE campaign_pictures SET map_asked_at = %s WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s AND map_asked_at IS NULL",
+                (int(self._clock()), guild_id, campaign_id, picture_id),
+            )
+
+    async def unanswered_map_questions(self, guild_id: int, campaign_id: str) -> Sequence[Picture]:
+        """Kept pictures whose poster was asked about a map, was not reminded yet, and has no map
+        for it: the ones the one reminder at the next session start is for (#4344)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"""SELECT {COLUMNS} FROM campaign_pictures p
+                    WHERE guild_id = %s AND campaign_id = %s AND deleted_at IS NULL
+                      AND map_asked_at IS NOT NULL AND map_reminded_at IS NULL
+                      AND NOT EXISTS (SELECT 1 FROM campaign_maps m
+                                      WHERE m.guild_id = p.guild_id
+                                        AND m.campaign_id = p.campaign_id
+                                        AND m.picture_id = p.id)
+                    ORDER BY id""",
+                (guild_id, campaign_id),
+            )
+            return [_picture(r) for r in await cur.fetchall()]
+
+    async def mark_map_reminded(self, guild_id: int, campaign_id: str, picture_id: int) -> None:
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "UPDATE campaign_pictures SET map_reminded_at = %s WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = %s AND map_reminded_at IS NULL",
+                (int(self._clock()), guild_id, campaign_id, picture_id),
+            )
+
+    async def taken_back_by(
+        self, guild_id: int, campaign_id: str, batch: int, user_id: int
+    ) -> bool:
+        """Whether this batch is a take-back this person made of their own picture's map: the guard
+        on the poster's Undo, so a card forwarded to someone else, a made-up batch, or a batch that
+        was a DM's Remove, Yes or No undoes nothing."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM campaign_pictures WHERE guild_id = %s AND campaign_id = %s"
+                " AND map_taken_back_batch = %s AND poster_id = %s AND deleted_at IS NULL",
+                (guild_id, campaign_id, batch, user_id),
+            )
+            return await cur.fetchone() is not None
+
+    async def delete(
+        self, guild_id: int, campaign_id: str, picture_id: int, *, unless_map: bool = False
+    ) -> Picture | None:
         """Delete a picture: the row keeps its link (so it can say it was removed), the
         description goes. Returns what was kept so the caller deletes the files; None when it was
         not kept here or already gone."""
@@ -361,6 +420,28 @@ class PictureStore:
             row = await cur.fetchone()
             if row is None:
                 return None
+            if unless_map:  # (a poster's no must not take a map their own yes just made, #4344)
+                cur = await conn.execute(
+                    "SELECT 1 FROM campaign_maps WHERE guild_id = %s AND campaign_id = %s"
+                    " AND picture_id = %s",
+                    (guild_id, campaign_id, picture_id),
+                )
+                if await cur.fetchone() is not None:
+                    return None
+            # A picture that is gone is no map either (#4344: a poster who deletes their picture
+            # takes its map with it, in the same step).
+            cur = await conn.execute(
+                "DELETE FROM campaign_maps WHERE guild_id = %s AND campaign_id = %s"
+                " AND picture_id = %s RETURNING id",
+                (guild_id, campaign_id, picture_id),
+            )
+            gone = [str(r["id"]) for r in await cur.fetchall()]
+            if gone:  # its change-log rows hold the uploader's id and its title: nothing is left
+                await conn.execute(
+                    "DELETE FROM memory_changes WHERE guild_id = %s AND campaign_id = %s"
+                    " AND table_name = 'campaign_maps' AND row_id = ANY(%s)",
+                    (guild_id, campaign_id, gone),
+                )
             await conn.execute(
                 "UPDATE campaign_pictures SET deleted_at = %s, permanent = FALSE, description = ''"
                 " WHERE id = %s",

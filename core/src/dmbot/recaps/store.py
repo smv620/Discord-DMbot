@@ -395,7 +395,13 @@ class RecapStore:
                     Jsonb(beats), now, now, now,
                 ),
             )  # fmt: skip
-            return bool(cur.rowcount)
+            if not cur.rowcount:
+                return False
+            # The beat sheet is this session's notes, as for a recap the pipeline wrote (#3026).
+            # This row skips the pipeline, so without this the Session notes tab stayed empty
+            # for a finished recap kept by `recap_run --keep` or the sample run (#3959).
+            await notes.keep_from_job(conn, guild_id, campaign_id, session_at)
+            return True
 
     async def due(self, guild_id: int, *, limit: int = 20) -> list[tuple[str, int]]:
         """(campaign, session) of the unfinished jobs in a server that may run now: not leased,
@@ -1000,8 +1006,9 @@ class RecapStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 # (a recap written by the table is not one of DMbot's recaps: it costs nothing and
-                # is not counted; its narration still is)
-                "SELECT COALESCE(sum(CASE WHEN uploaded_by > 0 THEN 0 ELSE"
+                # is not counted; its narration still is. `written_by`, not `uploaded_by`: that
+                # one goes to 0 when the uploader's account is deleted, #4148)
+                "SELECT COALESCE(sum(CASE WHEN written_by <> '' THEN 0 ELSE"
                 " (CASE WHEN state = 'ready' THEN 1 ELSE 0 END) + tries END), 0)"
                 " AS recaps, COALESCE(sum((CASE WHEN audio = 'ready' THEN 1 ELSE 0 END)"
                 " + (CASE WHEN audio <> 'off' THEN tries ELSE 0 END)), 0)"

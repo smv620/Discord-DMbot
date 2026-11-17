@@ -98,6 +98,10 @@ export const webPage = {
   layoutQuests: "Cluster by quest",
   noQuest: "Not part of a quest",
   alsoIn: (quests: string): string => `Also in: ${quests}`,
+  // The hint for the point-and-tap map, shown only to people who can edit (#4155). The button's label names the
+  // connection in full, so a screen reader does not read the button as just "Mira Voss serves Garrick".
+  tapConnection: "Tap a connection to open it.",
+  openConnection: (text: string): string => `Open this connection: ${text}`,
   letGo: "Let everything move again",
   nConnections: (n: number): string => `${n} connections`,
   // The last line of a line's tooltip when it holds more connections than the four it lists (#3279).
@@ -162,6 +166,8 @@ export const webPage = {
   save: "Save",
   makeMiddle: (name: string): string => `Put ${name} in the middle`,
   inMiddle: "In the middle",
+  // The line for an item two people handed over (#4122): the steps come from the API in Discord's words.
+  historyHead: "How it changed hands:",
   seeLine: (a: string, b: string): string => `See the connections between ${a} and ${b}`,
   // One connection as a sentence, read subject, then what it does, then object (#2666).
   lineText: (from: string, words: string, to: string, after = ""): string => (after ? `${from} ${words} ${to} ${after}` : `${from} ${words} ${to}`),
@@ -181,8 +187,16 @@ export const webPage = {
   kindChange: "What it is",
   saveKind: "Save what it is",
   edgePanel: (a: string, b: string): string => `${a} and ${b}`,
-  linkText: (a: string, b: string, words: string, direction: "a-b" | "b-a" | "both"): string =>
-    direction === "a-b" ? `${a} ${words} ${b}` : direction === "b-a" ? `${b} ${words} ${a}` : `${a} and ${b}: ${words}`,
+  // A two-way connection reads "A and B are rivals" from the API's pair words (#4196, core #4166); an older API sends none, and the
+  // line stays "A and B: <words>".
+  linkText: (a: string, b: string, words: string, direction: "a-b" | "b-a" | "both", pairWords?: string): string =>
+    direction === "a-b"
+      ? `${a} ${words} ${b}`
+      : direction === "b-a"
+        ? `${b} ${words} ${a}`
+        : pairWords
+          ? `${a} and ${b} ${pairWords}`
+          : `${a} and ${b}: ${words}`,
   wordsLabel: (n: number): string => `Words for connection ${n}`,
   saveWords: (n: number): string => `Save words for connection ${n}`,
   makeSecretShort: "Make secret",
@@ -254,6 +268,11 @@ export const webPage = {
   pinnedDone: "Pinned. Only you see it. Unpin any time.",
   unpinnedDone: "Unpinned.",
   pinHint: "Only you see pins. Players never do.",
+  // A place's parent DMbot assumed from where the story was (#4304): the same words as Discord's card.
+  assumedMark: "(assumed)",
+  rightButton: "✅ That's right",
+  rightLabel: (n: number): string => `That's right: connection ${n}`,
+  rightDone: (place: string, parent: string): string => `📍 Noted: ${place} is in ${parent}.`,
   // "Who knows this?" on a held connection (#2935 D4, #3214). Plain words; the bot applies the answer.
   whoKnowsHeading: "Who knows this?",
   whoOnlyDm: "🤫 Only the DM",
@@ -270,6 +289,13 @@ export const webPage = {
   whoDoneSome: (names: string): string => `Now only ${names} know this.`,
   whoDoneAll: "Now everyone at the table can see this.",
   whoAlready: "It was already like that.",
+  // 🌍 Common knowledge on a connection (#4559; the bot's door takes `common`).
+  whoCommon: "🌍 Common knowledge",
+  whoStateCommon: "🌍 Common knowledge: every character knows it, NPCs too, and anyone who joins later. Players can see it.",
+  whoDoneCommon: "Done: everyone, NPCs too, now knows it.",
+  // Said before the usual done line when another answer takes common knowledge back (#4559, point 4).
+  whoNoLongerCommon: "No longer common knowledge.",
+  whoCannotShow: "Show the names to the players first: common knowledge is something they see.",
   // Names in a list: "Mara, Tavin and Brann"; past five, the first four and how many more.
   whoNames: (names: string[]): string => {
     if (names.length <= 5) {

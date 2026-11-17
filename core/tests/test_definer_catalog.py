@@ -73,3 +73,39 @@ class Catalog(DatabaseTest):
         assert row is not None
         self.assertFalse(row["helper"])
         self.assertTrue(row["door"])
+
+
+class Grants(DatabaseTest):
+    async def test_a_website_door_is_granted_to_nobody_but_its_owner_and_the_websites_role(
+        self,
+    ) -> None:
+        """#4619: dev1 saw `dmbot` among a door's grants on the server. `dmbot` is the role that
+        runs the migrations, so it OWNS every function, and an owner's own entry is how the catalog
+        shows the owner's right once PUBLIC is revoked: it is not a grant to take back (the owner
+        can always re-grant itself), and the bot calls a few `dmbot_web_*` helpers itself
+        (`dmbot_web_lore_add`, `_scenes`, `_readings`, the move codes). What would be wrong is a
+        grant to any other role, to PUBLIC, or a default-privileges grant: this test reads every
+        SECURITY DEFINER `dmbot_web_*` function's ACL (the doors) and fails on any grantee but its
+        owner and the website's role. (`dmbot_web_guilds` and `dmbot_web_managed_guilds` are plain
+        functions the row-level security policies call, so every role must run them: they are open
+        to PUBLIC on purpose and are not doors.)"""
+        async with self.db.guild(1) as conn:
+            cur = await conn.execute(
+                "SELECT p.proname AS name, pg_get_userbyid(p.proowner) AS owner,"
+                " CASE WHEN a.grantee = 0 THEN 'PUBLIC' ELSE pg_get_userbyid(a.grantee) END"
+                " AS grantee, a.privilege_type AS privilege"
+                " FROM pg_proc p CROSS JOIN LATERAL aclexplode("
+                "   COALESCE(p.proacl, acldefault('f', p.proowner))) a"
+                " WHERE p.pronamespace = current_schema()::regnamespace"
+                " AND p.proname LIKE 'dmbot\\_web\\_%' AND p.prosecdef"
+            )
+            rows = [dict(r) for r in await cur.fetchall()]
+        self.assertTrue(rows, "no website door found: the query is wrong")
+        stray = sorted(
+            {
+                (str(r["name"]), str(r["grantee"]))
+                for r in rows
+                if r["grantee"] not in (r["owner"], "dmbot_web")
+            }
+        )
+        self.assertEqual(stray, [], "a website door is granted to a role it should not be")

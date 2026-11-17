@@ -31,7 +31,12 @@ from dmbot.campaigns.models import HANDOVER_DAYS, HandoverOffer
 from dmbot.campaigns.moves import HandoverMover, Moved
 from dmbot.dm_screen.handover import (
     ACCEPTED,
+    CLOSED_DM_TO_DM,
+    CLOSED_DM_TO_RECEIVER,
+    CLOSED_RECEIVER_TO_DM,
+    CLOSED_RECEIVER_TO_RECEIVER,
     DECLINED,
+    HANDOVER_POINTER,
     MOVE_ENDED_NEW_OWNER,
     MOVE_FAILED,
     MOVE_FAILED_NEW_OWNER,
@@ -128,6 +133,7 @@ class SiteOffers:
         spawn: Callable[[Awaitable[None], str], object],
         deliver: Deliver = _deliver,
         post: Callable[[int, str], Awaitable[object]] | None = None,
+        note: Callable[[Campaign, str, str], Awaitable[object]] | None = None,
         mover: HandoverMover | None = None,
         owner_mail: OwnerMail | None = None,
         site_url: str = "",
@@ -141,6 +147,7 @@ class SiteOffers:
         self._wait_until_ready = wait_until_ready
         self._spawn = spawn
         self._deliver = deliver
+        self._note = note
         self._post = post  # a message in a channel: the #dm-screen note on an accept
         self._site_url = site_url
         self._owner_mail = owner_mail  # the owner is also told by email, when there is an address
@@ -357,9 +364,15 @@ class SiteOffers:
     async def _screen_note(self, campaign: Campaign, offer: HandoverOffer) -> None:
         """The accept noted in the campaign's #dm-screen, as for the Discord button (it
         changes whose plan the table uses). Best effort."""
+        names = {"name": _who(offer), "campaign": md(campaign.name)}
+        if self._note is not None:  # names, so the DMs privately and a pointer in the channel
+            try:
+                await self._note(campaign, SCREEN_ACCEPTED.format(**names), HANDOVER_POINTER)
+            except Exception as exc:
+                log.warning("Couldn't note a website accept to the DMs (%s)", type(exc).__name__)
+            return
         if self._post is None or campaign.dm_screen_channel_id is None:
             return
-        names = {"name": _who(offer), "campaign": md(campaign.name)}
         try:
             await self._post(campaign.dm_screen_channel_id, SCREEN_ACCEPTED.format(**names))
         except Exception as exc:
@@ -434,7 +447,9 @@ class SiteOffers:
             log.exception("Couldn't announce the end of hand-over offer %s", offer.id)
             return
         try:
-            if campaign is not None:  # deleted since: its offers go with it
+            if campaign is not None and offer.status == "closed":
+                await _tell_closed(guild, offer, campaign)
+            elif campaign is not None:  # deleted since: its offers go with it
                 await _tell_expired(guild, offer, campaign)
         except BaseException as exc:
             # Not told: let it go, so the next sweep tries again.
@@ -449,7 +464,7 @@ class SiteOffers:
             return
         # Only once the notice is kept: a cancel during the email must not release it, or the
         # next sweep would send the Discord message again.
-        if campaign is not None:
+        if campaign is not None and offer.status != "closed":
             await self._email_owner(offer, campaign.name, "expired")
 
     async def send(self, guild_id: int, offer_id: int) -> None:
@@ -603,6 +618,32 @@ async def _tell_expired(guild: discord.Guild, offer: HandoverOffer, campaign: Ca
             view=None,
             allowed_mentions=NO_PINGS,
         )
+
+
+async def _tell_closed(guild: discord.Guild, offer: HandoverOffer, campaign: Campaign) -> None:
+    """An offer closed because an account changed (#2533, slice 3): the owner who offered and the
+    person offered to are each told once, in the pair that fits whose account changed, and the
+    person's message loses its buttons. When both ended up on one account only the owner is told.
+    A person who left the server or closed their messages counts as told. Nothing here names
+    which account changed or what it holds."""
+    receiver_changed = offer.closed_side == "receiver"
+    to_owner = CLOSED_RECEIVER_TO_DM if receiver_changed else CLOSED_DM_TO_DM
+    to_person = CLOSED_RECEIVER_TO_RECEIVER if receiver_changed else CLOSED_DM_TO_RECEIVER
+    with contextlib.suppress(discord.HTTPException):
+        owner = await _member(guild, offer.from_user_id)
+        await owner.send(to_owner.format(campaign=md(campaign.name)), allowed_mentions=NO_PINGS)
+    if offer.closed_side == "same" or offer.delivered_at is None:  # (nothing was ever sent to them)
+        return
+    text = to_person.format(campaign=md(campaign.name))
+    with contextlib.suppress(discord.HTTPException):
+        person = await _member(guild, offer.to_user_id)
+        if offer.message_id is not None and not offer.via_email:
+            channel = person.dm_channel or await person.create_dm()
+            await channel.get_partial_message(offer.message_id).edit(
+                content=text, view=None, allowed_mentions=NO_PINGS
+            )
+        else:
+            await person.send(text, allowed_mentions=NO_PINGS)
 
 
 async def _tell_owner(guild: discord.Guild, offer: HandoverOffer, campaign: Campaign) -> None:

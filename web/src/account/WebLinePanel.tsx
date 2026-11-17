@@ -5,8 +5,11 @@
 // page's switches, as before.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { ASSUMED_PARENT_LIVE } from "../content/assumed-parent-switch";
 import { KNOWS_FEELING_LIVE } from "../content/knows-feeling-switch";
 import { feelingOf } from "../content/knows-feeling-words";
+import { KNOWS_HOW_LIVE } from "../content/knows-how-switch";
+import { knowsHowOf, knowsHowWords } from "../content/knows-how-words";
 import { WHO_KNOWS_LIVE } from "../content/who-knows-switch";
 import { webPage as words } from "../content/web-words";
 import { type AccountApi, type WebEdge, type WebLinkChange, type WebRevealTarget } from "./api";
@@ -97,7 +100,7 @@ export default function LinePanel({
 
 /** "Who knows this?" on a held connection (#2935 D4, #3214): the DM says only the DM, some characters, or everyone at
  * the table, and the bot applies it. Shown to the DM's full view only, behind WHO_KNOWS_LIVE. */
-function WhoKnows({
+export function WhoKnows({
   api,
   refId,
   link,
@@ -106,7 +109,7 @@ function WhoKnows({
   api: AccountApi;
   refId: string;
   link: WebEdge["links"][number];
-  act: (change: WebLinkChange, ok: string) => Promise<string | null>;
+  act: (change: WebLinkChange, ok: string, own?: Partial<Record<string, string>>) => Promise<string | null>;
 }) {
   const [picking, setPicking] = useState(false);
   const [chosen, setChosen] = useState<Set<string>>(new Set());
@@ -158,17 +161,24 @@ function WhoKnows({
           ? words.whoStateSome(words.whoNames(holders.map((h) => h.name)))
           : current === "all"
             ? words.whoStateAll
-            : words.whoStateDm;
+            : current === "common"
+              ? words.whoStateCommon
+              : words.whoStateDm;
 
-  /** Only the DM, or everyone at the table: sent at once. Pressing the answer already set says so, and sends nothing. */
-  async function choose(who: "dm" | "everyone"): Promise<void> {
+  /** Only the DM, everyone at the table, or 🌍 common knowledge: sent at once. Pressing the answer already set says so, and sends nothing. */
+  async function choose(who: "dm" | "everyone" | "common"): Promise<void> {
     if (busy) return;
-    const now = current === "dm" ? "dm" : current === "all" ? "everyone" : null;
+    const now = current === "dm" ? "dm" : current === "all" ? "everyone" : current === "common" ? "common" : null;
     setAlready("");
     if (now === who) return setAlready(words.whoAlready);
     setBusy(true);
     try {
-      setProblem(await act({ action: "who", id: link.id, who }, who === "dm" ? words.whoDoneDm : words.whoDoneAll));
+      const done = who === "dm" ? words.whoDoneDm : who === "common" ? words.whoDoneCommon : words.whoDoneAll;
+      // Taking common knowledge back says so first; a failure shows its own error, as ever.
+      const taken = current === "common" && who !== "common" ? `${words.whoNoLongerCommon} ${done}` : done;
+      // A refusal of common knowledge says what to do first: the names are shown to the players, then the answer is sent again.
+      const own = who === "common" ? { "cannot-show": words.whoCannotShow } : undefined;
+      setProblem(await act({ action: "who", id: link.id, who }, taken, own));
     } finally {
       setBusy(false);
     }
@@ -194,7 +204,8 @@ function WhoKnows({
     const named = ids.map((id) => names.get(id) ?? holders.find((h) => h.id === id)?.name ?? "");
     setBusy(true);
     try {
-      const problemNow = await act({ action: "who", id: link.id, who: "some", characters: ids }, words.whoDoneSome(words.whoNames(named)));
+      const said = words.whoDoneSome(words.whoNames(named));
+      const problemNow = await act({ action: "who", id: link.id, who: "some", characters: ids }, current === "common" ? `${words.whoNoLongerCommon} ${said}` : said);
       setProblem(problemNow);
       if (problemNow === null) setPicking(false); // a failure keeps the picker and the ticks
     } finally {
@@ -227,6 +238,9 @@ function WhoKnows({
         </button>
         <button type="button" class="button secondary" aria-pressed={current === "all"} disabled={busy} onClick={() => void choose("everyone")}>
           {words.whoEveryone}
+        </button>
+        <button type="button" class="button secondary" aria-pressed={current === "common"} disabled={busy} onClick={() => void choose("common")}>
+          {words.whoCommon}
         </button>
       </div>
       <SavingWait active={busy} />
@@ -286,7 +300,7 @@ function LinkRow({
   a: string;
   b: string;
   canEdit: boolean;
-  act: (change: WebLinkChange, ok: string) => Promise<string | null>;
+  act: (change: WebLinkChange, ok: string, own?: Partial<Record<string, string>>) => Promise<string | null>;
   reveal: (target: WebRevealTarget) => Promise<string | null>;
   revealing: Set<string>;
   api: AccountApi;
@@ -298,12 +312,15 @@ function LinkRow({
   const run = async (change: WebLinkChange, ok: string): Promise<void> => setProblem(await act(change, ok));
   const sourceWords = words.sourceLine(link.source);
   const feeling = KNOWS_FEELING_LIVE ? feelingOf(link.words) : null;
+  // How the two know each other (#3882): on any `knows` connection, whatever its feeling.
+  const how = KNOWS_HOW_LIVE ? knowsHowOf(link.words) : null;
   return (
     <li class={dimmedName(link) ? "stack web-dim" : "stack"}>
       <p>
         {markSecret(link) && <span aria-hidden="true">{words.secretMark} </span>}
         {link.belief && <span aria-hidden="true">{words.theoryMark} </span>}
-        {words.linkText(a, b, link.words, link.direction)}
+        {words.linkText(a, b, link.words, link.direction, link.pairWords)}
+        {ASSUMED_PARENT_LIVE && canEdit && link.assumed && <span> {words.assumedMark}</span>}
         {!link.knowWord && link.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
       </p>
       {sourceWords && <p class="small muted">{sourceWords}</p>}
@@ -348,6 +365,7 @@ function LinkRow({
               <input type="text" value={text} maxLength={100} onInput={(e) => setText((e.target as HTMLInputElement).value)} />
             </label>
           )}
+          {how !== null && <LazyPanel load={() => import("./LinkKnowsHow")} what={knowsHowWords.loading} props={{ n, id: link.id, how, act }} />}
           <div class="row">
             {feeling === null && (
               <button
@@ -380,6 +398,22 @@ function LinkRow({
             >
               {link.pinned ? words.unpin : words.pin}
             </button>
+            {ASSUMED_PARENT_LIVE && link.assumed && (
+              <button
+                type="button"
+                class="button secondary"
+                aria-label={words.rightLabel(n)}
+                onClick={() =>
+                  void run(
+                    { action: "right", id: link.id },
+                    // the place is the one the line reads from, its parent the other (Discord's note)
+                    link.direction === "b-a" ? words.rightDone(b, a) : words.rightDone(a, b),
+                  )
+                }
+              >
+                {words.rightButton}
+              </button>
+            )}
             {!asking && (
               <button type="button" class="button secondary" aria-label={words.removeLink(n)} onClick={() => setAsking(true)}>
                 {words.removeShort}

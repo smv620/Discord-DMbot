@@ -126,6 +126,17 @@ class TheatreRuns:
             )
             return [(str(r["campaign_id"]), str(r["id"])) for r in await cur.fetchall()]
 
+    async def progress(self, guild_id: int, session_id: str) -> tuple[int, int] | None:
+        """(part, parts) of a run that is going now, or None. Counts only."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT part, parts FROM theatre_runs WHERE guild_id = %s AND session_id = %s"
+                " AND state = 'running'",
+                (guild_id, session_id),
+            )
+            row = await cur.fetchone()
+        return None if row is None else (int(row["part"]), int(row["parts"]))
+
     async def moved(
         self, guild_id: int, session_id: str, token: str, part: int, parts: int
     ) -> bool:

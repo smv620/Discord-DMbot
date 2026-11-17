@@ -51,6 +51,18 @@ describe("makeScript", () => {
     const { api } = fake([{ status: 200, body: { id: ID } }, { status: 200, body: { state: "failed", error } }]);
     expect(await kindOf(api.makeScript!("100.cmp1", 2))).toBe(kind);
   });
+  it("a press that ends busy ends as still-waiting", async () => {
+    const { api } = fake([{ status: 200, body: { id: ID } }, { status: 200, body: { state: "failed", error: "busy" } }]);
+    expect(await kindOf(api.makeScript!("100.cmp1", 2))).toBe("still-waiting");
+  });
+  it("a press that ends not-allowed ends as not-allowed", async () => {
+    const { api } = fake([{ status: 200, body: { id: ID } }, { status: 200, body: { state: "failed", error: "not-allowed" } }]);
+    expect(await kindOf(api.makeScript!("100.cmp1", 2))).toBe("not-allowed");
+  });
+  it("an unknown error word stays a plain failure", async () => {
+    const { api } = fake([{ status: 200, body: { id: ID } }, { status: 200, body: { state: "failed", error: "lost" } }]);
+    expect(await kindOf(api.makeScript!("100.cmp1", 2))).toBe("server");
+  });
   it("ends at once on a refusal from a look, and does not wait out ten minutes", async () => {
     const { api, seen } = fake([{ status: 200, body: { id: ID } }, { status: 409, body: { detail: "plan" } }]);
     expect(await kindOf(api.makeScript!("100.cmp1", 2))).toBe("plan-needed");

@@ -17,15 +17,16 @@ from __future__ import annotations
 import logging
 import re
 import time
-from collections.abc import Awaitable, Callable, Mapping, Sequence
-from typing import Any
+from collections.abc import Awaitable, Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass
+from typing import Any, NamedTuple
 
 import discord
 
 from dmbot.memory import background as bg
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.mentions import NO_PINGS
-from dmbot.ui import dm_links
+from dmbot.ui import dm_links, split_words
 from dmbot.ui.dmbot_commands import _bot, _tell
 from dmbot.upload_notices import Notice
 
@@ -52,10 +53,17 @@ def _plural(kind: str, count: int) -> str:
     return f"{count} {one if count == 1 else many}"
 
 
+# Counts that ride beside the kinds of names, never one of them (#3963 c, #3979, #2996).
+_NOT_NAMES = (
+    "connections", "other_names", "shown", "held", "split_group", "split_unknown",
+    "names_split_group", "names_split_unknown", "revealed",
+)  # fmt: skip
+
+
 def notice_text(label: str, counts: Mapping[str, int], questions: int) -> str:
     """ "📜 Added **62 names** (30 NPCs, 24 places) and **48 connections** from <label>." and, when
     something is left, "**3 questions** need you." Counts only."""
-    kinds = {k: v for k, v in counts.items() if k not in ("connections", "other_names") and v}
+    kinds = {k: v for k, v in counts.items() if k not in _NOT_NAMES and v}
     names = sum(kinds.values())
     parts = ", ".join(_plural(k, v) for k, v in sorted(kinds.items(), key=lambda x: -x[1]))
     connections = counts.get("connections", 0)
@@ -70,6 +78,50 @@ def notice_text(label: str, counts: Mapping[str, int], questions: int) -> str:
     what = " and ".join(added) if added else "**nothing new**"
     source = f" from {discord.utils.escape_markdown(label)}" if label else ""
     text = f"📜 Added {what}{source}."
+    shown = counts.get("shown", 0)
+    if shown:  # (an import's: held-back connections the table stated, #3963 c)
+        text += (
+            f"\n👁️ **{shown} connection{'' if shown == 1 else 's'}** said at the table "
+            f"{'is' if shown == 1 else 'are'} now shown to your players."
+        )
+    held = counts.get("held", 0)
+    if held:  # (an import's: kept hidden beside a connection the story hides, #3979)
+        one = held == 1
+        text += (
+            f"\n🙈 **{held} connection{'' if one else 's'}** {'is' if one else 'are'} kept hidden "
+            f"from your players, so {'it' if one else 'they'} can't give away another hidden "
+            f"connection between the same two names. To show {'it' if one else 'them'}: open "
+            f"either name, ✏️ Edit a connection…, 👁️ Who knows this?, then 👁️ Everyone at the "
+            f"table."
+        )
+    group = counts.get("split_group", 0)
+    if group:  # (an import's: said while the game clock had the party split, #2996)
+        one = group == 1
+        text += (
+            f"\n👁️ **{group} connection{'' if one else 's'}** {'was' if one else 'were'} said "
+            f"while the party was split, so only the characters who were there know "
+            f"{'it' if one else 'them'}."
+        )
+    unknown = counts.get("split_unknown", 0)
+    if unknown:  # (… and which group heard it can't be told: nobody knows it yet)
+        one = unknown == 1
+        text += (
+            f"\n🙈 **{unknown} connection{'' if one else 's'}** {'is' if one else 'are'} kept "
+            f"hidden from your players: the party was split, and DMbot can't tell which group "
+            f"heard {'it' if one else 'them'}. To choose who knows: open either name, ✏️ Edit a "
+            f"connection…, 👁️ Who knows this?, pick who was there, then 👥 Only some characters."
+        )
+    revealed = counts.get("revealed", 0)
+    if revealed:  # (a World read named what backstories kept hidden, #4524 slice 1b)
+        one = revealed == 1
+        text += (
+            f"\n🌍 **{revealed} hidden thing{'' if one else 's'}** "
+            f"{'is' if one else 'are'} now known to everyone."
+        )
+    if names_split := split_words.for_many(
+        counts.get("names_split_group", 0), counts.get("names_split_unknown", 0)
+    ):  # (an import's new names said only while the party was split, #4037)
+        text += f"\n{names_split}"
     if questions:
         text += (
             f"\n❓ **{questions} question{'' if questions == 1 else 's'}** "
@@ -143,7 +195,7 @@ class UndoUploadButton(
         await _tell(interaction, text)
 
 
-async def undo_upload(
+async def undo_upload_result(
     bot: Any,
     guild_id: int,
     campaign_id: str,
@@ -151,27 +203,27 @@ async def undo_upload(
     user_id: int,
     *,
     started: Callable[[], Awaitable[None]] | None = None,
-) -> str:
+) -> Undone:
     """Undo one upload's changes for a game master, from the Discord button or the website's
     queue action: every check, the claim, the changes undone newest first as one chain, and the
-    plain-words answer. `started` runs once the undo is claimed (the button answers Discord with
-    it). Counts only in the log."""
+    plain-words answer and how many changes were taken back. `started` runs once the undo is
+    claimed (the button answers Discord with it). Counts only in the log."""
     campaign = await bot.campaigns.get(guild_id, campaign_id)
     if campaign is None or bot.memory is None or bot.upload_notices is None:
-        return GONE
+        return Undone(GONE)
     if user_id not in campaign.dm_user_ids:  # checked on every press
-        return NOT_YOURS
+        return Undone(NOT_YOURS)
     notices = bot.upload_notices
     found = await notices.get(guild_id, notice_id)
-    if found is None:
-        return GONE
+    if found is None or found.campaign_id != campaign_id:  # (an upload of another campaign: no)
+        return Undone(GONE)
     if found.undone_at is not None:
-        return ALREADY
+        return Undone(ALREADY)
     if not found.can_undo(int(time.time())):
-        return TOO_LATE
+        return Undone(TOO_LATE)
     claimed = await notices.claim_undo(guild_id, notice_id)
     if claimed is None:  # (a second press at the same moment)
-        return ALREADY
+        return Undone(ALREADY)
     if started is not None:
         await started()
     done = 0
@@ -186,15 +238,58 @@ async def undo_upload(
             log.warning("Undoing an upload stopped (%s)", type(exc).__name__)
             broke = True
             break
+    try:  # the lineage questions the upload left waiting go too (#3926); never stops the undo
+        from dmbot.memory.trait_offers import TraitOfferStore
+
+        await TraitOfferStore(bot.memory._db).drop_for_notice(
+            campaign.guild_id, campaign.id, notice_id
+        )
+    except Exception as exc:
+        log.warning("Undoing an upload's lineage questions failed (%s)", type(exc).__name__)
     if bot.lookup is not None:
         bot.lookup.drop([campaign.id])
     total = len(claimed.changes)
     if broke and done == 0:
         await notices.give_back_undo(guild_id, notice_id)  # nothing changed: again
-        return COULD_NOT
+        return Undone(COULD_NOT)
     if broke:
-        return STOPPED.format(done=done, total=total)
-    return NOTHING_LEFT if done == total else PARTLY.format(done=done, total=total)
+        return Undone(STOPPED.format(done=done, total=total), done, total, stopped=True)
+    answer = NOTHING_LEFT if done == total else PARTLY.format(done=done, total=total)
+    return Undone(answer, done, total)
+
+
+@dataclass(frozen=True, slots=True)
+class Undone:
+    """What an undo did: the plain-words answer, and the counts (changes taken back, and how many
+    the upload made) for the website's queue, which writes numbers and never the words."""
+
+    answer: str
+    done: int = 0
+    total: int = 0
+    stopped: bool = False  # an unexpected error ended it part way
+
+
+async def undo_upload(
+    bot: Any,
+    guild_id: int,
+    campaign_id: str,
+    notice_id: str,
+    user_id: int,
+    *,
+    started: Callable[[], Awaitable[None]] | None = None,
+) -> str:
+    """`undo_upload_result`'s answer: the words the Discord button shows."""
+    return (
+        await undo_upload_result(bot, guild_id, campaign_id, notice_id, user_id, started=started)
+    ).answer
+
+
+class DmClaims(NamedTuple):
+    """Which connections an import may keep as sure (#3897): stated in the lines of these DMs, in
+    the sessions that start at these times."""
+
+    dm_ids: Collection[int]
+    sessions: Collection[int]
 
 
 async def add_sure(
@@ -205,14 +300,22 @@ async def add_sure(
     *,
     connections: bool = True,
     source: tuple[str, str] | None = None,
+    dm_claims: DmClaims | None = None,
+    earlier: Sequence[int] = (),
+    revealed: int = 0,
 ) -> tuple[Notice, int] | None:
     """Add what DMbot is sure of from this reading, as the DM's own calls (`memory.auto_accept`),
     and keep the upload's notice with the changes it made. Returns the notice and the number of
     questions left (names and connections waiting, "Which one?" and same-person questions), or
     None when nothing could be kept (no store). `connections=False`: names only (an import's).
     `source`: ("lore" or "import", that upload's or import's id), so the website finds this notice
-    by it (#3879). Never raises."""
+    by it (#3879). `dm_claims`: the DMs and this import's sessions, to also keep the connections the
+    DM's own lines state, once their names are in (#3897; an import's); who may be recorded is read
+    again just before. `earlier`: changes this upload made before (a World read's reveals, #4524
+    slice 1b), kept first so ↩️ Undo takes them back too; `revealed`: how many things they made
+    known to everyone, for the notice's count. Never raises."""
     from dmbot.memory import auto_accept as auto
+    from dmbot.memory import backstory_keep
     from dmbot.ui.names import background_kind
 
     try:
@@ -226,10 +329,23 @@ async def add_sure(
             memory, guild, cid, tally, narrow=True, only=ids, kind_of=background_kind
         )
         await auto.accept_other_names(memory, guild, cid, tally, only_entries=ids)
+        if dm_claims is not None:  # (after the names, so the claims about them are ready)
+            # (read again after the names; an import counts who is recorded in its own sessions)
+            opted_in = await bot.consent.recorded_in(guild, cid)
+            await auto.accept_dm_claims(
+                memory, guild, cid, tally,
+                dm_ids=dm_claims.dm_ids, opted_in=opted_in, sessions=dm_claims.sessions,
+            )  # fmt: skip
         if (
             links is not None and connections
         ):  # (a bot without the connections store adds the names only)
             await auto.accept_connections(memory, links, guild, cid, tally, upload=label)
+            # (a place's parent assumed from where the story was, once both places are kept: never
+            # a question, #4173 slice 3)
+            try:  # (never at the cost of the upload's notice and its Undo)
+                await backstory_keep.keep_assumed(memory, links, guild, cid)
+            except Exception as exc:
+                log.warning("Assumed places couldn't be kept (%s)", type(exc).__name__)
         if bot.lookup is not None:
             bot.lookup.drop([cid])
         counts = {**tally.kinds}
@@ -237,6 +353,20 @@ async def add_sure(
             counts["connections"] = tally.accepted[auto.CONNECTIONS]
         if tally.accepted[auto.OTHER_NAMES]:
             counts["other_names"] = tally.accepted[auto.OTHER_NAMES]
+        if tally.shown:
+            counts["shown"] = tally.shown
+        if tally.held:
+            counts["held"] = tally.held
+        if tally.split_group:
+            counts["split_group"] = tally.split_group
+        if tally.split_unknown:
+            counts["split_unknown"] = tally.split_unknown
+        if tally.names_split_group:
+            counts["names_split_group"] = tally.names_split_group
+        if tally.names_split_unknown:
+            counts["names_split_unknown"] = tally.names_split_unknown
+        if revealed:
+            counts["revealed"] = revealed
         questions = (
             tally.waiting[auto.NAMES]
             + tally.waiting[auto.CONNECTIONS]
@@ -250,7 +380,7 @@ async def add_sure(
             cid,
             label,
             counts,
-            tally.batches,
+            [*earlier, *tally.batches],  # (in the order made: Undo goes newest first)
             source_kind=source[0] if source else None,
             source_id=source[1] if source else None,
         )

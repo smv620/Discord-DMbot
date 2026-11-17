@@ -13,8 +13,9 @@ DMbot's own first candidate) and every same-person question (answered with the b
 name that needs a person to say who plays it, a question with no suggestion, and anything a rule
 refuses stay waiting and are counted.
 
-Guard: it refuses any campaign not named "test of the frostmaiden (sample)", the same as
-`graph_key_check`, and there is no flag to override that. Without `--dry-run` it needs `--yes`.
+Guard: it refuses any campaign not named "test of the frostmaiden (sample N)" (or the old
+unnumbered name), the same as `graph_key_check`, and there is no flag to override that.
+Without `--dry-run` it needs `--yes`.
 Output: counts by kind only (accepted, left waiting, refused by a rule), never a name or a word of
 a text. It reads no transcript. Connect as the normal `dmbot` user, as `movers_check` does.
 """
@@ -29,6 +30,7 @@ import sys
 from dataclasses import dataclass
 
 from dmbot.db import Database
+from dmbot.devtools import sample_name
 from dmbot.memory import auto_accept as auto
 from dmbot.memory.backstory_links import DONE, BackstoryLinks
 from dmbot.memory.store import MemoryStore
@@ -36,7 +38,7 @@ from dmbot.ui.names import background_kind
 
 log = logging.getLogger(__name__)
 
-SAMPLE_CAMPAIGN = "test of the frostmaiden (sample)"
+SAMPLE_CAMPAIGN = sample_name.OLD_NAME  # (the old unnumbered name; numbered ones pass `is_sample`)
 NAMES, OTHER_NAMES, CONNECTIONS, QUESTIONS, SAME_PERSON = (
     "names", "other names", "connections", "which-one questions", "same-person questions",
 )  # fmt: skip
@@ -69,9 +71,10 @@ async def check_campaign(db: Database, guild_id: int, campaign_id: str) -> None:
             "SELECT name FROM campaigns WHERE guild_id = %s AND id = %s", (guild_id, campaign_id)
         )
         row = await cur.fetchone()
-    if row is None or str(row["name"]) != SAMPLE_CAMPAIGN:
+    if row is None or not sample_name.is_sample(str(row["name"])):
         raise WrongCampaign(
-            f"accept_all only runs on the campaign named {SAMPLE_CAMPAIGN!r}; nothing was done"
+            'accept_all only runs on a sample campaign, "test of the frostmaiden (sample N)"; '
+            "nothing was done"
         )
 
 
@@ -158,6 +161,57 @@ async def accept_same_person(
             counts.add_batch(written.batch)
         except Exception as exc:
             _refused(counts, SAME_PERSON, exc)
+
+
+async def keep_threads(db: Database, memory: MemoryStore, guild: int, campaign: str) -> int:
+    """Every story thread the lore reader suggested (#4453), kept as the DM's ✅ keeps it (the
+    thread, its state and all its people, through `MemoryStore.keep_thread`), so the sample's
+    backup holds what the reader found and the key check can score it. The sample campaign only
+    (the caller checked). Never in the bot: there a reader's suggestion is only ever kept by the
+    DM (design §9.6). How many kept."""
+    from dmbot.memory.models import DM
+    from dmbot.memory.thread_suggestions import ThreadSuggestionStore
+
+    kept = 0
+    for s in await ThreadSuggestionStore(db).waiting(guild, campaign):
+        try:
+            await memory.keep_thread(
+                guild, campaign, s.name, s.kind, s.state, aim=s.aim, parts=list(s.parts),
+                source=DM, suggestion_id=s.id,
+            )  # fmt: skip
+            kept += 1
+        except Exception as exc:  # the type only
+            log.warning("A story thread couldn't be kept (%s)", type(exc).__name__)
+    return kept
+
+
+async def progress_waiting(db: Database, guild: int, campaign: str) -> int:
+    """How many progress lines wait, before `keep_progress` (counts only)."""
+    from dmbot.memory.thread_progress import ThreadProgressStore
+
+    return len(await ThreadProgressStore(db).waiting(guild, campaign))
+
+
+async def keep_progress(db: Database, memory: MemoryStore, guild: int, campaign: str) -> int:
+    """Every progress line a session read on the campaign's threads (#4522 5b), kept as the DM's
+    ✅ Keep these keeps it, one thread at a time (`MemoryStore.keep_thread_progress`: one change,
+    consent asked again inside it, a line that no longer fits left out), so the sample's backup
+    holds what the reader moved and the key check can score it (5c). The sample campaign only
+    (the caller checked); never in the bot. How many lines kept."""
+    from dmbot.memory.models import DM
+    from dmbot.memory.thread_progress import ThreadProgressStore
+
+    by_thread: dict[str, list[str]] = {}
+    for line in await ThreadProgressStore(db).waiting(guild, campaign):
+        by_thread.setdefault(line.thread_id, []).append(line.id)
+    kept = 0
+    for ids in by_thread.values():
+        try:
+            written = await memory.keep_thread_progress(guild, campaign, ids, source=DM)
+            kept += written.value
+        except Exception as exc:  # the type only
+            log.warning("Progress on a story thread couldn't be kept (%s)", type(exc).__name__)
+    return kept
 
 
 async def run(

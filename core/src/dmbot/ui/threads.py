@@ -63,7 +63,8 @@ def _stalled_after(interaction: discord.Interaction) -> int:
 
 
 def waiting_text(count: int, quiet: int, promises: int = 0) -> str:
-    """For the DM screen after a session: how many, and for how long, never which."""
+    """For the DM Bot channel (else the DM screen) after a session: how many, and for how long,
+    never which (the campaign's people read that channel)."""
     return (
         f"🧵 **{model.stalled_line(count, quiet, promises)}** Tap to check them. "
         "Nothing changes until you say."

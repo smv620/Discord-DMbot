@@ -99,7 +99,7 @@ describe("Before you start", () => {
 
   it("promises nothing the privacy page doesn't (it links there instead)", () => {
     const text = (start: string): string => beforeQuestions.find((q) => q.question.startsWith(start))?.answer ?? "";
-    expect(text("Who can read")).toContain("Everyone in your Discord server can read and download it");
+    expect(text("Who can read")).toContain("can read and download it, or everyone in your Discord server if you chose that");
     expect(beforeQuestions.find((q) => q.question.startsWith("Who can read"))?.more?.href).toBe("/legal/privacy");
     // The three notes settings, in the words of dm_screen/messages.py; "peek" is the default.
     expect(text("Can my players")).toContain("players can peek after a spoiler warning (the usual setting");

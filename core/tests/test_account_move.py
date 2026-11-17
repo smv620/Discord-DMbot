@@ -9,7 +9,7 @@ from unittest.mock import patch
 from psycopg import AsyncConnection, errors
 from psycopg.rows import dict_row
 
-from dmbot import account_move
+from dmbot import account_move, person_key, usage
 from dmbot.account_id import to_dmbot_id
 from dmbot.account_move import AccountMoves, MoveError
 from dmbot.campaigns import CampaignStore
@@ -82,8 +82,68 @@ class Moves(DatabaseTest):
                 (user_id, minutes),
             )
 
+    async def add_credits(self, user_id: int, credits: int) -> None:
+        await usage.add_credits(
+            self.db, guild_id=GUILD_A, campaign_id=self.a, owner_user_id=user_id,
+            spend_id=f"{user_id:032x}", job_kind="lore", feature="names", credits=credits,
+            now_ms=NOW * 1000,
+        )  # fmt: skip
+
     async def code(self) -> str:
         return await self.moves.make_code(OLD)
+
+    async def test_every_month_of_credits_arrives_and_a_third_account_is_untouched(self) -> None:
+        for user, month, credits in ((OLD, 0, 5), (OLD, 1, 6), (NEW, 2, 9), (THIRD, 0, 3)):
+            async with self.db.meter(GUILD_A, user) as conn:
+                await conn.execute(
+                    "INSERT INTO owner_credits (owner_user_id, month_start, credits)"
+                    " VALUES (%s, %s, %s)",
+                    (user, month, credits),
+                )
+        await self.moves.move(OLD, NEW, await self.code())
+        for user, want in ((NEW, [5, 6]), (THIRD, [3]), (OLD, [])):  # (NEW's own month is gone)
+            async with self.db.user(user) as conn:
+                cur = await conn.execute(
+                    "SELECT credits FROM owner_credits WHERE owner_user_id = %s"
+                    " ORDER BY month_start",
+                    (user,),
+                )
+                self.assertEqual([r["credits"] for r in await cur.fetchall()], want, user)
+
+    async def test_a_refused_move_leaves_the_credits_where_they_were(self) -> None:
+        await self.add_credits(OLD, 40)
+        with self.assertRaises(MoveError):
+            await self.moves.move(OLD, NEW, "not the code")
+        self.assertEqual(
+            await self.scalar(
+                "SELECT sum(credits) FROM owner_credits WHERE owner_user_id = %s", OLD, person=OLD
+            ),
+            40,
+        )
+
+    async def test_the_ai_credits_move_with_the_account(self) -> None:
+        # (the new account's own credits, like its own hours, are dropped: the plan's are kept)
+        await self.add_credits(OLD, 40)
+        await self.add_credits(NEW, 9)
+        await self.moves.move(OLD, NEW, await self.code())
+        month = await self.scalar(
+            "SELECT sum(credits) FROM owner_credits WHERE owner_user_id = %s", NEW, person=NEW
+        )
+        self.assertEqual(month, 40)
+        self.assertEqual(
+            await self.scalar(
+                "SELECT count(*) FROM owner_credits WHERE owner_user_id = %s", OLD, person=OLD
+            ),
+            0,
+        )
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT owner_user_id, credits FROM ai_credit_spend ORDER BY credits"
+            )
+            rows = [(r["owner_user_id"], r["credits"]) for r in await cur.fetchall()]
+        # (the ledger keeps both rows: the plan's now belongs to the new account, as does the
+        # one the new account had made, which is its own history)
+        self.assertEqual(rows, [(NEW, 9), (NEW, 40)])
 
     async def test_everything_listed_moves_and_nothing_else_does(self) -> None:
         # Hours, a player's entry, a DM place, a session record and a consent record.
@@ -612,6 +672,44 @@ class Moves(DatabaseTest):
         self.assertEqual(
             await self.scalar("SELECT count(*) FROM email_unsubscribed WHERE user_id = %s", NEW), 1
         )
+
+    async def test_the_move_gives_each_trial_marker_its_keyed_hash_and_copies_the_unsubscribe(
+        self,
+    ) -> None:
+        person_key.configure("m" * 40)
+        self.addCleanup(person_key.configure, "")
+        async with self.db.unscoped() as conn:
+            await conn.execute(
+                "INSERT INTO email_unsubscribed (user_id, at, person_key) VALUES (%s, 5, %s)",
+                (OLD, person_key.key_for(OLD)),
+            )
+        await self.moves.move(OLD, NEW, await self.code())
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute(
+                "SELECT user_id, person_key FROM email_unsubscribed ORDER BY user_id"
+            )
+            unsubscribed = [(r["user_id"], r["person_key"]) for r in await cur.fetchall()]
+        self.assertEqual(
+            unsubscribed,
+            sorted([(OLD, person_key.key_for(OLD)), (NEW, person_key.key_for(NEW))]),
+        )
+        async with self.db.plan_writer(OLD) as conn:
+            cur = await conn.execute("SELECT person_key FROM try_it_used")
+            self.assertEqual(
+                [r["person_key"] for r in await cur.fetchall()], [person_key.key_for(OLD)]
+            )
+
+    async def test_the_move_door_refuses_a_malformed_key_before_it_touches_anything(self) -> None:
+        good = "ab" * 32
+        for old_key, new_key in (("nope", good), (good, "AB" * 32), ("", None)):
+            with self.subTest(old_key=old_key, new_key=new_key):
+                async with self.db.unscoped() as conn:
+                    cur = await conn.execute(
+                        "SELECT dmbot_move_account(%s, %s, %s, %s, %s, %s) AS outcome",
+                        (OLD, NEW, NOW, "x", old_key, new_key),
+                    )
+                    self.assertEqual((await cur.fetchone() or {})["outcome"], "bad_key")
+        self.assertEqual(await self.scalar("SELECT count(*) FROM account_moves"), 0)
 
     async def test_too_many_campaigns_for_the_plan_stops_the_move(self) -> None:
         async with self.db.plan_writer(OLD) as conn:

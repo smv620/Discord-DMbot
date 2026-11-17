@@ -11,3 +11,5 @@ plot: The element of surprise: unexpected twists, betrayals and shocking dice ro
 plot: Narrative puzzle pieces: the new clue given, mystery presented or puzzle solved this session. Say only the new step, not the whole history of the mystery.
 character: PC-to-PC development: moments between the player characters come first: backstory reveals, flaws shown, new skills learned, and shifts in ideals, bonds or motivations.
 character: Characters the party meets (NPCs): include the ones who matter to the story and leave out the ones who only pass by.
+action: Every encounter ends: each fight, ambush, threat or stranger the recap mentions says how it ended, even a small one: won, fled, avoided, talked down, or nothing came of it. If the session stopped first, say so; that is the cliffhanger.
+character: Every name earns its place: anyone the recap names gets a nod to why they matter in this scene, what they did or how they tie in. A name that played no part is left out, not dropped in as a label.

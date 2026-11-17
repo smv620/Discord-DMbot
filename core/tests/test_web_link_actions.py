@@ -88,11 +88,12 @@ class Editing(Web):
         done = []
         while (action := await self.actions.claim_next(self.g)) is not None:
             outcome = await wa.apply(
-                self.memory, self.g, {ALICE.id} if dms is None else dms, action, waiting
-            )
+                self.memory, self.g, {ALICE.id} if dms is None else dms, action, waiting,
+                actions=self.actions,
+            )  # fmt: skip
             await self.actions.finish(
                 self.g, action, error=outcome.error, result_id=outcome.result_id,
-                result_other=outcome.result_other,
+                result_other=outcome.result_other, result_batches=outcome.batches,
             )  # fmt: skip
             done.append(outcome)
         return done
@@ -128,6 +129,118 @@ class Editing(Web):
                 (self.one.id, version),
             )
             return list(await cur.fetchall())
+
+
+class TheUndo(Editing):
+    """The Story Graph panel's ↩ Undo of a connection edit (#4156): an edit's answer carries the
+    change it made, and a queued `link-undo` takes it back with the store's own undo."""
+
+    async def undo(self, batch: int) -> str:
+        return await relationships.queue_link_undo(self.web, self.session, self.cref, str(batch))
+
+    async def test_an_edits_answer_carries_its_change_and_a_repeated_press_carries_none(
+        self,
+    ) -> None:
+        first = await self.add_link(self.mira, self.hall, "Is a Member of")
+        await self.apply_all()
+        batch = (await self.poll(first))["batch"]
+        self.assertIsInstance(batch, int)
+        again = await self.add_link(self.mira, self.hall, "Is a Member of")  # (already known)
+        await self.apply_all()
+        self.assertIsNone((await self.poll(again))["batch"])
+        self.assertEqual((await self.poll(again))["state"], "done")
+
+    async def test_every_kind_of_edit_carries_the_change_it_made(self) -> None:
+        link = (await self.stored_link(self.mira, self.rook)).id
+        for body in (
+            {"action": "secret", "secret": True},
+            {"action": "pin", "pinned": True},
+            {"action": "words", "words": "is the sworn friend of"},
+        ):
+            answer = await self.edit(link, **body)
+            await self.apply_all()
+            polled = await self.poll(answer)
+            self.assertEqual((polled["state"], polled["error"]), ("done", ""), body)
+            self.assertIsInstance(polled["batch"], int, body)
+
+    async def stored_link(self, a: str, b: str) -> Any:
+        data = await self.memory.relations(self.g, self.one.id, entity_id=a)
+        return next(r for r in data if {r.subject_id, r.object_id} == {a, b})
+
+    async def test_link_undo_takes_the_edit_back_and_a_second_one_says_gone(self) -> None:
+        added = await self.add_link(self.mira, self.hall, "Is a Member of")
+        await self.apply_all()
+        batch = (await self.poll(added))["batch"]
+        undone = await self.undo(batch)
+        self.assertEqual((await self.poll(undone))["state"], "waiting")
+        self.assertEqual([o.error for o in await self.apply_all()], [""])
+        self.assertEqual(await self.poll(undone), {"state": "done", "error": "", "undone": True})
+        data = await self.memory.relations(self.g, self.one.id, entity_id=self.hall)
+        self.assertEqual([r for r in data if r.predicate == "member_of"], [])  # (it is gone)
+        second = await self.undo(batch)
+        self.assertEqual([o.error for o in await self.apply_all()], ["gone"])
+        polled = await self.poll(second)
+        self.assertEqual(
+            (polled["state"], polled["error"], polled["undone"]), ("failed", "gone", False)
+        )
+
+    async def test_a_batch_that_is_not_the_callers_own_edit_is_refused(self) -> None:
+        added = await self.add_link(self.mira, self.hall, "Is a Member of")
+        await self.apply_all()
+        batch = (await self.poll(added))["batch"]
+        with self.assertRaises(RecapError) as caught:
+            await relationships.queue_link_undo(self.web, self.player, self.cref, str(batch))
+        self.assertEqual(caught.exception.code, "not_allowed")  # (a player is no DM)
+        other_ref = f"{self.g}.{self.two.id}"  # (another campaign)
+        with self.assertRaises(RecapError):
+            await relationships.queue_link_undo(self.web, self.session, other_ref, str(batch))
+        for bad in ("0", "999999999", "-1", "x", "1" * 13, "²"):  # (a number no edit made, or junk)
+            with self.assertRaises(RecapError, msg=bad):
+                await relationships.queue_link_undo(self.web, self.session, self.cref, bad)
+        self.assertEqual(await self.actions.claim_next(self.g), None)  # (nothing was queued)
+
+    async def test_a_store_that_says_too_late_is_told_to_the_page(self) -> None:
+        from dmbot.memory.models import TooLateToUndo
+
+        added = await self.add_link(self.mira, self.hall, "Is a Member of")
+        await self.apply_all()
+        batch = (await self.poll(added))["batch"]
+        undone = await self.undo(batch)
+        with patch.object(
+            type(self.memory), "undo", side_effect=TooLateToUndo("Undo only works for a day.")
+        ):
+            self.assertEqual([o.error for o in await self.apply_all()], ["too_late"])
+        self.assertEqual((await self.poll(undone))["error"], "too_late")
+
+    async def test_the_bot_refuses_a_batch_no_link_edit_of_this_dm_made_even_if_queued(
+        self,
+    ) -> None:
+        """A forged row that skipped the door: the bot's own check refuses it before `undo`."""
+        added = await self.add_link(self.mira, self.hall, "Is a Member of")
+        await self.apply_all()
+        batch = (await self.poll(added))["batch"]
+        for forged in (batch + 1, 7):  # (a batch no edit of hers made)
+            action = wa.Action(
+                id="e" * 32, campaign_id=self.one.id, entity_id="", user_id=ALICE.id,
+                action="link-undo", kind="", target_id=str(forged), text="", flag=False,
+                claimed_at=1,
+            )  # fmt: skip
+            outcome = await wa.apply(self.memory, self.g, {ALICE.id}, action, actions=self.actions)
+            self.assertEqual(outcome.error, "gone", forged)
+        data = await self.memory.relations(self.g, self.one.id, entity_id=self.hall)
+        self.assertTrue([r for r in data if r.predicate == "member_of"])  # (nothing was undone)
+
+    async def test_an_edit_made_since_says_changed(self) -> None:
+        added = await self.add_link(self.mira, self.hall, "Is a Member of")
+        await self.apply_all()
+        batch = (await self.poll(added))["batch"]
+        link = await self.stored_link(self.mira, self.hall)
+        gone = await self.edit(link.id, action="remove", confirm=True)
+        await self.apply_all()
+        self.assertEqual((await self.poll(gone))["state"], "done")
+        await self.undo(batch)
+        errors = [o.error for o in await self.apply_all()]
+        self.assertEqual(errors, ["changed"])  # (the store refuses: the connection ended since)
 
 
 class TheEdits(Editing):
@@ -583,6 +696,19 @@ class TheEdits(Editing):
         assert rejected is not None
         self.assertEqual(rejected.status, "rejected")
 
+    async def test_a_waiting_yes_gives_the_page_the_bots_counts(self) -> None:
+        """What the bot also did with a yes ("shown:1", "held:1", #3973, #3979) reaches the page's
+        answer, and an answer with none says so with an empty text."""
+        shown, plain = await self.claim(), await self.claim("Rook", "Greywater Keep")
+        first = await self.queue(kind="claim", action="confirm", id=shown)
+        second = await self.queue(kind="claim", action="confirm", id=plain)
+        for counts in ("shown:1", ""):
+            action = await self.actions.claim_next(self.g)
+            assert action is not None
+            await self.actions.finish(self.g, action, result_other="7", result_counts=counts)
+        self.assertEqual((await self.poll(first))["counts"], "shown:1")
+        self.assertEqual((await self.poll(second))["counts"], "")
+
     async def knows_hall(self) -> list[Any]:
         found = await self.memory.relations(self.g, self.one.id, include_secret=True)
         return [r for r in found if r.predicate == "knows" and r.object_id == self.hall]
@@ -632,6 +758,37 @@ class TheEdits(Editing):
                     await self.memory.update_relation(
                         self.g, self.one.id, rel.id, source=DM_SOURCE, status="rejected"
                     )
+
+    async def keep_over_a_hidden_connection(self, **sent: Any) -> list[tuple[str, bool]]:
+        """A hidden "knows (friendly)" is replaced by a waiting "knows (hostile)" that the website
+        keeps with `sent`; what the live connection now says, and whether players can't see it."""
+        old = await self.memory.add_relation(
+            self.g, self.one.id, self.mira, "knows", self.hall, source=DM_SOURCE,
+            confidence=1.0, status="confirmed", secret=True, detail="friendly",
+        )  # fmt: skip
+        assert old.value
+        await self.backstory.add(
+            self.g,
+            self.one.id,
+            [NewLink(self.mira, "knows", self.hall, "quote", detail="hostile")],
+        )
+        (link,) = [
+            w
+            for w in await self.backstory.waiting(self.g, self.one.id)
+            if w.subject_id == self.mira and w.object_id == self.hall
+        ]
+        await self.queue(kind="backstory", action="keep", id=link.id, **sent)
+        self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+        live = [r for r in await self.knows_hall() if r.to_session_at is None]
+        return [(r.detail, r.secret or r.unrevealed) for r in live if r.subject_id == self.mira]
+
+    async def test_the_websites_players_choice_shows_a_replaced_hidden_connection(self) -> None:
+        self.assertEqual(
+            await self.keep_over_a_hidden_connection(secret=False), [("hostile", False)]
+        )
+
+    async def test_a_plain_website_keep_leaves_a_replaced_hidden_connection_hidden(self) -> None:
+        self.assertEqual(await self.keep_over_a_hidden_connection(), [("hostile", True)])
 
     async def test_keep_all_writes_every_ready_one_and_the_discord_undo_takes_them_back(
         self,
@@ -684,7 +841,8 @@ class TheEdits(Editing):
         self.assertGreater(waits["lastMovedAt"], 0)
         self.assertFalse(waits["stalled"])
         self.assertEqual(
-            set(got), {"state", "error", "edge", "removed", "kept", "batch", "waits", "progress"}
+            set(got),
+            {"state", "error", "edge", "removed", "kept", "batch", "counts", "waits", "progress"},
         )
 
     async def test_keep_all_shows_how_far_it_has_got_and_when_it_last_moved(self) -> None:
@@ -1045,6 +1203,41 @@ class TheEdits(Editing):
         self.assertEqual((choice["side"], choice["words"]), (direct.side, direct.words))
         self.assertTrue(all(e["tag"] for e in choice["entries"]))
 
+    async def test_a_which_one_tag_never_names_a_place_left(self) -> None:
+        """#4134: the website's tag reads current ties only, as the store's `tag_ties` does."""
+        from dmbot.memory import tags
+
+        miras = []
+        for note in ("the ferrywoman", "a smuggler's daughter"):
+            made = await self.memory.add_entity(
+                self.g, self.one.id, type="character", name="Mira", description=note,
+                source="dm", status="confirmed",
+            )  # fmt: skip
+            miras.append(made.value.id)
+        town = await self.memory.add_entity(
+            self.g, self.one.id, type="place", name="Termalaine", source="dm", status="confirmed"
+        )
+        tie = await self.memory.add_relation(
+            self.g, self.one.id, miras[0], "located_in", town.value.id, source="dm",
+            confidence=1.0, status="confirmed", detail="lives in",
+        )  # fmt: skip
+        await self.memory.update_relation(
+            self.g, self.one.id, tie.value[0].id, source="dm", to_session_at=5
+        )
+        await self.claims.propose(
+            self.g, self.one.id, [said("Rook", "is the sister of", "Mira")], {"1": 7},
+            opted_in={7}, prompt_version="p1", model="m1", session_started_at=500,
+        )  # fmt: skip
+        kept = [c for c in (await self.waiting_now())["claims"] if "choices" in c]
+        (choice,) = kept[0]["choices"]
+        shown = {e["id"]: e["tag"] for e in choice["entries"]}
+        self.assertNotIn("Termalaine", shown[miras[0]])
+        ties = await self.memory.tag_ties(self.g, self.one.id, [miras[0]])
+        entity = next(
+            e for e in await self.memory.entities(self.g, self.one.id) if e.id == miras[0]
+        )
+        self.assertEqual(shown[miras[0]], tags.tag_for(entity, ties.get(miras[0], []), dm=True))
+
     async def _kept_claim(self) -> tuple[str, str]:
         for note in ("the ferrywoman", "a smuggler's daughter"):
             await self.memory.add_entity(
@@ -1106,6 +1299,66 @@ class TheEdits(Editing):
         self.assertEqual((await self.waiting_now())["claims"], [])
         await self.agree(7)
         self.assertEqual(len((await self.waiting_now())["claims"]), 1)
+
+    async def confirmed(self, user: int, *, removed: bool = False) -> None:
+        """An import's uploader confirmed this person for the campaign (0526, #4603)."""
+        from dmbot.consent import TERMS_VERSION
+
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO import_consents (guild_id, campaign_id, id, import_id, user_id, basis,"
+                " confirmed_by, confirmed_at, terms_version, removed_at)"
+                " VALUES (%s, %s, %s, 'imp', %s, 'uploader_confirmed', 1, 0, %s, %s)",
+                (self.g, self.one.id, f"{user:032x}", user, TERMS_VERSION, 5 if removed else None),
+            )
+
+    async def test_an_import_confirmed_speaker_with_no_consent_row_is_listed(self) -> None:
+        """#4603: Discord counts an import's confirmed speaker as recorded, so the website does."""
+        await self.claim()
+        await self.stop(7)
+        self.assertEqual((await self.waiting_now())["claims"], [])
+        await self.confirmed(7)
+        self.assertEqual((await self.waiting_now())["counts"]["claims"], 1)
+
+    async def test_a_taken_back_or_refused_confirmation_is_not_listed(self) -> None:
+        await self.claim()
+        await self.stop(7)
+        await self.confirmed(7, removed=True)
+        self.assertEqual((await self.waiting_now())["claims"], [])
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE import_consents SET removed_at = NULL WHERE guild_id = %s", (self.g,)
+            )
+            await conn.execute(
+                "INSERT INTO consent_refusals (guild_id, user_id, kind, refused_at)"
+                " VALUES (%s, %s, 'stopped', 1)",
+                (self.g, 7),
+            )
+        self.assertEqual((await self.waiting_now())["claims"], [])
+
+    async def test_a_confirmation_for_another_campaign_or_server_does_not_count(self) -> None:
+        """The import confirmation is read for this campaign and this server only."""
+        await self.claim()
+        await self.stop(7)
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO import_consents (guild_id, campaign_id, id, import_id, user_id,"
+                " basis, confirmed_by, confirmed_at, terms_version)"
+                " VALUES (%s, %s, %s, 'imp', 7, 'uploader_confirmed', 1, 0, 1)",
+                (self.g, self.two.id, "e" * 32),
+            )
+        self.assertEqual((await self.waiting_now())["claims"], [])
+
+    async def test_a_speaker_without_discord_never_blocks_a_claim(self) -> None:
+        """A negative id is never in `consent`: the missing row is not a stop for them."""
+        await self.claim("Mira Voss", "Far Hall", speaker=-3)
+        await self.stop(-3)  # (`claim` agrees for its speaker: there is no consent row to find)
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM consent WHERE user_id = -3")
+            row = await cur.fetchone()
+            assert row is not None
+            self.assertEqual(row["n"], 0)
+        self.assertEqual((await self.waiting_now())["counts"]["claims"], 1)
 
     async def test_the_website_counts_what_the_bot_lists_for_who_is_recorded_now(self) -> None:
         """The bot's own count (`ClaimStore.waiting_for_check`, read-only, with who the consent
@@ -1712,7 +1965,7 @@ class Refusals(Editing):
     def test_only_the_relationship_and_name_code_calls_the_door(self) -> None:
         self.assertEqual(
             callers("dmbot_web_name_action_add("),
-            {"schema.py", "web/all_names.py", "web/relationships.py"},
+            {"schema.py", "web/all_names.py", "web/met_list.py", "web/relationships.py"},
         )
 
 
@@ -1764,7 +2017,7 @@ class TheReveal(Editing):
         """#3426: the rule is unchanged, but the refusal has its own word instead of bad_target."""
         link = await self.hidden_link()
         await self.memory.set_hidden_from_players(
-            self.g, self.one.id, self.hall, True, source=DM_SOURCE
+            self.g, self.one.id, self.hall, True, source=DM_SOURCE, dm_chose_secret=True
         )
         answer = await self.reveal("link", link)
         self.assertEqual([o.error for o in await self.apply_all()], ["names_not_shown"])
@@ -1798,7 +2051,9 @@ class TheReveal(Editing):
 
     async def test_a_dm_reveals_a_name_and_undo_hides_it_again(self) -> None:
         name = await self.add("Hidden Tower", "place")
-        await self.memory.set_hidden_from_players(self.g, self.one.id, name, True, source=DM_SOURCE)
+        await self.memory.set_hidden_from_players(
+            self.g, self.one.id, name, True, source=DM_SOURCE, dm_chose_secret=True
+        )
         before = await self.memory.version(self.g, self.one.id)
         answer = await self.reveal("name", name)
         self.assertEqual([o.error for o in await self.apply_all()], [""])
@@ -2388,7 +2643,7 @@ class TheRoutes(Editing):
             self.assertEqual((edit.status_code, edit.json()["error"]), (400, "needs_confirm"))
             name = await self.add("Hidden Tower", "place")
             await self.memory.set_hidden_from_players(
-                self.g, self.one.id, name, True, source=DM_SOURCE
+                self.g, self.one.id, name, True, source=DM_SOURCE, dm_chose_secret=True
             )
             revealed = await client.post(
                 f"/me/campaigns/{self.cref}/web/reveal", json={"kind": "name", "id": name}
@@ -2401,6 +2656,41 @@ class TheRoutes(Editing):
             self.assertEqual((nope.status_code, nope.json()["error"]), (404, "not_found"))
             junk = await client.post(f"/me/campaigns/{self.cref}/web/links", content=b"not json")
             self.assertEqual((junk.status_code, junk.json()["error"]), (400, "bad_action"))
+
+    async def test_the_undo_route_queues_for_the_dm_and_refuses_a_batch_no_edit_made(self) -> None:
+        from dmbot.web import sessions
+
+        app = create_app(
+            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, "https://x"),
+            clock=lambda: NOW,
+        )  # fmt: skip
+        token = await sessions.sign_in(self.web, ALICE, [THURSDAY], now=NOW, days=30)
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app),
+            base_url="https://web-api.internal.test",
+            headers=HEADERS,
+        ) as client:
+            client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+            posted = await client.post(
+                f"/me/campaigns/{self.cref}/web/links",
+                json={"a": self.mira, "b": self.hall, "words": "knows", "secret": False},
+            )
+            await self.apply_all()
+            answer = await client.get(
+                f"/me/campaigns/{self.cref}/web/answers/{posted.json()['answer']}"
+            )
+            batch = answer.json()["batch"]
+            self.assertIsInstance(batch, int)
+            undo = await client.post(f"/me/campaigns/{self.cref}/web/links/{batch}/undo")
+            self.assertEqual(undo.status_code, 202)
+            await self.apply_all()
+            done = await client.get(
+                f"/me/campaigns/{self.cref}/web/answers/{undo.json()['answer']}"
+            )
+            self.assertEqual(done.json(), {"state": "done", "error": "", "undone": True})
+            for bad in (str(batch + 1000), "abc"):
+                refused = await client.post(f"/me/campaigns/{self.cref}/web/links/{bad}/undo")
+                self.assertEqual(refused.status_code, 404, bad)
 
 
 class WhichOneFromTheWebsite(Editing):

@@ -82,7 +82,13 @@ class TheDoor(Web):
     ) -> None:
         assert self.hero is not None
         await self.memory.set_statement_knowers(
-            self.g, self.one.id, "connection", self.knows, [self.hero, self.rook], source="dm"
+            self.g,
+            self.one.id,
+            "connection",
+            self.knows,
+            [self.hero, self.rook],
+            source="dm",
+            dm_chose_secret=True,
         )  # (every player character knows the line, so it is drawn)
         for who, view in ((self.player, None), (self.player, "full"), (None, "players")):
             with self.subTest(view=view):

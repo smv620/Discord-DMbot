@@ -56,7 +56,7 @@ class MyCharacters(Web):
 
     async def know(self, kind: str, statement: str, who: list[str]) -> None:
         await self.memory.set_statement_knowers(
-            self.g, self.one.id, kind, statement, who, source=DM_SOURCE
+            self.g, self.one.id, kind, statement, who, source=DM_SOURCE, dm_chose_secret=True
         )
 
     async def join(self) -> Any:
@@ -311,7 +311,9 @@ class WhenKenIsPublic(MyCharacters):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         # (the product's own reveal: every player character now has a row for Ken)
-        await self.memory.set_hidden_from_players(self.g, self.one.id, self.ken, False, source="dm")
+        await self.memory.set_hidden_from_players(
+            self.g, self.one.id, self.ken, False, source="dm", dm_chose_secret=True
+        )
         self.ken_rook = await self.link("ally_of", self.ken, self.rook, "ken-rook")  # table-wide
 
     async def test_the_guard_is_a_separate_node_carrying_the_moved_link(self) -> None:
@@ -404,7 +406,9 @@ class ByFact(MyCharacters):
         self.assertIsNone(row["via_alias_id"])
 
     async def test_making_the_name_not_secret_folds_the_two_people_into_one(self) -> None:
-        await self.memory.set_hidden_from_players(self.g, self.one.id, self.ken, False, source="dm")
+        await self.memory.set_hidden_from_players(
+            self.g, self.one.id, self.ken, False, source="dm", dm_chose_secret=True
+        )
         await self.know(ENTRY, self.ken, [self.okra])
         await self.join()
         before = await self.bob()
@@ -422,7 +426,9 @@ class ByFact(MyCharacters):
         self.assertEqual(set(links[self.guard_link]), {self.ken, self.mira})
 
     async def test_the_reader_lists_the_connection_on_the_guard_with_ken_public(self) -> None:
-        await self.memory.set_hidden_from_players(self.g, self.one.id, self.ken, False, source="dm")
+        await self.memory.set_hidden_from_players(
+            self.g, self.one.id, self.ken, False, source="dm", dm_chose_secret=True
+        )
         await self.join()
         mine = await self.memory.what_my_characters_know(self.g, self.one.id, BOB.id)
         self.assertEqual(

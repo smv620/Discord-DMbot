@@ -130,6 +130,12 @@ def questions_link(site_url: str) -> str:
     return f"https://{host}/account/questions" if host else ""
 
 
+def wizard_link(site_url: str, guild_id: int) -> str:
+    """The start-up wizard's page for one server (#3955). "" without an https site."""
+    host = _host(site_url)
+    return f"https://{host}/new?server={guild_id}" if host else ""
+
+
 def clarify_link(site_url: str, guild_id: int, campaign_id: str, name_id: str) -> str:
     """The clarify page for one name (#3604). It has its own address shape, not `?item=`; "" when
     there is no https address or an id is not a plain id."""
@@ -214,35 +220,3 @@ def for_campaign(
         site_url, links.page, guild_id, campaign_id, tail=links.tail, item=links.item
     )
     return add_links(view, discord_url=links.discord_url, site_url=site)
-
-
-async def point_at_itself(message: discord.Message | None, view: discord.ui.View | None) -> None:
-    """After a private question is sent, edit it once so "Open in Discord" opens that very
-    message (#3663): its address is only known after it is sent. The view may be shared by several
-    DMs' copies, so the button is taken off again, ready for the next copy. Never fatal: the
-    question is already there without it."""
-    url = jump_link(message)
-    if message is None or view is None or not url:
-        return
-    own = buttons(discord_url=url)
-    if not own:
-        return
-    link = own[0]
-    try:
-        # Keep the order the same on every message: Discord first, then the website.
-        kept = [c for c in view.children if getattr(c, "url", None)]
-        for c in kept:
-            view.remove_item(c)
-        row = next((c.row for c in kept if c.row is not None), None)
-        link.row = row
-        view.add_item(link)
-        for c in kept:
-            view.add_item(c)
-        await message.edit(view=view)
-    except Exception as exc:  # (a closed message, a full view, a rate limit: all fine to skip)
-        log.info("Couldn't add Open in Discord to a private message (%s)", type(exc).__name__)
-    finally:
-        try:
-            view.remove_item(link)
-        except Exception:
-            log.debug("The own-message link was already gone")

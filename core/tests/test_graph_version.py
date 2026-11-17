@@ -56,7 +56,9 @@ class TheNumberMoves(ConfirmedMemoryTest):
         a, b = await self.add("Aldric"), await self.add("Brann")
         rel = (await self.relate(a, "knows", b)).value[0]
         v = await self.version()
-        await self.memory.update_relation(GUILD_A, self.c, rel.id, source="dm", secret=True)
+        await self.memory.update_relation(
+            GUILD_A, self.c, rel.id, source="dm", secret=True, dm_chose_secret=True
+        )
         self.assertTrue(await self.moved(v))
 
     async def test_a_merge_moves_it(self) -> None:
@@ -149,11 +151,19 @@ FILES: dict[str, str] = {
     "memory/deed_proposals_backup.py": NOT_DRAWN + " (the same in a backup)",
     "memory/reveal_proposals.py": NOT_DRAWN + " (who learned what, waiting for the DM, #2996)",
     "memory/reveal_proposals_backup.py": NOT_DRAWN + " (the same in a backup)",
+    "memory/trait_offers.py": NOT_DRAWN + " (a lineage or class waiting for the DM, #3926)",
+    "memory/met_store.py": NOT_DRAWN + " (beings met in play, waiting for the DM, #3172)",
+    "memory/private_scene_store.py": NOT_DRAWN + " (private scenes, ids and times, #2996)",
+    "memory/private_scenes_backup.py": NOT_DRAWN + " (the same in a backup)",
+    "memory/story_chain_store.py": NOT_DRAWN + " (where the story is, ids only, #4173 slice 4;"
+    " its assumed links go through backstory_keep's _write)",
+    "memory/story_chain_backup.py": NOT_DRAWN + " (the same in a backup)",
     "memory/scenes.py": NOT_DRAWN + " (the scene of a waiting question, #3596)",
     "memory/scenes_backup.py": NOT_DRAWN + " (the same in a backup)",
     "memory/who_answers.py": NOT_DRAWN + " (the AI's answers for a waiting name, #3602)",
     "memory/evidence.py": NOT_DRAWN + " (evidence ids)",
     "memory/forget_readings.py": BUMPS,
+    "memory/hand_over.py": INSIDE_WRITE + ' (the DM\'s "Yes, both have it", #4115)',
     "memory/heard_backup.py": NOT_DRAWN,
     "memory/importance_backup.py": NOT_DRAWN + " (the importance rank)",
     "memory/importance_rank.py": NOT_DRAWN + " (the importance rank)",

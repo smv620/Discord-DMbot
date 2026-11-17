@@ -66,6 +66,7 @@ def _words(rel: dict[str, Any]) -> str:
             # (the report is the DM's alone; it tells what was read then, so it keeps the reader's
             # word and not the DM's Reputation as it is now, #3642)
             feeling=True,
+            route_state=str(rel.get("route_state") or ""),  # (a journey or a plan, #4173 6d)
         )
     )
     return f"{rel['subject']} {said} {rel['object']}"

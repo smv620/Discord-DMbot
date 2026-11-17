@@ -454,6 +454,17 @@ class ThePrivacy(Smart):
         await self.alias(self.auril, "Auril", secret=True)  # (its own spelling is the secret)
         self.assertNotIn("Auril", await self.text_of(self.mira))
 
+    async def test_a_connection_that_ended_is_left_out(self) -> None:
+        # (#4115: an ended tie of any kind is left out; the text says what holds now)
+        await self.link("ally_of", self.mira, self.auril)
+        self.assertIn("Auril", await self.text_of(self.mira))
+        await self.sql(
+            "UPDATE memory_relations SET to_session_at = 5"
+            " WHERE (subject_id, object_id) IN ((%s, %s), (%s, %s))",
+            self.mira, self.auril, self.auril, self.mira,
+        )  # fmt: skip
+        self.assertNotIn("Auril", await self.text_of(self.mira))
+
     async def test_a_public_connection_still_reads(self) -> None:
         self.assertIn("Brannoc", await self.text_of(self.mira))
 
@@ -467,6 +478,49 @@ class ThePrivacy(Smart):
             rows = await cur.fetchall()
         self.assertTrue(rows)
         self.assertFalse(any(r["open"] for r in rows))
+
+
+class TheDirection(Smart):
+    """The text follows the DM's own direction for a connection (#4164, after #4154)."""
+
+    async def text_of(self, entity: str) -> str:
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT dmbot_entity_parts(%s, %s, %s) AS p", (self.g, self.one.id, entity)
+            )
+            row = await cur.fetchone()
+        return compose(row["p"]) if row and row["p"] else ""
+
+    async def mark(self, a: str, b: str, both_ways: bool) -> str:
+        """Set the mark on the one connection between a and b; returns the name it reads from
+        (its subject: a two-way kind is stored with its names in id order)."""
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "UPDATE memory_relations SET both_ways = %s WHERE (subject_id, object_id) IN"
+                " ((%s, %s), (%s, %s)) RETURNING subject_id",
+                (both_ways, a, b, b, a),
+            )
+            (row,) = await cur.fetchall()
+        return str(row["subject_id"])
+
+    async def test_a_rivalry_the_dm_made_one_way_reads_only_from_its_first_name(self) -> None:
+        await self.link("rival_of", self.mira, self.auril)
+        self.assertIn("Mira Voss", await self.text_of(self.auril))  # (two-way by its kind)
+        self.assertIn("Auril", await self.text_of(self.mira))
+        first = await self.mark(self.mira, self.auril, False)
+        second = self.auril if first == self.mira else self.mira
+        names = {self.mira: "Mira Voss", self.auril: "Auril"}
+        self.assertIn(names[second], await self.text_of(first))
+        self.assertNotIn(names[first], await self.text_of(second))
+
+    async def test_a_one_way_kind_the_dm_made_two_way_reads_from_both(self) -> None:
+        await self.link("serves", self.mira, self.auril)
+        self.assertNotIn("Mira Voss", await self.text_of(self.auril))  # (one way by its kind)
+        await self.mark(self.mira, self.auril, True)
+        text = await self.text_of(self.auril)
+        self.assertIn("is the boss of Mira Voss", text)  # (the card's words from Auril's side)
+        self.assertNotIn("serves Mira Voss", text)  # (never the wrong way round)
+        self.assertIn("serves Auril", await self.text_of(self.mira))
 
 
 class TheWaits(Smart):

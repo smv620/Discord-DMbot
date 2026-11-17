@@ -29,6 +29,8 @@ EXPECTED = {
     "did": OTHER,
     "plays": OTHER,
     "led_to": OTHER,
+    "branch_of": OTHER,  # a branch of a bigger thread (#4471)
+    "clue_to": OTHER,  # a clue to a story thread, the DM's alone (#4624)
     "in_thread": OTHER,
     "advances": OTHER,
     "affected": OTHER,
@@ -41,6 +43,8 @@ EXPECTED = {
     "founded": GROUP,
     "captive_of": OTHER,
     "contains": WORK,
+    "next_to": WORK,
+    "route_to": WORK,
     "travels_with": OTHER,  # (a companion; shown like any other tie, #3176)
     "disguised_as": OTHER,  # (secret by nature; drawn like any other connection, #3091)
 }
@@ -105,10 +109,12 @@ class TheGraphLinks(unittest.TestCase):
                 "pinned",
                 "check",
                 "direction",
+                "pairWords",  # (a two-way line said of both, #4154)
                 "kind",
             },
         )
         self.assertFalse(link["secret"])  # (still masked for a player)
+        self.assertEqual(link["pairWords"], "know each other")  # (no feeling for a player, #3611)
 
 
 if __name__ == "__main__":

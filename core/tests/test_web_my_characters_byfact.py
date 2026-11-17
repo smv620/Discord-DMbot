@@ -15,7 +15,9 @@ from tests.test_web_my_characters_view import MyCharacters
 
 class ByFactBase(MyCharacters):
     async def reveal(self, entity: str) -> None:
-        await self.memory.set_hidden_from_players(self.g, self.one.id, entity, False, source="dm")
+        await self.memory.set_hidden_from_players(
+            self.g, self.one.id, entity, False, source="dm", dm_chose_secret=True
+        )
 
     async def guard_alias(self, owner: str | None = None) -> Any:
         found = await self.memory.aliases(
@@ -196,7 +198,9 @@ class WhenTheNameChanges(ByFactBase):
         await self.reveal(self.ken)
         await self.join()
         alias = await self.guard_alias()
-        await self.memory.set_alias_knowers(self.g, self.one.id, alias.id, [], source=DM_SOURCE)
+        await self.memory.set_alias_knowers(
+            self.g, self.one.id, alias.id, [], source=DM_SOURCE, dm_chose_secret=True
+        )
         await self.sql("DELETE FROM memory_knowers WHERE alias_id = %s", alias.id)
         r = await self.report()
         self.assertNotIn(self.ken, r["wide_links"].get(self.guard_link, ()))

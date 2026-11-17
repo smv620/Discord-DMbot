@@ -4,8 +4,9 @@ when DMbot lacks a permission. Invented ids."""
 
 from __future__ import annotations
 
+import unittest
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import discord
 
@@ -153,3 +154,46 @@ class Access(DatabaseTest):
         self.assertEqual(channel_sync.exposed_roles(self.guild, self.campaign), 1)
         opened = await self.store.set_channels_visibility(GUILD, self.campaign.id, "everyone")
         self.assertEqual(channel_sync.exposed_roles(self.guild, opened), 0)
+
+
+class PresentOnly(unittest.IsolatedAsyncioTestCase):
+    """Who still counts as in the server (#3891): the cache is believed, a clear NotFound drops
+    someone, any other Discord error keeps them, and an answer holds for the check window."""
+
+    def setUp(self) -> None:
+        channel_sync._seen.clear()  # the answers are kept across calls: start each test empty
+        self.addCleanup(channel_sync._seen.clear)
+
+    def guild(self, cached: tuple[int, ...] = (), fetch: Any = None) -> Any:
+        guild = MagicMock(spec=discord.Guild)
+        guild.id = GUILD
+        guild.get_member = MagicMock(side_effect=lambda uid: object() if uid in cached else None)
+        guild.fetch_member = AsyncMock(return_value=MagicMock(), side_effect=fetch)
+        return guild
+
+    async def test_cached_member_is_kept_without_a_fetch(self) -> None:
+        guild = self.guild(cached=(EVE,))
+        self.assertEqual(await channel_sync.present_only(guild, [EVE]), frozenset({EVE}))
+        guild.fetch_member.assert_not_awaited()
+
+    async def test_not_found_member_is_dropped(self) -> None:
+        gone = discord.NotFound(MagicMock(status=404, reason="x"), "gone")
+        guild = self.guild(fetch=gone)
+        self.assertEqual(await channel_sync.present_only(guild, [MIRA]), frozenset())
+
+    async def test_other_discord_errors_keep_the_person(self) -> None:
+        hiccup = discord.HTTPException(MagicMock(status=500, reason="x"), "hiccup")
+        guild = self.guild(fetch=hiccup)
+        self.assertEqual(await channel_sync.present_only(guild, [MIRA]), frozenset({MIRA}))
+
+    async def test_an_answer_is_believed_for_the_check_window(self) -> None:
+        clock = [1_000.0]
+        guild = self.guild()  # not cached: the fetch answers that they are in the server
+        with patch("dmbot.dm_screen.channel_sync.time") as fake_time:  # only this module's clock
+            fake_time.monotonic.side_effect = lambda: clock[0]
+            self.assertEqual(await channel_sync.present_only(guild, [MIRA]), frozenset({MIRA}))
+            self.assertEqual(await channel_sync.present_only(guild, [MIRA]), frozenset({MIRA}))
+            guild.fetch_member.assert_awaited_once()  # the second call believed the first answer
+            clock[0] += channel_sync.MEMBER_CHECK_S
+            await channel_sync.present_only(guild, [MIRA])
+            self.assertEqual(guild.fetch_member.await_count, 2)  # after the window it asks again

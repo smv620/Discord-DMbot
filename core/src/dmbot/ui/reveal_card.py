@@ -19,6 +19,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import re
+from dataclasses import dataclass
 from typing import Any
 
 import discord
@@ -27,7 +28,9 @@ from dmbot.dm_questions import REVEALS, Ask
 from dmbot.memory.models import DM, MemoryRuleError, TooLateToUndo
 from dmbot.memory.reveal_proposals import GONE, STATEMENT_GONE, RevealProposals, Shown, Waiting
 from dmbot.mentions import NO_PINGS
+from dmbot.ui import walk_cards
 from dmbot.ui.dmbot_commands import _bot, _tell
+from dmbot.walk import Walk
 
 log = logging.getLogger(__name__)
 
@@ -54,6 +57,7 @@ def ask_for(guild_id: int, campaign_id: str, count: int) -> Ask:
         lambda: OpenButton(guild_id, campaign_id),
         lambda: OpenButton(guild_id, campaign_id),
         text,
+        count=count,
     )
 
 
@@ -235,6 +239,43 @@ async def open_first(interaction: discord.Interaction, guild_id: int, campaign_i
     )
 
 
+STATEMENT_GONE_WORDS = "That one is no longer in DMbot's memory, so there was nothing to keep."
+ALREADY_ANSWERED = (
+    "That one was already answered, or someone it came from has stopped being recorded."
+)
+
+
+def gone_words(exc: MemoryRuleError) -> str | None:
+    """The card's words for a proposal that is gone (already answered, its speaker stopped, or its
+    statement no longer in memory), or None for any other rule error."""
+    if str(exc) == STATEMENT_GONE:  # (already turned down: say so and move on)
+        return STATEMENT_GONE_WORDS
+    if str(exc) == GONE:
+        return ALREADY_ANSWERED
+    return None
+
+
+async def apply_answer(
+    bot: Any, guild_id: int, campaign_id: str, proposal_id: str, *, keep: bool
+) -> tuple[str, int | None]:
+    """What Keep or Not this does: the words to show, and the change's batch for an Undo (a kept
+    reveal that changed something). The one place the answer is made: the card's own buttons and
+    the "Check everything" walk both come here. Consent is asked again for a Keep. Raises
+    `MemoryRuleError`."""
+    reveals = RevealProposals(bot.memory)
+    if keep:
+        agreed = await bot.consent.consenting(guild_id)
+        batch = await reveals.keep(guild_id, campaign_id, proposal_id, opted_in=agreed, source=DM)
+        log.info("Reveals: one kept by the DM")
+        note = (
+            "✅ Kept." if batch is not None else "Nothing to change: they already knew it for sure."
+        )
+        return note, batch
+    await reveals.dismiss(guild_id, campaign_id, proposal_id, source=DM)
+    log.info("Reveals: one turned down by the DM")
+    return "Okay, not this one.", None
+
+
 async def answer(
     interaction: discord.Interaction,
     guild_id: int,
@@ -249,34 +290,15 @@ async def answer(
     bot = await _checked(interaction, guild_id, campaign_id)
     if bot is None:
         return
-    reveals = RevealProposals(bot.memory)
     batch: int | None = None
     try:
-        if keep:
-            agreed = await bot.consent.consenting(guild_id)
-            batch = await reveals.keep(
-                guild_id, campaign_id, proposal_id, opted_in=agreed, source=DM
-            )
-            log.info("Reveals: one kept by the DM")
-            note = (
-                "✅ Kept."
-                if batch is not None
-                else "Nothing to change: they already knew it for sure."
-            )
-        else:
-            await reveals.dismiss(guild_id, campaign_id, proposal_id, source=DM)
-            log.info("Reveals: one turned down by the DM")
-            note = "Okay, not this one."
+        note, batch = await apply_answer(bot, guild_id, campaign_id, proposal_id, keep=keep)
     except MemoryRuleError as exc:
-        if str(exc) == STATEMENT_GONE:  # (already turned down: say so and move on)
-            note = "That one is no longer in DMbot's memory, so there was nothing to keep."
-        elif str(exc) == GONE:
-            note = (
-                "That one was already answered, or someone it came from has stopped being recorded."
-            )
-        else:
+        said = gone_words(exc)
+        if said is None:
             await _tell(interaction, f"Couldn't do that. {exc}")
             return
+        note = said
     except Exception:  # (the database was unreachable, say): the reply must not hang
         log.exception("Reveals: the answer could not be saved")
         await _tell(interaction, FAILED)
@@ -326,4 +348,86 @@ async def undo(
     await _tell(interaction, "↩️ Undone. Back to how it was before you pressed Keep.")
 
 
-__all__ = ["KeepButton", "NotButton", "OpenButton", "UndoButton", "ask_for", "card"]
+WALK_FINISHED = "✅ What the characters learned: checked."  # (the line a walk leaves)
+
+
+@dataclass(frozen=True, slots=True)
+class WalkItem:
+    """A waiting proposal in a walk: the first one is described (its words are read from memory
+    when it is shown); the others wait their turn with ids only. The reveals part has no Later
+    button on purpose: a card that is skipped would leave the next item undescribed."""
+
+    proposal: Waiting
+    shown: Shown | None = None
+
+
+async def waiting_reveals(bot: Any, guild_id: int, campaign_id: str) -> list[WalkItem]:
+    """The proposals waiting for a yes, the first one described. One whose character or statement
+    is gone since is turned down here and skipped, as `_next` does."""
+    agreed = await bot.consent.consenting(guild_id)
+    reveals = RevealProposals(bot.memory)
+    waiting = await reveals.waiting(guild_id, campaign_id, opted_in=agreed)
+    for at, proposal in enumerate(waiting):
+        shown = await reveals.describe(guild_id, campaign_id, proposal)
+        if shown is not None:
+            return [WalkItem(proposal, shown), *(WalkItem(p) for p in waiting[at + 1 :])]
+        with contextlib.suppress(MemoryRuleError):  # (nothing left to learn: never asked again)
+            await reveals.dismiss(guild_id, campaign_id, proposal.id, source=DM)
+    return []
+
+
+async def count_reveals(bot: Any, guild_id: int, campaign_id: str) -> int:
+    """How many wait, counted without changing anything. It can be a little higher than what the
+    cards show: a proposal whose character or statement is gone is turned down when its card
+    loads (as the question's own card does)."""
+    if bot.memory is None:
+        return 0
+    agreed = await bot.consent.consenting(guild_id)
+    return await RevealProposals(bot.memory).count_waiting(guild_id, campaign_id, opted_in=agreed)
+
+
+def walk_kind(bot: Any, guild_id: int, campaign_id: str) -> walk_cards.Kind:
+    """What the characters learned as a part of "✅ Check everything" (#4192): the same card, Keep
+    and Not this and the Undo, one at a time."""
+
+    def choice(label: str, style: discord.ButtonStyle, keep: bool) -> walk_cards.Choice:
+        async def do(item: WalkItem) -> walk_cards.Answer:
+            try:
+                note, batch = await apply_answer(
+                    bot, guild_id, campaign_id, item.proposal.id, keep=keep
+                )
+            except MemoryRuleError as exc:
+                said = gone_words(exc)
+                if said is None:
+                    raise
+                return walk_cards.Answer(said)
+            undo = UndoButton(guild_id, campaign_id, batch) if batch is not None else None
+            return walk_cards.Answer(note, undo)
+
+        return walk_cards.Choice(label, style, do)
+
+    def text(item: WalkItem, left: int) -> str:
+        assert item.shown is not None  # (the first of the list is always described)
+        return card(item.shown, left)
+
+    return walk_cards.Kind(
+        waiting=lambda: waiting_reveals(bot, guild_id, campaign_id),
+        key=lambda item: item.proposal.id,
+        text=text,
+        choices=lambda: [
+            choice("✅ Keep", discord.ButtonStyle.success, True),
+            choice("Not this", discord.ButtonStyle.secondary, False),
+        ],
+        finished=WALK_FINISHED,
+    )
+
+
+async def start_walk_part(
+    interaction: discord.Interaction, guild_id: int, campaign_id: str, walk: Walk
+) -> None:
+    """The reveals part of a walk. The presser was checked as a DM when the walk began."""
+    bot = _bot(interaction)
+    if bot.memory is None:
+        await _tell(interaction, NOT_AVAILABLE)
+        return
+    await walk_cards.start(interaction, walk_kind(bot, guild_id, campaign_id), walk)

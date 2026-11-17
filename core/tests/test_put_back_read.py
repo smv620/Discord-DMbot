@@ -65,6 +65,7 @@ class Base(DatabaseTest):
             story_deeds_on=False,
             story_reveals_on=False,
             story_reveals_precheck=False,
+            met_unnamed_on=False,
             story_who_on=False,
             story_family_only=False,
         )

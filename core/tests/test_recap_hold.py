@@ -228,7 +228,7 @@ def entity(created_at: int, status: str = PROPOSED, id: str = "") -> Any:
 def campaign() -> Any:
     return SimpleNamespace(
         guild_id=GUILD, id="c" * 32, recaps_text=True, recaps_email=True, owner_user_id=DM,
-        dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM}),
+        dm_user_ids=frozenset({DM}), dm_accounts=frozenset({DM}), dm_bot_channel_id=None,
     )  # fmt: skip
 
 
@@ -284,7 +284,7 @@ def fake_bot(
         "_open_name_questions", "_hold_or_queue", "_queue_recap", "_say_writing",
         "release_recap_holds", "_release_one", "recap_hold_write_now", "recheck_recap_hold",
         "recap_write_anyway", "_remind", "_say_group_writing", "_close_hold_lines",
-        "_extractor_pending", "_next_session_start", "_group_lock",
+        "_extractor_pending", "_next_session_start", "_group_lock", "_upkeep_channel",
     ):  # fmt: skip
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
     return bot

@@ -25,10 +25,16 @@ DEFINES = "defines or carries the flag: the model, the table, a backup, a row de
 WRITES = "writes the flag (and the list beside it, so they stay one rule); goes with the flags"
 MIRRORS = "keeps the list and the flag in step (slice 2b); goes with the flags"
 READS = "READS the flag to decide who may see something: to be converted to the gate"
+COUNTS = "counts it for a report to dev1: decides nothing anyone sees, prints numbers only"
 
 # path (under src/dmbot) → (kind, owner, why). One line each, in alphabetical order.
 FILES: dict[str, tuple[str, str, str]] = {
     "bot.py": (READS, "CloudDev-lead", "the clue reveal reads `unseen_by_players` from the lookup"),
+    "devtools/sample_run/counts.py": (
+        COUNTS,
+        "GraphEngineer",
+        "the sample run's split-party counts (#3545)",
+    ),
     "memory/_changes.py": (WRITES, "GraphEngineer", "the change log's row writers and Undo"),
     "memory/backstory_keep.py": (READS, "GraphEngineer", "which entries a backstory may link"),
     "memory/backstory_links.py": (READS, "GraphEngineer", "hides a connection with a limited end"),
@@ -41,13 +47,19 @@ FILES: dict[str, tuple[str, str, str]] = {
     "memory/meaning.py": (READS, "GraphEngineer", "meaning search leaves out unseen entries"),
     "memory/models.py": (DEFINES, "GraphEngineer", "the Entity fields and `unseen_by_players`"),
     "memory/party.py": (DEFINES, "GraphEngineer", "the party faction's row"),
+    "memory/public_guard.py": (
+        WRITES,
+        "GraphEngineer",
+        "which flags take an item from the players, held unless the DM chose it (#4524)",
+    ),
     "memory/recall.py": (READS, "GraphEngineer", "recall leaves out unseen entries"),
     "memory/revealed_aloud.py": (READS, "GraphEngineer", "names said aloud that were hidden"),
     "memory/states.py": (WRITES, "GraphEngineer", "clears `audience_limited` on a change of kind"),
     "memory/store.py": (
         WRITES,
         "GraphEngineer",
-        "the writers: add_entity, set_hidden_from_players",
+        "the writers: add_entity, set_hidden_from_players; and `_shown_when_said`, which "
+        "reads them for what `reveal_said` shows and `ask_world_reveals` asks (#4590)",
     ),
     "recaps/name_answers.py": (
         READS,
@@ -96,7 +108,7 @@ class TheFlagReaders(unittest.TestCase):
 
     def test_the_list_is_in_order_and_each_line_says_why(self) -> None:
         self.assertEqual(list(FILES), sorted(FILES))
-        kinds = {DEFINES, WRITES, MIRRORS, READS}
+        kinds = {DEFINES, WRITES, MIRRORS, READS, COUNTS}
         for path, (kind, owner, why) in FILES.items():
             self.assertIn(kind, kinds, path)
             self.assertIn(owner, ("CloudDev-lead", "GraphEngineer"), path)

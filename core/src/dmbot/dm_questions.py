@@ -35,7 +35,8 @@ ORDER = (NAMES, PEOPLE, CLAIMS, CONNECTIONS, FAMILY, KINDS, DEEDS, REVEALS, SCRI
 @dataclass(frozen=True, slots=True)
 class Ask:
     """One question for the DM: what to say alone, what to say as a line in a list, its button,
-    and the words for the DM screen if no DM can be reached."""
+    and the words for the fallback channel if no DM can be reached (counts only: the DM Bot
+    channel is read by the campaign's people)."""
 
     kind: str
     alone: str  # the whole message when this is the only question
@@ -47,7 +48,9 @@ class Ask:
     # question has a screen button that finds the server from the press, the private one has it in
     # its id).
     screen_button: Callable[[], discord.ui.Item[Any]]
-    screen: str  # the DM screen's words, if the private message could not be sent
+    screen: str  # counts-only words for the fallback channel, if the private message fails
+    # How many checks wait behind this question (0 when not counted), for "Check everything (N)".
+    count: int = 0
 
 
 def ordered(asks: list[Ask]) -> list[Ask]:
@@ -55,23 +58,48 @@ def ordered(asks: list[Ask]) -> list[Ask]:
     return sorted(asks, key=lambda a: ORDER.index(a.kind) if a.kind in ORDER else len(ORDER))
 
 
+# The kinds "✅ Check everything" walks through (#4192), in ORDER. The other kinds keep their own
+# buttons until they join the walk. A kind that joins must first work from a private chat (no
+# `interaction.guild`): `heard_review` and `said_as_review` do not yet (#4528).
+WALKED = (NAMES, PEOPLE, CLAIMS, CONNECTIONS, KINDS, DEEDS, REVEALS)
+WALK_PRESS = "Press **✅ Check everything** to go through them."
+
+
 def combine(
-    asks: list[Ask], about: str = "your last session"
+    asks: list[Ask],
+    about: str = "your last session",
+    walk: Callable[[int], discord.ui.Item[Any]] | None = None,
 ) -> tuple[str, discord.ui.View] | None:
     """The one message and its buttons, or None with nothing to ask. One question keeps its own
-    words; several become a list under a count, each with its button."""
+    words; several become a list under a count. With `walk` (a maker taking the total waiting, 0
+    when not counted) and two or more of the walked kinds, those kinds' buttons (an upload
+    summary's links included: the walk opens Add all itself) become one "✅ Check everything";
+    every other kind keeps its own button."""
     if not asks:
         return None
     asks = ordered(asks)
+    walked = [a for a in asks if a.kind in WALKED]  # (two or more kinds, not two questions)
+    use_walk = walk is not None and len({a.kind for a in walked}) >= 2
     view = discord.ui.View(timeout=None)
+    if use_walk and walk is not None:
+        counted = [a.count for a in walked]
+        view.add_item(walk(sum(counted) if all(counted) else 0))
     for ask in asks:
+        if use_walk and ask.kind in WALKED:
+            continue
         view.add_item(ask.button())
     if len(asks) == 1:
         return asks[0].alone, view
     lines = "\n".join(f"• {ask.line}" for ask in asks)
     # (no ❓ here: the private message already opens with DMbot's own "has a question" line)
     head = f"**{len(asks)} questions** about {about}:"
-    text = f"{head}\n{lines}\nPress a button to answer."
+    if use_walk and all(a.count for a in walked):
+        # The same number as the walk's button: "3 questions" above "Check everything (59)" read
+        # as three questions to the DM (#4528). Counts only; no name. When a count is unknown
+        # (0) the heading keeps counting the questions, as the button then shows no number.
+        head = f"**{sum(a.count for a in walked)} things to check** from {about}:"
+    press = WALK_PRESS if use_walk else "Press a button to answer."
+    text = f"{head}\n{lines}\n{press}"
     return text, view
 
 

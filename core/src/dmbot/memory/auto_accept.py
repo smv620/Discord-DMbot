@@ -14,26 +14,135 @@ sample for dev1: the tool calls these functions with `narrow=False`, which keeps
 - a name that is a rules word or a kind of creature ("Owlbear", "Goodberries"): the readers refuse
   those, and one that slips through is a question, not a fact.
 "Which one?" and same-person questions are not answered here at all, and nor are the family links
-DMbot worked out (they stay in their own question). Counts only; never a name or a word of a text.
+DMbot worked out (they stay in their own question). A connection DMbot worked out waits for the
+DM too, with one exception (#4636 part 3): a place the text lists as one of a region's
+(`listed_towns`). Counts only; never a name or a word of a text.
 """
 
 from __future__ import annotations
 
 import logging
-from collections import Counter
+import re
+from collections import Counter, defaultdict
 from collections.abc import Callable, Collection
 from dataclasses import dataclass, field
 
 from dmbot.memory import backstory_keep
-from dmbot.memory.backstory_links import BackstoryLinks
-from dmbot.memory.models import CONFIRMED, DM, PLAYER_CHARACTER, Entity, MemoryRuleError
-from dmbot.memory.ontology import rules_word_for
-from dmbot.memory.store import MemoryStore
+from dmbot.memory.backstory_links import BackstoryLinks, Waiting
+from dmbot.memory.checks import NESTS
+from dmbot.memory.claims import ClaimStore
+from dmbot.memory.models import (
+    CONFIRMED,
+    DM,
+    HOW_DM,
+    NPC,
+    PLAYER_CHARACTER,
+    Entity,
+    MemoryRuleError,
+)
+from dmbot.memory.ontology import resolve_kind, rules_word_for
+from dmbot.memory.store import NO_KIN_TIE, MemoryStore
 from dmbot.names.not_names import CREATURE_KINDS
 
 log = logging.getLogger(__name__)
 
 NAMES, OTHER_NAMES, CONNECTIONS = "names", "other names", "connections"
+# Why a connection waits for the DM (#4382, so a count can say it): an end that isn't a kept entry
+# yet, one DMbot worked out (#2959 item 5), or a hand-over, which ends what someone else holds
+# (#4115). Each is a question for the DM, never kept here.
+ON_A_NAME, WORKED_OUT, HAND_OVER = "waiting on a name", "worked out by DMbot", "an item handed over"
+WHY_WAITING = (ON_A_NAME, WORKED_OUT, HAND_OVER)
+
+
+def why_waiting(link: Waiting, listed: Collection[str] = ()) -> str | None:
+    """Why this waiting connection stays a question, or None when it is ready to keep. `listed`:
+    the ids of worked-out ones that are a region's listed towns (`listed_towns`), the one kind of
+    worked-out connection the sure step keeps (#4636 part 3)."""
+    if not link.ready:
+        return ON_A_NAME
+    if link.inferred and link.id not in listed:
+        return WORKED_OUT
+    if link.hand_over:
+        return HAND_OVER
+    return None
+
+
+# A region's listed towns (#4636 part 3, Supervisor's ruling): a list names at least this many of
+# the region's places, so one place said to be "in" a region is never taken as a list of one.
+LIST_MIN = 3
+_LIST_MARK = re.compile(r",|;|\band\b", re.I)
+
+
+async def listed_towns(
+    memory: MemoryStore,
+    guild: int,
+    campaign: str,
+    every: list[Waiting],
+    whole: list[Waiting] | None = None,
+) -> set[str]:
+    """The waiting worked-out connections the sure step keeps (#4636 part 3, Supervisor's ruling,
+    the keys' one exception to "inferred = offered, never extracted"): each is
+    - `in`, from a kept place to a kept place (a region or bigger place);
+    - rated sure by the reader (`inferred_sure`, only ever on such a one);
+    - from a list: its quote names the place and another of the region's listed places in one
+      sentence with a list mark between them, and at least `LIST_MIN` of them from the same
+      upload put places in that same region;
+    - for a place with no other parent: kept, or waiting from any upload (`whole`, the whole
+      list; `every` when not given), stated or worked out. A parent DMbot only assumed from where
+      the story was is no other parent: a stated one replaces it (`store._replace_assumed`).
+    A secret one never is. Everything else worked out stays a question ("lives in", roads, a
+    guess). Whether the region is the bigger place is the reader's word (its ' | sure' asks for a
+    region's own list): no place level is checked here. Read only."""
+    found = [
+        w
+        for w in every
+        if w.inferred and w.inferred_sure and w.predicate == NESTS and w.ready and not w.secret
+    ]
+    if not found:
+        return set()
+    places = {
+        e.id for e in await memory.entities(guild, campaign, statuses=("confirmed",))
+        if e.type == "place"
+    }  # fmt: skip
+    parents: dict[str, set[str]] = defaultdict(set)
+    for w in every if whole is None else whole:
+        if w.predicate == NESTS:
+            parents[w.subject_id].add(w.object_id)
+    for r in await memory.relations(guild, campaign, include_secret=True):
+        if r.predicate == NESTS and r.status != "rejected" and not r.assumed:
+            parents[r.subject_id].add(r.object_id)
+    groups: dict[tuple[str, str], list[Waiting]] = defaultdict(list)
+    for w in found:
+        if {w.subject_id, w.object_id} <= places and parents[w.subject_id] <= {w.object_id}:
+            groups[(w.object_id, w.upload)].append(w)
+    out: set[str] = set()
+    for group in groups.values():
+        if len(group) < LIST_MIN:
+            continue
+        names = [w.subject for w in group]
+        out |= {w.id for w in group if _in_the_list(w.quote, w.subject, names)}
+    return out
+
+
+def _in_the_list(quote: str, name: str, listed: list[str]) -> bool:
+    """Whether `name` sits in a list in `quote`: one sentence of it names this place and another
+    of the region's listed places with a list mark (a comma, "and", ";") between them. A place
+    named only after the list ends ("…and Dunhollow. Eastpeak rises over them") is not in it."""
+    key = name.casefold()
+    for sentence in re.split(r"(?<=[.!?])\s+", quote):
+        low = sentence.casefold()
+        at = low.find(key)
+        if at < 0:
+            continue
+        for other in listed:
+            o = other.casefold()
+            there = low.find(o)
+            if o == key or there < 0:
+                continue
+            lo, hi = sorted((at, there))
+            if _LIST_MARK.search(low[lo : hi + len(o)]):
+                return True
+    return False
 
 
 def _words(text: str) -> str:
@@ -55,9 +164,18 @@ class Tally:
 
     accepted: Counter[str] = field(default_factory=Counter)
     waiting: Counter[str] = field(default_factory=Counter)  # left for a person to answer
+    waiting_why: Counter[str] = field(default_factory=Counter)  # connections, by `why_waiting`
     refused: Counter[str] = field(default_factory=Counter)  # a rule said no (it stays waiting)
     batches: list[int] = field(default_factory=list)  # the changes made, to undo them together
     kinds: Counter[str] = field(default_factory=Counter)  # names added, by their kind
+    shown: int = 0  # held-back connections the table stated, shown to the players (#3963 c)
+    held: int = 0  # kept hidden beside a connection the story hides (#3975, #3979)
+    # Said while the party was split (#2996): the group there knows it, or which group can't be told
+    split_group: int = 0
+    split_unknown: int = 0
+    # A new name said only while the party was split (#4037): the group knows it / nobody does
+    names_split_group: int = 0
+    names_split_unknown: int = 0
 
     def add_batch(self, batch: int | None) -> None:
         if batch is not None:
@@ -84,9 +202,21 @@ async def accept_names(
     """Confirm each waiting name that was read with its kind. `only`: just these entries (an
     upload's own, so an earlier session's names are not touched); None for every waiting one.
     `kind_of`: the reader's kind for an entry (`ui.names.background_kind`; passed in, as the memory
-    package does not import the screens)."""
+    package does not import the screens).
+
+    An unnamed relative ("Brewner's daughter", "Cerric's paternal grandfather") is kept as an NPC
+    once the character it hangs off is kept (#4636 part 1, the owner's "stop asking the
+    obvious"; Supervisor's ruling): the story gives who they are to a kept character, so "Is this
+    someone in your game?" has one answer. Kept with `as_kin`, so it is never more visible than its
+    tie. A described stranger who hangs off nobody, a group, and a relative of a name still
+    waiting stay questions (a relative of a relative is kept once the first one is)."""
+    accepted: set[str] = set()
+    kin: list[Entity] = []
     for entity in await memory.entities(guild, campaign, statuses=("proposed",)):
         if only is not None and entity.id not in only:
+            continue
+        if narrow and _is_kin(entity):
+            kin.append(entity)
             continue
         kind = kind_of(entity)
         if not kind or entity.role == PLAYER_CHARACTER:
@@ -98,14 +228,89 @@ async def accept_names(
         if dry_run:
             tally.accepted[NAMES] += 1
             tally.kinds[kind] += 1
+            if _a_person(kind):
+                accepted.add(entity.id)
             continue
         try:
             written = await memory.confirm_entity(guild, campaign, entity.id, kind, source=DM)
+            tally.names_split_group += written.split == "group"
+            tally.names_split_unknown += written.split == "unknown"
             tally.accepted[NAMES] += 1
             tally.kinds[kind] += 1
             tally.add_batch(written.batch)
         except Exception as exc:  # a rule, or anything else: counted, the run goes on
             refused(tally, NAMES, exc)
+    if kin:
+        await _accept_kin(memory, guild, campaign, tally, kin, accepted, dry_run=dry_run)
+
+
+def _a_person(kind: str) -> bool:
+    """A kind a dry run counts as a kept character, as the live run reads them back."""
+    try:
+        return resolve_kind(kind)[0] == "character"
+    except MemoryRuleError:
+        return False
+
+
+def _is_kin(entity: Entity) -> bool:
+    """An unnamed person who hangs off another entry and is a character, not a group. (Read with
+    getattr: callers and tests may pass a bare stand-in without the unnamed fields.)"""
+    return bool(
+        getattr(entity, "unnamed", False)
+        and getattr(entity, "unnamed_anchor", None)
+        and entity.type == "character"
+    )
+
+
+async def _accept_kin(
+    memory: MemoryStore,
+    guild: int,
+    campaign: str,
+    tally: Tally,
+    kin: list[Entity],
+    accepted: set[str],
+    *,
+    dry_run: bool,
+) -> None:
+    """Keep each unnamed relative whose character is kept, as an NPC (`accept_names`). Rounds
+    until nothing more is kept, so a grandfather hanging off an unnamed father is kept once the
+    father is (at most one round per relative)."""
+    kept_people = {
+        e.id
+        for e in await memory.entities(guild, campaign, statuses=("confirmed",))
+        if e.type == "character"
+    } | (accepted if dry_run else set())  # (a dry run keeps nothing: count its people as kept)
+    left = list(kin)
+    for _ in range(len(kin)):
+        ready = [e for e in left if e.unnamed_anchor in kept_people]
+        if not ready:
+            break
+        for entity in ready:
+            left.remove(entity)
+            if dry_run:
+                if not await memory.has_kin_tie(guild, campaign, entity.id):
+                    tally.waiting[NAMES] += 1  # (as the live run: no stated tie, it waits)
+                    continue
+                tally.accepted[NAMES] += 1
+                tally.kinds[NPC] += 1
+                kept_people.add(entity.id)
+                continue
+            try:
+                written = await memory.confirm_entity(
+                    guild, campaign, entity.id, NPC, source=DM, as_kin=True
+                )
+                tally.accepted[NAMES] += 1
+                tally.kinds[NPC] += 1
+                tally.add_batch(written.batch)
+                kept_people.add(entity.id)
+            except MemoryRuleError as exc:
+                if str(exc) != NO_KIN_TIE:
+                    refused(tally, NAMES, exc)
+                else:  # (no stated tie: its relation is only its label's reading, so it waits)
+                    tally.waiting[NAMES] += 1
+            except Exception as exc:  # anything else: counted, the run goes on
+                refused(tally, NAMES, exc)
+    tally.waiting[NAMES] += len(left)
 
 
 async def accept_other_names(
@@ -150,18 +355,26 @@ async def accept_connections(
     name and date as the DM saw them); None for all."""
     onto = await memory.ontology(guild, campaign)
     symmetric = {p.key for p in onto.predicates.values() if p.symmetric}
-    every = [
-        w
-        for w in await links.waiting(guild, campaign, symmetric=symmetric)
-        if upload is None or w.upload == upload
-    ]
-    ready = [w for w in every if w.ready]
+    whole = await links.waiting(guild, campaign, symmetric=symmetric)
+    every = [w for w in whole if upload is None or w.upload == upload]
+    # (one DMbot inferred is never kept unasked: it waits for the DM's own press, #2959 item 5,
+    # except a region's listed town, #4636 part 3; nor a hand-over, which ends what someone else
+    # holds, #4115)
+    # (another parent waiting from any upload counts: the whole list, not this upload's)
+    listed = await listed_towns(memory, guild, campaign, every, whole)
+    ready = []
+    for w in every:
+        why = why_waiting(w, listed)
+        if why is None:
+            ready.append(w)
+        else:
+            tally.waiting_why[why] += 1
     tally.waiting[CONNECTIONS] += len(every) - len(ready)
     if dry_run:
         tally.accepted[CONNECTIONS] += len(ready)
         return
     try:
-        done = await backstory_keep.keep_all(memory, links, guild, campaign, ready)
+        done = await backstory_keep.keep_all(memory, links, guild, campaign, ready, listed=listed)
     except Exception as exc:  # the connections kept before it stay kept
         tally.refused[CONNECTIONS] += len(ready)
         log.warning("auto_accept: keeping connections stopped (%s)", type(exc).__name__)
@@ -170,3 +383,52 @@ async def accept_connections(
     tally.refused[CONNECTIONS] += done.refused
     for _link, batch in done.kept:
         tally.add_batch(batch)
+
+
+async def accept_dm_claims(
+    memory: MemoryStore,
+    guild: int,
+    campaign: str,
+    tally: Tally,
+    *,
+    dm_ids: Collection[int],
+    opted_in: Collection[int],
+    sessions: Collection[int],
+    dry_run: bool = False,
+) -> None:
+    """Keep the connections an import's sessions state in the DM's own lines (#3897), through the
+    claims review's own yes (`ClaimStore.confirm`: every rule, the speakers' consent read again,
+    the DM's own batch for Undo). A claim is sure only when all hold: it is stated, not a reading;
+    it is `dm_said`; every cited line was spoken by one of the campaign's DMs (checked here, never
+    trusting the AI's label); it is still waiting with both its names answered (what `waiting`
+    returns); and it came from `sessions`, the starts of this import's sessions. Players' claims,
+    plans, readings and lore's worked-out ties stay questions. Secrecy is decided as a plain ✅
+    in the review decides it (`secret=False`, with the store's own rules for names the DM hid);
+    this adds no "secret" choice, which only the DM makes."""
+    dms = set(dm_ids)
+    starts = set(sessions)
+    claims = ClaimStore(memory)
+    for claim in await claims.waiting(guild, campaign, opted_in=opted_in):
+        if claim.session_started_at not in starts:
+            continue  # (another session's: not this import's to answer)
+        if (
+            claim.reading is not None
+            or claim.how != HOW_DM
+            or not claim.speaker_ids
+            or not set(claim.speaker_ids) <= dms
+        ):
+            tally.waiting[CONNECTIONS] += 1
+            continue
+        if dry_run:
+            tally.accepted[CONNECTIONS] += 1
+            continue
+        try:
+            done = await claims.confirm(guild, campaign, claim.id, opted_in=opted_in, secret=False)
+            tally.accepted[CONNECTIONS] += 1
+            tally.shown += done.shown
+            tally.held += done.held
+            tally.split_group += done.split and done.scene > 0
+            tally.split_unknown += done.split and done.scene == 0
+            tally.add_batch(done.batch)
+        except Exception as exc:  # a rule, or anything else: counted, the run goes on
+            refused(tally, CONNECTIONS, exc)

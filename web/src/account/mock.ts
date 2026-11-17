@@ -20,10 +20,16 @@ import type {
   NameThemStep,
   NameKind,
   NameRow,
+  MapItem,
   NamesPage,
   NameSource,
+  UploadNotice,
+  UploadUndo,
   ScriptOffer,
   MatchRow,
+  MetItem,
+  PlaceWorldRow,
+  PrivateScene,
   NamesQuery,
   SmartNamesAnswer,
   Offer,
@@ -69,10 +75,11 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { CleanupView, ImportClock, NameAnswerResult, NameGroupHint } from "./api";
+import type { StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
+import { knowsHowOf, withKnowsHow } from "../content/knows-how-words";
 import { MUSTS_LINE_CHARS, MUSTS_MAX_LINES } from "../content/recap-style-words";
 
 /** Found in the built files only if the pretend API was included; check-csp fails a real
@@ -385,7 +392,11 @@ export function scenarioMe(scenario: Scenario): Me | null {
     case "offers":
       return {
         ...base,
-        offers: { incoming: incomingOffers, outgoing: [outgoingOffer] },
+        offers: {
+          incoming: incomingOffers,
+          outgoing: [outgoingOffer],
+          closed: [{ id: "offer-closed", campaignName: "Lanternfall", serverName: "Quillon's Corner" }],
+        },
         plan: {
           id: "two-tables",
           status: "active",
@@ -603,6 +614,7 @@ interface WebState {
     revealed?: boolean;
     belief?: WebLink["belief"];
     pinned?: boolean;
+    assumed?: boolean;
     check?: string;
     quote?: string;
     line?: number;
@@ -712,13 +724,39 @@ function pretendReadings(): Reading[] {
   ];
 }
 
+/** The pretend lineage and class questions (#3946): a lineage that changes one, and a class that adds one. */
+function pretendHandOvers(): HandOverQuestion[] {
+  return [
+    { item: "a".repeat(32), itemName: "Frost Brand", older: "b".repeat(32), olderName: "Claude", newer: "c".repeat(32), newerName: "Belleros", predicate: "owns", olderTie: "d".repeat(32), newerTie: "e".repeat(32), madeAt: 1_800_000_000 },
+    { item: "f".repeat(32), itemName: "the Lantern of Ash", older: "1".repeat(32), olderName: "Mira Voss", newer: "2".repeat(32), newerName: "Okra", predicate: "carries", olderTie: "3".repeat(32), newerTie: "4".repeat(32), madeAt: 1_800_000_100 },
+  ];
+}
+
+function pretendTraitOffers(): TraitOffer[] {
+  return [
+    { entity: "e1", who: "Torvin", kind: "species", name: "Dwarf", key: "dwarf", known: true, edition: "2024", current: "Human", classes: [], upload: "Notes, 9 Nov", quote: "Torvin Ashgrove is a dwarf of the northern holds." },
+    { entity: "e2", who: "Mira Voss", kind: "class", name: "Cleric", key: "cleric", known: true, edition: "2024", current: null, classes: ["Fighter"], upload: "", quote: "" },
+    { entity: "e3", who: "Brewner", kind: "language", name: "Giant", key: "giant", known: true, edition: "2024", current: null, classes: [], upload: "Session 4 notes", quote: "Brewner speaks Giant, the tongue of the hill clans." },
+  ];
+}
+
 /** A pretend API with in-memory state. `calls` records what the page asked for. */
-/** The pretend list of what waits for the DM, a fresh copy for each campaign the page opens. */
-function pretendWaiting(): Waiting {
+/** The pretend list of what waits for the DM, a fresh copy for each campaign the page opens. A campaign ref ending
+ * `.shown-held` also has two claims: a yes on one the bot shows to the players, and one it keeps hidden (#3974, #3986). */
+function pretendWaiting(ref = ""): Waiting {
+  const shownHeld: WaitingClaim[] = ref.endsWith(".shown-held")
+    ? [
+        { id: "c3-shown", statement: "Tavin is Mira's cousin", canSecret: false },
+        { id: "c4-held", statement: "Mira Voss grew up in Far Hall", canSecret: false },
+        { id: "c5-scene", statement: "The Ferryman sold Mira the map", canSecret: false },
+        { id: "c6-split", statement: "Roan heard the bell in the tower", canSecret: false },
+      ]
+    : [];
   return {
     claims: [
       { id: "c1", statement: "Mira Voss knows Far Hall", canSecret: true, at: 1791000000 },
       { id: "c2", statement: "Roan is dead", canSecret: false },
+      ...shownHeld,
     ],
     backstory: [
       { id: "b1", subject: "Rook", object: "Far Hall", how: "knows", secret: false, upload: "Lore, 24 Oct", ready: true, waitingOn: [], quote: "Rook has been to Far Hall." },
@@ -797,6 +835,8 @@ function mockSourcesOf(id: string): string[] {
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const removedClaims = new Map<string, WaitingClaim>(); // answered claims, kept for "Undo all" (#3645)
   const waitingState: Record<string, Waiting> = {}; // (fresh for each pretend API)
+  const handOverState: Record<string, { list: HandOverQuestion[]; no: Map<string, HandOverQuestion> }> = {}; // by campaign (#4122)
+  const traitState: Record<string, TraitOffer[]> = {}; // the lineage and class questions left, by campaign (#3946)
   const readingState: Record<string, { list: Reading[]; kept: Map<string, Reading> }> = {}; // (#2412) by campaign
   console.info(MOCK_MARKER, "pretend API in use:", scenario);
   let me = scenarioMe(scenario);
@@ -813,6 +853,15 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let loreLooks = 0;
   let aiFeedLooks = 0;
   // DMbot's own matches (#3602): two waiting in the table scenario, answered one at a time.
+  let metNow: MetItem[] = [
+    { id: "a".repeat(32), what: "barbarians", count: 2, sessionStartedAt: 1_700_000_000 },
+    { id: "b".repeat(32), what: "rats", count: 0, sessionStartedAt: 1_700_000_000 },
+    { id: "c".repeat(32), what: "a wolf", count: 1, sessionStartedAt: 1_699_000_000 },
+  ];
+  let scenesNow: PrivateScene[] = [
+    { id: "d".repeat(32), first: "Rook", second: "Mira Voss", sessionStartedAt: 1_700_000_000, into: 65, minutes: 12, lines: 9 },
+    { id: "e".repeat(32), first: "Brynn", second: "Rook", sessionStartedAt: 1_699_000_000, into: 7, minutes: 1, lines: 4 },
+  ];
   let matchesNow: MatchRow[] =
     scenario === "table"
       ? [
@@ -894,6 +943,17 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const memorySaid = new Map<string, string | null>();
   // The line the players are told about each name (#3568), by the name's id.
   const playersLines = new Map<string, string>();
+  // A place's land, climate and ruler (#4287), by the name's id; the groups the ruler menu offers; and two places' sizes for the climate rule.
+  const worldRows = new Map<string, PlaceWorldRow[]>();
+  const worldGroups = [{ id: "a".repeat(32), name: "Ten-Towns" }, { id: "b".repeat(32), name: "The Arcane Brotherhood" }];
+  const worldLevel = (name: string): string | null => (name === "Brynwater Crossing" ? "settlement" : name === "Saltmarsh" ? "region" : null);
+  // A place's size, kind and setting (#4173), by the name's id: nothing is set until a DM sets it, except "Saltmarsh", which DMbot read as a town.
+  const placeFacts = new Map<string, { level: string | null; levelFrom: "read" | "dm" | null; form: "water" | "route" | null; formFrom: "read" | "dm" | null; setting: boolean }>();
+  const factsOf = (n: NameRow) => {
+    if (n.kind !== "place") return {};
+    const f = placeFacts.get(n.id) ?? (n.name === "Saltmarsh" ? { level: "settlement", levelFrom: "read" as const, form: null, formFrom: null, setting: false } : { level: null, levelFrom: null, form: null, formFrom: null, setting: false });
+    return { placeLevel: f.level, placeLevelFrom: f.levelFrom, form: f.form, formFrom: f.formFrom, setting: f.setting };
+  };
   /** A name for the said-as calls: a recap page's name, or a main name from the Names page. */
   const sayable = (id: string): { text: string; set: (v: string | null) => void } | undefined => {
     const recap = names.find((n) => n.id === id);
@@ -914,6 +974,12 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       if (/\.unnamed$/.test(ref)) {
         found.nodes.push({ id: "u1", name: "unnamed - Ken's sister", kind: "npc", unnamed: true, unnamedWhat: "sister", unnamedAnchor: "Ken" });
         found.links.push({ id: "lu1", a: found.nodes[0]!.id, b: "u1", words: "sister of", secret: false, direction: "a-b" });
+      }
+      // `.knowshow`: three `knows` connections, one for each way the story can say (#3882).
+      if (/\.knowshow$/.test(ref)) {
+        found.links.push({ id: "kh1", a: found.nodes[0]!.id, b: found.nodes[5]!.id, words: "has met (wary)", secret: false, direction: "a-b" });
+        found.links.push({ id: "kh2", a: found.nodes[0]!.id, b: found.nodes[4]!.id, words: "has heard of", secret: false, direction: "a-b" });
+        found.links.push({ id: "kh3", a: found.nodes[1]!.id, b: found.nodes[5]!.id, words: "knows", secret: false, direction: "a-b" });
       }
       if (/\.feeling$/.test(ref)) found.links.push({ id: "lf1", a: found.nodes[0]!.id, b: found.nodes[5]!.id, words: "knows (wary)", secret: false, direction: "a-b", quote: "They argued over the toll, and neither would give way.", line: 67 });
     }
@@ -946,6 +1012,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           words: l.words,
           secret: l.secret,
           direction: l.direction,
+          ...(l.direction === "both" ? { pairWords: `are connected (“${l.words}”)` } : {}),
           // What the real API works out from the relationship type (core #2942), here from the pretend words.
           kind: pretendKind(l.words),
           ...(full ? { revealed: l.revealed !== false } : {}),
@@ -955,6 +1022,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
           ...(pins && l.quote !== undefined ? { quote: l.quote } : {}),
           // The DM's alone (#2448): sent to a DM in the full view, never to a player or a peeker.
           ...(pins && l.pinned ? { pinned: true } : {}),
+          // The DM's alone, like a pin (#4304).
+          ...(pins && l.assumed ? { assumed: true } : {}),
           // DMbot's check is the DM's alone, like a pin: never to a player or a peeker (#2859).
           ...(pins && l.check ? { check: l.check } : {}),
           ...(l.belief ? { belief: full ? l.belief : { confidence: l.belief.confidence, status: l.belief.status } } : {}),
@@ -970,8 +1039,64 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     if (n % 4 === 2) return [{ id: "q-heist", name: "The Keep Heist", links: 1 }];
     return [];
   };
+  // What each connection edit changed, for Undo (the numbers only go up).
+  let lastBatch = 0;
+  // DMbot's guesses for the DM to check (#4285): a few lines of each kind, ids shaped as the door's are.
+  const worldNotes: { places: WorldPlaceNote[]; languages: WorldLanguageNote[] } = {
+    places: [
+      { id: `place:${"a1".repeat(16)}`, entityId: "n24", name: "Saltmarsh", layer: "terrain", value: "swamp", words: "", how: null, rulerId: null, ruler: null, from: "session", fromSession: 1_700_000_000 },
+      { id: `place:${"a2".repeat(16)}`, entityId: "n24", name: "Saltmarsh", layer: "climate", value: "temperate", words: "", how: "wet", rulerId: null, ruler: null, from: "session", fromSession: 1_700_000_000 },
+      { id: `place:${"a3".repeat(16)}`, entityId: "n25", name: "Greywatch", layer: "control", value: "", words: "", how: "rules", rulerId: "g1", ruler: "The Greywatch Guard", from: "lore", fromSession: null },
+    ],
+    languages: [{ id: `language:${"b1".repeat(16)}`, entityId: "n3", name: "Brother Venn", language: "Giant", from: "lore", fromSession: null }],
+  };
+  const worldBatches = new Map<number, { places: WorldPlaceNote[]; languages: WorldLanguageNote[] }>();
+  // The story threads DMbot found in an upload (#4482), waiting for the DM; a keep or a 🚫 takes one out, and Undo puts it back.
+  const storyThreadList: StoryThreadSuggestion[] = [
+    {
+      id: "a1".repeat(16), kind: "quest", name: "Find the heir", aim: "Bring the heir home before the pass closes.",
+      quote: "Garret needs his heir brought back by the new moon.", upload: "Notes, 9 Nov",
+      people: [{ index: 0, role: "quest giver", name: "Keegan Velryn" }, { index: 1, role: "target", name: "Garret Velryn" }],
+      lines: [{ words: "Find the heir", what: "a step", branch: false }, { words: "The old pass", what: "a branch", branch: true }],
+      session: false,
+      heard: [],
+    },
+    {
+      id: "b2".repeat(16), kind: "hook", name: "Ask about the bell", aim: "A lead nobody has taken up yet.",
+      quote: "", upload: "Notes, 9 Nov", people: [],
+      lines: [{ words: "Ask the sexton", what: "a step", branch: false }, { words: "The bell tower", what: "a branch", branch: true }],
+      session: false,
+      heard: [],
+    },
+    {
+      id: "c3".repeat(16), kind: "hook", name: "Keegan's cap", aim: "Where the cap went.",
+      quote: "", upload: "the session of 14 Nov 2026", people: [{ index: 0, role: "quest giver", name: "Keegan Velryn" }],
+      lines: [], session: true, heard: ["Keegan wrings his cap.", "We'll find him."],
+    },
+  ];
+  const storyThreadBatches = new Map<number, StoryThreadSuggestion>();
+  // A character's languages (#4621): the DM's and the ones DMbot found, and a character with a sheet's (read only).
+  let lastLanguageId = 10;
+  let lastLanguageBatch = 0;
+  const charLanguages = new Map<string, { hasSheet: boolean; languages: { id?: string; name: string; source: "sheet" | "dm" | "read" }[] }>([
+    ["lang-dm", { hasSheet: false, languages: [{ id: "l1", name: "Common", source: "dm" }, { id: "l2", name: "Giant", source: "read" }] }],
+    ["lang-sheet", { hasSheet: true, languages: [{ name: "Elvish", source: "sheet" }, { name: "Dwarvish", source: "sheet" }] }],
+  ]);
+  const storyThreadTurnedDown = new Map<string, StoryThreadSuggestion>();
+  // The Maps page (#4347): the pictures a DM or a player added. A DM sees them all; a player sees the shown usable ones and their own.
+  let mapList: { id: string; title: string; addedBy: string; via: "website" | "discord"; mine: boolean; shown: boolean; state: "usable" | "waiting" | "declined" }[] = [
+    { id: "m1", title: "Icewind Dale", addedBy: "Ana", via: "discord", mine: false, shown: true, state: "usable" },
+    { id: "m2", title: "The Keep, floor 1", addedBy: "Ana", via: "website", mine: false, shown: false, state: "usable" },
+    { id: "m3", title: "Harbour sketch", addedBy: "Ben", via: "website", mine: true, shown: false, state: "waiting" },
+    { id: "m4", title: "Old road", addedBy: "Cy", via: "discord", mine: false, shown: false, state: "declined" },
+    { id: "m5", title: "Cave", addedBy: "Dee", via: "website", mine: false, shown: false, state: "waiting" },
+  ];
+  // What each Maps change did, to put back on Undo (by its batch number).
+  const mapBatches = new Map<number, () => void>();
+  let mapSeq = 5;
+  const linkBatches = new Map<number, { id: string; a: string; b: string; words: string; secret: boolean; direction: "a-b" | "b-a" | "both"; pinned?: boolean }[]>();
   // Who knows a held connection (#3214): the DM's answers, kept by link id for the pretend web.
-  const linkWho = new Map<string, { who: "dm" | "some" | "all"; knownBy: { id: string; name: string }[] }>();
+  const linkWho = new Map<string, { who: "dm" | "some" | "all" | "common"; knownBy: { id: string; name: string }[] }>();
   // Player character icons (#3621, #3622): in a campaign reference ending ".icons" the first three names are player
   // characters: the first has a Discord avatar and a dndbeyond.com portrait, the second only a portrait, the third none.
   const pcChoice = new Map<string, IconChoice>();
@@ -1081,7 +1206,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         return s !== undefined && (s.secret === true || s.revealed === false);
       })
       .map((l) => l.id);
-    const defaultWho: { who: "dm" | "some" | "all"; knownBy: { id: string; name: string }[] }[] = [
+    const defaultWho: { who: "dm" | "some" | "all" | "common"; knownBy: { id: string; name: string }[] }[] = [
       { who: "dm", knownBy: [] },
       { who: "some", knownBy: [{ id: "pc-cerric", name: "Cerric" }, { id: "pc-mira", name: "Mira" }] },
       { who: "all", knownBy: [] },
@@ -1209,6 +1334,9 @@ function applySharing(ref: string, choice: RuleSharingChoice): string {
   sharingState.set(ref, now);
   return note;
 }
+// The pretend uploads' notices (#3879): how many times each was looked at, and which were undone.
+const autoLooks = new Map<string, number>();
+const undoneUploads = new Map<string, UploadUndo>();
 // Scripts made from the pretend website (#3899), by campaign and session.
 const madeScripts = new Set<string>();
 const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; value: string; confirm?: boolean; on?: boolean }>();
@@ -1451,6 +1579,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         return { ...base, state: "done", note: `**${person.name}** is no longer a game master.` };
       }
       // Sharing the story (#3741): `.ss-failed` is a refusal, with nothing changed; every other campaign says done at once.
+      if (asked.setting === "ask_before_adding") return { ...base, state: "done" };
       if (asked.setting === "share_improve") {
         if (/\.ss-failed$/.test(ref)) return { ...base, state: "failed", error: "refused" };
         return { ...base, state: "done" };
@@ -1857,7 +1986,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const all = [
         { userId: "1", name: "Stormy", agreed: true },
         { userId: "2", name: "Ash", agreed: false },
-        { userId: "3", name: "Mira", agreed: true },
+        { userId: "3", name: "Mira", agreed: true, before: true },
         // Said Stop recording me: can never be ticked in (#3306).
         { userId: "4", name: "Dax", agreed: false, blocked: "said_no" as const },
       ];
@@ -2155,7 +2284,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-found");
-      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : /\.ties$/.test(ref) ? tiesWaiting() : pretendWaiting()));
+      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : /\.ties$/.test(ref) ? tiesWaiting() : pretendWaiting(ref)));
       return structuredClone({
         ...waiting,
         counts: {
@@ -2174,7 +2303,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-found");
-      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : /\.ties$/.test(ref) ? tiesWaiting() : pretendWaiting()));
+      const waiting = (waitingState[ref] ??= (/\.pronoun$/.test(ref) ? pronounWaiting() : /\.ties$/.test(ref) ? tiesWaiting() : pretendWaiting(ref)));
       const ids = "ids" in answer ? answer.ids : [answer.id];
       // Family ties (#3463): a pick settles one name of a kept claim (the claim becomes an ordinary waiting one
       // once none is left), and Undo puts it back; "None of these" is the ordinary reject below.
@@ -2216,7 +2345,16 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       waiting.backstory = waiting.backstory.filter((b) => !(ids.includes(b.id) && (b.ready || answer.action === "skip")));
       waiting.which = waiting.which.filter((q) => !ids.includes(q.id));
       if (before === waiting.claims.length + waiting.backstory.length + waiting.which.length) throw new ApiError("gone");
-      if (answer.kind === "claim" && answer.action === "confirm") return { batch: 100 + Number(answer.id.replace(/\D/g, "")) };
+      if (answer.kind === "claim" && answer.action === "confirm") {
+        // A yes the bot showed to the players, or kept hidden beside another hidden connection (#3974, #3986).
+        // (each also gives a batch, so Undo takes it back, as for an ordinary yes)
+        const batch = 100 + Number(answer.id.replace(/\D/g, ""));
+        if (answer.id.endsWith("-shown")) return { shown: 1, batch };
+        if (answer.id.endsWith("-held")) return { held: 1, batch };
+        if (answer.id.endsWith("-scene")) return { scene: 1, batch };
+        if (answer.id.endsWith("-split")) return { split: 1, batch };
+        return { batch };
+      }
       return answer.action === "keep_all" ? { kept: ids.length } : {};
     },
     // What people believe (#2412), the shapes of core PR 2693: DM only (anyone else gets not-found). Placing a
@@ -2294,45 +2432,79 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError(webView(ref) === "none" ? "not-found" : "not-allowed");
       const state = web(ref);
-      const edgeOf = (a: string, b: string): WebEdge | { removed: true } => {
-        const found = edgesOf(state.links.filter((l) => (l.a === a && l.b === b) || (l.a === b && l.b === a)), true, true, true);
-        return found[0] ?? { removed: true };
+      // Each edit is a batch that Undo can take back while nothing has been done since (core #4156): the snapshot is what it put back.
+      if (change.action === "undo") {
+        const kept = linkBatches.get(change.batch);
+        if (!kept) throw new ApiError("not-found");
+        if (change.batch !== Math.max(...linkBatches.keys())) throw new ApiError("changed");
+        state.links.splice(0, state.links.length, ...kept.map((l) => ({ ...l })));
+        linkBatches.delete(change.batch);
+        return { removed: true, batch: null };
+      }
+      const before = state.links.map((l) => ({ ...l }));
+      const edit = (): WebEdge | { removed: true } => {
+        const edgeOf = (a: string, b: string): WebEdge | { removed: true } => {
+          const found = edgesOf(state.links.filter((l) => (l.a === a && l.b === b) || (l.a === b && l.b === a)), true, true, true);
+          return found[0] ?? { removed: true };
+        };
+        if (change.action === "add") {
+          if (change.words.trim() === "") throw new ApiError("bad-name");
+          if (!state.nodes.some((n) => n.id === change.a) || !state.nodes.some((n) => n.id === change.b)) throw new ApiError("not-found");
+          state.links.push({ id: `l${state.nextLink++}`, a: change.a, b: change.b, words: change.words.trim(), secret: change.secret, direction: "a-b" });
+          return edgeOf(change.a, change.b);
+        }
+        const link = state.links.find((l) => l.id === change.id);
+        if (!link) throw new ApiError("not-found");
+        if (change.action === "words") {
+          if (change.words.trim() === "") throw new ApiError("bad-name");
+          link.words = change.words.trim();
+        } else if (change.action === "direction") {
+          // Both ways or one way keeps the id; turning a one-way connection round writes it anew, with a new id (core #4166).
+          if (change.direction === link.direction) return edgeOf(link.a, link.b);
+          if (link.direction === "both" || change.direction === "both") link.direction = change.direction;
+          else {
+            [link.a, link.b] = [link.b, link.a];
+            link.id = `l${state.nextLink++}`;
+          }
+        } else if (change.action === "secret") {
+          link.secret = change.secret;
+        } else if (change.action === "pin") {
+          link.pinned = change.pinned;
+        } else if (change.action === "right") {
+          link.assumed = false;
+        } else if (change.action === "feeling") {
+          // Only a "knows (…)" connection takes a feeling, and only one of the nine words; it stays a "knows" (#3606).
+          if (!/^knows \(/.test(link.words) || !FEELINGS.includes(change.feeling as Feeling)) throw new ApiError("bad-name");
+          link.words = `knows (${change.feeling})`;
+        } else if (change.action === "knows-how") {
+          // Only a `knows` connection says how its two people know each other (#3882); the feeling stays.
+          if (knowsHowOf(link.words) === null) throw new ApiError("bad-name");
+          link.words = withKnowsHow(link.words, change.how);
+        } else if (change.action === "who") {
+          // Who knows a held connection (#3214): "everyone" is the table; "some" names the characters picked. "common" (#4559)
+          // is refused as `cannot-show` while the ref ends `.common-refused` (a connection whose names the players are not shown).
+          if (change.who === "common" && /\.common-refused$/.test(ref)) throw new ApiError("cannot-show");
+          const picked = (change.characters ?? []).map((id) => PRETEND_VIEWERS.find((v) => v.id === id)).filter((v) => v !== undefined);
+          linkWho.set(
+            link.id,
+            change.who === "dm"
+              ? { who: "dm", knownBy: [] }
+              : change.who === "everyone"
+                ? { who: "all", knownBy: [] }
+                : change.who === "common"
+                  ? { who: "common", knownBy: [] }
+                  : { who: "some", knownBy: picked.map((v) => ({ id: v.id, name: v.name })) },
+          );
+        } else {
+          if (change.confirm !== true) throw new ApiError("needs-confirm");
+          state.links.splice(state.links.indexOf(link), 1);
+        }
+        return edgeOf(link.a, link.b);
       };
-      if (change.action === "add") {
-        if (change.words.trim() === "") throw new ApiError("bad-name");
-        if (!state.nodes.some((n) => n.id === change.a) || !state.nodes.some((n) => n.id === change.b)) throw new ApiError("not-found");
-        state.links.push({ id: `l${state.nextLink++}`, a: change.a, b: change.b, words: change.words.trim(), secret: change.secret, direction: "a-b" });
-        return edgeOf(change.a, change.b);
-      }
-      const link = state.links.find((l) => l.id === change.id);
-      if (!link) throw new ApiError("not-found");
-      if (change.action === "words") {
-        if (change.words.trim() === "") throw new ApiError("bad-name");
-        link.words = change.words.trim();
-      } else if (change.action === "secret") {
-        link.secret = change.secret;
-      } else if (change.action === "pin") {
-        link.pinned = change.pinned;
-      } else if (change.action === "feeling") {
-        // Only a "knows (…)" connection takes a feeling, and only one of the nine words; it stays a "knows" (#3606).
-        if (!/^knows \(/.test(link.words) || !FEELINGS.includes(change.feeling as Feeling)) throw new ApiError("bad-name");
-        link.words = `knows (${change.feeling})`;
-      } else if (change.action === "who") {
-        // Who knows a held connection (#3214): "everyone" is the table; "some" names the characters picked.
-        const picked = (change.characters ?? []).map((id) => PRETEND_VIEWERS.find((v) => v.id === id)).filter((v) => v !== undefined);
-        linkWho.set(
-          link.id,
-          change.who === "dm"
-            ? { who: "dm", knownBy: [] }
-            : change.who === "everyone"
-              ? { who: "all", knownBy: [] }
-              : { who: "some", knownBy: picked.map((v) => ({ id: v.id, name: v.name })) },
-        );
-      } else {
-        if (change.confirm !== true) throw new ApiError("needs-confirm");
-        state.links.splice(state.links.indexOf(link), 1);
-      }
-      return edgeOf(link.a, link.b);
+      const drawn = edit();
+      const batch = ++lastBatch;
+      linkBatches.set(batch, before);
+      return { ...drawn, batch };
     },
     async recapStyle(ref): Promise<RecapStyle> {
       calls.push(`recapStyle:${ref}`);
@@ -2539,6 +2711,239 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
       return matchesNow.map((m) => ({ ...m }));
     },
+    // "Met but not named" (#4084): three in the table scenario; naming a name the campaign already has answers `name-exists`.
+    async metList(ref): Promise<MetItem[]> {
+      calls.push(`metList:${ref}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
+      return metNow.map((m) => ({ ...m }));
+    },
+    async answerMet(ref, id, answer, onLook) {
+      calls.push(`answerMet:${ref}:${id}:${JSON.stringify(answer)}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
+      const found = metNow.find((m) => m.id === id);
+      if (!found) throw new ApiError("gone");
+      if (answer.action === "name") {
+        const name = answer.name.trim();
+        if (name === "") throw new ApiError("bad-name");
+        if (/^waiting\b/i.test(name)) throw new ApiError("met-waiting");
+        if (/^mira\b/i.test(name)) throw new ApiError("name-exists");
+      }
+      onLook?.({ waits: null });
+      await new Promise((ok) => setTimeout(ok, 200));
+      metNow = metNow.filter((m) => m.id !== id);
+    },
+    // "Private scenes" (#4102): two in the table scenario; a second "Not private" on one says gone.
+    async placeWorld(ref, placeId) {
+      calls.push(`placeWorld:${ref}:${placeId}`);
+      const named = memory.find((n) => n.id === placeId);
+      if (!named || named.kind !== "place") throw new ApiError("not-found");
+      return { level: worldLevel(named.name), form: null, rows: (worldRows.get(placeId) ?? []).map((r) => ({ ...r })), groups: worldGroups.map((g) => ({ ...g })) };
+    },
+    // The quest sheet of the mock's kept thread (#4547): the example the spec gives, for its one thread node.
+    async threadCard(ref, thread) {
+      calls.push(`threadCard:${ref}:${thread}`);
+      if (thread !== "thread-heir") throw new ApiError("not-found");
+      const part = (id: string, kind: string, words: string, state: string, extra: Partial<ThreadCardPart> = {}): ThreadCardPart => ({
+        id, kind, words, state, underId: null, who: null, about: null, amount: null, unit: "", owed: null, due: "",
+        terms: "", limitKind: "", dated: false, dateWords: "", fromRead: false, tableKnows: false, ...extra,
+      });
+      return {
+        thread: { id: thread, name: "Bring the heir home", kind: "Quest", state: "active", stateWords: "Happening now", description: "Bring the heir home." },
+        people: [
+          { id: "n-keegan", name: "Keegan Velryn", role: "quest giver" },
+          { id: "n-garret", name: "Garret Velryn", role: "target" },
+        ],
+        waiting: 2,
+        done: 1,
+        of: 2,
+        parts: [
+          part("p1", "reward", "50 gold", "owed", { amount: 50, unit: "gold", owed: 0, due: "up_front" }),
+          part("p2", "reward", "A route map", "owed"),
+          part("p3", "help", "A team of sleds", "to_keep"),
+          part("p4", "objective", "Find the heir", "done"),
+          part("p5", "objective", "Cross the pass", "to_do"),
+          part("p6", "time_limit", "Before the new moon", "running"),
+        ],
+        bigger: null,
+        branches: [],
+      };
+    },
+    // The quest sheet's edit controls (#4562): each press is recorded, and an Undo gives back no batch.
+    async changeThreadParts(ref, thread, change) {
+      calls.push(`changeThreadParts:${ref}:${thread}:${JSON.stringify(change)}`);
+      if (thread !== "thread-heir") throw new ApiError("not-found");
+      if (change.action === "undo") return { batch: null };
+      // The mock has no game clock for day 13 (the spec's example): a date that day is refused as the bot would (#4503).
+      if (change.action === "date" && change.days === 13) throw new ApiError("no-clock");
+      return { batch: 1 };
+    },
+    // The story threads DMbot found (#4482): two suggestions, each with one step and one branch as a line; a keep, a turn-down and their Undo
+    // are recorded and change the list as the bot would.
+    async storyThreads(ref) {
+      calls.push(`storyThreads:${ref}`);
+      return { suggestions: storyThreadList.map((t) => ({ ...t, people: t.people.map((p) => ({ ...p })), lines: t.lines.map((l) => ({ ...l })) })) };
+    },
+    async changeStoryThreads(ref, change) {
+      calls.push(`changeStoryThreads:${ref}:${JSON.stringify(change)}`);
+      if (change.action === "undo") {
+        const back = "keep" in change ? storyThreadBatches.get(change.keep) : storyThreadTurnedDown.get(change.not);
+        if (!back) throw new ApiError("gone");
+        if ("keep" in change) storyThreadBatches.delete(change.keep);
+        else storyThreadTurnedDown.delete(change.not);
+        storyThreadList.push(back);
+        return { batch: null };
+      }
+      const at = storyThreadList.findIndex((t) => t.id === change.id);
+      if (at < 0) throw new ApiError("gone");
+      const [gone] = storyThreadList.splice(at, 1);
+      if (change.action === "not") {
+        storyThreadTurnedDown.set(change.id, gone!);
+        return { batch: null };
+      }
+      const batch = ++lastBatch;
+      storyThreadBatches.set(batch, gone!);
+      return { batch };
+    },
+    // A character's languages (#4621): one with the DM's and DMbot's (ids), one with a sheet (read only).
+    async characterLanguages(ref, entity) {
+      calls.push(`characterLanguages:${ref}:${entity}`);
+      const row = charLanguages.get(entity);
+      if (!row) throw new ApiError("not-allowed");
+      return { hasSheet: row.hasSheet, languages: row.languages.map((l) => ({ ...l })) };
+    },
+    async changeCharacterLanguages(ref, entity, change) {
+      calls.push(`changeCharacterLanguages:${ref}:${entity}:${JSON.stringify(change)}`);
+      const row = charLanguages.get(entity);
+      if (!row) throw new ApiError("not-allowed");
+      if (change.action === "undo") return { batch: null };
+      if (change.action === "add") row.languages.push({ id: `l${++lastLanguageId}`, name: change.name, source: "dm" });
+      if (change.action === "remove") row.languages = row.languages.filter((l) => l.id !== change.language);
+      if (change.action === "check") row.languages = row.languages.map((l) => (l.source === "read" ? { ...l, source: "dm" as const } : l));
+      return { batch: ++lastLanguageBatch };
+    },
+    async worldNotes(ref) {
+      calls.push(`worldNotes:${ref}`);
+      return { places: worldNotes.places.map((n) => ({ ...n })), languages: worldNotes.languages.map((n) => ({ ...n })) };
+    },
+    // ✅, 🚫 and ↩ Undo on World notes (#4285): a line checked meanwhile is "gone", as the real bot says.
+    async changeWorldNotes(ref, change) {
+      calls.push(`changeWorldNotes:${ref}:${JSON.stringify(change)}`);
+      if (change.action === "undo") {
+        const back = worldBatches.get(change.batch);
+        if (!back) throw new ApiError("gone");
+        worldBatches.delete(change.batch);
+        worldNotes.places.push(...back.places);
+        worldNotes.languages.push(...back.languages);
+        return { kept: null, batch: null };
+      }
+      const ids = change.action === "keep" ? change.ids : [change.id];
+      const places = worldNotes.places.filter((n) => ids.includes(n.id));
+      const languages = worldNotes.languages.filter((n) => ids.includes(n.id));
+      if (places.length + languages.length === 0) throw new ApiError("gone");
+      worldNotes.places = worldNotes.places.filter((n) => !ids.includes(n.id));
+      worldNotes.languages = worldNotes.languages.filter((n) => !ids.includes(n.id));
+      const batch = ++lastBatch;
+      worldBatches.set(batch, { places, languages });
+      return { kept: change.action === "keep" ? places.length + languages.length : null, batch };
+    },
+    // The Maps page (#4347). A ref ending `.player` is a player's campaign: the player rule applies, and `shown` and `state` are only on their own rows.
+    async maps(ref) {
+      calls.push(`maps:${ref}`);
+      const player = /\.player$/.test(ref);
+      const rows = mapList.filter((m) => !player || (m.shown && m.state === "usable") || m.mine);
+      return {
+        canManage: !player,
+        maps: rows.map((m) => {
+          const row: MapItem = { id: m.id, title: m.title, addedBy: m.addedBy, via: m.via, mine: m.mine, openUrl: `/account/pictures/${m.id}` };
+          if (!player || m.mine) {
+            row.shown = m.shown;
+            row.state = m.state;
+          }
+          return row;
+        }),
+      };
+    },
+    async changeMaps(ref, change) {
+      calls.push(`changeMaps:${ref}:${JSON.stringify(change)}`);
+      if (change.action === "undo") {
+        const back = mapBatches.get(change.batch);
+        if (!back) throw new ApiError("gone");
+        mapBatches.delete(change.batch);
+        back();
+        return { batch: null };
+      }
+      // A player can only take back their own map; a map hidden from the table is not theirs to see, so it reads as gone.
+      const m = mapList.find((x) => x.id === change.id);
+      if (!m || (/\.player$/.test(ref) && !m.mine && !(m.shown && m.state === "usable"))) throw new ApiError("gone");
+      if (/\.player$/.test(ref) && change.action !== "takeback" && !(change.action === "remove" && m.mine)) throw new ApiError("not-allowed");
+      let undo: () => void;
+      if (change.action === "use") {
+        if (m.state !== "waiting") throw new ApiError("gone");
+        const was = m.state;
+        m.state = change.yes ? "usable" : "declined";
+        undo = () => {
+          m.state = was;
+        };
+      } else if (change.action === "show") {
+        const was = m.shown;
+        m.shown = change.shown;
+        undo = () => {
+          m.shown = was;
+        };
+      } else {
+        if (change.action === "takeback" && !m.mine) throw new ApiError("not-allowed");
+        const at = mapList.indexOf(m);
+        mapList = mapList.filter((x) => x !== m);
+        undo = () => {
+          mapList.splice(at, 0, m);
+        };
+      }
+      const batch = ++lastBatch;
+      mapBatches.set(batch, undo);
+      return { batch };
+    },
+    // A picture sent to be a map: the stages it goes through, then the map is added (a player's waits for a DM's yes).
+    async addMap(ref, upload, onLook) {
+      calls.push(`addMap:${ref}:${upload.title}`);
+      const player = /\.player$/.test(ref);
+      onLook?.({ stage: "sending", seconds: 1, quiet: 0 });
+      onLook?.({ stage: "saving", seconds: 2, quiet: 0 });
+      const id = `m${++mapSeq}`;
+      mapList = [...mapList, { id, title: upload.title, addedBy: player ? "Ben" : "Ana", via: "website", mine: true, shown: false, state: player ? "waiting" : "usable" }];
+      const batch = ++lastBatch;
+      mapBatches.set(batch, () => {
+        mapList = mapList.filter((x) => x.id !== id);
+      });
+      return { mapId: id, batch };
+    },
+    async placeWorldTable(ref, placeId) {
+      calls.push(`placeWorldTable:${ref}:${placeId}`);
+      const named = memory.find((n) => n.id === placeId);
+      if (!named || named.kind !== "place") throw new ApiError("not-found");
+      // only what the DM confirmed and showed: no "read" row and no hidden one (the real door also cuts by what the reader may know)
+      return { rows: (worldRows.get(placeId) ?? []).filter((r) => r.shown && !r.read).map((r) => ({ layer: r.layer, value: r.value, words: r.words, groupName: r.groupName, how: r.how, part: r.part })) };
+    },
+    async privateScenes(ref): Promise<PrivateScene[]> {
+      calls.push(`privateScenes:${ref}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
+      return scenesNow.map((x) => ({ ...x }));
+    },
+    async notPrivateScene(ref, id) {
+      calls.push(`notPrivateScene:${ref}:${id}`);
+      await reachable();
+      signedIn();
+      if (namesView(ref) !== "dm") throw new ApiError("not-allowed");
+      const found = scenesNow.find((x) => x.id === id);
+      if (!found) throw new ApiError("gone");
+      scenesNow = scenesNow.filter((x) => x.id !== id);
+      return { first: found.first, second: found.second };
+    },
     async answerMatch(ref, batch, answer, onLook) {
       calls.push(`answerMatch:${ref}:${batch}:${answer}`);
       await reachable();
@@ -2598,7 +3003,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         ...(role === "player"
           ? {}
           : {
-              settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, storyMode: "off", shareImprove: false, dndbeyondInvite: "", mainRules: "2024", fallbackRules: "2014", gameMasters: 2 } as const,
+              settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, storyMode: "off", shareImprove: false, askBeforeAdding: false, dndbeyondInvite: "", mainRules: "2024", fallbackRules: "2014", gameMasters: 2 } as const,
               // What the bot has switched on (#3693): a DM's page only, like the settings.
               features: {
                 writtenAt: 1_790_000_000,
@@ -2626,6 +3031,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (choice.setting === "rulesets" && !/^(2024|2014)\/(2024|2014|none)$/.test(choice.value)) throw new ApiError("bad-value");
       // The server's door: sharing the story is "on" or "off" (#3741).
       if (choice.setting === "share_improve" && choice.value !== "on" && choice.value !== "off") throw new ApiError("bad-value");
+      if (choice.setting === "ask_before_adding" && choice.value !== "on" && choice.value !== "off") throw new ApiError("bad-value");
       if (choice.setting === "rulesets" && choice.value.split("/")[0] === choice.value.split("/")[1]) throw new ApiError("bad-value");
       // The server's door: the one standard invite shape, or empty to remove it.
       if (choice.setting === "dndbeyond_invite" && choice.value !== "" && !/^https:\/\/(www\.)?dndbeyond\.com\/campaigns\/join\/[A-Za-z0-9]{4,64}$/.test(choice.value)) throw new ApiError("bad-value");
@@ -2801,6 +3207,111 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       npcNotes.clear();
       return n;
     },
+    // What DMbot added by itself after an upload (#3879, core #3887). `.autoadd-applying`: two looks while it is applying, then done;
+    // `.autoadd-none`: nothing was added by itself; `.autoadd-old`: done and past the undo; `.autoadd-fail`: the read fails.
+    async uploadNotice(ref, source): Promise<UploadNotice> {
+      calls.push(`uploadNotice:${ref}:${source.kind}:${source.id}`);
+      await reachable();
+      signedIn();
+      if (/\.autoadd-fail$/.test(ref)) throw new ApiError("server");
+      const now = 1790000000;
+      const looks = (autoLooks.get(source.id) ?? 0) + 1;
+      autoLooks.set(source.id, looks);
+      const base = { label: "Lore, 24 Oct", serverNow: now, questionsLeft: 3, undone: undoneUploads.get(source.id) ?? null };
+      const counts = { names: 62, byKind: { npc: 30, place: 24, group: 8 }, connections: 48 };
+      if (/\.autoadd-none$/.test(ref)) return { ...base, state: "none", counts: { names: 0, byKind: {}, connections: 0 }, undoUntil: null };
+      if (/\.autoadd-applying$/.test(ref) && looks <= 2) {
+        return { ...base, state: "applying", counts, undoUntil: null, progress: { stage: "adding", done: looks * 20, total: 110, unit: "names", startedAt: now - 30, updatedAt: now - 2, serverNow: now, state: "running" } };
+      }
+      return { ...base, state: "done", counts, undoUntil: /\.autoadd-old$/.test(ref) ? null : now + 7 * 86400 };
+    },
+    async undoUpload(ref, source, onLook): Promise<UploadUndo> {
+      calls.push(`undoUpload:${ref}:${source.kind}:${source.id}`);
+      await reachable();
+      signedIn();
+      onLook?.(null);
+      if (/\.autoadd-old$/.test(ref)) throw new ApiError("undo-late");
+      if (undoneUploads.has(source.id)) throw new ApiError("undo-done");
+      const got = { took: 60, of: 62 + 48 };
+      undoneUploads.set(source.id, got);
+      return got;
+    },
+    // The hand-over question (#4122). A campaign ref ending `.handover` has two; `.handover-gone` says an answer was already given
+    // meanwhile; `-fail` cannot be saved; `-late` and `-changed` cannot undo; `-notallowed` is refused. Only a game master sees them.
+    async handOverQuestions(ref): Promise<HandOverQuestion[]> {
+      calls.push(`handOverQuestions:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      return structuredClone((handOverState[ref] ??= { list: /\.handover/.test(ref) ? pretendHandOvers() : [], no: new Map() }).list);
+    },
+    async answerHandOver(ref, question, answer, undoes, onLook) {
+      calls.push(`answerHandOver:${ref}:${question.olderTie}:${answer}${undoes ? `:${undoes}` : ""}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      onLook?.({ waits: null, progress: null });
+      if (/\.handover-fail/.test(ref)) throw new ApiError("server");
+      const state = (handOverState[ref] ??= { list: pretendHandOvers(), no: new Map() });
+      if (/\.handover-notallowed/.test(ref)) {
+        const refused = new ApiError("not-allowed");
+        refused.note = "not-allowed";
+        throw refused;
+      }
+      if (answer === "undo") {
+        const back = undoes ? state.no.get(undoes) : undefined;
+        if (/\.handover-late/.test(ref) || /\.handover-changed/.test(ref)) {
+          const failure = new ApiError("server");
+          failure.note = /late/.test(ref) ? "too-late" : "changed";
+          throw failure;
+        }
+        if (!back) throw new ApiError("gone");
+        state.no.delete(undoes!);
+        state.list.unshift(back);
+        return { answerId: undoes!, undoable: false };
+      }
+      const at = state.list.findIndex((q) => q.olderTie === question.olderTie && q.newerTie === question.newerTie);
+      if (at < 0 || /\.handover-gone/.test(ref)) {
+        if (at >= 0) state.list.splice(at, 1);
+        throw new ApiError("gone");
+      }
+      const [gone] = state.list.splice(at, 1);
+      const id = `a${at}${question.olderTie.slice(0, 4)}`.padEnd(32, "0");
+      if (answer === "no") state.no.set(id, gone!);
+      return { answerId: id, undoable: answer === "no" };
+    },
+    // The lineage and class questions (#3946). A campaign ref ending `.traits` has one of each; `.traits-gone` says an answer was
+    // already given meanwhile; `.traits-fail` cannot be saved. Only a game master sees them.
+    async traitOffers(ref): Promise<TraitOffer[]> {
+      calls.push(`traitOffers:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      return structuredClone((traitState[ref] ??= /\.traits/.test(ref) ? pretendTraitOffers() : []));
+    },
+    async answerTrait(ref, offer, how, onLook) {
+      calls.push(`answerTrait:${ref}:${offer.kind}:${offer.key}:${how}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-found");
+      onLook?.({ waits: null, progress: null });
+      if (/\.traits-fail/.test(ref)) throw new ApiError("server");
+      // The bot's own words for an answer that ended badly (`refused`, `not-allowed`, `lost`), as the real client gives them in `note`.
+      const word = /\.traits-(refused|notallowed|lost)/.exec(ref)?.[1];
+      if (word) {
+        const failure = new ApiError(word === "notallowed" ? "not-allowed" : "server");
+        failure.note = word === "notallowed" ? "not-allowed" : word;
+        throw failure;
+      }
+      const list = (traitState[ref] ??= pretendTraitOffers());
+      const at = list.findIndex((o) => o.entity === offer.entity && o.kind === offer.kind && o.key === offer.key);
+      if (at < 0 || /\.traits-gone/.test(ref)) {
+        if (at >= 0) list.splice(at, 1);
+        throw new ApiError("gone");
+      }
+      list.splice(at, 1);
+      return how === "keep" ? { batch: 700 + at } : {};
+    },
     async nameSources(ref): Promise<NameSource[]> {
       calls.push(`nameSources:${ref}`);
       await reachable();
@@ -2853,7 +3364,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         // A DM's rows carry the main name's id and how it is said (#2317); a manager's do not.
         names: sorted
           .slice((query.page - 1) * pageSize, query.page * pageSize)
-          .map((n) => ({ ...n, others: [...n.others], ...(view === "dm" ? { aliasId: `al-${n.id}`, saidAs: memorySaid.get(n.id) ?? null, playersText: playersLines.get(n.id) ?? null } : {}) })),
+          .map((n) => ({ ...n, others: [...n.others], ...factsOf(n), ...(view === "dm" ? { aliasId: `al-${n.id}`, saidAs: memorySaid.get(n.id) ?? null, playersText: playersLines.get(n.id) ?? null } : {}) })),
         kinds,
         total: sorted.length,
         page: query.page,
@@ -2901,6 +3412,40 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         const at = from.findIndex((x) => x.id === change.character);
         if (at >= 0) to.push(...from.splice(at, 1));
         else if (!to.some((x) => x.id === change.character)) throw new ApiError("bad-target");
+        return { ...row, others: [...row.others] };
+      }
+      if (change.action === "map-terrain" || change.action === "map-climate" || change.action === "map-control" || change.action === "map-show") {
+        // A place's land, climate and ruler (#4287): the same rules as the store: climate only on a region or bigger, a group must exist.
+        if (row.kind !== "place") throw new ApiError("bad-target");
+        const mine = worldRows.get(id) ?? [];
+        if (change.action === "map-show") {
+          worldRows.set(id, mine.map((r) => ({ ...r, shown: change.shown })));
+          return { ...row, others: [...row.others] };
+        }
+        const layer = change.action === "map-terrain" ? "terrain" : change.action === "map-climate" ? "climate" : "control";
+        if (layer === "climate" && !["plane", "world", "region", null].includes(worldLevel(row.name))) throw new ApiError("bad-target");
+        const rest = mine.filter((r) => r.layer !== layer);
+        const value = change.action === "map-control" ? change.group : change.value;
+        if (value !== null) {
+          const group = change.action === "map-control" ? worldGroups.find((g) => g.id === change.group) : undefined;
+          if (change.action === "map-control" && !group) throw new ApiError("bad-target");
+          rest.push({ layer, value: change.action === "map-control" ? "" : (value as string), words: "", group: group?.id ?? null, groupName: group?.name ?? null, how: change.action === "map-control" ? change.how : change.how, part: "", read: false, source: "dm", shown: false });
+        }
+        worldRows.set(id, rest);
+        return { ...row, others: [...row.others] };
+      }
+      if (change.action === "place-size" || change.action === "place-form" || change.action === "place-setting") {
+        // A place's size, kind and setting (#4173): only a place has them, and a setting is a region or bigger.
+        if (row.kind !== "place") throw new ApiError("bad-target");
+        const f = { ...factsOf(row) } as { placeLevel?: string | null };
+        const was = placeFacts.get(id) ?? { level: (f.placeLevel ?? null) as string | null, levelFrom: (row.name === "Saltmarsh" ? "read" : null) as "read" | "dm" | null, form: null as "water" | "route" | null, formFrom: null as "read" | "dm" | null, setting: false };
+        if (change.action === "place-size") placeFacts.set(id, { ...was, level: change.size, levelFrom: change.size === null ? null : "dm" });
+        else if (change.action === "place-form") placeFacts.set(id, { ...was, form: change.form, formFrom: change.form === null ? null : "dm" });
+        else {
+          if (change.setting && !["plane", "world", "region"].includes(was.level ?? "")) throw new ApiError("bad-target");
+          for (const [other, value] of placeFacts) if (change.setting && value.setting) placeFacts.set(other, { ...value, setting: false });
+          placeFacts.set(id, { ...was, setting: change.setting });
+        }
         return { ...row, others: [...row.others] };
       }
       if (change.action === "players-line") {

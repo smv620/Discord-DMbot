@@ -11,6 +11,7 @@ import asyncio
 import inspect
 import json
 import unittest
+from functools import partial
 from types import SimpleNamespace
 from typing import Any
 from unittest import mock
@@ -1196,13 +1197,14 @@ class Notices(Setup):
         async def post(channel: int, text: str) -> None:
             posted.append((channel, text))
 
-        campaign = SimpleNamespace(dm_screen_channel_id=555)
+        campaign = SimpleNamespace(dm_screen_channel_id=555, dm_bot_channel_id=None)
         bot: Any = SimpleNamespace(
             plan=self.plan,
             adventure=self.adventure,
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
             post=post,
         )
+        bot._upkeep_channel = partial(DMBot._upkeep_channel, bot)
         await DMBot._plan_read_notice(bot, GUILD_A, self.a.id, doc.id)
         ((channel, text),) = posted
         self.assertEqual(channel, 555)

@@ -10,6 +10,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 from dmbot.memory import backstory_keep as keep
+from dmbot.memory import link_edits
 from dmbot.memory.models import CONFIRMED, MemoryRuleError, NewName
 from dmbot.ui import name_background as ui_bg
 from dmbot.ui.name_lists import Upload, _ai_busy, _ai_reads
@@ -69,6 +70,10 @@ class TheChange(NamesTest):
         await it.response.sent[0][1]["view"]._read(press)
         return press
 
+    async def replace_questions(self) -> list[Any]:
+        waiting = await self.memory.secret_questions_waiting(GUILD, self.campaign.id)
+        return [q for q in waiting if q.kind == "replace"]
+
     async def relations(self) -> list[Any]:
         return await self.memory.relations(GUILD, self.campaign.id, include_secret=True)
 
@@ -88,18 +93,50 @@ class TheChange(NamesTest):
         ]
         self.assertIn("📜 Check the connections", labels)
         view = await self.card()
-        self.assertIn("Change this?", view.text())
-        self.assertIn("Now: **Belleros** ally of **Cerric**", view.text())
-        self.assertIn("Your text: **Belleros** knows (hostile) **Cerric**", view.text())
+        self.assertIn("🙋❓ **PROPOSED:**", view.text())
+        self.assertIn("Now: Belleros ally of Cerric", view.text())
+        self.assertIn("🙋❓ **PROPOSED:** Belleros **knows (hostile)** Cerric", view.text())
         # nothing has changed until the DM says yes
         (only,) = await self.relations()
         self.assertIsNone(only.to_session_at)
-        await next(b for b in view.children if b.label == "✅ Change it").callback(self.it())
+        await next(b for b in view.children if b.label == "✅ Update it").callback(self.it())
         by_kind = {r.predicate: r for r in await self.relations()}
         self.assertIsNotNone(by_kind["ally_of"].to_session_at)  # ended, not deleted
         self.assertIsNone(by_kind["knows"].to_session_at)  # live (enemy is knows, hostile, #3175)
         self.assertEqual(by_kind["knows"].detail, "hostile")
         self.assertEqual(await self.store.waiting(GUILD, self.campaign.id), [])
+
+    async def test_card_proposed_is_second_line_on_an_update(self) -> None:
+        # #4529: the proposal comes first and stands out; "Now" is under it, and no footer.
+        await self.read("enemy")
+        lines = (await self.card()).text().splitlines()
+        self.assertTrue(lines[0].startswith("📜 **Connection "), lines[0])
+        self.assertTrue(lines[1].startswith("🙋❓ **PROPOSED:**"), lines[1])
+        self.assertTrue(lines[2].startswith("Now: "), lines[2])
+        self.assertNotIn("update it?", "\n".join(lines))
+        self.assertNotIn("Nothing changes unless", "\n".join(lines))
+
+    async def test_card_now_after_proposed(self) -> None:
+        # #4529: "Now:" comes after the PROPOSED line, never before it.
+        await self.read("enemy")
+        text = (await self.card()).text()
+        self.assertLess(text.index("🙋❓ **PROPOSED:**"), text.index("Now: "))
+
+    async def test_card_no_nothing_changes_footer(self) -> None:
+        # #4529: the ✅ buttons say what they do, so the footers are gone.
+        await self.read("enemy")
+        update = (await self.card()).text()
+        self.assertNotIn("Nothing changes unless", update)
+        self.assertNotIn("Nothing is added unless", update)
+
+    async def test_card_proposed_is_second_line_on_an_add(self) -> None:
+        await self.read("works for")
+        lines = (await self.card()).text().splitlines()
+        self.assertTrue(lines[0].startswith("📜 **Connection "), lines[0])
+        self.assertTrue(lines[1].startswith("🙋❓ **PROPOSED:**"), lines[1])
+        self.assertFalse(any(line.startswith("Now: ") for line in lines))
+        self.assertNotIn("add it?", "\n".join(lines))
+        self.assertNotIn("Nothing is added unless", "\n".join(lines))
 
     async def test_a_kind_that_can_hold_beside_the_old_one_is_offered_as_new(self) -> None:
         press = await self.read("works for")
@@ -107,8 +144,8 @@ class TheChange(NamesTest):
         self.assertIn("1 ready to check", said)
         self.assertNotIn("change", said)
         view = await self.card()
-        self.assertIn("Keep this?", view.text())
-        await next(b for b in view.children if b.label == "✅ Keep").callback(self.it())
+        self.assertIn("🙋❓ **PROPOSED:**", view.text())
+        await next(b for b in view.children if b.label == "✅ Add it").callback(self.it())
         live = [r.predicate for r in await self.relations() if r.to_session_at is None]
         self.assertCountEqual(live, ["ally_of", "serves"])
 
@@ -121,23 +158,30 @@ class TheChange(NamesTest):
         self.assertIn("1 already known", again)  # (waiting from the first run)
         self.assertEqual(len(await self.store.waiting(GUILD, self.campaign.id)), 1)
 
-    async def test_keep_all_ends_the_old_one_and_undo_brings_it_back(self) -> None:
+    async def test_keep_all_asks_before_ending_a_public_one_and_undo_takes_it_back(self) -> None:
+        # (#4524, ruling E: the kept one waits to be said at the table, so ending the public one
+        # would take it from the players by itself: "Did this change?" is asked instead)
         await self.read("enemy")
         waiting = await self.store.waiting(GUILD, self.campaign.id)
         done = await keep.keep_all(self.memory, self.store, GUILD, self.campaign.id, waiting)
         by_kind = {r.predicate: r for r in await self.relations()}
-        self.assertIsNotNone(by_kind["ally_of"].to_session_at)
+        self.assertIsNone(by_kind["ally_of"].to_session_at)
+        # (only its "Did this change?": the 🌍 World read in this campaign, which asks first, also
+        # asks to show the two hidden names it gives, #4590 C)
+        (q,) = await self.replace_questions()
+        self.assertEqual((q.kind, q.item_id), ("replace", by_kind["ally_of"].id))
         self.assertEqual(
             await keep.undo_all(self.memory, self.store, GUILD, self.campaign.id, done), 1
         )
         live = [r.predicate for r in await self.relations() if r.to_session_at is None]
         self.assertEqual(live, ["ally_of"])
+        self.assertEqual(await self.replace_questions(), [])
 
     async def test_a_refused_change_leaves_the_old_connection_as_it_was(self) -> None:
         await self.read("enemy")
         view = await self.card()
         with patch.object(self.memory, "add_relation", AsyncMock(side_effect=MemoryRuleError("x"))):
-            await next(b for b in view.children if b.label == "✅ Change it").callback(self.it())
+            await next(b for b in view.children if b.label == "✅ Update it").callback(self.it())
         (only,) = await self.relations()
         self.assertEqual((only.predicate, only.to_session_at), ("ally_of", None))
         self.assertEqual(len(await self.store.waiting(GUILD, self.campaign.id)), 1)
@@ -147,18 +191,133 @@ class TheChange(NamesTest):
         # the opposite
         await self.read("enemy")
         view = await self.card()
-        await next(b for b in view.children if b.label == "✅ Change it").callback(self.it())
+        await next(b for b in view.children if b.label == "✅ Update it").callback(self.it())
         again = shown(await self.read("enemy"))
         self.assertIn("1 already known", again)  # (same feeling: nothing to ask)
         changed = shown(await self.read("friend"))
         self.assertIn("1 change ready to check", changed)  # (the opposite feeling is a change)
         view = await self.card()
-        self.assertIn("Now: **Belleros** knows (hostile) **Cerric**", view.text())
-        self.assertIn("Your text: **Belleros** knows (friendly) **Cerric**", view.text())
+        self.assertIn("Now: Belleros knows (hostile) Cerric", view.text())
+        self.assertIn("🙋❓ **PROPOSED:** Belleros knows **(friendly)** Cerric", view.text())
 
     async def test_after_a_change_the_old_kind_can_be_offered_back(self) -> None:
         await self.read("enemy")
         view = await self.card()
-        await next(b for b in view.children if b.label == "✅ Change it").callback(self.it())
+        await next(b for b in view.children if b.label == "✅ Update it").callback(self.it())
         said = shown(await self.read("friend"))  # (the ended friendship is not "already known")
         self.assertIn("1 change ready to check", said)
+
+
+class TheCardWords(NamesTest):
+    """The connection card's Players line, toggle and bold words (#4429), without a database."""
+
+    def test_only_the_changed_words_are_bold(self) -> None:
+        bold = ui_bg.bold_what_changed
+        self.assertEqual(bold("A knows B", "A knows (friendly) B"), "A knows **(friendly)** B")
+        self.assertEqual(bold("A knows B", "A ally of B"), "A **ally of** B")
+        self.assertEqual(bold("A knows B", "A knows B"), "A knows B")
+
+    def test_the_four_lines_of_a_change(self) -> None:
+        def line(now_hidden: bool, choice: bool | None) -> ui_bg.PlayersView:
+            return ui_bg.players_view(
+                change=True, now_hidden=now_hidden, now_secret=now_hidden, waits=False,
+                name_secret=False, choice=choice,
+            )  # fmt: skip
+
+        self.assertIn("Players see it now and after", line(False, None).line)
+        self.assertIn("Hidden from players now and after", line(True, None).line)  # stays hidden
+        self.assertTrue(line(True, None).hidden_after)
+        self.assertIn("After: hidden", line(False, True).line)
+        self.assertTrue(line(False, True).secret)
+        flipped = line(True, False)
+        self.assertIn("After: players see it", flipped.line)
+        self.assertEqual((flipped.secret, flipped.reveal), (False, True))
+
+    def test_a_secret_name_has_no_toggle_and_stays_hidden(self) -> None:
+        view = ui_bg.players_view(
+            change=False, now_hidden=False, now_secret=False, waits=False, name_secret=True,
+            choice=False,
+        )  # fmt: skip
+        self.assertEqual((view.label, view.secret), ("", True))
+        self.assertEqual(view.line, ui_bg.SECRET_NAME_LINE)
+
+    def test_a_new_card_says_whether_it_waits_for_the_table(self) -> None:
+        waits = ui_bg.players_view(
+            change=False, now_hidden=False, now_secret=False, waits=True, name_secret=False,
+            choice=None,
+        )  # fmt: skip
+        self.assertIn("once it comes up at the table", waits.line)
+        hidden = ui_bg.players_view(
+            change=False, now_hidden=False, now_secret=False, waits=True, name_secret=False,
+            choice=True,
+        )  # fmt: skip
+        self.assertEqual((hidden.line, hidden.secret), ("🤫 Hidden from players.", True))
+
+
+class TheCardToggle(TheChange):
+    async def test_the_toggle_flips_only_the_players_line_and_saves_on_update(self) -> None:
+        await self.read("enemy")
+        view = await self.card()
+        before = view.text()
+        self.assertIn("Players see it now and after", before)
+        await next(b for b in view.children if b.label == ui_bg.HIDE_PLAYERS).callback(self.it())
+        after = view.text()
+        self.assertIn("After: hidden", after)
+        (old,) = await self.relations()  # nothing saved by the toggle
+        self.assertFalse(old.secret)
+        await next(b for b in view.children if b.label == "✅ Update it").callback(self.it())
+        by_kind = {r.predicate: r for r in await self.relations()}
+        self.assertTrue(by_kind["knows"].secret)
+
+    async def test_a_hidden_connection_stays_hidden_by_default_on_update(self) -> None:
+        await link_edits.set_secret(self.memory, GUILD, self.campaign.id, self.old.value[0], True)
+        await self.read("enemy")
+        view = await self.card()
+        self.assertIn("Hidden from players now and after", view.text())
+        await next(b for b in view.children if b.label == "✅ Update it").callback(self.it())
+        knows = next(r for r in await self.relations() if r.predicate == "knows")
+        self.assertTrue(knows.secret or knows.unrevealed)
+
+    async def test_the_websites_keep_follows_the_players_choice(self) -> None:
+        # (#4432) the same three answers as the card: as it is now, hide, or players see it
+        for players, hidden in (("", True), ("show", False), ("hide", True)):
+            with self.subTest(players=players):
+                await self.asyncTearDown()
+                await self.asyncSetUp()
+                await link_edits.set_secret(
+                    self.memory, GUILD, self.campaign.id, self.old.value[0], True
+                )
+                await self.read("enemy")
+                (one,) = await self.store.waiting(GUILD, self.campaign.id)
+                done = await keep.keep_all(
+                    self.memory, self.store, GUILD, self.campaign.id, [one],
+                    one_press=True, players=players,
+                )  # fmt: skip
+                self.assertEqual(len(done.kept), 1)
+                knows = next(r for r in await self.relations() if r.predicate == "knows")
+                self.assertEqual(knows.secret or knows.unrevealed, hidden)
+
+    async def test_an_unknown_players_word_is_refused(self) -> None:
+        await self.read("enemy")
+        (one,) = await self.store.waiting(GUILD, self.campaign.id)
+        with self.assertRaises(ValueError):
+            await keep.keep_all(
+                self.memory, self.store, GUILD, self.campaign.id, [one],
+                one_press=True, players="maybe",
+            )  # fmt: skip
+
+    async def test_a_hide_beats_an_identical_visible_twin(self) -> None:
+        # (#4432) the hide choice is the DM's own word: an existing public twin is hidden too
+        await self.read("enemy")
+        view = await self.card()
+        await next(b for b in view.children if b.label == "✅ Update it").callback(self.it())
+        await self.read("friend")
+        await self.read("enemy")  # the same kind again, now an update of the same pair
+        waiting = await self.store.waiting(GUILD, self.campaign.id)
+        if waiting:
+            await keep.keep_all(
+                self.memory, self.store, GUILD, self.campaign.id, waiting[:1],
+                one_press=True, players="hide",
+            )  # fmt: skip
+        live = [r for r in await self.relations() if r.to_session_at is None]
+        self.assertTrue(all(r.secret or r.unrevealed for r in live if r.predicate == "knows"))

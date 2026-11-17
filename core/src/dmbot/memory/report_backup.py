@@ -30,6 +30,11 @@ def _int(value: Any, low: int = 0) -> bool:
     return type(value) is int and low <= value <= INT64_MAX
 
 
+def _author(value: Any) -> bool:
+    """A person, or 0: someone who has left (their account was deleted, #4148)."""
+    return value == "0" or _user(value)
+
+
 def _user(value: Any) -> bool:
     return (
         isinstance(value, str)
@@ -78,7 +83,7 @@ class ReportAnswersSection:
                 and key not in seen
                 and row["item_kind"] in (CONTRADICTION, DIFFERENCE)
                 and row["answer"] in ANSWERS
-                and _user(row["answered_by"])
+                and _author(row["answered_by"])
                 and _int(row["answered_at"])
                 and (
                     _int(row["remind_from"], 1)

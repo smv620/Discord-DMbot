@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import inspect
 import logging
 import os
@@ -17,6 +18,7 @@ import re
 import shutil
 import signal
 import time
+from collections import Counter
 from collections.abc import (
     Awaitable,
     Callable,
@@ -42,21 +44,33 @@ from dmbot import (
     alerts,
     auto_script,
     campaign_cap,
+    credits,
+    disk_check,
     entitlements,
     features,
     fightbot,
+    hand_over_answer,
     hours,
+    image_desk,
     images,
     install,
     lore_upload,
     mail,
+    member_lookups,
+    member_names,
     owner_presence,
+    person_key,
+    person_key_backfill,
     plan_rules,
     retention,
+    script_make,
     sheet_reread,
     table_chat,
+    trait_answer,
     trial_jobs,
+    upload_undo,
     usage,
+    wizard_finish,
 )
 from dmbot import consent as consent_terms
 from dmbot.account_move import AccountMoves
@@ -64,9 +78,11 @@ from dmbot.ai import (
     FEATURE_TIERS,
     OUTPUT_FLOOR,
     AIModelTier,
+    AIOutOfFunds,
     AnthropicClient,
     Feature,
     GeminiClient,
+    Image,
 )
 from dmbot.ai_watch import AIWatch
 from dmbot.audio.segmenter import Segmenter, Utterance
@@ -145,10 +161,11 @@ from dmbot.dm_screen import (
     house_sync,
     import_button,
     links_ready,
+    orphan_channels,
     pack_suggestion,
     pack_update,
     peek_view,
-    private_note,
+    pointer_note,
     rules_cards,
     said_as_hears,
     said_as_listens,
@@ -156,6 +173,7 @@ from dmbot.dm_screen import (
     set_suggestion,
     set_update,
     update_notes,
+    upkeep,
     web_settings,
 )
 from dmbot.dm_screen import clock as clock_screen
@@ -192,6 +210,7 @@ from dmbot.dm_screen.handover import (
     TakeOnButton,
     WithdrawOfferButton,
 )
+from dmbot.dm_screen.house_sync import HOUSE_FILE_POINTER
 from dmbot.dm_screen.import_button import ImportButton
 from dmbot.dm_screen.left_out import PutBackButton, left_out_view
 from dmbot.dm_screen.name_questions import (
@@ -209,6 +228,7 @@ from dmbot.dm_screen.old_chat import notice_text as old_chat_notice
 from dmbot.dm_screen.old_chat import notice_view as old_chat_view
 from dmbot.dm_screen.pause import PauseButton
 from dmbot.dm_screen.peek_notices import PeekNotices
+from dmbot.dm_screen.peek_notices import counts_line as peek_counts_line
 from dmbot.dm_screen.peek_notices import notice as peek_notice
 from dmbot.dm_screen.quiet_stop import (
     CANCELLED,
@@ -222,6 +242,7 @@ from dmbot.dm_screen.quiet_stop import (
 from dmbot.dm_screen.recap_panel import RecapsButton
 from dmbot.dm_screen.recap_style import RecapStyleButton
 from dmbot.dm_screen.retired_channels import remove_old_channels
+from dmbot.dm_screen.setting_field import KeepSettingButton, PickButton, WorldMenu
 from dmbot.dm_screen.settings import (
     AskBeforeAddingButton,
     BackToSettingsButton,
@@ -262,6 +283,11 @@ from dmbot.dm_screen.transcript_keep import (
     KeepYesButton,
     TranscriptsButton,
 )
+from dmbot.dm_screen.upkeep_pointers import (
+    names_fixed_pointer,
+    secrets_pointer,
+    session_names_pointer,
+)
 from dmbot.dm_waiting import WaitingChecks, WaitingSent, asks_for
 from dmbot.ears.protocol import (
     AudioFrame,
@@ -281,8 +307,13 @@ from dmbot.install_record import InstallStore
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
 from dmbot.map_notes import MapNotesSection, MapNoteStore
+from dmbot.maps import store as maps_store
+from dmbot.maps.pending import PendingMaps
+from dmbot.maps.store import Map as MapRow
+from dmbot.maps.store import MapStore
 from dmbot.members import MemberDirectory
 from dmbot.memory import (
+    backstory_keep,
     contradiction_run,
     definitions,
     document_reader,
@@ -297,8 +328,11 @@ from dmbot.memory import (
     report_make,
     role_match,
     scan_kinds,
+    scene_move_step,
     scene_step,
+    time_limits,
     voyage,
+    waiting_now,
     web_actions,
     web_report_requests,
     web_sheets,
@@ -332,6 +366,8 @@ from dmbot.memory.importance_backup import ImportanceSection
 from dmbot.memory.kind_offers_backup import KindOffersSection
 from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
 from dmbot.memory.lookup import CampaignLookup, LookupCache
+from dmbot.memory.map_uploads import MapUploads
+from dmbot.memory.met_store import MetStore
 from dmbot.memory.models import (
     DM,
     FIX,
@@ -347,6 +383,8 @@ from dmbot.memory.party import party_notice
 from dmbot.memory.pc_icons_backup import PcIconsSection
 from dmbot.memory.places import find_spots, spread
 from dmbot.memory.presession import PreSession
+from dmbot.memory.private_scene_store import PrivateScenes
+from dmbot.memory.private_scenes_backup import PrivateScenesSection
 from dmbot.memory.recall import PLAYERS, AsOf, Recall, RecallService
 from dmbot.memory.report_backup import ReportAnswersSection
 from dmbot.memory.report_store import ReportStore
@@ -360,13 +398,16 @@ from dmbot.memory.scene import Found, find_mentions, mentions, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
 from dmbot.memory.scenes import ENTITY, Scenes
 from dmbot.memory.scenes_backup import ScenesSection
-from dmbot.memory.secret_aloud import MAX_ASKED, said_lines, secret_names, spoken
+from dmbot.memory.secret_aloud import said_lines, secret_names
 from dmbot.memory.secret_reveal import revealed_in
 from dmbot.memory.sheet_refresh import hint_names as sheet_hint_names
 from dmbot.memory.sheet_refresh import refresh as refresh_sheets
 from dmbot.memory.sheet_store import SheetStore
 from dmbot.memory.sounds import sound_codes
 from dmbot.memory.store import MemoryStore
+from dmbot.memory.story_chain_backup import StoryChainSection
+from dmbot.memory.story_chain_store import Said as StorySaid
+from dmbot.memory.story_chain_store import StoryChains, readable_lines, stored_vectors
 from dmbot.memory.story_plan import PlanStore, SpendSection
 from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
@@ -539,17 +580,25 @@ from dmbot.ui import (
     kept_pictures,
     kind_offer,
     looked_at,
+    map_answer,
+    map_question,
+    map_send,
+    map_show,
     name_pass_undo,
     player_id,
     recap_audio,
     reveal_card,
     shared_rules_defs,
     theatre_button,
+    time_limit_alerts,
 )
 from dmbot.ui import guide as guide_screen
 from dmbot.ui import logic as ui_logic
+from dmbot.ui import met_list as met_list_ui
+from dmbot.ui import private_scenes_list as private_scenes_ui
 from dmbot.ui import recap_lines as recap_lines_ui
 from dmbot.ui import sheets as sheets_ui
+from dmbot.ui.check_everything import WalkButton
 from dmbot.ui.claims_review import ClaimsReviewButton, claims_review_view
 from dmbot.ui.claims_review import question_text as claims_question
 from dmbot.ui.claims_review import waiting_text as claims_waiting_text
@@ -597,6 +646,8 @@ from dmbot.ui.names import (
     RecapNamesButton,
     ReviewButton,
     after_session_text,
+    counts_after_session_text,
+    held_back_pointer,
     held_back_text,
     private_after_session_text,
     review_view,
@@ -608,20 +659,21 @@ from dmbot.ui.recap_again import (
 )
 from dmbot.ui.recap_upload import recap_upload_command  # noqa: F401 (registers it)
 from dmbot.ui.revealed_report import UndoRevealedButton, report_text, revealed_view
+from dmbot.ui.revealed_report import pointer_text as revealed_pointer_text
 from dmbot.ui.rule_clash import ClashView
 from dmbot.ui.rule_lookup import dmbot_rule  # noqa: F401 (registers it)
 from dmbot.ui.secret_aloud import (
     SecretAloudButton,
-    more_text,
-    question_text,
-    secret_aloud_view,
 )
+from dmbot.ui.secret_questions import SecretQuestionsButton
 from dmbot.ui.secret_reveal import RevealButton, reveal_view
 from dmbot.ui.secret_reveal import question_text as reveal_question
 from dmbot.ui.sheets import MySheetButton, OpenCardButton
 from dmbot.ui.story_watch import KnowButton, WordsButton, message_text, watch_view
+from dmbot.ui.thread_questions import ThreadQuestionsButton
 from dmbot.ui.threads import ThreadListButton, ThreadsButton, threads_view
 from dmbot.ui.threads import waiting_text as threads_waiting_text
+from dmbot.ui.trait_questions import TraitQuestionsButton
 from dmbot.ui.transcripts import (
     DownloadButton,
     download_view,
@@ -631,6 +683,7 @@ from dmbot.ui.transcripts import (
     transcript_command,
 )
 from dmbot.ui.upload_notice import UndoUploadButton, notice_text, notice_view
+from dmbot.ui.world_notes import WorldNotesButton
 from dmbot.upload_notices import Notice as UploadNotice
 from dmbot.upload_notices import UploadNotices
 
@@ -640,6 +693,11 @@ CONTRADICTION_CALLS = 3  # AI calls a session may spend grading contradictions (
 MAX_SPEAKER_NAMES = 25  # people looked up for one session in a go (the download's own cap)
 RULES_CARD_DB_S = 5.0  # the longest a rules card waits for the house rules
 log = logging.getLogger(__name__)
+# How often the map close-read sweep looks for maps to read (#4349): a kept map waits at most
+# this long for its close read, which nobody is waiting on at the table.
+MAP_CLOSE_EVERY_S = 600
+MAP_CLOSE_PER_SWEEP = 10  # (the first sweep after a deploy, or credits back, reads no more)
+MAP_CLOSE_NO_FUNDS_S = 3600  # a campaign put off for AI credits is tried again after this
 
 WHO_PER_SESSION = 120  # waiting names ranked in one session's step: about four calls
 WHO_SCAN_BOUND = 600  # names looked at to find them (the rest wait for the next session)
@@ -692,8 +750,27 @@ OWNER_CHECK_DAYS = 120  # the retention window: older campaigns are not looked a
 OWNER_CHECK_GAP_S = 0.5  # between campaigns in the daily look
 AUTO_SCRIPT_FIRST_S = 150  # the first look for sessions due a script (#3901)
 AUTO_SCRIPT_EVERY_S = 60
+SCRIPT_MAKE_FIRST_S = 20  # the website's "Make the script" presses are answered (#3899)
+SCRIPT_MAKE_EVERY_S = 5
+TRAIT_ANSWER_FIRST_S = 25  # the website's lineage and class answers are applied (#3946)
+TRAIT_ANSWER_EVERY_S = 5
+HAND_OVER_FIRST_S = 35  # the website's "Does Claude still have it?" (#4122): answers applied,
+HAND_OVER_EVERY_S = 5  # and the list for the page written again every LIST_EVERY rounds
+HAND_OVER_LIST_EVERY = 12  # (a minute)
+UPLOAD_UNDO_FIRST_S = 30  # the website's "Undo this upload" presses are applied (#4078)
+UPLOAD_UNDO_EVERY_S = 5
+WIZARD_FINISH_FIRST_S = 25  # the website's start-up wizard finish runs are answered (#3955)
+WIZARD_FINISH_EVERY_S = 5
+MEMBER_NAMES_FIRST_S = 45  # people known only by number are given their Discord names (#4225)
+MEMBER_NAMES_EVERY_S = 60
+MEMBER_LOOKUP_FIRST_S = 20
+MEMBER_LOOKUP_EVERY_S = 3  # a typed Discord ID is answered while the DM waits (#4225)
+DISK_CHECK_FIRST_S = 60  # the disk check (#4075), then every `disk_check.CHECK_EVERY_S`
+WIZARD_SWEEP_EVERY_S = 3600  # drafts past their week are removed, with their documents
 CHANNEL_SYNC_FIRST_S = 120  # the first look at who sees each campaign's channels (#3891)
 CHANNEL_SYNC_EVERY_S = 3600  # and then every hour
+ORPHAN_CHANNELS_FIRST_S = 600  # the look for channels of campaigns that are gone (#4479)
+ORPHAN_CHANNELS_EVERY_S = 6 * 3600  # (a channel goes after being seen twice a day apart)
 OWNER_START_WAIT_S = 2  # at a start the table is waiting
 OWNER_ASK_EVERY_S = 3600  # Discord is asked about one campaign's owner at most this often
 OWNER_LOOK_TIMEOUT_S = 6  # asking Discord about an owner must not hold up a start
@@ -725,6 +802,10 @@ IMPORT_SCAN_TRIES = 3  # an imported session's name scan is let go after this ma
 # words (web/src/content/import-words.ts, `stage.finding_names` and `story.reading_connections`).
 IMPORT_NAMES = "Looking for names"
 IMPORT_READING = "Reading connections"
+# The two steps after the read, in the same feed (#3602's ruling, #3596): the words show as written.
+IMPORT_SCENES = "Writing what happened around each name"
+IMPORT_WHO = "Working out who each name is"
+IMPORT_THREADS = "Looking for story threads"
 IDLE_CHECK_S = 60  # how often a running session is checked for being empty or quiet (#2034)
 METER_INTERVAL_S = 60  # how often listening minutes are written to the hours meter (#437)
 METER_FINAL_TRIES = 3  # at a stop: the last minutes are written nowhere else
@@ -844,6 +925,13 @@ def _joined_at(guild: discord.Guild) -> int | None:
     """When the bot joined this server, as Discord says (None while the server is still loading)."""
     me = cast(discord.Member | None, getattr(guild, "me", None))
     return int(me.joined_at.timestamp()) if me is not None and me.joined_at else None
+
+
+def _first_undo_view(campaign_id: str, fixes: list[Any]) -> discord.ui.View:
+    """A fresh first Undo message for an import's name report each time it is asked (a view that
+    was copied for a private send must not be reused for the screen)."""
+    views = name_pass_undo.undo_views_import(campaign_id, fixes)
+    return views[0] if views else discord.ui.View()
 
 
 class DMBotTree(app_commands.CommandTree["DMBot"]):
@@ -1009,7 +1097,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # What DMbot asks the AI during a lore read or an import, for the DM's live window (#3710):
         # off unless DMBOT_AI_FEED is on, and then only inside a job's `ai_feed.job(...)`.
         ai_feed.configure(recaps.db if recaps is not None else None, on=settings.ai_feed_on)
-        self._lore_reads: dict[int, asyncio.Task[None]] = {}  # server -> its read in progress
+        # What a call costs in AI credits, for the calls made because a DM added material (#4005):
+        # it needs the campaign's owner, found the first time a job charges.
+        credits.configure(recaps.db if recaps is not None else None, self._owner_of_campaign)
+        # (server, campaign) -> its read in progress: one a campaign, several a server (#4551)
+        self._lore_reads: dict[tuple[int, str], asyncio.Task[None]] = {}
         self._lore_swept: dict[int, float] = {}  # server -> when its queue was last swept
         # The website's House-rules file requests (#3087), one at a time per server like lore.
         self.house_file_queue = HouseFileQueue(recaps.db) if recaps is not None else None
@@ -1072,7 +1164,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.recap_musts = recap_musts  # the list every recap is written to (#3328)
         # How connected each name is in The truth, to rank the recap's beats (#2411); refreshed
         # after each session.
-        self.importance = ImportanceCache(memory) if memory is not None else None
+        # With DMBOT_RECAP_BY_RANK it also keeps each name's importance rank (#3172 slice 4).
+        self.importance = (
+            ImportanceCache(memory, ranks_on=settings.recap_by_rank_on)
+            if memory is not None
+            else None
+        )
+        self.party_fill: asyncio.Task[Counter[str]] | None = None  # the start's party fill (#3954)
         self.suggestions = suggestions  # players' suggested line fixes (#1491)
         self.homebrew = homebrew  # a campaign's own homebrew entries (#1520)
         self.sources: SourceStore | None = (
@@ -1108,6 +1206,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self._import_speakers: dict[str, set[int]] = {}
         # campaign -> the entries its import scans proposed (the only ones the import may add)
         self._import_entries: dict[str, set[str]] = {}
+        # campaign -> the starts of the sessions its import scans read (their claims count)
+        self._import_starts: dict[str, set[int]] = {}
         # campaign -> the import batches whose scans ended in this report (the notice's source)
         self._import_batches: dict[str, set[str]] = {}
         self._import_unhonoured: dict[str, list[str]] = {}  # campaign -> why recaps weren't made
@@ -1142,6 +1242,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # Waiting backstory connections that may have become ready (#2650): the campaigns to look
         # at, so a burst of name answers is one look a few seconds on.
         self._links_ready_pending: set[str] = set()
+        # campaign -> (channel, message) of its one live "connections ready" message, edited as more
+        # become ready instead of a new post each time (#3874); in memory: after a restart the next
+        # one is a new message, and the button (persistent) works on both
+        self._links_ready_msgs: dict[str, tuple[int, int, str]] = {}
+        self._links_ready_locks: dict[str, asyncio.Lock] = {}  # one say at a time for a campaign
         self._links_guilds: dict[str, int] = {}  # campaign -> its server, once found
         self._npcs_recall: RecallService | None = None
         self._npcs_roster = npcs_roster  # what each NPC's page shows, and its notes (#2265)
@@ -1195,7 +1300,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 campaigns=campaigns,
                 transcripts=transcripts,
                 guild_ids=campaigns.guilds_with_campaigns,
-                post_screen=self._post_to_screen,
+                post_screen=self._post_upkeep,
             )
         if meter is not None:
             self.retention = RetentionJob(
@@ -1253,9 +1358,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if settings.ai_key
             else None
         )
+        # Document readers send the same instructions for every piece of a document, so their
+        # system text is cached (#4054): a read of several pieces pays the instructions once at
+        # 1.25 times and then at a tenth. The service only caches above a minimum length and
+        # otherwise answers as usual; the log line's cache_read says whether it did. (The shorter
+        # instructions here, such as the house rules' and the plan reader's, may sit under it today:
+        # check cache_read before counting them as savings.)
         # AI text calls (a document into a names list).
         self.ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.NAMES], Feature.NAMES)
+            self.ai_client.tier(FEATURE_TIERS[Feature.NAMES], Feature.NAMES, cache_system=True)
             if self.ai_client
             else None
         )
@@ -1264,7 +1375,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.lore_context = lore_context.Held()
         # The names in a DM's own campaign background (#2167): suggestions only, on the fast tier.
         self.background_ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.NAMES_BACKGROUND], Feature.NAMES_BACKGROUND)
+            self.ai_client.tier(
+                FEATURE_TIERS[Feature.NAMES_BACKGROUND], Feature.NAMES_BACKGROUND, cache_system=True
+            )
             if self.ai_client
             else None
         )
@@ -1277,14 +1390,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # Pass 1 of that read (#2454): the careful model reads the whole text into a plain list.
         self.background_read_ai = (
             self.ai_client.tier(
-                FEATURE_TIERS[Feature.NAMES_BACKGROUND_READ], Feature.NAMES_BACKGROUND_READ
+                FEATURE_TIERS[Feature.NAMES_BACKGROUND_READ],
+                Feature.NAMES_BACKGROUND_READ,
+                cache_system=True,
             )
             if self.ai_client
             else None
         )
         # The story-plan reader (#1714): the AI reads an adventure once, on a DM's press.
         self.plan_ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.PLAN_READER], Feature.PLAN_READER)
+            self.ai_client.tier(
+                FEATURE_TIERS[Feature.PLAN_READER], Feature.PLAN_READER, cache_system=True
+            )
             if self.ai_client
             else None
         )
@@ -1311,7 +1428,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )
         # PlotBot's name pass on a finished transcript (#2628): which list name a word means.
         self.name_pass_ai = (
-            self.ai_client.tier(FEATURE_TIERS[Feature.NAME_PASS], Feature.NAME_PASS)
+            self.ai_client.tier(
+                FEATURE_TIERS[Feature.NAME_PASS], Feature.NAME_PASS, cache_system=True
+            )
             if self.ai_client
             else None
         )
@@ -1364,6 +1483,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 critics=True,  # the critics read each draft until they agree (#2255)
                 reads=settings.recap_writer_reads,
                 final_read=settings.recap_final_read,
+                cache_front=settings.recap_cache,
                 structured_split=settings.recap_structured_output_split,
                 structured_beats=settings.recap_structured_output_beats,
                 stored_split=self.recap_stored_split,
@@ -1428,7 +1548,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             else None
         )
         self.house_file_ai = (  # house rules found in any file or link (#2377)
-            self.ai_client.tier(FEATURE_TIERS[Feature.HOUSE_RULES], Feature.HOUSE_RULES)
+            self.ai_client.tier(
+                FEATURE_TIERS[Feature.HOUSE_RULES], Feature.HOUSE_RULES, cache_system=True
+            )
             if self.ai_client
             else None
         )
@@ -1450,7 +1572,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             else None
         )
         self.theatre_ai = (  # a session recast as a script (#3244), background, DM only
-            self.ai_client.tier(FEATURE_TIERS[Feature.THEATRE], Feature.THEATRE)
+            self.ai_client.tier(FEATURE_TIERS[Feature.THEATRE], Feature.THEATRE, cache_system=True)
             if self.ai_client
             else None
         )
@@ -1469,10 +1591,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.picture_keeper: PictureKeeper | None = None
         self.picture_actions: PictureActions | None = None
         self.picture_store: PictureStore | None = None
+        self.map_store: MapStore | None = None  # a picture kept as a map (#4344)
+        self.pending_maps = PendingMaps()  # a sent map waiting for its owner's yes (#4372)
         self.picture_bucket: Bucket | None = None
+        self.maps_staging: Bucket | None = None  # where the website stages a sent map (#4347)
         self._picture_db: Database | None = None
         self._pictures_told: set[str] = set()  # campaigns told this run that old pictures went
         self._picture_swept = 0.0  # when the leftover-file sweep last ran
+        self._waiting_now_at = 0.0  # when the waiting cards' "now" was last refreshed (#4441)
+        self._map_close_swept = 0.0  # when the map close-read sweep last ran (#4349)
+        self._map_close_task: asyncio.Task[None] | None = None
+        # campaign → when its close reads may be tried again after being put off (in memory: a
+        # restart simply tries once more)
+        self._map_close_after: dict[str, float] = {}
         self.image_desk: ImageDesk | None = (
             ImageDesk(
                 self.ai_client.tier(FEATURE_TIERS[Feature.IMAGE], Feature.IMAGE),
@@ -1631,7 +1762,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             guild_ids=lambda: [g.id for g in self.guilds],
             wait_until_ready=self.wait_until_ready,
             spawn=self._track,
-            post=self.post,  # the #dm-screen note on an accept made on the website
+            post=self.post,  # (the fallback where no note sender is given)
+            note=self.tell_dms_with_pointer,  # the note on an accept made on the website
             owner_mail=self.email_hand_over_owner,  # the owner also hears by email (#2532)
             site_url=self.settings.site_url,
             # a hand-over to another server: its audio files go with it, and the caches that are
@@ -1686,6 +1818,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             dm_bot_buttons.OpenButton, dm_bot_buttons.HelpButton, dm_bot_buttons.RuleButton
         )  # #1666, #1691
         self.add_dynamic_items(looked_at.LookedButton, looked_at.OpenCard)  # #1957
+        self.add_dynamic_items(time_limit_alerts.OpenThread)  # (quests slice 4b, #4448)
         self.add_dynamic_items(
             SettingsButton,
             LevelButton,
@@ -1697,6 +1830,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             RuleLookupButton,
             RulesCardsButton,
             AskBeforeAddingButton,
+            KeepSettingButton,
+            PickButton,
+            WorldMenu,
             channel_sync_ui.ChannelsMenuButton,
             channel_sync_ui.ChannelsChoiceButton,
             channel_sync_ui.PeopleButton,
@@ -1726,6 +1862,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(
             ReviewButton, PeopleReviewButton, ClaimsReviewButton, ContinuityButton
         )
+        self.add_dynamic_items(WalkButton)  # "✅ Check everything" after a session (#4192)
         self.add_dynamic_items(
             ThreadsButton, ThreadListButton
         )  # the quiet story threads (#1662, #1675)
@@ -1733,6 +1870,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(LiveHeadsUpButton)  # the live heads-up's three answers (#2068)
         self.add_dynamic_items(KeepListeningButton)  # the automatic stop's warning (#2034)
         self.add_dynamic_items(HeardReviewButton)  # unanswered "Did they mean…?" (#1572)
+        self.add_dynamic_items(met_list_ui.MetListButton)  # who the party met, unnamed (#4045)
+        self.add_dynamic_items(private_scenes_ui.PrivateScenesButton)  # (#2996 rule 5)
         self.add_dynamic_items(SecretAloudButton)  # the secret-said-aloud question (#1407)
         self.add_dynamic_items(RevealButton)  # "Is it revealed now?" to the DM (#2088)
         self.add_dynamic_items(RecantButton)  # ↩️ Recant in the after-session summary (#2410)
@@ -1744,6 +1883,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(  # Make private / Delete under a kept picture's link (#3274)
             kept_pictures.PrivateButton, kept_pictures.DeleteButton, kept_pictures.DeleteYesButton
         )
+        self.add_dynamic_items(map_question.YesButton, map_question.NoButton)  # #4344
+        self.add_dynamic_items(
+            map_send.PickButton, map_send.MenuSelect, map_send.YesButton, map_send.NoButton
+        )  # a map sent to DMbot, #4372
+        self.add_dynamic_items(
+            map_answer.ActButton, map_answer.OpenButton, map_answer.UndoButton
+        )  # the DM's side, #4344
+        self.add_dynamic_items(map_question.TakeBackButton, map_question.PosterUndoButton)  # #4344
+        self.add_dynamic_items(  # a DM shows or hides a map, #4414
+            map_show.CampaignSelect, map_show.MapSelect, map_show.ActButton,
+            map_show.BackButton, map_show.UndoButton,
+        )  # fmt: skip
         self.add_dynamic_items(  # #965, #1117
             clock_screen.ClockButton, clock_screen.ClockUndoButton, clock_screen.SuggestionButton
         )
@@ -1820,7 +1971,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(recap_lines_ui.RecapLinesUndoButton)  # last time's recap (#3298)
         self.add_dynamic_items(questions_discord.NotNowButton)  # 🔕 under a reminder (#3435)
         self.add_dynamic_items(
-            questions_board.LookAlikesButton, questions_board.QuestionsButton, FamilyTiesButton
+            questions_board.LookAlikesButton,
+            questions_board.QuestionsButton,
+            FamilyTiesButton,
+            TraitQuestionsButton,  # 🧬 Character details (#3926)
+            WorldNotesButton,  # 🌍 World notes (#4285)
+            ThreadQuestionsButton,  # 📜 Story threads (#4453)
+            SecretQuestionsButton,  # 🤫 Known or secret? (#4524)
         )  # the Questions message and the card's button (#3435)
         self.question_round = questions_discord.build_round(self)
         self.question_notices = (
@@ -1835,6 +1992,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self._watched(self._meter_loop(), "hours-meter"),
             self._watched(self._idle_loop(), "idle-stop"),  # #2034
             *([self._watched(self._trial_loop(), "trial-jobs")] if self.trial_jobs else []),
+            self._watched(self._person_key_loop(), "person-keys"),  # #4145
             *(
                 [self._watched(questions_discord.run_loop(self, self.question_round), "questions")]
                 if self.question_round is not None
@@ -1862,8 +2020,23 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 else []
             ),
             self._watched(self._channel_sync_loop(), "channel-sync"),
+            self._watched(self._orphan_channels_loop(), "orphan-channels"),
+            self._watched(self._wizard_finish_loop(), "wizard-finish"),
             *(
-                [self._watched(self._auto_script_loop(), "auto-scripts")]
+                [self._watched(self._member_names_loop(), "member-names")]
+                if self.memory is not None
+                else []
+            ),
+            self._watched(self._member_lookup_loop(), "member-lookups"),
+            self._watched(self._disk_check_loop(), "disk-check"),
+            self._watched(self._trait_answer_loop(), "trait-answers"),
+            self._watched(self._hand_over_loop(), "hand-over-answers"),
+            self._watched(self._upload_undo_loop(), "upload-undos"),
+            *(
+                [
+                    self._watched(self._auto_script_loop(), "auto-scripts"),
+                    self._watched(self._script_make_loop(), "script-presses"),
+                ]
                 if self.settings.theatre_on
                 and self.theatre_ai is not None
                 and self.memory is not None
@@ -2488,7 +2661,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             except Exception:
                 log.exception("Could not remove the story claims of a stopped speaker")
         try:
-            return await self.consent.revoke(guild_id, user_id)
+            revoked = await self.consent.revoke(guild_id, user_id)
         finally:
             if self.members is not None:  # no longer offered by name in the import search (#2141)
                 try:
@@ -2502,6 +2675,22 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # Again, in case a grant that was saving meanwhile sent ears an older list.
             with contextlib.suppress(Exception):
                 await self.push_allowlist(guild_id)
+        if self.memory is not None:
+            # Once more, now the consent row is gone (#4153): an after-session writer that read
+            # who agreed before the stop and re-read it just before the delete committed has
+            # written by now (this waits on its session row), so what it wrote goes too. Never
+            # blocks or fails the stop: a failure is one counts-only warning, and nothing is shown
+            # meanwhile, because every list re-checks who is recorded when it is read (the met
+            # list deletes such rows then; private scenes leave them out).
+            try:
+                async with asyncio.timeout(FORGET_TIMEOUT_S):
+                    await ClaimStore(self.memory).forget_speaker(guild_id, user_id)
+            except Exception as exc:
+                log.warning(
+                    "Could not remove the story claims of a stopped speaker again: %s",
+                    type(exc).__name__,
+                )
+        return revoked
 
     async def count_my_lines(self, guild_id: int, user_id: int) -> tuple[int, int]:
         """(lines, sessions) this person has in this server's transcripts, for the warning
@@ -2869,8 +3058,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     return
                 agreed = await self.consent.consenting(gid)
                 presession = PreSession(
-                    self.memory, RecallService(self.memory), ClaimStore(self.memory), self.recaps
-                )
+                    self.memory, RecallService(self.memory), ClaimStore(self.memory), self.recaps,
+                    # (getattr: the tests' stand-in bots have no clock store)
+                    getattr(self, "clocks", None),
+                )  # fmt: skip
                 async with asyncio.timeout(PRESESSION_NOTE_WAIT_S):  # never a stuck connection
                     note = await presession.note(
                         gid,
@@ -3219,6 +3410,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("session recap", lambda: self.recap_session(table)),
             # Slow when on (minutes of AI calls): after the quick steps; the steps after it need it.
             ("story extractor", lambda: self.extract_claims(table, ended_at)),
+            # Where the story is (#4173 slice 4): the DM's lines move a chain of open places kept
+            # between sessions, and new places get an assumed parent from it. No AI call.
+            ("where the story is", lambda: self.walk_story_chain(table)),
             # The scene of each waiting question, from the lines it came from (#3596): after the
             # extractor, so the questions it made are there, and inside the same call limit.
             ("scenes", lambda: self.write_scenes(table)),
@@ -3246,10 +3440,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("deeds to record", lambda: self.offer_deeds(table)),
             # What the characters learned in the session, for the DM to keep (#2996).
             ("reveals to keep", lambda: self.offer_reveals(table)),
+            # Private scenes between two player characters (#2996 rule 5): before the importance
+            # step, which will weigh them; no AI call. Off unless its switch is on.
+            ("private scenes", lambda: self.find_private_scenes(table)),
             # How much each entry the session touched matters, and its roles (#3172): after the
             # extractor, inside the same call limit, live wherever it runs (ruled); after the
             # posts the DM waits for, since nothing above reads a rank.
             ("importance", lambda: self.write_importance(table)),
+            # New story threads the table's talk started (#4522, quests slice 5a): after the
+            # importance step (as an import runs them), inside the same call limit, so a long
+            # session's threads never leave importance without calls; one counts line in the DM
+            # Bot channel. Off unless its switch is on.
+            ("story threads", lambda: self.read_session_threads(table)),
             # The questions above go out as one private message (#3210).
             ("questions for the DM", lambda: self.send_collected_asks(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
@@ -3443,12 +3645,49 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except Exception:
             log.exception("The daily owner check failed")
 
-    async def _post_to_screen(self, campaign: Campaign, text: str) -> bool:
-        """Say something on a campaign's DM screen (for the daily jobs); False if it has none
-        or the post failed."""
-        if campaign.dm_screen_channel_id is None:
+    async def tell_dms_with_pointer(
+        self,
+        campaign: Campaign,
+        words: str,
+        pointer: str,
+        view: Callable[[], discord.ui.View] | None = None,
+    ) -> bool:
+        """A note with names in it (#3874): the words to the campaign's DMs privately (the DM
+        screen only if none can be reached) and, after a private message went out, `pointer` (counts
+        only) in the DM Bot channel. `view` makes the buttons, if any."""
+        return await pointer_note.send(
+            self, campaign, words, view or (lambda: discord.ui.View()), pointer, note=True
+        )
+
+    async def _post_upkeep(self, campaign: Campaign, text: str) -> bool:
+        """Say a counts-only upkeep note for a campaign (the daily jobs; #3874): in the DM Bot
+        channel when it has one, else on the DM screen as before. False if it has neither or the
+        post failed. The DM Bot channel is read by the campaign's people, so `text` holds counts
+        and never a name."""
+        channel = self._upkeep_channel(campaign)[0]
+        if channel is None:
             return False
-        return await self.post(campaign.dm_screen_channel_id, text)
+        return await self.post(channel, text)
+
+    async def _post_after_session(
+        self, table: Table, text: str, view: discord.ui.View | None = None
+    ) -> bool:
+        """An after-session note that is a count and a button only the DM can use (#3874 E1): in
+        the DM Bot channel when the campaign has one, else on the DM screen as before. The DM
+        Bot channel is read by the campaign's people, so `text` holds counts and never a name;
+        the button checks the presser is a DM on every press and opens its list privately."""
+        campaign = (
+            await self.campaigns.get(table.guild_id, table.campaign_id)
+            if table.campaign_id is not None
+            else None
+        )
+        # (a campaign with neither channel saved still has the table's own screen, as before)
+        channel = (self._upkeep_channel(campaign)[0] if campaign is not None else None) or (
+            table.screen_channel_id
+        )
+        if channel is None:
+            return False
+        return await self.post(channel, text, view)
 
     async def _tell_admin(self, user_id: int, text: str) -> None:
         """A private message to one of DMbot's admins (#972). Raises if it can't be sent, so
@@ -3564,8 +3803,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 campaign = await self.campaigns.get(guild_id, campaign.id) or campaign
             except Exception:
                 log.exception("Couldn't reload the campaign after settling the cap")
+        starter_is_owner = campaign.is_owner(starter_id)  # (any Discord login of the owner)
         if campaign.paused:  # the owner's choice, or the plan's: not a plan check, so always
-            return hours.PAUSED_OWNER if starter_id == owner else hours.PAUSED_OTHER
+            return hours.PAUSED_OWNER if starter_is_owner else hours.PAUSED_OTHER
         if not self.settings.enforce_plans or self.meter is None:
             return None
         if owner is None:
@@ -3579,7 +3819,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return None
         refused = hours.refusal(
             check.verdict,
-            is_owner=starter_id == owner,
+            is_owner=starter_is_owner,
             site_url=self.settings.site_url,
             can_change_plan=check.can_change_plan,
             renews=check.renews,
@@ -3600,10 +3840,22 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         return hours.campaigns_refusal(
             room.cap,
             room.owned,
-            is_owner=starter_id == owner,
+            is_owner=starter_is_owner,
             site_url=self.settings.site_url,
             can_change_plan=room.can_change_plan,
         )
+
+    async def _account_number(self, user_id: int) -> int:
+        """The DMbot account a Discord user belongs to, as its number: a plan, its hours and its
+        campaign count are the account's, so a Discord login added to an account is on the
+        account's plan (#2533, slice 2b). Someone who never signed in to the website is their own
+        account, and a failed lookup falls back to the Discord ID, as the plan checks fail open."""
+        try:
+            found = await accounts.account_of(self.campaigns.db, user_id)
+        except Exception:
+            log.warning("Couldn't resolve a Discord ID to its account; using the ID")
+            return user_id
+        return user_id if found is None else found
 
     async def create_refusal(self, guild_id: int, user_id: int) -> str | None:
         """Why this person may not make one more campaign, or None (#437 part 2c). Only when
@@ -3614,6 +3866,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         check still refuses them until one is paused.)"""
         if not self.settings.enforce_plans or self.meter is None:
             return None
+        user_id = await self._account_number(user_id)  # (the plan is the account's, #2533)
         await self._settle_cap(guild_id, user_id, 1.0)  # shrunk plan: pause extras (3 s deadline)
         try:
             async with asyncio.timeout(GATE_TIMEOUT_S):
@@ -3638,6 +3891,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         fail-open as `create_refusal`; the store checks again as the backstop."""
         if not self.settings.enforce_plans or self.meter is None:
             return None
+        user_id = await self._account_number(user_id)  # (the plan is the account's, #2533)
         await self._settle_cap(guild_id, user_id, GATE_TIMEOUT_S)
         try:
             async with asyncio.timeout(GATE_TIMEOUT_S):
@@ -4029,8 +4283,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         transcript_id, transcript_problem = await self._transcript_channel(guild, campaign, screen)
         dm_bot_problem = await self._dm_bot_channel(guild, campaign, screen)
         await self._retire_old_channels(guild, campaign)
+        await map_question.remind(
+            self, guild.id, campaign
+        )  # the one reminder (#4344, never raises)
         try:
-            await self._old_chat_notice(guild, campaign, screen_id)
+            # (a setup note: the DM Bot channel, the screen only if there is none; #3874)
+            fresh = await self.campaigns.get(guild.id, campaign.id) or campaign  # (the DM Bot
+            # channel may have been made just above)
+            await self._old_chat_notice(guild, campaign, upkeep.channel_for(fresh) or screen_id)
         except Exception:
             log.exception("Couldn't tell the DM about the old chat channel")  # never blocks a start
         await self._tell_players_the_clock(
@@ -4087,8 +4347,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             except Exception:
                 log.exception("Couldn't forget the session that failed to start")
             return False, SAVE_FAILED
-        if transcript_problem:
-            await self.post(screen_id, transcript_problem)
+        if transcript_problem:  # (words only; the DM Bot channel's own problem stays on the screen)
+            await self.post(upkeep.channel_for(campaign) or screen_id, transcript_problem)
         if dm_bot_problem:
             await self.post(screen_id, dm_bot_problem)
         self._check_house_file(campaign, screen_id)
@@ -4527,7 +4787,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             guild_id=guild.id,
             voice_channel_id=saved.voice_channel_id,
             screen_channel_id=screen_id,
-            dm_user_id=saved.started_by,
+            dm_user_id=dm_for_resume(saved.started_by, campaign.dm_user_ids),
             segmenter=Segmenter(guild.id),
             notice_posted=saved.notice_posted,
             campaign_id=campaign.id,
@@ -5015,8 +5275,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         user_id: int,
         text: str,
         view: discord.ui.View | None = None,
-        *,
-        link_to_itself: bool = False,
     ) -> str:
         """ "sent", "forbidden" (their messages from DMbot are closed) or "failed"."""
         try:
@@ -5028,8 +5286,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 keep = getattr(view, "keep_message", None)  # a view that edits itself later (#2284)
                 if keep is not None:
                     keep(sent)
-                if link_to_itself:  # "Open in Discord" on a question the message itself holds
-                    await dm_links.point_at_itself(sent, view)
         except discord.Forbidden as exc:
             log.info("Couldn't message user %s privately: %s", user_id, exc)
             return "forbidden"
@@ -5539,15 +5795,27 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if campaign is None or not await self.plan_allows("ai", gid, campaign, fail_open=False):
             return
 
-        async def keep(n: int, image: Any, read: images.Read | None) -> None:
-            await self._keep_picture(table, user_id, message_id, channel_id, image, read, still_ok)
+        kept_ids: dict[int, int] = {}  # each read's kept picture, so its note names it (#4349)
 
+        async def keep(n: int, image: Any, read: images.Read | None) -> None:
+            pid = await self._keep_picture(
+                table, user_id, message_id, channel_id, image, read, still_ok
+            )
+            if pid is not None:
+                kept_ids[n] = pid
+
+        # A map's careful read is charged as AI credits only when its note can be kept (the Shared
+        # story confirmation, asked again under the save lock below): a read thrown away costs
+        # nothing. Its close read waits for both yeses on the kept map: the sweep makes it
+        # (`run_map_close_reads`, #4349).
+        kept = self.map_notes is not None and await self._maps_may_be_kept(gid, cid)
         reads = await desk.describe(
-            gid, cid, links, still_ok, on_image=keep if self.picture_keeper is not None else None
-        )
+            gid, cid, links, still_ok, on_image=keep if self.picture_keeper is not None else None,
+            meter=(lambda: credits.preparing(gid, cid, "map")) if kept else None,
+        )  # fmt: skip
         if not still_ok():
             return
-        maps = [r for r in reads if r is not None and r.kind == images.MAP]
+        maps = [(n, r) for n, r in enumerate(reads) if r is not None and r.kind == images.MAP]
         if maps and self.map_notes is not None:
             # Under the save lock, as "delete my past transcripts" takes it, and with the consent
             # asked once more right before, so a note can't be written after its poster deleted.
@@ -5556,11 +5824,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             async with table.save_lock:
                 if not await self._maps_may_be_kept(gid, cid):
                     maps = []
-                for a_map in maps:
+                for n, a_map in maps:
                     if not still_ok():
                         break
                     try:
-                        await self.map_notes.add(gid, cid, user_id, a_map, message_id)
+                        await self.map_notes.add(
+                            gid, cid, user_id, a_map, message_id, kept_ids.get(n)
+                        )
                     except Exception as exc:  # the transcript line matters more than the note
                         log.warning(
                             "Table image: couldn't keep a map's description (%s)",
@@ -6278,8 +6548,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
 
         async def send(text: str, view: discord.ui.View) -> bool:
-            posted = await self.post_message(screen_id, text, view if view.children else None)
-            return posted is not None
+            # The file's differences are house-rule text: private to the DMs, a pointer in the DM
+            # Bot channel, the screen only if no DM can be reached (#3874).
+            pointer = HOUSE_FILE_POINTER if view.children else None  # (only an offer, not an error)
+            return await pointer_note.send(self, campaign, text, lambda: view, pointer)
 
         self._track(
             house_sync.check_linked(self, campaign, send, quiet_if_same=True), "house-file-check"
@@ -8471,19 +8743,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         """How much DMbot says in this campaign's DM screen (#504, #515): saved, and a
         running session (or one still finishing) follows the change from now on. Under
         the session lock, so a session starting meanwhile can't miss it (#553). A change
-        from `was` (the level the DM saw) is noted in the DM screen, so a co-DM knows why
-        DMbot went quiet."""
+        from `was` (the level the DM saw) is noted in the DM Bot channel (the screen if none), so
+        a co-DM knows why DMbot went quiet."""
         campaign = await self.campaigns.set_dm_screen_level(guild_id, campaign_id, level)
         async with self.session_lock(guild_id):
             for table in [self.tables.get(guild_id), *self._ending.get(guild_id, [])]:
                 if table is not None and table.campaign_id == campaign_id:
                     table.screen_level = campaign.dm_screen_level
-        if was != campaign.dm_screen_level and campaign.dm_screen_channel_id is not None:
+        channel = upkeep.channel_for(campaign)  # (the DM Bot channel, else the screen; #3874)
+        if was != campaign.dm_screen_level and channel is not None:
             # Always posted: a note about the level, not something the level governs.
-            await self.post(
-                campaign.dm_screen_channel_id,
-                screen_messages.level_changed(campaign.dm_screen_level),
-            )
+            await self.post(channel, screen_messages.level_changed(campaign.dm_screen_level))
         return campaign
 
     async def _alert_dm(self, guild_id: int, message: str) -> None:
@@ -8662,7 +8932,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def save_unanswered(self, table: Table) -> None:
         """After a session: keep the questions that went unanswered for the after-session check,
         and say how many wait (#1572). Only for speakers who still agree, checked again after the
-        write; a person who stopped meanwhile has theirs removed. DM screen only."""
+        write; a person who stopped meanwhile has theirs removed. The count goes to the DM Bot
+        channel (else the DM screen; #3874 E1)."""
         items, table.unanswered = table.unanswered, []  # (lost if the save fails: only a reminder)
         session_id = table.transcript_session_id
         if (
@@ -8689,10 +8960,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             waiting = await self.heard_questions.count(gid, cid)
             log.info("Did they mean: %d question(s) wait for the DM", waiting)
             if waiting:
-                await self.post(
-                    table.screen_channel_id,
-                    heard_waiting_text(waiting),
-                    view=heard_review_view(cid),
+                # A count and a button only the DM can use: the DM Bot channel (else the screen)
+                await self._post_after_session(
+                    table, heard_waiting_text(waiting), heard_review_view(cid)
                 )
 
     async def answer_waiting_question(
@@ -8919,19 +9189,21 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     # after" is true (#2564).
                     limit = asyncio.timeout(plan_reader.MAX_RUN_S)
                     try:
+                        # (a read of the DM's adventure is metered as AI credits, #4005)
                         async with limit:
-                            report = await plan_reader.run(
-                                ai,
-                                plan,
-                                guild_id=guild_id,
-                                campaign_id=campaign_id,
-                                document_id=document_id,
-                                start_chunk=start,
-                                model=lambda: ai.model,
-                                allowed=plan_allowed,
-                                progress=moved,
-                                report=report,
-                            )
+                            with credits.preparing(guild_id, campaign_id, "adventure"):
+                                report = await plan_reader.run(
+                                    ai,
+                                    plan,
+                                    guild_id=guild_id,
+                                    campaign_id=campaign_id,
+                                    document_id=document_id,
+                                    start_chunk=start,
+                                    model=lambda: ai.model,
+                                    allowed=plan_allowed,
+                                    progress=moved,
+                                    report=report,
+                                )
                     except TimeoutError:
                         if not limit.expired():
                             raise  # a store's or a call's own timeout: the generic handler
@@ -8956,13 +9228,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 self.plan_clocks.pop(key, None)
 
     async def _plan_read_notice(self, guild_id: int, campaign_id: str, document_id: str) -> None:
-        """One line on the DM screen when a read ends, done or stopped (#1723): the DM is not
-        left pressing Refresh. Never raises: a missing channel or a failed post is only logged."""
+        """One line in the DM Bot channel when a read ends, done or stopped (#1723, #3874): the DM
+        is not left pressing Refresh. Never raises: a missing channel or a failed post is only
+        logged."""
         try:
             if self.plan is None or self.adventure is None:
                 return
             campaign = await self.campaigns.get(guild_id, campaign_id)
-            if campaign is None or campaign.dm_screen_channel_id is None:
+            channel, counts_only = self._upkeep_channel(campaign) if campaign else (None, False)
+            if channel is None:
                 return
             state = (await self.plan.states(guild_id, campaign_id)).get(document_id)
             docs = await self.adventure.documents(guild_id, campaign_id)
@@ -8971,7 +9245,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 return
             counts = (await self.plan.counts(guild_id, campaign_id)).get(document_id)
             await self.post(
-                campaign.dm_screen_channel_id, finished_text(doc.file_name, state, counts)
+                channel, finished_text(doc.file_name, state, counts, named=not counts_only)
             )
         except Exception as exc:
             log.warning(
@@ -8979,21 +9253,43 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             )
 
     async def write_scenes(self, table: Table) -> None:
-        """After a live session (#3596), only with DMBOT_STORY_SCENES and the extractor on: write
-        the scene of each waiting question that has none (see `memory.scene_step`). Inside the
-        extractor's session and daily call limits, only lines of people who agree, counts only in
-        the log."""
+        """After a live session (#3596): see `_write_scenes`. The people who may be read are those
+        who agree now (`ConsentStore.consenting`)."""
+        if (
+            not self.settings.story_scenes_on  # (off means off: not even the table is read)
+            or not self.settings.story_extractor_on
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return
+        gid = table.guild_id
+        await DMBot._write_scenes(  # (by the class: the tests' stand-ins are not DMBots)
+            self, gid, table.campaign_id, table.transcript_session_id,
+            {table.dm_user_id, *table.dm_user_ids}, lambda: self.consent.consenting(gid),
+        )  # fmt: skip
+
+    async def _write_scenes(
+        self,
+        gid: int,
+        cid: str,
+        sid: str,
+        dm_ids: Collection[int],
+        consenting: Callable[[], Awaitable[Collection[int]]],
+        renew: Callable[[], Awaitable[object]] | None = None,
+    ) -> None:
+        """Only with DMBOT_STORY_SCENES and the extractor on: write the scene of each waiting
+        question that has none (see `memory.scene_step`), after a live session or an imported one
+        (#3602's ruling). Inside the extractor's session and daily call limits, only lines of
+        people `consenting` returns (asked again after the call: a live session's agreed people,
+        an import's `recorded_in`), counts only in the log. `renew`, after each counted call."""
         if (
             not self.settings.story_scenes_on
             or not self.settings.story_extractor_on
             or self.extractor_ai is None
             or self.memory is None
             or self.transcripts is None
-            or table.campaign_id is None
-            or table.transcript_session_id is None
         ):
             return  # (off means off: nothing is read or asked)
-        gid, cid, sid = table.guild_id, table.campaign_id, table.transcript_session_id
         memory, transcripts, ai = self.memory, self.transcripts, self.extractor_ai
         with log_context(guild_id=gid, campaign_id=cid):
             campaign = await self.campaigns.get(gid, cid)
@@ -9021,17 +9317,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             waiting = [e for e in open_names if e.id in missing][:SCENES_PER_SESSION]
             if not waiting:
                 return
-            agreed = await self.consent.consenting(gid)
-            dm_ids = {table.dm_user_id, *table.dm_user_ids}  # (the same set the extractor uses)
+            agreed = await consenting()
             items, empty = await scene_step.items_for(
-                waiting, lambda i: memory.mentions(gid, cid, i), transcripts, gid, dm_ids, agreed
-            )
+                waiting, lambda i: memory.mentions(gid, cid, i), transcripts, gid, set(dm_ids),
+                agreed,
+            )  # fmt: skip
             report = scene_step.Report(no_lines=empty)
 
             async def count_call() -> None:
                 await transcripts.record_extraction(
                     gid, sid, through_ms=0, calls=1, now=int(time.time())
                 )
+                if renew is not None:  # (an import keeps its claim through a long step)
+                    await renew()
 
             await scene_step.run(
                 ai,
@@ -9039,7 +9337,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 items,
                 guild_id=gid,
                 campaign_id=cid,
-                consenting=lambda: self.consent.consenting(gid),
+                consenting=consenting,
                 model=lambda: ai.model,
                 session_started_at=session.started_at if session else None,
                 max_calls=allowed,
@@ -9061,12 +9359,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         cid: str,
         sid: str,
         renew: Callable[[], Awaitable[Any]] | None = None,
+        consenting: Callable[[], Awaitable[Collection[int]]] | None = None,
     ) -> None:
         """PlotBot's reading of importance for one stored session (`memory.importance_step`):
         ranks and story roles for the entries it touched. Only where the story extractor runs (no
         switch of its own on collecting: the owner's ruling) and the plan allows the story;
         inside the extractor's session and daily call limits, only lines of people who agree,
-        counts only in the log. Never raises."""
+        counts only in the log. Never raises. `consenting`: who may be read, asked again after each
+        call; the people who agree in the server unless given (an import passes `recorded_in`)."""
         if (
             not self.settings.story_extractor_on
             or self.extractor_ai is None
@@ -9075,6 +9375,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         ):
             return  # (off means off: nothing is read or asked)
         memory, transcripts, ai = self.memory, self.transcripts, self.extractor_ai
+        if consenting is None:
+            consenting = partial(self.consent.consenting, gid)
         with log_context(guild_id=gid, campaign_id=cid):
             try:
                 campaign = await self.campaigns.get(gid, cid)
@@ -9096,7 +9398,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if allowed <= 0:
                     log.info("Importance: no calls left in the extractor's limit")
                     return
-                agreed = await self.consent.consenting(gid)
+                agreed = await consenting()
                 items, codes, labels = await importance_step.gather(
                     memory._db,
                     transcripts,
@@ -9106,6 +9408,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     session_started_at=session.started_at,
                     agreed=agreed,
                     mentions=lambda i: memory.mentions(gid, cid, i),
+                    private=self.settings.private_scenes_on,  # (#2996 rule 5)
                 )
                 if not items:
                     return
@@ -9133,7 +9436,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     guild_id=gid,
                     campaign_id=cid,
                     session_started_at=session.started_at,
-                    consenting=lambda: self.consent.consenting(gid),
+                    consenting=consenting,
                     max_calls=allowed,
                     count_call=count_call,
                     renew=renew,
@@ -9143,25 +9446,186 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             except Exception as exc:  # the type only: never fatal, never a word of the story
                 log.warning("Importance: the reading failed (%s)", type(exc).__name__)
 
+    async def read_session_threads(self, table: Table) -> None:
+        """After a live session (#4522): see `_read_threads`. The people who may be read are
+        those who agree now (`ConsentStore.consenting`)."""
+        if table.campaign_id is None or table.transcript_session_id is None:
+            return
+        gid = table.guild_id
+        await DMBot._read_threads(  # (by the class: the tests' stand-ins are not DMBots)
+            self, gid, table.campaign_id, table.transcript_session_id,
+            {table.dm_user_id, *table.dm_user_ids}, lambda: self.consent.consenting(gid),
+        )  # fmt: skip
+
+    async def _read_threads(
+        self,
+        gid: int,
+        cid: str,
+        sid: str,
+        dm_ids: Collection[int],
+        consenting: Callable[[], Awaitable[Collection[int]]],
+        renew: Callable[[], Awaitable[Any]] | None = None,
+    ) -> None:
+        """The new story threads one stored session's talk starts (#4522, quests slice 5a;
+        `memory.session_threads`), waiting on the 📜 card for the DM, with one counts line in the
+        DM Bot channel (#3874; its button opens the card privately, for a DM only). Only with
+        DMBOT_STORY_THREADS and the story extractor on, where the plan allows the story, inside
+        the extractor's session and daily call limits, only lines of people who agree (last
+        time's recap left out). A thread the campaign has, or one suggested before, is never
+        suggested again. Counts only in the log and the channel. Never raises. `renew` keeps an
+        import's hold while it reads (unused live)."""
+        if (
+            not self.settings.story_threads_on  # (off means off: nothing is read or asked)
+            or not self.settings.story_extractor_on
+            or self.extractor_ai is None
+            or self.memory is None
+            or self.transcripts is None
+        ):
+            return
+        from dmbot.ai import OUTPUT_FLOOR
+        from dmbot.memory import session_threads
+        from dmbot.memory.thread_progress import ThreadProgressStore
+        from dmbot.memory.thread_suggestions import ThreadSuggestionStore
+        from dmbot.ui.name_background import clue_finders, progress_inputs, thread_inputs
+        from dmbot.ui.thread_questions import session_label
+
+        memory, transcripts, ai = self.memory, self.transcripts, self.extractor_ai
+        with log_context(guild_id=gid, campaign_id=cid):
+            try:
+                campaign = await self.campaigns.get(gid, cid)
+                if campaign is None or not await self.plan_allows(
+                    "story", gid, campaign, fail_open=False
+                ):
+                    return
+                session = await transcripts.session(gid, sid)
+                if session is None:
+                    return
+                _after_ms, used = await transcripts.extraction(gid, sid)
+                now = int(time.time())
+                allowed = extractor.calls_left(
+                    self.settings.story_extractor_max_calls,
+                    used,
+                    self.settings.story_extractor_max_calls_day,
+                    await transcripts.extractor_calls_since(gid, cid, now - 86400),
+                )
+                label = session_label(session.started_at)
+                if allowed <= 0:  # (a limit stopped it before it began: said, never "nothing")
+                    log.info("Session threads: no calls left in the extractor's limit")
+                    await self._tell_threads(campaign, 0, "call limit", label)
+                    return
+                recap = await self._recap_lines(gid, sid)
+                lines = [
+                    s
+                    for s in extractor.readable(await transcripts.lines(gid, sid))
+                    if s.number not in recap
+                ]
+                if not lines:
+                    return
+                have, entries, names, known = await thread_inputs(memory, gid, cid)
+                moving = await progress_inputs(memory, gid, cid)  # (5b: progress on these)
+                finders = await clue_finders(memory, gid, cid) if moving else None  # (6c)
+
+                async def count_call() -> None:
+                    await transcripts.record_extraction(
+                        gid, sid, through_ms=0, calls=1, now=int(time.time())
+                    )
+                    if renew is not None:
+                        await renew()
+
+                found, report = await session_threads.run(
+                    ai, lines, dm_ids=dm_ids, entries=entries, names=names, have=have,
+                    known=known, consenting=consenting, max_calls=allowed,
+                    max_tokens=OUTPUT_FLOOR, count_call=count_call, progress=moving,
+                    finders=finders,
+                )  # fmt: skip
+                store = ThreadSuggestionStore(memory._db)
+                # (the consent re-check just before storing: who stopped meanwhile is never kept)
+                agreed = set(await consenting())
+                found = [f for f in found if set(f.speaker_ids) <= agreed]
+                made = await store.offer(
+                    gid, cid, found, label, int(time.time()),
+                    session_id=sid, session_at=session.started_at,
+                )  # fmt: skip
+                moved = 0
+                try:  # (its own try: a failure here never loses the new threads' count)
+                    moved = await ThreadProgressStore(memory._db).offer(
+                        gid, cid, sid, session.started_at,
+                        [m for m in report.progress if set(m[3]) <= agreed],
+                        now=int(time.time()),
+                    )  # fmt: skip
+                except Exception as exc:
+                    log.warning("Session threads: progress not kept (%s)", type(exc).__name__)
+                # (one counts line for both, ruling D; the 📜 card shows the progress after the new
+                # threads, #4522 5b part 3)
+                await self._tell_threads(campaign, made, report.stopped, label, moved)
+            except Exception as exc:  # the type only: never fatal, never a word of the story
+                log.warning("Session threads: the reading failed (%s)", type(exc).__name__)
+
+    async def _tell_threads(
+        self, campaign: Campaign, made: int, stopped: str, label: str, changes: int = 0
+    ) -> None:
+        """One counts line in the DM Bot channel (#3874; the DM screen when there is none) when a
+        session's reading made new story threads to check, or stopped early: counts only (the
+        channel is the campaign's people's), with the 📜 button that opens the card privately for
+        a DM. Nothing when nothing was found and nothing stopped it."""
+        from dmbot.ui.thread_questions import ThreadQuestionsButton, threads_found_text
+
+        if not made and not changes and not stopped:
+            return
+        channel, _counts_only = self._upkeep_channel(campaign)
+        if channel is None:
+            return
+        view = discord.ui.View(timeout=None)
+        if made or changes:
+            view.add_item(ThreadQuestionsButton(campaign.id))
+        try:
+            await self.post(
+                channel, threads_found_text(made, bool(stopped), label, changes), view=view
+            )
+        except Exception as exc:
+            log.warning("Session threads: couldn't post the count (%s)", type(exc).__name__)
+
     async def write_who(self, table: Table) -> None:
-        """After a live session (#3602), only with DMBOT_STORY_WHO and the extractor on: rank who
-        each waiting name could be (see `memory.who_step`). It only ranks, unless
-        DMBOT_STORY_WHO_APPLY is also on: then a "sure" answer naming an existing entry is joined
-        by `join_by_ai`.
-        Inside the extractor's session and daily call limits, only lines of people who agree, the
-        DM's own ranking (hidden entries may be a choice; the answers are DM-only), counts only in
-        the log."""
+        """After a live session (#3602): see `_write_who`. The people who may be read are those
+        who agree now (`ConsentStore.consenting`)."""
+        if (
+            not self.settings.story_who_on  # (off means off: not even the table is read)
+            or not self.settings.story_extractor_on
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return
+        gid = table.guild_id
+        await DMBot._write_who(  # (by the class: the tests' stand-ins are not DMBots)
+            self, gid, table.campaign_id, table.transcript_session_id,
+            {table.dm_user_id, *table.dm_user_ids}, lambda: self.consent.consenting(gid),
+        )  # fmt: skip
+
+    async def _write_who(
+        self,
+        gid: int,
+        cid: str,
+        sid: str,
+        dm_ids: Collection[int],
+        consenting: Callable[[], Awaitable[Collection[int]]],
+        renew: Callable[[], Awaitable[object]] | None = None,
+    ) -> None:
+        """Only with DMBOT_STORY_WHO and the extractor on, after a live session or an imported one
+        (#3602's ruling): rank who each waiting name could be (see `memory.who_step`). It only
+        ranks, unless DMBOT_STORY_WHO_APPLY is also on: then a "sure" answer naming an existing
+        entry is joined by `join_by_ai`.
+        Inside the extractor's session and daily call limits, only lines of people `consenting`
+        returns (asked again after the call: a live session's agreed people, an import's
+        `recorded_in`), `renew` after each counted call, the DM's own ranking (hidden entries may
+        be a choice; the answers are DM-only), counts only in the log."""
         if (
             not self.settings.story_who_on
             or not self.settings.story_extractor_on
             or self.extractor_ai is None
             or self.memory is None
             or self.transcripts is None
-            or table.campaign_id is None
-            or table.transcript_session_id is None
         ):
             return  # (off means off: nothing is read or asked)
-        gid, cid, sid = table.guild_id, table.campaign_id, table.transcript_session_id
         memory, transcripts, ai = self.memory, self.transcripts, self.extractor_ai
         with log_context(guild_id=gid, campaign_id=cid):
             campaign = await self.campaigns.get(gid, cid)
@@ -9189,8 +9653,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             waiting = [e for e in open_names if e.id in missing]
             if not waiting or allowed <= 0:
                 return  # (nothing to ask, or no call left: no lookup or transcript is read)
-            agreed = await self.consent.consenting(gid)
-            dm_ids = {table.dm_user_id, *table.dm_user_ids}  # (the same set the extractor uses)
+            agreed = await consenting()
             lookup = CampaignLookup.build(await memory.lookup_data(gid, cid))
             # (every open name is left out, not only the ones asked this time: a name that waits is
             # never offered as another's choice, even if it is confirmed between the two reads)
@@ -9215,7 +9678,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     return found
 
                 lines, speakers = await who_step.lines_for(
-                    entity.id, held, transcripts, gid, dm_ids, agreed
+                    entity.id, held, transcripts, gid, set(dm_ids), agreed
                 )
                 if pointers and not lines:
                     report.no_lines += 1  # (it was said, but no line of a recorded person is left)
@@ -9241,6 +9704,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 await transcripts.record_extraction(
                     gid, sid, through_ms=0, calls=1, now=int(time.time())
                 )
+                if renew is not None:  # (an import keeps its claim through a long step)
+                    await renew()
 
             await who_step.run(
                 ai,
@@ -9248,7 +9713,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 pending,
                 guild_id=gid,
                 campaign_id=cid,
-                consenting=lambda: self.consent.consenting(gid),
+                consenting=consenting,
                 model=lambda: ai.model,
                 session_started_at=session.started_at if session else None,
                 max_calls=allowed,
@@ -9259,12 +9724,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 ),
             )
             log.info(report.line())
-            if report.joined and campaign.dm_screen_channel_id is not None:
+            joins_to = self._upkeep_channel(campaign)[0] if report.joined else None
+            if joins_to is not None:
                 from dmbot.ui.joined_review import summary_line  # (the ui imports this module)
 
-                try:  # a count on the DM screen: players never see it, and a failure only logs
+                try:  # a count in the DM Bot channel (#3874); a failure only logs
                     await self.post(
-                        campaign.dm_screen_channel_id,
+                        joins_to,
                         f"{summary_line(report.joined)} Press **Check guesses** in "
                         "**/dmbot names**.",
                     )
@@ -9304,11 +9770,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         notice_channel: int | None,
         renew: Callable[[], Awaitable[Any]] | None = None,
         progress: Callable[[int, int], Awaitable[None]] | None = None,
+        consenting: Callable[[], Awaitable[Collection[int]]] | None = None,
     ) -> str:
         """Read one stored session with the story extractor: "done", "limit" (its call limit is
         used, or it stopped early: the rest waits for a later round) or "skipped" (off, no plan,
         nothing to read).
         `renew` is awaited before each AI call, so an import's claim stays fresh while it runs.
+        `consenting`: who may be read, asked again after each step; the people who agree in the
+        server unless given (an import passes `ConsentStore.recorded_in`, Supervisor on #3918).
 
         Only with DMBOT_STORY_EXTRACTOR on (it is off until #1282 passes): read
         the stored transcript in short batches and store what the AI heard as proposals for the DM
@@ -9324,6 +9793,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             or self.transcripts is None
         ):
             return "skipped"
+        if consenting is None:
+            consenting = partial(self.consent.consenting, gid)
         with log_context(guild_id=gid, campaign_id=cid):
             session = await self.transcripts.session(gid, sid)
             if session is None or session.lines == 0:
@@ -9352,9 +9823,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             transcripts = self.transcripts
             lines = await transcripts.lines(gid, sid)
             # The people at the table are not story names (as in the name scan).
-            people = {*dm_ids, *(await self.consent.consenting(gid))}
+            people = {*dm_ids, *(await consenting())}
             skip: set[str] = set()
             for uid in people:
+                if uid < 0:
+                    continue  # (a speaker without Discord has only a placeholder name here)
                 name = self.name_of(gid, uid)
                 if not name.startswith("<@"):
                     skip.add(name_key(name))
@@ -9371,47 +9844,68 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # session's events: the lines the stored split labels so are left out. A session with
             # no split yet is read as all play.
             recap_lines = await self._recap_lines(gid, sid)
-            # (a character's first name said alone is their short name before the claims are
-            # matched to names, so "Claude" is Claude Ambere and not a new name: #3880)
-            agreed = await self.consent.consenting(gid)
-            await self.add_short_names(gid, cid, extractor.heard_texts(lines, agreed, recap_lines))
-            report = await extractor.run(
-                self.extractor_ai,
-                ClaimStore(self.memory),
-                lines,
-                guild_id=gid,
-                campaign_id=cid,
-                dm_ids=dm_ids,
-                consenting=lambda: self.consent.consenting(gid),
-                model=lambda: self.extractor_ai.model if self.extractor_ai else "",
-                session_started_at=session.started_at,
-                recap_lines=recap_lines,
-                tally=tally,
-                max_calls=allowed,
-                skip=skip,
-                after_ms=after_ms,
-                readings=self.settings.story_readings_on,
-                deeds=self.settings.story_deeds_on,
-                deed_store=DeedProposals(self.memory)
-                if self.settings.story_deeds_on and self.memory is not None
-                else None,
-                reveals=self.settings.story_reveals_on,
-                reveals_precheck=self.settings.story_reveals_precheck,
-                reveal_store=RevealProposals(self.memory)
-                if self.settings.story_reveals_on and self.memory is not None
-                else None,
-                family_only=self.settings.story_family_only,
-                imported=await transcripts.is_import(gid, sid),
-                count_call=count_call,
-                progress=progress,
-            )
+            # (a 🤫 question the read asks cites this session, never its words, and is counted on
+            # the after-session line: #4524; the short names too, which can ask one)
+            from dmbot.memory import secret_questions
+            from dmbot.ui.thread_questions import session_label
+
+            with secret_questions.evidence(
+                session_label(session.started_at), session_id=sid
+            ) as asked:
+                # (a character's first name said alone is their short name before the claims
+                # are matched to names, so "Claude" is Claude Ambere and not a new name: #3880)
+                agreed = await consenting()
+                await self.add_short_names(
+                    gid, cid, extractor.heard_texts(lines, agreed, recap_lines)
+                )
+                report = await extractor.run(
+                    self.extractor_ai,
+                    ClaimStore(self.memory),
+                    lines,
+                    guild_id=gid,
+                    campaign_id=cid,
+                    dm_ids=dm_ids,
+                    consenting=consenting,
+                    model=lambda: self.extractor_ai.model if self.extractor_ai else "",
+                    session_started_at=session.started_at,
+                    recap_lines=recap_lines,
+                    tally=tally,
+                    max_calls=allowed,
+                    skip=skip,
+                    after_ms=after_ms,
+                    readings=self.settings.story_readings_on,
+                    deeds=self.settings.story_deeds_on,
+                    deed_store=DeedProposals(self.memory)
+                    if self.settings.story_deeds_on and self.memory is not None
+                    else None,
+                    reveals=self.settings.story_reveals_on,
+                    reveals_precheck=self.settings.story_reveals_precheck,
+                    reveal_store=RevealProposals(self.memory)
+                    if self.settings.story_reveals_on and self.memory is not None
+                    else None,
+                    met=self.settings.met_unnamed_on,
+                    met_store=MetStore(self.memory._db)
+                    if self.settings.met_unnamed_on and self.memory is not None
+                    else None,
+                    session_id=sid,
+                    family_only=self.settings.story_family_only,
+                    imported=await transcripts.is_import(gid, sid),
+                    count_call=count_call,
+                    progress=progress,
+                )
             log.info(report.line())
-            if report.recap_lines and notice_channel is not None:
+            # Counts and buttons go to the DM Bot channel when the campaign has one (the DM screen
+            # otherwise); names go to the DMs privately, with a count-only pointer (#3874 E1)
+            campaign = await self.campaigns.get(gid, cid)
+            counts_channel = (
+                self._upkeep_channel(campaign)[0] if campaign is not None else notice_channel
+            )
+            if report.recap_lines and counts_channel is not None:
                 # Said once, with the way back, before anything else is relied on (#3298): counts
                 # only. Only an imported session is ever split by the story reader.
                 try:
                     await self.post(
-                        notice_channel,
+                        counts_channel,
                         recap_lines_ui.note(report.recap_lines),
                         view=recap_lines_ui.undo_view(cid, sid),
                     )
@@ -9423,11 +9917,42 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )  # (the calls were counted as they were made)
             except Exception:
                 log.exception("Story extractor: couldn't note how far it got")
-            if report.named and notice_channel is not None:
+            if report.named and (campaign is not None or notice_channel is not None):
                 # the DM checks them where the name scan's are checked
-                await self.post(
-                    notice_channel, held_back_text(report.new_names), view=review_view(cid)
-                )
+                if campaign is not None:
+                    await pointer_note.send(
+                        self,
+                        campaign,
+                        held_back_text(report.new_names),
+                        lambda: review_view(cid),
+                        held_back_pointer(len(report.new_names)),
+                    )
+                elif notice_channel is not None:
+                    await self.post(
+                        notice_channel, held_back_text(report.new_names), view=review_view(cid)
+                    )
+            if asked and counts_channel is not None:  # (#4524: counts only)
+                from dmbot.ui import secret_questions as secret_questions_ui
+
+                try:
+                    left = await self.memory.secret_questions_still_waiting(gid, cid, asked)
+                    if left:
+                        await self.post(
+                            counts_channel,
+                            secret_questions_ui.count_line(left).strip(),
+                            view=secret_questions_ui.notice_view(cid),
+                        )
+                except Exception as exc:
+                    log.warning("Secret questions: no note (%s)", type(exc).__name__)
+            if report.met_made and counts_channel is not None:  # (#4045: counts only)
+                try:
+                    await self.post(
+                        counts_channel,
+                        met_list_ui.notice(report.met_made),
+                        view=met_list_ui.notice_view(cid),
+                    )
+                except Exception as exc:
+                    log.warning("Met list: the note was not posted (%s)", type(exc).__name__)
             return "limit" if report.stopped or report.failed else "done"
 
     async def read_put_back_lines(self, guild_id: int) -> None:
@@ -9578,6 +10103,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 reveal_store=RevealProposals(self.memory)
                 if self.settings.story_reveals_on and self.memory is not None
                 else None,
+                met=self.settings.met_unnamed_on,
+                met_store=MetStore(self.memory._db)
+                if self.settings.met_unnamed_on and self.memory is not None
+                else None,
+                session_id=sid,
                 family_only=self.settings.story_family_only,
                 imported=await transcripts.is_import(gid, sid),
                 count_call=lambda: transcripts.record_extraction(
@@ -9921,7 +10451,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 # Asked last, right before the names are matched: a person can stop at any moment
                 agreed = await self.consent.consenting(gid)
                 recorded = {line.user_id for line in lines} & set(agreed)
-                return table_lines(lines, recorded=recorded)
+                # A line said while the game clock had the party split was heard by one group,
+                # never the whole table: it shows nobody anything (#4037)
+                assert self.memory is not None
+                split = await self.memory.split_moments(
+                    gid, cid, [line.started_ms // 1000 for line in lines]
+                )
+                together = [line for line in lines if line.started_ms // 1000 not in split]
+                return table_lines(together, recorded=recorded)
 
             await self._reveal_said(gid, cid, spoken, f"Session {number}")
 
@@ -9943,17 +10480,24 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self.lookup.drop([cid])
         log.info("Names said at the table and shown: %d", len(written.value))  # a count only
         campaign = await self.campaigns.get(gid, cid)
-        if campaign is None or campaign.dm_screen_channel_id is None:
+        if campaign is None:
             return
         shown = [f.name for f in found if f.entity_id in set(written.value)]
         waiting = await self.memory.waiting_connections(gid, cid, written.value)
-        if not await self.post(
-            campaign.dm_screen_channel_id,
+        batch = written.batch
+        # The names go to the DMs privately, with Undo; the DM Bot channel (which the campaign's
+        # people read) gets a count only, and only when a private message really went out. With
+        # no private message the words go on the DM screen as before (#3874 E1).
+        if not await pointer_note.send(
+            self,
+            campaign,
             report_text(shown, where=where, waiting=waiting),
-            view=revealed_view(cid, written.batch),
+            lambda: revealed_view(cid, batch),
+            revealed_pointer_text(len(shown)),
+            note=True,
         ):
             # The names are shown and the DM could not be told: say so in the log (a count only)
-            log.warning("Names shown at the table, but the DM screen could not say so")
+            log.warning("Names shown at the table, but no DM could be told")
 
     async def record_exposures(self, table: Table) -> None:
         """After a session: remember the secret names and secret connections said or typed at the
@@ -10079,6 +10623,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if closed and described:  # nobody could be told: their private messages are closed
                     await self.post(table.screen_channel_id, SUMMARY_WAITING)
                 return  # nothing is shown to the players
+            if campaign.dm_bot_channel_id:  # numbers only: the details stay with the DM (#3874)
+                try:
+                    await self.post(
+                        campaign.dm_bot_channel_id,
+                        secrets_pointer(
+                            len(described), len(table.new_names), int(table.claims_waiting)
+                        ),
+                    )
+                except Exception as exc:
+                    log.warning("Secrets pointer: couldn't post it (%s)", type(exc).__name__)
             if on_screen or reached >= len(campaign.dm_accounts):
                 # Told: the screen has it, or every DM got it. A co-DM whose private messages are
                 # closed has not heard, so then the "new names" step still posts them.
@@ -10129,68 +10683,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 "Secrets said at the table: %d told, %d shown, %d not", len(listed), shown, failed
             )
 
-    async def ask_about_secrets(self, table: Table) -> None:
-        """After a session: a name the DM keeps secret was said by a player, so it is now in the
-        transcript everyone may read (#1407). The DM screen asks, privately, once for each such
-        name (at most five, most said first), with two buttons. Only players who are recorded
-        now count: not the DM, not DMbot, not someone who stopped. No AI call. The log gets a
-        count, never a name."""
-        if (
-            self.memory is None
-            or self.transcripts is None
-            or table.campaign_id is None
-            or table.transcript_session_id is None
-        ):
-            return
-        gid, cid = table.guild_id, table.campaign_id
-        with log_context(guild_id=gid, campaign_id=cid):
-            campaign = await self.campaigns.get(gid, cid)
-            if campaign is None:
-                return
-            secrets = await secret_names(self.memory, gid, cid)
-            if not secrets:
-                return
-            lines = await self.transcripts.lines(gid, table.transcript_session_id)
-            agreed = await self.consent.consenting(gid)  # asked after the lines were read
-            players = {line.user_id for line in lines} & set(agreed) - set(campaign.dm_user_ids)
-            every = spoken(secrets, said_lines(lines, people=players))
-            found = every[:MAX_ASKED]
-            alone = campaign.dm_screen_visibility != "private"
-            reached = 0  # DMs who got the question privately
-            closed_dms = 0  # DMs whose private messages are closed
-            for said in found:
-                if alone:  # players may look at the screen: the name goes to the DMs only
-                    for dm_id in sorted(campaign.dm_accounts):
-                        sent = await self.sidebar_send_dm(
-                            dm_id,
-                            question_text(
-                                said.text,
-                                said.entries,
-                                private=True,
-                                campaign_name=campaign.name,
-                            ),
-                            secret_aloud_view(cid, said.alias_id, gid),
-                        )
-                        reached += sent == "sent"
-                        closed_dms += sent == "forbidden"
-                    continue
-                await self.post(
-                    table.screen_channel_id,
-                    question_text(said.text, said.entries),
-                    view=secret_aloud_view(cid, said.alias_id, gid),
-                    secret_of=(gid, cid),  # pulled back if the screen opens up (#2097)
-                )
-            if alone and found:
-                log.info("Secret questions sent privately: %d DM(s) reached", reached)  # a count
-                if not reached and closed_dms:
-                    # Nobody could be asked because their private messages are closed (a send that
-                    # merely failed is not that): say so, with no name.
-                    await self.post(table.screen_channel_id, SECRET_QUESTION_WAITING)
-            if len(every) > len(found):  # the DM should know the rest exist
-                await self.post(table.screen_channel_id, more_text(len(every) - len(found)))
-            if found:
-                log.info("Secret name(s) said by players: %d asked", len(found))  # a count only
-
     async def note_claims(self, table: Table) -> None:
         """After a session (#1297): count the proposals the story extractor left waiting. With the
         extractor off (the default) nothing is ever waiting; this step makes no AI call. The
@@ -10225,11 +10717,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     claims_waiting_text(waiting),
                 ),
             )
-
-    async def ask_about_claims(self, table: Table) -> None:
-        """Count and tell in one go: the two steps above, for a caller that wants both."""
-        await self.note_claims(table)
-        await self.post_claims(table)
 
     async def warn_about_family(self, table: Table) -> None:
         """After a session (#3066): if family links worked out from the DM's own (#2960) wait for a
@@ -10299,6 +10786,164 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 log.info("Reveals: %d waiting for the DM", count)
                 await self.ask_dm(table, reveal_card.ask_for(gid, cid, count))
 
+    async def walk_story_chain(self, table: Table) -> None:
+        """After a session (#4173 slice 4): walk where the story is through it. Never stops the
+        other steps (the type only in the log). It reads the session's own words, not what the
+        extractor found, so it runs whether or not a call limit cut the extractor short (an import
+        walks once its read is done)."""
+        if table.campaign_id is None or table.transcript_session_id is None:
+            return
+        dm_ids = {table.dm_user_id, *table.dm_user_ids}
+        consenting = partial(self.consent.consenting, table.guild_id)
+        await self._walk_story_chain(
+            table.guild_id, table.campaign_id, table.transcript_session_id, dm_ids, consenting
+        )
+
+    async def _walk_story_chain(
+        self,
+        gid: int,
+        cid: str,
+        sid: str,
+        dm_ids: Collection[int],
+        consenting: Callable[[], Awaitable[Collection[int]]],
+    ) -> None:
+        """The session's own lines, as the story extractor reads them (`extractor.readable`, last
+        time's recap left out, only people who still agree, the DM too, asked just before and again
+        before anything is kept), through
+        `StoryChains`. Only for a campaign whose plan has story memory; counts only in the log."""
+        if self.memory is None or self.transcripts is None or self.backstory_links is None:
+            return
+        with log_context(guild_id=gid, campaign_id=cid):
+            try:
+                campaign = await self.campaigns.get(gid, cid)
+                if campaign is None or not await self.plan_allows(
+                    "story", gid, campaign, fail_open=False
+                ):
+                    return
+                session = await self.transcripts.session(gid, sid)
+                if session is None or session.lines == 0:
+                    return
+                recap = await self._recap_lines(gid, sid)
+                lines = await self.transcripts.lines(gid, sid)
+                said = readable_lines(lines, recap, set(await consenting()))
+                found = await self._scene_moves(gid, cid, sid, said, dm_ids, consenting)
+                done = await StoryChains(
+                    self.memory._db, self.backstory_links, self.memory
+                ).read_session(
+                    gid, cid, session.started_at, said, dm_ids, f"Session {session.number}",
+                    consenting, scene_move_step.moves_of(found),
+                )  # fmt: skip
+                log.info(
+                    "Where the story is: %d new guesses of where a place is%s; %d journeys (%d left"
+                    " out: a place not kept yet; %d refused); scene moves: %d DM"
+                    " lines, %d asked (%d without numbers), %d calls, %d+%d tokens, %d moves,"
+                    " %d unreadable, %d stopped early",
+                    done.guessed,
+                    " (an older session: left out)" if done.skipped_older else "",
+                    done.journeys, done.journeys_unkept, done.journeys_refused,
+                    found.dm_lines, found.asked, found.fallback, found.calls,
+                    found.input_tokens, found.output_tokens,
+                    sum(len(m) for m in found.moves.values()), found.unreadable,
+                    found.stopped_early,
+                )  # fmt: skip
+            except Exception as exc:  # the type only: a database error can quote a row
+                log.warning("Where the story is: stopped (%s)", type(exc).__name__)
+
+    async def _scene_moves(
+        self,
+        gid: int,
+        cid: str,
+        sid: str,
+        said: Sequence[StorySaid],
+        dm_ids: Collection[int],
+        consenting: Callable[[], Awaitable[Collection[int]]],
+    ) -> scene_move_step.Found:
+        """The session's scene moves (#4173 slice 4): the DM lines whose stored numbers look like
+        a move, with their context, to the AI (`scene_move_step`); every DM line when there are no
+        numbers. Inside the story extractor's call limits, counted as its calls; none when the
+        extractor's AI is off (nothing is read or asked)."""
+        ai, transcripts, memory = self.extractor_ai, self.transcripts, self.memory
+        if ai is None or transcripts is None or memory is None:
+            return scene_move_step.Found()
+        examples = None
+        vectors: dict[tuple[int, int], list[float]] = {}
+        if (
+            self.settings.scene_filter_on  # (off by default: every DM line goes to the call)
+            and self.voyage is not None
+            and self.settings.meaning_search_on
+        ):
+            model = self.settings.voyage_embed_model
+            try:
+                examples = await scene_move_step.example_vectors(self.voyage, model)
+                vectors = await stored_vectors(memory._db, gid, sid, model, dm_ids)
+            except Exception as exc:  # (no filter, then: every DM line is asked about)
+                log.warning("Scene moves: no numbers (%s)", type(exc).__name__)
+                examples, vectors = None, {}
+        lines = [
+            scene_move_step.DmLine(
+                s.number, s.user_id, s.text, vectors.get((s.started_ms, s.user_id))
+            )
+            for s in said
+        ]
+        _after_ms, used = await transcripts.extraction(gid, sid)
+        now = int(time.time())
+        allowed = extractor.calls_left(
+            self.settings.story_extractor_max_calls,
+            used,
+            self.settings.story_extractor_max_calls_day,
+            await transcripts.extractor_calls_since(gid, cid, now - 86400),
+        )
+
+        async def count_call() -> None:
+            await transcripts.record_extraction(
+                gid, sid, through_ms=0, calls=1, now=int(time.time())
+            )
+
+        return await scene_move_step.find(
+            ai, lines, set(dm_ids), examples, count_call=count_call, allowed=allowed,
+            agreed=consenting,
+        )  # fmt: skip
+
+    async def find_private_scenes(self, table: Table) -> None:
+        """After a session (#2996 rule 5), only with DMBOT_PRIVATE_SCENES: find the stretches when
+        the party was split and two player characters, played by two different people, were alone
+        together and both spoke, and keep them (ids and times, never words). Found by code from
+        the game clock and who spoke, never by the AI, so it costs no call. Only for a campaign
+        whose plan has story memory; the log gets counts only."""
+        if (
+            not self.settings.private_scenes_on
+            or self.memory is None
+            or table.campaign_id is None
+            or table.transcript_session_id is None
+        ):
+            return
+        gid, cid = table.guild_id, table.campaign_id
+        with log_context(guild_id=gid, campaign_id=cid):
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is None or not await self.plan_allows(
+                "story", gid, campaign, fail_open=False
+            ):
+                return
+            written = await PrivateScenes(self.memory._db).write_session(
+                gid, cid, table.transcript_session_id, await self.consent.consenting(gid),
+                int(time.time()),
+            )  # fmt: skip
+            log.info(
+                "Private scenes: %d kept, %d the DM said are not private",
+                written.kept,
+                written.not_private,
+            )
+            # (counts only; a re-read finds the same scenes again and says nothing new)
+            if written.new:
+                try:
+                    await self._post_after_session(
+                        table,
+                        private_scenes_ui.notice(written.new),
+                        view=private_scenes_ui.notice_view(cid),
+                    )
+                except Exception as exc:
+                    log.warning("Private scenes: the note was not posted (%s)", type(exc).__name__)
+
     async def offer_kind(self, table: Table) -> None:
         """After a session (#3033): one more question for the DM, "make these words a kind of
         connection?", when the table has kept using the same words (3 or more times) on
@@ -10340,8 +10985,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 "on" if report.ready else "not enough story yet",
             )  # fmt: skip
             if report.conflicts:
-                await self.post(
-                    table.screen_channel_id,
+                await self._post_after_session(
+                    table,
                     continuity_waiting_text(
                         len(report.conflicts), sum(1 for c in report.conflicts if c.pinned)
                     ),
@@ -10399,8 +11044,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             quiet = [t for t in found if t.stalled]
             log.info("Threads: %d, %d stalled", len(found), len(quiet))  # counts, never names
             if quiet:
-                await self.post(
-                    table.screen_channel_id,
+                await self._post_after_session(
+                    table,
                     threads_waiting_text(
                         len(quiet),
                         min(t.quiet_sessions for t in quiet),
@@ -10492,6 +11137,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 if not e.unnamed
             ]
             given: set[str] = set()  # suggestions that already got a spelling in this run
+            session_at = await self._session_start(gid, table.transcript_session_id)  # (#4043)
             for word, user_id, near in spelled:
                 key = name_key(word)
                 if user_id not in agreed or key in known:
@@ -10521,6 +11167,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         name=word,
                         source="scan",
                         description=SPELLED_OUT,
+                        session_started_at=session_at,
                     )
                 except MemoryRuleError as exc:
                     log.info("Skipped a spelled-out name: %s", exc)
@@ -10740,6 +11387,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         agreed: Collection[int] | None = None,
         hold: list[name_pass_logic.Report] | None = None,
         game_only: bool = False,
+        recheck: Callable[[], Awaitable[Collection[int]]] | None = None,
     ) -> int:
         """PlotBot's name pass (#2628): once per session, when its transcript is complete and before
         its recap, a word the cleaner left as heard that PlotBot is sure means a name on the list
@@ -10748,10 +11396,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         happened (a pass that could not run must not hold the recap back); the DM can still fix a
         spelling by hand. `hold`: an import's pass (#2649) puts its report there instead of posting
         it, and the import posts one report for all its sessions. `game_only`: read only the lines
-        the off-topic filter kept as game talk, as the import's name scan does."""
+        the off-topic filter kept as game talk, as the import's name scan does. `recheck`: who may
+        still be read, asked again after the AI call; the server's consent unless given (an
+        import passes `recorded_in`, its own rule for who is recorded in it, #3962)."""
         fixed = 0
         try:
-            fixed = await self._repair_names(gid, cid, session_id, users, agreed, hold, game_only)
+            fixed = await self._repair_names(
+                gid, cid, session_id, users, agreed, hold, game_only, recheck
+            )
         except Exception:
             log.exception("The name pass failed")
         finally:
@@ -10771,6 +11423,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         agreed: Collection[int] | None,
         hold: list[name_pass_logic.Report] | None = None,
         game_only: bool = False,
+        recheck: Callable[[], Awaitable[Collection[int]]] | None = None,
     ) -> int:
         if (
             self.transcripts is None
@@ -10785,6 +11438,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         lookup = await self.lookup.get(gid, cid)
         people: set[str] = set()
         for uid in users:
+            if uid < 0:  # (an imported speaker's stand-in label, "a player without Discord")
+                continue
             name = self.name_of(gid, uid)
             if not name.startswith("<@"):
                 people.add(name_key(name))
@@ -10801,7 +11456,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self.transcripts, lookup, ask, gid, cid, session_id,
             people=people, known=await self.memory.known_keys(gid, cid), agreed=agreed, now=now,
             forget_before=now - int(self.memory.keep_days * 86400), game_only=game_only,
-            consenting=lambda: self.consent.consenting(gid),
+            consenting=recheck or (lambda: self.consent.consenting(gid)),
         )  # fmt: skip
         # The words PlotBot was not sure of, and the ones it says are new names, are name questions
         # for the DM, whatever the scan's own "heard twice" rule says; the recap is held until they
@@ -10818,24 +11473,48 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if hold is not None:
             if not report.quiet:
                 hold.append(report)
-        elif not report.quiet and campaign.dm_screen_channel_id is not None:
-            await self.post(
-                campaign.dm_screen_channel_id,
+        elif not report.quiet:
+            # The spellings go to the DMs privately, with Undo; the DM Bot channel gets counts
+            # only (#3874 E1)
+            await pointer_note.send(
+                self,
+                campaign,
                 name_pass_logic.report_text(report),
-                name_pass_undo.undo_view(cid, report.fixed),
+                lambda: name_pass_undo.undo_view(cid, report.fixed) or discord.ui.View(),
+                session_names_pointer(len(report.fixed), len(report.unsure), len(report.new)),
+                note=True,
             )
         log.info("Name pass report: %s", name_pass_logic.counts_line(report))  # counts only
         return sum(f.times for f in report.fixed)
 
-    async def add_short_names(self, gid: int, cid: str, texts: Sequence[str]) -> None:
-        """Add each character's first name as their short name where the rule allows it
-        (#3880, `MemoryStore.add_short_names`): after a lore read, before the name scan and before
-        the story extractor. `texts` must hold only what may be read (people who agree). Never
+    async def drop_language_suggestions(self, gid: int, cid: str) -> None:
+        """Turn down any waiting suggestion that is an SRD language (#4227,
+        `MemoryStore.drop_language_suggestions`), before a scan or a lore read suggests more. Never
         stops what called it; counts only."""
         if self.memory is None:
             return
         try:
-            written = await self.memory.add_short_names(gid, cid, texts)
+            dropped = await self.memory.drop_language_suggestions(gid, cid)
+        except Exception as exc:
+            log.warning("Language suggestions: couldn't drop them (%s)", type(exc).__name__)
+            return
+        if dropped:
+            log.info("Language suggestions: %d dropped", dropped)
+
+    async def add_short_names(
+        self, gid: int, cid: str, texts: Sequence[str], *, before_read: bool = False
+    ) -> None:
+        """Add each character's first name as their short name where the rule allows it
+        (#3880, `MemoryStore.add_short_names`): after a lore read, before the name scan and before
+        the story extractor; `before_read`, before a lore read too, for the DM's confirmed player
+        characters only (#4224). `texts` must hold only what may be read (people who agree). Never
+        stops what called it; counts only."""
+        if self.memory is None:
+            return
+        try:
+            written = await self.memory.add_short_names(
+                gid, cid, texts, players_before_read=before_read
+            )
         except Exception as exc:
             log.warning("Short names: couldn't add them (%s)", type(exc).__name__)
             return
@@ -10862,6 +11541,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # A character's first name said alone ("Claude" for Claude Ambere) is their short name
         # before the scan looks (#3880), so it is never offered as a new name.
         await self.add_short_names(gid, cid, lines)
+        await self.drop_language_suggestions(gid, cid)
         heard_in: list[Line] = []
         if session_id is not None and self.transcripts is not None:
             try:
@@ -10879,6 +11559,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # each word of them ("Mia Stone" → "Mia", "Stone").
         skip = set(await self.memory.known_keys(gid, cid))
         for uid in users:
+            if uid < 0:  # (an imported speaker's stand-in label, never a name: #3962)
+                continue
             name = self.name_of(gid, uid)
             if not name.startswith("<@"):
                 skip.add(name_key(name))
@@ -10895,6 +11577,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 found.append(Suggestion(name, times))
         added: list[str] = []
         kinds = await self._scan_kinds(gid, cid, [f.name for f in found], lines)
+        # the session each name is made in, for the split-party check (#4043): never a guess
+        session_at = await self._session_start(gid, session_id)
         log.info(  # counts only
             "Name scan: %d name(s) suggested, %d with a kind, %d without",
             len(found), len(kinds), len(found) - len(kinds),
@@ -10911,6 +11595,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         name=suggestion.name,
                         source="scan",
                         description=f"Heard {suggestion.times} times",
+                        session_started_at=session_at,
                     )
                     break
                 except MemoryRuleError as exc:
@@ -11006,6 +11691,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except Exception:
             log.exception("Couldn't keep where a suggested name was said")
 
+    async def _session_start(self, gid: int, session_id: str | None) -> int | None:
+        """When a stored session began, recorded with the names made from it for the split-party
+        check (#4043). None when there is none or it can't be read (the check then falls back to
+        its older guess by time). Never raises."""
+        if session_id is None or self.transcripts is None:
+            return None
+        try:
+            session = await self._session_of(gid, session_id)
+        except Exception as exc:
+            log.warning("Couldn't read the session for its start (%s)", type(exc).__name__)
+            return None
+        return session.started_at if session is not None else None
+
     async def _session_of(self, gid: int, session_id: str) -> TranscriptSession | None:
         assert self.transcripts is not None
         return await self.transcripts.session(gid, session_id)
@@ -11094,7 +11792,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     f"{len(names)} new {'name' if len(names) == 1 else 'names'} to check",
                     partial(RecapNamesButton, table.guild_id, table.campaign_id),
                     partial(ReviewButton, table.campaign_id),
-                    after_session_text(names),
+                    counts_after_session_text(len(names)),  # (a count: others may read it)
                 ),
             )
 
@@ -11126,7 +11824,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     ) -> bool:
         """`send_asks` for a campaign with no table at a session (a lore upload, an import,
         #3314). True when the message reached a DM privately or was posted on the DM screen."""
-        combined = combine(asks, about)
+        combined = combine(asks, about, walk=partial(WalkButton, guild_id, campaign_id))
         if combined is None:
             return False
         text, view = combined
@@ -11139,18 +11837,27 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )
         if private:
             return True
+        # These are upkeep, not live play, so with no way to reach a DM privately they wait in the
+        # DM Bot channel (the owner's "which channel gets what", #3874); the DM screen only for a
+        # campaign that has none. Each line is counts only (`Ask.screen`, pinned by a test over
+        # every builder), because the campaign's people read that channel.
+        target = screen_channel_id
+        try:
+            campaign = await self.campaigns.get(guild_id, campaign_id)
+            if campaign is not None and campaign.dm_bot_channel_id:
+                target = campaign.dm_bot_channel_id
+        except Exception:
+            log.exception("Couldn't look up where to leave the questions for the DM")
         posted = False
         for ask in ordered(asks):
-            if screen_channel_id is None:
-                break  # (no DM screen to fall back on)
+            if target is None:
+                break  # (nowhere to fall back on)
             # Each in its own try: one failed post must not skip the questions after it.
             try:
-                await self.post(
-                    screen_channel_id, ask.screen + NO_PRIVATE_MESSAGE, view=view_of(ask)
-                )
+                await self.post(target, ask.screen + NO_PRIVATE_MESSAGE, view=view_of(ask))
                 posted = True
             except Exception:
-                log.exception("Couldn't post a question for the DM on the DM screen")
+                log.exception("Couldn't post a question for the DM")
         return posted
 
     async def _recap_lines(self, gid: int, sid: str) -> frozenset[int]:
@@ -11372,7 +12079,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         dm_links.DMLinks(),
                     )
                     message = await self._dm_message(user_id, marked, copy)
-                    await dm_links.point_at_itself(message, copy)  # (its own jump link)
                 except Exception:
                     log.exception("Couldn't ask a DM a live question privately")
                     continue
@@ -11395,10 +12101,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         notice: UploadNotice,
         questions: int,
         asks: Sequence[Callable[[], discord.ui.Item[Any]]] = (),
+        *,
+        private: str = "",
     ) -> discord.Message | None:
         """A lore upload added what DMbot was sure of (#3878): the live notice in the DM Bot
         channel (counts only, the DM screen is for live play), and the same words privately to
-        every DM. Returns the channel message, or None when it could not be posted there (no DM Bot
+        every DM, with `private` under them (what a World read revealed, by name: #4590 B).
+        Returns the channel message, or None when it could not be posted there (no DM Bot
         channel, no permission): the DM's own card then carries it. Never raises."""
         text = notice_text(notice.label, notice.counts, questions)
         site = self.settings.site_url
@@ -11419,7 +12128,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 try:  # one DM failing must not stop the others
                     await self.sidebar_send_dm(
                         user_id,
-                        f"**{who}**\n{text}",
+                        f"**{who}**\n{text}{private}",
                         notice_view(notice, site_url=site, asks=[make() for make in asks]),
                     )
                 except Exception:
@@ -11514,10 +12223,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         text: str,
         view: discord.ui.View,
         links: dm_links.DMLinks | None = None,
+        *,
+        note: bool = False,
     ) -> bool:
         """Send a question to each of the campaign's DMs in their private chat (#3210). True when
         at least one got it; False (DMs closed, campaign gone) means the caller keeps its old
-        place for the question. Never raises."""
+        place for the question. `note`: it is a statement, not a question (#3874), so it is marked
+        "DMbot note". Never raises."""
         try:
             campaign = await self.campaigns.get(guild_id, campaign_id)
             if campaign is None:
@@ -11526,7 +12238,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # Marked as from DMbot, with the campaign, so a DM with several campaigns knows which
             # one is asking (owner, 2026-11-01, #3210).
             who = discord.utils.escape_markdown(campaign.name)
-            text = f"❓ **DMbot has a question** · {who}\n{text}"
+            heading = "📣 **DMbot note**" if note else "❓ **DMbot has a question**"
+            text = f"{heading} · {who}\n{text}"
             # The two link buttons (#3663), added once: every DM gets the same view.
             view = (
                 dm_links.for_campaign(
@@ -11539,12 +12252,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 # send that worked (the caller would then also post on the DM screen, asking
                 # twice). "At least one DM got it" is the contract.
                 try:
-                    # ("Open in Discord" opens the message itself, unless the caller gave another)
-                    own = not (links and links.discord_url)
-                    if (
-                        await self.sidebar_send_dm(user_id, text, view, link_to_itself=own)
-                        == "sent"
-                    ):
+                    # ("Open in Discord" only when it points somewhere else: never at the message)
+                    if await self.sidebar_send_dm(user_id, text, view) == "sent":
                         sent = True
                 except Exception:
                     log.exception("Couldn't ask a DM privately")
@@ -11627,7 +12336,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         while True:
             for guild in list(self.guilds):
                 try:
-                    await self.import_job.run_round(guild.id)
+                    await self.import_job.run_round(
+                        guild.id, int(getattr(self.settings, "server_jobs_at_once", 1))
+                    )
                     await self.run_import_followups(guild.id)
                 except Exception:
                     log.exception("Import: a round failed for a server")
@@ -11647,12 +12358,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # First: the DM's "plays which character" choices, so a session scanned below is linked to
         # the characters those choices make the players' own (#3036).
         await self._apply_import_plays(gid, store)
-        done = 0
-        for ready in await store.ready_for_scan(gid):
+
+        async def scan_one(ready: Ready) -> int:
             with log_context(guild_id=gid, campaign_id=ready.campaign_id):
                 began = int(time.time())
                 if not await store.claim_scan(gid, ready.session_id, began):
-                    continue  # another round or bot has it
+                    return 0  # another round or bot has it
                 try:
                     # Well inside the stale claim. A scan cancelled here may have proposed names
                     # already: they are on the review list, just not in the "new names" post.
@@ -11662,8 +12373,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     await store.finish_scan(gid, ready.session_id, int(time.time()))
                     await self._link_import_party(gid, ready)
                     await self._offer_import_time(gid, ready)
-                    done += 1
                     self._import_names.setdefault(ready.campaign_id, []).extend(added)
+                    return 1
                 except Exception:
                     log.exception("Import: a session's name scan failed")
                     if await store.release_scan(gid, ready.session_id) >= IMPORT_SCAN_TRIES:
@@ -11672,6 +12383,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         self._import_unchecked[ready.campaign_id] = (
                             self._import_unchecked.get(ready.campaign_id, 0) + 1
                         )
+                    return 0
+
+        # One campaign's sessions are scanned in date order, one after another; up to the server's
+        # cap of campaigns go side by side (#4551).
+        by_campaign: dict[str, list[Ready]] = {}
+        for ready in await store.ready_for_scan(gid):
+            by_campaign.setdefault(ready.campaign_id, []).append(ready)
+        gate = asyncio.Semaphore(max(1, int(getattr(self.settings, "server_jobs_at_once", 1))))
+
+        async def scan_campaign(group: list[Ready]) -> int:
+            async with gate:
+                return sum([await scan_one(ready) for ready in group])
+
+        done = sum(await asyncio.gather(*(scan_campaign(g) for g in by_campaign.values())))
         for ready in await store.ready_for_recap(gid):
             with log_context(guild_id=gid, campaign_id=ready.campaign_id):
                 await self._start_import_recap(gid, store, ready)
@@ -11712,13 +12437,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def _tell_imports_left(self, gid: int, store: ImportStore, left: dict[str, int]) -> None:
         """Say, once for each change, how many imported sessions the story read has not reached
         (its call limits ran out): they are read on a later round, so nothing is lost. Only when
-        the import's scans are over, on the DM screen; counts only."""
+        the import's scans are over, in the DM Bot channel (#3874); counts only."""
         for cid in list(self._import_left_told.keys() | left.keys()):
             now = left.get(cid, 0)
             if now == self._import_left_told.get(cid, 0) or await store.pending_scans(gid, cid):
                 continue
             campaign = await self.campaigns.get(gid, cid)
-            if campaign is None or campaign.dm_screen_channel_id is None:
+            channel = self._upkeep_channel(campaign)[0] if campaign is not None else None
+            if channel is None:
                 self._import_left_told.pop(cid, None)
                 continue
             if now:
@@ -11728,15 +12454,23 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     f"📖 The story read has not finished {what} yet. It tries again later on its "
                     "own; nothing is lost."
                 )
-                await self.post(campaign.dm_screen_channel_id, text)
+                await self.post(channel, text)
             self._import_left_told[cid] = now
             if not now:
                 self._import_left_told.pop(cid, None)
 
+    async def _owner_of_campaign(self, gid: int, campaign_id: str) -> int | None:
+        """The account that owns a campaign, or None (for the AI credits ledger, #4005)."""
+        campaign = await self.campaigns.get(gid, campaign_id)
+        return None if campaign is None else campaign.owner_user_id
+
     async def _extract_import(self, gid: int, ready: Ready) -> str:
         """`_read_import_story`, its AI calls filed under this session's import for the DM's live
         window on the import page (#3710), with the page's word for the step."""
-        with ai_feed.job(gid, ready.campaign_id, "import", ready.session_id, step=IMPORT_READING):
+        with (
+            credits.preparing(gid, ready.campaign_id, "import"),  # (metered, #4005)
+            ai_feed.job(gid, ready.campaign_id, "import", ready.session_id, step=IMPORT_READING),
+        ):
             return await DMBot._read_import_story(self, gid, ready)
 
     async def _read_import_story(self, gid: int, ready: Ready) -> str:
@@ -11751,6 +12485,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         campaign = await self.campaigns.get(gid, ready.campaign_id)
         if campaign is None:
             return "skipped"
+        # (who an import may read: the people it recorded, uploader-confirmed speakers included and
+        # anyone with a "no" left out, asked again after each step; Supervisor on #3918)
+        recorded = partial(self.consent.recorded_in, gid, ready.campaign_id)
         try:
             noted = False
 
@@ -11770,6 +12507,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 notice_channel=campaign.dm_screen_channel_id,
                 renew=lambda: store.renew_scan(gid, ready.session_id, int(time.time())),
                 progress=batch,
+                consenting=recorded,
             )
             if outcome == "done":
                 # (the card first: if the second write fails the session is read again, which
@@ -11782,7 +12520,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     ready.campaign_id,
                     ready.session_id,
                     renew=lambda: store.renew_scan(gid, ready.session_id, int(time.time())),
+                    consenting=recorded,
                 )
+                await self._import_scenes_and_who(gid, ready, campaign)
             elif outcome == "limit":
                 await store.set_story(gid, ready.session_id, "waiting", int(time.time()))
             return outcome
@@ -11794,6 +12534,39 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 except Exception as again:
                     log.warning("Import: couldn't note the wait (%s)", type(again).__name__)
             return "skipped"
+
+    async def _import_scenes_and_who(self, gid: int, ready: Ready, campaign: Campaign) -> None:
+        """An imported session's scenes, then who each waiting name could be (#3602's ruling, and
+        #3596): the same steps, switches, call limits and Undo as after a live session, in the
+        same order, before the import's sure step (`_add_sure_import`) runs at its end. The people
+        who may be read are those the import recorded (`ConsentStore.recorded_in`), asked again
+        after each call. Each is its own named stage in the import page's live feed; neither stops
+        the import (each logs the type only). A session a call limit split across rounds is
+        finished by `_extract_imports_left`, after the import's sure step: its scenes and who
+        step run then, on what the sure step left waiting."""
+        assert self.import_job is not None
+        store = self.import_job.store
+        cid, sid = ready.campaign_id, ready.session_id
+        dm_ids = set(campaign.dm_user_ids)
+
+        def recorded() -> Awaitable[Collection[int]]:
+            return self.consent.recorded_in(gid, cid)
+
+        def renew() -> Awaitable[bool]:  # (no other round retakes the import while it runs)
+            return store.renew_scan(gid, sid, int(time.time()))
+
+        for word, step in (
+            (IMPORT_SCENES, self._write_scenes),
+            (IMPORT_WHO, self._write_who),
+            (IMPORT_THREADS, self._read_threads),  # (#4522: off unless its switch is on)
+        ):
+            try:
+                ai_feed.step(word)
+                await step(gid, cid, sid, dm_ids, recorded, renew)
+            except Exception as exc:  # the type only: a database error can quote a row
+                log.warning("Import: %s stopped (%s)", word.lower(), type(exc).__name__)
+        # where the story is (#4173 slice 4): the same walk as after a live session, no AI call
+        await self._walk_story_chain(gid, cid, sid, dm_ids, recorded)
 
     async def _extract_imports_left(self, gid: int) -> dict[str, int]:
         """Imported sessions the story extractor did not finish (a call limit stopped it, or a
@@ -11913,6 +12686,33 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except Exception as exc:
             log.warning("Import time: the offer could not be kept: %s", type(exc).__name__)
 
+    def _reads_campaign(
+        self, guild_id: int, campaign: Campaign
+    ) -> Callable[[int], Awaitable[bool]]:
+        """Whether a person may read this campaign's transcripts: the one rule Discord's channels
+        and the website's doors follow (`channel_sync.reads_campaign`), for the Maps page's player
+        actions (#4347, #4445). "Still in the server" is Discord's member cache only: a member
+        DMbot cannot see is refused."""
+
+        async def may(user_id: int) -> bool:
+            guild = self.get_guild(guild_id)
+            return await channel_sync.reads_campaign(
+                self.campaigns, self.memory, campaign, user_id,
+                in_server=guild is not None and guild.get_member(user_id) is not None,
+            )  # fmt: skip
+
+        return may
+
+    def _game_now(self, guild_id: int) -> web_actions.GameNowFn:
+        """The campaign's game clock now, for a time limit's date from the website (#4503): the
+        one function Discord's card counts on (`time_limits.clock_now`), minutes only."""
+
+        async def now(campaign_id: str) -> int | None:
+            clock = await time_limits.clock_now(self.clocks, guild_id, campaign_id)
+            return None if clock is None else clock[0]
+
+        return now
+
     def _import_clock_choice(self, guild_id: int) -> web_actions.ClockChoiceFn:
         """The website's answer to an import clock offer (#3199), applied the way Discord's two
         buttons do it: the offer is held for this answer (a second answer, from either place,
@@ -12018,21 +12818,39 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 continue  # the import is not over: one report at the end
             reports = self._import_reports.pop(key, [])
             campaign = await self.campaigns.get(gid, cid)
-            if reports and campaign is not None and campaign.dm_screen_channel_id is not None:
+            if reports and campaign is not None:
                 views = name_pass_undo.undo_views_import(cid, [r.fixed for r in reports])
-                screen = campaign.dm_screen_channel_id
-                await self.post(
-                    screen, name_pass_logic.import_text(reports), views[0] if views else None
+                # Private first, with the numbers-only pointer in the DM Bot channel after; the
+                # DM screen holds it only when no DM could be messaged (#3874 E1)
+                fixes = [r.fixed for r in reports]
+                told = await pointer_note.send(
+                    self,
+                    campaign,
+                    name_pass_logic.import_text(reports),
+                    functools.partial(_first_undo_view, cid, fixes),
+                    names_fixed_pointer(
+                        sum(len(r.fixed) for r in reports),
+                        sum(len(r.unsure) for r in reports),
+                        sum(len(r.new) for r in reports),
+                    ),
+                    note=True,
                 )
+                # (`told` is true for either route; an extra that can't go private then goes to the
+                # screen with the first message, which is where it fell back to)
                 for extra in views[1:]:  # Discord holds 25 buttons a message: no Undo is lost
-                    await self.post(screen, "↩️ More Undo buttons for the report above:", extra)
+                    more = "↩️ More Undo buttons for the report above:"
+                    if not await self.ask_privately(gid, cid, more, extra, note=True) and (
+                        told and campaign.dm_screen_channel_id is not None
+                    ):
+                        await self.post(campaign.dm_screen_channel_id, more, extra)
         for cid in list(self._import_party):
             if await store.pending_scans(gid, cid):
                 continue  # once, at the end of the import
             characters = self._import_party.pop(cid)
             campaign = await self.campaigns.get(gid, cid)
-            if campaign is not None and campaign.dm_screen_channel_id is not None:
-                await self.post(campaign.dm_screen_channel_id, party_notice(characters))
+            party_to = self._upkeep_channel(campaign)[0] if campaign is not None else None
+            if party_to is not None:
+                await self.post(party_to, party_notice(characters))  # a count: fine for everyone
         over = self._import_names.keys() | self._import_unchecked.keys()
         for cid in list(over | self._import_speakers.keys() | self._import_entries.keys()):
             if await store.pending_scans(gid, cid):
@@ -12043,16 +12861,25 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             speakers = self._import_speakers.pop(cid, set())
             entries = self._import_entries.pop(cid, set())
             batches = self._import_batches.pop(cid, set())
+            starts = self._import_starts.pop(cid, set())
             campaign = await self.campaigns.get(gid, cid)
-            if campaign is None or campaign.dm_screen_channel_id is None:
+            notice_to, counts_only = self._upkeep_channel(campaign) if campaign else (None, False)
+            if campaign is None or notice_to is None:
                 continue
             if (
-                names
+                (names or starts)
                 and not campaign.ask_before_adding
-                and await self._add_sure_import(campaign, speakers, entries, batches)
+                and await self._add_sure_import(campaign, speakers, entries, batches, starts)
             ):
                 names = []  # added what it was sure of; the notice carries what is left to answer
-            text = after_session_text(names, where="your imported sessions") if names else ""
+            # The DM Bot channel is read by the campaign's people (#3874): a count there, the names
+            # themselves in the DM's private check; the DM screen (no DM Bot channel) keeps them.
+            if not names:
+                text = ""
+            elif counts_only:
+                text = counts_after_session_text(len(names), where="your imported sessions")
+            else:
+                text = after_session_text(names, where="your imported sessions")
             if skipped:
                 one = skipped == 1
                 more = " more" if names else ""
@@ -12066,9 +12893,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )
                 text = f"{text}\n{note}" if text else f"📝 {note}"
             if text:
-                await self.post(
-                    campaign.dm_screen_channel_id, text, view=review_view(cid) if names else None
-                )
+                await self.post(notice_to, text, view=review_view(cid) if names else None)
         for cid in list(self._import_queued.keys() | self._import_unhonoured.keys()):
             if await store.pending_scans(gid, cid):
                 continue  # once, at the end of the import
@@ -12099,27 +12924,38 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 await self.post(channel, f"📜 {missed}")
 
     async def _add_sure_import(
-        self, campaign: Campaign, speakers: set[int], entries: set[str], batches: set[str]
+        self,
+        campaign: Campaign,
+        speakers: set[int],
+        entries: set[str],
+        batches: set[str],
+        starts: Collection[int] = (),
     ) -> bool:
         """An import's scans are over and the DM has not asked to be asked first (#3878): add the
         names and other names DMbot is sure of, as the DM's own calls (`memory.auto_accept`), and
         post the live notice with Undo in the DM Bot channel. Only `entries`, the names these
-        scans proposed (never something already waiting from an upload or a session); connections
-        and players' claims stay questions. Consent is checked once more just before the batch:
-        if anyone whose lines were read (`speakers`) has stopped since, nothing is added and the
-        usual list is posted instead. Returns True when the notice went out (the old post is then
-        not needed), False when nothing was added. Never raises; counts only in the log."""
+        scans proposed (never something already waiting from an upload or a session), and the
+        connections the DM's own lines state in this import's sessions (#3897, `starts`); players'
+        claims, plans, readings and lore's worked-out ties stay questions. Consent is checked once
+        more just before the batch: if anyone whose lines were read (`speakers`) has stopped
+        since, nothing is added and the usual list is posted instead. Returns True when the
+        notice went out (the old post is then not needed), False when nothing was added. Never
+        raises; counts only in the log."""
         from dmbot.ui.names import RecapNamesButton
-        from dmbot.ui.upload_notice import add_sure
+        from dmbot.ui.upload_notice import DmClaims, add_sure
 
         try:
-            agreed = await self.consent.consenting(campaign.guild_id)
-            if self.memory is None or not entries or not speakers <= agreed:
+            # An import is judged by who is recorded in THIS campaign's imported sessions (#3305):
+            # a speaker the uploader confirmed, with no Discord account, counts; a "no" on record
+            # does not.
+            agreed = await self.consent.recorded_in(campaign.guild_id, campaign.id)
+            if self.memory is None or not (entries or starts) or not speakers <= agreed:
                 log.info("Import: names left as questions (consent changed, none, or no store)")
                 return False
             done = await add_sure(
                 self, campaign, {"names": sorted(entries)}, "your imported sessions",
                 connections=False,
+                dm_claims=DmClaims(campaign.dm_user_ids, starts),
                 # (the website finds the notice by its import; with several batches in one report
                 # there is no single one to name, so none is: it shows no notice, never a wrong one)
                 source=("import", next(iter(batches))) if len(batches) == 1 else None,
@@ -12143,46 +12979,68 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def _scan_import(self, gid: int, ready: Ready) -> list[str]:
         """`_scan_import_lines`, its AI calls filed under this session's import for the DM's live
         window on the import page (#3710), with the page's word for the step."""
-        with ai_feed.job(gid, ready.campaign_id, "import", ready.session_id, step=IMPORT_NAMES):
+        with (
+            credits.preparing(gid, ready.campaign_id, "import"),  # (metered, #4005)
+            ai_feed.job(gid, ready.campaign_id, "import", ready.session_id, step=IMPORT_NAMES),
+        ):
             return await DMBot._scan_import_lines(self, gid, ready)
 
     async def _scan_import_lines(self, gid: int, ready: Ready) -> list[str]:
-        """The name scan of one imported session: the lines of people who still agree (asked after
+        """The name scan of one imported session: the lines of people recorded in it (asked after
         the lines are read, since a person can stop at any moment) and nobody else's. Returns the
-        names proposed."""
+        names proposed. Recorded is `recorded_in`, as the import's claim reader reads it (#3305):
+        the people who agree, plus the speakers the uploader confirmed for this campaign (a speaker
+        without Discord has a negative number), minus anyone with a "no" on record. `consenting`
+        alone skipped every imported speaker, so a session with none in Discord was never scanned,
+        and the names it said were never shown (#3962)."""
         assert self.import_job is not None
         campaign = await self.campaigns.get(gid, ready.campaign_id)
         if self.memory is None or campaign is None:
             log.info("Import: no name scan (names are off, or the campaign is gone)")
             return []
         rows = await self.import_job.store.scan_lines(gid, ready.session_id)
-        agreed = await self.consent.consenting(gid)
+        agreed = await self.consent.recorded_in(gid, ready.campaign_id)
+
+        def recorded() -> Awaitable[Collection[int]]:
+            # (the name pass asks again after its AI call, by the same rule: #3962)
+            return self.consent.recorded_in(gid, ready.campaign_id)
+
         lines = [(uid, text) for uid, text in rows if uid in agreed]
         if not lines:
             await self.repair_names(
                 gid, ready.campaign_id, ready.session_id, (), agreed,
                 self._import_reports.setdefault((gid, ready.campaign_id), []),
-                game_only=True,
+                game_only=True, recheck=recorded,
             )  # (marks it)  # fmt: skip
             return []
         users = {uid for uid, _ in lines} | set(agreed) | set(campaign.dm_user_ids)
         self._import_speakers.setdefault(ready.campaign_id, set()).update(uid for uid, _ in lines)
         if ready.import_id:
             self._import_batches.setdefault(ready.campaign_id, set()).add(ready.import_id)
+        self._import_starts.setdefault(ready.campaign_id, set()).add(ready.started_at)
         # PlotBot's name pass (#2628) for an imported session too, before the scan and the recap;
         # the lines are read again when it fixed something.
         held = self._import_reports.setdefault((gid, ready.campaign_id), [])
         if await self.repair_names(
-            gid, ready.campaign_id, ready.session_id, users, agreed, held, game_only=True
+            gid,
+            ready.campaign_id,
+            ready.session_id,
+            users,
+            agreed,
+            held,
+            game_only=True,
+            recheck=recorded,
         ):
             rows = await self.import_job.store.scan_lines(gid, ready.session_id)
             lines = [(uid, text) for uid, text in rows if uid in agreed] or lines
         # What an imported session says is what was said at the table: held-back names it says
-        # are shown, as after a live session (#2404).
+        # are shown, as after a live session (#2404). Not when the party was split during it: the
+        # lines here carry no moments, so it holds, and the DM shows (#4037, fails closed).
         try:
-            await self._reveal_said(
-                gid, ready.campaign_id, _fixed([t for _, t in lines]), "an imported session"
-            )
+            if not await self.memory.session_ever_split(gid, ready.campaign_id, ready.started_at):
+                await self._reveal_said(
+                    gid, ready.campaign_id, _fixed([t for _, t in lines]), "an imported session"
+                )
         except Exception:
             log.exception(
                 "Import: showing the names the session said failed"
@@ -12473,19 +13331,35 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             await self.campaigns.forget_guild_if_empty(guild_id)
 
     async def run_peek_notices(self) -> None:
-        """Tell the DM, on the DM screen, that a player turned the peek on (#2404): one line for
-        each visit, taken from the website's peek door's rows. Nothing but the person's display
-        name is in it."""
+        """Tell the campaign that players turned the peek on (#2404, #3874): one counts-only line
+        in the DM Bot channel (the DM screen if there is none) for each campaign and round, and
+        each name only in a private message to the campaign's DMs, taken from the website's peek
+        door's rows. The name is the person's own display name and nothing else is in it."""
         store = self.peek_notices
         if store is None:
             return
         for guild in list(self.guilds):
+            by_campaign: dict[str, list[str]] = {}
             for peek in await store.take(guild.id):
-                with log_context(guild_id=guild.id, campaign_id=peek.campaign_id):
-                    campaign = await self.campaigns.get(guild.id, peek.campaign_id)
-                    if campaign is None or not campaign.dm_screen_channel_id:
-                        continue
-                    await self.post(campaign.dm_screen_channel_id, peek_notice(peek.name))
+                by_campaign.setdefault(peek.campaign_id, []).append(peek.name)
+            for campaign_id, names in by_campaign.items():
+                with log_context(guild_id=guild.id, campaign_id=campaign_id):
+                    # Each campaign in its own try: the rows were marked posted when taken, so one
+                    # failure must not lose the others' names. Only the error's type is logged.
+                    try:
+                        campaign = await self.campaigns.get(guild.id, campaign_id)
+                        if campaign is None:
+                            continue
+                        try:  # (a courtesy: the names below go out even if it fails)
+                            await self._post_upkeep(campaign, peek_counts_line(len(names)))
+                        except Exception as exc:
+                            log.warning("Peek count not posted: %s", type(exc).__name__)
+                        # (a person with two accounts is told once: `dm_accounts`, not the ids)
+                        for user_id in sorted(campaign.dm_accounts):
+                            for name in names:
+                                await self._dm_user(user_id, peek_notice(name))
+                    except Exception as exc:
+                        log.warning("Peek notices failed: %s", type(exc).__name__)
 
     def _waiting_answers(self, guild_id: int) -> web_actions.Waiting | None:
         """What the website's answers to waiting connections need (#2635): the claims, the
@@ -12584,6 +13458,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 look_up=self._player_lookup(guild.id),
                                 actions=store,
                                 clock=self._import_clock_choice(guild.id),
+                                game_now=self._game_now(guild.id),
+                                maps=self.map_store,
+                                uploads=MapUploads(
+                                    self.maps_staging,
+                                    self.picture_keeper,
+                                    self.map_store,
+                                    self.settings.picture_storage_mb,
+                                ),
+                                reads=self._reads_campaign(guild.id, campaign),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -12688,30 +13571,32 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         """The lore DMs uploaded on the website (#3022): for each server, sweep its queue (words
         never stay just because the DM did not come back), and when no read is running there, take
         the oldest waiting upload and read it in its own task. A read takes minutes, so it must not
-        hold this loop, which every other website action shares. One read at a time per server."""
+        hold this loop, which every other website action shares. One read at a time per campaign,
+        and at most `server_jobs_at_once` on a server (#4551)."""
         queue = self.lore_uploads
         if queue is None or self.memory is None:
             return
+        cap = max(1, int(getattr(self.settings, "server_jobs_at_once", 2)))
         for guild in list(self.guilds):
             if self._closing:
                 return
-            running = self._lore_reads.get(guild.id)
-            if running is not None and running.done():
-                del self._lore_reads[guild.id]
-                running = None
+            for key in [k for k, t in self._lore_reads.items() if k[0] == guild.id and t.done()]:
+                del self._lore_reads[key]
             now = time.monotonic()
             if now - self._lore_swept.get(guild.id, -LORE_SWEEP_EVERY_S) >= LORE_SWEEP_EVERY_S:
                 self._lore_swept[guild.id] = now
                 await queue.sweep(guild.id)
-            if running is not None:
-                continue
-            claim = await queue.claim_next(guild.id)
-            if claim is None:
-                continue
-            with log_context(guild_id=guild.id, campaign_id=claim.campaign_id):
-                self._lore_reads[guild.id] = asyncio.ensure_future(
-                    lore_upload.run_upload(self, queue, claim, guild.id)
-                )
+            while True:
+                busy = [k[1] for k in self._lore_reads if k[0] == guild.id]
+                if len(busy) >= cap:  # (the server's cap: the AI and the bill are shared)
+                    break
+                claim = await queue.claim_next(guild.id, not_campaigns=busy)
+                if claim is None:
+                    break
+                with log_context(guild_id=guild.id, campaign_id=claim.campaign_id):
+                    self._lore_reads[(guild.id, claim.campaign_id)] = asyncio.ensure_future(
+                        lore_upload.run_upload(self, queue, claim, guild.id)
+                    )
 
     async def run_house_file_requests(self) -> None:
         """The House-rules file requests DMs made on the website (#3087): for each server, sweep
@@ -12818,15 +13703,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self, campaign: Campaign, rule: OptionalRule, turn_on: bool, sender_id: int
     ) -> bool:
         """An optional rule chosen on the website (#2755), as `/dmbot optionalrules` does it:
-        saved, then noted in the DM screen if the campaign has one. A line that could not be
+        saved, then noted in the DM Bot channel (the screen if none). A line that could not be
         posted is not the choice's failure (the rule is saved): False says so, for the page to
         mention. The note never pings."""
         await self.campaigns.set_optional_rule(campaign.guild_id, campaign.id, rule.id, turn_on)
-        if campaign.dm_screen_channel_id is None:
+        channel = upkeep.channel_for(campaign)  # (the DM Bot channel, else the screen; #3874)
+        if channel is None:
             return True
         try:
             return await self.post(
-                campaign.dm_screen_channel_id,
+                channel,
                 optional.screen_line(rule, turn_on, f"<@{sender_id}>"),
             )
         except Exception as exc:  # the type only
@@ -12917,7 +13803,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         image: Any,
         read: images.Read | None,
         still_ok: Callable[[], bool],
-    ) -> None:
+    ) -> int | None:
         """Keep one posted picture with its campaign and say where its link is. A picture that is
         not kept (too big, broken, no room, the bucket down) was still described and keeps its
         line; the reason is logged as a word and nothing else."""
@@ -12929,14 +13815,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             or not self._pictures_may_be_kept(gid, user_id)
             or not still_ok()
         ):
-            return
+            return None
         agreed = await self.consent.agreed_under(gid, user_id)
         if (
             agreed is None
             or agreed[1] < consent_terms.IMAGE_TERMS_VERSION  # a yes to wording that keeps pictures
             or not still_ok()
         ):  # no such record of the yes: nothing is kept on a guess
-            return
+            return None
         granted, agreed_version = agreed
         got = await keeper.keep(
             PictureContext(
@@ -12956,11 +13842,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             await self._tell_pictures_removed(gid, cid, got.removed)
         if got.picture is None:
             log.info("Table image: not kept (%s)", got.why_not)
-            return
+            return None
         if got.new and not still_ok():
             # The poster stopped, or the message went, while it was stored: take it back.
             await keeper.discard(gid, cid, got.picture)
-            return
+            return None
+        if got.new and read is not None and read.kind == images.MAP and self.map_store is not None:
+            # A map: its poster is asked, once and in private, whether they may use and save it
+            # (#4344). Not answered, it stays a picture as before.
+            campaign = await self.campaigns.get(gid, cid)
+            if campaign is not None and still_ok():  # (the poster's yes, checked once more)
+                await map_question.ask(self, gid, campaign, got.picture)
         if got.new and channel_id and self.settings.site_url:
             # The link under the description: anyone with it can open the picture (the poster or a
             # DM can make it private or delete it on the website). The picture, its files and this
@@ -12976,6 +13868,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     await self._delete_reply(reply)
                 else:
                     self._image_replies.setdefault(message_id, []).append(reply)
+        return got.picture.id
+
+    async def take_private_map(self, message: discord.Message) -> bool:
+        """A picture sent to DMbot in a private chat is a map to keep (#4372): True when it took
+        it, so the sidebar says nothing more. Nothing is stored before the sender's yes."""
+        if self.map_store is None or self.picture_keeper is None:
+            return False
+        return await map_send.from_private_message(self, message)
 
     async def _tell_pictures_removed(self, guild_id: int, campaign_id: str, count: int) -> None:
         """The DMs hear once (a run of the bot) that old pictures were removed to make room."""
@@ -12990,7 +13890,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             f"DMbot removed {count} old {word} to make room. "
             "Mark the ones to keep as permanent on the website."
         )
-        await private_note.send(self, campaign, text, lambda: discord.ui.View())
+        # Private first; a count, so the DM Bot channel is the fallback (#3874), not the screen.
+        if await self.ask_privately(guild_id, campaign_id, text, discord.ui.View()):
+            return
+        channel = upkeep.channel_for(campaign)
+        if channel is not None:
+            await self.post(channel, text)
+        else:
+            log.info("A pictures-removed note had nowhere to go (%d pictures)", count)
 
     async def run_picture_actions(self) -> None:
         """What posters and DMs chose on the website's Pictures page, applied through the picture
@@ -13003,6 +13910,139 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 return
             await actions.run_once(guild.id)
 
+    async def run_map_close_reads(self) -> None:
+        """Every `MAP_CLOSE_EVERY_S`, read closely the kept maps DMbot may now use (#4349, MapBot
+        6b-2; Supervisor's ruling): as one background task, so the poll loop never waits for the
+        AI, at most `MAP_CLOSE_PER_SWEEP` a time. Nobody is told: each read goes quietly into its
+        map's note (counts only in the log)."""
+        if None in (self.map_store, self.image_desk, self.map_notes, self.picture_store,
+                    self.picture_bucket):  # fmt: skip
+            return
+        task = self._map_close_task
+        if (task is not None and not task.done()) or (
+            time.time() - self._map_close_swept < MAP_CLOSE_EVERY_S
+        ):
+            return
+        self._map_close_swept = time.time()
+        self._map_close_task = self._track(self._map_close_reads(), "map-close-reads")
+
+    async def _map_close_reads(self) -> None:
+        store = self.map_store
+        assert store is not None
+        done: Counter[str] = Counter()
+        now = time.time()
+        for guild in list(self.guilds):
+            if self._closing or done["read"] + done["failed"] >= MAP_CLOSE_PER_SWEEP:
+                break
+            try:
+                # (the poster's consent is asked from the cache: fill it for a quiet server first)
+                await self.consent.consenting(guild.id)
+                waiting = await store.close_read_waiting(guild.id)
+            except Exception as exc:
+                log.warning("Map close reads: a server's list failed (%s)", type(exc).__name__)
+                continue
+            for campaign_id, a_map in waiting:
+                if self._closing or done["read"] + done["failed"] >= MAP_CLOSE_PER_SWEEP:
+                    break
+                if self._map_close_after.get(campaign_id, 0.0) > now:
+                    done["waiting"] += 1  # (put off a while ago: no credits, the day's limit)
+                    continue
+                with log_context(guild_id=guild.id, campaign_id=campaign_id):
+                    try:
+                        done[await self._close_read_one(guild.id, campaign_id, a_map)] += 1
+                    except Exception as exc:  # one map's trouble never stops the others
+                        log.warning("Map close reads: one failed (%s)", type(exc).__name__)
+                        done["error"] += 1
+        if done:
+            log.info("Map close reads: %s", ", ".join(f"{k} {v}" for k, v in sorted(done.items())))
+
+    async def _close_read_one(self, gid: int, cid: str, a_map: MapRow) -> str:
+        """One kept map's close read, every check asked now and again after the slow steps
+        (Supervisor's ruling; CLAUDE.md, "Consent" and "Maps and pictures"): DMbot may use it, the
+        plan has AI, the DM confirmed the right to use shared material, the picture is still kept
+        and its poster still agrees to pictures. What to count it as in the log."""
+        store, desk, notes = self.map_store, self.image_desk, self.map_notes
+        pictures, bucket = self.picture_store, self.picture_bucket
+        assert store and desk and notes and pictures and bucket
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None or not maps_store.may_use_map(a_map):
+            return "not allowed"
+        if not await self.plan_allows("ai", gid, campaign, fail_open=False):
+            return "no AI on the plan"
+        if not await self._maps_may_be_kept(gid, cid):
+            return "no right-to-use record"
+        picture = await pictures.get(gid, cid, a_map.picture_id)
+        if picture is None or picture.gone:
+            return "picture gone"
+        poster = picture.poster_id
+
+        def still_ok() -> bool:
+            return self.consent.has_image_consent(gid, poster)
+
+        if not still_ok():
+            return "poster stopped"
+        claimed = await store.claim_close_read(gid, cid, a_map.id)
+        if claimed is None:
+            return "taken"  # (another sweep has it, or it changed since it was listed)
+        try:
+            if await notes.close_known(gid, cid, picture.id, picture.message_id):
+                await store.close_read_done(gid, cid, a_map.id, claimed)
+                return "read before"  # (a DM's map read closely when posted, #4173 6b-1)
+            data = await bucket.get(picture.object_key)
+            media = images.sniff(data)
+            if media is None:
+                raise images.ImageError("not a picture")
+            read = await desk.read_closely(
+                gid, cid, Image(media, data), lambda: credits.preparing(gid, cid, "map"), still_ok
+            )
+        except (image_desk.DayLimit, AIOutOfFunds) as exc:  # put off: read when it can be
+            await store.close_read_failed(gid, cid, a_map.id, claimed, counted=False)
+            self._map_close_after[cid] = time.time() + (
+                MAP_CLOSE_NO_FUNDS_S if isinstance(exc, AIOutOfFunds) else image_desk.DAY_S
+            )
+            return "put off"
+        except image_desk.Stopped:
+            await store.close_read_failed(gid, cid, a_map.id, claimed, counted=False)
+            return "poster stopped"
+        except asyncio.CancelledError:  # (shutting down mid-read: the try is given back)
+            await store.close_read_failed(gid, cid, a_map.id, claimed, counted=False)
+            raise
+        except Exception as exc:
+            log.info("Map close read: failed (%s)", type(exc).__name__)
+            await store.close_read_failed(gid, cid, a_map.id, claimed)
+            return "failed"
+        # Asked again after the read: the poster may have stopped, the DM taken back their yes,
+        # or the picture gone (the note write checks that last one in its own transaction).
+        now_map = await store.get(gid, cid, a_map.id, maps_store.Viewer(dm=True))
+        if not still_ok() or now_map is None or not maps_store.may_use_map(now_map):
+            await store.close_read_failed(gid, cid, a_map.id, claimed, counted=False)
+            return "stopped meanwhile"
+        if (
+            read is None
+            or read.kind != images.MAP
+            or not await notes.set_close(
+                gid, cid, poster, read, picture_id=picture.id, message_id=picture.message_id
+            )
+        ):
+            # (a cut or empty answer, or the picture gone: tried again, never "nothing found")
+            await store.close_read_failed(gid, cid, a_map.id, claimed)
+            return "not read"
+        await store.close_read_done(gid, cid, a_map.id, claimed)
+        return "read"
+
+    async def run_waiting_now(self) -> None:
+        """Once a minute, write on each waiting connection what a keep would replace, for the
+        website's card (#4441). Counts only in the log."""
+        store, memory = self.backstory_links, self.memory
+        if store is None or memory is None or time.time() - self._waiting_now_at < 60:
+            return
+        self._waiting_now_at = time.time()
+        changed = 0
+        for guild in list(self.guilds):
+            changed += await waiting_now.refresh_guild(memory, store, guild.id)
+        if changed:
+            log.info("What a keep would replace: %d waiting connections updated", changed)
+
     async def run_picture_sweep(self) -> None:
         """Once a day, delete the picture files no row points to (counts only in the log)."""
         db, bucket = self._picture_db, self.picture_bucket
@@ -13010,6 +14050,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         self._picture_swept = time.time()
         await picture_sweep.sweep(db, bucket)
+        if self.maps_staging is not None:  # (sent maps nobody picked up, #4347)
+            await picture_sweep.sweep_staging(self.maps_staging)
 
     async def run_web_report_requests(self) -> None:
         """The reports DMs asked for again on the website (#2805): each asker must still be a DM of
@@ -13278,6 +14320,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     except Exception as exc:  # the type only: a database error can quote a row
                         log.warning("Graph checks failed for a server: %s", type(exc).__name__)
             await asyncio.sleep(60)
+
+    async def _person_key_loop(self) -> None:
+        """A minute after start and then every 6 hours: give the trial and email rows written before
+        the secret was set their keyed hash (#4145). Does nothing while no secret is configured;
+        each pass is idempotent and resumes where the last stopped."""
+        await asyncio.sleep(60)
+        while True:
+            try:
+                await person_key_backfill.run_logged(self.campaigns.db)
+            except Exception as exc:
+                log.warning("The person key job failed (%s)", type(exc).__name__)
+            await asyncio.sleep(6 * 3600)
 
     async def _trial_loop(self) -> None:
         """Every hour: the last-day messages and the automatic extensions (#1229). Waits a
@@ -13801,6 +14855,147 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         stored = await TheatreStore(self.campaigns.db).read_by_start(gid, cid, job.session_at)
         return [(line.user_ids, line.text) for line in stored]
 
+    async def _script_make_loop(self) -> None:
+        """Every few seconds: answer the website's "Make the script" presses (#3899;
+        `script_make`). A server's trouble never stops the others."""
+        await asyncio.sleep(SCRIPT_MAKE_FIRST_S)
+        running: dict[int, asyncio.Task[int]] = {}
+        while True:
+            for guild in list(self.guilds):
+                # One script at a time for a server, but a long one never holds up another
+                # server's presses (a run takes minutes), so each runs as its own task.
+                task = running.get(guild.id)
+                if task is not None and not task.done():
+                    continue
+                running[guild.id] = asyncio.create_task(
+                    script_make.run_round(self, guild.id), name=f"script-press-{guild.id}"
+                )
+            await asyncio.sleep(SCRIPT_MAKE_EVERY_S)
+
+    async def _upload_undo_loop(self) -> None:
+        """Every few seconds: apply the website's "Undo this upload" presses (#4078;
+        `upload_undo`). An undo is a few writes and a chain of Undos, so one pass per server; a
+        server's trouble never stops the others."""
+        await asyncio.sleep(UPLOAD_UNDO_FIRST_S)
+        while True:
+            for guild in list(self.guilds):
+                try:
+                    while await upload_undo.run_round(self, guild.id):  # drain what waits
+                        pass
+                except Exception as exc:
+                    log.warning("An upload undo round failed (%s)", type(exc).__name__)
+            await asyncio.sleep(UPLOAD_UNDO_EVERY_S)
+
+    async def _trait_answer_loop(self) -> None:
+        """Every few seconds: apply the website's lineage and class answers (#3946;
+        `trait_answer`). Quick work (no AI), so one pass per server; a server's trouble never
+        stops the others."""
+        await asyncio.sleep(TRAIT_ANSWER_FIRST_S)
+        while True:
+            for guild in list(self.guilds):
+                try:
+                    while await trait_answer.run_round(self, guild.id):  # drain what waits
+                        pass
+                except Exception as exc:
+                    log.warning("A lineage answer round failed (%s)", type(exc).__name__)
+            await asyncio.sleep(TRAIT_ANSWER_EVERY_S)
+
+    async def _hand_over_loop(self) -> None:
+        """Every few seconds: apply the website's answers to "Does Claude still have it?"; every
+        minute: write the list of those questions the page reads (#4122; `hand_over_answer`).
+        Quick work (no AI), one pass per server; a server's trouble never stops the others."""
+        await asyncio.sleep(HAND_OVER_FIRST_S)
+        rounds = 0
+        while True:
+            for guild in list(self.guilds):
+                try:
+                    if rounds % HAND_OVER_LIST_EVERY == 0:
+                        await hand_over_answer.refresh_guild(self, guild.id)
+                    while await hand_over_answer.run_round(self, guild.id):  # drain what waits
+                        pass
+                except Exception as exc:
+                    log.warning("A hand-over answer round failed (%s)", type(exc).__name__)
+            rounds += 1
+            await asyncio.sleep(HAND_OVER_EVERY_S)
+
+    async def _disk_check_loop(self) -> None:
+        """Every ten minutes: look at how full the disks core can see are, and say so before one is
+        full (#4075; `disk_check`). Counts only in the log; the owner is told by the usual alert."""
+        watch = disk_check.DiskWatch(
+            disk_check.places_for(self.settings.data_dir),
+            warn_pct=self.settings.disk_warn_pct,
+            alert_pct=self.settings.disk_alert_pct,
+        )
+        await asyncio.sleep(DISK_CHECK_FIRST_S)
+        while True:
+            await disk_check.look(watch)  # (never raises)
+            await asyncio.sleep(disk_check.CHECK_EVERY_S)
+
+    async def _member_lookup_loop(self) -> None:
+        """Every few seconds: answer the website's "who is this Discord ID?" questions, a few in
+        each server (#4225, point 5; `member_lookups`). A server's trouble never stops the
+        others."""
+        await asyncio.sleep(MEMBER_LOOKUP_FIRST_S)
+        while not self._closing:
+            for guild in list(self.guilds):
+                try:
+                    await member_lookups.run(self, guild.id)
+                except Exception as exc:
+                    log.warning("Member lookups: a server's round failed (%s)", type(exc).__name__)
+            await asyncio.sleep(MEMBER_LOOKUP_EVERY_S)
+
+    async def _member_names_loop(self) -> None:
+        """Every minute: give the people DMbot knows only as `Player 1234` their Discord names, a
+        few in each server (#4225; `member_names`). A server's trouble never stops the others."""
+        await asyncio.sleep(MEMBER_NAMES_FIRST_S)
+        skip: dict[tuple[int, int], float] = {}
+        while not self._closing:
+            for guild in list(self.guilds):
+                try:
+                    await member_names.run(self, guild.id, skip)
+                except Exception as exc:
+                    log.warning("Member names: a server's round failed (%s)", type(exc).__name__)
+            await asyncio.sleep(MEMBER_NAMES_EVERY_S)
+
+    async def _wizard_round(self, guild_id: int) -> int:
+        """One server's finish round; a failure is logged (the class only) and never escapes."""
+        try:
+            taken = await wizard_finish.run_round(self, guild_id)
+        except Exception as exc:
+            log.warning("Wizard finish: a server's round failed (%s)", type(exc).__name__)
+            return 0
+        try:  # a sheet link that waited for a player (#4205): one a round, after the run
+            await wizard_finish.run_sheet_waits(self, guild_id)
+        except Exception as exc:
+            log.warning("Wizard sheets: a server's round failed (%s)", type(exc).__name__)
+        return taken
+
+    async def _wizard_finish_loop(self) -> None:
+        """Every few seconds: answer the website's start-up wizard finish runs (#3955;
+        `wizard_finish`), and once an hour remove the drafts nobody came back to. A server's trouble
+        never stops the others; a run takes minutes, so each server's runs in its own task."""
+        await asyncio.sleep(WIZARD_FINISH_FIRST_S)
+        running: dict[int, asyncio.Task[int]] = {}
+        swept = float("-inf")
+        while True:
+            now = time.monotonic()
+            sweep = now - swept >= WIZARD_SWEEP_EVERY_S
+            if sweep:
+                swept = now
+            for guild in list(self.guilds):
+                if sweep:
+                    try:
+                        await wizard_finish.WizardFinishes(self.campaigns.db).sweep(guild.id)
+                    except Exception:
+                        log.exception("Wizard drafts: a server's sweep failed")
+                task = running.get(guild.id)
+                if task is not None and not task.done():
+                    continue
+                running[guild.id] = asyncio.create_task(
+                    self._wizard_round(guild.id), name=f"wizard-finish-{guild.id}"
+                )
+            await asyncio.sleep(WIZARD_FINISH_EVERY_S)
+
     async def _auto_script_loop(self) -> None:
         """Every minute: make the scripts that are due, by themselves (#3901; `auto_script`). A
         server's trouble never stops the others."""
@@ -13837,17 +15032,62 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             looked = 0
             for guild in list(self.guilds):
                 try:
-                    for campaign in await self.campaigns.list_campaigns(guild.id):
+                    campaigns = await self.campaigns.list_campaigns(guild.id)
+                except Exception:
+                    log.exception("Channel sync: a server's look failed")
+                    continue
+                for campaign in campaigns:
+                    try:  # one campaign's trouble never stops the next
                         with log_context(guild_id=guild.id, campaign_id=campaign.id):
                             await channel_sync.reconcile(
                                 guild, campaign, self.campaigns, self.memory
                             )
-                        looked += 1
-                        await asyncio.sleep(OWNER_CHECK_GAP_S)
-                except Exception:
-                    log.exception("Channel sync: a server's look failed")
+                    except Exception:
+                        log.exception("Channel sync: a campaign's look failed")
+                    looked += 1
+                    await asyncio.sleep(OWNER_CHECK_GAP_S)
             log.info("Channel sync: %d campaign(s) looked at", looked)
             await asyncio.sleep(CHANNEL_SYNC_EVERY_S)
+
+    async def _orphan_channels_loop(self) -> None:
+        """Delete the DM Bot, transcript and DM screen channels DMbot made for a campaign that no
+        longer exists (#4479), after the grace in `dm_screen/orphan_channels`. A server's trouble
+        never stops the rest; counts only in the log; the server's owner is told once a sweep that
+        deleted something."""
+        sightings = orphan_channels.Sightings()
+        await asyncio.sleep(ORPHAN_CHANNELS_FIRST_S)
+        while True:
+            for guild in list(self.guilds):
+                try:
+                    with log_context(guild_id=guild.id):
+                        await self._orphan_channels_in(guild, sightings)
+                except Exception:
+                    log.exception("Orphaned channels: a server's look failed")
+            await asyncio.sleep(ORPHAN_CHANNELS_EVERY_S)
+
+    async def _orphan_channels_in(
+        self, guild: discord.Guild, sightings: orphan_channels.Sightings
+    ) -> None:
+        # every channel any live campaign of this server points to (read in one go)
+        live = await self.campaigns.special_channel_ids(guild.id)
+        me = guild.me
+        found = await orphan_channels.sweep(
+            guild.id,
+            guild.text_channels,
+            live,
+            sightings,
+            can_manage=me is not None and me.guild_permissions.manage_channels,
+        )
+        if found.seen or found.deleted or found.failed:
+            log.info(
+                "Orphaned channels: %d seen, %d deleted, %d failed%s",
+                found.seen,
+                found.deleted,
+                found.failed,
+                f" ({found.skipped})" if found.skipped else "",
+            )
+        if found.deleted and guild.owner_id:
+            await self.dm_user(guild.owner_id, orphan_channels.told_words(found.deleted))
 
     async def upgrade_dm_bot_channel(self, campaign: Campaign) -> int | None:
         """A campaign made before the DM Bot channel (#1666) gets one when its ⚙️ Manage DMbot is
@@ -14036,7 +15276,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         if event is not None and (event.names_changed or event.kinds_changed):
                             # (entries, names, facts, and the labels of kinds show on the pages)
                             self._npcs_changed(event.campaign_id)
-                        if event is not None and event.names_changed:
+                        if event is not None and (
+                            event.names_changed or event.campaign_id in self._links_ready_msgs
+                        ):  # (a campaign with a live message hears every change, to count down)
                             self._links_ready_changed(event.campaign_id)
             except asyncio.CancelledError:
                 raise
@@ -14083,17 +15325,91 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         guild_id, campaign = found
         with log_context(guild_id=guild_id, campaign_id=campaign_id):
-            # (nothing is marked told while there is nowhere to say it)
-            if not campaign.dm_screen_channel_id or not await store.count(guild_id, campaign_id):
-                return  # most campaigns have none waiting: the common case costs one count
-            onto = await memory.ontology(guild_id, campaign_id)
-            symmetric = {k for k, p in onto.predicates.items() if p.symmetric}
-            taken = await store.take_ready_notices(guild_id, campaign_id, symmetric=symmetric)
-            text = links_ready.notice(taken.counts)
-            if text and not await self.post(
-                campaign.dm_screen_channel_id, text, links_ready.view(campaign_id)
-            ):
-                await store.untell(guild_id, campaign_id, taken.ids)  # said next time instead
+            # A place's parent DMbot assumed (#4173 slice 3) is kept once both places are: never a
+            # question, so it is done here, where a name's keep is noticed, before the count.
+            try:
+                await backstory_keep.keep_assumed(memory, store, guild_id, campaign_id)
+            except Exception as exc:
+                log.warning("Assumed places couldn't be kept (%s)", type(exc).__name__)
+            # Upkeep, not live play: the DM Bot channel (the DM screen only where there is none).
+            channel_id = campaign.dm_bot_channel_id or campaign.dm_screen_channel_id
+            # The whole decision runs under the campaign's lock, so two looks never post, edit and
+            # end the one live message at once (what is on screen is read inside it).
+            async with self._links_ready_locks.setdefault(campaign_id, asyncio.Lock()):
+                mine = self._links_ready_msgs.get(campaign_id)
+                waiting = await store.count(guild_id, campaign_id) if channel_id else 0
+                if not channel_id or not waiting:
+                    if mine is not None:  # the last one was answered: the message says so
+                        await self._end_links_ready(campaign_id, links_ready.ALL_ANSWERED)
+                    return  # most campaigns have none waiting: the common case costs one count
+                onto = await memory.ontology(guild_id, campaign_id)
+                symmetric = {k for k, p in onto.predicates.items() if p.symmetric}
+                taken = await store.take_ready_notices(guild_id, campaign_id, symmetric=symmetric)
+                if not taken.ids and mine is None:
+                    return  # nothing new became ready and nothing is on screen
+                # One message that says the whole count (what is ready now, told before or not),
+                # so a burst of answers never becomes a flood of posts.
+                now = await store.ready_counts(guild_id, campaign_id, symmetric=symmetric)
+                if not now:
+                    # Some wait on a name, but none can be checked now. Never "All answered" while
+                    # connections remain: a message on screen says so, with no count to be untrue.
+                    if mine is not None:
+                        await self._end_links_ready(campaign_id, links_ready.NONE_READY)
+                    return
+                # (counts only in the DM Bot channel; the DM screen may name the upload)
+                text = links_ready.notice(now, named=not campaign.dm_bot_channel_id)
+                said = await self._say_links_ready(
+                    campaign_id, channel_id, text, fresh=bool(taken.ids)
+                )
+                if not said:
+                    await store.untell(guild_id, campaign_id, taken.ids)  # said next time instead
+
+    async def _end_links_ready(self, campaign_id: str, words: str) -> None:
+        """The live message has nothing left to check: it ends with `words` ("✅ All answered." or
+        "None ready to check right now.") and no button (#3874), and the next batch is a new
+        message. A message that is gone ends the remembering; a passing error keeps it, so a later
+        look tries again. Never raises."""
+        mine = self._links_ready_msgs.get(campaign_id)
+        if mine is None:
+            return
+        channel = self.get_channel(mine[0])
+        if isinstance(channel, discord.TextChannel):
+            try:
+                await channel.get_partial_message(mine[1]).edit(content=words, view=None)
+            except (discord.NotFound, discord.Forbidden):
+                pass  # gone, or not ours any more
+            except discord.HTTPException:
+                return  # a passing problem: the entry stays and a later look ends it
+        self._links_ready_msgs.pop(campaign_id, None)
+
+    async def _say_links_ready(
+        self, campaign_id: str, channel_id: int, text: str, *, fresh: bool = False
+    ) -> bool:
+        """Edit the campaign's live "connections ready" message, or post it (and remember it).
+        True when the words are on screen. `fresh`: connections were just announced, so Discord is
+        asked even when the words are the same (a deleted message is then noticed and replaced)."""
+        mine = self._links_ready_msgs.get(campaign_id)
+        if mine is not None and mine[0] == channel_id and mine[2] == text and not fresh:
+            return True  # already says exactly this: no call to Discord
+        if mine is not None and mine[0] == channel_id:
+            channel = self.get_channel(channel_id)
+            if isinstance(channel, discord.TextChannel):
+                try:
+                    await channel.get_partial_message(mine[1]).edit(
+                        content=text, view=links_ready.view(campaign_id)
+                    )
+                    self._links_ready_msgs[campaign_id] = (channel_id, mine[1], text)
+                    return True
+                except (discord.NotFound, discord.Forbidden):
+                    # gone, or not ours any more: a new one below
+                    self._links_ready_msgs.pop(campaign_id, None)
+                except discord.HTTPException:
+                    return False  # a passing problem: said again next time, never a second message
+        sent = await self.post_message(channel_id, text, links_ready.view(campaign_id))
+        if sent is None:
+            return False
+        self._links_ready_msgs[campaign_id] = (channel_id, sent.id, text)
+        return True
 
     def _winding_down(self, guild_id: int, campaign_id: str) -> bool:
         """Is a session of this campaign still finishing its after-session work (#2532)?"""
@@ -14119,18 +15435,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             self._npcs_dirty.discard(campaign_id)
 
     async def _old_chat_notice(
-        self, guild: discord.Guild, campaign: Campaign, screen_id: int
+        self, guild: discord.Guild, campaign: Campaign, post_to: int
     ) -> None:
         """A campaign that still has the old `dmb-chat` channel (#3212): DMbot no longer uses it,
-        and says so once, with the button to remove it (never removed by DMbot itself). A channel
-        that is gone already is forgotten. Told once for each run of the bot; nothing is stored."""
-        channel_id = campaign.dmbchat_channel_id
-        if channel_id is None or campaign.id in self._old_chat_told:
+        and says so once, in `post_to` (the DM Bot channel, else the screen; #3874), with the
+        button to remove it (never removed by DMbot itself). A channel that is gone already is
+        forgotten. Told once for each run of the bot; nothing is stored."""
+        old_channel = campaign.dmbchat_channel_id
+        if old_channel is None or campaign.id in self._old_chat_told:
             return
-        if guild.get_channel(channel_id) is None:
+        if guild.get_channel(old_channel) is None:
             return  # not cached, or gone: say nothing (the button forgets a channel that is gone)
         self._old_chat_told.add(campaign.id)
-        await self.post(screen_id, old_chat_notice(channel_id), view=old_chat_view(campaign.id))
+        await self.post(post_to, old_chat_notice(old_channel), view=old_chat_view(campaign.id))
 
     def _usable_transcript(self, guild: discord.Guild, campaign: Campaign) -> int | None:
         """After a restart: the campaign's transcript channel, if it's still one and
@@ -14500,6 +15817,15 @@ def _bot(interaction: discord.Interaction) -> DMBot:
     return cast(DMBot, interaction.client)
 
 
+def dm_for_resume(started_by: int, dm_user_ids: frozenset[int]) -> int:
+    """The DM a resumed session runs for. Whoever started it, unless that person has deleted their
+    account (their number is 0 then, #4148): then the campaign's lowest-numbered DM, or 0 when it
+    has none, so nothing looks up a user 0."""
+    if started_by > 0:
+        return started_by
+    return min(dm_user_ids) if dm_user_ids else 0
+
+
 def register_commands(tree: app_commands.CommandTree[Any]) -> None:
     """Add DMbot's slash commands to the tree. The one place both the bot's start-up and the
     check against Discord's limits (tests/test_command_limits.py) build the tree from."""
@@ -14644,14 +15970,64 @@ def register_backup_sections(
     campaigns.register_section(RolesSection())  # after memory too: roles name its entries
     campaigns.register_section(DeedProposalsSection())  # deeds waiting for the DM (#3175)
     campaigns.register_section(RevealProposalsSection())  # who learned what (#2996)
+    # private scenes (#2996 rule 5); their entries only for who is recorded where it lands (#4110)
+    campaigns.register_section(PrivateScenesSection(consenting))
     campaigns.register_section(ScenesSection())  # the scene of a waiting question (#3596)
     campaigns.register_section(KindOffersSection())  # the DM's answers about kinds (#3033)
+    campaigns.register_section(StoryChainSection())  # where the story is (#4173 slice 4)
     campaigns.register_section(PcIconsSection())  # and which icon each player character has (#3621)
     campaigns.register_section(LineageSection())  # last: the build stamps of the rest (#3751)
 
 
+async def fill_parties(
+    campaigns: CampaignStore, make: Callable[[int, str], Awaitable[Any]]
+) -> Counter[str]:
+    """The one-time fill of the party entry (#3954), at each start: every campaign gets its party,
+    adopted from a group it already uses for it or made (`party.fill`). A campaign that has one is
+    one read. One failing campaign never stops the rest. Counts only in the log: the step each
+    campaign took, and how many knower rows a party holds (Supervisor's ruling: posted first, then
+    a follow-up turns them into the member characters' own rows)."""
+    steps: Counter[str] = Counter()
+    held = both = ended = 0
+    try:
+        guilds = await campaigns.guilds_with_campaigns()
+    except Exception as exc:
+        log.warning("The party fill could not list the campaigns (%s)", type(exc).__name__)
+        return steps
+    for guild_id in guilds:
+        try:
+            listed = sorted(await campaigns.campaign_ids(guild_id))
+        except Exception as exc:  # (one server's list failing never stops the rest, nor the start)
+            steps["failed"] += 1
+            log.warning(
+                "The party fill could not list a server's campaigns (%s)", type(exc).__name__
+            )
+            continue
+        for campaign_id in listed:
+            try:
+                filled = await make(guild_id, campaign_id)
+            except Exception as exc:  # the type only: a database error can quote a row
+                steps["failed"] += 1
+                log.warning("The party fill failed for a campaign (%s)", type(exc).__name__)
+                continue
+            steps[filled.step] += 1
+            held += filled.knower_rows
+            both += filled.both
+            ended += filled.ended
+    log.info(
+        "Party fill: %s; knower rows on a party: %d; both: %d; ended beside another: %d",
+        dict(steps),
+        held,
+        both,
+        ended,
+    )  # (both: a #3036 party besides the flagged one; ended: #3998; both for Supervisor)
+    return steps
+
+
 async def run(settings: Settings) -> None:
     entitlements.configure_free_users(settings.free_users)  # #771
+    if not person_key.configure(settings.person_key):
+        log.warning("DMBOT_PERSON_KEY is not set: trial and email records keep no hash (#4145)")
     entitlements.configure_free_guilds(settings.free_guilds)  # #3788
     dm_links.configure_site(settings.site_url)  # the website button of every private message
     alerter = alerts.Alerter(settings.mail)
@@ -14730,12 +16106,31 @@ async def run(settings: Settings) -> None:
                 pictures, bot.picture_bucket, settings.picture_storage_mb
             )
             bot.picture_store = pictures
+            if settings.maps_staging_ready:
+                bot.maps_staging = Bucket(
+                    settings.r2_account_id,
+                    settings.r2_staging_bucket,
+                    settings.r2_staging_access_key,
+                    settings.r2_staging_secret_key,
+                )
+            if bot.memory is not None:
+                bot.map_store = MapStore(db, bot.memory)  # the two yeses of a map (#4344)
             bot.picture_actions = PictureActions(
                 db, pictures, bot.picture_bucket, settings.picture_storage_mb
             )
             bot._picture_db = db
         if bot.image_desk is not None:  # the day's count lives in the database (#2450)
             bot.image_desk.counter = ImageUseStore(db)
+        if bot.memory is not None:
+            # The party is the first entry of every campaign (#3954): made with each new campaign,
+            # and for every campaign that has none by the fill, in the background once the bot is
+            # starting, so it never holds up the login (idempotent: one read for a campaign that
+            # has its party). The task is kept on the bot, so it is not collected half done.
+            party_of = bot.memory.make_party
+            campaigns.on_create(party_of)
+            bot.party_fill = asyncio.get_running_loop().create_task(
+                fill_parties(campaigns, party_of)
+            )
         _close_on_sigterm(bot)
         async with bot:
             await bot.start(settings.discord_token)

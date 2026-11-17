@@ -126,6 +126,7 @@ export const hiddenBotLabels = [
 
 /** Buttons and menu items of the website itself, which the bot's code can't hold. */
 export const siteButtons = [
+  "Met but not named", // the Names page's list of who the party met (#4084, #4045); Discord's button counts them ("👣 Met but not named (n)"), so its label is built in code
   "Download a backup", // the campaign page's Keep a copy (#3148), a website button, not in Discord
   "Save the link", // the campaign invite panel (#2985), a website button, not in Discord
   "Remove the link", // the campaign invite panel (#2985), a website button, not in Discord

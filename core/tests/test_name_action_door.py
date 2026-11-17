@@ -25,6 +25,22 @@ EVERY_ACTION = (
     "told-add", "told-remove",  # "Tell a character" (#3542)
     "clock-set", "clock-skip",  # the import clock offer (#3199)
     "match-confirm", "match-undo",  # the answer to one of DMbot's own matches (#3602)
+    "link-undo",  # the page's Undo of a connection edit (#4156)
+    "met-name", "met-join", "met-remove",  # "Met but not named" (#4084)
+    "link-direction",  # A → B, B → A or A ↔ B (#4154)
+    "link-right",  # ✅ That's right on an assumed parent (#4304)
+    "place-size",  # how big a place is (#4173)
+    "place-setting",  # the campaign's setting (#4173 slice 2)
+    "place-form",  # land, water or a road (#4173 slice 6a)
+    "maps-use", "maps-show", "maps-remove", "maps-takeback", "maps-undo",  # the Maps page (#4347)
+    "map-terrain", "map-climate", "map-control", "map-show",  # a place's land, climate, ruler
+    "world-keep", "world-not", "world-undo",  # World notes (#4285)
+    "backstory-keep-show",  # "Let players see it" on the website's waiting card (#4432)
+    "maps-add",  # a map sent from the website (#4347, slice B)
+    "part-add", "part-fix", "part-state", "part-show", "part-remove",  # a thread's parts (#4476)
+    "branch-move", "branch-not", "part-undo", "part-date",
+    "lang-add", "lang-remove", "lang-check", "lang-undo",  # a character's languages (#4271)
+    "thread-keep", "thread-not", "thread-undo",  # story threads DMbot found (#4457)
 )  # fmt: skip
 
 

@@ -110,7 +110,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
             if self.gate is not None:
                 await self.gate.wait()
             self.clock.now += SLOW_S
-            return SimpleNamespace(value=2)
+            return SimpleNamespace(value=2, split_counts=(0, 0))  # (none split, #4037)
 
         memory = MagicMock()
         memory.relations = AsyncMock(return_value=[])
@@ -124,6 +124,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
             lookup=self.lookup,
             memory=memory,
             name_of=lambda *_: "Ann",
+            settings=SimpleNamespace(),  # (every list switch off: the More lists count is 0)
         )
 
     def it(self, kind: discord.InteractionType = discord.InteractionType.component) -> Any:
@@ -229,6 +230,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
             setattr(memory, write, self.slow())
         memory.alias_knowers = self.slow({})  # (the Who-knows page reads these first, #2935)
         memory.told_characters = self.slow([])  # (and who was told, #3542)
+        memory.common_knowledge = self.slow(set())  # (and whether it is common knowledge, #4537)
         memory.lookup_data = self.slow(LookupData(0, (), (), (), ()))
         memory.update_relation = self.slow(SimpleNamespace(batch=7))  # the Undo needs the batch
         memory.add_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL]))

@@ -30,8 +30,10 @@ from pathlib import Path
 from typing import Any
 
 from dmbot.campaigns.store import decode_backup
-from dmbot.memory import kin, place_words, reputation_words, unnamed
+from dmbot.devtools import sample_name
+from dmbot.memory import kin, place_words, reputation_words, route_length, unnamed
 from dmbot.memory.models import name_key
+from dmbot.memory.session_progress import THREAD_WORDS
 
 DEFAULT_KEY = (
     Path(__file__).resolve().parents[3] / "tests" / "fixtures" / "story_graph" / "master_key.json"
@@ -68,6 +70,7 @@ GROUPS: dict[str, str] = {
     "found": "things",
     "associate": "associations",
     "in": "places",
+    "route": "places",  # a road or way between two places (#4255)
     "lives_in": "places",
     "lived_in": "places",
     "works_in": "places",
@@ -85,7 +88,7 @@ UNCLE = frozenset({"uncle", "aunt", "aunt or uncle"})
 NEPHEW = frozenset({"nephew", "niece", "niece or nephew"})
 GRAND_UP = frozenset({"grandparent", "grandmother", "grandfather"})
 GRAND_DOWN = frozenset({"grandchild", "grandson", "granddaughter"})
-SAMPLE_CAMPAIGN = "test of the frostmaiden (sample)"
+SAMPLE_CAMPAIGN = sample_name.OLD_NAME  # (numbered names pass `sample_name.is_sample`, #4538)
 # What slot (word, past) each key place tie means, as `place_words.slot` reads a stored detail.
 PLACE_SLOTS = {
     "lives_in": (place_words.LIVES, False), "lived_in": (place_words.LIVES, True),
@@ -128,6 +131,9 @@ class Report:
     extra_ties: int = 0
     violations: list[str] = field(default_factory=list)
     inferred_confirmed: list[str] = field(default_factory=list)
+    # `must_not_ties` rows kept as facts (#4636 part 3): a near-miss a list was over-applied to,
+    # "Kelvin's Cairn in Ten-Towns". Offered (waiting) is fine; kept is a false tie.
+    false_ties: list[str] = field(default_factory=list)
     events_in_backup: int = 0
     events_expected: int = 0
     players_found: int = 0  # the key's player characters that are entries with that role (#3553)
@@ -136,6 +142,34 @@ class Report:
     placeholders: int = 0
     # #3606: for each key tie that expects a feeling, (id, how the stored word sits against it)
     feelings: list[tuple[str, str]] = field(default_factory=list)
+    # #4256: a place's land, climate and ruler, per layer: found, wrong (another value), missed,
+    # and extra (a row the key does not list: a false note). Counts only.
+    map_facts: dict[str, Counter[str]] = field(default_factory=dict)
+    # A character's languages (#4229; owner, 2026-11-14: a property of the character, never a tie):
+    # found, missed, and extra (a language row the key does not list). Counts only.
+    languages: Counter[str] = field(default_factory=Counter)
+    # A road's stated length (#4255; a property of the road, never a tie): found, missed, and extra
+    # (a length on a road the key does not list). Counts only.
+    route_lengths: Counter[str] = field(default_factory=Counter)
+    # Story threads (#4453, quests slice 1): found, missed, wrong (another kind), doubles (one key
+    # thread suggested twice), extra (a thread the key doesn't list), hints found
+    threads: Counter[str] = field(default_factory=Counter)
+    # A thread's parts (#4500, quests slice 3), on the backup thread its key thread matched: found
+    # and missed by kind ("found objective"), on the wrong thread, and extra. Branches: found and
+    # missed (a hint's miss isn't held against the reader), each a `branch_of` to its quest.
+    thread_parts: Counter[str] = field(default_factory=Counter)
+    # A thread's clues (#4624, quests slice 6b): found on the backup thread its key thread matched,
+    # on the wrong thread, missed (must-find only), good finds missed, extra (a clue tied to a
+    # matched thread that no key row is), false (a `must_not_clues` row: any tie to that thread)
+    clues: Counter[str] = field(default_factory=Counter)
+    # Progress a session makes on a thread the campaign had (#4522 quests 5b/5c), read off the
+    # matched backup thread: found, missed (must-find only), good finds missed, and false (a
+    # `must_not_progress` row that holds)
+    progress: Counter[str] = field(default_factory=Counter)
+    # The table's guesses (#4655, quests slice 7a): found (in the key's point of view, kept as a
+    # belief or waiting as a reading), missed, wrong holder (the statement in another point of
+    # view), and false (a `must_not_readings` row that became a guess anywhere)
+    readings: Counter[str] = field(default_factory=Counter)
 
 
 def _live(row: Mapping[str, Any]) -> bool:
@@ -168,6 +202,7 @@ class Graph:
     """The backup's entries and connections, found by name."""
 
     def __init__(self, tables: Mapping[str, Sequence[Mapping[str, Any]]]) -> None:
+        self.tables = tables  # (every table, for the checks that read one of their own)
         self.entities = {
             str(e["id"]): e
             for e in tables.get("entity", ())
@@ -361,6 +396,8 @@ def _row_ok(
             why = "" if ok else "other feeling"
     elif rel == "associate":
         ok = pred == "associated_with"
+    elif rel == "route":  # (a way between two places reads both ways round, #4255)
+        ok = pred == "route_to"
     elif rel == "in":
         ok = pred == "located_in" and forward and not place_words.way_of(detail)
         why = "wrong place word" if pred == "located_in" else ""
@@ -454,6 +491,7 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
     # makes it a placeholder, so only another connection makes it a real entry
     others = [r for r in graph.relations if str(r["predicate"]) != "plays"]
     linked = {str(r["subject_id"]) for r in others} | {str(r["object_id"]) for r in others}
+    tied_clues = {str(r["subject_id"]) for r in graph.relations if r["predicate"] == "clue_to"}
     for i, e in graph.entities.items():
         if i in matched_ids:
             continue
@@ -463,6 +501,10 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
         if e.get("unnamed"):
             report.unnamed_extras += 1  # (their own line: a description, not an extra name)
             continue
+        if str(e["type"]) in THREAD_TYPES:
+            continue  # (a story thread is scored on its own line, #4453, never as an extra name)
+        if i in tied_clues:
+            continue  # (a clue tied to a thread is scored on the Clues line, #4624 6b)
         report.extra_entries[_kind_for(str(e["type"]))] += 1
     for name in key.get("must_not_names", ()):
         # (a must-not name is still found in a description too, as before; only one that is a
@@ -470,6 +512,18 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
         right_as_description = any(_plain(name) in {_plain(x) for x in names[s]} for s in strict)
         if graph.named([name]) or (not right_as_description and graph.described([name])):
             report.violations.append(name)
+    # A must-not-make row (#4636 part 3): every row, whichever document (a near-miss is false in
+    # either); a kept one is counted here only, never again as an extra tie
+    for t in key.get("must_not_ties", []):
+        if t["a"] not in names or t["b"] not in names:
+            continue
+        a, b = lookup(t["a"]), lookup(t["b"])
+        if not a or not b:
+            continue
+        status, _why, used_here = _tie_status(t, graph, a, b, kinds)
+        if status == FOUND:
+            report.false_ties.append(str(t["id"]))
+            used_relations |= used_here
     for r in graph.relations:
         if (
             str(r["subject_id"]) in matched_ids
@@ -488,7 +542,459 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
     report.events_in_backup = sum(
         1 for e in graph.entities.values() if e["type"] in ("event", "deed")
     )
+    _score_map_facts(report, graph, key, names)
+    _score_readings(report, graph, key, names)
+    _score_threads(report, graph, key, names)
+    _score_languages(report, graph, key, names, wanted)
+    _score_route_lengths(report, graph, key, names, wanted)
     return report
+
+
+def _score_languages(
+    report: Report,
+    graph: Graph,
+    key: Mapping[str, Any],
+    names: Mapping[str, list[str]],
+    wanted: set[str],
+) -> None:
+    """The key's `languages` (#4229): {character, language}. A backup language row on that
+    character with that language (compared as `name_key`, so "elvish" is "Elvish") is found; none
+    is missed. Every other row is extra: a language the document never gives that character, such
+    as runes on an item read as a language. Whoever gave it (DMbot's read or the DM) counts alike:
+    the check scores what the graph holds, as for ties. A key with no `languages` list (the
+    session key, a key from before #4229) is not scored, so its report is unchanged; nor is a run
+    that scores none of the documents its languages come from (`doc`, lore when not given), so a
+    session-only run never counts the lore's languages as missed. Two things this does not judge:
+    a row on an entry turned down since is still extra, and a character with a sheet gets no story
+    languages at all (its languages are the sheet's), so a run that sets one before the lore is
+    read scores its languages as missed."""
+    langs = [x for x in key.get("languages", []) if x.get("doc", "lore") in wanted]
+    if not langs:
+        return
+    rows = list(graph.tables.get("story_language", []))
+    used: set[int] = set()
+    for lang in langs:
+        who = graph.ids(names.get(lang["character"], [lang["character"]]))
+        want = name_key(str(lang["language"]))
+        hit = [
+            i
+            for i, r in enumerate(rows)
+            if str(r["entity_id"]) in who and str(r.get("name_key") or name_key(r["name"])) == want
+        ]
+        used.update(hit)
+        report.languages["found" if hit else "missed"] += 1
+    report.languages["extra"] += sum(1 for i in range(len(rows)) if i not in used)
+
+
+def _same_length(stored: Mapping[str, Any], words: str) -> bool:
+    """A stored length says what the key's words say: the same amount and unit when the words give
+    one (so "1 hour" is "an hour"), else the same words."""
+    want = route_length.parse(words)
+    if want is None:
+        return False
+    if want.amount is not None:
+        return (stored.get("length_amount"), stored.get("length_unit")) == (want.amount, want.unit)
+    return name_key(str(stored.get("length_words") or "")) == name_key(want.words)
+
+
+def _joins(s: str, o: str, a: set[str], b: set[str]) -> bool:
+    """The road runs between the two places, either way round (never a road with one end only)."""
+    return (s in a and o in b) or (s in b and o in a)
+
+
+def _score_route_lengths(
+    report: Report,
+    graph: Graph,
+    key: Mapping[str, Any],
+    names: Mapping[str, list[str]],
+    wanted: set[str],
+) -> None:
+    """The key's `route_lengths` (#4255): {from, to, words}. A road (`route_to`, either way round)
+    between those two places whose stored length says the same is found; none is missed. Every
+    other road with a length is extra. Whoever gave it (DMbot's read or the DM) counts alike, as
+    for languages. A key with no list, or a run that scores none of its documents (`doc`, the
+    session when not given), scores none, so its report is unchanged."""
+    lengths = [x for x in key.get("route_lengths", []) if x.get("doc", "session") in wanted]
+    if not lengths:
+        return
+    roads = [r for r in graph.relations if r["predicate"] == "route_to" and r.get("length_words")]
+    used: set[int] = set()
+    for want in lengths:
+        a = graph.ids(names.get(want["from"], [want["from"]]))
+        b = graph.ids(names.get(want["to"], [want["to"]]))
+        hit = [
+            i
+            for i, r in enumerate(roads)
+            if _joins(str(r["subject_id"]), str(r["object_id"]), a, b)
+            and _same_length(r, str(want["words"]))
+        ]
+        used.update(hit)
+        report.route_lengths["found" if hit else "missed"] += 1
+    report.route_lengths["extra"] += sum(1 for i in range(len(roads)) if i not in used)
+
+
+def _score_map_facts(
+    report: Report, graph: Graph, key: Mapping[str, Any], names: Mapping[str, list[str]]
+) -> None:
+    """The key's `map_facts` (#4256): {place, layer, value}, the value a word of the layer's list
+    or, for control, the ruling group's key name. A backup row on that place and layer with that
+    value is found; one with another value is wrong; none is missed. A row the key doesn't list is
+    extra (a false note, design §13.15). Only the rows still open count."""
+    rows = [
+        r
+        for r in graph.tables.get("map_fact", [])
+        if r.get("status") != "rejected" and r.get("to_session_at") is None
+    ]
+    used: set[str] = set()
+    # a road's condition (#4258): the sample states none, so the key expects none and every row is
+    # a false note; the line is always printed, so a zero shows too
+    report.map_facts.setdefault("condition", Counter())
+    for fact in key.get("map_facts", []):
+        layer = str(fact["layer"])
+        tally = report.map_facts.setdefault(layer, Counter())
+        places = graph.ids(names.get(fact["place"], [fact["place"]]))
+        wanted = (
+            graph.ids(names.get(fact["value"], [fact["value"]]))
+            if layer == "control"
+            else {str(fact["value"])}
+        )
+        here = [r for r in rows if str(r["entity_id"]) in places and r["layer"] == layer]
+        hit = [
+            r for r in here if str(r["faction_id"] if layer == "control" else r["value"]) in wanted
+        ]
+        used.update(str(r["id"]) for r in here)
+        tally["found" if hit else "wrong" if here else "missed"] += 1
+    for r in rows:
+        if str(r["id"]) not in used:
+            report.map_facts.setdefault(str(r["layer"]), Counter())["extra"] += 1
+
+
+THREAD_TYPES = frozenset({"thread", "quest", "mystery", "hook", "goal", "promise"})
+# The key's people of a thread, by the part word `in_thread` carries (`thread_read`)
+THREAD_ROLES = {"giver": "quest giver", "target": "target", "taker": "takes it on"}
+
+
+GUESS_STATUSES = frozenset({"theory", "accusation"})
+
+
+def _guesses(graph: Graph) -> list[tuple[str, frozenset[str], frozenset[str]]]:
+    """Every guess in the backup as (holder, subject's name keys, object's name keys): kept as a
+    belief (a theory or an accusation in the party's or a character's point of view), or waiting
+    as a claim's reading. The holder is "party" or a name key of the character."""
+    keys: dict[str, set[str]] = {}
+    for key, ids in graph.by_key.items():
+        for i in ids:
+            keys.setdefault(i, set()).add(key)
+    views = {str(p["id"]): p for p in graph.tables.get("perspective", ())}
+    # (live connections only: a guess the DM turned down is no guess)
+    relations = {str(r["id"]): r for r in graph.relations}
+    out: list[tuple[str, frozenset[str], frozenset[str]]] = []
+    for b in graph.tables.get("belief", ()):
+        view, rel = (
+            views.get(str(b.get("perspective_id"))),
+            relations.get(str(b.get("relation_id"))),
+        )
+        if view is None or rel is None or str(b.get("status")) not in GUESS_STATUSES:
+            continue
+        if view.get("kind") == "party":
+            holder = {"party"}
+        elif view.get("entity_id"):
+            holder = keys.get(str(view["entity_id"]), set())
+        else:
+            continue  # (The truth, or everyone: never a guess)
+        ends = (keys.get(str(rel["subject_id"]), set()), keys.get(str(rel["object_id"]), set()))
+        out += [(h, frozenset(ends[0]), frozenset(ends[1])) for h in holder]
+    for c in graph.tables.get("claim", ()):
+        reading = c.get("reading")
+        if c.get("status") != "proposed" or not isinstance(reading, Mapping):
+            continue
+        if str(reading.get("status")) not in GUESS_STATUSES:
+            continue
+        said = str(reading.get("view") or "")
+        holders = {"party"} if said == "party" else _said_keys(said.removeprefix("pc:"))
+        subject = _said_keys(str(c.get("subject") or ""))
+        obj = _said_keys(str(c.get("object") or ""))
+        out += [(h, subject, obj) for h in holders]
+    return out
+
+
+_ARTICLE = re.compile(r"^(?:the|a|an)\s+", re.I)
+
+
+def _said_keys(words: str) -> frozenset[str]:
+    """A waiting reading's name as the model wrote it, with and without a leading "the" ("the Old
+    Well"), as name keys: the key lists each entry's short forms as aliases."""
+    return frozenset({name_key(words), name_key(_ARTICLE.sub("", words.strip()))})
+
+
+def _score_readings(
+    report: Report, graph: Graph, key: Mapping[str, Any], names: Mapping[str, list[str]]
+) -> None:
+    """The table's guesses against the key (#4655): each `readings` row is found (the statement,
+    either way round, in the key's point of view), wrong holder (only in another one) or missed;
+    each `must_not_readings` row that is a guess anywhere is false. The relationship's word is not
+    scored: the model says it in its own words. Counts only."""
+    rows, nots = key.get("readings", []), key.get("must_not_readings", [])
+    if not rows and not nots:
+        return
+    guesses = _guesses(graph)
+
+    def ends(name: str) -> frozenset[str]:
+        return frozenset(name_key(n) for n in names.get(name, [name]))
+
+    def holds(row: Mapping[str, Any]) -> list[str]:
+        a, b = ends(str(row["subject"])), ends(str(row["object"]))
+        return [h for h, s, o in guesses if (s & a and o & b) or (s & b and o & a)]
+
+    for row in rows:
+        held = holds(row)
+        who = "party" if row["who"] == "party" else None
+        wanted = {who} if who else ends(str(row["who"]))
+        if set(held) & wanted:
+            report.readings["found"] += 1
+        elif held:
+            report.readings["wrong holder"] += 1
+        else:
+            report.readings["missed"] += 1
+    report.readings["false"] += sum(1 for row in nots if holds(row))
+
+
+def _score_threads(
+    report: Report, graph: Graph, key: Mapping[str, Any], names: Mapping[str, list[str]]
+) -> None:
+    """The key's `threads` (#4453; quests design §9.7): a backup thread is the key's when it has
+    every person the key names in the same part (who gave it, who it's aimed at, who takes it on;
+    with none of those, who it is about). It is found when its kind matches too, wrong when not;
+    a second backup thread for one key thread is a double; a backup thread no key thread is is an
+    extra. A hint is counted when found and never missed. Only the key's rows count as missed
+    when they are must-find."""
+    threads = {i for i, e in graph.entities.items() if str(e["type"]) in THREAD_TYPES}
+    parts: dict[str, set[tuple[str, str]]] = {}
+    for r in graph.relations:
+        if r.get("predicate") == "in_thread" and str(r["object_id"]) in threads:
+            role = str(r.get("detail") or "").strip().lower()
+            parts.setdefault(str(r["object_id"]), set()).add((role, str(r["subject_id"])))
+    used: set[str] = set()
+    matched: dict[str, str] = {}  # (the key thread's id: the backup thread it is, for its parts)
+    every: dict[str, list[str]] = {}  # (and every one it is, for progress: a double holds it too)
+    for t in key.get("threads", []):
+        wanted_kinds = {str(t["kind"])}
+        need: list[tuple[str, set[str]]] = [
+            (role, graph.ids(names.get(t[field], [t[field]])))
+            for field, role in THREAD_ROLES.items()
+            if t.get(field)
+        ]
+        # (a person to find is the target or "the one missing": either word is right, #4453)
+        alike = {"target": ("target", "the one missing")}
+        if not need:  # (a thread about someone, with nobody giving or taking it)
+            need = [
+                (role, graph.ids(names.get(n, [n])))
+                for role, people in (("the one missing", t.get("missing", [])),
+                                     ("in danger", t.get("in_danger", [])))
+                for n in people
+            ]  # fmt: skip
+        hits = [
+            th
+            for th in sorted(threads)
+            if need
+            and all(
+                any(
+                    (word, i) in parts.get(th, set())
+                    for i in ids
+                    for word in alike.get(role, (role,))
+                )
+                for role, ids in need
+            )
+        ]
+        used.update(hits)
+        right = [th for th in hits if str(graph.entities[th]["type"]) in wanted_kinds]
+        if hits and t.get("id"):
+            matched[str(t["id"])] = (right or hits)[0]
+            every[str(t["id"])] = right or hits
+        if t.get("hint"):
+            report.threads["hints found"] += 1 if hits else 0
+            continue
+        if right:
+            report.threads["found"] += 1
+        elif hits:
+            report.threads["wrong"] += 1
+        elif t.get("must_find", True):
+            report.threads["missed"] += 1
+        report.threads["doubles"] += max(0, len(hits) - 1)
+    report.threads["extra"] += len(threads - used)
+    # talk that must make no thread (§9.7: a plan, an errand, a threat, a wish), by its words
+    for rule in key.get("must_not_threads", []):
+        words = [str(w).casefold() for w in rule.get("words", [])]
+        for th in threads:
+            e = graph.entities[th]
+            said = f"{e.get('name', '')} {e.get('description', '')}".casefold()
+            if any(w in said for w in words):
+                report.threads["false"] += 1
+                break
+    _score_thread_parts(report, graph, key, matched)
+    _score_clues(report, graph, key, matched)
+    _score_progress(report, graph, key, every)
+
+
+def _score_thread_parts(
+    report: Report, graph: Graph, key: Mapping[str, Any], matched: Mapping[str, str]
+) -> None:
+    """A thread's parts and branches (#4500; quests design §9.7). A key part is found when the
+    backup thread its key thread matched has a part of that kind whose words hold one of the key's
+    `words` (casefold); on another thread only, it is "wrong thread". A key thread's part counts as
+    missed whether or not the thread was found, so a missed quest's parts are missed too. Parts on a
+    matched thread that no key part is are extra. A key thread with `branch_of` is found when the
+    backup thread it matched has a live `branch_of` to the one its quest matched."""
+    rows = [
+        r
+        for r in graph.tables.get("thread_part", ())
+        if r.get("status") != "rejected" and r.get("to_session_at") is None
+    ]
+    on: dict[str, list[Mapping[str, Any]]] = {}
+    for r in rows:
+        on.setdefault(str(r["thread_id"]), []).append(r)
+    used: set[str] = set()
+
+    def fits(r: Mapping[str, Any], kind: str, words: Sequence[str]) -> bool:
+        said = str(r.get("words", "")).casefold()
+        return str(r["kind"]) == kind and any(str(w).casefold() in said for w in words)
+
+    for t in key.get("threads", []):
+        thread = matched.get(str(t.get("id", "")))
+        for p in t.get("parts", []):
+            kind, words = str(p["kind"]), [str(w) for w in p.get("words", [])]
+            here = [r for r in on.get(thread or "", []) if fits(r, kind, words)]
+            if here:
+                report.thread_parts[f"found {kind}"] += 1
+                used.update(str(r["id"]) for r in here)
+            elif any(fits(r, kind, words) for r in rows):
+                report.thread_parts["wrong thread"] += 1
+            else:
+                report.thread_parts[f"missed {kind}"] += 1
+        bigger = str(t.get("branch_of", ""))
+        if bigger:
+            links = {
+                (str(r["subject_id"]), str(r["object_id"]))
+                for r in graph.relations
+                if r.get("predicate") == "branch_of"
+            }
+            if thread and (thread, matched.get(bigger, "")) in links:
+                report.thread_parts["branches found"] += 1
+            elif not t.get("hint"):
+                report.thread_parts["branches missed"] += 1
+    for thread in set(matched.values()):
+        report.thread_parts["extra"] += sum(
+            1 for r in on.get(thread, []) if str(r["id"]) not in used
+        )
+
+
+def _score_clues(
+    report: Report, graph: Graph, key: Mapping[str, Any], matched: Mapping[str, str]
+) -> None:
+    """The key's `clues` (#4624, quests 6b; design §7, §9.3): a clue tied with `clue_to` to the
+    backup thread its key thread matched, whose name holds one of the row's `words` (casefold), is
+    found; tied only to another thread, it is "wrong thread". Clues tied to a matched thread that no
+    row is are extra. A `must_not_clues` row names a thread that must have no clue tied at all."""
+    if not key.get("clues") and not key.get("must_not_clues"):
+        return
+    ties = [
+        (str(r["subject_id"]), str(r["object_id"]))
+        for r in graph.relations
+        if r.get("predicate") == "clue_to"
+    ]
+
+    def named(clue: str, words: Sequence[str]) -> bool:
+        # (from a word's start, so "Wit" is never "with" nor "whisper" past "whispers")
+        said = str(graph.entities.get(clue, {}).get("name", ""))
+        return any(re.search(rf"\b{re.escape(str(w))}", said, re.IGNORECASE) for w in words)
+
+    used: set[tuple[str, str]] = set()
+    # (must-find rows first, and each tie answers one row only: one clue is never two finds)
+    rows = sorted(key.get("clues", []), key=lambda c: not c.get("must_find", True))
+    for c in rows:
+        thread = matched.get(str(c.get("thread", "")), "")
+        words = [str(w) for w in c.get("words", [])]
+        here = [
+            t for t in ties if thread and t[1] == thread and t not in used and named(t[0], words)
+        ]
+        if here:
+            report.clues["found"] += 1
+            used.add(here[0])
+        elif any(named(clue, words) for clue, th in ties if th != thread):
+            report.clues["wrong thread"] += 1
+        elif c.get("must_find", True):
+            report.clues["missed"] += 1
+        else:
+            report.clues["good finds missed"] += 1
+    named_threads = {str(c.get("thread", "")) for c in key.get("clues", [])}
+    keyed = {matched[t] for t in named_threads if t in matched}
+    report.clues["extra"] += sum(1 for t in ties if t[1] in keyed and t not in used)
+    for rule in key.get("must_not_clues", []):
+        thread = matched.get(str(rule.get("thread", "")), "")
+        if thread and any(t[1] == thread for t in ties):
+            report.clues["false"] += 1
+
+
+def _progress_holds(
+    graph: Graph, thread: str, row: Mapping[str, Any], parts: Sequence[Mapping[str, Any]]
+) -> bool:
+    """Whether one key progress row (or one of its `or` rows) stands on a backup thread now:
+    "thread_moves", its open state is the row's; "part_moves", an open part of the row's kind
+    whose words hold one of the row's `words` is in the row's state; "new_part", such a part was
+    read from a session (casefold words, as `_score_thread_parts`)."""
+    change = str(row.get("change", ""))
+    if change == "thread_moves":
+        want = THREAD_WORDS.get(str(row.get("state", "")), str(row.get("state", "")))
+        return any(
+            str(r.get("entity_id")) == thread
+            and r.get("closed_at") is None
+            and str(r.get("condition")) == want
+            for r in graph.tables.get("state", ())
+        )
+    words = [str(w).casefold() for w in row.get("words", [])]
+    kind = str(row.get("part_kind", ""))
+    for r in parts:
+        if str(r["thread_id"]) != thread or str(r["kind"]) != kind:
+            continue
+        if words and not any(w in str(r.get("words", "")).casefold() for w in words):
+            continue
+        if change == "part_moves" and str(r.get("state")) == str(row.get("state")):
+            return True
+        same_state = not row.get("state") or str(r.get("state")) == str(row.get("state"))
+        if change == "new_part" and str(r.get("source")) == "session" and same_state:
+            return True
+    return False
+
+
+def _score_progress(
+    report: Report, graph: Graph, key: Mapping[str, Any], matched: Mapping[str, Sequence[str]]
+) -> None:
+    """The key's `progress` (#4522, quests 5c): what the session changes on a thread the lore
+    made, read off the backup thread that key thread matched once the sample keeps every progress
+    line (`accept_all.keep_progress`). A row is found when it, or one of its `or` rows, holds on
+    any backup thread its key thread matched (the session reader may suggest the thread again, and
+    which double sorts first is chance); on an unmatched thread it can't be. `must_not_progress`
+    rows count as false when they hold on any of them."""
+    if not key.get("progress") and not key.get("must_not_progress"):
+        return
+    parts = [
+        r
+        for r in graph.tables.get("thread_part", ())
+        if r.get("status") != "rejected" and r.get("to_session_at") is None
+    ]
+    for p in key.get("progress", []):
+        threads = matched.get(str(p.get("thread", "")), ())
+        rows = [p, *p.get("or", [])]
+        if any(_progress_holds(graph, th, r, parts) for th in threads for r in rows):
+            report.progress["found"] += 1
+        elif p.get("must_find", True):
+            report.progress["missed"] += 1
+        else:
+            report.progress["good finds missed"] += 1
+    for p in key.get("must_not_progress", []):
+        threads = matched.get(str(p.get("thread", "")), ())
+        if any(_progress_holds(graph, th, p, parts) for th in threads):
+            report.progress["false"] += 1
 
 
 def _kind_for(entry_type: str) -> str:
@@ -521,8 +1027,17 @@ def summarize(report: Report) -> dict[str, Any]:
         "extra_ties": report.extra_ties,
         "violations": len(report.violations),
         "inferred_confirmed": len(report.inferred_confirmed),
+        "false_ties": len(report.false_ties),
         "event_entries": {"expected": report.events_expected, "in_backup": report.events_in_backup},
         "player_characters": {"found": report.players_found, "expected": report.players_expected},
+        "map_facts": {layer: dict(c) for layer, c in sorted(report.map_facts.items())},
+        "threads": dict(report.threads),
+        **({"thread_parts": dict(report.thread_parts)} if report.thread_parts else {}),
+        **({"clues": dict(report.clues)} if report.clues else {}),
+        **({"progress": dict(report.progress)} if report.progress else {}),
+        **({"readings": dict(report.readings)} if report.readings else {}),
+        **({"languages": dict(report.languages)} if report.languages else {}),
+        **({"route_lengths": dict(report.route_lengths)} if report.route_lengths else {}),
     }
 
 
@@ -556,6 +1071,55 @@ def render(report: Report, counts_only: bool = False) -> str:
         f"Event entries: {report.events_in_backup} in the backup, {report.events_expected} expected"
     )
     lines.append(f"Player characters found: {report.players_found} of {report.players_expected}")
+    for layer, c in sorted(report.map_facts.items()):  # (#4256: land, climate and ruler)
+        lines.append(
+            f"Place {layer}: found {c['found']}, wrong {c['wrong']}, missed {c['missed']}, "
+            f"extra {c['extra']}"
+        )
+    if report.languages:  # (#4229: a character's languages, a property, not a tie)
+        c = report.languages
+        lines.append(f"Languages: found {c['found']}, missed {c['missed']}, extra {c['extra']}")
+    if report.threads:  # (#4453: story threads, quests slice 1)
+        c = report.threads
+        lines.append(
+            f"Story threads: found {c['found']}, missed {c['missed']}, wrong {c['wrong']}, "
+            f"doubles {c['doubles']}, extra {c['extra']}, false {c['false']} "
+            f"(hints found {c['hints found']})"
+        )
+    if report.thread_parts:  # (#4500: a thread's parts and branches, quests slice 3)
+        c = report.thread_parts
+        kinds = ("objective", "complication", "reward", "reward_given", "help", "time_limit")
+        said = ", ".join(
+            f"{k} {c['found ' + k]}/{c['found ' + k] + c['missed ' + k]}"
+            for k in kinds
+            if c["found " + k] or c["missed " + k]
+        )
+        lines.append(
+            f"Thread parts found: {said or 'none in the key'}; wrong thread {c['wrong thread']}, "
+            f"extra {c['extra']}; branches found {c['branches found']}, "
+            f"missed {c['branches missed']}"
+        )
+    if report.clues:  # (#4624: a thread's clues, quests 6b)
+        c = report.clues
+        lines.append(
+            f"Clues: found {c['found']}, missed {c['missed']}, wrong thread {c['wrong thread']}, "
+            f"extra {c['extra']}, false {c['false']} (good finds missed {c['good finds missed']})"
+        )
+    if report.progress:  # (#4522: what the session moved on the lore's threads, quests 5c)
+        c = report.progress
+        lines.append(
+            f"Thread progress: found {c['found']}, missed {c['missed']}, false {c['false']} "
+            f"(good finds missed {c['good finds missed']})"
+        )
+    if report.readings:  # (#4655: the table's guesses, quests slice 7a)
+        c = report.readings
+        lines.append(
+            f"Readings: found {c['found']}, missed {c['missed']}, "
+            f"wrong holder {c['wrong holder']}, false {c['false']}"
+        )
+    if report.route_lengths:  # (#4255: a road's length, a property of the road, not a tie)
+        c = report.route_lengths
+        lines.append(f"Road lengths: found {c['found']}, missed {c['missed']}, extra {c['extra']}")
     lines.append(f"Must-not-find names present: {len(report.violations)}")
     if report.violations and not counts_only:
         lines.append("  " + ", ".join(report.violations))
@@ -563,6 +1127,9 @@ def render(report: Report, counts_only: bool = False) -> str:
         "Inferred ties already confirmed as facts (they should be offered; a yes from the DM "
         f"is fine): {len(report.inferred_confirmed)}"
     )
+    lines.append(f"Must-not-make ties kept as facts: {len(report.false_ties)}")
+    if report.false_ties and not counts_only:
+        lines.append("  " + ", ".join(report.false_ties))
     lines.append("")
     for label, status in (
         ("Must-find ties missing", MISSING),
@@ -617,9 +1184,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         key = json.loads(args.key.read_text())
         campaign = backup.get("campaign") if isinstance(backup, dict) else None
         name = campaign.get("name") if isinstance(campaign, dict) else None
-        if name != SAMPLE_CAMPAIGN and not args.force:
+        if not (isinstance(name, str) and sample_name.is_sample(name)) and not args.force:
             raise ValueError(
-                f'This campaign is not "{SAMPLE_CAMPAIGN}"; the check is only for the sample.'
+                'This campaign is not "test of the frostmaiden (sample N)"; the check is only '
+                "for the sample."
             )
         report = check(backup, key, args.docs)
     except (ValueError, OSError) as exc:

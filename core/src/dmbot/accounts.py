@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import logging
 import time
+from dataclasses import dataclass
+
+from psycopg import errors as pg_errors
 
 from dmbot.db import Database
 
@@ -64,6 +67,115 @@ async def account_of(db: Database, discord_id: int) -> int | None:
     return None if row is None or row["a"] is None else int(row["a"])
 
 
+# The words for adding or taking off a Discord account (#2533, slice 4). The three refusals of an
+# add are Supervisor's ruling on #2533 (2026-11-15): each says only what is wrong with the Discord
+# account being added and what to do next, never which other DMbot account it is on, whose
+# campaigns or which plan (isolation). The rest are plain words of the same kind.
+LINK_WORDS = {
+    "has_campaigns": (
+        "That Discord account is already the DM of its own campaigns. Hand those campaigns over "
+        "or delete them first, then add the account."
+    ),
+    "has_plan": (
+        "That Discord account pays for its own DMbot plan. Sign in as that account and cancel "
+        "its plan first, then add it here."
+    ),
+    "has_account": (
+        "That Discord account is already on another DMbot account. Remove it there first, then "
+        "add it here."
+    ),
+    "taken": (  # (another account's, or one taken off an account for good: the same words)
+        "That Discord account is already on another DMbot account. Remove it there first, then "
+        "add it here."
+    ),
+    "not_yours": (
+        "DMbot couldn't confirm you own that Discord account. Sign in as that account, then try "
+        "again."
+    ),
+}
+UNLINK_WORDS = {
+    "last": ("That is your only Discord account. Add another one first, then take this one off."),
+    "not_linked": (
+        "That Discord account isn't on your DMbot account any more. Refresh the page to see your "
+        "current accounts."
+    ),
+    "not_yours": (
+        "DMbot couldn't confirm you own that Discord account. Sign in as that account, then try "
+        "again."
+    ),
+}
+
+
+@dataclass(frozen=True, slots=True)
+class LinkResult:
+    """`ok` when it was done; else `code` is the door's word and `words` what to tell the person."""
+
+    ok: bool
+    code: str
+    words: str
+
+
+async def link_discord_id(
+    db: Database, account: int, discord_id: int, *, now: int | None = None
+) -> LinkResult:
+    """Add a Discord account to the signed-in DMbot account (the door `dmbot_account_link`, which
+    refuses one that runs campaigns, has its own plan or belongs to another account). Open hand-over
+    offers to or from the changed accounts are closed by the bot's next sweep (slice 3)."""
+    async with db.user(account) as conn:
+        cur = await conn.execute(
+            "SELECT dmbot_account_link(%s, %s, %s) AS r",
+            (account, int(discord_id), int(now if now is not None else time.time())),
+        )
+        row = await cur.fetchone()
+    code = "not_yours" if row is None else str(row["r"])
+    if code == "ok":
+        return LinkResult(True, code, "")
+    return LinkResult(False, code, LINK_WORDS.get(code, LINK_WORDS["not_yours"]))
+
+
+async def unlink_discord_id(
+    db: Database, account: int, discord_id: int, *, now: int | None = None
+) -> LinkResult:
+    """Take a Discord account off the signed-in DMbot account, never the last one. The account's
+    campaigns stay with it (the door `dmbot_account_unlink`)."""
+    async with db.user(account) as conn:
+        cur = await conn.execute(
+            "SELECT dmbot_account_unlink(%s, %s, %s) AS r",
+            (account, int(discord_id), int(now if now is not None else time.time())),
+        )
+        row = await cur.fetchone()
+    code = "not_yours" if row is None else str(row["r"])
+    if code == "ok":
+        return LinkResult(True, code, "")
+    return LinkResult(False, code, UNLINK_WORDS.get(code, UNLINK_WORDS["not_yours"]))
+
+
+@dataclass(frozen=True, slots=True)
+class Login:
+    """One Discord account of a DMbot account, for the website's list."""
+
+    discord_id: int
+    first: bool  # the one the account began with (its number)
+    added_at: int | None  # None for the first one
+
+
+async def logins_of(db: Database, account: int) -> list[Login]:
+    """The Discord accounts of this DMbot account that still sign in: its first one (unless it was
+    taken off) and every added one, first first. Only the signed-in account's own list."""
+    async with db.user(account) as conn:
+        cur = await conn.execute(
+            "SELECT discord_id, added_at FROM account_discord_ids WHERE account_id = %s"
+            " ORDER BY added_at, discord_id",
+            (account,),
+        )
+        added = [
+            Login(int(r["discord_id"]), False, int(r["added_at"])) for r in await cur.fetchall()
+        ]
+        cur = await conn.execute("SELECT 1 FROM account_reserved WHERE discord_id = %s", (account,))
+        first_off = await cur.fetchone() is not None
+    return added if first_off else [Login(account, True, None), *added]
+
+
 async def user_of_dmbot_id(db: Database, dmbot_id: str) -> int | None:
     """The Discord ID that holds this DMbot ID now (it changes when the account moves)."""
     async with db.unscoped() as conn:
@@ -78,20 +190,40 @@ async def record_install(
     """DMbot was added to this server through the website by this person (#435).
     Returns "recorded", or "already_linked" when someone else is already the installer
     (DMbot is in the server either way; the first installer stays)."""
-    async with db.user(user_id, install_guild=guild_id, session=session) as conn:
-        # The write contract (schema.py, migration 0014): someone else's install is left
-        # alone, quietly (no row comes back).
-        cur = await conn.execute(
-            "INSERT INTO installs (guild_id, installed_by_user_id, installed_at, via)"
-            " VALUES (%s, %s, %s, 'site')"
-            " ON CONFLICT (guild_id) DO UPDATE SET"
-            "   installed_by_user_id = EXCLUDED.installed_by_user_id, via = 'site', left_at = NULL"
-            " WHERE installs.installed_by_user_id IS NULL"
-            "   OR installs.installed_by_user_id = EXCLUDED.installed_by_user_id"
-            " RETURNING guild_id",
-            (guild_id, user_id, now),
-        )
-        return "recorded" if await cur.fetchone() is not None else "already_linked"
+    # Someone else's install is left alone. Migration 0014 relied on Postgres applying the upsert's
+    # WHERE before the update policy (so it skipped quietly); Postgres 16.16 checks the policy
+    # first and raises instead. So the installer is read first, and a policy error is taken as
+    # "already linked" only when the row now shows another installer (two people installing at
+    # once); for a server the person may not touch the error stands (row-level security refuses).
+    try:
+        async with db.user(user_id, install_guild=guild_id, session=session) as conn:
+            cur = await conn.execute(
+                "SELECT installed_by_user_id FROM installs WHERE guild_id = %s", (guild_id,)
+            )
+            row = await cur.fetchone()
+            if row is not None and row["installed_by_user_id"] not in (None, user_id):
+                return "already_linked"
+            cur = await conn.execute(
+                "INSERT INTO installs (guild_id, installed_by_user_id, installed_at, via)"
+                " VALUES (%s, %s, %s, 'site')"
+                " ON CONFLICT (guild_id) DO UPDATE SET"
+                "   installed_by_user_id = EXCLUDED.installed_by_user_id, via = 'site',"
+                "   left_at = NULL"
+                " WHERE installs.installed_by_user_id IS NULL"
+                "   OR installs.installed_by_user_id = EXCLUDED.installed_by_user_id"
+                " RETURNING guild_id",
+                (guild_id, user_id, now),
+            )
+            return "recorded" if await cur.fetchone() is not None else "already_linked"
+    except pg_errors.InsufficientPrivilege:
+        async with db.user(user_id, install_guild=guild_id, session=session) as conn:
+            cur = await conn.execute(
+                "SELECT installed_by_user_id FROM installs WHERE guild_id = %s", (guild_id,)
+            )
+            row = await cur.fetchone()
+        if row is not None and row["installed_by_user_id"] not in (None, user_id):
+            return "already_linked"
+        raise
 
 
 async def link_install(db: Database, user_id: int, guild_id: int, *, session: str) -> str:
@@ -173,6 +305,44 @@ async def delete_person(db: Database, user_id: int, *, now: int | None = None) -
         # The account's history of earlier Discord accounts goes with it (#1230).
         await conn.execute("SELECT dmbot_forget_account_history()")
         await conn.execute("SELECT dmbot_forget_email_records()")
+        # A start-up wizard draft is the person's own answers and documents: it goes in every
+        # server (#3955).
+        await conn.execute("SELECT dmbot_forget_wizard()")
+        # The AI credit totals are the person's Discord ID too; the ledger rows keep their numbers
+        # with the owner set to nobody (#4094).
+        await conn.execute("SELECT dmbot_forget_credits()")
+        # The listening hours are the person's Discord ID too: the month totals go, and each
+        # campaign's minutes stay with the owner set to nobody (#4132).
+        await conn.execute("SELECT dmbot_forget_hours()")
+        # The person's own requests and records go; authorship and transcripts are the campaign's
+        # (#4141).
+        await conn.execute("SELECT dmbot_forget_person()")
+        # What they wrote or decided for a campaign stays, with nobody as the author (#4141).
+        await conn.execute("SELECT dmbot_forget_authorship()")
+        # More of their own requests and codes (#4148).
+        await conn.execute("SELECT dmbot_forget_requests()")
+        # Their typed-id questions, and any that asked about them (#4225).
+        await conn.execute("SELECT dmbot_forget_lookups()")
+        # Who decided or set a campaign's records goes to 0; the records stay (#4148).
+        await conn.execute("SELECT dmbot_forget_decisions()")
+        # The same for the next set: name decisions, the plan's, suggestions, plot answers and who
+        # started a reading or a session (#4148).
+        await conn.execute("SELECT dmbot_forget_decisions_2()")
+        # Their own talk with PlotBot, and the website's note that they deleted a campaign (#4148).
+        await conn.execute("SELECT dmbot_forget_own_records()")
+        # Who approved a recap goes to 0; the approval is its hash, which stays (#4148).
+        await conn.execute("SELECT dmbot_forget_recap_approval()")
+        # They come out of every campaign's DM list; open hand-over offers to or from them are
+        # cancelled and answered ones keep nobody in their place (#4148).
+        await conn.execute("SELECT dmbot_forget_membership()")
+        # The DM's list of players they remember, and every list that names the person (#4226).
+        await conn.execute("SELECT dmbot_forget_dm_players()")
+        # The kept trial and unsubscribe records lose the Discord ID where they have its keyed hash
+        # (#4145); a row with no hash yet keeps the ID, as before.
+        await conn.execute("SELECT dmbot_forget_person_ids()")
+        # The maps they uploaded go, and the maps they answered "use it?" for stay with nobody as
+        # the DM who said so (#3274, #4344).
+        await conn.execute("SELECT dmbot_forget_maps()")
         await conn.execute("DELETE FROM web_users WHERE user_id = %s", (user_id,))
         # Free access goes with the account (#771). It isn't linked to web_users (a grant
         # works for someone who never signed in), so it's deleted by hand.

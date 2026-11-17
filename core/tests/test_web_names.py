@@ -64,7 +64,7 @@ class Names(Base):
         self.title = (
             await self.memory.add_alias(
                 g, self.one.id, self.kazeth, "the Grey Voice", kind="title", source=DM_SOURCE,
-                status="confirmed", secret=True,
+                status="confirmed", secret=True, dm_chose_secret=True,
             )
         ).value.id  # fmt: skip
         self.short = (

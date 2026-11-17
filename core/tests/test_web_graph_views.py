@@ -58,7 +58,7 @@ class TheDm(Views):
             status="confirmed",
         )  # fmt: skip
         await self.memory.set_hidden_from_players(self.g, self.one.id, rook.value.id, False,
-                                                  source="dm")  # fmt: skip
+                                                  source="dm", dm_chose_secret=True)  # fmt: skip
         made = await self.memory.add_relation(
             self.g, self.one.id, self.mira, "knows", rook.value.id, source="dm", confidence=1.0,
             status="confirmed", secret=True, knows_how="met",
@@ -68,7 +68,9 @@ class TheDm(Views):
         self.assertNotIn(link, self.ids(players))
         self.assertFalse(any("knowsHow" in x and x["id"] == link
                              for e in players["edges"] for x in e["links"]))  # fmt: skip
-        await self.memory.update_relation(self.g, self.one.id, link, source="dm", secret=False)
+        await self.memory.update_relation(
+            self.g, self.one.id, link, source="dm", secret=False, dm_chose_secret=True
+        )
         players = await self.graph(self.player, center=self.mira, hops=1)
         shown = [x for e in players["edges"] for x in e["links"] if x["id"] == link]
         self.assertEqual([(x["words"], x["knowsHow"]) for x in shown], [("has met", "met")])
@@ -272,3 +274,25 @@ class ThePeekNotice(Views):
             row = await cur.fetchone()
         assert row is not None
         self.assertEqual(row["n"], 0)
+
+
+class Routes(Views):
+    async def test_a_journey_never_reads_as_a_road_in_either_view(self) -> None:
+        # (#4173 slice 6d part 2, Supervisor's condition: before anything writes one)
+        town = await self.add("Brindleford", "place")
+        road = await self.link("route_to", self.hall, town, "road")
+        leg = await self.memory.add_relation(
+            self.g, self.one.id, self.hall, "route_to", town, source="dm", confidence=1.0,
+            status="confirmed", detail="road", route_state="travelled", from_session_at=100,
+        )  # fmt: skip
+        leg_id = leg.value[0].id
+        for view in ("full", "players"):
+            got = await self.graph(center=self.hall, hops=1, view=view)
+            words = {x["id"]: x.get("words") for e in got["edges"] for x in e["links"]}
+            with self.subTest(view=view):
+                self.assertIn(road, words)
+                self.assertEqual(words[leg_id], "is where the party set out by road for")
+                link = next(x for e in got["edges"] for x in e["links"] if x["id"] == leg_id)
+                self.assertNotEqual(link["direction"], "both")  # (one way, from the start)
+                self.assertEqual(link["back"], "is where the party arrived by road from")
+                self.assertIsNone(link.get("pairWords"))

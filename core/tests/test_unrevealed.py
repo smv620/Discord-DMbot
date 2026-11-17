@@ -44,7 +44,9 @@ class TheConnection(Held):
         self.assertIn(held, full)
         self.assertFalse(full[held]["revealed"])  # the DM sees it dimmed
         self.assertTrue(full[self.links["mira-keep"]]["revealed"])
-        await self.memory.update_relation(self.g, self.one.id, held, source=DM, unrevealed=False)
+        await self.memory.update_relation(
+            self.g, self.one.id, held, source=DM, unrevealed=False, dm_chose_secret=True
+        )
         shown = await self.seen(self.player)
         self.assertIn(held, shown)
         self.assertTrue(shown[held]["revealed"])
@@ -52,7 +54,7 @@ class TheConnection(Held):
     async def test_undoing_a_reveal_hides_it_again(self) -> None:
         held = await self.held_link()
         shown = await self.memory.update_relation(
-            self.g, self.one.id, held, source=DM, unrevealed=False
+            self.g, self.one.id, held, source=DM, unrevealed=False, dm_chose_secret=True
         )
         self.assertIn(held, await self.seen(self.player))
         await self.memory.undo(self.g, self.one.id, shown.batch, source=DM)  # type: ignore[arg-type]
@@ -66,11 +68,18 @@ class TheConnection(Held):
         )  # fmt: skip
         with self.assertRaises(MemoryRuleError):
             await self.memory.update_relation(
-                self.g, self.one.id, made.value[0].id, source=DM, unrevealed=False
+                self.g,
+                self.one.id,
+                made.value[0].id,
+                source=DM,
+                unrevealed=False,
+                dm_chose_secret=True,
             )
-        await self.memory.set_hidden_from_players(self.g, self.one.id, other, False, source=DM)
+        await self.memory.set_hidden_from_players(
+            self.g, self.one.id, other, False, source=DM, dm_chose_secret=True
+        )
         await self.memory.update_relation(
-            self.g, self.one.id, made.value[0].id, source=DM, unrevealed=False
+            self.g, self.one.id, made.value[0].id, source=DM, unrevealed=False, dm_chose_secret=True
         )
 
     async def test_only_the_dm_holds_one_back_or_shows_it(self) -> None:
@@ -82,7 +91,7 @@ class TheConnection(Held):
         held = await self.held_link()
         with self.assertRaises(MemoryRuleError):
             await self.memory.update_relation(
-                self.g, self.one.id, held, source="scan", unrevealed=False
+                self.g, self.one.id, held, source="scan", unrevealed=False, dm_chose_secret=True
             )
 
     async def test_a_secret_one_is_never_shown_by_a_reveal(self) -> None:
@@ -91,7 +100,9 @@ class TheConnection(Held):
             status="confirmed", unrevealed=True, secret=True,
         )  # fmt: skip
         link = made.value[0].id
-        await self.memory.update_relation(self.g, self.one.id, link, source=DM, unrevealed=False)
+        await self.memory.update_relation(
+            self.g, self.one.id, link, source=DM, unrevealed=False, dm_chose_secret=True
+        )
         self.assertNotIn(link, await self.seen(self.player))  # still 🤫
 
     async def test_the_wording_of_a_held_back_connection_stays_held_back(self) -> None:
@@ -122,7 +133,9 @@ class TheConnection(Held):
         link = made.value[0]
         with self.assertRaises(MemoryRuleError):  # a name is still hidden
             await link_edits.set_secret(self.memory, self.g, self.one.id, link, False)
-        await self.memory.set_hidden_from_players(self.g, self.one.id, other, False, source=DM)
+        await self.memory.set_hidden_from_players(
+            self.g, self.one.id, other, False, source=DM, dm_chose_secret=True
+        )
         await link_edits.set_secret(self.memory, self.g, self.one.id, link, False)
         self.assertIn(link.id, await self.seen(self.player))
 
@@ -150,7 +163,7 @@ class TheNames(Held):
         mine = names(await self.graph(center=self.mira, hops=1, view="full"))
         self.assertFalse(mine[fresh]["revealed"])
         shown = await self.memory.set_hidden_from_players(
-            self.g, self.one.id, fresh, False, source=DM
+            self.g, self.one.id, fresh, False, source=DM, dm_chose_secret=True
         )
         theirs = names(await self.graph(self.player, center=self.mira, hops=1))
         self.assertTrue(theirs[fresh]["revealed"])
@@ -194,7 +207,9 @@ class TheListeners(Held):
         fresh = await self.add("Orla Finch", "npc", hidden_from_players=True)
         clue = await self.add("The Map", "clue")
         await self.link("knows", self.mira, clue, "knows-clue")
-        await self.memory.set_audience_limited(self.g, self.one.id, clue, True, source=DM)
+        await self.memory.set_audience_limited(
+            self.g, self.one.id, clue, True, source=DM, dm_chose_secret=True
+        )
         secret = await self.add("Lord Veil", "npc")
         await self.alias(secret, "The Stranger", secret=True)
         lookup = CampaignLookup.build(await self.memory.lookup_data(self.g, self.one.id))
