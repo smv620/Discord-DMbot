@@ -40,14 +40,6 @@ from __future__ import annotations
 # gets the long text limit, in the table's check and in the door's own list. The queue door's
 # lists, shape check and text limit are read back from the database as they are and each anchor
 # must be found exactly once, so a drift stops the migration. No row is changed.
-# The four actions go on the queue door as 0519's did, filed under no name with no target and no
-# flag; the door checks only their shape, the bot applies each through the store call Discord's
-# screen makes (`tie_clue`, `set_clue_word`, `untie_clue`, `undo`), one change with one Undo, and
-# checks the rest again (the thread, the clue, the DM): A clue's name may be longer than a hundred
-# characters with the thread id in front, so `clue-add` gets the long text limit, in the table's
-# check and in the door's own list. The queue door's lists, shape check and text limit are read
-# back from the database as they are and each anchor must be found exactly once, so a drift stops
-# the migration. No row is changed.
 
 
 ACTIONS = ("clue-add", "clue-word", "clue-off", "clue-undo")
