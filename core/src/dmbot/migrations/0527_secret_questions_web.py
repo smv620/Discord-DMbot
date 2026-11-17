@@ -11,7 +11,8 @@ from __future__ import annotations
 # ('narrow' | 'replace' | 'reveal'), label, limits, item, owner, knowers, new}`: the item as the
 # card names it (an entry `{table: 'entity', name, type}`, an other name `{table: 'alias', text,
 # owner}` or a connection `{table: 'relation', subject, subjectType, predicate, detail, object}`;
-# NULL when the item is gone, which the page words as Discord does), `limits` (a clue made known to
+# NULL when the item is gone or is no longer a kept connection, which the page words as
+# Discord does: a question is only ever asked about a kept one), `limits` (a clue made known to
 # some only), `knowers` (the names of the player characters a narrowing would take off), and for a
 # replace question `new`, the connection that replaces it. A 🌍 World read's question (its change
 # says `common`; only a reveal ever does, `ui/secret_questions.is_world`) is left out: it is
@@ -153,7 +154,8 @@ SQL = (
                             AND s.campaign_id = r.campaign_id AND s.id = r.subject_id
                         JOIN memory_entities t ON t.guild_id = r.guild_id
                             AND t.campaign_id = r.campaign_id AND t.id = r.object_id
-                        WHERE r.guild_id = g AND r.campaign_id = c AND r.id = q.item_id) END,
+                        WHERE r.guild_id = g AND r.campaign_id = c AND r.id = q.item_id
+                          AND r.status = 'confirmed') END,
                 'knowers', COALESCE((
                     SELECT jsonb_agg(k.name ORDER BY k.name)
                     FROM memory_entities k
@@ -170,7 +172,8 @@ SQL = (
                         JOIN memory_entities t ON t.guild_id = r.guild_id
                             AND t.campaign_id = r.campaign_id AND t.id = r.object_id
                         WHERE r.guild_id = g AND r.campaign_id = c
-                          AND r.id = q.change ->> 'by') END
+                          AND r.id = q.change ->> 'by'
+                          AND r.status = 'confirmed') END
                 ) ORDER BY q.created_at, q.id)
             FROM secret_questions q
             WHERE q.guild_id = g AND q.campaign_id = c AND q.status = 'waiting'
