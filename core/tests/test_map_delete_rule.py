@@ -1,8 +1,8 @@
 """When a map is deleted (#4259, MapBot slice 8b; docs/design/mapbot_layers.md §7.5; Supervisor's
 ruling on #4236 f): DMbot's read resting only on that map goes with it; a read the text also stated
-stays as the text's; the DM's own word stays, without the pointer; one Undo puts it all back. A map
-dropped only to make room keeps its rows, which lose only the pointer. Invented names;
-needs Postgres."""
+stays as the text's; the DM's own word stays, without the pointer; one Undo puts it all back. A
+picture deleted with its map follows the same rule, (backups: test_map_facts).
+Invented names; needs Postgres."""
 
 from __future__ import annotations
 
@@ -72,17 +72,33 @@ class TheRule(PinsBase):
         written = await self.maps.remove_map(GUILD_A, self.one.id, self.map_id)
         assert written.batch is not None
         await self.memory.undo(GUILD_A, self.one.id, written.batch)
-        for fact_id, source in ((only_map, "map"), (text_too, "map"), (dms, "map")):
-            got = await self.row(fact_id)
-            assert got is not None
-            self.assertEqual((got["source"], got["map_id"]), (source, self.map_id))
+        for fact_id, status in ((only_map, "read"), (text_too, "read"), (dms, "confirmed")):
+            self.assertEqual(
+                await self.row(fact_id), {"status": status, "source": "map", "map_id": self.map_id}
+            )
 
-    async def test_a_map_dropped_to_make_room_keeps_its_rows(self) -> None:
+    async def test_deleting_the_picture_follows_the_same_rule(self) -> None:
         only_map, text_too, dms = await self.three()
-        async with self.db.guild(GUILD_A) as conn:  # (the storage path: the row goes, not _remove)
-            await conn.execute("DELETE FROM campaign_maps WHERE id = %s", (self.map_id,))
-        for fact_id in (only_map, text_too, dms):
-            got = await self.row(fact_id)
-            assert got is not None
-            self.assertIsNone(got["map_id"])
-        self.assertEqual((await self.row(only_map) or {}).get("source"), "map")
+        rejected = await self.fact("hill", status="rejected", source="map", also_text=False)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT picture_id FROM campaign_maps WHERE id = %s", (self.map_id,)
+            )
+            picture = await cur.fetchone()
+        assert picture is not None
+        await self.pictures.delete(GUILD_A, self.one.id, int(picture["picture_id"]))
+        self.assertIsNone(await self.row(only_map))
+        self.assertEqual(
+            await self.row(text_too), {"status": "read", "source": "text", "map_id": None}
+        )
+        for kept, status in ((dms, "confirmed"), (rejected, "rejected")):  # (the DM's word and no)
+            self.assertEqual(
+                await self.row(kept), {"status": status, "source": "map", "map_id": None}
+            )
+
+    async def test_the_dms_no_stays_without_the_pointer(self) -> None:
+        rejected = await self.fact("hill", status="rejected", source="map", also_text=False)
+        await self.maps.remove_map(GUILD_A, self.one.id, self.map_id)
+        self.assertEqual(
+            await self.row(rejected), {"status": "rejected", "source": "map", "map_id": None}
+        )

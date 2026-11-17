@@ -452,8 +452,9 @@ class MapStore:
         # What the map said (§7.5, Supervisor's ruling on #4236 f; #4259 slice 8b), in the same
         # write, so one Undo puts it all back: DMbot's read resting only on this map goes with it;
         # a read the text also stated stays, as the text's; the DM's own word (and the DM's no)
-        # stays, without the pointer. A map dropped only to make room is not this path: its rows
-        # keep their words and lose only the pointer (the foreign key's ON DELETE SET NULL).
+        # stays, without the pointer. A picture deleted with its map follows the same rule
+        # (`PictureStore.delete`); only a row whose map is gone some other way loses just the
+        # pointer (the foreign key's ON DELETE SET NULL).
         for fact in await w.select(MAP_FACTS, " AND map_id = %s", [map_id]):
             fact_id = str(fact["id"])
             if fact["status"] == "read" and fact["source"] == "map" and not fact["also_text"]:
@@ -461,7 +462,10 @@ class MapStore:
                     await w.update(MAP_FEATURES, str(pinned["id"]), {"fact_id": None})
                 await w.delete(MAP_FACTS, fact_id)
             elif fact["status"] == "read" and fact["source"] == "map":
-                await w.update(MAP_FACTS, fact_id, {"source": "text", "map_id": None})
+                # (the text is its source now, so "also the text" says nothing more)
+                await w.update(
+                    MAP_FACTS, fact_id, {"source": "text", "also_text": False, "map_id": None}
+                )
             else:
                 await w.update(MAP_FACTS, fact_id, {"map_id": None})
         for other in await w.select(MAPS, " AND replaces = %s", [map_id]):

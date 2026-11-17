@@ -797,8 +797,10 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
         elif isinstance(raw, dict) and raw.get("table") == "alias":
             raw = {"said_as": None, **raw}  # from before the narrator's spelling (#1419)
         elif isinstance(raw, dict) and raw.get("table") == "map_fact":
-            # (from before named cultures, #4257 slice 3b, and road conditions, #4258)
-            raw = {"culture_id": None, "relation_id": None, **raw}
+            # (from before named cultures, #4257 slice 3b, and road conditions, #4258). The map a
+            # row rests on (#4259) is never restored: maps are not in a backup yet (OWED_TO_BACKUP),
+            # so the row comes back as the DM's or the text's, as when a map is dropped for room.
+            raw = {"culture_id": None, "relation_id": None, **raw, "map_id": None}
         elif isinstance(raw, dict) and raw.get("table") == "predicate":
             raw = {**_NEW_PREDICATE_FIELDS, **raw}
             if raw.get("key") in core_predicates:
