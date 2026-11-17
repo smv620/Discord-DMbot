@@ -21,6 +21,7 @@ from dmbot.mentions import NO_PINGS
 from dmbot.transcript.name_pass import Fixed
 from dmbot.transcript.name_pass_log import undo_fix
 from dmbot.ui.dmbot_commands import _bot, _tell
+from dmbot.ui.private_server import guild_id_for
 
 log = logging.getLogger(__name__)
 
@@ -57,11 +58,11 @@ class UndoNamePassButton(
 
     async def callback(self, interaction: discord.Interaction) -> Any:
         bot = _bot(interaction)
-        guild = interaction.guild
+        guild_id = await guild_id_for(interaction, self.campaign_id)  # (a private chat has none)
         campaign = (
-            await bot.campaigns.get(guild.id, self.campaign_id) if guild is not None else None
+            await bot.campaigns.get(guild_id, self.campaign_id) if guild_id is not None else None
         )
-        if guild is None or campaign is None:
+        if guild_id is None or campaign is None:
             await _tell(interaction, GONE)
             return
         if interaction.user.id not in campaign.dm_user_ids:  # on every press
@@ -73,7 +74,7 @@ class UndoNamePassButton(
             return
         try:
             lines = await undo_fix(
-                store, bot.memory, guild.id, campaign.id, self.batch, now=int(time.time())
+                store, bot.memory, guild_id, campaign.id, self.batch, now=int(time.time())
             )
         except Exception:
             log.exception("Undo of the name pass failed")

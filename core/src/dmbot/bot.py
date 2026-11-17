@@ -925,8 +925,11 @@ def _joined_at(guild: discord.Guild) -> int | None:
     return int(me.joined_at.timestamp()) if me is not None and me.joined_at else None
 
 
-def _same_view(view: discord.ui.View) -> discord.ui.View:
-    return view
+def _first_undo_view(campaign_id: str, fixes: list[Any]) -> discord.ui.View:
+    """A fresh first Undo message for an import's name report each time it is asked (a view that
+    was copied for a private send must not be reused for the screen)."""
+    views = name_pass_undo.undo_views_import(campaign_id, fixes)
+    return views[0] if views else discord.ui.View()
 
 
 class DMBotTree(app_commands.CommandTree["DMBot"]):
@@ -12813,12 +12816,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 views = name_pass_undo.undo_views_import(cid, [r.fixed for r in reports])
                 # Private first, with the numbers-only pointer in the DM Bot channel after; the
                 # DM screen holds it only when no DM could be messaged (#3874 E1)
-                first: discord.ui.View = views[0] if views else discord.ui.View()
+                fixes = [r.fixed for r in reports]
                 told = await pointer_note.send(
                     self,
                     campaign,
                     name_pass_logic.import_text(reports),
-                    functools.partial(_same_view, first),
+                    functools.partial(_first_undo_view, cid, fixes),
                     names_fixed_pointer(
                         sum(len(r.fixed) for r in reports),
                         sum(len(r.unsure) for r in reports),
@@ -12826,6 +12829,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     ),
                     note=True,
                 )
+                # (`told` is true for either route; an extra that can't go private then goes to the
+                # screen with the first message, which is where it fell back to)
                 for extra in views[1:]:  # Discord holds 25 buttons a message: no Undo is lost
                     more = "↩️ More Undo buttons for the report above:"
                     if not await self.ask_privately(gid, cid, more, extra, note=True) and (
