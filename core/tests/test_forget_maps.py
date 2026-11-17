@@ -240,3 +240,60 @@ class ForgetMapReads(MapsBase):
             await self.row(kept),
             {"status": "read", "source": "map", "also_text": False, "map_id": mid},
         )
+
+    # ---- the memory version moves once for each campaign whose facts changed (#4711, 0536) ----
+
+    async def version(self, campaign: str) -> int:
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT memory_version FROM campaigns WHERE id = %s", (campaign,)
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        return int(row["memory_version"])
+
+    async def test_it_moves_once_however_many_rows_changed(self) -> None:
+        mine = await self.a_map(ALICE, dm=False)
+        await self.fact(mine, "arctic", status="read", source="map", text=False)
+        await self.fact(mine, "mountain", status="read", source="map", text=True)
+        await self.fact(mine, "forest", status="confirmed", source="map", text=False)
+        before = await self.version(self.campaign)
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        self.assertEqual(await self.version(self.campaign), before + 1)
+
+    async def test_a_campaign_whose_facts_did_not_change_keeps_its_number(self) -> None:
+        mine = await self.a_map(ALICE, dm=False)  # (no facts rest on it)
+        bobs = await self.a_map(BOB, dm=False)
+        await self.fact(bobs, "arctic", status="read", source="map", text=False)
+        before = await self.version(self.campaign)
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        self.assertEqual(await self.version(self.campaign), before)
+        self.assertIsNotNone(mine)
+
+    async def test_every_campaign_with_changed_facts_moves_and_nobody_elses(self) -> None:
+        other = (await CampaignStore(self.db).create(GUILD, "Two", CAL)).id
+        untouched = (await CampaignStore(self.db).create(GUILD, "Three", CAL)).id
+        first = await self.a_map(ALICE, dm=False)
+        await self.fact(first, "arctic", status="read", source="map", text=False)
+        self.campaign = other
+        placed = await MemoryStore(self.db).add_entity(
+            GUILD, other, type="place", name="Neverwinter", source="dm", status="confirmed"
+        )
+        self.place = placed.value.id
+        second = await self.a_map(ALICE, dm=False)
+        await self.fact(second, "forest", status="read", source="map", text=False)
+        moved = {c: await self.version(c) for c in (other, untouched)}
+        first_before = await self.version(await self.first_campaign())
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        self.assertEqual(await self.version(other), moved[other] + 1)
+        self.assertEqual(await self.version(untouched), moved[untouched])
+        self.assertEqual(await self.version(await self.first_campaign()), first_before + 1)
+
+    async def first_campaign(self) -> str:
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM campaigns WHERE name = 'One' AND guild_id = %s", (GUILD,)
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        return str(row["id"])
