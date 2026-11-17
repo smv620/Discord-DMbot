@@ -7,6 +7,7 @@ import unittest
 import uuid
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 from dmbot.campaigns.models import STORY_OFF, STORY_WATCH
 from dmbot.memory import book_links as links
@@ -282,7 +283,7 @@ class MoreCases(Setup):
 class Triggers(Setup):
     """The bot's step: the plan gate, a failed post, and one condition at a time."""
 
-    def bot(self, *, allowed: bool = True, posted: bool = True) -> Any:
+    def bot(self, *, allowed: bool = True, posted: bool = True, privately: bool = False) -> Any:
         sent: list[Any] = []
 
         async def post(channel: int, text: str, view: Any = None, **kw: Any) -> bool:
@@ -295,6 +296,8 @@ class Triggers(Setup):
         return SimpleNamespace(
             watch=self.watch, campaigns=self.campaigns, plan_allows=plan_allows, post=post,
             transcripts=None, sent=sent,
+            ask_privately=AsyncMock(return_value=privately),  # (#3874 E1: the DMs first)
+            post_message=AsyncMock(return_value=None),
         )  # fmt: skip
 
     async def test_the_owners_plan_is_asked_and_a_no_posts_nothing_and_writes_nothing(self) -> None:
@@ -319,6 +322,21 @@ class Triggers(Setup):
         self.assertEqual(len(fake.sent), 1)
         self.assertIn("(Session", fake.sent[0][1] + "(Session")  # numbering is optional
         self.assertEqual(await self.watch.count(GUILD_A, self.c, "open"), 1)
+
+    async def test_the_words_go_to_the_dms_privately_and_the_channel_gets_a_count(self) -> None:
+        from dmbot.bot import DMBot
+
+        entity, _, _ = await self.varn()
+        await self.set(entity, "dead")
+        await self.campaigns.set_dm_bot_channel(GUILD_A, self.c, 888)
+        fake = self.bot(privately=True)
+        await DMBot.watch_story(fake, GUILD_A, self.c, 777)
+        fake.ask_privately.assert_awaited_once()
+        self.assertEqual(len(fake.sent), 1)  # (only the pointer, in the DM Bot channel)
+        channel, pointer = fake.sent[0]
+        self.assertEqual(channel, 888)
+        self.assertIn("1 story note", pointer)
+        self.assertNotIn("Varn", pointer)  # (a count: never a name)
 
     async def test_a_check_for_one_condition_tells_only_that_one(self) -> None:
         entity, _, _ = await self.varn()
