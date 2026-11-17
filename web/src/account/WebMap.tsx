@@ -67,9 +67,10 @@ export function lineWidthOf(count: number, on: boolean, chosen: boolean): { stro
 const NUDGE = 24; // how far an arrow key moves the name it is on
 
 /** Who knows a line, from its connections (#3809): "all" when every one is fully revealed, "dm" when every one is hidden from
- * every player, else "some". A connection from an older API has no `who`: it counts as "all" unless it is secret. */
+ * every player, else "some". A connection from an older API has no `who`: it counts as "all" unless it is secret. A 🌍 common
+ * knowledge connection (#4559) is known to everyone, so it counts as "all". */
 function knowOf(edge: WebEdge): "all" | "some" | "dm" {
-  const each = edge.links.map((l) => l.who ?? (l.secret ? "dm" : "all"));
+  const each = edge.links.map((l) => (l.who === "common" ? "all" : (l.who ?? (l.secret ? "dm" : "all"))));
   if (each.every((w) => w === "all")) return "all";
   if (each.every((w) => w === "dm")) return "dm";
   return "some";

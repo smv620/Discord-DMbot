@@ -7,6 +7,7 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { AccountApi, WebGraph, WebLink, WebLinkChange } from "../src/account/api";
+import { ApiError } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import Web from "../src/account/Web";
 import { webPage as w } from "../src/content/web-words";
@@ -47,7 +48,7 @@ function pageWith(g: WebGraph, changes: WebLinkChange[] = []): AccountApi {
     // The change is kept on the link, as the bot would keep it, so the next read shows the new answer.
     const link = g.edges[0]!.links.find((l) => change.action !== "add" && l.id === change.id);
     if (link && change.action === "who") {
-      link.who = change.who === "dm" ? "dm" : change.who === "everyone" ? "all" : "some";
+      link.who = change.who === "dm" ? "dm" : change.who === "everyone" ? "all" : change.who === "common" ? "common" : "some";
       link.knownBy = change.who === "some" ? (change.characters ?? []).map((id) => ({ id, name: id })) : [];
     }
     return g.edges[0]!;
@@ -109,6 +110,52 @@ describe("who knows this, on a held connection", () => {
     await screen.findByText(w.seeAsNow("The party"));
     await waitFor(() => expect(screen.queryAllByRole("button", { name: /^See the connections between/ })).toHaveLength(0));
     expect(screen.queryByText(w.whoKnowsHeading)).toBeNull();
+  });
+
+  it("a common connection shows the common line and the common button pressed", async () => {
+    const panel = await openPanel(pageWith(graph([held({ who: "common" })])));
+    expect(within(panel).getByText(w.whoStateCommon)).toBeTruthy();
+    expect(within(panel).getByRole("button", { name: w.whoCommon }).getAttribute("aria-pressed")).toBe("true");
+    expect(within(panel).getByRole("button", { name: w.whoEveryone }).getAttribute("aria-pressed")).toBe("false");
+  });
+
+  it("pressing Common knowledge sends who common and says it is done", async () => {
+    const changes: WebLinkChange[] = [];
+    const panel = await openPanel(pageWith(graph([held()]), changes));
+    fireEvent.click(within(panel).getByRole("button", { name: w.whoCommon }));
+    await waitFor(() => expect(changes).toEqual([{ action: "who", id: "l1", who: "common" }]));
+    expect(await screen.findByText(w.whoDoneCommon)).toBeTruthy();
+  });
+
+  it("pressing it again on a common connection says it is already so and sends nothing", async () => {
+    const changes: WebLinkChange[] = [];
+    const panel = await openPanel(pageWith(graph([held({ who: "common" })]), changes));
+    await waitFor(() => expect((within(panel).getByRole("button", { name: w.whoCommon }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(within(panel).getByRole("button", { name: w.whoCommon }));
+    expect(await within(panel).findByText(w.whoAlready)).toBeTruthy();
+    expect(changes).toHaveLength(0);
+  });
+
+  it("a refusal says to show the names to the players first", async () => {
+    const api = pageWith(graph([held()]));
+    api.changeWebLink = async () => {
+      throw new ApiError("cannot-show");
+    };
+    const panel = await openPanel(api);
+    fireEvent.click(within(panel).getByRole("button", { name: w.whoCommon }));
+    expect(await within(panel).findByText(w.whoCannotShow)).toBeTruthy();
+  });
+
+  it("only the DM, some and everyone still send what they did", async () => {
+    const changes: WebLinkChange[] = [];
+    const panel = await openPanel(pageWith(graph([held({ who: "common" })]), changes));
+    await waitFor(() => expect((within(panel).getByRole("button", { name: w.whoOnlyDm }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(within(panel).getByRole("button", { name: w.whoOnlyDm }));
+    await waitFor(() => expect(changes).toEqual([{ action: "who", id: "l1", who: "dm" }]));
+    expect(await screen.findByText(w.whoDoneDm)).toBeTruthy();
+    await waitFor(() => expect((within(panel).getByRole("button", { name: w.whoEveryone }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(within(panel).getByRole("button", { name: w.whoEveryone }));
+    await waitFor(() => expect(changes).toEqual([{ action: "who", id: "l1", who: "dm" }, { action: "who", id: "l1", who: "everyone" }]));
   });
 
   it("only the DM and everyone send at once, with no characters", async () => {

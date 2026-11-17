@@ -1096,7 +1096,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let mapSeq = 5;
   const linkBatches = new Map<number, { id: string; a: string; b: string; words: string; secret: boolean; direction: "a-b" | "b-a" | "both"; pinned?: boolean }[]>();
   // Who knows a held connection (#3214): the DM's answers, kept by link id for the pretend web.
-  const linkWho = new Map<string, { who: "dm" | "some" | "all"; knownBy: { id: string; name: string }[] }>();
+  const linkWho = new Map<string, { who: "dm" | "some" | "all" | "common"; knownBy: { id: string; name: string }[] }>();
   // Player character icons (#3621, #3622): in a campaign reference ending ".icons" the first three names are player
   // characters: the first has a Discord avatar and a dndbeyond.com portrait, the second only a portrait, the third none.
   const pcChoice = new Map<string, IconChoice>();
@@ -1206,7 +1206,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
         return s !== undefined && (s.secret === true || s.revealed === false);
       })
       .map((l) => l.id);
-    const defaultWho: { who: "dm" | "some" | "all"; knownBy: { id: string; name: string }[] }[] = [
+    const defaultWho: { who: "dm" | "some" | "all" | "common"; knownBy: { id: string; name: string }[] }[] = [
       { who: "dm", knownBy: [] },
       { who: "some", knownBy: [{ id: "pc-cerric", name: "Cerric" }, { id: "pc-mira", name: "Mira" }] },
       { who: "all", knownBy: [] },
@@ -2481,7 +2481,9 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           if (knowsHowOf(link.words) === null) throw new ApiError("bad-name");
           link.words = withKnowsHow(link.words, change.how);
         } else if (change.action === "who") {
-          // Who knows a held connection (#3214): "everyone" is the table; "some" names the characters picked.
+          // Who knows a held connection (#3214): "everyone" is the table; "some" names the characters picked. "common" (#4559)
+          // is refused as `cannot-show` while the ref ends `.common-refused` (a connection whose names the players are not shown).
+          if (change.who === "common" && /\.common-refused$/.test(ref)) throw new ApiError("cannot-show");
           const picked = (change.characters ?? []).map((id) => PRETEND_VIEWERS.find((v) => v.id === id)).filter((v) => v !== undefined);
           linkWho.set(
             link.id,
@@ -2489,7 +2491,9 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
               ? { who: "dm", knownBy: [] }
               : change.who === "everyone"
                 ? { who: "all", knownBy: [] }
-                : { who: "some", knownBy: picked.map((v) => ({ id: v.id, name: v.name })) },
+                : change.who === "common"
+                  ? { who: "common", knownBy: [] }
+                  : { who: "some", knownBy: picked.map((v) => ({ id: v.id, name: v.name })) },
           );
         } else {
           if (change.confirm !== true) throw new ApiError("needs-confirm");
