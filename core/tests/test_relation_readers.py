@@ -125,6 +125,9 @@ STORE = {
     "untie_clue": CONFIRMED_ONLY + ": the DM takes a live tie off (#4624)",
     "thread_clues": CONFIRMED_ONLY + ": a thread's live clue ties; a player gets only the clues "
     "their characters know, with no word (#4624)",
+    "thread_guesses": "reads a guess's own connection, proposed and secret as placing makes it, "
+    "only to word the guess on a thread's card; a player gets only their own characters' and the "
+    "party's guesses, never as fact (#4655)",
     "_recheck_led_to_after_undo": CONFIRMED_ONLY
     + ': re-checks a "led to" link an Undo made live again',
     "_relations_touching": DM_ONLY + ": the checks, which skip guess connections themselves",
