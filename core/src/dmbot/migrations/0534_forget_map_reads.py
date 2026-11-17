@@ -22,7 +22,12 @@ from __future__ import annotations
 # The policies are for the function's owner only and open only while the function runs (its own
 # `dmbot.owner_sync` value, as 0480 does). They read the person's maps through `campaign_maps`,
 # which 0480's own policy opens for the same function. The read policy also shows a row the UPDATE
-# leaves behind (`map_id` NULL), because Postgres checks the new row against the SELECT policies.
+# leaves behind (`map_id` NULL), because Postgres checks the new row against the SELECT policies;
+# that opens every map-less fact row to the function body only, while the gate is on, and the
+# DELETE and UPDATE policies still require the person's own map, so nothing else can be changed.
+# The log rows of the facts (`memory_changes`, table `memory_map_facts`) hold the fact's own words
+# and ids, never a person's id, so they stay; an Undo of one after the map is gone is refused by
+# the foreign keys, as an Undo of a deleted picture's map already is.
 # No table changes; the function keeps its owner, its search path and its web grant.
 _GATE = "dmbot_owner_sync() = ''forget_maps''"
 _ME = "dmbot_current_user()"
@@ -69,7 +74,7 @@ SQL = (
             USING ({_GATE} AND {_MINE} AND status = ''read'' AND source = ''map''
                    AND NOT also_text)', current_user);
         EXECUTE format('CREATE POLICY forget_map_reads_update ON memory_map_facts FOR UPDATE TO %I
-            USING ({_GATE} AND {_MINE}) WITH CHECK ({_GATE})', current_user);
+            USING ({_GATE} AND {_MINE}) WITH CHECK ({_GATE} AND map_id IS NULL)', current_user);
 """
     + r"""
     END

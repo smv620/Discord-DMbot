@@ -21,7 +21,7 @@ GUILD = 111
 NOW = 1_800_000_000
 
 
-class ForgetMaps(DatabaseTest):
+class MapsBase(DatabaseTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.addCleanup(entitlements.configure_free_users, ())
@@ -53,6 +53,8 @@ class ForgetMaps(DatabaseTest):
         )  # fmt: skip
         return made.value.id
 
+
+class ForgetMaps(MapsBase):
     async def rows(self) -> dict[str, tuple[object, object, object]]:
         async with self.db.guild(GUILD) as conn:
             cur = await conn.execute("SELECT id, right_by, use_ok, use_by FROM campaign_maps")
@@ -138,7 +140,7 @@ class ForgetMaps(DatabaseTest):
         self.assertNotIn(mine, await self.rows())
 
 
-class ForgetMapReads(ForgetMaps):
+class ForgetMapReads(MapsBase):
     """Migration 0534 (#4693): what DMbot read from a departing person's maps follows the deletion
     rule of a removed map (design 7.5): its own read goes, a read the text also stated becomes the
     text's, the DM's word and the DM's no stay without the pointer."""
