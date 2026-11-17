@@ -37,6 +37,16 @@ def session_summary_pointer(minutes: int, recorded: int) -> str:
     )
 
 
+def story_watch_pointer(shown: int, more: int) -> str:
+    """The story watch found places where the table left what the DM's adventure needs. The
+    words name people and places, so they go to the DMs privately; this is the count."""
+    total = shown + more
+    return (
+        f"🧭 {_count(total, 'thing', 'things')} the table changed in the DM's story. "
+        "DMs: the details are in your private message."
+    )
+
+
 def session_names_pointer(fixed: int, unsure: int, new: int) -> str:
     """After one session's name check: the same counts, for the DM Bot channel (#3874 E1). The
     names, the spellings and the Undo buttons are in the DMs' private message."""

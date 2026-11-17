@@ -288,6 +288,7 @@ from dmbot.dm_screen.upkeep_pointers import (
     secrets_pointer,
     session_names_pointer,
     session_summary_pointer,
+    story_watch_pointer,
 )
 from dmbot.dm_waiting import WaitingChecks, WaitingSent, asks_for
 from dmbot.ears.protocol import (
@@ -11049,7 +11050,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if self.transcripts is not None:
                 sessions = await self.transcripts.sessions(guild_id, campaign_id, limit=100)
                 numbers = {x.started_at: x.number for x in sessions}  # (the recent ones)
-            posted = await self.post(
+            # The words name people and places, so they go to the DMs privately; the DM Bot channel
+            # gets a count only, after a private message really went out. With none, the channel
+            # the caller gave (the DM screen) as before (#3874 E1).
+            posted = await pointer_note.send(
+                self,
+                campaign,
+                message_text(found, numbers),
+                functools.partial(watch_view, campaign_id, found),
+                story_watch_pointer(len(found.shown), found.more),
+                note=True,
+            ) or await self.post(
                 channel_id, message_text(found, numbers), view=watch_view(campaign_id, found)
             )
             if not posted:  # Discord was down: let the next check tell them rather than lose them
