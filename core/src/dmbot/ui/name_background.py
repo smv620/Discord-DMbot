@@ -3772,8 +3772,7 @@ class ConnectionOffer(_Menu):
         self.toggle = _Button(self._toggle, label=HIDE_PLAYERS, style=grey, row=1)
         self.add_item(self.toggle)
         # 👥 Some know (#4534): only the ticked player characters learn it; the rest of the table
-        # hears it when it is said. Set by the picker's Save and read once by `_answer`.
-        self.knowers: list[str] | None = None
+        # hears it when it is said. The picker's Save hands its ticks straight to `_answer`.
         self.some = _Button(self._some, label=SOME_KNOW, style=grey, row=1)
         self.add_item(self.some)
         self.add_item(_Button(self._skip, label="⏭️ Skip the rest", style=grey, row=2))
@@ -3843,7 +3842,7 @@ class ConnectionOffer(_Menu):
             self.toggle.label = view.label or HIDE_PLAYERS
             self.toggle.disabled = not view.label
             # (a secret spelling can only be kept as secret; a hand-over ends what another holds)
-            self.some.disabled = not self.characters or c.secret or bool(c.hand_over)
+            self.some.disabled = not self.characters or view.secret or c.secret or bool(c.hand_over)
 
     async def load(self, interaction: discord.Interaction) -> bool:
         campaign = await _campaign_for(interaction, self.campaign_id)
@@ -4074,7 +4073,7 @@ class ConnectionOffer(_Menu):
             c = await self._same(interaction, campaign)
             if c is None:
                 return
-            if c.secret or c.hand_over or not self.characters:
+            if self._players(c).secret or c.secret or c.hand_over or not self.characters:
                 await _tell(interaction, SOME_KNOW_REFUSED)
                 return
             picker = SomeKnowPicker(self, c)
@@ -4083,7 +4082,11 @@ class ConnectionOffer(_Menu):
                     content=picker.text(), view=picker, allowed_mentions=NO_PINGS
                 )
 
-    async def _answer(self, interaction: discord.Interaction) -> None:
+    async def _answer(
+        self, interaction: discord.Interaction, knowers: list[str] | None = None
+    ) -> None:
+        """✅ Add it / Update it; with `knowers` (the picker's Save) held back with exactly
+        those characters knowing it. A press that finds the card changed writes nothing."""
         await interaction.response.defer()
         async with self.busy:
             campaign = await self._dm(interaction)
@@ -4100,10 +4103,15 @@ class ConnectionOffer(_Menu):
             old = self._old(c)
             view = self._players(c)
             secret = view.secret
-            knowers, self.knowers = self.knowers, None  # (read once: the next ✅ is its own)
             if knowers is not None and (secret or c.secret or c.hand_over):
                 await _tell(interaction, SOME_KNOW_REFUSED)
                 return
+            if knowers is not None:
+                known_by: Sequence[str] = knowers
+            elif c.known_by and not (secret or c.secret):
+                known_by = [c.known_by]
+            else:
+                known_by = ()
             now = int(time.time())
             start = keep.change_start(old, now)
             ended: list[int | None] = []
@@ -4139,11 +4147,7 @@ class ConnectionOffer(_Menu):
                     ),
                     # ✅ Keep: the uploader's character knows it from the start; 🤫 Keep as secret
                     # is the DM's alone (#2935); 👥 Some know: exactly the ticked characters
-                    known_by=(
-                        knowers
-                        if knowers is not None
-                        else [c.known_by] if c.known_by and not (secret or c.secret) else ()
-                    ),
+                    known_by=known_by,
                     from_session_at=start if old else None,  # (starts as the old one ends)
                     # a secret SPELLING in the text never hides what the players were shown (#3025);
                     # the DM's own 🤫 button is their word and does
@@ -4339,6 +4343,7 @@ class SomeKnowPicker(_Menu):
             options=self._options(),
             row=0,
         )
+        # (a Select's callback is set after it is made: discord.py has no argument for it)
         self.select.callback = self._ticked  # type: ignore[method-assign]
         self.add_item(self.select)
         self.add_item(_Button(self._save, label="Save", style=discord.ButtonStyle.success, row=1))
@@ -4353,7 +4358,8 @@ class SomeKnowPicker(_Menu):
     def text(self) -> str:
         return (
             f"{SOME_KNOW} **Who knows this?**\n{self.card.text()}\n"
-            "Tick the characters who know it, then Save. The others find out when it is said."
+            "Tick the characters who know it, then Save. Players won't see this until it is said; "
+            "the others find out then."
         )
 
     async def _ticked(self, interaction: discord.Interaction) -> None:
@@ -4369,9 +4375,8 @@ class SomeKnowPicker(_Menu):
         if not self.chosen:
             await _tell(interaction, "Tick at least one character, or press Back.")
             return
-        self.card.knowers = list(self.chosen)
-        self.stop()
-        await self.card._answer(interaction)
+        await self.card._answer(interaction, knowers=list(self.chosen))
+        self.stop()  # (after: a refused Save leaves the picker usable, with Back)
 
     async def _back(self, interaction: discord.Interaction) -> None:
         if await self.card._dm(interaction) is None:

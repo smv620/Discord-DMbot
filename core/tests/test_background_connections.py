@@ -779,6 +779,29 @@ class ThePath(NamesTest):
         await picker._back(self.it())
         self.assertEqual(await self.backstory(), [])
 
+    async def test_an_empty_save_writes_nothing_and_a_plain_add_after_it_is_everyones(self) -> None:
+        await self.pc("Cerric")
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
+        picker_it = self.it()
+        await self.button(view, "👥 Some know").callback(picker_it)
+        picker = picker_it.edit_original_response.await_args.kwargs["view"]
+        picker.chosen = []
+        await picker._save(self.it())
+        self.assertEqual(await self.backstory(), [])
+        # (the ticks are an argument of the one answer, never state the next ✅ could inherit)
+        await self.button(view, "✅ Add it").callback(self.it())
+        (rel,) = await self.backstory()
+        knowing = await self.memory.connection_knowers(GUILD, self.campaign.id, [rel.id])
+        self.assertEqual(knowing.get(rel.id, []), [])
+
+    async def test_some_know_is_off_with_no_player_characters(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
+        self.assertTrue(self.button(view, "👥 Some know").disabled)
+
     async def test_they_survive_a_rebuilt_view_and_a_closed_message(self) -> None:
         await self.read()
         await self.confirm_all()
