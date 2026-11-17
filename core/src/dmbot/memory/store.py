@@ -130,6 +130,7 @@ from dmbot.memory.models import (
     AFFECTED,
     ALIAS_KINDS,
     BACKGROUND_SOURCE,
+    CLAIM_CONFIRMED,
     CLAIM_DROPPED,
     CLAIM_PROPOSED,
     CLASS,
@@ -4826,7 +4827,9 @@ class MemoryStore:
         role: str | None = None,
     ) -> Written[Entity]:
         """The DM says a suggested name is real: what it is (and, for a character, its
-        role), confirmed with all its names, in one change (one undo, one reload)."""
+        role), confirmed with all its names, in one change (one undo, one reload). The DM's own
+        stated claims about it whose other end is kept are kept in that same change (#4636,
+        `ClaimStore.keep_dm_claims_in`)."""
         if source != DM:
             raise MemoryRuleError("Only the DM can confirm that.")
         asked = type
@@ -4872,6 +4875,11 @@ class MemoryStore:
             )
             row = await _entity_row(w, entity_id)
             await _sync_plays(w, entity_id)
+            # (#4636: the DM's own words about it, once its other end is kept too, in this same
+            # change, never asked as questions any more)
+            from dmbot.memory.claims import ClaimStore
+
+            await ClaimStore(self).keep_dm_claims_in(w, [entity_id])
             said = "" if scene is None else "group" if learned else "unknown"
             return Written(_entity(row), w.batch, split=said)
 
@@ -4958,6 +4966,10 @@ class MemoryStore:
                     " AND status = 'proposed' AND entity_id = ANY(%s)",
                     [ids],
                 )
+            # (#4636: the DM's own words about each, as `confirm_entity` keeps them)
+            from dmbot.memory.claims import ClaimStore
+
+            await ClaimStore(self).keep_dm_claims_in(w, [str(i) for i in ids])
             return Written(len(ids), w.batch, split_counts=(heard, not_told))
 
     async def known_keys(self, guild_id: int, campaign_id: str) -> set[str]:
@@ -8767,6 +8779,7 @@ class MemoryStore:
                 await secret_questions_mod.undo(w, batch)
                 await _recheck_led_to_after_undo(w, batch)
                 await _settle_kinds_after_undo(w, batch)
+                await _reopen_claims_after_undo(w, batch)
                 if after is not None:
                     await after(w)
                 return Written(None, w.batch)
@@ -10626,6 +10639,24 @@ async def _live_led_to(
         [predicate],
     )
     return [(r["subject_id"], r["object_id"]) for r in live if r["id"] != skip]
+
+
+async def _reopen_claims_after_undo(w: Changes, batch: int) -> None:
+    """A kept claim whose fact this Undo took away waits again (#4636 part 2). Claims are not in
+    the change log, so the Undo cannot put them back itself: keeping a name keeps the DM's own
+    words about it in the same change, and the name's Undo, from any screen, takes those facts
+    too, so their questions come back with it. A claim's own Undo already does this
+    (`ClaimStore.reopen_in`, which only touches a kept claim, so twice is the same as once)."""
+    from dmbot.memory.claims import ClaimStore  # (claims builds on this module)
+
+    cur = await w.conn.execute(
+        "SELECT c.id FROM memory_claims c WHERE c.guild_id = %s AND c.campaign_id = %s"
+        " AND c.status = %s AND c.fact_id IN (SELECT row_id FROM memory_changes"
+        " WHERE guild_id = %s AND campaign_id = %s AND batch = %s AND op = 'insert')",
+        (*w.ids, CLAIM_CONFIRMED, *w.ids, batch),
+    )
+    for row in await cur.fetchall():
+        await ClaimStore.reopen_in(w, str(row["id"]))
 
 
 async def _settle_kinds_after_undo(w: Changes, batch: int) -> None:
