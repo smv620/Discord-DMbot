@@ -648,7 +648,8 @@ class MapStore:
 
             a, b = place(asked.a), place(asked.b)
             if not dm and (a is None or b is None):
-                # (both kept places to the DM, one not shown to the table: say so, never what)
+                # (both kept places to the DM, one not shown to the table: say so, never what. The
+                # DM's view reads every other name, a secret one included, which the table's skips)
                 every = await scope.select(ALIASES, " AND status = 'confirmed'")
                 to_dm = positions.place_names(
                     entities, every, lambda kind: onto.is_a(kind, "place")
@@ -656,8 +657,9 @@ class MapStore:
 
                 def dm_place(said: str) -> str | None:
                     for key in (name_key(said), name_key(measure_phrase.without_article(said))):
-                        if key in to_dm:
-                            return to_dm[key]
+                        found = to_dm.get(key)
+                        if found is not None:  # (as `place`: a name two places share is none)
+                            return found
                     return None
 
                 da, db = dm_place(asked.a), dm_place(asked.b)

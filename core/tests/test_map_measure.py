@@ -370,6 +370,27 @@ class WhoSeesWhat(
             await self.ask("how far is Targos from the Hidden Hold?", dm=False), words.NOT_SHOWN
         )
         self.assertIsNone(await self.ask("how far is Targos from Luskan?", dm=False))
+        self.assertIsNone(await self.ask("how far is the Hidden Hold from Luskan?", dm=False))
+
+    async def test_a_stated_length_to_a_hidden_place_goes_the_usual_way_to_the_dm(self) -> None:
+        # (the table's view says NOT_SHOWN; the DM's private re-ask finds the stated length and
+        # leaves it to the usual answer, by its own rules)
+        await self.memory.add_relation(
+            GUILD_A, self.one.id, self.targos, "route_to", self.bryn, source="dm",
+            confidence=1.0, status="confirmed",
+        )  # fmt: skip
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE memory_relations SET length_words = 'two days by cart',"
+                " length_from = 'dm' WHERE predicate = 'route_to'"
+            )
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.one.id, self.bryn, True, source="dm", dm_chose_secret=True
+        )
+        self.assertIs(
+            await self.ask("how far is Targos from Bryn Shander?", dm=False), words.NOT_SHOWN
+        )
+        self.assertIsNone(await self.ask("how far is Targos from Bryn Shander?", dm=True))
 
     async def test_names_that_are_not_kept_places_go_the_usual_way(self) -> None:
         self.assertIsNone(await self.ask("how far is Luskan from Targos?", dm=True))
