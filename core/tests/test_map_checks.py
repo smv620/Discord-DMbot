@@ -48,6 +48,10 @@ class TheSwitch(DatabaseTest):
         self.assertTrue(has(settings_view(self.c, None, DM, map_checks=True)))
         self.assertFalse(has(settings_view(self.c, None, DM)))
         self.assertFalse(has(settings_view(self.c, None, OTHER, map_checks=True)))  # (DMs only)
+        from dmbot.dm_screen.settings import settings_text
+
+        self.assertIn("**Map checks:** on", settings_text(self.c, None, DM, map_checks=True))
+        self.assertNotIn("Map checks", settings_text(self.c, None, DM))
 
     async def test_a_backup_keeps_it_and_an_older_one_has_it_on(self) -> None:
         await self.store.set_map_checks(GUILD, self.c.id, False)

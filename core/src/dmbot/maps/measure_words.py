@@ -100,7 +100,9 @@ def road_note(stated: str, from_session: bool, amount: str, map_title: str) -> s
 # ruling 2: one button at most, and "how far" gives the map).
 
 STOP = "🔕 Stop map checks"  # the note's one button
-STOPPED = "Map checks are off for this campaign. Turn them back on in ⚙️ Settings."
+STOPPED = (
+    "Map checks are off for this campaign. Turn them back on with 🗺️ Map checks in ⚙️ Manage DMbot."
+)
 
 
 def said_far(stated: str, a: str, b: str, amount: str, map_title: str) -> str:

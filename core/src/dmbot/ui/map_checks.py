@@ -23,7 +23,7 @@ from dmbot.maps import measure_words as words
 log = logging.getLogger(__name__)
 
 ONLY_DM = "Only a DM of this campaign can change map checks."
-GONE = "That campaign is gone."
+GONE = "That campaign isn't here any more. Nothing was changed."
 FAILED = "Something went wrong. Map checks are still on. Press the button again."
 
 

@@ -151,6 +151,7 @@ def settings_text(
     offer: HandoverOffer | None = None,
     viewer: int | None = None,
     setting: SettingField | None = None,
+    map_checks: bool = False,
 ) -> str:
     """The ⚙️ Manage DMbot card (only the person who opened it sees it): only what needs Discord
     to be there (#2986), with the rest listed as not on the website yet. `offer`, `viewer`: kept
@@ -175,8 +176,22 @@ def settings_text(
                 if viewer in campaign.dm_user_ids
                 else []
             ),
+            # (#4670 4c-2: the button's line, beside it whenever it is drawn; the ux-critic's words)
+            *(
+                [_map_checks_line(campaign)]
+                if map_checks and viewer in campaign.dm_user_ids
+                else []
+            ),
             f"**Not on the website yet:** {NOT_ON_WEBSITE}.",
         ]
+    )
+
+
+def _map_checks_line(campaign: Campaign) -> str:
+    return (
+        f"• **Map checks:** {'on' if campaign.map_checks else 'off'}. When a distance or direction"
+        " you say at the table is far off a map, DMbot tells you privately, once per pair of"
+        " places. Change it with 🗺️ Map checks."
     )
 
 
@@ -383,7 +398,7 @@ def _drawn(
         return channel_sync_ui.channels_text(campaign), channel_sync_ui.channels_view(campaign)
     if card == "management":
         return management_text(campaign, offer, viewer), management_view(campaign, offer, viewer)
-    return settings_text(campaign, offer, viewer, setting), settings_view(
+    return settings_text(campaign, offer, viewer, setting, map_checks), settings_view(
         campaign, offer, viewer, site_url, questions, setting, map_checks
     )
 
@@ -454,7 +469,7 @@ class SettingsButton(
             return
         setting = await _setting_for(interaction, campaign, "settings")
         await interaction.response.send_message(
-            settings_text(campaign, offer, interaction.user.id, setting),
+            settings_text(campaign, offer, interaction.user.id, setting, _map_checks(interaction)),
             view=settings_view(
                 campaign,
                 offer,
