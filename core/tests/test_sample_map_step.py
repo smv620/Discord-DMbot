@@ -114,6 +114,61 @@ class OnTheKeptRun(unittest.TestCase):
                 asyncio.run(cli.run_many(args, say=lambda _: None))
         self.assertEqual(order, ["run", "run", "recap", "map c1"])
 
+    def test_a_failed_run_says_the_map_was_skipped_and_why(self) -> None:
+        # (#4646) a step that does not run never reads as "nothing found"
+        said: list[str] = []
+
+        async def run(args: Any, **kw: Any) -> int:
+            return 1  # the run failed: no run is kept
+
+        with tempfile.TemporaryDirectory() as d:
+            args = cli.parse_args(
+                ["--guild", "1", "--dm", "2", "--lore", "l", "--session", "s", "--backup-dir", d,
+                 "--commit", "abc1234", "--yes", "--repeat", "2", "--map", "/srv/map.jpg"]
+            )  # fmt: skip
+            with mock.patch.object(cli, "run", run):
+                asyncio.run(cli.run_many(args, say=said.append))
+        skipped = [line for line in said if line.startswith("map: skipped")]
+        self.assertEqual(len(skipped), 1)
+        self.assertNotIn("/srv", skipped[0])  # (never the path)
+
+    def test_a_kept_run_leaves_one_map_line_and_it_is_not_a_skip(self) -> None:
+        said: list[str] = []
+
+        async def run(args: Any, **kw: Any) -> int:
+            kw["kept"].update(guild=1, campaign="c1", started=1)
+            kw["metrics"]["spend: the bot's AI ($)"] = 0.1
+            return 0
+
+        async def recap(*a: Any, **k: Any) -> int:
+            return 0
+
+        async def map_on(args: Any, kept: Any, folder: Path, say: Any) -> None:
+            say("map: read closely (2 tries, 30 seconds)")
+
+        with tempfile.TemporaryDirectory() as d:
+            args = cli.parse_args(
+                ["--guild", "1", "--dm", "2", "--lore", "l", "--session", "s", "--backup-dir", d,
+                 "--commit", "abc1234", "--yes", "--repeat", "2", "--map", "/srv/map.jpg"]
+            )  # fmt: skip
+            with (
+                mock.patch.object(cli, "run", run),
+                mock.patch.object(sample_steps, "write_recap", recap),
+                mock.patch.object(cli, "_map_on", map_on),
+            ):
+                asyncio.run(cli.run_many(args, say=said.append))
+        lines = [line for line in said if line.startswith("map:")]
+        self.assertEqual(lines, ["map: read closely (2 tries, 30 seconds)"])
+
+
+class TheSkipLine(unittest.TestCase):
+    def test_it_is_said_and_logged_with_the_reason(self) -> None:
+        said: list[str] = []
+        with self.assertLogs("dmbot.devtools.sample_run.map_step", level="INFO") as logs:
+            map_step.skipped(said.append, "only the kept run reads the map")
+        self.assertEqual(said, ["map: skipped (only the kept run reads the map)"])
+        self.assertIn("only the kept run reads the map", logs.output[0])
+
 
 if __name__ == "__main__":
     unittest.main()

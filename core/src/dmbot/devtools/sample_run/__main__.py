@@ -35,7 +35,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
 
 from dmbot.devtools import sample_name
-from dmbot.devtools.sample_run import characters, costs, counts, plan, steps
+from dmbot.devtools.sample_run import characters, costs, counts, map_step, plan, steps
 from dmbot.devtools.sample_run import decide as decide_mod
 from dmbot.devtools.sample_run.plan import SampleError, Step
 from dmbot.transcript import import_plan as ip
@@ -499,10 +499,15 @@ async def run(
         try:
             await steps.run_steps(actions, done, say, order)
         finally:  # (a run that stopped part way still counts what it did and spent)
-            if recap and args.map is not None and len(done) == len(order):
-                # (a single run's map step, once the rest is done: `--repeat` does it after the
-                # runs, on the kept campaign)
-                await _map_on(args, {"guild": gid, "campaign": cid}, folder, say)
+            if args.map is not None:
+                if recap and len(done) == len(order):
+                    # (a single run's map step, once the rest is done: `--repeat` does it after
+                    # the runs, on the kept campaign)
+                    await _map_on(args, {"guild": gid, "campaign": cid}, folder, say)
+                elif recap:
+                    # (#4646: a step that does not run says why, never silence; the runs of a
+                    # `--repeat` stay quiet here, `_finish` says it for the kept run)
+                    map_step.skipped(say, "an earlier step did not finish")
             if metrics is not None or snapshot is not None:
                 await _measure(db, memory, gid, cid, done, metrics, snapshot, say)
         # The secret connections by source and the split-party counts (Supervisor, #3545): counts
@@ -840,6 +845,8 @@ async def _finish(
             say(f"recap: not made (recap_run exit {code}); {reason}")
         if args.map is not None:
             await _map_on(args, kept, folder, say)
+    elif args.map is not None:  # (#4646)
+        map_step.skipped(say, "a run failed, so none was kept" if failed else "no run was kept")
     stats = spread.summarize(runs)
     say(f"Sample summary, commit {commit}: {len(runs)} runs, about ${spent:.2f} (#3545)")
     for line in spread.render(stats):
@@ -864,7 +871,6 @@ async def _map_on(
     """The sample map step (#4423) on the kept campaign: never fails the run, says why it
     skipped."""
     from dmbot.db import Database
-    from dmbot.devtools.sample_run import map_step
     from dmbot.memory.store import MemoryStore
 
     say("=== the sample map ===")
