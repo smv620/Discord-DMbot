@@ -77,6 +77,7 @@ from dmbot.memory import secret_questions as secret_questions_mod
 from dmbot.memory import short_names as short_names_mod
 from dmbot.memory import tags as tags_mod
 from dmbot.memory import thread_clues as clues_mod
+from dmbot.memory import thread_guesses as guesses_mod
 from dmbot.memory import thread_progress as tp_mod
 from dmbot.memory import threads as threads_mod
 from dmbot.memory import unnamed as unnamed_mod
@@ -104,6 +105,7 @@ from dmbot.memory._changes import (
     SHEETS,
     STATES,
     STORY_LANGUAGES,
+    THREAD_GUESSES,
     TYPES,
     Changes,
     Scope,
@@ -2776,6 +2778,91 @@ class MemoryStore:
             name = str(clue["name"])
             out.append(clues_mod.ThreadClue(str(clue["id"]), tie_id, name, false_lead, known))
         return sorted(out, key=lambda c: (c.name.lower(), c.clue_id))
+
+    async def thread_guesses(
+        self, guild_id: int, campaign_id: str, thread_id: str, viewer: gate.Viewer
+    ) -> list[guesses_mod.Guess]:
+        """The table's guesses at a thread (#4655), the newest first (`thread_guesses.Guess`).
+        Only a guess still current: its belief is the newest of its character's (or the party's)
+        on its connection, more than 0.0 sure, and the connection was not turned down. The DM:
+        every one. A player: only those held by one of their own characters or by the party, about
+        entries they can see, on a thread they can see (Supervisor's condition on #4655), never
+        another character's."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            links = await scope.select(THREAD_GUESSES, " AND thread_id = %s", [thread_id])
+            if not links:  # (no other read: the card opens quickly)
+                return []
+            linked = await scope.select(
+                BELIEFS, " AND id = ANY(%s)", [[str(r["belief_id"]) for r in links]]
+            )
+            relation_ids = sorted({str(b["relation_id"]) for b in linked})
+            newest: dict[tuple[str, str], int] = {}
+            for b in await scope.select(BELIEFS, " AND relation_id = ANY(%s)", [relation_ids]):
+                key = (str(b["relation_id"]), str(b["perspective_id"]))
+                newest[key] = max(newest.get(key, -1), int(b["seq"]))
+            relations = {
+                str(r["id"]): r
+                for r in await scope.select(
+                    RELATIONS, " AND id = ANY(%s) AND status <> 'rejected'", [relation_ids]
+                )
+            }
+            views = {
+                str(v["id"]): v
+                for v in await scope.select(
+                    PERSPECTIVES,
+                    " AND id = ANY(%s)",
+                    [sorted({str(b["perspective_id"]) for b in linked})],
+                )
+            }
+            named = {str(r[c]) for r in relations.values() for c in ("subject_id", "object_id")}
+            named |= {str(v["entity_id"]) for v in views.values() if v["entity_id"]}
+            names = {
+                str(e["id"]): str(e["name"])
+                for e in await scope.select(ENTITIES, " AND id = ANY(%s)", [sorted(named)])
+            }
+            seen = None if viewer.dm else await gate.visible_to(scope, viewer)
+        if seen is not None and not seen.knows(gate.ENTRY, thread_id):
+            return []  # (a thread the player can't see has no guesses for them, §10.2)
+        out: list[guesses_mod.Guess] = []
+        for b in linked:
+            rel = relations.get(str(b["relation_id"]))
+            view = views.get(str(b["perspective_id"]))
+            if (
+                rel is None
+                or view is None
+                or float(b["confidence"]) <= 0.0
+                or newest.get((str(b["relation_id"]), str(b["perspective_id"]))) != int(b["seq"])
+            ):
+                continue
+            holder_id = str(view["entity_id"]) if view["entity_id"] else ""
+            if view["kind"] == "party":
+                holder = ""
+            elif view["kind"] in ("pc", "npc") and holder_id in names:
+                holder = names[holder_id]
+            else:
+                continue  # (the truth's or everyone's: no guess of the table's)
+            ends = (str(rel["subject_id"]), str(rel["object_id"]))
+            if seen is not None and (
+                (view["kind"] != "party" and holder_id not in viewer.characters)
+                or not all(seen.knows(gate.ENTRY, e) for e in ends)
+            ):
+                continue  # (another character's guess, or a name the player can't see)
+            said = str(rel["detail"] or "") or link_words.connection_words(str(rel["predicate"]))
+            if (
+                seen is not None
+                and rel["status"] != "proposed"
+                and (rel["secret"] or rel["unrevealed"])
+            ):
+                # (a guess placed on a connection the DM keeps hidden: its words are the DM's,
+                # so a player gets the plain kind of connection, never them)
+                said = link_words.connection_words(str(rel["predicate"]))
+            words = f"{names.get(ends[0], '?')} {said} {names.get(ends[1], '?')}"
+            guess = guesses_mod.Guess(
+                str(b["id"]), holder, words, float(b["confidence"]),
+                b["status"] == "accusation", int(b["seq"]),
+            )  # fmt: skip
+            out.append(guess)
+        return sorted(out, key=lambda g: -g.seq)
 
     async def thread_card(
         self, guild_id: int, campaign_id: str, thread_id: str
@@ -6824,6 +6911,14 @@ class MemoryStore:
         await thread_parts.move_on_merge(  # a thread's parts (#4471)
             w, keep_id, gone_id, onto.is_a(str(kept["type"]), "thread")
         )
+        if onto.is_a(str(kept["type"]), "thread"):
+            # The table's guesses at the thread merged away go on the kept one (#4655). Unlogged,
+            # like the link itself: an Undo of the merge leaves them on the kept thread.
+            await w.conn.execute(
+                "UPDATE memory_thread_guesses SET thread_id = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND thread_id = %s",
+                (keep_id, *w.ids, gone_id),
+            )
         await _move_plan_links(w, keep_id, gone_id)
         await states.move_states(w, onto, keep_id, kept["type"], gone_id)
         if confirm_keys and source != DM:

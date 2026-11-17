@@ -57,6 +57,7 @@ from dmbot.memory._changes import (
     SHEETS,
     STATES,
     STORY_LANGUAGES,
+    THREAD_GUESSES,
     THREAD_PARTS,
     TOLD,
     TYPES,
@@ -96,6 +97,7 @@ from dmbot.memory.models import (
     SOURCES,
     STORY_LANGUAGE_MAX,
     THREAD_STATES,
+    THREAD_TYPES,
     is_id,
     lookup_key,
     name_key,
@@ -144,6 +146,7 @@ _TAGS: dict[str, Table] = {
     "told": TOLD,  # which character was told an other name is an entry (#3089)
     "belief": BELIEFS,
     "evidence": EVIDENCE,  # what a connection or belief stands on (#2662)
+    "thread_guess": THREAD_GUESSES,  # which mystery a table's guess is about (#4655), after both
     "impression": IMPRESSIONS,
     "attitude": ATTITUDES,
     "correction": CORRECTIONS,
@@ -572,6 +575,12 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             _check_culture(raw)
         elif table is THREAD_PARTS:
             _check_thread_part(raw)  # (its own words for `kind`, `state`, `status` and `source`)
+        elif table is THREAD_GUESSES:  # (ids and a time only)
+            if not (
+                all(is_id(raw[c]) for c in ("id", "thread_id", "belief_id"))
+                and _valid("created_at", raw["created_at"])
+            ):
+                raise CampaignError(DAMAGED)
         elif table is KNOWERS:  # four statement columns, exactly one set (`_check_knowers`)
             if not all(
                 raw[c] is None or is_id(raw[c])
@@ -656,6 +665,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
                     "added_at": 0,
                 }
             )  # fmt: skip
+    _check_thread_guesses(by_tag)  # which mystery a guess is about (#4655)
     # A row asleep waits for entries of this campaign: a name in the mark that is not an entry of
     # the file is dropped from it (a row left with none is awake), never a reason to refuse.
     entry_ids = {r["id"] for r in by_tag["entity"]}
@@ -669,6 +679,24 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         r for r in by_tag["sheet"] if entities[r["entity_id"]]["played_by"] == r["player_id"]
     ]
     return by_tag
+
+
+def _check_thread_guesses(by_tag: dict[str, list[dict[str, Any]]]) -> None:
+    """Which mystery a table's guess is about (#4655): a row names a story thread and a belief
+    the file holds, one row for each belief, or the file is damaged (the database would refuse it
+    mid-restore otherwise)."""
+    entries = {r["id"]: r for r in by_tag["entity"]}
+    held = {r["id"] for r in by_tag["belief"]}
+    beliefs = [g["belief_id"] for g in by_tag["thread_guess"]]
+    if len(beliefs) != len(set(beliefs)) or any(
+        g["thread_id"] not in entries or g["belief_id"] not in held for g in by_tag["thread_guess"]
+    ):
+        raise CampaignError(DAMAGED)
+    # (one on an entry the DM has since made something other than a story thread is history, and
+    # dropped: a backup must always be loadable)
+    by_tag["thread_guess"] = [
+        g for g in by_tag["thread_guess"] if entries[g["thread_id"]]["type"] in THREAD_TYPES
+    ]
 
 
 def _check_knowers(
@@ -1521,10 +1549,15 @@ def _reading_ok(reading: object) -> bool:
     character's, and short words. Untrusted."""
     if reading is None:
         return True
-    if not isinstance(reading, dict) or set(reading) - {"liar", "spoken_at"} != set(_READING_KEYS):
+    extra = {"liar", "spoken_at", "thread_id"}  # (each only on some readings)
+    if not isinstance(reading, dict) or set(reading) - extra != set(_READING_KEYS):
         return False
+    if "thread_id" in reading and not is_id(reading["thread_id"]):
+        return False  # the mystery a guess is about (#4655): an entry's id
     optional = tuple(
-        (key, kind) for key, kind in (("liar", str), ("spoken_at", int)) if key in reading
+        (key, kind)
+        for key, kind in (("liar", str), ("spoken_at", int), ("thread_id", str))
+        if key in reading
     )
     for key, kind in (*_READING_KEYS.items(), *optional):
         value = reading[key]

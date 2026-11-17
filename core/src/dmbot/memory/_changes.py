@@ -15,7 +15,7 @@ from psycopg.types.json import Jsonb
 
 from dmbot.db import Conn
 from dmbot.memory import merge_restore
-from dmbot.memory.models import MemoryRuleError, TooLateToUndo
+from dmbot.memory.models import THREAD_TYPES, MemoryRuleError, TooLateToUndo, new_id
 from dmbot.memory.ontology import MIGRATED_KINDS, god_is_an_npc
 from dmbot.pictures.store import _lock as pictures_lock
 
@@ -358,10 +358,19 @@ SECRET_QUESTIONS = Table(
      "line_starts", "speaker_ids", "status", "created_at", "batch", "answered_batch"),
     logged=False,
 )  # fmt: skip
+# Which story thread a table's guess is about (#4655, quests slice 7b; 0529): one row per belief.
+# Unlogged, like the evidence links: it is written in the same change as its belief, and an Undo
+# that takes the belief back takes the link with it by the database (as it does when the belief or
+# the thread goes for any other reason).
+GUESS_LINK = "thread_guess"  # its kind among a belief's links carried in the log (#4655)
+THREAD_GUESSES = Table(
+    "memory_thread_guesses", "id", ("id", "thread_id", "belief_id", "created_at"), logged=False
+)
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
        STORY_LANGUAGES, CULTURES, MAP_FACTS, MAPS, THREAD_PARTS,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
-       BELIEFS, EVIDENCE, ALIAS_KNOWERS, KNOWERS, TOLD, SECRET_QUESTIONS)  # fmt: skip
+       BELIEFS, EVIDENCE, THREAD_GUESSES, ALIAS_KNOWERS, KNOWERS, TOLD,
+       SECRET_QUESTIONS)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
 
 # The columns whose change can change whether the players are shown a statement (#2995).
@@ -1280,6 +1289,17 @@ async def _entry_links(
                 "added_at": r["added_at"],
             }
         )
+    # The mystery a guess is about (#4655) is an id-only link too, so it travels the same way: an
+    # Undo of the belief's removal, or a redo of its place, puts the guess back on its card.
+    cur = await conn.execute(
+        "SELECT belief_id, thread_id, created_at FROM memory_thread_guesses"
+        " WHERE guild_id = %s AND campaign_id = %s AND belief_id = ANY(%s)",
+        (*ids, list(belief_ids)),
+    )
+    for r in await cur.fetchall():
+        out.setdefault(str(r["belief_id"]), []).append(
+            {"kind": GUESS_LINK, "target_id": r["thread_id"], "added_at": r["created_at"]}
+        )
     return out
 
 
@@ -1306,6 +1326,17 @@ async def _kept_entry(conn: Conn, ids: tuple[int, str], entry_id: str) -> str:
 async def _give_back_links(conn: Conn, ids: tuple[int, str], belief_id: str, links: Any) -> None:
     for link in links or ():
         target = await _kept_entry(conn, ids, str(link["target_id"]))
+        if link["kind"] == GUESS_LINK:
+            # (onto the thread it was about, or the one that was merged into, while it is still a
+            # kept thread; otherwise the belief comes back a plain one, as placing would make it)
+            await conn.execute(
+                "INSERT INTO memory_thread_guesses (guild_id, campaign_id, id, thread_id,"
+                " belief_id, created_at) SELECT %s, %s, %s, e.id, %s, %s FROM memory_entities e"
+                " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.id = %s"
+                " AND e.status = 'confirmed' AND e.type = ANY(%s) ON CONFLICT DO NOTHING",
+                (*ids, new_id(), belief_id, link["added_at"], *ids, target, list(THREAD_TYPES)),
+            )
+            continue
         await conn.execute(
             "INSERT INTO memory_evidence (guild_id, campaign_id, belief_id, kind, target_id,"
             " session_started_at, added_at) VALUES (%s, %s, %s, %s, %s, %s, %s)"

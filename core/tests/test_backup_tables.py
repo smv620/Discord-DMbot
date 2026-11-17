@@ -210,6 +210,12 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " 1)",
                 (g, c, OBJECTIVE, QUEST, OBJECTIVE, g, c, STEP, QUEST, STEP, OBJECTIVE),
             ),
+            "memory_thread_guesses": (  # a table's guess on the quest (#4655)
+                "INSERT INTO memory_thread_guesses (guild_id, campaign_id, id, thread_id,"
+                " belief_id, created_at) SELECT %s, %s, %s, %s, b.id, 1 FROM memory_beliefs b"
+                " WHERE b.guild_id = %s AND b.campaign_id = %s ORDER BY b.id LIMIT 1",
+                (g, c, new_id(), QUEST, g, c),
+            ),
             "memory_map_facts": (  # a place's climate (#4256)
                 "INSERT INTO memory_map_facts (guild_id, campaign_id, id, entity_id, layer, value,"
                 " status, source, created_at) VALUES (%s, %s, %s, %s, 'climate', 'cold',"
