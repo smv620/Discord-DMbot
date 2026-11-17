@@ -27,6 +27,26 @@ def secrets_pointer(secrets: int, names: int, checks: int) -> str:
     return f"🤫 After the session: {what}. The DM has the details privately."
 
 
+def session_summary_pointer(minutes: int, recorded: int) -> str:
+    """When a session ends: how long it ran and how many people were recorded, in numbers. The
+    summary itself names who spoke, so it goes to the DMs privately."""
+    people = _count(recorded, "person", "people")
+    return (
+        f"📋 The session ended after {_count(minutes, 'minute', 'minutes')}; {people} recorded. "
+        "DMs: the summary is in your private message."
+    )
+
+
+def story_watch_pointer(shown: int, more: int) -> str:
+    """The story watch found places where the table left what the DM's adventure needs. The
+    words name people and places, so they go to the DMs privately; this is the count."""
+    total = shown + more
+    return (
+        f"🧭 After the session: {_count(total, 'story note', 'story notes')} for the DMs. "
+        "DMs: the details are in your private message."
+    )
+
+
 def session_names_pointer(fixed: int, unsure: int, new: int) -> str:
     """After one session's name check: the same counts, for the DM Bot channel (#3874 E1). The
     names, the spellings and the Undo buttons are in the DMs' private message."""
