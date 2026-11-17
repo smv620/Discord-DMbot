@@ -67,6 +67,12 @@ class TheSchemasWeSend(unittest.TestCase):
                     bad.extend(f"{info.name}.{name}{key}" for key in _keys(value))
         self.assertEqual(bad, [])
 
+    def test_the_source_scan_matches_either_quote_and_a_tight_colon(self) -> None:
+        quoted = re.compile(r"""["'](""" + "|".join(REFUSED) + r""")["']\s*:""")
+        self.assertTrue(quoted.search('"maximum": 5'))
+        self.assertTrue(quoted.search("'minLength':1"))
+        self.assertIsNone(quoted.search("the maximum is five"))
+
     def test_the_walker_finds_one_nested_in_a_list(self) -> None:
         schema = {"properties": {"a": {"items": [{"type": "integer", "maximum": 5}]}}}
         self.assertEqual(_keys(schema), ["/properties/a/items/0/maximum"])
