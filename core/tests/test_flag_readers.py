@@ -35,11 +35,6 @@ FILES: dict[str, tuple[str, str, str]] = {
         "GraphEngineer",
         "the sample run's split-party counts (#3545)",
     ),
-    "maps/store.py": (
-        READS,
-        "GraphEngineer",
-        "a player's map answer: the gate first, the flags only when no party exists (#4670 4b)",
-    ),
     "memory/_changes.py": (WRITES, "GraphEngineer", "the change log's row writers and Undo"),
     "memory/backstory_keep.py": (READS, "GraphEngineer", "which entries a backstory may link"),
     "memory/backstory_links.py": (READS, "GraphEngineer", "hides a connection with a limited end"),

@@ -328,3 +328,22 @@ class WhoSeesWhat(
             await self.ask("how far is Targos from Bryn Shander?", dm=True),
             "I can't find Targos on any map yet. You can add it on the Maps page.",
         )
+
+
+class NoPartyYet(unittest.TestCase):  # (`gate.public_entries`: the names every player may read)
+    def test_hidden_limited_unnamed_and_secret_names_stay_out(self) -> None:
+        from dmbot.memory import gate
+        from dmbot.memory.models import lookup_key
+
+        def row(i: str, name: str, **flags: bool) -> dict[str, Any]:
+            base = {"hidden_from_players": False, "audience_limited": False, "unnamed": False}
+            base.update(flags)
+            return {"id": i, "name": name, "status": "confirmed", "merged_into": None, **base}
+
+        rows = [
+            row("a", "Targos"), row("b", "Bryn Shander", hidden_from_players=True),
+            row("c", "Easthaven", audience_limited=True), row("d", "a tall stranger", unnamed=True),
+            row("e", "The Sunken Tower"),
+        ]  # fmt: skip
+        secret = [{"entity_id": "e", "key": lookup_key("The Sunken Tower"), "secret": True}]
+        self.assertEqual(gate.public_entries(rows, secret), frozenset({"a"}))
