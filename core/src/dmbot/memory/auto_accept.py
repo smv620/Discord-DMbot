@@ -35,12 +35,13 @@ from dmbot.memory.models import (
     CONFIRMED,
     DM,
     HOW_DM,
+    NPC,
     PLAYER_CHARACTER,
     Entity,
     MemoryRuleError,
 )
-from dmbot.memory.ontology import rules_word_for
-from dmbot.memory.store import MemoryStore
+from dmbot.memory.ontology import resolve_kind, rules_word_for
+from dmbot.memory.store import NO_KIN_TIE, MemoryStore
 from dmbot.names.not_names import CREATURE_KINDS
 
 log = logging.getLogger(__name__)
@@ -201,9 +202,21 @@ async def accept_names(
     """Confirm each waiting name that was read with its kind. `only`: just these entries (an
     upload's own, so an earlier session's names are not touched); None for every waiting one.
     `kind_of`: the reader's kind for an entry (`ui.names.background_kind`; passed in, as the memory
-    package does not import the screens)."""
+    package does not import the screens).
+
+    An unnamed relative ("Brewner's daughter", "Cerric's paternal grandfather") is kept as an NPC
+    once the character it hangs off is kept (#4636 part 1, the owner's "stop asking the
+    obvious"; Supervisor's ruling): the story gives who they are to a kept character, so "Is this
+    someone in your game?" has one answer. Kept with `as_kin`, so it is never more visible than its
+    tie. A described stranger who hangs off nobody, a group, and a relative of a name still
+    waiting stay questions (a relative of a relative is kept once the first one is)."""
+    accepted: set[str] = set()
+    kin: list[Entity] = []
     for entity in await memory.entities(guild, campaign, statuses=("proposed",)):
         if only is not None and entity.id not in only:
+            continue
+        if narrow and _is_kin(entity):
+            kin.append(entity)
             continue
         kind = kind_of(entity)
         if not kind or entity.role == PLAYER_CHARACTER:
@@ -215,6 +228,8 @@ async def accept_names(
         if dry_run:
             tally.accepted[NAMES] += 1
             tally.kinds[kind] += 1
+            if _a_person(kind):
+                accepted.add(entity.id)
             continue
         try:
             written = await memory.confirm_entity(guild, campaign, entity.id, kind, source=DM)
@@ -225,6 +240,77 @@ async def accept_names(
             tally.add_batch(written.batch)
         except Exception as exc:  # a rule, or anything else: counted, the run goes on
             refused(tally, NAMES, exc)
+    if kin:
+        await _accept_kin(memory, guild, campaign, tally, kin, accepted, dry_run=dry_run)
+
+
+def _a_person(kind: str) -> bool:
+    """A kind a dry run counts as a kept character, as the live run reads them back."""
+    try:
+        return resolve_kind(kind)[0] == "character"
+    except MemoryRuleError:
+        return False
+
+
+def _is_kin(entity: Entity) -> bool:
+    """An unnamed person who hangs off another entry and is a character, not a group. (Read with
+    getattr: callers and tests may pass a bare stand-in without the unnamed fields.)"""
+    return bool(
+        getattr(entity, "unnamed", False)
+        and getattr(entity, "unnamed_anchor", None)
+        and entity.type == "character"
+    )
+
+
+async def _accept_kin(
+    memory: MemoryStore,
+    guild: int,
+    campaign: str,
+    tally: Tally,
+    kin: list[Entity],
+    accepted: set[str],
+    *,
+    dry_run: bool,
+) -> None:
+    """Keep each unnamed relative whose character is kept, as an NPC (`accept_names`). Rounds
+    until nothing more is kept, so a grandfather hanging off an unnamed father is kept once the
+    father is (at most one round per relative)."""
+    kept_people = {
+        e.id
+        for e in await memory.entities(guild, campaign, statuses=("confirmed",))
+        if e.type == "character"
+    } | (accepted if dry_run else set())  # (a dry run keeps nothing: count its people as kept)
+    left = list(kin)
+    for _ in range(len(kin)):
+        ready = [e for e in left if e.unnamed_anchor in kept_people]
+        if not ready:
+            break
+        for entity in ready:
+            left.remove(entity)
+            if dry_run:
+                if not await memory.has_kin_tie(guild, campaign, entity.id):
+                    tally.waiting[NAMES] += 1  # (as the live run: no stated tie, it waits)
+                    continue
+                tally.accepted[NAMES] += 1
+                tally.kinds[NPC] += 1
+                kept_people.add(entity.id)
+                continue
+            try:
+                written = await memory.confirm_entity(
+                    guild, campaign, entity.id, NPC, source=DM, as_kin=True
+                )
+                tally.accepted[NAMES] += 1
+                tally.kinds[NPC] += 1
+                tally.add_batch(written.batch)
+                kept_people.add(entity.id)
+            except MemoryRuleError as exc:
+                if str(exc) != NO_KIN_TIE:
+                    refused(tally, NAMES, exc)
+                else:  # (no stated tie: its relation is only its label's reading, so it waits)
+                    tally.waiting[NAMES] += 1
+            except Exception as exc:  # anything else: counted, the run goes on
+                refused(tally, NAMES, exc)
+    tally.waiting[NAMES] += len(left)
 
 
 async def accept_other_names(
