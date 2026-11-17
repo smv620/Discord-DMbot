@@ -2576,7 +2576,7 @@ class RecapFeatures:
         if self.memory is None:
             return ()
         try:
-            found = await secret_connections(self.memory, gid, cid)
+            found = await secret_connections(self.memory, gid, cid, dm_only=True)
         except Exception:
             log.exception("Recap: couldn't read the secret connections")
             return ()

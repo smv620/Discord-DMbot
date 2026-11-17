@@ -423,15 +423,19 @@ def _phrase(text: str) -> str:
 def resolve_relationship(onto: Ontology, text: str) -> tuple[PredicateTerm, bool] | None:
     """The relationship a phrase means and whether it is said from the object's side
     ("owned by"): its key, a synonym of a core one, or its words. None: not one DMbot has."""
+    from dmbot.memory.thread_clues import DM_ONLY_PREDICATES
+
     phrase = _phrase(text)
     if not phrase:
         return None
+    # (a clue's tie to a thread is the DM's alone, never read from a text, #4624: a reader's
+    # "is a clue to" falls back to the catch-all, its own words kept)
     for key in (phrase, SYNONYMS.get(phrase, "")):
         term = onto.predicates.get(key)
-        if term is not None and term.status == "active":
+        if term is not None and term.status == "active" and key not in DM_ONLY_PREDICATES:
             return term, False
     for term in onto.predicates.values():
-        if term.status != "active":
+        if term.status != "active" or term.key in DM_ONLY_PREDICATES:
             continue
         if phrase in {_phrase(term.label)} | {_phrase(s) for s in term.synonyms}:
             return term, False
