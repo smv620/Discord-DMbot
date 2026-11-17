@@ -262,13 +262,12 @@ class ForgetMapReads(MapsBase):
         self.assertEqual(await self.version(self.campaign), before + 1)
 
     async def test_a_campaign_whose_facts_did_not_change_keeps_its_number(self) -> None:
-        mine = await self.a_map(ALICE, dm=False)  # (no facts rest on it)
+        await self.a_map(ALICE, dm=False)  # (no facts rest on it)
         bobs = await self.a_map(BOB, dm=False)
         await self.fact(bobs, "arctic", status="read", source="map", text=False)
         before = await self.version(self.campaign)
         await accounts.delete_person(self.db, ALICE, now=NOW)
         self.assertEqual(await self.version(self.campaign), before)
-        self.assertIsNotNone(mine)
 
     async def test_every_campaign_with_changed_facts_moves_and_nobody_elses(self) -> None:
         other = (await CampaignStore(self.db).create(GUILD, "Two", CAL)).id
@@ -297,3 +296,51 @@ class ForgetMapReads(MapsBase):
             row = await cur.fetchone()
         assert row is not None
         return str(row["id"])
+
+    # ---- a fact another usable map still shows is kept, on the oldest such map (#4696) ----
+
+    async def pin(self, map_id: str, fact_id: str, *, status: str = "read") -> None:
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO map_features (guild_id, campaign_id, id, map_id, shape, points,"
+                " fact_id, status, source, created_at) VALUES (%s, %s, %s, %s, 'area',"
+                " ARRAY[0.1, 0.1, 0.2, 0.1, 0.2, 0.2], %s, %s, 'read', %s)",
+                (GUILD, self.campaign, uuid.uuid4().hex, map_id, fact_id, status, int(time.time())),
+            )  # fmt: skip
+
+    async def test_a_fact_another_usable_map_shows_is_kept_on_that_map(self) -> None:
+        mine = await self.a_map(ALICE, dm=False)
+        bobs = await self.a_map(BOB, dm=True)  # (usable: its DM said yes)
+        fact = await self.fact(mine, "arctic", status="read", source="map", text=False)
+        await self.pin(bobs, fact)
+        before = await self.version(self.campaign)
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        self.assertEqual(
+            await self.row(fact),
+            {"status": "read", "source": "map", "also_text": False, "map_id": bobs},
+        )
+        self.assertEqual(await self.version(self.campaign), before + 1)  # (and it moved once)
+
+    async def test_the_oldest_such_map_keeps_it(self) -> None:
+        mine = await self.a_map(ALICE, dm=False)
+        older = await self.a_map(BOB, dm=True)
+        newer = await self.a_map(CAL, dm=True)
+        fact = await self.fact(mine, "arctic", status="read", source="map", text=False)
+        await self.pin(newer, fact)
+        await self.pin(older, fact)
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        kept = await self.row(fact)
+        assert kept is not None
+        self.assertEqual(kept["map_id"], older)
+
+    async def test_an_unusable_map_or_a_turned_down_area_keeps_nothing(self) -> None:
+        mine = await self.a_map(ALICE, dm=False)
+        waiting = await self.a_map(BOB, dm=False)  # (no DM yes yet: not usable)
+        usable = await self.a_map(CAL, dm=True)
+        on_waiting = await self.fact(mine, "arctic", status="read", source="map", text=False)
+        turned_down = await self.fact(mine, "forest", status="read", source="map", text=False)
+        await self.pin(waiting, on_waiting)
+        await self.pin(usable, turned_down, status="rejected")
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        self.assertIsNone(await self.row(on_waiting))
+        self.assertIsNone(await self.row(turned_down))
