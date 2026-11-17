@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import unittest
 import uuid
+from unittest import mock
 
 from dmbot.campaigns import CampaignStore
 from dmbot.db import Database, drop_schema
@@ -169,6 +170,10 @@ class TheMigration(unittest.IsolatedAsyncioTestCase):
             migrations=tuple(m for m in MIGRATIONS if m[0] < self.NAME),
         )  # fmt: skip
         self.memory = MemoryStore(self.db)
+        # (a place kept looks for a map's loose pins, #4670; that table comes after 0496)
+        no_pins = mock.patch("dmbot.memory.store._rematch_pins", mock.AsyncMock())
+        no_pins.start()
+        self.addCleanup(no_pins.stop)
 
     async def asyncTearDown(self) -> None:
         await self.db.close()
