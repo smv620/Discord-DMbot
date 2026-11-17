@@ -96,6 +96,7 @@ from dmbot.mentions import NO_PINGS
 from dmbot.ui import logic, split_words
 from dmbot.ui import secret_questions as secret_questions_ui
 from dmbot.ui.check_everything import add_stop, next_part, progress
+from dmbot.ui.claims_review import knower_icon, names_joined
 from dmbot.ui.dmbot_commands import VIEW_TIMEOUT_S, _bot, _Button, _Menu, _send, _tell
 from dmbot.ui.name_lists import (
     AI_AT_ONCE,
@@ -3890,12 +3891,13 @@ class ConnectionOffer(_Menu):
             return plain
         return link_words(r.predicate, r.detail, r.directional, feeling=True, knows_how=r.knows_how)
 
-    def text(self) -> str:
-        """The card, with the walk's part line above it when this is inside "Check everything"."""
+    def text(self, note: str = "") -> str:
+        """The card, with the walk's part line above it when this is inside "Check everything",
+        and `note` (who the last 👥 Some know saved it for, #4682) above both."""
         if self.walk is None or self.current is None:
-            return self._card()
+            return note + self._card()
         done = self.kept + self.left_out + 1
-        return progress(self.walk, done, max(self.total, done)) + self._card()
+        return note + progress(self.walk, done, max(self.total, done)) + self._card()
 
     def _card(self) -> str:
         c = self.current
@@ -3914,8 +3916,10 @@ class ConnectionOffer(_Menu):
         mine = ""
         if who is not None:
             name = _md(who[:40])
+            # (DMbot's guess shown before the answer: the icon says how many, #4682; it writes
+            # nothing, 👥 Some know opens the picker with it ticked)
             mine = (
-                f"👥 **{name}**'s character will know it.\n"
+                f"{knower_icon(1)} DMbot thinks only {name} knows this.\n"
                 if not (view.secret or c.secret)
                 else f"👥 **{name}**'s character won't know it: it is hidden.\n"
             )
@@ -4002,13 +4006,16 @@ class ConnectionOffer(_Menu):
             f"{others}: {decide}.\n"
         )
 
-    async def _show(self, interaction: discord.Interaction, ready: list[Waiting]) -> None:
+    async def _show(
+        self, interaction: discord.Interaction, ready: list[Waiting], note: str = ""
+    ) -> None:
         self._set(ready)
         if self.current is None:
             self.stop()
+        text = self.text(note)  # (the note is said once, with the card that follows the save)
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
-                content=self.text(),
+                content=text,
                 view=self if self.current else None,
                 allowed_mentions=NO_PINGS,
             )
@@ -4208,8 +4215,13 @@ class ConnectionOffer(_Menu):
                     log.info("A kept connection could not be pinned")
             changed(interaction, campaign)
             await store.remove(campaign.guild_id, campaign.id, c)
+            saved = ""
+            if knowers is not None:
+                names = [self.characters[k] for k in knowers if k in self.characters]
+                if names:
+                    saved = f"{knower_icon(len(names))} Known to: {names_joined(names)}.\n"
             self.kept += 1
-            await self._show(interaction, await self._ready(interaction, campaign))
+            await self._show(interaction, await self._ready(interaction, campaign), saved)
 
     async def _no(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
