@@ -2018,11 +2018,14 @@ class MemoryStore:
 
     # ---- World notes: DMbot's guesses about the world, for the DM to check (#4285) ----------
 
-    async def world_notes(self, guild_id: int, campaign_id: str) -> list[world_notes.Note]:
+    async def world_notes(
+        self, guild_id: int, campaign_id: str, *, with_roads: bool = False
+    ) -> list[world_notes.Note]:
         """Every open World note of the campaign: the DM's own list (the caller checks it is a DM
-        of the campaign asking), never a player's."""
+        of the campaign asking), never a player's. `with_roads`: the road lengths a map disagrees
+        with too (#4670 4c, only while DMBOT_MAP_MEASURE is on)."""
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
-            return await world_notes.read(scope)
+            return await world_notes.read(scope, with_roads=with_roads)
 
     async def keep_world_notes(
         self, guild_id: int, campaign_id: str, line_ids: Sequence[str], *, source: str

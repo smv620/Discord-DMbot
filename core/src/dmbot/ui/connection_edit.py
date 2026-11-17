@@ -621,7 +621,7 @@ class OneConnection(_Menu):
         if written.batch is None:
             await _tell(interaction, NOTHING_CHANGED)
             return
-        note = length_note(written.value, kept=False)
+        note = length_note(written.value, kept=False) + await map_line(interaction, found)
         await self._changed(interaction, found, note, undo=written.batch)
 
     async def _keep_length(self, interaction: discord.Interaction) -> None:
@@ -641,7 +641,7 @@ class OneConnection(_Menu):
         except MemoryRuleError as exc:
             await _tell(interaction, str(exc))  # (the length changed meanwhile: plain words)
             return
-        note = length_note(written.value, kept=True)
+        note = length_note(written.value, kept=True) + await map_line(interaction, found)
         await self._changed(interaction, found, note, undo=written.batch)
 
     async def _remove(self, interaction: discord.Interaction) -> None:
@@ -726,6 +726,32 @@ class RouteLengthForm(discord.ui.Modal, title="How far is it?"):
             await _tell(interaction, "Type how far it is, like “two days by cart”.")
             return
         await self._done(interaction, text)
+
+
+async def map_line(interaction: discord.Interaction, found: Found) -> str:
+    """After the DM sets or keeps a road's length (#4670 4c; Supervisor's ruling; design §9): when
+    a kept map's straight line is far longer, one more line on the DM's private card, "On the
+    Ten-Towns map it's about 35 miles in a straight line.", with the Maps page's link. Only while
+    DMBOT_MAP_MEASURE is on; nothing is changed, and nothing is said within the limit. Never fatal:
+    a failure here leaves the saved length's own line as it was."""
+    from dmbot.maps import disagree, measure_words
+
+    settings = getattr(interaction.client, "settings", None)
+    store = getattr(interaction.client, "map_store", None)
+    if store is None or not getattr(settings, "map_measure_on", False):
+        return ""
+    c = found.campaign
+    try:
+        road = await store.road_off(c.guild_id, c.id, found.relation.id)
+    except Exception as exc:  # (never fatal: the length is saved either way)
+        log.warning("Road map check failed (%s)", type(exc).__name__)
+        return ""
+    if road is None:
+        return ""
+    line = measure_words.map_measures(disagree.amount(road.off), road.off.map.title)
+    site = str(getattr(settings, "site_url", "") or "")
+    link = f"\n{measure_words.LINK}: <{site}/account/maps>" if site else ""
+    return f"\n{_md(line)}{link}"
 
 
 def length_note(length: route_length.Length | None, *, kept: bool, undo: bool = True) -> str:
