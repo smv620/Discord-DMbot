@@ -113,3 +113,32 @@ class TheRule(PinsBase):
         self.assertEqual(
             await self.row(rejected), {"status": "rejected", "source": "map", "map_id": None}
         )
+
+
+class TheNo(TheRule):
+    """A DM's No to a map runs the rule on what it said (#4695; Supervisor's ruling 1 on #4694):
+    the map row stays, refused, and one Undo puts everything back."""
+
+    async def test_yes_then_no_runs_the_rule_and_keeps_the_refused_map(self) -> None:
+        only_map, text_too, dms = await self.three()
+        written = await self.maps.answer_use(GUILD_A, self.one.id, self.map_id, dm_id=7, yes=False)
+        self.assertIsNone(await self.row(only_map))
+        self.assertEqual(
+            await self.row(text_too), {"status": "read", "source": "text", "map_id": None}
+        )
+        self.assertEqual(
+            await self.row(dms), {"status": "confirmed", "source": "map", "map_id": None}
+        )
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT use_ok FROM campaign_maps WHERE id = %s", (self.map_id,)
+            )
+            kept = await cur.fetchone()
+        assert kept is not None
+        self.assertIs(kept["use_ok"], False)  # (refused, never read again)
+        assert written.batch is not None
+        await self.memory.undo(GUILD_A, self.one.id, written.batch)
+        for fact_id, status in ((only_map, "read"), (text_too, "read"), (dms, "confirmed")):
+            self.assertEqual(
+                await self.row(fact_id), {"status": status, "source": "map", "map_id": self.map_id}
+            )

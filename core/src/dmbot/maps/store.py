@@ -384,12 +384,15 @@ class MapStore:
         yes: bool,
         first_only: bool = False,
     ) -> Written[Map]:
-        """A DM's yes or no to "A map from <player>: use it?". A no leaves the picture kept and
-        unused; removing it is a separate tap. The caller has checked that `dm_id` is a DM of this
-        campaign. Answering again changes the answer, and the later one stands, unless
-        `first_only`: then an answered map is left as it is and `AlreadyAnswered` says so (two DMs
-        pressing at once: the first answer stands). The check and the write are one step, under
-        the picture store's lock."""
+        """A DM's yes or no to "A map from <player>: use it?". A no ends DMbot's use of the map:
+        what it said goes by the deletion rule (`_forget_said`, §7.5; Supervisor's ruling 1 on
+        #4694, #4695) in the same write, one Undo. DMbot's reads resting only on it go and the
+        DM's word stays; the map row stays, refused, so a second DM is told the first answer, the
+        poster still sees it as theirs, and nothing reads it again. The caller has checked that
+        `dm_id` is a DM of this campaign. Answering again changes the answer, and the later one
+        stands, unless `first_only`: then an answered map is left as it is and `AlreadyAnswered`
+        says so (two DMs pressing at once: the first answer stands). The check and the write are
+        one step, under the picture store's lock."""
         async with self._memory.map_write(guild_id, campaign_id) as w:
             await _lock(w.conn, guild_id, campaign_id)
             current = await w.get(MAPS, map_id)
@@ -400,6 +403,8 @@ class MapStore:
             row = await w.update(
                 MAPS, map_id, {"use_ok": yes, "use_by": dm_id, "use_at": int(self._clock())}
             )
+            if not yes:  # (the answer is logged first, so Undo puts the question back as it was)
+                await self._forget_said(w, map_id)
             return Written(_map(row), w.batch)
 
     async def set_audience(
@@ -463,6 +468,21 @@ class MapStore:
         row = await w.get(MAPS, map_id)
         if row is None:
             return None
+        await MapStore._forget_said(w, map_id)
+        for other in await w.select(MAPS, " AND replaces = %s", [map_id]):
+            await w.update(MAPS, str(other["id"]), {"replaces": None})
+        await w.delete(MAPS, map_id)
+        await w.conn.execute(
+            "UPDATE campaign_pictures SET permanent = FALSE WHERE guild_id = %s"
+            " AND campaign_id = %s AND id = %s",
+            (w.guild_id, w.campaign_id, int(row["picture_id"])),
+        )
+        return _map(row)
+
+    @staticmethod
+    async def _forget_said(w: Changes, map_id: str) -> None:
+        """What a map said goes by the deletion rule, in the caller's write (§7.5): its pins, and
+        its rows as below. A removal and a DM's No (#4695) both run it."""
         for feature in await w.select(MAP_FEATURES, " AND map_id = %s", [map_id]):
             # (its pins go with it, logged, so one Undo puts the map back with them: #4670)
             await w.delete(MAP_FEATURES, str(feature["id"]))
@@ -485,15 +505,6 @@ class MapStore:
                 )
             else:
                 await w.update(MAP_FACTS, fact_id, {"map_id": None})
-        for other in await w.select(MAPS, " AND replaces = %s", [map_id]):
-            await w.update(MAPS, str(other["id"]), {"replaces": None})
-        await w.delete(MAPS, map_id)
-        await w.conn.execute(
-            "UPDATE campaign_pictures SET permanent = FALSE WHERE guild_id = %s"
-            " AND campaign_id = %s AND id = %s",
-            (w.guild_id, w.campaign_id, int(row["picture_id"])),
-        )
-        return _map(row)
 
     async def maps(
         self,
