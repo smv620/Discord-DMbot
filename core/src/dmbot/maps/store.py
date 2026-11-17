@@ -402,8 +402,8 @@ class MapStore:
     async def remove_map(self, guild_id: int, campaign_id: str, map_id: str) -> Written[Map | None]:
         """Take a picture's map status away (a DM can always; its poster can too). The picture
         stays a picture, no longer permanent (Supervisor's ruling on #4344: a pin the DM set before
-        the map existed is cleared too). Facts that point at the map are cleared first, through
-        the log, so one Undo puts them back with it. No such map: nothing, and no batch."""
+        the map existed is cleared too). What the map said goes by §7.5 (`_remove`), through the
+        log, so one Undo puts it back with it. No such map: nothing, and no batch."""
         async with self._memory.map_write(guild_id, campaign_id) as w:
             await _lock(w.conn, guild_id, campaign_id)
             gone = await self._remove(w, map_id)
@@ -446,11 +446,24 @@ class MapStore:
         row = await w.get(MAPS, map_id)
         if row is None:
             return None
-        for fact in await w.select(MAP_FACTS, " AND map_id = %s", [map_id]):
-            await w.update(MAP_FACTS, str(fact["id"]), {"map_id": None})
         for feature in await w.select(MAP_FEATURES, " AND map_id = %s", [map_id]):
             # (its pins go with it, logged, so one Undo puts the map back with them: #4670)
             await w.delete(MAP_FEATURES, str(feature["id"]))
+        # What the map said (§7.5, Supervisor's ruling on #4236 f; #4259 slice 8b), in the same
+        # write, so one Undo puts it all back: DMbot's read resting only on this map goes with it;
+        # a read the text also stated stays, as the text's; the DM's own word (and the DM's no)
+        # stays, without the pointer. A map dropped only to make room is not this path: its rows
+        # keep their words and lose only the pointer (the foreign key's ON DELETE SET NULL).
+        for fact in await w.select(MAP_FACTS, " AND map_id = %s", [map_id]):
+            fact_id = str(fact["id"])
+            if fact["status"] == "read" and fact["source"] == "map" and not fact["also_text"]:
+                for pinned in await w.select(MAP_FEATURES, " AND fact_id = %s", [fact_id]):
+                    await w.update(MAP_FEATURES, str(pinned["id"]), {"fact_id": None})
+                await w.delete(MAP_FACTS, fact_id)
+            elif fact["status"] == "read" and fact["source"] == "map":
+                await w.update(MAP_FACTS, fact_id, {"source": "text", "map_id": None})
+            else:
+                await w.update(MAP_FACTS, fact_id, {"map_id": None})
         for other in await w.select(MAPS, " AND replaces = %s", [map_id]):
             await w.update(MAPS, str(other["id"]), {"replaces": None})
         await w.delete(MAPS, map_id)
