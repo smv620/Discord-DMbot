@@ -2607,6 +2607,16 @@ def create_app(
             )
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/maps/{map_id}/features")
+    async def me_campaign_map_features(ref: str, map_id: str, signed: Signed) -> dict[str, Any]:
+        """A map's pins, scale, grid and north (#4672): DM only, nothing for anyone else."""
+        session, _token = signed
+        try:
+            return await map_pages.read_features(db, session, ref, map_id)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.post("/me/campaigns/{ref}/maps/{map_id}/use", status_code=202)
     async def me_campaign_map_use(
         ref: str, map_id: str, request: Request, signed: Signed
