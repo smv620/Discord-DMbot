@@ -9,7 +9,7 @@ import { type AccountApi } from "./api";
 import LazyPanel from "./LazyPanel";
 import QuestionsNames from "./QuestionsNames";
 
-export type HereGroup = "names" | "waiting" | "readings" | "traits";
+export type HereGroup = "names" | "waiting" | "readings" | "traits" | "secrets";
 
 /** The panel a kind opens, or null when it is not answered on this page. Kinds in one group share one panel. */
 export function groupOf(kind: string): HereGroup | null {
@@ -17,12 +17,14 @@ export function groupOf(kind: string): HereGroup | null {
   if (kind === "connections" || kind === "which" || kind === "family" || kind === "claims") return "waiting";
   if (kind === "readings") return "readings";
   if (kind === "traits") return "traits";
+  if (kind === "secrets") return "secrets";
   return null;
 }
 
 export default function QuestionsHere({ api, campaignRef, group, id }: { api: AccountApi; campaignRef: string; group: HereGroup; id: string }) {
   if (group === "names") return <QuestionsNames api={api} campaignRef={campaignRef} id={id} />;
   if (group === "traits") return <LazyPanel load={() => import("./TraitQuestions")} what="the lineage and class questions" props={{ api, campaignRef, id }} />;
+  if (group === "secrets") return <LazyPanel load={() => import("./SecretQuestions")} what="the known or secret questions" props={{ api, campaignRef, id }} />;
   return (
     <div id={id} class="stack">
       {group === "waiting" ? (
