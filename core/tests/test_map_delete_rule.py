@@ -142,3 +142,31 @@ class TheNo(TheRule):
             self.assertEqual(
                 await self.row(fact_id), {"status": status, "source": "map", "map_id": self.map_id}
             )
+
+    async def test_a_refused_map_gives_no_pins_no_layers_and_no_how_far(self) -> None:
+        # (Supervisor's condition on #4695: everything goes through `may_use_map`)
+        from dmbot.maps import measure_phrase
+        from dmbot.maps.store import Viewer, may_use_map
+
+        await self.place("Bryn Shander")
+        await self.record()  # (pinned and a scale read while it was a yes)
+        asked = measure_phrase.read("how far is Targos from Bryn Shander?")
+        assert asked is not None
+        said = await self.maps.measure(GUILD_A, self.one.id, asked, dm=True)
+        assert isinstance(said, str) and said.startswith("About "), said
+        async with self.db.guild(GUILD_A) as conn:  # (and owed a fresh pins read, as a re-read)
+            await conn.execute(
+                "UPDATE campaign_maps SET close_read_at = NULL, close_read_tries = 0,"
+                " pins_read_at = NULL"
+            )
+        await self.maps.answer_use(GUILD_A, self.one.id, self.map_id, dm_id=7, yes=False)
+        refused = await self.maps.get(GUILD_A, self.one.id, self.map_id, Viewer(dm=True))
+        assert refused is not None
+        self.assertFalse(may_use_map(refused))
+        self.assertEqual(await self.features(), [])  # (its pins went with the No)
+        waiting = [m.id for _, m in await self.maps.close_read_waiting(GUILD_A)]
+        waiting += [m.id for _, m in await self.maps.pins_waiting(GUILD_A)]
+        self.assertNotIn(self.map_id, waiting)  # (never read again: no pins, no layers)
+        said = await self.maps.measure(GUILD_A, self.one.id, asked, dm=True)
+        assert isinstance(said, str)
+        self.assertTrue(said.startswith("I can't find "), said)  # (no "how far" from it)
