@@ -63,6 +63,7 @@ from dmbot.ui.dmbot_commands import (
     _tell,
     dmbot_group,
 )
+from dmbot.ui.private_server import guild_id_for
 from dmbot.walk import Walk
 
 if TYPE_CHECKING:
@@ -2422,10 +2423,10 @@ class ReviewButton(
         # Only a DM of the campaign, on every press: this button now sits in the DM Bot channel,
         # which the campaign's people can read, and a server manager who is not a DM must not be
         # able to open the names to check (#3874).
-        guild = interaction.guild
+        guild_id = await guild_id_for(interaction, self.campaign_id)  # (a private chat has none)
         campaign = (
-            await _bot(interaction).campaigns.get(guild.id, self.campaign_id)
-            if guild is not None
+            await _bot(interaction).campaigns.get(guild_id, self.campaign_id)
+            if guild_id is not None
             else None
         )
         if campaign is None or not logic.can_run(campaign, interaction.user.id, False):
@@ -2494,6 +2495,13 @@ def held_back_text(names: list[str]) -> str:
         "What was said about them is held back until you check them. Say which are in your "
         "game: the check opens privately for the DM."
     )
+
+
+def held_back_pointer(count: int) -> str:
+    """The line in the DM Bot channel, which the campaign's people read: how many, never which
+    (#3874 E1). The names and the check are in the DMs' private message."""
+    what = "new name" if count == 1 else "new names"
+    return f"📝 {count} {what} to check from this session. DMs: it is in your private message."
 
 
 def recap_names_text(count: int) -> str:
