@@ -17,14 +17,24 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import logging
 import time
 from collections.abc import Awaitable, Callable, Mapping
 from pathlib import Path
 from typing import Any
 
+log = logging.getLogger(__name__)
+
 WAIT_S = 1500  # the bot's close reads run every 10 minutes (`bot.MAP_CLOSE_EVERY_S`): about 2.5
 POLL_S = 20
 TITLE = "Icewind Dale (sample)"
+
+
+def skipped(say: Callable[[str], None], reason: str) -> None:
+    """Say, and log, that the map step did not run and why (#4646): a step that silently doesn't
+    run reads as "nothing found". The reason is a fixed phrase, never a path or a name."""
+    say(f"map: skipped ({reason})")
+    log.info("Sample map: skipped (%s)", reason)
 
 
 async def run(
@@ -62,18 +72,18 @@ async def run(
 
         settings = load_settings()
     if not settings.pictures_ready:
-        say("map: skipped (kept pictures are off on this server)")
+        skipped(say, "kept pictures are off on this server")
         return {"skipped": 1}
     consent = ConsentStore(db)
     await consent.consenting(guild_id)  # (fills the cache `has_image_consent` reads)
     if not consent.has_image_consent(guild_id, dm):
         # (the bot reads a map only while its poster agrees to pictures being read)
-        say("map: skipped (the DM account hasn't agreed to its pictures being read)")
+        skipped(say, "the DM account hasn't agreed to its pictures being read")
         return {"skipped": 1}
     try:
         data = await asyncio.to_thread(path.read_bytes)
     except OSError as exc:  # (the kind only, never the path)
-        say(f"map: skipped (the map file could not be read: {type(exc).__name__})")
+        skipped(say, f"the map file could not be read: {type(exc).__name__}")
         return {"skipped": 1}
     bucket = Bucket(
         settings.r2_account_id, settings.r2_bucket, settings.r2_access_key, settings.r2_secret_key
@@ -88,7 +98,7 @@ async def run(
         data,
     )  # fmt: skip
     if got.picture is None:
-        say(f"map: skipped (the picture was not kept: {got.why_not})")
+        skipped(say, f"the picture was not kept: {got.why_not}")
         return {"skipped": 1}
     try:
         maps = MapStore(db, memory)
@@ -98,7 +108,7 @@ async def run(
             title=TITLE, audience="dm", storage_mb=settings.picture_storage_mb,
         )  # fmt: skip
     except MapError as exc:  # (the store's own words)
-        say(f"map: skipped ({exc})")
+        skipped(say, str(exc))
         return {"skipped": 1}
     # The owner's standing confirmation for the sample campaign (#4423): recorded only now that the
     # map is kept, as the file's own SHA-256 (it can be checked against the file on the server)
@@ -112,6 +122,9 @@ async def run(
         if read or tries >= CLOSE_READ_TRIES:
             break
         await sleep(POLL_S)
+    if read:  # (#4646: the success path says so too, never only the failures)
+        say(f"map: read closely ({tries} tries, {int(clock() - began)} seconds)")
+        log.info("Sample map: read closely after %d tries", tries)
     if not read:
         say(
             f"map: not read closely (the bot tried {tries} times)"

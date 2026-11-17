@@ -114,6 +114,33 @@ class OnTheKeptRun(unittest.TestCase):
                 asyncio.run(cli.run_many(args, say=lambda _: None))
         self.assertEqual(order, ["run", "run", "recap", "map c1"])
 
+    def test_a_failed_run_says_the_map_was_skipped_and_why(self) -> None:
+        # (#4646) a step that does not run never reads as "nothing found"
+        said: list[str] = []
+
+        async def run(args: Any, **kw: Any) -> int:
+            return 1  # the run failed: no run is kept
+
+        with tempfile.TemporaryDirectory() as d:
+            args = cli.parse_args(
+                ["--guild", "1", "--dm", "2", "--lore", "l", "--session", "s", "--backup-dir", d,
+                 "--commit", "abc1234", "--yes", "--repeat", "2", "--map", "/srv/map.jpg"]
+            )  # fmt: skip
+            with mock.patch.object(cli, "run", run):
+                asyncio.run(cli.run_many(args, say=said.append))
+        skipped = [line for line in said if line.startswith("map: skipped")]
+        self.assertEqual(len(skipped), 1)
+        self.assertNotIn("/srv", skipped[0])  # (never the path)
+
+
+class TheSkipLine(unittest.TestCase):
+    def test_it_is_said_and_logged_with_the_reason(self) -> None:
+        said: list[str] = []
+        with self.assertLogs("dmbot.devtools.sample_run.map_step", level="INFO") as logs:
+            map_step.skipped(said.append, "only the kept run reads the map")
+        self.assertEqual(said, ["map: skipped (only the kept run reads the map)"])
+        self.assertIn("only the kept run reads the map", logs.output[0])
+
 
 if __name__ == "__main__":
     unittest.main()
