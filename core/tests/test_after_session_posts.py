@@ -44,6 +44,14 @@ class TheNote(unittest.IsolatedAsyncioTestCase):
         await DMBot._post_after_session(fake, table(), "3 things")
         fake.post.assert_awaited_once_with(SCREEN, "3 things", None)
 
+    async def test_a_campaign_with_no_saved_channel_uses_the_tables_screen(self) -> None:
+        fake = bot(dm_bot_channel=None)
+        fake.campaigns.get = AsyncMock(
+            return_value=SimpleNamespace(dm_bot_channel_id=None, dm_screen_channel_id=None)
+        )
+        await DMBot._post_after_session(fake, table(), "x")
+        fake.post.assert_awaited_once_with(SCREEN, "x", None)
+
     async def test_with_no_campaign_it_falls_back_to_the_tables_screen(self) -> None:
         fake = bot(dm_bot_channel=UPKEEP)
         fake.campaigns.get = AsyncMock(return_value=None)

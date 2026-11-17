@@ -3676,8 +3676,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if table.campaign_id is not None
             else None
         )
-        channel = (
-            self._upkeep_channel(campaign)[0] if campaign is not None else table.screen_channel_id
+        # (a campaign with neither channel saved still has the table's own screen, as before)
+        channel = (self._upkeep_channel(campaign)[0] if campaign is not None else None) or (
+            table.screen_channel_id
         )
         if channel is None:
             return False
