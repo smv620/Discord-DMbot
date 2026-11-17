@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import functools
 import inspect
 import logging
 import os
@@ -282,7 +283,11 @@ from dmbot.dm_screen.transcript_keep import (
     KeepYesButton,
     TranscriptsButton,
 )
-from dmbot.dm_screen.upkeep_pointers import names_fixed_pointer, secrets_pointer
+from dmbot.dm_screen.upkeep_pointers import (
+    names_fixed_pointer,
+    secrets_pointer,
+    session_names_pointer,
+)
 from dmbot.dm_waiting import WaitingChecks, WaitingSent, asks_for
 from dmbot.ears.protocol import (
     AudioFrame,
@@ -918,6 +923,10 @@ def _joined_at(guild: discord.Guild) -> int | None:
     """When the bot joined this server, as Discord says (None while the server is still loading)."""
     me = cast(discord.Member | None, getattr(guild, "me", None))
     return int(me.joined_at.timestamp()) if me is not None and me.joined_at else None
+
+
+def _same_view(view: discord.ui.View) -> discord.ui.View:
+    return view
 
 
 class DMBotTree(app_commands.CommandTree["DMBot"]):
@@ -11453,11 +11462,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if hold is not None:
             if not report.quiet:
                 hold.append(report)
-        elif not report.quiet and campaign.dm_screen_channel_id is not None:
-            await self.post(
-                campaign.dm_screen_channel_id,
+        elif not report.quiet:
+            # The spellings go to the DMs privately, with Undo; the DM Bot channel gets counts
+            # only (#3874 E1)
+            await pointer_note.send(
+                self,
+                campaign,
                 name_pass_logic.report_text(report),
-                name_pass_undo.undo_view(cid, report.fixed),
+                lambda: name_pass_undo.undo_view(cid, report.fixed) or discord.ui.View(),
+                session_names_pointer(len(report.fixed), len(report.unsure), len(report.new)),
+                note=True,
             )
         log.info("Name pass report: %s", name_pass_logic.counts_line(report))  # counts only
         return sum(f.times for f in report.fixed)
@@ -12793,23 +12807,29 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 continue  # the import is not over: one report at the end
             reports = self._import_reports.pop(key, [])
             campaign = await self.campaigns.get(gid, cid)
-            if reports and campaign is not None and campaign.dm_screen_channel_id is not None:
+            if reports and campaign is not None:
                 views = name_pass_undo.undo_views_import(cid, [r.fixed for r in reports])
-                screen = campaign.dm_screen_channel_id
-                await self.post(
-                    screen, name_pass_logic.import_text(reports), views[0] if views else None
+                # Private first, with the numbers-only pointer in the DM Bot channel after; the
+                # DM screen holds it only when no DM could be messaged (#3874 E1)
+                first: discord.ui.View = views[0] if views else discord.ui.View()
+                told = await pointer_note.send(
+                    self,
+                    campaign,
+                    name_pass_logic.import_text(reports),
+                    functools.partial(_same_view, first),
+                    names_fixed_pointer(
+                        sum(len(r.fixed) for r in reports),
+                        sum(len(r.unsure) for r in reports),
+                        sum(len(r.new) for r in reports),
+                    ),
+                    note=True,
                 )
                 for extra in views[1:]:  # Discord holds 25 buttons a message: no Undo is lost
-                    await self.post(screen, "↩️ More Undo buttons for the report above:", extra)
-                if campaign.dm_bot_channel_id:  # numbers only; the names stay on the DM screen
-                    await self.post(
-                        campaign.dm_bot_channel_id,
-                        names_fixed_pointer(
-                            sum(len(r.fixed) for r in reports),
-                            sum(len(r.unsure) for r in reports),
-                            sum(len(r.new) for r in reports),
-                        ),
-                    )
+                    more = "↩️ More Undo buttons for the report above:"
+                    if not await self.ask_privately(gid, cid, more, extra, note=True) and (
+                        told and campaign.dm_screen_channel_id is not None
+                    ):
+                        await self.post(campaign.dm_screen_channel_id, more, extra)
         for cid in list(self._import_party):
             if await store.pending_scans(gid, cid):
                 continue  # once, at the end of the import

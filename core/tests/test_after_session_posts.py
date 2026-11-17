@@ -156,3 +156,44 @@ class TheNamesShownReport(unittest.IsolatedAsyncioTestCase):
         with self.assertLogs("dmbot", level="WARNING") as logs:
             await self._run(False)
         self.assertNotIn("Zed", "".join(logs.output))
+
+
+class TheImportNamesReport(unittest.IsolatedAsyncioTestCase):
+    """(#3874 E1) an import's name report: private first, a count in the DM Bot channel"""
+
+    async def test_the_report_goes_private_first_and_the_pointer_has_no_name(self) -> None:
+        from functools import partial
+        from unittest.mock import patch
+
+        report = SimpleNamespace(fixed=[], unsure=[1], new=[2, 3])
+        campaign = SimpleNamespace(
+            id="c" * 32, guild_id=GUILD, dm_bot_channel_id=UPKEEP, dm_screen_channel_id=SCREEN
+        )
+        store = SimpleNamespace(pending_scans=AsyncMock(return_value=[]))
+        fake: Any = SimpleNamespace(
+            _import_reports={(GUILD, "c" * 32): [report]},
+            _import_party={},
+            _import_names={},
+            _import_unchecked={},
+            _import_speakers={},
+            _import_entries={},
+            _import_batches={},
+            _import_queued={},
+            _import_unhonoured={},
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
+            post=AsyncMock(),
+            ask_privately=AsyncMock(return_value=True),
+        )
+        send = AsyncMock(return_value=True)
+        with (
+            patch("dmbot.bot.pointer_note.send", send),
+            patch("dmbot.bot.name_pass_logic.import_text", lambda r: "Zed was fixed"),
+            patch("dmbot.bot.name_pass_undo.undo_views_import", lambda cid, fixed: []),
+        ):
+            await partial(DMBot._tell_import_news, fake)(GUILD, store)  # type: ignore[arg-type]
+        send.assert_awaited_once()
+        args = send.await_args.args
+        self.assertIn("Zed", args[2])
+        self.assertIn("1 not sure", args[4])
+        self.assertIn("2 new", args[4])
+        self.assertNotIn("Zed", args[4])

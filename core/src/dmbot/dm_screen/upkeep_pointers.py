@@ -27,6 +27,20 @@ def secrets_pointer(secrets: int, names: int, checks: int) -> str:
     return f"🤫 After the session: {what}. The DM has the details privately."
 
 
+def session_names_pointer(fixed: int, unsure: int, new: int) -> str:
+    """After one session's name check: the same counts, for the DM Bot channel (#3874 E1). The
+    names, the spellings and the Undo buttons are in the DMs' private message."""
+    parts = [_count(fixed, "name fixed", "names fixed")]
+    if unsure:
+        parts.append(f"{unsure} not sure")
+    if new:
+        parts.append(f"{new} new")
+    return (
+        f"📝 This session: {', '.join(parts)}. "
+        "DMs: the report with Undo is in your private message."
+    )
+
+
 def names_fixed_pointer(fixed: int, unsure: int, new: int) -> str:
     """After an import: how many names the name pass fixed, and how many it left to the DM. The
     names, the spellings and the Undo buttons stay on the DM screen."""
