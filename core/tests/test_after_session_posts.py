@@ -192,7 +192,7 @@ class TheImportNamesReport(unittest.IsolatedAsyncioTestCase):
         ):
             await partial(DMBot._tell_import_news, fake)(GUILD, store)  # type: ignore[arg-type]
         send.assert_awaited_once()
-        args = send.await_args.args
+        args = send.await_args_list[-1].args
         self.assertIn("Zed", args[2])
         self.assertIn("1 not sure", args[4])
         self.assertIn("2 new", args[4])

@@ -91,10 +91,8 @@ class ThePass(NamesTest):
         )
         self.assertEqual(await self.heard(), heard)  # what was heard never changes (#933)
         self.assertTrue(await self.done())
-        text, view = (
-            self.bot.ask_privately.await_args.args[2],
-            self.bot.ask_privately.await_args.args[3],
-        )  # type: ignore[attr-defined]
+        asked: Any = self.bot.ask_privately
+        text, view = asked.await_args.args[2], asked.await_args.args[3]
         self.assertEqual(
             text,
             "**Names fixed this session**\n"

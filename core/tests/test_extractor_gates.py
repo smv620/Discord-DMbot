@@ -228,7 +228,7 @@ class Gates(unittest.IsolatedAsyncioTestCase):
             name_of=unittest.mock.Mock(side_effect=lambda gid, uid: f"<@{uid}>"),
             post=AsyncMock(),
         )  # fmt: skip
-        me._upkeep_channel = lambda c: DMBot._upkeep_channel(me, c)  # (#3874 E1)
+        me._upkeep_channel = lambda c: DMBot._upkeep_channel(me, c)  # type: ignore[arg-type]
         me._extract_session = partial(BOT._extract_session, me)  # (extract_claims calls it)
         return me
 

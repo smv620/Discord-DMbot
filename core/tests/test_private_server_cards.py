@@ -170,8 +170,8 @@ class TheNameButtonsInAPrivateChat(unittest.IsolatedAsyncioTestCase):
             patch.object(name_pass_undo, "_tell", AsyncMock()) as tell,
         ):
             await name_pass_undo.UndoNamePassButton(CAMPAIGN, 5).callback(it)
-        self.assertEqual(undo.await_args.args[2], GUILD)  # (the campaign's own server)
-        self.assertNotEqual(tell.await_args.args[1], name_pass_undo.GONE)
+        self.assertEqual(undo.await_args_list[-1].args[2], GUILD)  # (the campaign's own server)
+        self.assertNotEqual(tell.await_args_list[-1].args[1], name_pass_undo.GONE)
 
     async def test_the_name_check_undo_still_refuses_someone_who_is_not_a_dm(self) -> None:
         from dmbot.ui import name_pass_undo
@@ -184,7 +184,7 @@ class TheNameButtonsInAPrivateChat(unittest.IsolatedAsyncioTestCase):
         ):
             await name_pass_undo.UndoNamePassButton(CAMPAIGN, 5).callback(it)
         undo.assert_not_awaited()
-        self.assertEqual(tell.await_args.args[1], name_pass_undo.NOT_YOURS)
+        self.assertEqual(tell.await_args_list[-1].args[1], name_pass_undo.NOT_YOURS)
 
     async def test_check_new_names_opens_for_a_dm_with_no_server(self) -> None:
         from dmbot.ui import names
