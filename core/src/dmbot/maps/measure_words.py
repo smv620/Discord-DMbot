@@ -7,7 +7,8 @@ used; a measured line is called a straight line; an answer that rests on north b
 "if north is at the top"; no scale is no number, never a guess, with the fix said to the DM (a
 player is told the DM can add one, as setting a scale is the DM's); "pin" is never said; and a
 player is never told a hidden map exists (the same words whether or not a DM-only map has both
-places). DMbot never says a stated distance is wrong."""
+places; a DM's own table question the table's maps can't answer goes to the DM privately, #4676).
+DMbot never says a stated distance is wrong."""
 
 from __future__ import annotations
 
@@ -116,3 +117,14 @@ def said_way(a: str, direction: str, b: str, map_way: str, map_title: str) -> st
     of Targos.' (Only on a map whose north was read or set, so no "if north is at the top".)"""
     said = f"You said {a} is {direction} of {b}."
     return f"{said} On {on_map(map_title)}, {a} is about {map_way} of {b}."
+
+
+# (any new miss wording above must be added here and to `test_what_counts_as_measured`, or a miss
+# would be sent to the DM privately as if it were a figure)
+def measured(text: str) -> bool:
+    """Whether an answer gives a figure or a direction, not what is missing ("I can't find …",
+    "I don't have a map with both …", "… has no scale …"). #4676: a DM's table question the table's
+    maps can't answer is then answered privately."""
+    return not (
+        text.startswith(("I can't find ", "I don't have a map ")) or " has no scale" in text
+    )
