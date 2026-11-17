@@ -68,11 +68,8 @@ class TheTimeout(unittest.IsolatedAsyncioTestCase):
     async def test_a_message_that_cannot_be_read_is_not_edited_and_never_raises(self) -> None:
         made = menu()
         made.origin = origin_showing()
-        made.origin.original_response = AsyncMock(
-            side_effect=discord.NotFound(  # type: ignore[arg-type]
-                SimpleNamespace(status=404, reason="gone"), "gone"
-            )
-        )
+        gone = discord.NotFound(cast(Any, SimpleNamespace(status=404, reason="gone")), "gone")
+        cast(Any, made.origin).original_response = AsyncMock(side_effect=gone)
         await made.on_timeout()
         edits(made).assert_not_awaited()
 
