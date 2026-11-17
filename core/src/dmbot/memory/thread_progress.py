@@ -4,7 +4,8 @@
 
 Each line names its thread and one change (`Change`): a new part (an objective, a complication, a
 reward given, help, a time limit's words), a part it has moving on (an objective done, help
-returned…), or the thread's own state (a hook taken up is "Happening now"). The DM sees them on the
+returned…), the thread's own state (a hook taken up is "Happening now"), or a clue the table found
+and who found it (#4624, quests slice 6c). The DM sees them on the
 📜 card under the thread's name, "Progress to check", and keeps the ones left on in **one change**
 (`MemoryStore.keep_thread_progress`), so one ↩ Undo takes them all back (`unkeep_in`).
 
@@ -38,7 +39,11 @@ from dmbot.memory.models import ABANDONED, GOING, RESOLVED, new_id
 log = logging.getLogger(__name__)
 
 PART, PART_STATE, THREAD_STATE = "part", "part_state", "thread_state"
-KINDS = (PART, PART_STATE, THREAD_STATE)
+# A clue the table found (#4624, quests slice 6c; 0525): the campaign's clue, or a new one's words,
+# and the characters who found it. Its state is always FOUND.
+CLUE, FOUND = "clue", "found"
+KINDS = (PART, PART_STATE, THREAD_STATE, CLUE)
+FINDERS_MAX = 8  # characters on one line at most
 # The parts a session can add (§9.5): a reward *promised* is the thread's own, set when it is kept,
 # so a session gives one only as given.
 PART_KINDS = (
@@ -62,13 +67,19 @@ class Change:
     state: str = ""
     part_id: str | None = None
     due: str = ""  # a time limit's "when" in words, for the DM's own date (never parsed here)
+    clue_id: str | None = None  # a found clue the campaign has (CLUE only; None: a new one)
+    finder_ids: tuple[str, ...] = ()  # who found it (CLUE only), character entry ids
 
     def key(self, thread_id: str) -> str:
         """The change in a fixed form, hashed: offered once on each thread."""
-        # (a new part is its words; a state change is the same change however it was put)
-        words = " ".join(self.words.lower().split()) if self.kind == PART else ""
+        # (a new part is its words; a state change is the same change however it was put; a clue
+        # found is the clue and who found it, so a later finder of the same clue is offered too,
+        # and the same finders once however many say it)
+        new_words = self.kind == PART or (self.kind == CLUE and self.clue_id is None)
+        words = " ".join(self.words.lower().split()) if new_words else ""
         fixed = json.dumps(
-            [thread_id, self.kind, self.part_kind, words, self.state, self.part_id or ""],
+            [thread_id, self.kind, self.part_kind, words, self.state, self.part_id or ""]
+            + ([self.clue_id or "", sorted(self.finder_ids)] if self.kind == CLUE else []),
             separators=(",", ":"),
         )
         return hashlib.sha256(fixed.encode()).hexdigest()
@@ -113,6 +124,11 @@ def check(change: Change) -> Change | None:
         if change.state not in THREAD_STATES:
             return None
         return Change(THREAD_STATE, "", words, change.state)
+    if change.kind == CLUE:
+        finders = tuple(dict.fromkeys(f for f in change.finder_ids if f))[:FINDERS_MAX]
+        if not finders or (change.clue_id is None and not words):
+            return None  # (nobody found it, or nothing says which clue)
+        return Change(CLUE, "", words, FOUND, None, "", change.clue_id, finders)
     return None
 
 
@@ -122,6 +138,8 @@ def _line(r: Any) -> Line:
         Change(
             str(r["kind"]), str(r["part_kind"]), str(r["words"]), str(r["state"]),
             None if r["part_id"] is None else str(r["part_id"]), str(r["due"]),
+            None if r["clue_id"] is None else str(r["clue_id"]),
+            tuple(str(f) for f in r["finder_ids"] or ()),
         ),
         str(r["session_id"]), None if r["session_at"] is None else int(r["session_at"]),
         tuple(int(n) for n in r["line_starts"] or ()),
@@ -130,8 +148,8 @@ def _line(r: Any) -> Line:
 
 
 _COLUMNS = (
-    "id, thread_id, kind, part_kind, words, state, part_id, due, session_id, session_at,"
-    " line_starts, speaker_ids, created_at"
+    "id, thread_id, kind, part_kind, words, state, part_id, due, clue_id, finder_ids, session_id,"
+    " session_at, line_starts, speaker_ids, created_at"
 )
 # A line waits again (an Undo) only while no withdrawal has touched it: `forget` empties its lines
 _CAN_WAIT = " AND cardinality(line_starts) >= 1"
@@ -278,20 +296,25 @@ class ThreadProgressStore:
                 # (a thread or part gone since the read is skipped, never failing the others)
                 cur = await conn.execute(
                     "INSERT INTO thread_progress (guild_id, campaign_id, id, thread_id, kind,"
-                    " part_kind, part_id, words, state, due, change_key, session_id, session_at,"
-                    " line_starts, speaker_ids, created_at) SELECT %s, %s, %s, %s, %s, %s, %s,"
-                    " %s, %s, %s, %s, %s, %s, %s, %s, %s WHERE EXISTS (SELECT 1 FROM"
-                    " memory_entities WHERE guild_id = %s AND campaign_id = %s AND id = %s)"
+                    " part_kind, part_id, words, state, due, clue_id, finder_ids, change_key,"
+                    " session_id, session_at, line_starts, speaker_ids, created_at) SELECT %s, %s,"
+                    " %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s WHERE EXISTS"
+                    " (SELECT 1 FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+                    " AND id = %s)"
                     " AND (%s::text IS NULL OR EXISTS (SELECT 1 FROM memory_thread_parts"
+                    " WHERE guild_id = %s AND campaign_id = %s AND id = %s))"
+                    # (a clue gone since the read is skipped, as a gone thread or part is)
+                    " AND (%s::text IS NULL OR EXISTS (SELECT 1 FROM memory_entities"
                     " WHERE guild_id = %s AND campaign_id = %s AND id = %s))"
                     " ON CONFLICT DO NOTHING",
                     (
                         guild_id, campaign_id, new_id(), thread_id, change.kind, change.part_kind,
-                        change.part_id, change.words, change.state, change.due,
-                        change.key(thread_id), session_id, session_at,
+                        change.part_id, change.words, change.state, change.due, change.clue_id,
+                        list(change.finder_ids), change.key(thread_id), session_id, session_at,
                         sorted({int(n) for n in starts}), sorted({int(n) for n in speakers}),
                         max(now, 1), guild_id, campaign_id, thread_id,
                         change.part_id, guild_id, campaign_id, change.part_id,
+                        change.clue_id, guild_id, campaign_id, change.clue_id,
                     ),
                 )  # fmt: skip
                 new += int(cur.rowcount or 0)
@@ -367,6 +390,9 @@ class ThreadProgressStore:
 
 
 __all__ = [
+    "CLUE",
+    "FINDERS_MAX",
+    "FOUND",
     "GONE",
     "KINDS",
     "PART",
