@@ -41,6 +41,7 @@ EVERY_ACTION = (
     "branch-move", "branch-not", "part-undo", "part-date",
     "lang-add", "lang-remove", "lang-check", "lang-undo",  # a character's languages (#4271)
     "thread-keep", "thread-not", "thread-undo",  # story threads DMbot found (#4457)
+    "secret-keep", "secret-make", "secret-undo",  # 🤫 Known or secret? questions (#4598)
 )  # fmt: skip
 
 
