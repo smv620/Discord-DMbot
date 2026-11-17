@@ -259,6 +259,23 @@ async def roads_off(
     return out
 
 
+async def _shown_at(w: Changes, map_id: str) -> int:
+    """The story time a map was shown (§7.4): the start of the last session that began before its
+    picture was posted (not when it was kept as a map, which can be later), else the campaign's
+    own start."""
+    cur = await w.conn.execute(
+        "SELECT COALESCE((SELECT max(s.started_at) FROM transcript_sessions s, campaign_maps m"
+        " JOIN campaign_pictures p ON p.guild_id = m.guild_id AND p.campaign_id = m.campaign_id"
+        " AND p.id = m.picture_id"
+        " WHERE s.guild_id = %(g)s AND s.campaign_id = %(c)s AND m.guild_id = %(g)s"
+        " AND m.campaign_id = %(c)s AND m.id = %(m)s AND s.started_at <= p.made_at),"
+        " (SELECT created_at FROM campaigns WHERE guild_id = %(g)s AND id = %(c)s)) AS at",
+        {"g": w.guild_id, "c": w.campaign_id, "m": map_id},
+    )
+    row = await cur.fetchone()
+    return int(row["at"]) if row is not None and row["at"] is not None else int(w.now)
+
+
 @dataclass(frozen=True, slots=True)
 class SaidOff:
     """A distance or direction the DM said that a kept map disagrees with (#4670 4c-2): what was
@@ -590,24 +607,41 @@ class MapStore:
     # ---- positions (#4670, MapBot slice 4a; Supervisor's ruling 1 on #4670) ----
 
     async def record_positions(
-        self, guild_id: int, campaign_id: str, map_id: str, read: Any
+        self, guild_id: int, campaign_id: str, map_id: str, read: Any, *, layers: bool = False
     ) -> Any:
         """A close read's pins, scale, grid and north, as DMbot's own write (one batch, one Undo),
         and the map marked as read for pins (`pins_read_at`, in the same transaction). Counts only
-        come back (`positions.Recorded`)."""
-        from dmbot.maps import positions
+        come back (`positions.Recorded`). `layers` (DMBOT_MAP_LAYERS, #4259 slice 8a): what the
+        map shows outright is written too, in the same batch, as layer rows for the DM to check
+        (`source = 'map'`, this map, from the story time it was shown: §7.4)."""
+        from collections import Counter
+
+        from dmbot.maps import layers_read, positions
+        from dmbot.memory import map_fact_store
+        from dmbot.memory import map_facts as mf
         from dmbot.memory._changes import ALIASES, ENTITIES
         from dmbot.memory.store import _load_ontology
 
         async with self._memory._write(guild_id, campaign_id, "extractor") as w:
             await _lock(w.conn, guild_id, campaign_id)
             onto = await _load_ontology(w)
-            names = positions.place_names(
-                await w.select(ENTITIES, " AND status = 'confirmed'"),
-                await w.select(ALIASES, " AND status = 'confirmed'"),
-                lambda kind: onto.is_a(kind, "place"),
-            )
+            entities = await w.select(ENTITIES, " AND status = 'confirmed'")
+            aliases = await w.select(ALIASES, " AND status = 'confirmed'")
+            names = positions.place_names(entities, aliases, lambda kind: onto.is_a(kind, "place"))
             done = await positions.record_in(w, map_id, read, names)
+            if layers and read.shows:
+                rulers = positions.place_names(
+                    entities, aliases,
+                    lambda kind: onto.is_a(kind, "faction") or onto.is_a(kind, "place"),
+                )  # fmt: skip
+                rows = layers_read.reads(read.shows, names, rulers)
+                written: Counter[str] = Counter()
+                counts = await map_fact_store.add_read(
+                    w, onto, rows, source=mf.FROM_MAP, map_id=map_id,
+                    shown_at=await _shown_at(w, map_id), layers_written=written,
+                )  # fmt: skip
+                done.layers, done.written = dict(counts), dict(written)
+                done.batch = w.batch
             await w.conn.execute(
                 "UPDATE campaign_maps SET pins_read_at = %s WHERE guild_id = %s"
                 " AND campaign_id = %s AND id = %s",

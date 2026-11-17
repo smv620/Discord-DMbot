@@ -269,6 +269,14 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,  # not live until the consent wording is: for whoever runs DMbot
     ),
     Feature(
+        "map layers",
+        "What your maps show about places",
+        "",
+        lambda s: s.map_layers_on,
+        ("map_layers_on",),
+        for_dms=False,  # not live yet: on only after dev1's scored run on the sample map (#4259)
+    ),
+    Feature(
         "who is he",
         'Who "he" and "she" are in a document',
         "",
