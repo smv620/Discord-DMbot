@@ -631,6 +631,7 @@ from dmbot.ui.line_fix import (
 )
 from dmbot.ui.live_heads_up import LiveHeadsUpButton, heads_up_text, heads_up_view
 from dmbot.ui.map_checks import StopMapChecksButton
+from dmbot.ui.map_layers_note import UndoMapLayersButton
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
 from dmbot.ui.name_card import (
     FinishPastButton,
@@ -1850,6 +1851,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             AskBeforeAddingButton,
             MapChecksButton,
             StopMapChecksButton,
+            UndoMapLayersButton,
             KeepSettingButton,
             PickButton,
             WorldMenu,
@@ -3474,6 +3476,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("story threads", lambda: self.read_session_threads(table)),
             # The questions above go out as one private message (#3210).
             ("questions for the DM", lambda: self.send_collected_asks(table)),
+            # What maps posted during the session showed (#4259 8a), privately, once each
+            ("map notes", lambda: self.send_held_map_notes(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
             # The biggest clashes PlotBot graded, up to three; no AI call here (#2660)
             ("big clashes", lambda: self.tell_contradictions(table)),
@@ -12297,6 +12301,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 with contextlib.suppress(discord.HTTPException):
                     await message.edit(content=shown, view=None)
 
+    async def send_held_map_notes(self, table: Table) -> None:
+        """The map notes held during the session (#4259 8a), each to every DM privately."""
+        held, table.held_map_notes = table.held_map_notes, []  # (once: in memory, on the session)
+        if table.campaign_id is None:
+            return
+        for text, view in held:
+            try:  # (one that fails never stops the rest)
+                await _send_map_note(self, table.guild_id, table.campaign_id, text, view)
+            except Exception as exc:
+                log.warning("Map layers: a held note wasn't sent (%s)", type(exc).__name__)
+
     async def send_collected_asks(self, table: Table) -> None:
         """The after-session step that sends what the steps before it collected (#3210). After it,
         a question asked later goes out at once. If sending fails the list is kept, and the
@@ -16290,10 +16305,11 @@ async def _open_mysteries(bot: Any, gid: int, cid: str) -> list[tuple[str, str]]
 
 async def _record_pins(bot: Any, gid: int, cid: str, map_id: str, read: Any) -> None:
     """A close read's pins, scale and north (#4670): counts only in the log; a failure here
-    never undoes the read itbot."""
+    never undoes the read itself."""
     assert bot.map_store is not None
     try:
-        got = await bot.map_store.record_positions(gid, cid, map_id, read)
+        layers = bool(getattr(bot.settings, "map_layers_on", False))  # (#4259 8a, off for now)
+        got = await bot.map_store.record_positions(gid, cid, map_id, read, layers=layers)
     except Exception as exc:
         log.warning("Map pins: not written (%s)", type(exc).__name__)
         return
@@ -16302,6 +16318,42 @@ async def _record_pins(bot: Any, gid: int, cid: str, map_id: str, read: Any) -> 
         got.pins, got.matched, got.kept, "read" if got.scale else "no",
         "read" if got.north else "no",
     )  # fmt: skip
+    if got.layers:  # (counts only: what the map showed outright, #4259)
+        log.info("Map layers: %s", ", ".join(f"{k} {v}" for k, v in sorted(got.layers.items())))
+        await _map_layers_note(bot, gid, cid, map_id, got)
+
+
+async def _map_layers_note(bot: Any, gid: int, cid: str, map_id: str, got: Any) -> None:
+    """The DM's private note on what a map showed (#4259 8a; Supervisor's ruling): at once with
+    no session running for the campaign, else held for the session's end. Never fails the read."""
+    from dmbot.ui import map_layers_note as note
+
+    try:
+        a_map = await bot.map_store.get(gid, cid, map_id, maps_store.Viewer(dm=True))
+        if a_map is None:
+            return
+        label = note.map_label(a_map.title, a_map.created_at)
+        site = getattr(bot.settings, "site_url", "") or ""
+        text = note.note_text(label, got.written, got.layers, site, pins=got.pins)
+        if text is None:
+            return
+        view = note.note_view(gid, cid, got.batch if got.written else None, label)
+        table = bot.tables.get(gid)
+        if table is not None and table.campaign_id == cid:
+            table.held_map_notes.append((text, view))
+            return
+        await _send_map_note(bot, gid, cid, text, view)
+    except Exception as exc:
+        log.warning("Map layers: the note wasn't sent (%s)", type(exc).__name__)
+
+
+async def _send_map_note(bot: Any, gid: int, cid: str, text: str, view: Any) -> None:
+    """To each DM of the campaign, privately: it names places (never a channel)."""
+    campaign = await bot.campaigns.get(gid, cid)
+    if campaign is None:
+        return
+    for dm in sorted(campaign.dm_user_ids):
+        await bot._dm_message(dm, text, view)
 
 
 async def _pins_again(

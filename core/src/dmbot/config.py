@@ -126,6 +126,10 @@ class Settings:
     story_threads_on: bool = False
     # MapBot's "how far" and "which way" answers from kept maps (#4670 4b), and 4c's private note
     map_measure_on: bool = False
+    # MapBot's layers from maps (#4259 slice 8a): what a map shows outright (a legend, a labelled
+    # border, a colour key, a terrain symbol) written as layer rows for the DM to check. Off until
+    # dev1's scored run on the sample map (rows found, wrong rows, false notes per layer).
+    map_layers_on: bool = False
     # Ask the reveal question only of batches that could hold one (#2996): off until dev1's run
     # shows the kept reveals don't drop with it on.
     story_reveals_precheck: bool = False
@@ -538,6 +542,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_PICTURE_NAMES must be 1 (on) or 0 (off), got "' + picture_raw + '".'
         )
+    layers_raw = (get("DMBOT_MAP_LAYERS") or "0").lower()
+    if layers_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_MAP_LAYERS must be 1 (on) or 0 (off), got "' + layers_raw + '".')
     measure_raw = (get("DMBOT_MAP_MEASURE") or "0").lower()
     if measure_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_MAP_MEASURE must be 1 (on) or 0 (off), got "' + measure_raw + '".')
@@ -757,6 +764,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_reveals_on=reveals_raw in ("1", "true", "on"),
         story_threads_on=threads_raw in ("1", "true", "on"),
         map_measure_on=measure_raw in ("1", "true", "on"),
+        map_layers_on=layers_raw in ("1", "true", "on"),
         story_reveals_precheck=precheck_raw in ("1", "true", "on"),
         met_unnamed_on=met_raw in ("1", "true", "on"),
         private_scenes_on=private_raw in ("1", "true", "on"),
