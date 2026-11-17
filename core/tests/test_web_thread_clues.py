@@ -146,7 +146,8 @@ class TheParity(Clues):
         await self.sql(
             "INSERT INTO memory_knowers (guild_id, campaign_id, id, perspective_id,"
             " about_entity_id, created_at) SELECT %s, %s, %s, p.id, %s, 1"
-            " FROM memory_perspectives p WHERE p.guild_id = %s AND p.campaign_id = %s AND p.kind = 'party'",
+            " FROM memory_perspectives p WHERE p.guild_id = %s AND p.campaign_id = %s"
+            " AND p.kind = 'party'",
             self.g, self.one.id, "d" * 32, clue, self.g, self.one.id,
         )  # fmt: skip
         self.assertEqual((await self.both())["Party's"], (False, False))
