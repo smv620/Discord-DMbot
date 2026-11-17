@@ -293,6 +293,8 @@ export const webPage = {
   whoCommon: "🌍 Common knowledge",
   whoStateCommon: "🌍 Common knowledge: every character knows it, NPCs too, and anyone who joins later. Players can see it.",
   whoDoneCommon: "Done: everyone, NPCs too, now knows it.",
+  // Said before the usual done line when another answer takes common knowledge back (#4559, point 4).
+  whoNoLongerCommon: "No longer common knowledge.",
   whoCannotShow: "Show the names to the players first: common knowledge is something they see.",
   // Names in a list: "Mara, Tavin and Brann"; past five, the first four and how many more.
   whoNames: (names: string[]): string => {
