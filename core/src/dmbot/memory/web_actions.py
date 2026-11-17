@@ -28,7 +28,7 @@ from dmbot.memory import claims as claims_mod
 from dmbot.memory import thread_clues as clues_mod
 from dmbot.memory import time_limits as tl
 from dmbot.memory import unnamed as unnamed_mod
-from dmbot.memory._changes import ALREADY_UNDONE, CLAIMS, Changes
+from dmbot.memory._changes import ALREADY_UNDONE, CLAIMS, MAP_PICTURE_GONE, Changes
 from dmbot.memory._changes import NOT_FOUND as STORE_NOT_FOUND
 from dmbot.memory.backstory_links import DONE, FULL, BackstoryLinks
 from dmbot.memory.claims import WAITING_NAME_REASON, ClaimStore
@@ -1527,7 +1527,8 @@ async def _maps(
         except MemoryRuleError as exc:
             if str(exc) == ALREADY_UNDONE:
                 return Outcome()  # (taken back already: a retried Undo)
-            return _failed(GONE if str(exc) == STORE_NOT_FOUND else CHANGED)
+            # (the map went with its picture since: "gone", never "changed", #4697)
+            return _failed(GONE if str(exc) in (STORE_NOT_FOUND, MAP_PICTURE_GONE) else CHANGED)
         return Outcome()
     if a.action not in PLAYER_MAPS_ACTIONS and not is_dm:
         return _failed(NOT_ALLOWED)

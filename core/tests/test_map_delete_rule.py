@@ -184,3 +184,30 @@ class TheNo(Facts):
         said = await self.maps.measure(GUILD_A, self.one.id, asked, dm=True)
         assert isinstance(said, str)
         self.assertTrue(said.startswith("I can't find "), said)  # (no "how far" from it)
+
+
+class UndoAfterThePictureWent(Facts):
+    """#4697 (Supervisor's ruling 3 on #4694): an Undo of a Remove after the map's picture was
+    deleted changes nothing and says so plainly, never the generic failure."""
+
+    async def test_nothing_comes_back_and_it_says_why(self) -> None:
+        from dmbot.memory._changes import MAP_PICTURE_GONE
+        from dmbot.memory.models import MemoryRuleError
+
+        await self.record()  # (pins on the map: the Remove's batch holds them)
+        kept = await self.fact("forest", status="confirmed", source="map", also_text=False)
+        removed = await self.maps.remove_map(GUILD_A, self.one.id, self.map_id)
+        assert removed.batch is not None
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM campaign_pictures WHERE campaign_id = %s ORDER BY id LIMIT 1",
+                (self.one.id,),
+            )
+            picture = await cur.fetchone()
+        assert picture is not None
+        await self.pictures.delete(GUILD_A, self.one.id, int(picture["id"]))
+        before = (await self.row(kept), await self.features())
+        with self.assertRaises(MemoryRuleError) as caught:
+            await self.memory.undo(GUILD_A, self.one.id, removed.batch)
+        self.assertEqual(str(caught.exception), MAP_PICTURE_GONE)
+        self.assertEqual((await self.row(kept), await self.features()), before)  # (nothing)

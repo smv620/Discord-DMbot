@@ -29,7 +29,7 @@ _DM_ONLY_COLUMNS: dict[str, frozenset[str]] = {
 }
 ALREADY_UNDONE = "That was already undone."
 CHANGED_SINCE = "That was changed again since, so it can't be undone on its own."
-MAP_PICTURE_GONE = "That map's picture was deleted since, so this can't be undone."
+MAP_PICTURE_GONE = "That map's picture was deleted, so nothing could be put back."
 
 
 @dataclass(frozen=True, slots=True)
@@ -1428,6 +1428,27 @@ async def _map_pictures_kept(
         for side in (r["before"], r["after"])
         if isinstance(side, dict) and side.get("picture_id") is not None
     }
+    # (#4697) A deleted picture takes its map and the map's own change-log rows with it, outside
+    # the log, but the same batch's pins and layer rows stay. A batch naming a map that is gone
+    # and has no logged row left at all was the picture's: nothing can come back, so it says so
+    # plainly. A map gone by a logged Remove has its rows: that is "changed since", as before.
+    named = {
+        str(side["map_id"])
+        for r in rows
+        if r["table_name"] in (MAP_FEATURES.name, MAP_FACTS.name)
+        for side in (r["before"], r["after"])
+        if isinstance(side, dict) and side.get("map_id")
+    }
+    if named:
+        cur = await conn.execute(
+            "SELECT m FROM unnest(%s::text[]) AS m WHERE NOT EXISTS (SELECT 1 FROM campaign_maps"
+            " WHERE guild_id = %s AND campaign_id = %s AND id = m) AND NOT EXISTS (SELECT 1"
+            " FROM memory_changes WHERE guild_id = %s AND campaign_id = %s"
+            " AND table_name = 'campaign_maps' AND row_id = m)",
+            (sorted(named), *ids, *ids),
+        )
+        if await cur.fetchone() is not None:
+            raise MemoryRuleError(MAP_PICTURE_GONE)
     if not pictures:
         return []
     # (the picture store's lock first, as `MapStore` and `PictureStore.delete` take it before any
