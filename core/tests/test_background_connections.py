@@ -630,6 +630,33 @@ class ThePath(NamesTest):
         self.assertEqual(await self.relations(), [])  # (nothing was kept)
         self.assertEqual(len(await self.waiting()), 3)  # (and it stays waiting)
 
+    async def test_keep_all_logs_why_each_refused_one_was_refused_and_never_the_names(self) -> None:
+        """#4161: Keep all counted a refusal and said nothing of why; the log now has the rule's
+        sentence (when it is one of the fixed ones) and the connection's kind, no names."""
+        from unittest.mock import patch
+
+        from dmbot.memory.models import MemoryRuleError
+        from dmbot.memory.store import COMPANION_TARGET
+
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
+        names = [view.current.subject, view.current.object]
+        with (
+            patch.object(
+                type(self.memory), "add_relation", side_effect=MemoryRuleError(COMPANION_TARGET)
+            ),
+            self.assertLogs("dmbot.memory.backstory_keep", level="INFO") as logged,
+        ):
+            await view.all_button.callback(self.it())
+        lines = [m for m in logged.output if "was refused (Keep all)" in m]
+        self.assertTrue(lines)
+        self.assertIn(COMPANION_TARGET, lines[0])
+        for line in lines:
+            for name in names:
+                self.assertNotIn(name, line)
+        self.assertEqual(await self.relations(), [])  # (nothing kept: they stay waiting)
+
     async def test_a_real_refusal_of_a_travels_with_between_two_non_players_is_loggable(
         self,
     ) -> None:
