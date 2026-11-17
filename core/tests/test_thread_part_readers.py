@@ -22,6 +22,8 @@ ALLOWED = {
     "migrations/0512_thread_sheet_door.py": "the same door, with the sheet (a count of waiting)",
     "migrations/0508_time_limit_told.py": "a foreign key to a limit's first row (#4448)",
     "migrations/0520_thread_progress.py": "a foreign key to the part a progress line moves (#4522)",
+    "migrations/0528_thread_progress_web.py": "the website's Progress to check door: the words of "
+    "the part a line moves (#4616)",
     "memory/thread_progress.py": "only whether a part a progress line moves still exists, before"
     " offering it (#4522): never a part's words or who it names",
 }
