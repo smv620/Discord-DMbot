@@ -318,7 +318,11 @@ class TheTiming(unittest.IsolatedAsyncioTestCase):
         bot = SimpleNamespace(
             map_store=SimpleNamespace(get=AsyncMock(return_value=a_map)),
             campaigns=SimpleNamespace(
-                get=AsyncMock(return_value=SimpleNamespace(dm_user_ids=frozenset({7, 8})))
+                get=AsyncMock(
+                    return_value=SimpleNamespace(
+                        dm_user_ids=frozenset({7, 8, 70}), dm_accounts=frozenset({7, 8})
+                    )
+                )
             ),
             settings=SimpleNamespace(site_url=""),
             tables={1: SimpleNamespace(guild_id=1, campaign_id=running, held_map_notes=[])}
