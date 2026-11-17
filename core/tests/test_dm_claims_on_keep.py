@@ -180,3 +180,19 @@ class KeepingANameKeepsTheDmsWords(MemoryTest):
         with patch.object(AsyncConnection, "execute", counting):
             await self.memory.confirm_kinds(GUILD_A, self.c, names, "npc", source="dm")
         self.assertLessEqual(statements, 1)
+
+    async def test_an_uploads_sure_step_keeps_a_claim_waiting_from_an_earlier_import(self) -> None:
+        """Supervisor's follow-up on #4641: the claim waited from an earlier import; a later
+        upload's sure step keeps the name (`auto_accept.accept_names`, through `confirm_entity`),
+        and the DM's own words about it are kept in that same change."""
+        from dmbot.memory import auto_accept as auto
+
+        claim = await self.ask()
+        tally = auto.Tally()
+        await auto.accept_names(
+            self.memory, GUILD_A, self.c, tally, only={self.jeb}, kind_of=lambda e: "npc"
+        )
+        self.assertEqual(tally.accepted[auto.NAMES], 1)
+        self.assertEqual(await self.status(claim), CLAIM_CONFIRMED)
+        await self.memory.undo(GUILD_A, self.c, tally.batches[-1], source="dm")
+        self.assertEqual(await self.status(claim), CLAIM_PROPOSED)
