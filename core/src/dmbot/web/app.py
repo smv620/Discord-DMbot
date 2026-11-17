@@ -96,6 +96,7 @@ from dmbot.web import (
     support,
     theatre_script,
     thread_card,
+    thread_progress,
     thread_suggestions,
     timeline,
     tokens,
@@ -2794,6 +2795,35 @@ def create_app(
             body = None
         try:
             return {"answer": await secret_questions.change(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/thread-progress")
+    async def me_campaign_thread_progress(ref: str, signed: Signed) -> dict[str, Any]:
+        """The "Progress to check" lines on story threads (#4616): DM only, nothing for anyone
+        else."""
+        session, _token = signed
+        try:
+            return await thread_progress.read(
+                db, session, ref, outside_engine=settings.outside_engine
+            )
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/thread-progress/change", status_code=202)
+    async def me_campaign_thread_progress_change(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """One "Progress to check" answer (#4616); polled at `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await thread_progress.change(db, session, ref, body)}
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

@@ -1150,10 +1150,13 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "branch-",
             "lang-",
             "secret-",
+            "progress-",
         )
     ):
         raise RecapError("not_found")
-    if str(got["action"]).startswith(("thread-", "part-", "branch-", "lang-", "secret-")):
+    if str(got["action"]).startswith(
+        ("thread-", "part-", "branch-", "lang-", "secret-", "progress-")
+    ):
         # a story thread's keep, or a change to its parts and branches (#4457, #4476): how it ended
         # and the change it made, for the page's Undo (none when it changed nothing)
         made = got.get("resultBatches") or []
