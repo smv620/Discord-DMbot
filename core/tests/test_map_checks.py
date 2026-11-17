@@ -162,7 +162,10 @@ class TheBot(unittest.IsolatedAsyncioTestCase):  # (`DMBot._map_check` on a stan
     def make(self, *, checks: bool = True, plan: bool = True) -> tuple[Any, Any]:
         from dmbot.memory.live_heads_up import LiveSession
 
-        table = SimpleNamespace(guild_id=GUILD, campaign_id="c" * 32, live_heads_up=LiveSession())
+        table = SimpleNamespace(
+            guild_id=GUILD, campaign_id="c" * 32, live_heads_up=LiveSession(), label_waits={},
+            speakers=SimpleNamespace(window_s=0.05),
+        )  # fmt: skip
         camp = SimpleNamespace(dm_user_ids=frozenset({DM}), map_checks=checks)
         bot = SimpleNamespace(
             map_store=SimpleNamespace(said_off=AsyncMock(return_value=[found()])),
@@ -172,6 +175,9 @@ class TheBot(unittest.IsolatedAsyncioTestCase):  # (`DMBot._map_check` on a stan
             tables={GUILD: table},
             _dm_message=AsyncMock(return_value=object()),
         )
+        from dmbot.bot import DMBot
+
+        bot._label_waiter = DMBot._label_waiter
         return bot, table
 
     async def check(self, bot: Any, table: Any, speaker: int = DM) -> None:
@@ -221,3 +227,67 @@ class TheBot(unittest.IsolatedAsyncioTestCase):  # (`DMBot._map_check` on a stan
         bot.map_store.said_off = said_off
         await self.check(bot, table)
         bot._dm_message.assert_not_awaited()
+
+
+class TheSpeakerLabel(unittest.IsolatedAsyncioTestCase):  # (#4690: an NPC's line is no note)
+    def make(self) -> tuple[Any, Any]:
+        return TheBot.make(TheBot(), checks=True)
+
+    async def labelled(self, entity: str | None) -> Any:
+        import asyncio
+        from unittest.mock import patch
+
+        from dmbot import bot as bot_module
+        from dmbot.bot import DMBot
+
+        bot, table = self.make()
+        waiter = DMBot._label_waiter(table, (DM, 5))
+        check = asyncio.ensure_future(
+            DMBot._map_check(bot, table, DM, "Targos is 20 miles from Bryn Shander.", waiter)
+        )
+        await asyncio.sleep(0)
+        if entity is not None:
+            DMBot._label_known(table, DM, 5, entity)
+            await check
+        else:  # (the label never comes: the wait ends, and it is the DM's own words)
+            with patch.object(bot_module, "TOPIC_CALL_TIMEOUT_S", -1):
+                await check
+            # (left for the label: every line of a window is answered, "" at worst, and that
+            # answer clears it; a look-up may share the same wait)
+            DMBot._label_known(table, DM, 5, "")
+        self.assertEqual(table.label_waits, {})  # (nothing left waiting)
+        return bot
+
+    async def test_a_line_said_as_an_npc_gets_no_note(self) -> None:
+        bot = await self.labelled("Mira the innkeeper")
+        bot._dm_message.assert_not_awaited()
+
+    async def test_narration_or_the_dm_gets_the_note(self) -> None:
+        from dmbot.transcript.models import NARRATING
+
+        for entity in ("", NARRATING):
+            bot = await self.labelled(entity)
+            bot._dm_message.assert_awaited_once()
+
+    async def test_no_label_in_time_gets_the_note(self) -> None:
+        bot = await self.labelled(None)
+        bot._dm_message.assert_awaited_once()
+
+    async def test_a_look_up_giving_up_first_never_cancels_the_map_checks_wait(self) -> None:
+        import asyncio
+
+        from dmbot.bot import DMBot
+
+        bot, table = self.make()
+        waiter = DMBot._label_waiter(table, (DM, 5))
+        self.assertIs(DMBot._label_waiter(table, (DM, 5)), waiter)  # (one wait, shared)
+        check = asyncio.ensure_future(
+            DMBot._map_check(bot, table, DM, "Targos is 20 miles from Bryn Shander.", waiter)
+        )
+        with self.assertRaises(TimeoutError):  # (the look-up's own wait, as it awaits it)
+            async with asyncio.timeout(0.01):
+                await asyncio.shield(waiter)
+        self.assertFalse(waiter.cancelled())
+        DMBot._label_known(table, DM, 5, "Mira the innkeeper")
+        await check
+        bot._dm_message.assert_not_awaited()  # (the label still reached the map check)
