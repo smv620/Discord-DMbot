@@ -241,6 +241,10 @@ def bot_with(**kw: Any) -> Any:
         settings=SimpleNamespace(site_url=""),
         post=AsyncMock(return_value=True),
         recap_secret_names=AsyncMock(return_value=[]),
+        # (#3874 E2: the reminder looks the campaign up for its DM Bot channel; none here)
+        campaigns=SimpleNamespace(
+            get=AsyncMock(return_value=SimpleNamespace(dm_bot_channel_id=None))
+        ),
         **kw,
     )
     bot._private_names_note = DMBot._private_names_note.__get__(bot)
@@ -374,6 +378,19 @@ class TheDMScreenNotice(unittest.IsolatedAsyncioTestCase):
         table.resumed = True
         await DMBot._waiting_recap_names(cast(Any, bot), table)
         bot.post.assert_not_awaited()
+
+    async def test_with_a_dm_bot_channel_the_reminder_goes_there(self) -> None:
+        table: Any = SimpleNamespace(
+            guild_id=GUILD, campaign_id=CID, screen_channel_id=66, resumed=False
+        )
+        bot = bot_with()
+        bot.campaigns.get.return_value.dm_bot_channel_id = 77
+        bot.tables = {GUILD: table}
+        bot.recaps.names_waiting.return_value = [(100, ["Zarathon Keep"])]
+        bot.memory.entities.return_value = [SimpleNamespace(name="Zarathon Keep")]
+        await DMBot._waiting_recap_names(cast(Any, bot), table)
+        self.assertEqual(bot.post.await_args.args[0], 77)
+        self.assertNotIn("Zarathon", bot.post.await_args.args[1])  # (a count, never a name)
 
     async def test_all_answered_means_no_reminder(self) -> None:
         table: Any = SimpleNamespace(

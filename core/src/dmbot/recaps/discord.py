@@ -450,11 +450,15 @@ class RecapFeatures:
                 for session_at, title in await self.recaps.waiting_drafts(gid, cid):
                     if self.tables.get(gid) is not table:
                         return  # the session ended meanwhile
-                    shown = discord.utils.escape_markdown(title)
+                    channel = campaign.dm_bot_channel_id  # (else the table's screen, as before)
+                    counts_only = bool(channel)
+                    # (no recap title in the DM Bot channel: its readers are the campaign's people,
+                    # and a title can carry story words)
+                    what = "" if counts_only else f": **{discord.utils.escape_markdown(title)}**"
                     site = self.settings.site_url
                     await self.post(
-                        table.screen_channel_id,
-                        f"📜 Last session's recap is still waiting: **{shown}**. "
+                        channel or table.screen_channel_id,
+                        f"📜 Last session's recap is still waiting{what}. "
                         "Nothing has gone to the players." + (f"\n{AUDIO_WHY[why]}" if why else ""),
                         view=ready_view(
                             cid,
@@ -649,6 +653,9 @@ class RecapFeatures:
         question is not posted again. `group_id`: the import's id; its holds go together.
         `say` False: a recap queued here is not announced (an import round says it once)."""
         gid, cid = campaign.guild_id, campaign.id
+        # The name question, its reminder and its edits all go where the hold says (#3874 E2): the
+        # DM Bot channel when the campaign has one, else the caller's. Counts only, as before.
+        channel_id = campaign.dm_bot_channel_id or channel_id
         store = self.recap_holds
         if store is not None:
             held = False
@@ -1757,10 +1764,12 @@ class RecapFeatures:
                 for session_at, names in waiting:
                     if await self.recaps.set_names_state(gid, cid, session_at, 2, only_from=1):
                         left += sum(1 for n in names if name_key(n) in proposed)
-                if left and self.tables.get(gid) is table and table.screen_channel_id is not None:
-                    await self.post(
-                        table.screen_channel_id, recap_names_reminder(left), view=review_view(cid)
-                    )
+                campaign = await self.campaigns.get(gid, cid)
+                where = (
+                    campaign.dm_bot_channel_id if campaign is not None else None
+                ) or table.screen_channel_id  # (the DM Bot channel, else the screen: #3874 E2)
+                if left and self.tables.get(gid) is table and where is not None:
+                    await self.post(where, recap_names_reminder(left), view=review_view(cid))
             except Exception:
                 log.exception("The waiting-names reminder failed")
 
