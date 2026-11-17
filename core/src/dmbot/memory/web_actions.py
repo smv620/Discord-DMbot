@@ -162,6 +162,9 @@ PART_ACTIONS = (
 # A character's languages from the website (#4271, #4229 slice 1b): the same store calls as
 # Discord's 🗣️ Languages screen, each one change and one Undo.
 LANG_ACTIONS = ("lang-add", "lang-remove", "lang-check", "lang-undo")
+# The 🤫 Known or secret? answers from the website (#4598): the same store call as Discord's card
+# (`answer_secret_question`), a make is one change and one Undo.
+SECRET_ACTIONS = ("secret-keep", "secret-make", "secret-undo")
 # The Maps page's presses (#4347): a DM's yes or no to using a map (`<map id> yes|no`), Show to
 # the table or Hide (`<map id> shown|hidden`), Remove (`<map id>`), a poster's Take it back
 # (`<map id>`), and ↩ Undo of one of those (the text is its change number). Filed under no name.
@@ -492,6 +495,26 @@ class ActionStore:
             )
             return await cur.fetchone() is not None
 
+    async def secret_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int
+    ) -> bool:
+        """Whether `batch` is the change this DM's own done 🤫 answer made from the website
+        (#4598), so the page's Undo can only take back what they did themselves."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action = ANY(%s) AND state = 'done'"
+                " AND %s = ANY (result_batches) LIMIT 1",
+                (
+                    guild_id,
+                    campaign_id,
+                    user_id,
+                    [a for a in SECRET_ACTIONS if a != "secret-undo"],
+                    batch,
+                ),
+            )
+            return await cur.fetchone() is not None
+
     async def map_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, batch: int, *, own_only: bool = False
     ) -> bool:
@@ -655,6 +678,10 @@ async def apply(
         if actions is None and action.action == "lang-undo":
             return _failed(FAILED)
         return await _languages(memory, actions, guild_id, cid, action)
+    if action.action in SECRET_ACTIONS:
+        if actions is None and action.action == "secret-undo":
+            return _failed(FAILED)
+        return await _secrets(memory, actions, guild_id, cid, action)
     if action.action in THREAD_ACTIONS:
         if actions is None and action.action == "thread-undo":
             return _failed(FAILED)
@@ -1185,6 +1212,48 @@ async def _languages(
         if a.action == "lang-undo":
             return _failed(CHANGED)
         return _failed(GONE if str(exc) in (STORE_NOT_FOUND, language_rows.GONE) else BAD_TARGET)
+
+
+async def _secrets(
+    memory: MemoryStore, actions: ActionStore | None, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """A 🤫 Known or secret? answer from the page (#4598), through the store call Discord's card
+    makes (`answer_secret_question`): `secret-keep` is the answer that changes nothing (Keep it
+    known, Keep both, Keep it secret) and `secret-make` the one that changes something (Make it
+    secret, End the old one, Let them know), one change with one Undo. The door checked the id's
+    shape; the store checks the rest again: a question answered meanwhile (in Discord, or a second
+    press) is `gone`. A 🌍 World read's question is answered one upload at a time in Discord, so
+    it is `bad_target` here. ↩ Undo takes back only a change this DM's own done answer made, read
+    again here. Ids only; nothing is logged but counts."""
+    from dmbot.memory import secret_questions as sq
+
+    try:
+        if a.action == "secret-undo":
+            assert actions is not None  # (checked by the caller)
+            batch = int(a.text)
+            if not await actions.secret_batch_made(guild_id, cid, a.user_id, batch):
+                return _failed(GONE)
+            await memory.undo(guild_id, cid, batch)
+            return Outcome()
+        waiting = await memory.secret_questions_waiting(guild_id, cid)
+        asked = next((q for q in waiting if q.id == a.text), None)
+        if asked is None:
+            return _failed(GONE)
+        if asked.kind == sq.REVEAL and asked.change.get("common"):
+            return _failed(BAD_TARGET)
+        # (a reveal's default is the secret: Keep it secret is `make_secret`, Let them know is
+        # the change; for the other two kinds Make it secret / End the old one is the change)
+        make_secret = (
+            (a.action == "secret-keep") if asked.kind == sq.REVEAL else (a.action == "secret-make")
+        )
+        done = await memory.answer_secret_question(guild_id, cid, a.text, make_secret, source=DM)
+        return _changed(done.batch)
+    except MemoryRuleError as exc:  # (TooLateToUndo is one: something done since is in the way)
+        if str(exc) == ALREADY_UNDONE:
+            return Outcome()  # (a second Undo of the same change: done, as a retry is)
+        if a.action == "secret-undo":
+            return _failed(CHANGED)
+        return _failed(GONE if str(exc) == sq.GONE else BAD_TARGET)
 
 
 async def _thread(

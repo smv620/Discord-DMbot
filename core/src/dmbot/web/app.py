@@ -85,6 +85,7 @@ from dmbot.web import (
     restores,
     rule_sharing,
     script_make,
+    secret_questions,
     see_as,
     session_notes,
     sessions,
@@ -2766,6 +2767,33 @@ def create_app(
             body = None
         try:
             return {"answer": await languages.change(db, session, ref, entity, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/secret-questions")
+    async def me_campaign_secret_questions(ref: str, signed: Signed) -> dict[str, Any]:
+        """The 🤫 Known or secret? questions waiting for the DM (#4598): DM only, nothing for
+        anyone else."""
+        session, _token = signed
+        try:
+            return await secret_questions.read(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/secret-questions/change", status_code=202)
+    async def me_campaign_secret_questions_change(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """One answer to a 🤫 question (#4598); polled at `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await secret_questions.change(db, session, ref, body)}
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
