@@ -69,3 +69,26 @@ def not_on_a_map(name: str, *, dm: bool) -> str:
 
 def same_spot(a: str, b: str, map_title: str) -> str:
     return f"{a} and {b} are at about the same spot on {on_map(map_title)}."
+
+
+# ---- When the DM's word and a map disagree (#4670 4c; §9; the ux-critic's words) ---------------
+# Never "wrong", never "should", never a correction, never "Nothing was changed" (that is the
+# failure wording elsewhere): both figures side by side, the map's said as a measurement.
+
+LORE_SAYS = "your lore says"
+SESSION_SAID = "said in a session:"
+
+
+def map_measures(amount: str, map_title: str) -> str:
+    """The road card's line after the DM's own length: "On the Ten-Towns map it's about 35 miles
+    in a straight line." (`amount` "35 miles", or "a mile or less")."""
+    said = on_map(map_title)
+    return f"On {said} it's about {amount} in a straight line."
+
+
+def road_note(stated: str, from_session: bool, amount: str, map_title: str) -> str:
+    """A World notes line after the road's names: "your lore says 20 miles; on the Ten-Towns
+    map, about 35 miles in a straight line" ("said in a session: 20 miles; …" from a session: the
+    speaker may not be the DM, so never "you said")."""
+    where = SESSION_SAID if from_session else LORE_SAYS
+    return f"{where} {stated}; on {on_map(map_title)}, about {amount} in a straight line"

@@ -26,6 +26,8 @@ from dmbot.memory.store import MemoryStore
 from dmbot.pictures.store import MB, Usage, _lock, _usage
 
 if TYPE_CHECKING:
+    from dmbot.maps.disagree import Distance
+    from dmbot.maps.measure import MapInfo, Pin
     from dmbot.memory._changes import Changes
 
 # Fixed lists in code, each with "other" (design rule 6).
@@ -154,6 +156,106 @@ def _seen(viewer: Viewer) -> str:
     if viewer.table:
         return f" AND ((audience = 'table' AND use_ok IS TRUE){own})"
     return f" AND (FALSE{own})"
+
+
+async def maps_and_pins(
+    conn: Conn, guild_id: int, campaign_id: str, place_ids: list[str], *, dm: bool
+) -> tuple[list[MapInfo], list[Pin]]:
+    """The maps an answer or a check may measure on, and these places' pins on them (#4670): for
+    the DM (`dm`), every map DMbot may use; otherwise only the table's (section 8.1's one clause,
+    `_seen`); never a map another one replaces (§4.4: the newer version answers), and only maps
+    `may_use_map` allows. Rejected pins never count. `measure.MapInfo` and `measure.Pin` rows."""
+    from dmbot.maps import measure
+
+    cur = await conn.execute(
+        f"SELECT {COLUMNS}, scale_value, scale_unit, north_angle, north_from"
+        " FROM campaign_maps WHERE guild_id = %s AND campaign_id = %s"
+        + _seen(Viewer(dm=dm, table=not dm)),
+        (guild_id, campaign_id),
+    )
+    rows = await cur.fetchall()
+    cur = await conn.execute(
+        "SELECT map_id, place_id, points FROM map_features WHERE guild_id = %s"
+        " AND campaign_id = %s AND shape = 'pin' AND status <> 'rejected'"
+        " AND place_id = ANY(%s)",
+        (guild_id, campaign_id, place_ids),
+    )
+    pins = [
+        measure.Pin(str(r["map_id"]), str(r["place_id"]), r["points"][0], r["points"][1])
+        for r in await cur.fetchall()
+    ]
+    replaced = {str(r["replaces"]) for r in rows if r["replaces"]}
+    maps = [
+        measure.MapInfo(
+            m.id, m.title, m.kind, m.width, m.height, r["scale_value"],
+            str(r["scale_unit"] or ""), float(r["north_angle"]), r["north_from"] != "assumed",
+            m.created_at,
+        )
+        for r in rows
+        if (m := _map(r)).id not in replaced
+        and may_use_map(m)  # (the one answer to "may DMbot use this map?")
+    ]  # fmt: skip
+    return maps, pins
+
+
+@dataclass(frozen=True, slots=True)
+class RoadOff:
+    """A road whose stated length a kept map's straight line disagrees with (#4670 4c, §9)."""
+
+    relation_id: str
+    a_id: str
+    b_id: str
+    stated: str  # the length's own words ("20 miles")
+    session_at: int | None  # the session the road came from; None for lore or an upload
+    created_at: int
+    off: Distance  # the map and both figures
+
+
+async def roads_off(
+    conn: Conn, guild_id: int, campaign_id: str, *, read_only: bool, relation_ids: list[str] | None
+) -> list[RoadOff]:
+    """Roads whose stated length in miles is far shorter than a kept map's straight line between
+    their two kept places (`disagree.check_distance`), worked out now and never stored (Supervisor's
+    ruling on #4670). DM's maps only (`dm=True`): both notes are the DM's alone. `read_only`: only
+    lengths DMbot read and the DM hasn't kept (World notes; a length the DM kept gets no note
+    later, ruling 3). `relation_ids`: only these roads (the card's own). A travel time is never
+    compared (§9), so only `length_unit = 'miles'`."""
+    from dmbot.maps import disagree
+
+    cur = await conn.execute(
+        "SELECT r.id, r.subject_id, r.object_id, r.length_words, r.length_amount,"
+        " r.from_session_at, r.created_at FROM memory_relations r"
+        " JOIN memory_entities a ON a.guild_id = r.guild_id AND a.campaign_id = r.campaign_id"
+        " AND a.id = r.subject_id AND a.status IN ('confirmed', 'proposed')"
+        " AND a.merged_into IS NULL"
+        " JOIN memory_entities b ON b.guild_id = r.guild_id AND b.campaign_id = r.campaign_id"
+        " AND b.id = r.object_id AND b.status IN ('confirmed', 'proposed')"
+        " AND b.merged_into IS NULL"
+        " WHERE r.guild_id = %s AND r.campaign_id = %s AND r.predicate = 'route_to'"
+        # (a kept road only: one still waiting is asked about on its own, never twice)
+        " AND r.status = 'confirmed' AND r.to_session_at IS NULL AND r.length_unit = 'miles'"
+        + (" AND r.length_from = 'read'" if read_only else "")
+        + (" AND r.id = ANY(%s)" if relation_ids is not None else "")
+        + " ORDER BY r.created_at, r.id",
+        (guild_id, campaign_id, *([relation_ids] if relation_ids is not None else [])),
+    )
+    roads = await cur.fetchall()
+    if not roads:
+        return []
+    places = sorted({str(r[k]) for r in roads for k in ("subject_id", "object_id")})
+    maps, pins = await maps_and_pins(conn, guild_id, campaign_id, places, dm=True)
+    out: list[RoadOff] = []
+    for r in roads:
+        a, b = str(r["subject_id"]), str(r["object_id"])
+        off = disagree.check_distance(maps, pins, a, b, float(r["length_amount"]))
+        if off is not None:
+            out.append(
+                RoadOff(
+                    str(r["id"]), a, b, str(r["length_words"]), r["from_session_at"],
+                    int(r["created_at"]), off,
+                )
+            )  # fmt: skip
+    return out
 
 
 class MapStore:
@@ -539,37 +641,19 @@ class MapStore:
                 )
                 if await cur.fetchone() is not None:
                     return None  # (a stated length: the usual answer gives it, by its own rules)
-            cur = await scope.conn.execute(
-                f"SELECT {COLUMNS}, scale_value, scale_unit, north_angle, north_from"
-                " FROM campaign_maps WHERE guild_id = %s AND campaign_id = %s"
-                # (section 8.1's one clause: a player, the table's maps DMbot may use)
-                + _seen(Viewer(dm=dm, table=not dm)),
-                (guild_id, campaign_id),
-            )
-            rows = await cur.fetchall()
-            cur = await scope.conn.execute(
-                "SELECT map_id, place_id, points FROM map_features WHERE guild_id = %s"
-                " AND campaign_id = %s AND shape = 'pin' AND status <> 'rejected'"
-                " AND place_id = ANY(%s)",
-                (guild_id, campaign_id, [a, b]),
-            )
-            pins = [
-                measure.Pin(str(r["map_id"]), str(r["place_id"]), r["points"][0], r["points"][1])
-                for r in await cur.fetchall()
-            ]
-        replaced = {str(r["replaces"]) for r in rows if r["replaces"]}
-        maps = [
-            measure.MapInfo(
-                m.id, m.title, m.kind, m.width, m.height, r["scale_value"],
-                str(r["scale_unit"] or ""), float(r["north_angle"]), r["north_from"] != "assumed",
-                m.created_at,
-            )
-            for r in rows
-            if (m := _map(r)).id not in replaced  # (a newer version answers, §4.4)
-            and may_use_map(m)  # (the one answer to "may DMbot use this map?")
-        ]  # fmt: skip
+            maps, pins = await maps_and_pins(scope.conn, guild_id, campaign_id, [a, b], dm=dm)
         # (the names as the asker said them, so a misheard name is easy to spot)
         return measure.answer(asked.kind, maps, pins, (a, asked.a), (b, asked.b), dm=dm)
+
+    async def road_off(self, guild_id: int, campaign_id: str, relation_id: str) -> RoadOff | None:
+        """This road's stated length against the kept maps (#4670 4c): the disagreement, or None
+        when no map with a scale has both places or the length is within the limit (§9). For the
+        road card's private line after the DM sets or keeps the length; the DM's maps only."""
+        async with self._memory._read(guild_id, campaign_id, snapshot=True) as scope:
+            found = await roads_off(
+                scope.conn, guild_id, campaign_id, read_only=False, relation_ids=[relation_id]
+            )
+        return found[0] if found else None
 
     async def pins_waiting(self, guild_id: int) -> list[tuple[str, Map]]:
         """The maps in this server read closely before pins were read (Supervisor's ruling 1: a
@@ -625,4 +709,7 @@ def _full(usage: Usage, need: int) -> bool:
     return usage.permanent_bytes + need > usage.permanent_limit_bytes
 
 
-__all__ = ["MB", "Map", "MapError", "MapStore", "Viewer", "may_use_map"]
+__all__ = [
+    "MB", "Map", "MapError", "MapStore", "RoadOff", "Viewer", "maps_and_pins", "may_use_map",
+    "roads_off",
+]  # fmt: skip

@@ -11,7 +11,15 @@ never a copy, so a ✅ here is the card's ✅ too.
   note (Supervisor's ruling on #4285), and DMbot's own read never hides the question
   (`trait_offers._STILL_OPEN`), so nothing is asked twice.
 
-Each line's id says which table it is (`place:` or `language:`), so one action word takes both.
+- **Roads** (#4670 4c, Supervisor's ruling; docs/design/mapbot_layers.md §9): a road's length
+  DMbot read, from lore or a session, that is far shorter than a kept map's straight line. Worked
+  out when the list is read (`maps.store.roads_off`), never stored; only while the map answers
+  are on (`with_roads`). ✅ makes the length the DM's own, as the road's ✅ Length is right does,
+  and the note goes: a length the DM kept is never flagged again (ruling 3). Nothing else changes
+  it. Only a road the DM kept: a waiting one is asked about on its own already, never twice.
+
+Each line's id says which table it is (`place:`, `language:` or `road:`), so one action word takes
+them all.
 The DM's own list: never a player's, never on the DM screen (the caller checks who asks). Ids and
 words of the list only, never a line of lore or transcript; logs get counts."""
 
@@ -20,13 +28,13 @@ from __future__ import annotations
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 
-from dmbot.memory import gate, language_rows, map_fact_store
+from dmbot.memory import gate, language_rows, map_fact_store, place_levels
 from dmbot.memory import map_facts as mf
 from dmbot.memory._changes import ENTITIES, RELATIONS, STORY_LANGUAGES, Changes, Scope
 from dmbot.memory.models import DM, MemoryRuleError
 
-PLACE, LANGUAGE = "place", "language"
-KINDS = (PLACE, LANGUAGE)
+PLACE, LANGUAGE, ROAD = "place", "language", "road"
+KINDS = (PLACE, LANGUAGE, ROAD)
 GONE = "That note is gone already: it was checked or changed meanwhile."
 
 
@@ -48,6 +56,8 @@ class Note:
     fact: mf.Fact | None = None  # a place's reading itself (its words, "partly", dry or wet)
     ruler: str = ""  # who rules it, by name, for a ruler line
     relation_id: str = ""  # a road's condition (#4258): `entity_id` is then the road's first place
+    map_title: str = ""  # a road's length (#4670 4c): the map that disagrees, and its figure
+    measured: str = ""  # ("35 miles", or "a mile or less")
 
 
 def note_id(kind: str, row_id: str) -> str:
@@ -79,10 +89,11 @@ _LANGUAGE_NOTES = (
 )
 
 
-async def read(scope: Scope) -> list[Note]:
+async def read(scope: Scope, *, with_roads: bool = False) -> list[Note]:
     """Every open note of the campaign, places then languages, each oldest first. Only lines on
     an entry the DM keeps (confirmed or waiting, never one turned down or merged away), and a
-    ruler only when the group is kept too (so ✅ never makes a group the DM turned down rule)."""
+    ruler only when the group is kept too (so ✅ never makes a group the DM turned down rule).
+    `with_roads`: with the road lengths a map disagrees with (only while the map answers are on)."""
     names = {
         str(r["id"]): str(r["name"])
         for r in await scope.select(
@@ -135,28 +146,56 @@ async def read(scope: Scope) -> list[Note]:
                     made_at=int(r["created_at"]),
                 )
             )  # fmt: skip
+    if with_roads:
+        out.extend(await _roads(scope, names))
     return out
 
 
-async def _still_open(w: Changes, line_ids: Collection[str]) -> tuple[set[str], set[str]]:
+async def _roads(scope: Scope, names: dict[str, str]) -> list[Note]:
+    """The road lengths DMbot read that a kept map's straight line disagrees with (§9)."""
+    from dmbot.maps import disagree
+    from dmbot.maps.store import roads_off  # (maps builds on this package)
+
+    guild_id, campaign_id = scope.ids
+    out: list[Note] = []
+    for r in await roads_off(scope.conn, guild_id, campaign_id, read_only=True, relation_ids=None):
+        if r.a_id in names and r.b_id in names:
+            out.append(
+                Note(
+                    note_id(ROAD, r.relation_id), ROAD, r.a_id,
+                    f"{names[r.a_id]} to {names[r.b_id]}", r.stated, session_at=r.session_at,
+                    made_at=r.created_at,  # (the road's: no column holds when its length came)
+                    relation_id=r.relation_id, map_title=r.off.map.title,
+                    measured=disagree.amount(r.off),
+                )
+            )  # fmt: skip
+    return out
+
+
+async def _still_open(w: Changes, line_ids: Collection[str]) -> dict[str, set[str]]:
     """The lines of these that are open notes now, by the list's own rule (an entry turned down
-    since, a hand-made id, a language that is a question meanwhile: none of them), split by table.
-    MemoryRuleError(GONE) for an id that is neither kind."""
-    _split_all(line_ids)
-    now = {n.id for n in await read(w)}
+    since, a hand-made id, a language that is a question meanwhile, a road the DM kept or that the
+    map agrees with now: none of them), by kind. MemoryRuleError(GONE) for an id of no kind."""
+    asked = _split_all(line_ids)
+    # (a road id only comes from a list drawn while the map answers were on: the callers check the
+    # switch; keeping a length the DM was shown is harmless either way)
+    now = {n.id for n in await read(w, with_roads=bool(asked[ROAD]))}
     return _split_all([i for i in line_ids if i in now])
 
 
 async def keep(w: Changes, line_ids: Collection[str]) -> int:
-    """The DM's ✅ on these lines, in the caller's one write (one Undo): a place's reading and a
-    language each become the DM's own word. A line checked or gone meanwhile is left; when none of
-    them is open any more, MemoryRuleError(GONE), as 🚫 says. How many kept."""
-    places, languages = await _still_open(w, line_ids)
-    if line_ids and not (places or languages):
+    """The DM's ✅ on these lines, in the caller's one write (one Undo): a place's reading, a
+    language and a road's length each become the DM's own word. A line checked or gone meanwhile is
+    left; when none of them is open any more, MemoryRuleError(GONE), as 🚫 says. How many kept."""
+    open_now = await _still_open(w, line_ids)
+    if line_ids and not any(open_now.values()):
         raise MemoryRuleError(GONE)
-    kept = await map_fact_store.keep_rows(w, places)
-    for row_id in sorted(languages):
+    kept = await map_fact_store.keep_rows(w, open_now[PLACE])
+    for row_id in sorted(open_now[LANGUAGE]):
         await w.update(STORY_LANGUAGES, row_id, {"given_by": DM})
+        kept += 1
+    for row_id in sorted(open_now[ROAD]):  # (as the road's ✅ Length is right, #4255)
+        await w.update(RELATIONS, row_id, {"length_from": place_levels.BY_DM})
         kept += 1
     return kept
 
@@ -164,16 +203,18 @@ async def keep(w: Changes, line_ids: Collection[str]) -> int:
 async def turn_down(w: Changes, line_id: str) -> bool:
     """The DM's 🚫 Not right on one line (one Undo). A place's reading is turned down and a
     language is marked as the DM's no, as the character's own ✖ does (#4362): neither is ever read
-    in again. True when a named culture went with it, at every place (#4257 slice 3b)."""
-    places, languages = await _still_open(w, [line_id])
-    if places:
-        done = await map_fact_store.reject_row(w, next(iter(places)))
+    in again. True when a named culture went with it, at every place (#4257 slice 3b). A road's
+    length has no 🚫: the length or the map may be the one that's off, so the DM changes the road
+    or the map themselves (§9: nothing changes because the two differ)."""
+    open_now = await _still_open(w, [line_id])
+    if open_now[PLACE]:
+        done = await map_fact_store.reject_row(w, next(iter(open_now[PLACE])))
         if done == map_fact_store.GONE_ALREADY:
             raise MemoryRuleError(GONE)
         return done == map_fact_store.NAME_TOO
-    if not languages:
+    if not open_now[LANGUAGE]:
         raise MemoryRuleError(GONE)
-    await language_rows.say_not(w, next(iter(languages)))
+    await language_rows.say_not(w, next(iter(open_now[LANGUAGE])))
     return False
 
 
@@ -184,16 +225,15 @@ def of_kind(notes: Sequence[Note], kind: str) -> list[str]:
     return [n.id for n in notes if n.kind == kind]
 
 
-def _split_all(line_ids: Collection[str]) -> tuple[set[str], set[str]]:
-    places: set[str] = set()
-    languages: set[str] = set()
+def _split_all(line_ids: Collection[str]) -> dict[str, set[str]]:
+    by_kind: dict[str, set[str]] = {kind: set() for kind in KINDS}
     for line_id in line_ids:
         kind, row_id = split_id(line_id)
-        (places if kind == PLACE else languages).add(row_id)
-    return places, languages
+        by_kind[kind].add(row_id)
+    return by_kind
 
 
 __all__ = [
-    "GONE", "KINDS", "LANGUAGE", "PLACE", "Note", "keep", "note_id", "of_kind", "read",
+    "GONE", "KINDS", "LANGUAGE", "PLACE", "ROAD", "Note", "keep", "note_id", "of_kind", "read",
     "split_id", "turn_down",
 ]  # fmt: skip
