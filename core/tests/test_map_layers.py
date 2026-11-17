@@ -196,16 +196,17 @@ class TheNote(unittest.IsolatedAsyncioTestCase):
             " to check.",
         )
         self.assertEqual(
-            note_text("the Ten-Towns map", {mf.CLIMATE: 1}, {"corrected": 1, "noted": 1}),
-            "🗺️ DMbot read the Ten-Towns map: climate for 1 place. They're waiting in 🌍 World"
-            " notes for you to check. 1 of them replaces what DMbot read in your lore."
-            " 1 disagrees with what you kept. Yours stays; both are in World notes.",
-        )
-        self.assertEqual(
-            note_text("the Ten-Towns map", {}, {"noted": 1}),
-            "🗺️ The Ten-Towns map disagrees with 1 thing you kept. Yours stays; both are in"
-            " 🌍 World notes.",
-        )
+            note_text(
+                "the Ten-Towns map", {mf.CLIMATE: 1, mf.POPULATION: 2},
+                {"corrected": 1, "noted": 1}, pins=4,
+            ),
+            "🗺️ DMbot read the Ten-Towns map: climate for 1 place, who lives there for 2. They're"
+            " waiting in 🌍 World notes for you to check. 1 of them replaces what DMbot read in"
+            " your lore. 1 differs from what's already there, and that stays as it is. ↩ Undo"
+            " takes back this whole read, including where places are on the map.",
+        )  # fmt: skip
+        # (a difference alone writes no row: nothing to check or undo, so no note)
+        self.assertIsNone(note_text("the Ten-Towns map", {}, {"noted": 1}))
         self.assertIsNone(note_text("the Ten-Towns map", {}, {"added": 0}))
 
     def test_undo_only_when_something_was_written(self) -> None:
@@ -247,8 +248,8 @@ class TheNote(unittest.IsolatedAsyncioTestCase):
         undo.assert_awaited_once_with(1, "c" * 32, 5)
         self.assertEqual(
             interaction.edit_original_response.await_args.kwargs["content"],
-            "↩ Undone. Nothing from the Ten-Towns map is in World notes now. The map itself is"
-            " still kept.",
+            "↩ Undone. DMbot took back everything it read from the Ten-Towns map, including where"
+            " places are on it, and won't place them again. The map itself is still kept.",
         )
         for error, words in (
             (TooLateToUndo("x"), note.NOT_UNDONE),
@@ -276,7 +277,7 @@ class TheTiming(unittest.IsolatedAsyncioTestCase):
             _held_map_notes={},
             _dm_message=AsyncMock(),
         )
-        bot.got = SimpleNamespace(written={mf.TERRAIN: 1}, layers={"added": 1}, batch=4)
+        bot.got = SimpleNamespace(written={mf.TERRAIN: 1}, layers={"added": 1}, batch=4, pins=0)
         return bot
 
     async def test_at_once_to_each_dm_with_no_session(self) -> None:
@@ -297,6 +298,14 @@ class TheTiming(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot._dm_message.await_count, 2)
         await DMBot.send_held_map_notes(bot, table)
         self.assertEqual(bot._dm_message.await_count, 2)  # (once)
+
+    def test_a_title_with_a_colon_comes_back_whole(self) -> None:
+        from dmbot.ui.map_layers_note import _label_in
+
+        self.assertEqual(
+            _label_in("🗺️ DMbot read the Icewind Dale: Ten-Towns map: ruler for 1 place."),
+            "the Icewind Dale: Ten-Towns map",
+        )
 
     async def test_another_campaigns_session_does_not_hold_it(self) -> None:
         from dmbot.bot import _map_layers_note

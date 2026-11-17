@@ -7,7 +7,7 @@ once. World notes is a link in the words, never a second button (§9: one button
 
 Counts name the layer for each place ("land for 3 places"), never "3 lands": DMbot only noted
 something about places the DM already has. A disagreement with what the DM kept changes nothing
-("Yours stays"). Words and counts only, no picture."""
+(it changes nothing and writes no row: no note for it alone). Words and counts only, no picture."""
 
 from __future__ import annotations
 
@@ -26,14 +26,15 @@ from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 log = logging.getLogger(__name__)
 
 UNDO = "↩ Undo"
-NOT_UNDONE = "Not undone: you've already checked some of these. Change them in World notes."
-ALREADY = "Already undone."
+NOT_UNDONE = "Not undone: some of these were checked already. Change them in 🌍 World notes."
+ALREADY = "Already undone (by you or another DM)."
+GONE = "That campaign is gone, so there's nothing to undo."
 ONLY_DM = "Only a DM of this campaign can undo this."
 FAILED = "Something went wrong. Nothing was changed. Press the button again."
-# (the layer's word for one place's row, in World notes' own order; "who lives in" reads as a count)
+# (the layer's word for one place's row, in World notes' own order)
 COUNTS = (
     (mf.TERRAIN, "land for"), (mf.CLIMATE, "climate for"), (mf.CONTROL, "ruler for"),
-    (mf.CULTURE, "culture for"), (mf.POPULATION, "who lives in"),
+    (mf.CULTURE, "culture for"), (mf.POPULATION, "who lives there for"),
 )  # fmt: skip
 _SAYS_MAP = re.compile(r"\b(map|chart|plan)$", re.I)
 
@@ -53,10 +54,16 @@ def _world_notes(site: str) -> str:
 
 
 def note_text(
-    label: str, written: Mapping[str, int], counts: Mapping[str, int], site: str = ""
+    label: str,
+    written: Mapping[str, int],
+    counts: Mapping[str, int],
+    site: str = "",
+    *,
+    pins: int = 0,
 ) -> str | None:
-    """The note's words, or None when the map added nothing and disagreed with nothing.
-    `written`: new rows by layer; `counts`: the store's (`corrected`, `noted`)."""
+    """The note's words, or None when the map added nothing (a difference alone writes no row, so
+    there is nothing to check or undo, and no note). `written`: new rows by layer; `counts`: the
+    store's (`corrected`, `noted`); `pins`: places placed in the same read, which Undo takes too."""
     parts: list[str] = []
     for layer, words in COUNTS:
         n = written.get(layer, 0)
@@ -66,25 +73,24 @@ def note_text(
     replaced, disagrees = counts.get("corrected", 0), counts.get("noted", 0)
     where = _world_notes(site)
     if not parts:
-        if not disagrees:
-            return None
-        things = "thing" if disagrees == 1 else "things"
-        return (
-            f"🗺️ {label[:1].upper()}{label[1:]} disagrees with {disagrees} {things} you kept. "
-            f"Yours stays; both are in {where}."
-        )
+        return None
     text = f"🗺️ DMbot read {label}: {', '.join(parts)}. They're waiting in {where} for you to check."
     if replaced:
         verb = "replaces" if replaced == 1 else "replace"
         text += f" {replaced} of them {verb} what DMbot read in your lore."
     if disagrees:
-        verb = "disagrees" if disagrees == 1 else "disagree"
-        text += f" {disagrees} {verb} with what you kept. Yours stays; both are in World notes."
+        verb = "differs" if disagrees == 1 else "differ"
+        text += f" {disagrees} {verb} from what's already there, and that stays as it is."
+    if pins:  # (one batch: Undo can't take the rows without the placements, so it says so)
+        text += " ↩ Undo takes back this whole read, including where places are on the map."
     return text
 
 
 def undone_text(label: str) -> str:
-    return f"↩ Undone. Nothing from {label} is in World notes now. The map itself is still kept."
+    return (
+        f"↩ Undone. DMbot took back everything it read from {label}, including where places are"
+        " on it, and won't place them again. The map itself is still kept."
+    )
 
 
 def note_view(guild_id: int, campaign_id: str, batch: int | None, label: str) -> Any:
@@ -129,8 +135,11 @@ class UndoMapLayersButton(
             log.exception("Couldn't load a campaign for a map note's Undo")
             await interaction.response.send_message(FAILED, ephemeral=True)
             return
-        if campaign is None or memory is None:
+        if memory is None:
             await interaction.response.send_message(FAILED, ephemeral=True)
+            return
+        if campaign is None:
+            await interaction.response.send_message(GONE, ephemeral=True)
             return
         if interaction.user.id not in campaign.dm_user_ids:  # checked on every press
             await interaction.response.send_message(ONLY_DM, ephemeral=True)
@@ -158,5 +167,5 @@ class UndoMapLayersButton(
 
 def _label_in(text: str) -> str:
     """The map's words back out of the note ('DMbot read the Ten-Towns map: …')."""
-    m = re.search(r"DMbot read (.+?): ", text)
+    m = re.search(r"DMbot read (.+): (?:land|climate|ruler|culture|who) ", text)
     return m.group(1) if m else "that map"

@@ -16305,7 +16305,7 @@ async def _open_mysteries(bot: Any, gid: int, cid: str) -> list[tuple[str, str]]
 
 async def _record_pins(bot: Any, gid: int, cid: str, map_id: str, read: Any) -> None:
     """A close read's pins, scale and north (#4670): counts only in the log; a failure here
-    never undoes the read itbot."""
+    never undoes the read itself."""
     assert bot.map_store is not None
     try:
         layers = bool(getattr(bot.settings, "map_layers_on", False))  # (#4259 8a, off for now)
@@ -16334,7 +16334,7 @@ async def _map_layers_note(bot: Any, gid: int, cid: str, map_id: str, got: Any) 
             return
         label = note.map_label(a_map.title, a_map.created_at)
         site = getattr(bot.settings, "site_url", "") or ""
-        text = note.note_text(label, got.written, got.layers, site)
+        text = note.note_text(label, got.written, got.layers, site, pins=got.pins)
         if text is None:
             return
         view = note.note_view(gid, cid, got.batch if got.written else None, label)
