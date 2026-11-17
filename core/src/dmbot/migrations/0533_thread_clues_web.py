@@ -15,8 +15,9 @@ from __future__ import annotations
 # into SQL): a row on the clue's own entry held by a current player character (a confirmed
 # `character` with the role `player_character`), or by the everyone point of view (common
 # knowledge) while the players are shown the clue (confirmed, and not hidden, limited to an
-# audience or unnamed). A row a hide put to sleep grants nothing. A row held by the party entity or
-# by a former player character, a common row on a hidden clue and a row on a clue that is not kept
+# audience or unnamed) and the campaign has a player character at all (the gate's "any player
+# character" has no one to ask without one). A row a hide put to sleep grants nothing. A row held
+# by the party entity or by a former player character, a common row on a hidden clue and a row on a clue that is not kept
 # never make a clue found. The bot's gate knows more ways (a group the character belongs to, a
 # property, a connection or another name of the clue that the character knows), so on those the
 # door says "not found yet" where Discord says "found", and never the other way round
@@ -188,6 +189,8 @@ SQL = (
                            FROM (SELECT * FROM memory_knowers
                                  WHERE cardinality(hidden_by) = 0) k
                            JOIN memory_perspectives p ON p.id = k.perspective_id
+                                                     AND p.guild_id = k.guild_id
+                                                     AND p.campaign_id = k.campaign_id
                            WHERE k.guild_id = g AND k.campaign_id = c
                              AND k.about_entity_id = e.id
                              AND ((p.entity_id IS NOT NULL AND EXISTS (
@@ -198,7 +201,13 @@ SQL = (
                                         AND pc.status = 'confirmed'))
                                   OR (p.kind = 'everyone'
                                       AND NOT (e.hidden_from_players OR e.unnamed
-                                               OR e.audience_limited)))) AS found
+                                               OR e.audience_limited)
+                                      AND EXISTS (
+                                          SELECT 1 FROM memory_entities pc
+                                          WHERE pc.guild_id = g AND pc.campaign_id = c
+                                            AND pc.type = 'character'
+                                            AND pc.role = 'player_character'
+                                            AND pc.status = 'confirmed')))) AS found
                 FROM memory_relations r
                 JOIN memory_entities e ON e.guild_id = r.guild_id
                                       AND e.campaign_id = r.campaign_id AND e.id = r.subject_id

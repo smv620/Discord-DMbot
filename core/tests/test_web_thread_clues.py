@@ -303,3 +303,41 @@ class TheChanges(Clues):
             with self.assertRaises(RecapError) as bad:
                 await thread_clues.change(self.web, self.session, self.cref, self.thread, body)
             self.assertEqual(bad.exception.code, "bad_action", body)
+
+
+class TheEdges(Clues):
+    async def test_a_common_row_with_no_player_character_is_not_found_on_either_side(self) -> None:
+        await self.sql(
+            "UPDATE memory_entities SET role = NULL WHERE guild_id = %s AND id = %s",
+            self.g, self.pc,
+        )  # fmt: skip
+        shown = await self.clue("Shown", hidden=False)
+        await self.memory.add_common_knowledge(self.g, self.one.id, gate.ENTRY, [shown], source=DM)
+        self.assertEqual((await self.both())["Shown"], (False, False))
+
+    async def test_a_row_a_hide_put_to_sleep_grants_nothing(self) -> None:
+        clue = await self.clue("Asleep")
+        await self.learn(clue)
+        self.assertEqual((await self.both())["Asleep"], (True, True))
+        await self.sql(
+            "UPDATE memory_knowers SET hidden_by = ARRAY['x'] WHERE guild_id = %s"
+            " AND about_entity_id = %s",
+            self.g, clue,
+        )  # fmt: skip
+        self.assertEqual((await self.both())["Asleep"], (False, False))
+
+    async def test_another_campaigns_thread_is_not_ours(self) -> None:
+        with self.assertRaises(RecapError) as refused:
+            await thread_clues.read(self.web, self.session, f"{self.g}.{self.two.id}", self.thread)
+        self.assertEqual(refused.exception.code, "not_allowed")
+
+    async def test_a_player_cannot_change_clues_and_an_undo_cannot_be_undone(self) -> None:
+        bob = await self.signed(BOB, THURSDAY)
+        with self.assertRaises(RecapError):
+            await thread_clues.change(
+                self.web, bob, self.cref, self.thread, {"action": "add", "name": "A key"}
+            )
+        done = await self.act("clue-add", f"{self.thread} A key")
+        (batch,) = done.batches
+        self.assertFalse((await self.act("clue-undo", str(batch))).error)
+        self.assertEqual((await self.act("clue-undo", str(batch))).error, "")  # (already undone)
