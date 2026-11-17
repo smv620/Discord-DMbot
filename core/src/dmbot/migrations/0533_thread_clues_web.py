@@ -10,9 +10,9 @@ from __future__ import annotations
 # the caller is not in), as 0519's door; else `{status: 'not_found'}` for an entry that is not a
 # kept entry of the campaign, or `{status: 'ok', clues}`: the clues tied to the thread (a live,
 # kept `clue_to` connection from a kept clue entry), each `{id, name, falseLead, found}`, A to Z,
-# once each. `found` is the website's own reading of "a player character knows it", worked out here
-# from the who-knows rows and nothing else (Supervisor's ruling on #4625: the gate is not copied
-# into SQL): a row on the clue's own entry held by a current player character (a confirmed
+# once each. `found` is the website's own reading of "a player character knows it", worked out
+# here from the who-knows rows and nothing else (Supervisor's ruling on #4625: the gate is not
+# copied into SQL): a row on the clue's own entry held by a current player character (a confirmed
 # `character` with the role `player_character`), or by the everyone point of view (common
 # knowledge) while the players are shown the clue (confirmed, and not hidden, limited to an
 # audience or unnamed) and the campaign has a player character at all (the gate's "any player
@@ -20,11 +20,11 @@ from __future__ import annotations
 # by the party entity or by a former player character, a common row on a hidden clue and a row on
 # a clue that is not kept never make a clue found. The bot's gate knows more ways (a group the
 # character belongs to, a property, a connection or another name of the clue that the character
-# knows), so on those the door says "not found yet" where Discord says "found", and never the other way round
-# (`test_web_thread_clues` holds both together, each difference written down). The count's words
-# are `thread_clues.found_text`'s, said by the web module. A player's reading never comes from
-# here: the door answers only a DM, and `clue_to` is the DM's alone. No entry id leaves it but the
-# clue's own, which the page needs to change it. Read only.
+# knows), so on those the door says "not found yet" where Discord says "found", and never the
+# other way round (`test_web_thread_clues` holds both together, each difference written down). The
+# count's words are `thread_clues.found_text`'s, said by the web module. A player's reading never
+# comes from here: the door answers only a DM, and `clue_to` is the DM's alone. No entry id leaves
+# it but the clue's own, which the page needs to change it. Read only.
 #
 # The four actions go on the queue door as 0519's did, filed under no name with no target and no
 # flag; the door checks only their shape, the bot applies each through the store call Discord's
@@ -40,6 +40,14 @@ from __future__ import annotations
 # gets the long text limit, in the table's check and in the door's own list. The queue door's
 # lists, shape check and text limit are read back from the database as they are and each anchor
 # must be found exactly once, so a drift stops the migration. No row is changed.
+# The four actions go on the queue door as 0519's did, filed under no name with no target and no
+# flag; the door checks only their shape, the bot applies each through the store call Discord's
+# screen makes (`tie_clue`, `set_clue_word`, `untie_clue`, `undo`), one change with one Undo, and
+# checks the rest again (the thread, the clue, the DM): A clue's name may be longer than a hundred
+# characters with the thread id in front, so `clue-add` gets the long text limit, in the table's
+# check and in the door's own list. The queue door's lists, shape check and text limit are read
+# back from the database as they are and each anchor must be found exactly once, so a drift stops
+# the migration. No row is changed.
 
 
 ACTIONS = ("clue-add", "clue-word", "clue-off", "clue-undo")
