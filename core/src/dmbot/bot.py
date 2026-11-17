@@ -3650,6 +3650,25 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return False
         return await self.post(channel, text)
 
+    async def _post_after_session(
+        self, table: Table, text: str, view: discord.ui.View | None = None
+    ) -> bool:
+        """An after-session note that is a count and a button only the DM can use (#3874 E1): in
+        the DM Bot channel when the campaign has one, else on the DM screen as before. The DM
+        Bot channel is read by the campaign's people, so `text` holds counts and never a name;
+        the button checks the presser is a DM on every press and opens its list privately."""
+        campaign = (
+            await self.campaigns.get(table.guild_id, table.campaign_id)
+            if table.campaign_id is not None
+            else None
+        )
+        channel = (
+            self._upkeep_channel(campaign)[0] if campaign is not None else table.screen_channel_id
+        )
+        if channel is None:
+            return False
+        return await self.post(channel, text, view)
+
     async def _tell_admin(self, user_id: int, text: str) -> None:
         """A private message to one of DMbot's admins (#972). Raises if it can't be sent, so
         the watch tries again later and doesn't count it as told."""
@@ -10873,10 +10892,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 written.not_private,
             )
             # (counts only; a re-read finds the same scenes again and says nothing new)
-            if written.new and table.screen_channel_id is not None:
+            if written.new:
                 try:
-                    await self.post(
-                        table.screen_channel_id,
+                    await self._post_after_session(
+                        table,
                         private_scenes_ui.notice(written.new),
                         view=private_scenes_ui.notice_view(cid),
                     )
@@ -10924,8 +10943,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 "on" if report.ready else "not enough story yet",
             )  # fmt: skip
             if report.conflicts:
-                await self.post(
-                    table.screen_channel_id,
+                await self._post_after_session(
+                    table,
                     continuity_waiting_text(
                         len(report.conflicts), sum(1 for c in report.conflicts if c.pinned)
                     ),
@@ -10983,8 +11002,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             quiet = [t for t in found if t.stalled]
             log.info("Threads: %d, %d stalled", len(found), len(quiet))  # counts, never names
             if quiet:
-                await self.post(
-                    table.screen_channel_id,
+                await self._post_after_session(
+                    table,
                     threads_waiting_text(
                         len(quiet),
                         min(t.quiet_sessions for t in quiet),
