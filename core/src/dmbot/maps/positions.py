@@ -98,6 +98,11 @@ class Recorded:
     north: bool = False
     grid: bool = False
     skipped: list[str] = field(default_factory=list)  # (never logged: the caller counts it)
+    # what the map showed outright, written as layer rows (#4259 slice 8a): the store's counts
+    # (`map_fact_store.add_read`) and the written rows' layers, for the DM's note
+    layers: dict[str, int] = field(default_factory=dict)
+    written: dict[str, int] = field(default_factory=dict)
+    batch: int | None = None  # (the write's one batch, for the note's Undo; set with the layers)
 
 
 async def record_in(
