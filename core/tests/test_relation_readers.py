@@ -19,6 +19,9 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "dmbot"
 CONFIRMED_ONLY = "reads confirmed connections only (and, for players, only those the party holds)"
 DM_ONLY = "DM-side by design"
 READERS = {
+    "maps/store.py": CONFIRMED_ONLY
+    + ": a stated road length between two kept places beats a measured one (#4670 4b), and a "
+    "kept road's length is checked against the DM's maps (4c, DM only); shows no connection",
     "lineage.py": "only names the table, on the list that carries the build's stamp (#3739)",
     "memory/recall.py": CONFIRMED_ONLY + ": the walk behind NPC pages, table answers and recaps",
     "memory/importance.py": CONFIRMED_ONLY,
