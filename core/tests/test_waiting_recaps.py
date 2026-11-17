@@ -109,6 +109,13 @@ class TheStartLines(unittest.IsolatedAsyncioTestCase):
         self.assertIn("still waiting", line)
         self.assertIsNotNone(bot.post.await_args.kwargs["view"])  # (the DM-only buttons)
 
+    async def test_with_no_dm_bot_channel_it_is_the_tables_screen_not_the_campaigns(self) -> None:
+        bot, table = fake_bot([(300, "The Silver Lock")])
+        bot.campaigns.get.return_value.dm_screen_channel_id = 99  # (differs from the table's)
+        await run(bot, table)
+        self.assertEqual(bot.post.await_args.args[0], 66)
+        self.assertIn("Silver Lock", bot.post.await_args.args[1])  # (the screen keeps the title)
+
     async def test_at_most_two_one_line_each_newest_first(self) -> None:
         bot, table = fake_bot([(300, "Third"), (200, "Second")])
         await run(bot, table)

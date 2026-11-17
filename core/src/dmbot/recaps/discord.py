@@ -450,7 +450,8 @@ class RecapFeatures:
                 for session_at, title in await self.recaps.waiting_drafts(gid, cid):
                     if self.tables.get(gid) is not table:
                         return  # the session ended meanwhile
-                    channel, counts_only = self._upkeep_channel(campaign)
+                    channel = campaign.dm_bot_channel_id  # (else the table's screen, as before)
+                    counts_only = bool(channel)
                     # (no recap title in the DM Bot channel: its readers are the campaign's people,
                     # and a title can carry story words)
                     what = "" if counts_only else f": **{discord.utils.escape_markdown(title)}**"
@@ -654,7 +655,7 @@ class RecapFeatures:
         gid, cid = campaign.guild_id, campaign.id
         # The name question, its reminder and its edits all go where the hold says (#3874 E2): the
         # DM Bot channel when the campaign has one, else the caller's. Counts only, as before.
-        channel_id = self._upkeep_channel(campaign)[0] or channel_id
+        channel_id = campaign.dm_bot_channel_id or channel_id
         store = self.recap_holds
         if store is not None:
             held = False
@@ -1765,7 +1766,7 @@ class RecapFeatures:
                         left += sum(1 for n in names if name_key(n) in proposed)
                 campaign = await self.campaigns.get(gid, cid)
                 where = (
-                    self._upkeep_channel(campaign)[0] if campaign is not None else None
+                    campaign.dm_bot_channel_id if campaign is not None else None
                 ) or table.screen_channel_id  # (the DM Bot channel, else the screen: #3874 E2)
                 if left and self.tables.get(gid) is table and where is not None:
                     await self.post(where, recap_names_reminder(left), view=review_view(cid))

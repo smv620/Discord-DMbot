@@ -312,6 +312,14 @@ class WhenTheSessionEnds(IsolatedAsyncioTestCase):
         self.assertEqual(bot.post.await_args.args[0], 88)
         self.assertEqual(bot.recap_holds.hold.await_args.kwargs["channel_id"], 88)
 
+    async def test_with_no_dm_bot_channel_the_callers_channel_is_kept(self) -> None:
+        bot = fake_bot(proposed=3)
+        mine = campaign()
+        mine.dm_screen_channel_id = 99  # (the campaign's screen differs from the caller's)
+        await bot._hold_or_queue(mine, "s1", AT, 66, DM)
+        self.assertEqual(bot.post.await_args.args[0], 66)
+        self.assertEqual(bot.recap_holds.hold.await_args.kwargs["channel_id"], 66)
+
     async def test_names_from_before_the_session_are_not_counted(self) -> None:
         bot = fake_bot(proposed=0)  # one proposed name, but from before the session
         await bot._hold_or_queue(campaign(), "s1", AT, 66, DM)
