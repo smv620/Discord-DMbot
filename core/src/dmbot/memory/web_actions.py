@@ -892,8 +892,8 @@ def _is_cannot_show(exc: MemoryRuleError) -> bool:
 
 
 def _who_of(text: str) -> tuple[str, list[str]]:
-    """The website's answer as the door let it through: `dm`, `everyone` or `some <ids>`. An
-    empty one is "" (the store refuses it as no answer)."""
+    """The website's answer as the door let it through: `dm`, `everyone`, `common` or
+    `some <ids>`. An empty one is "" (the store refuses it as no answer)."""
     words = text.split()
     return (words[0], words[1:]) if words else ("", [])
 

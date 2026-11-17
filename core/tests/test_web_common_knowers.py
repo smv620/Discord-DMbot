@@ -154,6 +154,16 @@ class CommonOnTheWeb(Web):
         got = await self.know_word_of(self.plain_link)
         self.assertEqual((got["who"], got["knownBy"]), ("common", []))
 
+    async def test_a_player_is_never_told_a_connection_is_common(self) -> None:
+        await self.common("connection", self.plain_link)
+        page: dict[str, Any] = {
+            "nodes": [],
+            "tray": [],
+            "edges": [{"links": [{"id": self.plain_link, "secret": False, "revealed": True}]}],
+        }
+        await relationships.with_know_words(self.web, self.player, self.cref, page)
+        self.assertNotIn("who", page["edges"][0]["links"][0])  # (the DM's control only)
+
     async def test_a_characters_own_row_still_comes_with_its_character(self) -> None:
         await self.memory.set_connection_knowers(
             self.g, self.one.id, self.secret_link, [self.tavin],
