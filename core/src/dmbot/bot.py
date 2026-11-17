@@ -5464,7 +5464,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # (#4670 4c-2: a distance or direction the DM says, far off a kept map's; a cheap look
             # at the words first, so most lines cost nothing)
             line = str(cleaned or text)
-            if said_phrases.may_state(line):
+            # (the table's own DM list first, in memory: a player's "miles" costs nothing; the
+            # campaign's DMs are checked again inside, as the one that counts)
+            if table.is_dm(utterance.user_id) and said_phrases.may_state(line):
                 self._track(self._map_check(table, utterance.user_id, line), "map-check")
         if text:
             # A line the off-topic filter holds for a label is not offered a time suggestion now:

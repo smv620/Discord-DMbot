@@ -188,6 +188,7 @@ def settings_text(
 
 
 def _map_checks_line(campaign: Campaign) -> str:
+    """The card's line for 🗺️ Map checks (#4670 4c-2; the ux-critic's words)."""
     return (
         f"• **Map checks:** {'on' if campaign.map_checks else 'off'}. When a distance or direction"
         " you say at the table is far off a map, DMbot tells you privately, once per pair of"

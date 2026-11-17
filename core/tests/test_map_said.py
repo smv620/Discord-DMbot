@@ -66,3 +66,12 @@ class TheShapes(unittest.TestCase):
         self.assertEqual(
             [(g.kind, g.a_id, g.b_id) for g in got], [(said.FAR, "t", "b"), (said.WAY, "b", "t")]
         )
+
+    def test_numbers_with_a_point_or_a_comma_are_read_whole(self) -> None:
+        # (the reviewer's: never 5 for 2.5, never 200 for 1,200)
+        self.assertEqual(self.one("It's 2.5 miles from Targos to Bryn Shander.").value, 2.5)
+        self.assertEqual(self.one("It is 1,200 miles from Targos to Bryn Shander").value, 1200)
+
+    def test_a_tag_question_is_not_a_statement(self) -> None:
+        self.assertEqual(said.read("Targos is 20 miles from Bryn Shander, right?", NAMES), [])
+        self.assertEqual(said.read("Targos is north of Bryn Shander, isn't it?", NAMES), [])

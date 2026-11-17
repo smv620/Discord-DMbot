@@ -26,8 +26,10 @@ from dmbot.memory.models import name_key
 
 FAR, WAY = "far", "way"
 
-_NUMBER = r"(?:\d+(?:\.\d+)?|a|an|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve"
-_NUMBER += r"|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)"
+_NUMBER = r"(?:\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?|a|an|one|two|three|four|five|six|seven|eight"
+_NUMBER += (
+    r"|nine|ten|eleven|twelve|thirteen|fourteen|fifteen|sixteen|seventeen|eighteen|nineteen|twenty)"
+)
 _LENGTH = (
     rf"(?P<len>(?:(?:about|around|roughly|some|nearly|almost)\s+)?{_NUMBER}"
     rf"(?:\s*(?:or|to|-|–)\s*{_NUMBER})?\s+(?:miles?|leagues?))"
@@ -41,8 +43,9 @@ _SHAPES = (
     (FAR, rf"^\s*from\s+A\s+to\s+B\s+{_IS}\s+{_LENGTH}\s*$"),
     (WAY, rf"^\s*A\s+{_IS}\s+(?:(?:to\s+the|due)\s+)?{_DIRECTION}\s+of\s+B\s*$"),
 )
-_SENTENCES = re.compile(r"[.!?;\n]+")
-_CLAUSES = re.compile(r"\s*(?:,|\band\s+then\b|\bbut\b)\s*", re.I)
+# (a full stop or comma inside a number is part of it: "2.5 miles", "1,200 miles", never 5 or 200)
+_SENTENCES = re.compile(r"((?<!\d)\.(?!\d)|[!?;\n])")
+_CLAUSES = re.compile(r"\s*(?:(?<!\d),(?!\d{3})|\band\s+then\b|\bbut\b)\s*", re.I)
 
 
 @dataclass(frozen=True, slots=True)
@@ -93,7 +96,10 @@ def read(line: str, names: Mapping[str, str]) -> list[Said]:
     """Every distance or direction this line states between two of `names` (name_key → entry id),
     in the line's order. Empty when it states none in a set shape."""
     out: list[Said] = []
-    for sentence in _SENTENCES.split(line):
+    parts = _SENTENCES.split(line)  # (sentences, each followed by what ended it)
+    for sentence, end in zip(parts[0::2], [*parts[1::2], ""], strict=True):
+        if end == "?":  # (a question, "…, right?" too, states nothing)
+            continue
         for clause in _CLAUSES.split(sentence):
             at = _names_in(clause, names)
             if len(at) != 2 or at[0][2] == at[1][2]:
@@ -105,7 +111,7 @@ def read(line: str, names: Mapping[str, str]) -> list[Said]:
                 if m is None:
                     continue
                 if kind == FAR:
-                    length = route_length.parse(m.group("len"))
+                    length = route_length.parse(re.sub(r"(?<=\d),(?=\d)", "", m.group("len")))
                     miles = (
                         disagree.in_miles(length.amount, length.unit or "")
                         if length is not None and length.amount is not None

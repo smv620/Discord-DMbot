@@ -17,20 +17,21 @@ from typing import Any
 import discord
 
 from dmbot.logs import set_log_context
-from dmbot.maps import disagree, said_phrases
+from dmbot.maps import disagree
 from dmbot.maps import measure_words as words
+from dmbot.maps.store import SaidOff
 
 log = logging.getLogger(__name__)
 
 ONLY_DM = "Only a DM of this campaign can change map checks."
 GONE = "That campaign isn't here any more. Nothing was changed."
-FAILED = "Something went wrong. Map checks are still on. Press the button again."
+FAILED = "Something went wrong. Nothing was changed. Press the button again."
 
 
-def note_text(found: Any) -> str:
+def note_text(found: SaidOff) -> str:
     """The note's words for one `maps.store.SaidOff`."""
     said, off = found.said, found.off
-    if said.kind == said_phrases.FAR:
+    if isinstance(off, disagree.Distance):
         return words.said_far(
             said.words, found.a_name, found.b_name, disagree.amount(off), off.map.title
         )
@@ -38,6 +39,7 @@ def note_text(found: Any) -> str:
 
 
 def note_view(guild_id: int, campaign_id: str) -> discord.ui.View:
+    """The note's one button (§9: one at most), and no map link (Supervisor's ruling 2)."""
     view = discord.ui.View(timeout=None)
     view.add_item(StopMapChecksButton(guild_id, campaign_id))
     return view

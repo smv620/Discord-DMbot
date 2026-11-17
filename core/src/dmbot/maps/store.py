@@ -26,8 +26,9 @@ from dmbot.memory.store import MemoryStore
 from dmbot.pictures.store import MB, Usage, _lock, _usage
 
 if TYPE_CHECKING:
-    from dmbot.maps.disagree import Distance
+    from dmbot.maps.disagree import Direction, Distance
     from dmbot.maps.measure import MapInfo, Pin
+    from dmbot.maps.said_phrases import Said
     from dmbot.memory._changes import Changes
 
 # Fixed lists in code, each with "other" (design rule 6).
@@ -263,10 +264,10 @@ class SaidOff:
     """A distance or direction the DM said that a kept map disagrees with (#4670 4c-2): what was
     said, the two places' names, and `disagree.Distance` or `disagree.Direction`."""
 
-    said: Any  # `said_phrases.Said`
+    said: Said
     a_name: str
     b_name: str
-    off: Any
+    off: Distance | Direction
 
 
 class MapStore:
@@ -692,7 +693,7 @@ class MapStore:
         called = {str(e["id"]): str(e["name"]) for e in entities}
         out: list[SaidOff] = []
         for s in said:
-            off: Any = (
+            off: Distance | Direction | None = (
                 disagree.check_distance(maps, pins, s.a_id, s.b_id, s.value)
                 if s.kind == said_phrases.FAR
                 else disagree.check_direction(maps, pins, s.a_id, s.b_id, s.value)

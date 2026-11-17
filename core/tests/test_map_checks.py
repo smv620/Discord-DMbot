@@ -206,3 +206,16 @@ class TheBot(unittest.IsolatedAsyncioTestCase):  # (`DMBot._map_check` on a stan
         await self.check(bot2, table2)
         bot._dm_message.assert_not_awaited()
         bot2._dm_message.assert_not_awaited()
+
+    async def test_consent_withdrawn_while_the_maps_are_read_sends_nothing(self) -> None:
+        bot, table = self.make()
+        agreed = {DM}
+        bot.consent = SimpleNamespace(has_consent=lambda g, u: u in agreed)
+
+        async def said_off(*args: Any) -> list[SaidOff]:
+            agreed.clear()  # (they stopped being recorded during the read)
+            return [found()]
+
+        bot.map_store.said_off = said_off
+        await self.check(bot, table)
+        bot._dm_message.assert_not_awaited()
