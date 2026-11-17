@@ -35,7 +35,7 @@ from dmbot.memory.models import (
     name_key,
 )
 from dmbot.memory.ontology import DISGUISED_AS, Ontology
-from dmbot.memory.store import MemoryStore
+from dmbot.memory.store import MemoryStore, refusal_for_log
 
 log = logging.getLogger(__name__)
 
@@ -444,6 +444,13 @@ async def keep_all(
                 if not isinstance(exc, MemoryRuleError):
                     raise
                 done.refused += 1
+                # Why, as the one-card Keep logs it (#4161): the rule's own sentence when it is one
+                # of the fixed ones, never a campaign's words, and the connection's kind
+                log.info(
+                    "A connection from a background was refused (Keep all): %s (%s)",
+                    refusal_for_log(exc),
+                    c.predicate,
+                )
                 if progress is not None:
                     await progress(tried, total)
                 continue
