@@ -287,6 +287,7 @@ from dmbot.dm_screen.upkeep_pointers import (
     names_fixed_pointer,
     secrets_pointer,
     session_names_pointer,
+    session_summary_pointer,
 )
 from dmbot.dm_waiting import WaitingChecks, WaitingSent, asks_for
 from dmbot.ears.protocol import (
@@ -3540,7 +3541,34 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 waiting,
             ),
         )
-        if session_id is not None and self.suggestions is not None:
+        # The summary names who spoke, so it goes to the DMs privately; the DM Bot channel (read by
+        # the campaign's people) gets numbers only, after a private message really went out. With
+        # no private message it is on the DM screen as before (#3874 E1).
+        campaign = (
+            await self.campaigns.get(gid, table.campaign_id)
+            if table.campaign_id is not None
+            else None
+        )
+        with_fix = session_id is not None and self.suggestions is not None
+        if campaign is not None:
+            fixes = session_id
+            if await pointer_note.send(
+                self,
+                campaign,
+                text,
+                lambda: (
+                    fix_line_view(gid, fixes, dm=True)
+                    if with_fix and fixes is not None
+                    else discord.ui.View()
+                ),
+                session_summary_pointer(
+                    max(0, (ended_at - (table.started_at or ended_at)) // 60), len(spoke)
+                ),
+                note=True,
+            ):
+                return
+            # (no DM could be messaged and the campaign has no screen saved: the table's own)
+        if with_fix and session_id is not None:
             # With ✏️ Fix a line (#1499): the DM can correct any line, from the same picker.
             await self.post_message(
                 table.screen_channel_id, text, fix_line_view(gid, session_id, dm=True)
