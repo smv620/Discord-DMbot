@@ -109,9 +109,13 @@ class _ChannelSelect(discord.ui.ChannelSelect[Any]):
 
 async def showing_menu(origin: discord.Interaction, menu: discord.ui.View) -> bool:
     """Whether the message `origin` answered still carries this menu's own buttons (#4521). A
-    message that now holds a newer screen, or none, has nothing of this menu to time out. Menus
-    with no buttons of their own, and a message that can't be read, count as showing it, so a
-    timeout still says so as before."""
+    message that now holds a newer screen, or none, has nothing of this menu to time out. A menu
+    with no buttons of its own counts as showing it, so its timeout says so as before. A message
+    that can't be read raises (`discord.HTTPException`); `_Menu.on_timeout` lets that mean "no
+    edit", right when the message is gone, since the edit would fail too. Only top-level button
+    rows are read (no menu uses layout containers). A newer screen can still land between this
+    read and the edit; the window is a moment, not the ten minutes it was.
+    """
     ours = {cid for i in menu.children if (cid := getattr(i, "custom_id", None)) is not None}
     if not ours:
         return True
