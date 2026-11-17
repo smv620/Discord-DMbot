@@ -4824,9 +4824,16 @@ class MemoryStore:
         source: str,
         played_by: int | None = None,
         role: str | None = None,
+        as_kin: bool = False,
     ) -> Written[Entity]:
         """The DM says a suggested name is real: what it is (and, for a character, its
-        role), confirmed with all its names, in one change (one undo, one reload)."""
+        role), confirmed with all its names, in one change (one undo, one reload).
+
+        `as_kin` (#4636 part 1): an unnamed person kept because the character it hangs off is
+        kept ("Brewner's daughter"). An unnamed person is the DM's alone anyway, but once the DM
+        names it, it is never more visible than its tie: it is kept hidden from players, in this
+        same change, when its character is, or when any tie between the two (kept or waiting) is
+        secret (`_kin_hidden`)."""
         if source != DM:
             raise MemoryRuleError("Only the DM can confirm that.")
         asked = type
@@ -4840,6 +4847,7 @@ class MemoryStore:
             _check_role(onto, type, role, played_by)
             before = await _entity_row(w, entity_id)
             check_named(asked, before["name"])
+            hide = as_kin and await _kin_hidden(w, before)
             # A session's new name said only while the party was split: kept from the players who
             # weren't there (#4037), in this same update (one change per entry, one Undo).
             scene = (
@@ -4858,7 +4866,7 @@ class MemoryStore:
                     "needs_look": False,
                     "unique_item": None,
                     **_note_cleared(before),
-                    **({"hidden_from_players": True} if scene is not None else {}),
+                    **({"hidden_from_players": True} if scene is not None or hide else {}),
                 },
             )
             learned = await learn_names_in_scene(w, entity_id, scene) if scene is not None else 0
@@ -10626,6 +10634,32 @@ async def _live_led_to(
         [predicate],
     )
     return [(r["subject_id"], r["object_id"]) for r in live if r["id"] != skip]
+
+
+async def _kin_hidden(w: Changes, row: Mapping[str, Any]) -> bool:
+    """An unnamed relative kept with its character (#4636 part 1) is hidden from players when the
+    character is, or when any tie between them, kept or still waiting, is secret: it is never
+    more visible than the tie that makes it (Supervisor's condition). One that hangs off nobody,
+    or off something gone, is hidden too: nothing says the players may know of it."""
+    anchor_id = row.get("unnamed_anchor")
+    if not anchor_id:
+        return True
+    anchor = await w.get(ENTITIES, str(anchor_id))
+    if anchor is None or anchor["hidden_from_players"] or anchor["audience_limited"]:
+        return True
+    pair = (row["id"], anchor_id, anchor_id, row["id"])
+    for table, live in (("memory_relations", " AND status <> 'rejected'"), ("backstory_links", "")):
+        cur = await w.conn.execute(
+            f"SELECT bool_or(secret) AS secret FROM {table}"  # (two fixed table names)
+            " WHERE guild_id = %s AND campaign_id = %s"
+            " AND ((subject_id = %s AND object_id = %s) OR (subject_id = %s AND object_id = %s))"
+            + live,
+            (*w.ids, *pair),
+        )
+        found = await cur.fetchone()
+        if found is not None and found["secret"]:
+            return True
+    return False
 
 
 async def _settle_kinds_after_undo(w: Changes, batch: int) -> None:

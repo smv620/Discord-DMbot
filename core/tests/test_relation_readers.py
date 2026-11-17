@@ -145,6 +145,7 @@ STORE = {
     + ": new words or a turn: the connection written anew, the old one ended (#4154)",
     "_recheck_companions": DM_ONLY
     + ": a merge or a change of kind refuses a companion link left invalid",
+    "_kin_hidden": DM_ONLY + ": whether a tie to a kept unnamed relative is secret (#4636)",
     "_let_go_of_anchored": DM_ONLY
     + ": only counts live connections, to decide a rejection (#2790)",
     "relations": "all live ones, without guess connections (they are not connections yet)",
