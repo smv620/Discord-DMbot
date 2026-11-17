@@ -119,6 +119,17 @@ def said_way(a: str, direction: str, b: str, map_way: str, map_title: str) -> st
     return f"{said} On {on_map(map_title)}, {a} is about {map_way} of {b}."
 
 
+class NotShown:
+    """`MapStore.measure`'s answer for a table question naming a kept place the players haven't
+    been shown (#4692): the DM's view finds both places, the table's doesn't. Never words: a
+    player's question goes the usual way, and a DM's goes to the DM privately."""
+
+    __slots__ = ()
+
+
+NOT_SHOWN = NotShown()
+
+
 # (any new miss wording above must be added here and to `test_what_counts_as_measured`, or a miss
 # would be sent to the DM privately as if it were a figure)
 def measured(text: str) -> bool:

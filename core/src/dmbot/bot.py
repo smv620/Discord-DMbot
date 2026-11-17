@@ -310,6 +310,7 @@ from dmbot.install_record import InstallStore
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
 from dmbot.map_notes import MapNotesSection, MapNoteStore
+from dmbot.maps import measure_words as maps_measure_words
 from dmbot.maps import said_phrases
 from dmbot.maps import store as maps_store
 from dmbot.maps.pending import PendingMaps
@@ -9876,7 +9877,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             notice_channel=table.screen_channel_id,
         )
 
-    async def _map_measure(self, campaign: Any, asked: Any, dm: bool) -> str | None:
+    async def _map_measure(
+        self, campaign: Any, asked: Any, dm: bool
+    ) -> str | maps_measure_words.NotShown | None:
         """A map question's words (#4670 4b), or None (no maps yet: the usual answer)."""
         store = self.map_store
         if store is None:
