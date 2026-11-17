@@ -12622,7 +12622,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         # (the website's page reads the offer too, so it is made whether or not the campaign has a
         # DM screen to post it on; only the Discord post needs the channel)
-        screen = campaign.dm_screen_channel_id
+        # (the DM Bot channel, else the DM screen: an import is post-game, #3874 E3; the offer is a
+        # game date and a question, never a name)
+        screen = upkeep.channel_for(campaign)
         if screen is None and self.import_clock_offers is None:
             return
         stored = await self.clocks.get(gid, campaign.id)

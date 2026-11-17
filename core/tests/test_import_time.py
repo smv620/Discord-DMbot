@@ -271,6 +271,15 @@ class Importing(sp.Party):
         await self.run_step()
         self.assertEqual((self.posts, self.ai.sent), ([], []))
 
+    async def test_with_a_dm_bot_channel_the_offer_goes_there_not_to_the_dm_screen(self) -> None:
+        # (#3874 E3: an import is post-game; the offer is a game date and a question)
+        await self.campaigns.set_dm_bot_channel(GUILD_A, self.a.id, 777)
+        await self.run_step()
+        [(channel, text, view)] = self.posts
+        self.assertEqual(channel, 777)
+        self.assertIn("Set the clock to that?", text)
+        self.assertIsNotNone(view)
+
     async def test_a_split_party_gets_the_reason_and_no_buttons(self) -> None:
         await self.split_up()
         await self.run_step()
