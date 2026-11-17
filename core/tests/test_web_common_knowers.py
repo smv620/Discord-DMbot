@@ -84,7 +84,10 @@ class CommonOnTheWeb(Web):
         self.assertNotIn(COMMON, self.rows(await self.door(), self.plain_link))
 
     async def test_an_entry_not_confirmed_or_limited_to_an_audience_is_not_listed(self) -> None:
-        proposed = await self.add("Ten-Towns", "place", status="proposed")
+        made = await self.memory.add_entity(
+            self.g, self.one.id, name="Ten-Towns", type="place", source=DM_SOURCE, status="proposed"
+        )
+        proposed = made.value.id
         await self.common("entry", proposed)
         self.assertNotIn(COMMON, self.rows(await self.door(), proposed))
         async with self.db.guild(self.g) as conn:  # (a clue only some know: `audience_limited`)
