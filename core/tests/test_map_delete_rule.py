@@ -37,6 +37,15 @@ class TheRule(PinsBase):
             got = await cur.fetchone()
         return dict(got) if got is not None else None
 
+    async def version(self) -> int:
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT memory_version FROM campaigns WHERE id = %s", (self.one.id,)
+            )
+            got = await cur.fetchone()
+        assert got is not None
+        return int(got["memory_version"])
+
     async def three(self) -> tuple[str, str, str]:
         only_map = await self.fact("arctic", status="read", source="map", also_text=False)
         text_too = await self.fact("mountain", status="read", source="map", also_text=True)
@@ -86,7 +95,9 @@ class TheRule(PinsBase):
             )
             picture = await cur.fetchone()
         assert picture is not None
+        before = await self.version()
         await self.pictures.delete(GUILD_A, self.one.id, int(picture["picture_id"]))
+        self.assertGreater(await self.version(), before)  # (World notes draw these: it moves)
         self.assertIsNone(await self.row(only_map))
         self.assertEqual(
             await self.row(text_too), {"status": "read", "source": "text", "map_id": None}

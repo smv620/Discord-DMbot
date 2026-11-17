@@ -443,12 +443,18 @@ class PictureStore:
                 " AND fact_id IN (SELECT id" + only_map + " AND NOT also_text)",
                 (guild_id, campaign_id, *ids),
             )
-            await conn.execute("DELETE" + only_map + " AND NOT also_text", ids)
-            await conn.execute(
+            cur = await conn.execute("DELETE" + only_map + " AND NOT also_text", ids)
+            changed = cur.rowcount
+            cur = await conn.execute(
                 "UPDATE memory_map_facts SET source = 'text', also_text = FALSE, map_id = NULL"
                 " WHERE id IN (SELECT id" + only_map + ")",
                 ids,
             )
+            changed += cur.rowcount
+            if changed > 0:  # (World notes draw these rows: a page holding a copy reads again)
+                from dmbot.memory import role_store
+
+                await role_store._bump(conn, guild_id, campaign_id)
             # A picture that is gone is no map either (#4344: a poster who deletes their picture
             # takes its map with it, in the same step).
             cur = await conn.execute(
