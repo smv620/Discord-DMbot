@@ -65,18 +65,65 @@ class TheRule(Facts):
             await self.row(dms), {"status": "confirmed", "source": "map", "map_id": None}
         )  # (the DM's word stays, without the pointer)
 
-    async def test_a_pin_on_the_fact_does_not_stop_it(self) -> None:
-        only_map = await self.fact("arctic", status="read", source="map", also_text=False)
+    async def other_area(self, fact_id: str, *, usable: bool = True) -> tuple[str, str]:
         other = await self.add(await self.picture(self.one.id, 2), dm=True, width=10, height=10)
+        feature = uuid.uuid4().hex
         async with self.db.guild(GUILD_A) as conn:  # (another map's area pointing at the fact)
             await conn.execute(
                 "INSERT INTO map_features (guild_id, campaign_id, id, map_id, shape, points,"
                 " fact_id, status, source, created_at) VALUES (%s, %s, %s, %s, 'area',"
                 " ARRAY[0.1, 0.1, 0.2, 0.1, 0.2, 0.2], %s, 'read', 'read', %s)",
-                (GUILD_A, self.one.id, uuid.uuid4().hex, other, only_map, int(time.time())),
+                (GUILD_A, self.one.id, feature, other, fact_id, int(time.time())),
             )
+            if not usable:
+                await conn.execute(
+                    "UPDATE campaign_maps SET use_ok = FALSE WHERE id = %s", (other,)
+                )
+        return other, feature
+
+    async def area_points_at(self, feature: str) -> str | None:
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute("SELECT fact_id FROM map_features WHERE id = %s", (feature,))
+            got = await cur.fetchone()
+        assert got is not None
+        return None if got["fact_id"] is None else str(got["fact_id"])
+
+    async def test_a_fact_another_map_shows_is_kept_and_re_pointed(self) -> None:
+        # (Supervisor's ruling 2 on #4694, #4696: it rests on that map now; its area untouched)
+        only_map = await self.fact("arctic", status="read", source="map", also_text=False)
+        other, feature = await self.other_area(only_map)
+        written = await self.maps.remove_map(GUILD_A, self.one.id, self.map_id)
+        self.assertEqual(
+            await self.row(only_map), {"status": "read", "source": "map", "map_id": other}
+        )
+        self.assertEqual(await self.area_points_at(feature), only_map)
+        assert written.batch is not None
+        await self.memory.undo(GUILD_A, self.one.id, written.batch)  # (the pointer back)
+        self.assertEqual(
+            await self.row(only_map), {"status": "read", "source": "map", "map_id": self.map_id}
+        )
+
+    async def test_a_map_dmbot_may_not_use_does_not_keep_it(self) -> None:
+        only_map = await self.fact("arctic", status="read", source="map", also_text=False)
+        _, feature = await self.other_area(only_map, usable=False)
         await self.maps.remove_map(GUILD_A, self.one.id, self.map_id)
         self.assertIsNone(await self.row(only_map))
+        self.assertIsNone(await self.area_points_at(feature))
+
+    async def test_a_deleted_picture_re_points_it_too(self) -> None:
+        only_map = await self.fact("arctic", status="read", source="map", also_text=False)
+        other, feature = await self.other_area(only_map)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT picture_id FROM campaign_maps WHERE id = %s", (self.map_id,)
+            )
+            picture = await cur.fetchone()
+        assert picture is not None
+        await self.pictures.delete(GUILD_A, self.one.id, int(picture["picture_id"]))
+        self.assertEqual(
+            await self.row(only_map), {"status": "read", "source": "map", "map_id": other}
+        )
+        self.assertEqual(await self.area_points_at(feature), only_map)
 
     async def test_one_undo_puts_it_all_back(self) -> None:
         only_map, text_too, dms = await self.three()

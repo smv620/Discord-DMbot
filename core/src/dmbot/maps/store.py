@@ -277,6 +277,19 @@ async def _shown_at(w: Changes, map_id: str) -> int:
     return int(row["at"]) if row is not None and row["at"] is not None else int(w.now)
 
 
+async def _other_map_showing(w: Changes, fact_id: str, map_id: str) -> str | None:
+    """The oldest other map DMbot may use whose area points at this fact (#4696), or None."""
+    cur = await w.conn.execute(
+        "SELECT m.id FROM map_features f JOIN campaign_maps m ON m.guild_id = f.guild_id"
+        " AND m.campaign_id = f.campaign_id AND m.id = f.map_id"
+        " WHERE f.guild_id = %s AND f.campaign_id = %s AND f.fact_id = %s AND m.id <> %s"
+        " AND m.use_ok IS TRUE ORDER BY m.created_at, m.id LIMIT 1",
+        (w.guild_id, w.campaign_id, fact_id, map_id),
+    )
+    row = await cur.fetchone()
+    return None if row is None else str(row["id"])
+
+
 @dataclass(frozen=True, slots=True)
 class SaidOff:
     """A distance or direction the DM said that a kept map disagrees with (#4670 4c-2): what was
@@ -497,7 +510,13 @@ class MapStore:
         # pointer (the foreign key's ON DELETE SET NULL).
         for fact in await w.select(MAP_FACTS, " AND map_id = %s", [map_id]):
             fact_id = str(fact["id"])
-            if fact["status"] == "read" and fact["source"] == "map" and not fact["also_text"]:
+            other = await _other_map_showing(w, fact_id, map_id)
+            if other is not None:
+                # (another usable map's area still shows it: it rests on that map now, kept and
+                # re-pointed whoever said it, its area's pointer untouched; Supervisor's ruling 2
+                # on #4694, #4696. The oldest such map, as the ruling says.)
+                await w.update(MAP_FACTS, fact_id, {"map_id": other})
+            elif fact["status"] == "read" and fact["source"] == "map" and not fact["also_text"]:
                 for pinned in await w.select(MAP_FEATURES, " AND fact_id = %s", [fact_id]):
                     await w.update(MAP_FEATURES, str(pinned["id"]), {"fact_id": None})
                 await w.delete(MAP_FACTS, fact_id)
