@@ -96,6 +96,7 @@ from dmbot.mentions import NO_PINGS
 from dmbot.ui import logic, split_words
 from dmbot.ui import secret_questions as secret_questions_ui
 from dmbot.ui.check_everything import add_stop, next_part, progress
+from dmbot.ui.claims_review import knower_icon, names_joined
 from dmbot.ui.dmbot_commands import VIEW_TIMEOUT_S, _bot, _Button, _Menu, _send, _tell
 from dmbot.ui.name_lists import (
     AI_AT_ONCE,
@@ -3654,6 +3655,11 @@ HAND_OVER_KEEP = {
 HAND_OVER_SECRET = "**{a}** stays as they know them."
 SHOW_PLAYERS = "👁️ Let players see it"
 HIDE_PLAYERS = "🤫 Hide from players"
+SOME_KNOW = "👥 Some know"
+SOME_KNOW_REFUSED = (
+    "That one can't be limited to some characters: it uses a secret name, or it changes what "
+    "someone else holds. Keep it as secret, or keep it for everyone."
+)
 SECRET_NAME_LINE = "🤫 Hidden from players: it uses a secret name."
 
 
@@ -3766,6 +3772,10 @@ class ConnectionOffer(_Menu):
         self.add_item(self.no_button)
         self.toggle = _Button(self._toggle, label=HIDE_PLAYERS, style=grey, row=1)
         self.add_item(self.toggle)
+        # 👥 Some know (#4534): only the ticked player characters learn it; the rest of the table
+        # hears it when it is said. The picker's Save hands its ticks straight to `_answer`.
+        self.some = _Button(self._some, label=SOME_KNOW, style=grey, row=1)
+        self.add_item(self.some)
         self.add_item(_Button(self._skip, label="⏭️ Skip the rest", style=grey, row=2))
         self.all_button = _Button(self._keep_all, label="✅ Keep all", style=grey, row=2)
         self.add_item(self.all_button)
@@ -3832,6 +3842,8 @@ class ConnectionOffer(_Menu):
             view = self._players(c)
             self.toggle.label = view.label or HIDE_PLAYERS
             self.toggle.disabled = not view.label
+            # (a secret spelling can only be kept as secret; a hand-over ends what another holds)
+            self.some.disabled = not self.characters or view.secret or c.secret or bool(c.hand_over)
 
     async def load(self, interaction: discord.Interaction) -> bool:
         campaign = await _campaign_for(interaction, self.campaign_id)
@@ -3879,12 +3891,13 @@ class ConnectionOffer(_Menu):
             return plain
         return link_words(r.predicate, r.detail, r.directional, feeling=True, knows_how=r.knows_how)
 
-    def text(self) -> str:
-        """The card, with the walk's part line above it when this is inside "Check everything"."""
+    def text(self, note: str = "") -> str:
+        """The card, with the walk's part line above it when this is inside "Check everything",
+        and `note` (who the last 👥 Some know saved it for, #4682) above both."""
         if self.walk is None or self.current is None:
-            return self._card()
+            return note + self._card()
         done = self.kept + self.left_out + 1
-        return progress(self.walk, done, max(self.total, done)) + self._card()
+        return note + progress(self.walk, done, max(self.total, done)) + self._card()
 
     def _card(self) -> str:
         c = self.current
@@ -3903,8 +3916,10 @@ class ConnectionOffer(_Menu):
         mine = ""
         if who is not None:
             name = _md(who[:40])
+            # (DMbot's guess shown before the answer: the icon says how many, #4682; it writes
+            # nothing, 👥 Some know opens the picker with it ticked)
             mine = (
-                f"👥 **{name}**'s character will know it.\n"
+                f"{knower_icon(1)} DMbot thinks only {name} knows this.\n"
                 if not (view.secret or c.secret)
                 else f"👥 **{name}**'s character won't know it: it is hidden.\n"
             )
@@ -3991,13 +4006,16 @@ class ConnectionOffer(_Menu):
             f"{others}: {decide}.\n"
         )
 
-    async def _show(self, interaction: discord.Interaction, ready: list[Waiting]) -> None:
+    async def _show(
+        self, interaction: discord.Interaction, ready: list[Waiting], note: str = ""
+    ) -> None:
         self._set(ready)
         if self.current is None:
             self.stop()
+        text = self.text(note)  # (the note is said once, with the card that follows the save)
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
-                content=self.text(),
+                content=text,
                 view=self if self.current else None,
                 allowed_mentions=NO_PINGS,
             )
@@ -4051,7 +4069,31 @@ class ConnectionOffer(_Menu):
                     content=self.text(), view=self, allowed_mentions=NO_PINGS
                 )
 
-    async def _answer(self, interaction: discord.Interaction) -> None:
+    async def _some(self, interaction: discord.Interaction) -> None:
+        """👥 Some know: swap the card for the picker of the party's characters (nothing is
+        written until the picker's Save)."""
+        await interaction.response.defer()
+        async with self.busy:
+            campaign = await self._dm(interaction)
+            if campaign is None or self.current is None:
+                return
+            c = await self._same(interaction, campaign)
+            if c is None:
+                return
+            if self._players(c).secret or c.secret or c.hand_over or not self.characters:
+                await _tell(interaction, SOME_KNOW_REFUSED)
+                return
+            picker = SomeKnowPicker(self, c)
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(
+                    content=picker.text(), view=picker, allowed_mentions=NO_PINGS
+                )
+
+    async def _answer(
+        self, interaction: discord.Interaction, knowers: list[str] | None = None
+    ) -> None:
+        """✅ Add it / Update it; with `knowers` (the picker's Save) held back with exactly
+        those characters knowing it. A press that finds the card changed writes nothing."""
         await interaction.response.defer()
         async with self.busy:
             campaign = await self._dm(interaction)
@@ -4068,6 +4110,15 @@ class ConnectionOffer(_Menu):
             old = self._old(c)
             view = self._players(c)
             secret = view.secret
+            if knowers is not None and (secret or c.secret or c.hand_over):
+                await _tell(interaction, SOME_KNOW_REFUSED)
+                return
+            if knowers is not None:
+                known_by: Sequence[str] = knowers
+            elif c.known_by and not (secret or c.secret):
+                known_by = [c.known_by]
+            else:
+                known_by = ()
             now = int(time.time())
             start = keep.change_start(old, now)
             ended: list[int | None] = []
@@ -4076,7 +4127,7 @@ class ConnectionOffer(_Menu):
                 shown = await keep.shown_entry_ids(memory, campaign.guild_id, campaign.id)
                 await keep.end_replaced(
                     memory, campaign.guild_id, campaign.id, old, start, ended, held=held, link=c,
-                    hidden=secret or c.secret
+                    hidden=secret or c.secret or knowers is not None
                     or ((
                         view.unrevealed
                         if view.unrevealed is not None
@@ -4085,7 +4136,7 @@ class ConnectionOffer(_Menu):
                     and not view.reveal),
                     # (only the DM's own Players toggle on this card is their choice to hide, #4524:
                     # a secret name in the text or the card's default is DMbot's, and asks)
-                    dm_chose_secret=self.choice is True,
+                    dm_chose_secret=self.choice is True or knowers is not None,
                 )  # fmt: skip
                 kept = await memory.add_relation(
                     campaign.guild_id, campaign.id, c.subject_id, c.predicate, c.object_id,
@@ -4095,18 +4146,21 @@ class ConnectionOffer(_Menu):
                     # a backstory connection waits to be said at the table (#2404), unless the
                     # upload said the players know it and both its ends are shown (#2959)
                     unrevealed=(
-                        view.unrevealed
+                        True
+                        if knowers is not None  # (held back: only the ticked ones know it)
+                        else view.unrevealed
                         if view.unrevealed is not None
                         else keep.kept_unrevealed(c, secret or c.secret, shown)
                     ),
                     # ✅ Keep: the uploader's character knows it from the start; 🤫 Keep as secret
-                    # is the DM's alone (#2935)
-                    known_by=[c.known_by] if c.known_by and not (secret or c.secret) else (),
+                    # is the DM's alone (#2935); 👥 Some know: exactly the ticked characters
+                    known_by=known_by,
                     from_session_at=start if old else None,  # (starts as the old one ends)
                     # a secret SPELLING in the text never hides what the players were shown (#3025);
                     # the DM's own 🤫 button is their word and does
-                    keep_flags=not secret and not view.reveal,
-                    dm_chose_secret=self.choice is True,  # (the DM's own toggle, #4524)
+                    keep_flags=not secret and not view.reveal and knowers is None,
+                    # (the DM's own toggle, #4524; and their own 👥 pick)
+                    dm_chose_secret=self.choice is True or knowers is not None,
                     # whether they've met, from the quote's own words (#3881)
                     knows_how=keep.kept_how(c, old),
                 )  # fmt: skip
@@ -4161,8 +4215,13 @@ class ConnectionOffer(_Menu):
                     log.info("A kept connection could not be pinned")
             changed(interaction, campaign)
             await store.remove(campaign.guild_id, campaign.id, c)
+            saved = ""
+            if knowers is not None:
+                names = [self.characters[k] for k in knowers if k in self.characters]
+                if names:
+                    saved = f"{knower_icon(len(names))} Known to: {names_joined(names)}.\n"
             self.kept += 1
-            await self._show(interaction, await self._ready(interaction, campaign))
+            await self._show(interaction, await self._ready(interaction, campaign), saved)
 
     async def _no(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
@@ -4273,6 +4332,71 @@ class ConnectionOffer(_Menu):
             await store.remove_all(campaign.guild_id, campaign.id, gone)
             self.left_out += len(gone)
             await self._show(interaction, [])
+
+
+class SomeKnowPicker(_Menu):
+    """👥 Some know, on a backstory connection's card (#4534): the party's characters to tick (the
+    uploader's character ticked already, DMbot's guess), Save and Back. Save keeps the connection
+    held back from the players with exactly these characters knowing it: one change, one Undo, the
+    DM's own choice. Back returns to the card; nothing is written until Save."""
+
+    MAX_OPTIONS = 25  # what a menu holds; a party is a handful
+
+    def __init__(self, card: ConnectionOffer, waiting: Waiting) -> None:
+        super().__init__()
+        self.card, self.waiting = card, waiting
+        self.party = list(card.characters.items())[: self.MAX_OPTIONS]  # (id, name)
+        ids = {i for i, _ in self.party}
+        self.chosen: list[str] = [waiting.known_by] if waiting.known_by in ids else []
+        self.select: discord.ui.Select[Any] = discord.ui.Select(
+            placeholder="Who knows it?",
+            min_values=1,
+            max_values=len(self.party),
+            options=self._options(),
+            row=0,
+        )
+        # (a Select's callback is set after it is made: discord.py has no argument for it)
+        self.select.callback = self._ticked  # type: ignore[method-assign]
+        self.add_item(self.select)
+        self.add_item(_Button(self._save, label="Save", style=discord.ButtonStyle.success, row=1))
+        self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary, row=1))
+
+    def _options(self) -> list[discord.SelectOption]:
+        return [
+            discord.SelectOption(label=name[:100], value=i, default=i in self.chosen)
+            for i, name in self.party
+        ]
+
+    def text(self) -> str:
+        return (
+            f"{SOME_KNOW} **Who knows this?**\n{self.card.text()}\n"
+            "Tick the characters who know it, then Save. Players won't see this until it is said; "
+            "the others find out then."
+        )
+
+    async def _ticked(self, interaction: discord.Interaction) -> None:
+        if await self.card._dm(interaction) is None:  # a DM, on every press
+            return
+        self.chosen = [str(v) for v in self.select.values]
+        self.select.options = self._options()
+        await interaction.response.edit_message(content=self.text(), view=self)
+
+    async def _save(self, interaction: discord.Interaction) -> None:
+        if await self.card._dm(interaction) is None:  # (`_answer` asks again, after its defer)
+            return
+        if not self.chosen:
+            await _tell(interaction, "Tick at least one character, or press Back.")
+            return
+        await self.card._answer(interaction, knowers=list(self.chosen))
+        self.stop()  # (after: a refused Save leaves the picker usable, with Back)
+
+    async def _back(self, interaction: discord.Interaction) -> None:
+        if await self.card._dm(interaction) is None:
+            return
+        self.stop()
+        await interaction.response.edit_message(
+            content=self.card.text(), view=self.card, allowed_mentions=NO_PINGS
+        )
 
 
 class BulkConfirm(_Menu):

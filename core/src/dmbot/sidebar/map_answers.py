@@ -12,7 +12,9 @@ from the table's maps and the places shown to the players only, whoever asked it
 map's pins, scale and distances never reach a player; a DM's private question uses every map
 DMbot may use, and carries the Maps page's link. The one exception (#4676): the DM's own table
 question that the table's maps can't answer is answered to the DM privately (`one_for_dm`), and
-the table hears only that it was sent, whether or not a hidden map has the answer."""
+the table hears only that it was sent, whether or not a hidden map has the answer. So does the
+DM's table question naming a kept place the players haven't been shown (#4692), even when the
+table's maps hold the others; a player's goes the usual way, with no hint."""
 
 from __future__ import annotations
 
@@ -22,13 +24,13 @@ from typing import Any
 
 from dmbot.maps import measure_phrase
 from dmbot.maps import measure_words as words
-from dmbot.sidebar.answer import Answer
+from dmbot.sidebar.answer import ONE_FOR_DM, Answer
 
 log = logging.getLogger(__name__)
 
 PROMPT_VERSION = "map-measure-1"  # no prompt: the words are code's (`maps/measure_words.py`)
 
-Measure = Callable[[Any, measure_phrase.Asked, bool], Awaitable[str | None]]
+Measure = Callable[[Any, measure_phrase.Asked, bool], Awaitable[str | words.NotShown | None]]
 
 
 def _restated(asked: measure_phrase.Asked) -> str:
@@ -65,13 +67,23 @@ class MapMeasuring:
             text = None
             if refused is None:
                 try:
-                    text = await self._measure(campaign, asked, not table)
-                    if (
-                        table
-                        and text is not None
-                        and not words.measured(text)
-                        and asker_id in getattr(campaign, "dm_user_ids", ())
-                    ):
+                    got = await self._measure(campaign, asked, not table)
+                    is_dm = asker_id in getattr(campaign, "dm_user_ids", ())
+                    if isinstance(got, words.NotShown):
+                        # (#4692: a place the players haven't been shown. A player's question goes
+                        # the usual way, never hinting at it; the DM's goes privately, re-asked
+                        # with every map, and the table hears only "Sent to the DM privately".)
+                        if table and is_dm:
+                            # (the text is only a fallback, should the table's DM list and the
+                            # campaign's ever differ: the table's own words, no hint at a place)
+                            return Answer(
+                                text=ONE_FOR_DM, in_game=False, question=_restated(asked),
+                                model="", prompt_version=PROMPT_VERSION, one_for_dm=True,
+                                parts=(ONE_FOR_DM,),
+                            )  # fmt: skip
+                        got = None
+                    text = got
+                    if table and text is not None and not words.measured(text) and is_dm:
                         # (#4676, Supervisor's ruling on #4691: the DM asked at the table and the
                         # table's maps can't answer. Always the DM's alone, whatever the DM's maps
                         # hold: the sidebar re-asks privately with every map DMbot may use (the

@@ -107,6 +107,34 @@ LINK_KINDS = (IN, NEXT_TO, ROUTE_TO, APART)
 LINKS_MAX = 120
 LINK_WORD_MAX = 40
 
+# What a map shows outright about a place (#4259, MapBot slice 8a; design §5.2, §7.2): only from a
+# legend, a labelled border, a colour key or a terrain symbol, never a guess from a banner or how a
+# town looks. The words are the layers' own lists (`memory/map_facts.py`); the store checks them
+# again, and anything off them writes nothing.
+SHOW_FROM = ("legend", "border", "colour_key", "symbol")
+SHOW_LAYERS = ("terrain", "climate", "control", "culture", "population")
+SHOWS_MAX = 120
+
+
+def _show_words() -> str:
+    from dmbot.memory import map_facts as mf  # (pure word lists; images stays free of the store)
+
+    lineages = ", ".join(mf.VALUES[mf.CULTURE])
+    return (
+        '- "shows": what the map shows OUTRIGHT about a labelled place, only from a legend, a '
+        'labelled border, a colour key or a terrain symbol ("from": legend, border, colour_key '
+        "or symbol). Never work anything out from a banner, a flag near a town, a town's look or "
+        'its name. "layer" and "value": terrain (one of '
+        + ", ".join(mf.VALUES[mf.TERRAIN])
+        + "), climate (one of "
+        + ", ".join(mf.VALUES[mf.CLIMATE])
+        + "), control (the ruling realm's or group's name exactly as the map writes it), "
+        "culture or population (one of "
+        + lineages
+        + "). Nothing when unsure: an empty list is a good answer."
+    )
+
+
 CLOSE_MAP_SYSTEM = "\n".join(
     [
         "You read one map that the Dungeon Master of a Dungeons & Dragons game shared. Write down "
@@ -142,6 +170,7 @@ CLOSE_MAP_SYSTEM = "\n".join(
         '= 6 miles"); "none" and zeros otherwise.',
         '- "north": the angle of north on the picture in degrees (0 = up, 90 = right) only when a '
         "compass rose or north arrow is drawn; -1 when there is none.",
+        _show_words(),
     ]
 )
 
@@ -222,8 +251,22 @@ CLOSE_MAP_SCHEMA: dict[str, Any] = {
             "additionalProperties": False,
         },
         "north": {"type": "number"},
+        "shows": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "place": {"type": "string"},
+                    "layer": {"type": "string", "enum": list(SHOW_LAYERS)},
+                    "value": {"type": "string"},
+                    "from": {"type": "string", "enum": list(SHOW_FROM)},
+                },
+                "required": ["place", "layer", "value", "from"],
+                "additionalProperties": False,
+            },
+        },
     },
-    "required": ["level", "places", "links", "layout", "scale", "grid", "north"],
+    "required": ["level", "places", "links", "layout", "scale", "grid", "north", "shows"],
     "additionalProperties": False,
 }
 
@@ -303,6 +346,17 @@ class MapGrid:
 
 
 @dataclass(frozen=True, slots=True)
+class Shown:
+    """One thing a map shows outright about a labelled place (#4259): its name as written, the
+    layer, the value as written, and where on the map it was shown (`SHOW_FROM`)."""
+
+    place: str
+    layer: str
+    value: str
+    shown_by: str
+
+
+@dataclass(frozen=True, slots=True)
 class Read:
     """What was made of one image."""
 
@@ -316,6 +370,7 @@ class Read:
     scale: MapScale | None = None  # the close read: a drawn scale bar (#4670)
     grid: MapGrid | None = None  # the close read: a drawn grid
     north: float | None = None  # the close read: north's angle from a drawn compass
+    shows: tuple[Shown, ...] = ()  # the close read: what the map shows outright (#4259)
 
 
 class Vision(Protocol):
@@ -497,7 +552,32 @@ def parse_close_map(raw: str) -> Read | None:
     return Read(
         MAP, "", "", tuple(places), layout, level, tuple(links),
         _scale(data.get("scale")), _grid(data.get("grid")), _north(data.get("north")),
+        _shows(data.get("shows"), named),
     )  # fmt: skip
+
+
+def _shows(items: object, named: set[str]) -> tuple[Shown, ...]:
+    """What the map shows outright (#4259): only a labelled place's, only from a legend, border,
+    colour key or symbol, only a layer on the list; the value is checked against the layer's own
+    words by the store. Anything else is dropped (not sure means nothing)."""
+    out: list[Shown] = []
+    for item in items if isinstance(items, list) else []:
+        if not isinstance(item, dict):
+            continue
+        place = clean(item.get("place"), PLACE_NAME_MAX)
+        value = clean(item.get("value"), PLACE_NAME_MAX)
+        if (
+            not place
+            or not value
+            or place.casefold() not in named
+            or item.get("layer") not in SHOW_LAYERS
+            or item.get("from") not in SHOW_FROM
+        ):
+            continue
+        out.append(Shown(place, str(item["layer"]), value, str(item["from"])))
+        if len(out) >= SHOWS_MAX:
+            break
+    return tuple(out)
 
 
 def _fraction(value: object) -> float | None:

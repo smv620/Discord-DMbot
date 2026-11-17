@@ -107,6 +107,28 @@ class _ChannelSelect(discord.ui.ChannelSelect[Any]):
         await self._handler(interaction)
 
 
+async def showing_menu(origin: discord.Interaction, menu: discord.ui.View) -> bool:
+    """Whether the message `origin` answered still carries this menu's own buttons (#4521). A
+    message that now holds a newer screen, or none, has nothing of this menu to time out. A menu
+    with no buttons of its own counts as showing it, so its timeout says so as before. A message
+    that can't be read raises (`discord.HTTPException`); `_Menu.on_timeout` lets that mean "no
+    edit", right when the message is gone, since the edit would fail too. Only top-level button
+    rows are read (no menu uses layout containers). A newer screen can still land between this
+    read and the edit; the window is a moment, not the ten minutes it was.
+    """
+    ours = {cid for i in menu.children if (cid := getattr(i, "custom_id", None)) is not None}
+    if not ours:
+        return True
+    message = await origin.original_response()
+    shown = {
+        child.custom_id
+        for row in message.components
+        for child in getattr(row, "children", [])
+        if getattr(child, "custom_id", None) is not None
+    }
+    return bool(ours & shown)
+
+
 class _Menu(discord.ui.View):
     """A private menu that says so when it times out, instead of failing silently."""
 
@@ -121,7 +143,11 @@ class _Menu(discord.ui.View):
     async def on_timeout(self) -> None:
         if self.origin is not None:
             with contextlib.suppress(discord.HTTPException):
-                await self.origin.edit_original_response(content=TIMED_OUT, view=None)
+                # Only while this menu is still what the message shows (#4521): a form it opened
+                # may have been sent, and a newer screen taken the message, which discord.py never
+                # tells this view about. Blanking that screen ten minutes later is the bug.
+                if await showing_menu(self.origin, self):
+                    await self.origin.edit_original_response(content=TIMED_OUT, view=None)
 
     async def on_error(
         self, interaction: discord.Interaction, error: Exception, item: discord.ui.Item[Any]

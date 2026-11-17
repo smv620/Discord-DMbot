@@ -437,6 +437,9 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       {THREADS_LIVE && data.canEdit && api.storyThreads !== undefined && (
         <LazyPanel load={() => import("./StoryThreads")} what="the story threads DMbot found" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />
       )}
+      {THREADS_LIVE && data.canEdit && api.threadProgress !== undefined && (
+        <LazyPanel load={() => import("./ThreadProgress")} what="the progress DMbot heard on your story threads" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />
+      )}
       {MET_LIST_LIVE && data.canEdit && api.metList !== undefined && (
         <LazyPanel load={() => import("./MetList")} what="who your party met" props={{ api, campaignRef: ref, onChanged: () => void load(pageNow.current, true) }} />
       )}
