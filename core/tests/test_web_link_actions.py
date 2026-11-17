@@ -1336,10 +1336,26 @@ class TheEdits(Editing):
             )
         self.assertEqual((await self.waiting_now())["claims"], [])
 
+    async def test_a_confirmation_for_another_campaign_or_server_does_not_count(self) -> None:
+        """The import confirmation is read for this campaign and this server only."""
+        await self.claim()
+        await self.stop(7)
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "INSERT INTO import_consents (guild_id, campaign_id, id, import_id, user_id,"
+                " basis, confirmed_by, confirmed_at, terms_version)"
+                " VALUES (%s, %s, %s, 'imp', 7, 'uploader_confirmed', 1, 0, 1)",
+                (self.g, self.two.id, "e" * 32),
+            )
+        self.assertEqual((await self.waiting_now())["claims"], [])
+
     async def test_a_speaker_without_discord_never_blocks_a_claim(self) -> None:
         """A negative id is never in `consent`: the missing row is not a stop for them."""
         await self.claim("Mira Voss", "Far Hall", speaker=-3)
         await self.stop(-3)  # (`claim` agrees for its speaker: there is no consent row to find)
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM consent WHERE user_id = -3")
+            self.assertEqual((await cur.fetchone())["n"], 0)
         self.assertEqual((await self.waiting_now())["counts"]["claims"], 1)
 
     async def test_the_website_counts_what_the_bot_lists_for_who_is_recorded_now(self) -> None:
