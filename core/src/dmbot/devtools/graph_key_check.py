@@ -131,6 +131,9 @@ class Report:
     extra_ties: int = 0
     violations: list[str] = field(default_factory=list)
     inferred_confirmed: list[str] = field(default_factory=list)
+    # `must_not_ties` rows kept as facts (#4636 part 3): a near-miss a list was over-applied to,
+    # "Kelvin's Cairn in Ten-Towns". Offered (waiting) is fine; kept is a false tie.
+    false_ties: list[str] = field(default_factory=list)
     events_in_backup: int = 0
     events_expected: int = 0
     players_found: int = 0  # the key's player characters that are entries with that role (#3553)
@@ -155,6 +158,10 @@ class Report:
     # and missed by kind ("found objective"), on the wrong thread, and extra. Branches: found and
     # missed (a hint's miss isn't held against the reader), each a `branch_of` to its quest.
     thread_parts: Counter[str] = field(default_factory=Counter)
+    # A thread's clues (#4624, quests slice 6b): found on the backup thread its key thread matched,
+    # on the wrong thread, missed (must-find only), good finds missed, extra (a clue tied to a
+    # matched thread that no key row is), false (a `must_not_clues` row: any tie to that thread)
+    clues: Counter[str] = field(default_factory=Counter)
     # Progress a session makes on a thread the campaign had (#4522 quests 5b/5c), read off the
     # matched backup thread: found, missed (must-find only), good finds missed, and false (a
     # `must_not_progress` row that holds)
@@ -480,6 +487,7 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
     # makes it a placeholder, so only another connection makes it a real entry
     others = [r for r in graph.relations if str(r["predicate"]) != "plays"]
     linked = {str(r["subject_id"]) for r in others} | {str(r["object_id"]) for r in others}
+    tied_clues = {str(r["subject_id"]) for r in graph.relations if r["predicate"] == "clue_to"}
     for i, e in graph.entities.items():
         if i in matched_ids:
             continue
@@ -491,6 +499,8 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
             continue
         if str(e["type"]) in THREAD_TYPES:
             continue  # (a story thread is scored on its own line, #4453, never as an extra name)
+        if i in tied_clues:
+            continue  # (a clue tied to a thread is scored on the Clues line, #4624 6b)
         report.extra_entries[_kind_for(str(e["type"]))] += 1
     for name in key.get("must_not_names", ()):
         # (a must-not name is still found in a description too, as before; only one that is a
@@ -498,6 +508,18 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
         right_as_description = any(_plain(name) in {_plain(x) for x in names[s]} for s in strict)
         if graph.named([name]) or (not right_as_description and graph.described([name])):
             report.violations.append(name)
+    # A must-not-make row (#4636 part 3): every row, whichever document (a near-miss is false in
+    # either); a kept one is counted here only, never again as an extra tie
+    for t in key.get("must_not_ties", []):
+        if t["a"] not in names or t["b"] not in names:
+            continue
+        a, b = lookup(t["a"]), lookup(t["b"])
+        if not a or not b:
+            continue
+        status, _why, used_here = _tie_status(t, graph, a, b, kinds)
+        if status == FOUND:
+            report.false_ties.append(str(t["id"]))
+            used_relations |= used_here
     for r in graph.relations:
         if (
             str(r["subject_id"]) in matched_ids
@@ -720,6 +742,7 @@ def _score_threads(
                 report.threads["false"] += 1
                 break
     _score_thread_parts(report, graph, key, matched)
+    _score_clues(report, graph, key, matched)
     _score_progress(report, graph, key, every)
 
 
@@ -773,6 +796,53 @@ def _score_thread_parts(
         report.thread_parts["extra"] += sum(
             1 for r in on.get(thread, []) if str(r["id"]) not in used
         )
+
+
+def _score_clues(
+    report: Report, graph: Graph, key: Mapping[str, Any], matched: Mapping[str, str]
+) -> None:
+    """The key's `clues` (#4624, quests 6b; design §7, §9.3): a clue tied with `clue_to` to the
+    backup thread its key thread matched, whose name holds one of the row's `words` (casefold), is
+    found; tied only to another thread, it is "wrong thread". Clues tied to a matched thread that no
+    row is are extra. A `must_not_clues` row names a thread that must have no clue tied at all."""
+    if not key.get("clues") and not key.get("must_not_clues"):
+        return
+    ties = [
+        (str(r["subject_id"]), str(r["object_id"]))
+        for r in graph.relations
+        if r.get("predicate") == "clue_to"
+    ]
+
+    def named(clue: str, words: Sequence[str]) -> bool:
+        # (from a word's start, so "Wit" is never "with" nor "whisper" past "whispers")
+        said = str(graph.entities.get(clue, {}).get("name", ""))
+        return any(re.search(rf"\b{re.escape(str(w))}", said, re.IGNORECASE) for w in words)
+
+    used: set[tuple[str, str]] = set()
+    # (must-find rows first, and each tie answers one row only: one clue is never two finds)
+    rows = sorted(key.get("clues", []), key=lambda c: not c.get("must_find", True))
+    for c in rows:
+        thread = matched.get(str(c.get("thread", "")), "")
+        words = [str(w) for w in c.get("words", [])]
+        here = [
+            t for t in ties if thread and t[1] == thread and t not in used and named(t[0], words)
+        ]
+        if here:
+            report.clues["found"] += 1
+            used.add(here[0])
+        elif any(named(clue, words) for clue, th in ties if th != thread):
+            report.clues["wrong thread"] += 1
+        elif c.get("must_find", True):
+            report.clues["missed"] += 1
+        else:
+            report.clues["good finds missed"] += 1
+    named_threads = {str(c.get("thread", "")) for c in key.get("clues", [])}
+    keyed = {matched[t] for t in named_threads if t in matched}
+    report.clues["extra"] += sum(1 for t in ties if t[1] in keyed and t not in used)
+    for rule in key.get("must_not_clues", []):
+        thread = matched.get(str(rule.get("thread", "")), "")
+        if thread and any(t[1] == thread for t in ties):
+            report.clues["false"] += 1
 
 
 def _progress_holds(
@@ -867,11 +937,13 @@ def summarize(report: Report) -> dict[str, Any]:
         "extra_ties": report.extra_ties,
         "violations": len(report.violations),
         "inferred_confirmed": len(report.inferred_confirmed),
+        "false_ties": len(report.false_ties),
         "event_entries": {"expected": report.events_expected, "in_backup": report.events_in_backup},
         "player_characters": {"found": report.players_found, "expected": report.players_expected},
         "map_facts": {layer: dict(c) for layer, c in sorted(report.map_facts.items())},
         "threads": dict(report.threads),
         **({"thread_parts": dict(report.thread_parts)} if report.thread_parts else {}),
+        **({"clues": dict(report.clues)} if report.clues else {}),
         **({"progress": dict(report.progress)} if report.progress else {}),
         **({"languages": dict(report.languages)} if report.languages else {}),
         **({"route_lengths": dict(report.route_lengths)} if report.route_lengths else {}),
@@ -936,6 +1008,12 @@ def render(report: Report, counts_only: bool = False) -> str:
             f"extra {c['extra']}; branches found {c['branches found']}, "
             f"missed {c['branches missed']}"
         )
+    if report.clues:  # (#4624: a thread's clues, quests 6b)
+        c = report.clues
+        lines.append(
+            f"Clues: found {c['found']}, missed {c['missed']}, wrong thread {c['wrong thread']}, "
+            f"extra {c['extra']}, false {c['false']} (good finds missed {c['good finds missed']})"
+        )
     if report.progress:  # (#4522: what the session moved on the lore's threads, quests 5c)
         c = report.progress
         lines.append(
@@ -952,6 +1030,9 @@ def render(report: Report, counts_only: bool = False) -> str:
         "Inferred ties already confirmed as facts (they should be offered; a yes from the DM "
         f"is fine): {len(report.inferred_confirmed)}"
     )
+    lines.append(f"Must-not-make ties kept as facts: {len(report.false_ties)}")
+    if report.false_ties and not counts_only:
+        lines.append("  " + ", ".join(report.false_ties))
     lines.append("")
     for label, status in (
         ("Must-find ties missing", MISSING),

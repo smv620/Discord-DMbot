@@ -120,6 +120,7 @@ def _no_words(s: Suggestion, starts: tuple[int, ...], speakers: tuple[int, ...])
         quote="",
         reads=tuple(replace(p, quote="") for p in s.reads),
         branches=tuple(replace(b, quote="") for b in s.branches),
+        clues=(),  # (a session's clues are quests slice 6c's: who found one, with consent, #4624)
         line_starts=starts,
         speaker_ids=speakers,
     )
@@ -140,6 +141,8 @@ def check_window(
     them: its speaker is that line's (good enough for evidence; the DM sees the line itself)."""
     flat = "\n".join(s.text for s in window)
     found, counts = thread_read.check(said, flat, entries, names, have=have)
+    # (a session's clues wait for slice 6c, #4624: their drops would only mislead this report)
+    counts = {k: n for k, n in counts.items() if not k.startswith("clue_")}
     by_number = {s.number: s for s in window}
     out: list[Suggestion] = []
     for s in found:
@@ -196,11 +199,13 @@ async def run(
     max_tokens: int,
     count_call: Callable[[], Awaitable[None]] | None = None,
     progress: Sequence[session_progress.KnownThread] = (),
+    finders: session_progress.Finders | None = None,
 ) -> tuple[list[Suggestion], Report]:
     """Read the session's readable lines (`extractor.readable`, recap left out by the caller) for
     new threads, window by window. With `progress` (the open threads and their standing parts,
     #4522 5b), the same calls also read what the talk changed on them (`session_progress`), kept
-    in `Report.progress`. Never raises: out of funds is reported as a stop."""
+    in `Report.progress`. `finders` (#4624 6c): who may have found a clue, for a "clue found"
+    line. Never raises: out of funds is reported as a stop."""
     from dmbot.ai import AIOutOfFunds
 
     report = Report()
@@ -257,8 +262,9 @@ async def run(
         lines_moved: list[tuple[str, thread_progress.Change, tuple[int, ...], tuple[int, ...]]] = []
         if progress and raw:
             lines_moved, why = session_progress.check(
-                session_progress.parse(raw[0]), window, progress, where=where, seen=moved
-            )
+                session_progress.parse(raw[0]), window, progress, where=where, seen=moved,
+                finders=finders,
+            )  # fmt: skip
             for k, v in why.items():
                 report.dropped[f"progress_{k}"] = report.dropped.get(f"progress_{k}", 0) + v
         agreed = set(await consenting())  # (and after the answer: who stopped meanwhile drops it)

@@ -1384,8 +1384,8 @@ export interface TraitOffer {
   /** The character's entry id, and who they are. */
   entity: string;
   who: string;
-  /** "species" is the lineage; "class" adds to their classes. */
-  kind: "species" | "class";
+  /** "species" is the lineage; "class" adds to their classes; "language" adds a language they speak (#4271). */
+  kind: "species" | "class" | "language";
   name: string;
   /** The trait's key, with `entity` and `kind` it names the question. */
   key: string;
@@ -1870,7 +1870,7 @@ export interface WebLink {
   knowWord?: KnowWord;
   /** Who may know a held connection, for the DM's full view (#2935 D4, #3214): only the DM, some characters, or
    * everyone at the table. Absent from an older API. */
-  who?: "dm" | "some" | "all";
+  who?: "dm" | "some" | "all" | "common";
   /** The characters that know it, when `who` is "some". */
   knownBy?: { id: string; name: string }[];
   direction: "a-b" | "b-a" | "both";
@@ -2022,7 +2022,8 @@ export type WebLinkChange =
   | { action: "knows-how"; id: string; how: "met" | "aware" | "" }
   // "everyone" is the table's answer; the read side calls the same answer "all" (WebLink.who). The bot's door takes
   // these names with #3202, so this change is not sent while WHO_KNOWS_LIVE is off.
-  | { action: "who"; id: string; who: "dm" | "some" | "everyone"; characters?: string[] }
+  // "common" is 🌍 Common knowledge (#4559): no characters, and the bot shows the names to the players first.
+  | { action: "who"; id: string; who: "dm" | "some" | "everyone" | "common"; characters?: string[] }
   | { action: "remove"; id: string; confirm: true }
   // Takes back an earlier edit by its `batch` (core #4156); `id` is any link of the pair, the route's path wants one.
   | { action: "undo"; id: string; batch: number };
@@ -2707,6 +2708,7 @@ export type ApiErrorKind =
   | "peek-off" // the DM turned peeking off, so the full view is closed (#2405)
   | "bad-target" // a merge, secret or remove the rules refuse for this name (#2379)
   | "names-not-shown" // showing a connection whose name is still held back from the players (#3426)
+  | "cannot-show" // a 🌍 Common knowledge answer for what the players are not shown yet (#4559)
   | "name-unnamed" // ... or whose end is a person the story never named (#3426)
   | "still-waiting" // a queued name change the bot hasn't answered yet (#2294)
   | "gone" // a waiting connection that is not waiting any more (#2635)
@@ -3602,6 +3604,7 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   account_in_use: "account-in-use",
   bad_target: "bad-target",
   names_not_shown: "names-not-shown",
+  cannot_show: "cannot-show",
   name_unnamed: "name-unnamed",
   // The web's views: a visit the API doesn't know is no more than a failed try, so the page says
   // its generic line rather than a reason (#2405).

@@ -1966,7 +1966,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             questions_board.LookAlikesButton,
             questions_board.QuestionsButton,
             FamilyTiesButton,
-            TraitQuestionsButton,  # 🧬 Lineage and class (#3926)
+            TraitQuestionsButton,  # 🧬 Character details (#3926)
             WorldNotesButton,  # 🌍 World notes (#4285)
             ThreadQuestionsButton,  # 📜 Story threads (#4453)
             SecretQuestionsButton,  # 🤫 Known or secret? (#4524)
@@ -9477,7 +9477,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         from dmbot.memory import session_threads
         from dmbot.memory.thread_progress import ThreadProgressStore
         from dmbot.memory.thread_suggestions import ThreadSuggestionStore
-        from dmbot.ui.name_background import progress_inputs, thread_inputs
+        from dmbot.ui.name_background import clue_finders, progress_inputs, thread_inputs
         from dmbot.ui.thread_questions import session_label
 
         memory, transcripts, ai = self.memory, self.transcripts, self.extractor_ai
@@ -9514,6 +9514,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     return
                 have, entries, names, known = await thread_inputs(memory, gid, cid)
                 moving = await progress_inputs(memory, gid, cid)  # (5b: progress on these)
+                finders = await clue_finders(memory, gid, cid) if moving else None  # (6c)
 
                 async def count_call() -> None:
                     await transcripts.record_extraction(
@@ -9526,6 +9527,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     ai, lines, dm_ids=dm_ids, entries=entries, names=names, have=have,
                     known=known, consenting=consenting, max_calls=allowed,
                     max_tokens=OUTPUT_FLOOR, count_call=count_call, progress=moving,
+                    finders=finders,
                 )  # fmt: skip
                 store = ThreadSuggestionStore(memory._db)
                 # (the consent re-check just before storing: who stopped meanwhile is never kept)

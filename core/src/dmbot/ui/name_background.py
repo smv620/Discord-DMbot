@@ -19,7 +19,7 @@ from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from difflib import SequenceMatcher
 from functools import partial
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 import discord
 
@@ -123,6 +123,9 @@ from dmbot.ui.who_knows import player_characters
 from dmbot.waiting import WaitingMessage, message_is_gone
 from dmbot.walk import Walk
 from dmbot.word_end import in_the_middle
+
+if TYPE_CHECKING:
+    from dmbot.memory import session_progress
 
 log = logging.getLogger(__name__)
 
@@ -737,7 +740,7 @@ class BackgroundRead:
     notice: Any = None
     questions_left: int = 0
     # A lineage or class the lore gives a character the campaign has already (#3926): how many new
-    # questions it left, asked only in the DM's private chat ("🧬 Lineage and class").
+    # questions it left, asked only in the DM's private chat ("🧬 Character details").
     trait_questions: int = 0
     # A lore language a player character's sheet lacks (#4229 slice 1c, Supervisor's ruling): one
     # plain line on the note naming each, never a row or a question (the sheet is the truth).
@@ -1779,15 +1782,55 @@ async def progress_inputs(memory: Any, guild_id: int, campaign_id: str) -> list[
             standing.setdefault(p.thread_id, []).append(
                 session_progress.KnownPart(p.id, p.kind, p.words, p.state)
             )
+    # (each thread's tied clues, the DM's view, so a "clue found" can name one: #4624 6c; a thread
+    # with none costs one short read)
+    clues = {
+        t.thread.id: tuple(
+            session_progress.KnownClue(c.clue_id, c.name)
+            for c in await memory.thread_clues(guild_id, campaign_id, t.thread.id, Viewer.the_dm())
+        )
+        for t in live
+    }
     return [
         session_progress.KnownThread(
             t.thread.id,
             t.thread.name,
             tuple(standing.get(t.thread.id, ())),
             t.state.condition if t.state is not None else "",
+            clues.get(t.thread.id, ()),
         )
         for t in live
     ]
+
+
+async def clue_finders(memory: Any, guild_id: int, campaign_id: str) -> session_progress.Finders:
+    """Who may have found a clue in a session (#4624 6c; `session_progress.Finders`): the
+    campaign's player characters, by each of their kept names (a name two share is left out), and
+    by the player who plays each. Only player characters: an NPC holding a clue has not found it
+    (Supervisor's ruling 2 on #4624)."""
+    from dmbot.memory import session_progress
+    from dmbot.memory.models import PLAYER_CHARACTER, name_key
+
+    pcs = [
+        e
+        for e in await memory.entities(guild_id, campaign_id, statuses=(CONFIRMED,))
+        if e.role == PLAYER_CHARACTER and not e.party
+    ]
+    ids = {e.id for e in pcs}
+    by_name: dict[str, set[str]] = {}
+    for e in pcs:
+        by_name.setdefault(name_key(e.name), set()).add(e.id)
+    for alias in await memory.aliases(guild_id, campaign_id):
+        if alias.entity_id in ids and alias.status == CONFIRMED:
+            by_name.setdefault(name_key(alias.text), set()).add(alias.entity_id)
+    by_player: dict[int, set[str]] = {}
+    for e in pcs:
+        if e.played_by is not None:
+            by_player.setdefault(int(e.played_by), set()).add(e.id)
+    return session_progress.Finders(
+        {k: next(iter(v)) for k, v in by_name.items() if len(v) == 1},
+        {k: next(iter(v)) for k, v in by_player.items() if len(v) == 1},
+    )
 
 
 async def store_thread_suggestions(
@@ -3033,6 +3076,7 @@ async def queue_links(
                 or known_by,
                 world,
                 inferred=c.inferred,  # (DMbot's inference waits for the DM's own press, #2959)
+                inferred_sure=c.inferred_sure,  # (a region's listed town, #4636 part 3)
                 # (who DMbot guesses knows it, written once it is kept: #2959 slice 3)
                 npc_guesses=dict(
                     (npc_guesses or {}).get((name_key(c.a), c.how, name_key(c.b)), {})

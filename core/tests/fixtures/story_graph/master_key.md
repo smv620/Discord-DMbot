@@ -366,6 +366,13 @@ How far a road is, as the session says it (#4255): a property of the road, never
 | Targos | Bryn Shander | 1 hour | 283 | 'It's only 1 hour to Bryn Shander' on the party's journey |
 | Targos | Easthaven | five hours | 192 | 'take the dogsled five hours to Easthaven'; read only if that journey is walked |
 
+## Must not make (ties)
+
+A tie the reader must never keep as a fact (#4636 part 3): the near-misses of a region's listed towns. Offered as a question is fine; kept is counted as a false tie.
+
+- nl01: Kelvin's Cairn in Ten-Towns: a mountain beside the towns, not one of them
+- nl02: Maer Dualdon in Ten-Towns: the lake some of the towns stand on, not one of them
+
 ## Must not find
 
 - a kind of creature is not an entry (#3373 rule, Supervisor 2026-11-04): no entry or tie for the white roc, ice kobolds, grell, electric eel or owlbears; one particular creature is (the mind flayer whose skull held the Psi crystal)
@@ -425,6 +432,20 @@ Each part is found when the thread it belongs to has a part of that kind whose w
 | L-lq06 | reward | 50 gold | 102 | offering 50 gold pieces |
 | L-lq06 | help | map | 102 | the route map: help to keep (§9.3) |
 | L-lq06 | help | sled, dogs | 102 | two dog sleds with eight dogs from Jebidiah; the lore doesn't say lent, so to keep (§5b) |
+
+### Clues (quests slice 6b, #4624; design §7, §9.3)
+
+A clue is found when a clue tied to the thread (`clue_to`, kept with the thread) has a name holding one of the words. Tied only to another thread, it is "wrong thread"; a clue tied to a listed thread that no row is, is extra. Who has a clue is not scored yet.
+
+| Thread | Words to find | Must find | Line | Note |
+|---|---|---|---|---|
+| L-lq01 | tome | yes | 27 | the warning in the locked azure tome |
+| L-lq01 | coming, Wit | no | 27 | Wit's warning that they are coming |
+| L-lq03 | journal | yes | 36 | the ancestral journal |
+| L-lq03 | campsite, camp | no | 36 | the blood-stained campsite |
+| L-lq03 | whisper | no | 36 | the whispers Nyssara hears |
+
+**Must have no clue tied:** L-lq04 (Hlin's contract has none in this passage); L-lq06 (the route map and the sleds are its help, never its clues).
 
 ### Progress the session makes on the lore's threads (quests 5c, #4522; design §9.5)
 

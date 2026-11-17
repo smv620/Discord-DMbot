@@ -76,6 +76,7 @@ from dmbot.memory import same_person as same_person_mod
 from dmbot.memory import secret_questions as secret_questions_mod
 from dmbot.memory import short_names as short_names_mod
 from dmbot.memory import tags as tags_mod
+from dmbot.memory import thread_clues as clues_mod
 from dmbot.memory import thread_progress as tp_mod
 from dmbot.memory import threads as threads_mod
 from dmbot.memory import unnamed as unnamed_mod
@@ -130,6 +131,7 @@ from dmbot.memory.models import (
     AFFECTED,
     ALIAS_KINDS,
     BACKGROUND_SOURCE,
+    CLAIM_CONFIRMED,
     CLAIM_DROPPED,
     CLAIM_PROPOSED,
     CLASS,
@@ -2230,6 +2232,7 @@ class MemoryStore:
             )
             if suggestion_id:
                 reads, branches = await thread_suggestions.lines_in(w, suggestion_id)
+                clues = await thread_suggestions.clues_in(w, suggestion_id)  # (#4624 6b)
                 if not await thread_suggestions.mark_kept(w, suggestion_id, w.batch):
                     raise MemoryRuleError(thread_suggestions.GONE)
                 off = set(leave_off)
@@ -2247,6 +2250,10 @@ class MemoryStore:
                         w, str(made["id"]), threads_mod.BRANCH_OF, str(row["id"]),
                         confidence=1.0, status=CONFIRMED,
                     )  # fmt: skip
+                # (#4624 6b: its clues, after its branches as on the card)
+                for i, clue in enumerate(clues, len(reads) + len(branches)):
+                    if i not in off:
+                        await self._keep_read_clue(w, onto, str(row["id"]), clue)
             return Written(_entity(row), w.batch)
 
     async def keep_thread_progress(
@@ -2325,6 +2332,8 @@ class MemoryStore:
                 await thread_parts.set_state_in_thread(
                     w, thread_id, str(change.part_id), change.state
                 )
+            elif change.kind == tp.CLUE:
+                return await self._keep_found_clue(w, onto, thread_id, change)
             else:
                 await states.set_condition(
                     w, onto, thread, change.state, from_session_at=line.session_at
@@ -2332,6 +2341,75 @@ class MemoryStore:
         except MemoryRuleError as exc:
             log.info("A progress line no longer fits (%s)", type(exc).__name__)
             return False
+        return True
+
+    async def _keep_found_clue(
+        self, w: Changes, onto: Ontology, thread_id: str, change: tp_mod.Change
+    ) -> bool:
+        """A session's "clue found" inside the progress keep's write (#4624, quests slice 6c; the
+        ruled plan and rulings 2 and 3): the clue is tied to the thread like the DM's own
+        (`_tie_clue_in`: the campaign's clue, by id or by name, else a new one hidden from the
+        players; one tied already stays as it is), and each finder learns it and is listed as
+        knowing it. Finders are the line's player characters still in the campaign (merged ones
+        followed); with none left the line no longer fits and nothing is written. A clue made
+        new that only some of the table found is theirs alone ("Only some people know this"),
+        switched on before anyone learns it; the campaign's own clue keeps the audience the DM
+        set, its finders only added (never a 🤫 question out of a plain Keep, #4524). False when
+        it no longer fits."""
+        finders: list[str] = []
+        for who in change.finder_ids:
+            live = await _followed(w, who)
+            row = await w.get(ENTITIES, live) if live is not None else None
+            if (
+                row is not None
+                and row["type"] == "character"
+                and row["status"] == CONFIRMED
+                and row["role"] == PLAYER_CHARACTER
+                and not row["party"]
+            ):
+                finders.append(str(row["id"]))
+        finders = list(dict.fromkeys(finders))
+        if not finders:
+            return False
+        made_new = False
+        if change.clue_id is not None:
+            clue_id = await _followed(w, change.clue_id) or ""
+            # (a clue the DM took off this thread since the read is never tied back by a plain
+            # Keep: "Not a clue to this" stands, and the line no longer fits)
+            if not clue_id or await _live_clue_tie(w, clue_id, thread_id) is None:
+                return False
+        else:
+            try:
+                fact, made_new = await self._tie_clue_in(w, onto, thread_id, new_name=change.words)
+                clue_id = fact.subject_id
+            except MemoryRuleError as exc:
+                if str(exc) != clues_mod.ALREADY_TIED:
+                    raise  # (a name that can't be a clue's: the line no longer fits)
+                # (the campaign's clue of that name, tied already: `_tie_clue_in`'s own lookup)
+                have = await w.select(
+                    ENTITIES,
+                    " AND type = 'clue' AND status = 'confirmed' AND lower(name) = lower(%s)",
+                    [clean_text(change.words)],
+                )
+                clue_id = str(have[0]["id"])
+        if made_new:
+            party = await w.select(
+                ENTITIES,
+                " AND type = 'character' AND status = 'confirmed' AND role = %s AND NOT party",
+                [PLAYER_CHARACTER],
+            )
+            if {str(r["id"]) for r in party} - set(finders):  # (only some of the table)
+                await w.update(ENTITIES, clue_id, {"audience_limited": True})
+        learned = 0
+        for character in finders:
+            try:
+                await knowers.learn(w, gate.ENTRY, clue_id, character)
+                await self.add_knower_in(w, clue_id, character, None)
+                learned += 1
+            except MemoryRuleError:
+                continue  # (the rules refused this one: the others still learn it)
+        if not learned:  # (can't happen for checked player characters; counted, never hidden)
+            log.info("A found clue was kept with no finder learning it")
         return True
 
     async def _new_thread_in(
@@ -2489,6 +2567,202 @@ class MemoryStore:
                 status=CONFIRMED, from_session_at=from_session_at,
             )  # fmt: skip
             return Written(fact, w.batch)
+
+    async def tie_clue(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        thread_id: str,
+        *,
+        clue_id: str = "",
+        new_name: str = "",
+        false_lead: bool = False,
+        source: str,
+    ) -> Written[tuple[Relation, bool]]:
+        """The DM ties a clue to a kept story thread (#4624, quests slice 6a; design §3, §7): a
+        clue entry they picked, or one by its name (the campaign's clue of that name, else a new
+        one), in ONE change with one Undo. "points to it" unless they say "false lead". The tie is
+        the DM's alone: always secret, never known by a player (`Changes._dm_only_check`). A new
+        clue is kept and known by nobody yet: the table finds it when a character comes to know it,
+        so it starts hidden from the players (a clue they are shown is one the whole table has).
+        Refused when it is tied already. Returns the tie, and whether the clue was made new (the DM
+        is told it is hidden, the ux-critic)."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            thread = await _entity_row(w, thread_id)
+            if thread["status"] != CONFIRMED or not onto.is_a(str(thread["type"]), "thread"):
+                raise MemoryRuleError(thread_parts.NOT_A_THREAD)
+            fact, made_new = await self._tie_clue_in(
+                w, onto, thread_id, clue_id=clue_id, new_name=new_name, false_lead=false_lead
+            )
+            return Written((fact, made_new), w.batch)
+
+    async def _tie_clue_in(
+        self,
+        w: Changes,
+        onto: Ontology,
+        thread_id: str,
+        *,
+        clue_id: str = "",
+        new_name: str = "",
+        false_lead: bool = False,
+    ) -> tuple[Relation, bool]:
+        """`tie_clue` inside the caller's write, for it and for a kept lore suggestion's clues
+        (#4624 6b): the DM's own act both times."""
+        # (every refusal before any insert: a keep that skips a clue must leave no stray entry)
+        onto.active_predicate(clues_mod.CLUE_TO)
+        name = clean_text(new_name) if new_name.strip() else ""
+        if name:
+            check_named(clues_mod.CLUE, name)
+            # (a clue the campaign has by that name is the one meant, never a twin)
+            have = await w.select(
+                ENTITIES,
+                " AND type = 'clue' AND status = 'confirmed' AND lower(name) = lower(%s)",
+                [name],
+            )
+            clue_id = str(have[0]["id"]) if have else ""
+        made_new = bool(name) and not clue_id
+        if made_new:
+            made = await w.insert(
+                ENTITIES,
+                {
+                    "id": new_id(), "type": clues_mod.CLUE, "name": name,
+                    "description": "", "status": CONFIRMED, "merged_into": None,
+                    "source": DM, "created_at": w.now, "played_by": None, "role": None,
+                    "needs_look": False, "unique_item": None, "hidden_from_players": True,
+                },
+            )  # fmt: skip
+            await w.insert(ALIASES, _new_alias(w, made["id"], name, "full", CONFIRMED, False, None))
+            clue_id = str(made["id"])
+        clue = await _entity_row(w, clue_id)
+        if clue["status"] != CONFIRMED or not onto.is_a(str(clue["type"]), clues_mod.CLUE):
+            raise MemoryRuleError(clues_mod.ONLY_CLUES)
+        if await _live_clue_tie(w, clue_id, thread_id):
+            raise MemoryRuleError(clues_mod.ALREADY_TIED)
+        word = clues_mod.FALSE_LEAD if false_lead else clues_mod.POINTS_TO
+        fact, _flags = await self.add_relation_in(
+            w, clue_id, clues_mod.CLUE_TO, thread_id, confidence=1.0, status=CONFIRMED,
+            detail=word, by_hand=True,
+        )  # fmt: skip
+        return fact, made_new
+
+    async def _keep_read_clue(
+        self, w: Changes, onto: Ontology, thread_id: str, clue: thread_read.ReadClue
+    ) -> None:
+        """One clue of a kept lore suggestion (#4624 6b; design §7, §10): tied to the thread like
+        the DM's own (`_tie_clue_in`: the campaign's clue of that name, else a new one hidden from
+        the players). The characters the text says have it learn it and are listed as knowing it,
+        and then only they may (ruling 3 on #4624: "Only some people know this" on); with nobody
+        named, nobody has found it yet. Only a clue made new is narrowed: the campaign's own clue
+        keeps its audience as the DM set it, its holders only added (never a 🤫 question out of a
+        plain Keep, #4524). A clue tied already is left as it is; a holder gone, no longer a
+        character or refused is skipped. Never fails the keep."""
+        try:
+            fact, made_new = await self._tie_clue_in(w, onto, thread_id, new_name=clue.words)
+        except MemoryRuleError:
+            return  # (tied already, or a name that can't be a clue's: the thread is still kept)
+        clue_id = fact.subject_id
+        holders: list[str] = []
+        for who in clue.who_ids:
+            live = await _followed(w, who)
+            row = await w.get(ENTITIES, live) if live is not None else None
+            if row is not None and row["type"] == "character" and row["status"] == CONFIRMED:
+                holders.append(str(row["id"]))
+        if not holders:
+            return
+        if made_new:
+            # (switched on first, while nobody at the table knows it: once a player character
+            # does, the public guard rightly holds any narrowing for the DM to answer, #4524)
+            await w.update(ENTITIES, clue_id, {"audience_limited": True})
+        for character in dict.fromkeys(holders):
+            try:
+                await knowers.learn(w, gate.ENTRY, clue_id, character)
+                await self.add_knower_in(w, clue_id, character, None)
+            except MemoryRuleError:
+                continue  # (refused before it wrote: the rest of the keep goes ahead)
+
+    async def set_clue_word(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        thread_id: str,
+        clue_id: str,
+        *,
+        false_lead: bool,
+        source: str,
+    ) -> Written[str]:
+        """The DM marks a tied clue a false lead, or says it points to it after all (#4624). One
+        change with one Undo; the tie stays secret. Returns the word now."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            tie = await _live_clue_tie(w, clue_id, thread_id)
+            if tie is None:
+                raise MemoryRuleError(clues_mod.NOT_TIED)
+            word = clues_mod.FALSE_LEAD if false_lead else clues_mod.POINTS_TO
+            await w.update(RELATIONS, str(tie["id"]), {"detail": word})
+            return Written(word, w.batch)
+
+    async def untie_clue(
+        self, guild_id: int, campaign_id: str, thread_id: str, clue_id: str, *, source: str
+    ) -> Written[None]:
+        """ "Not a clue to this" (#4624): the tie is taken off (turned down, logged); the clue entry
+        and who knows it stay. One change with one Undo."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        async with self._write(guild_id, campaign_id, source) as w:
+            tie = await _live_clue_tie(w, clue_id, thread_id)
+            if tie is None:
+                raise MemoryRuleError(clues_mod.NOT_TIED)
+            await w.update(RELATIONS, str(tie["id"]), {"status": "rejected"})
+            return Written(None, w.batch)
+
+    async def thread_clues(
+        self, guild_id: int, campaign_id: str, thread_id: str, viewer: gate.Viewer
+    ) -> list[clues_mod.ThreadClue]:
+        """A thread's clues, A to Z (#4624). The DM: every tied clue with its word and whether the
+        table has found it (one of the player characters knows it), for the count
+        (`clues_mod.found_text`). A player or the party: only the tied clues one of their
+        characters knows, through the gate, with no false-lead mark, no tie id and nothing for a
+        count (design §10)."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            ties = await scope.select(
+                RELATIONS,
+                " AND predicate = 'clue_to' AND status = 'confirmed' AND to_session_at IS NULL"
+                " AND object_id = %s",
+                [thread_id],
+            )
+            if not ties:  # (no read of who knows what: the 📋 screen and card open quickly)
+                return []
+            ids = sorted({str(r["subject_id"]) for r in ties})
+            rows = {
+                str(r["id"]): r
+                for r in await scope.select(
+                    ENTITIES, " AND id = ANY(%s) AND status = 'confirmed'", [ids]
+                )
+            }
+            # (found: known to ANY player character, ruling 2 on #4624; `the_party` is "every")
+            anyone = gate.Viewer(mode="any", party=True)
+            seen = await gate.visible_to(scope, anyone if viewer.dm else viewer)
+        out = []
+        listed: set[str] = set()
+        if not viewer.dm and not seen.knows(gate.ENTRY, thread_id):
+            return []  # (a thread the player can't see has no clues for them, §10.2)
+        for r in ties:
+            clue = rows.get(str(r["subject_id"]))
+            if clue is None or str(clue["id"]) in listed:  # (once each, whatever came before)
+                continue
+            listed.add(str(clue["id"]))
+            known = seen.knows(gate.ENTRY, str(clue["id"]))
+            if not viewer.dm and not known:
+                continue
+            false_lead = viewer.dm and clues_mod.word_of(r["detail"]) == clues_mod.FALSE_LEAD
+            tie_id = str(r["id"]) if viewer.dm else ""
+            name = str(clue["name"])
+            out.append(clues_mod.ThreadClue(str(clue["id"]), tie_id, name, false_lead, known))
+        return sorted(out, key=lambda c: (c.name.lower(), c.clue_id))
 
     async def thread_card(
         self, guild_id: int, campaign_id: str, thread_id: str
@@ -4826,7 +5100,9 @@ class MemoryStore:
         role: str | None = None,
     ) -> Written[Entity]:
         """The DM says a suggested name is real: what it is (and, for a character, its
-        role), confirmed with all its names, in one change (one undo, one reload)."""
+        role), confirmed with all its names, in one change (one undo, one reload). The DM's own
+        stated claims about it whose other end is kept are kept in that same change (#4636,
+        `ClaimStore.keep_dm_claims_in`)."""
         if source != DM:
             raise MemoryRuleError("Only the DM can confirm that.")
         asked = type
@@ -4872,6 +5148,11 @@ class MemoryStore:
             )
             row = await _entity_row(w, entity_id)
             await _sync_plays(w, entity_id)
+            # (#4636: the DM's own words about it, once its other end is kept too, in this same
+            # change, never asked as questions any more)
+            from dmbot.memory.claims import ClaimStore
+
+            await ClaimStore(self).keep_dm_claims_in(w, [entity_id])
             said = "" if scene is None else "group" if learned else "unknown"
             return Written(_entity(row), w.batch, split=said)
 
@@ -4958,6 +5239,10 @@ class MemoryStore:
                     " AND status = 'proposed' AND entity_id = ANY(%s)",
                     [ids],
                 )
+            # (#4636: the DM's own words about each, as `confirm_entity` keeps them)
+            from dmbot.memory.claims import ClaimStore
+
+            await ClaimStore(self).keep_dm_claims_in(w, [str(i) for i in ids])
             return Written(len(ids), w.batch, split_counts=(heard, not_told))
 
     async def known_keys(self, guild_id: int, campaign_id: str) -> set[str]:
@@ -5742,6 +6027,8 @@ class MemoryStore:
                     row["secret"]
                     and row["status"] == CONFIRMED
                     and row["predicate"] != threads_mod.LED_TO
+                    # (a clue's tie to a thread stays the DM's, whatever was said aloud: #4624)
+                    and row["predicate"] not in clues_mod.DM_ONLY_PREDICATES
                 ):
                     await w.update(RELATIONS, row["id"], {"secret": False})
                     shown += 1
@@ -7413,6 +7700,18 @@ class MemoryStore:
             # and may not close a loop (#1679).
             secret = True
             await _check_led_to_live(w, None, subject_id, object_id)
+        if pred.key == clues_mod.CLUE_TO:
+            # (#4624) whatever the path, the DM's alone: only their own tie (`tie_clue`, by hand;
+            # never a reader's claim kept), always secret, one of two words, one live tie per clue
+            # and thread whatever its word
+            if source != DM or not by_hand:
+                raise MemoryRuleError(ONLY_DM_SAYS)
+            if await _live_clue_tie(w, subject_id, object_id):
+                raise MemoryRuleError(clues_mod.ALREADY_TIED)
+            secret = True
+            if detail.strip() and detail.strip().lower() not in clues_mod.WORDS:
+                raise MemoryRuleError(clues_mod.NOT_A_CLUE_WORD)
+            detail = clues_mod.word_of(detail)
         if pred.key == threads_mod.BRANCH_OF:
             # (#4471) whatever the path, one bigger thread at most and never a loop. Not secret
             # (Supervisor's ruling): players see it as any connection, only when both threads are
@@ -8767,6 +9066,7 @@ class MemoryStore:
                 await secret_questions_mod.undo(w, batch)
                 await _recheck_led_to_after_undo(w, batch)
                 await _settle_kinds_after_undo(w, batch)
+                await _reopen_claims_after_undo(w, batch)
                 if after is not None:
                     await after(w)
                 return Written(None, w.batch)
@@ -10628,6 +10928,32 @@ async def _live_led_to(
     return [(r["subject_id"], r["object_id"]) for r in live if r["id"] != skip]
 
 
+async def _reopen_claims_after_undo(w: Changes, batch: int) -> None:
+    """A kept claim whose fact this Undo took away waits again (#4636 part 2). Claims are not in
+    the change log, so the Undo cannot put them back itself: keeping a name keeps the DM's own
+    words about it in the same change, and the name's Undo, from any screen, takes those facts
+    too, so their questions come back with it. A fact is taken away when the batch made it (its
+    row is gone now) or when it turned a connection already there into a kept one (a waiting one
+    from an upload, a turned-down twin), which the Undo has put back to what it was. A connection
+    the batch only changed, and that is still kept after the Undo, stands, and so does its claim.
+    A claim's own Undo already does this (`ClaimStore.reopen_in`, which only touches a kept
+    claim, so twice is the same as once). A redo (Undo of this Undo) brings the fact back but
+    leaves its question waiting: saying yes to it again is harmless."""
+    from dmbot.memory.claims import ClaimStore  # (claims builds on this module)
+
+    cur = await w.conn.execute(
+        "SELECT c.id FROM memory_claims c WHERE c.guild_id = %s AND c.campaign_id = %s"
+        " AND c.status = %s AND EXISTS (SELECT 1 FROM memory_changes m"
+        " WHERE m.guild_id = c.guild_id AND m.campaign_id = c.campaign_id AND m.batch = %s"
+        " AND m.row_id = c.fact_id AND (m.op = 'insert' OR (m.table_name = 'memory_relations'"
+        " AND NOT EXISTS (SELECT 1 FROM memory_relations r WHERE r.guild_id = c.guild_id"
+        " AND r.campaign_id = c.campaign_id AND r.id = c.fact_id AND r.status = 'confirmed'))))",
+        (*w.ids, CLAIM_CONFIRMED, batch),
+    )
+    for row in await cur.fetchall():
+        await ClaimStore.reopen_in(w, str(row["id"]))
+
+
 async def _settle_kinds_after_undo(w: Changes, batch: int) -> None:
     """An Undo that gives an entry back an older kind skips the rule every other kind change keeps
     (`states.settle_kind`): something added since for the newer kind would stay on the older one
@@ -10695,6 +11021,17 @@ async def _check_led_to_live(w: Changes, relation_id: str | None, start: str, en
             raise MemoryRuleError(LED_TO_CONFIRM)
     if threads_mod.would_loop(await _live_led_to(w, skip=relation_id), start, end):
         raise MemoryRuleError(LED_TO_LOOP)
+
+
+async def _live_clue_tie(w: Changes, clue_id: str, thread_id: str) -> dict[str, Any] | None:
+    """The live `clue_to` from a clue to a thread, if any (#4624)."""
+    rows = await w.select(
+        RELATIONS,
+        " AND predicate = 'clue_to' AND status = 'confirmed' AND to_session_at IS NULL"
+        " AND subject_id = %s AND object_id = %s",
+        [clue_id, thread_id],
+    )
+    return rows[0] if rows else None
 
 
 async def _take_off_branch(w: Changes, thread_id: str) -> bool:

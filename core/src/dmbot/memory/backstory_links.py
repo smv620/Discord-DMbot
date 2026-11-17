@@ -83,6 +83,9 @@ class NewLink:
     # DMbot inferred it, with why (#2959 item 5): "" for a connection the text states. Never kept
     # without the DM's press (the sure step and Keep all leave it out).
     inferred: str = ""
+    # The reader is sure of it (#4636 part 3): only ever on a worked-out `in` from a list naming
+    # the place as one of a region's; the sure step may keep such a one (`auto_accept`).
+    inferred_sure: bool = False
     # DMbot's guess of which NPCs and groups know it (#2959 slice 3): entry id to certainty, below
     # 1.0, written as knowers only once it is kept. Empty when DMBOT_STORY_NPC_GUESS is off.
     npc_guesses: Mapping[str, float] = field(default_factory=dict)
@@ -165,6 +168,7 @@ class Waiting:
     hand_over_name: str = ""
     hand_over: str = ""
     assumed: bool = False  # DMbot assumed it (#4173 slice 3): never one of the DM's questions
+    inferred_sure: bool = False  # as on `NewLink` (#4636 part 3)
 
 
 def _hand_over(link: NewLink) -> tuple[str, str]:
@@ -242,15 +246,16 @@ class BackstoryLinks:
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id, predicate,"
                     " object_id, quote, secret, detail, truth, created_at, upload, decided,"
                     " known_by, world, inferred_reason, npc_guesses, hand_over_from, hand_over,"
-                    " assumed)"
+                    " assumed, inferred_sure)"
                     " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
-                    " %s, %s)"
+                    " %s, %s, %s)"
                     " ON CONFLICT DO NOTHING",  # (a pair already waiting keeps its first check)
                     (guild_id, campaign_id, link.subject_id, link.predicate, link.object_id,
                      link.quote[:QUOTE_MAX], link.secret, link.detail, link.truth, now,
                      link.upload[:UPLOAD_MAX], link.decided[:DECIDED_MAX], link.known_by[:ID_MAX],
                      int(link.world), link.inferred[:INFERRED_MAX],
-                     Jsonb(_guesses(link.npc_guesses)), *_hand_over(link), link.assumed),
+                     Jsonb(_guesses(link.npc_guesses)), *_hand_over(link), link.assumed,
+                     bool(link.inferred and link.inferred_sure)),
                 )  # fmt: skip
                 added += cur.rowcount
                 if cur.rowcount == 0 and link.truth and not link.inferred:
@@ -295,7 +300,8 @@ class BackstoryLinks:
                 if cur.rowcount == 0 and not link.inferred:
                     # already waiting as DMbot's inference: a text that states it makes it stated
                     await conn.execute(
-                        "UPDATE backstory_links SET inferred_reason = '' WHERE guild_id = %s"
+                        "UPDATE backstory_links SET inferred_reason = '', inferred_sure = false"
+                        " WHERE guild_id = %s"
                         " AND campaign_id = %s AND subject_id = %s AND predicate = %s"
                         " AND object_id = %s AND means = %s AND inferred_reason <> ''",
                         (
@@ -518,7 +524,7 @@ class BackstoryLinks:
             cur = await conn.execute(
                 "SELECT id, subject_id, predicate, object_id, quote, secret, detail, truth,"
                 " created_at, upload, told, decided, known_by, world, inferred_reason, npc_guesses,"
-                " hand_over_from, hand_over, assumed"
+                " hand_over_from, hand_over, assumed, inferred_sure"
                 " FROM backstory_links"
                 " WHERE guild_id = %s AND campaign_id = %s AND assumed = %s"
                 " ORDER BY created_at, subject_id, predicate, object_id",
@@ -588,6 +594,7 @@ class BackstoryLinks:
                         _guesses(r["npc_guesses"]), prev or "",
                         str(entities[prev]["name"]) if prev else "",
                         str(r["hand_over"]) if prev else "", bool(r["assumed"]),
+                        bool(r["inferred_sure"]),
                     )
                 )  # fmt: skip
             # Deletes first, then inserts: a moved row may land on a key a dropped row had.
@@ -598,9 +605,9 @@ class BackstoryLinks:
                     "INSERT INTO backstory_links (guild_id, campaign_id, subject_id,"
                     " predicate, object_id, quote, secret, detail, truth, created_at, id, upload,"
                     " told, decided, known_by, world, inferred_reason, npc_guesses,"
-                    " hand_over_from, hand_over, assumed)"
+                    " hand_over_from, hand_over, assumed, inferred_sure)"
                     " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
-                    " %s, %s, %s, %s)"
+                    " %s, %s, %s, %s, %s)"
                     # (a stated one moved by a merge onto a key DMbot's assumption holds takes it
                     # over: the DM's question is never lost to a guess, #4173 slice 3)
                     " ON CONFLICT (guild_id, campaign_id, subject_id, predicate, object_id, means)"
@@ -611,7 +618,7 @@ class BackstoryLinks:
                      r["detail"], r["truth"], r["created_at"], r["id"], r["upload"], r["told"],
                      r["decided"], r["known_by"], int(r["world"]), r["inferred_reason"],
                      Jsonb(_guesses(r["npc_guesses"])), r["hand_over_from"], r["hand_over"],
-                     r["assumed"]),
+                     r["assumed"], r["inferred_sure"]),
                 )  # fmt: skip
         return out
 

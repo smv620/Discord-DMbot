@@ -7,7 +7,7 @@
  },
  "order": "the lore is read first, then the session; where they disagree about what is current, the session wins",
  "how_to_read": {
-  "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted); needs_context = only readable with the lore or the recap (for example 'she' is Keegan); recap_only = only in the 'Previously' recap on line 1, so background and never this session's event; by_rule = made by a rule, not read",
+  "tier": "stated = the words are in the text; inferred = only implied (offered to the DM as a suggestion, never extracted; one exception, #4636 part 3: a place the text lists as one of a region's, 'in', sure, with no other parent, is kept by an upload's sure step, and the key's row for it is stated); needs_context = only readable with the lore or the recap (for example 'she' is Keegan); recap_only = only in the 'Previously' recap on line 1, so background and never this session's event; by_rule = made by a rule, not read",
   "relation": "parent_of, grandparent_of, sibling, spouse, uncle_of, apprentice_of, mentor_of, owns, carries, knows (+ one of nine feeling words), member, leads, works_for, enemy_of, rival_of, held_captive_by, found, associate; place ties by word: lives_in, lived_in, works_in, comes_from, last_seen_in (a character, creature or group), kept_in, was_kept_in (an item); in (only a place inside a place); route (a road or way between two places, either way round, #4255)",
   "direction": "a to b: parent_of (a is the parent), owns (a owns b), leads (a leads b), member (a belongs to b), in (a place is inside place b); sibling, spouse and rival_of read the same both ways",
   "must_find": "false = a good find if present, not a miss if absent; an inferred tie that must be found is scored as an offered suggestion",
@@ -18,6 +18,7 @@
   "languages": "a character's languages are a property of the character, never a tie (owner, 2026-11-14; #4229): {character, language, line, note, doc (the document that says it)}; scored as found, missed, and extra (a language the key does not list)",
   "route_lengths": "how far a road is, as the session says it (#4255): a property of the road, never a tie; found by the same amount and unit, or the same words when they give none",
   "threads": "a story thread (quests design, #4450 §9.3; #4453): kind quest, hook or mystery; giver, target and taker (who takes it on, for a pursuit that is one character's own) are key names; missing and in_danger list who the thread is about. The party is never named: a thread is the party's unless it has a taker. hint = a question the text leaves open, counted when found and never missed. Scored as found, missed, wrong (another kind), doubles and extra (a thread the key does not list)",
+  "clues": "a clue to a thread (#4624, quests 6b; design \u00a77, \u00a79.3): found when a clue tied with clue_to to the backup thread its key thread matched has a name holding one of words (casefold); wrong thread when tied only elsewhere; must_not_clues name a thread that must have no clue tied. Who has a clue is not scored yet (the text's holders are the DM's to confirm)",
   "progress": "what the session moves on a thread the lore made (#4522, quests 5c): change thread_moves (state happening_now, finished or dropped), part_moves (a part of part_kind whose words hold one of words, now in state) or new_part (a part of part_kind read from the session); found when it or one of its 'or' rows stands on the backup thread its lore thread matched; must_not_progress rows are false when they stand"
  },
  "players": {
@@ -4066,6 +4067,10 @@
   "who a marching order puts ahead of whom is not a tie",
   "the road ambush as a deed ('attacked'), until session events have their own design note"
  ],
+ "must_not_ties": [
+  {"id": "nl01", "a": "Kelvin's Cairn", "relation": "in", "b": "Ten-Towns", "note": "a mountain beside the towns, not one of them: a region's listed towns (#4636 part 3) never reach a place the list doesn't name"},
+  {"id": "nl02", "a": "Maer Dualdon", "relation": "in", "b": "Ten-Towns", "note": "the lake some of the towns stand on, not one of them (#4636 part 3)"}
+ ],
  "must_not_find": [
   "a kind of creature is not an entry (#3373 rule, Supervisor 2026-11-04): no entry or tie for the white roc, ice kobolds, grell, electric eel or owlbears; one particular creature is (the mind flayer whose skull held the Psi crystal)",
   "any link made from dice rolls, hit points, wasp stings or spear wounds, spells (Moment to Think, Detect Magic) or marching order",
@@ -4131,6 +4136,17 @@
   {"id": "L-lq04", "kind": "quest", "name": "Hlin's contract on Sephek Kaltro", "giver": "Hlin Trollbane", "target": "Sephek Kaltro", "taker": "", "missing": [], "in_danger": [], "parts": [{"kind": "objective", "words": ["capture or eliminate"], "line": 59, "note": "one objective with the text's own 'or', never two"}], "must_find": true, "hint": false, "line": 73, "note": "an ask and a taker; replaces l069 'the party works for Hlin' (§6); capture or eliminate, one objective", "doc": "lore"},
   {"id": "L-lq05", "kind": "quest", "name": "Speaker Masthew's bounty on the mine", "giver": "Speaker Masthew", "target": "The gemstone mine", "taker": "", "missing": [], "in_danger": [], "parts": [{"kind": "objective", "words": ["mine"], "line": 84, "note": "clear out the gemstone mine"}, {"kind": "reward", "words": ["gold"], "line": 84, "note": "50 gold offered (line 84), raised to 250 in all (line 93)"}], "must_find": false, "hint": false, "line": 84, "note": "an ask and a taker, already paid (line 93); replaces l076; not one of §9.3's four, so a good find", "doc": "lore"},
   {"id": "L-lq06", "kind": "quest", "name": "Find Garret Velryn", "giver": "Keegan Velryn", "target": "Garret Velryn", "taker": "", "missing": [], "in_danger": [], "parts": [{"kind": "objective", "words": ["Garret"], "line": 102, "note": "locate Garret"}, {"kind": "reward", "words": ["50 gold"], "line": 102, "note": "offering 50 gold pieces"}, {"kind": "help", "words": ["map"], "line": 102, "note": "the route map: help to keep (§9.3)"}, {"kind": "help", "words": ["sled", "dogs"], "line": 102, "note": "two dog sleds with eight dogs from Jebidiah; the lore doesn't say lent, so to keep (§5b)"}], "must_find": true, "hint": false, "line": 102, "note": "an ask and a taker (Belleros agrees for the party); replaces l118; the session (sq01) is the same thread", "doc": "both"}
+ ],
+ "clues": [
+  {"thread": "L-lq01", "words": ["tome"], "must_find": true, "line": 27, "doc": "lore", "note": "the warning in the locked azure tome"},
+  {"thread": "L-lq01", "words": ["coming", "Wit"], "must_find": false, "line": 27, "doc": "lore", "note": "Wit's warning that they are coming (a good find)"},
+  {"thread": "L-lq03", "words": ["journal"], "must_find": true, "line": 36, "doc": "lore", "note": "the ancestral journal"},
+  {"thread": "L-lq03", "words": ["campsite", "camp"], "must_find": false, "line": 36, "doc": "lore", "note": "the blood-stained campsite (a good find)"},
+  {"thread": "L-lq03", "words": ["whisper"], "must_find": false, "line": 36, "doc": "lore", "note": "the whispers Nyssara hears (a good find)"}
+ ],
+ "must_not_clues": [
+  {"thread": "L-lq04", "note": "Hlin's contract has no clue in this passage"},
+  {"thread": "L-lq06", "note": "the route map and the sleds are Find Garret's help, never its clues"}
  ],
  "progress": [
   {"id": "sp01", "thread": "L-lq06", "change": "thread_moves", "state": "happening_now", "must_find": true, "line": 135, "doc": "session", "note": "the party takes it up: Belleros agrees to look for Garret and is paid, and they set off (222)"},
