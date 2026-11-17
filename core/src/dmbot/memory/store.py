@@ -2331,6 +2331,8 @@ class MemoryStore:
                 await thread_parts.set_state_in_thread(
                     w, thread_id, str(change.part_id), change.state
                 )
+            elif change.kind == tp.CLUE:
+                return await self._keep_found_clue(w, onto, thread_id, change)
             else:
                 await states.set_condition(
                     w, onto, thread, change.state, from_session_at=line.session_at
@@ -2338,6 +2340,70 @@ class MemoryStore:
         except MemoryRuleError as exc:
             log.info("A progress line no longer fits (%s)", type(exc).__name__)
             return False
+        return True
+
+    async def _keep_found_clue(
+        self, w: Changes, onto: Ontology, thread_id: str, change: tp_mod.Change
+    ) -> bool:
+        """A session's "clue found" inside the progress keep's write (#4624, quests slice 6c; the
+        ruled plan and rulings 2 and 3): the clue is tied to the thread like the DM's own
+        (`_tie_clue_in`: the campaign's clue, by id or by name, else a new one hidden from the
+        players; one tied already stays as it is), and each finder learns it and is listed as
+        knowing it. Finders are the line's player characters still in the campaign (merged ones
+        followed); with none left the line no longer fits and nothing is written. A clue made
+        new that only some of the table found is theirs alone ("Only some people know this"),
+        switched on before anyone learns it; the campaign's own clue keeps the audience the DM
+        set, its finders only added (never a 🤫 question out of a plain Keep, #4524). False when
+        it no longer fits."""
+        finders: list[str] = []
+        for who in change.finder_ids:
+            live = await _followed(w, who)
+            row = await w.get(ENTITIES, live) if live is not None else None
+            if (
+                row is not None
+                and row["type"] == "character"
+                and row["status"] == CONFIRMED
+                and row["role"] == PLAYER_CHARACTER
+            ):
+                finders.append(str(row["id"]))
+        finders = list(dict.fromkeys(finders))
+        if not finders:
+            return False
+        clue_id = ""
+        if change.clue_id is not None:
+            clue_id = await _followed(w, change.clue_id) or ""
+            if not clue_id:
+                return False
+        made_new = False
+        try:
+            fact, made_new = await self._tie_clue_in(
+                w, onto, thread_id, clue_id=clue_id, new_name="" if clue_id else change.words
+            )
+            clue_id = fact.subject_id
+        except MemoryRuleError as exc:
+            if str(exc) != clues_mod.ALREADY_TIED:
+                raise  # (not a clue, or a name that can't be one: the line no longer fits)
+            if not clue_id:  # (the campaign's clue of that name, tied already)
+                have = await w.select(
+                    ENTITIES,
+                    " AND type = 'clue' AND status = 'confirmed' AND lower(name) = lower(%s)",
+                    [clean_text(change.words)],
+                )
+                clue_id = str(have[0]["id"])
+        if made_new:
+            party = await w.select(
+                ENTITIES,
+                " AND type = 'character' AND status = 'confirmed' AND role = %s AND NOT party",
+                [PLAYER_CHARACTER],
+            )
+            if {str(r["id"]) for r in party} - set(finders):  # (only some of the table)
+                await w.update(ENTITIES, clue_id, {"audience_limited": True})
+        for character in finders:
+            try:
+                await knowers.learn(w, gate.ENTRY, clue_id, character)
+                await self.add_knower_in(w, clue_id, character, None)
+            except MemoryRuleError:
+                continue  # (refused before it wrote: the others still learn it)
         return True
 
     async def _new_thread_in(

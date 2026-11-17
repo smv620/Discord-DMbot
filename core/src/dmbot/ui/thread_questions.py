@@ -431,6 +431,13 @@ class ThreadQuestions(_Menu):
             self.guild_id, self.campaign_id, [thread_id], Viewer.the_dm()
         )
         words = {p.id: p.words for p in parts}
+        # (a found clue's line names the clue and its finders: #4624 6c; ids never collide)
+        for x in now:
+            for entry_id in (x.change.clue_id, *x.change.finder_ids):
+                if entry_id and entry_id not in words:
+                    entry = await memory.entity(self.guild_id, self.campaign_id, entry_id)
+                    if entry is not None:
+                        words[entry_id] = entry.name
         green, grey = discord.ButtonStyle.success, discord.ButtonStyle.secondary
         self.add_item(_Button(self._keep_progress, label=pcard.KEEP, style=green))
         self.add_item(

@@ -3,12 +3,13 @@
 the campaign already has, one thread at a time, for the DM to keep or turn down (`ThreadQuestions`
 draws it once no new thread waits; `memory.thread_progress` holds the lines).
 
-Each line says what would change in the 🧵 Threads card's own words (`ui/thread_parts`): a new
-step, something in the way, a reward given, help, a time limit's words, a step done, the thread
-happening now, with the change first ("Done: find Garret"). The DM unticks what didn't happen; the
-rest is kept and the unticked ones turned down in one change, and ↩ Undo takes it all back. Private
-to the DM, as the whole card is; no transcript words are shown: the session it was heard in, by its
-date. At most `SHOWN` lines a card (a menu holds 25), so the DM always sees what a press answers.
+Each line says what would change in the 🧵 Threads card's own words (`ui/thread_parts`): a new step,
+something in the way, a reward given, help, a time limit's words, a step done, the thread happening
+now, a clue found and by whom (#4624 6c), with the change first ("Done: find Garret"). The DM
+unticks what didn't happen; the rest is kept and the unticked ones turned down in one change, and ↩
+Undo takes it all back. Private to the DM, as the whole card is; no transcript words are shown: the
+session it was heard in, by its date. At most `SHOWN` lines a card (a menu holds 25), so the DM
+always sees what a press answers.
 Pure.
 """
 
@@ -55,8 +56,31 @@ def line_text(change: prog.Change, part_words: Mapping[str, str], kind: str = ""
     if change.kind == prog.PART_STATE:
         part = logic.shorten(part_words.get(change.part_id or "", "a step"), LINE_MAX)
         return f"{STATE_SAID.get(change.state, change.state).capitalize()}: {part}"
+    if change.kind == prog.CLUE:
+        return clue_text(change, part_words)
     which = "promise" if kind == PROMISE else "thread"
     return f"This {which}: {words_for(kind).get(change.state, change.state).lower()}"
+
+
+def _and(names: Sequence[str]) -> str:
+    """ "A", "A and B", "A, B and C"."""
+    return names[0] if len(names) == 1 else f"{', '.join(names[:-1])} and {names[-1]}"
+
+
+def clue_text(change: prog.Change, names: Mapping[str, str]) -> str:
+    """A session's "clue found" (#4624 6c): "Clue found: the torn letter (by Okthandom)", or, for
+    a clue the campaign has, "Clue found: the torn letter (now Cerric knows it too)". `names`: the
+    clue's and the finders' names by id (a gone one is left out)."""
+    clue = names.get(change.clue_id or "") if change.clue_id else change.words
+    who = [n for f in change.finder_ids if (n := names.get(f))]
+    said = _and(who)
+    text = f"Clue found: {logic.shorten(clue or 'a clue', LINE_MAX)}"
+    if not who:
+        return text
+    if change.clue_id:
+        knows = "know" if len(who) > 1 else "knows"
+        return f"{text} (now {said} {knows} it too)"
+    return f"{text} (by {said})"
 
 
 def card_text(
