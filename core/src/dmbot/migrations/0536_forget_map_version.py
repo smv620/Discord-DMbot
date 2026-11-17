@@ -12,8 +12,9 @@ from importlib import import_module
 # `dmbot_forget_maps()` (0534) deletes and changes `memory_map_facts` rows straight from SQL, so a
 # page that caches what the campaign's notes say (the World notes page) kept showing the deleted
 # reads until something else moved `campaigns.memory_version`, the number every store write moves
-# (and announces on the `dmbot_memory` channel; flag 0, as a write to this table sends: its rows are
-# not names). This replaces the function once more so that it
+# (and announces on the `dmbot_memory` channel: flag 0, as a write to this table sends; flag 1 is
+# "names changed", for the tables the name lookup reads, see `memory/notify.py`). This replaces the
+# function once more so that it
 # does the same, once for each campaign whose facts it touched, however many rows changed there.
 # The set of campaigns is taken before the facts change (a kept row loses its map pointer, which is
 # how it is found), as an array of "guild:campaign" texts, and the bump runs before the maps are
