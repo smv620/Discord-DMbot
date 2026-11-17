@@ -152,10 +152,44 @@ describe("who knows this, on a held connection", () => {
     await waitFor(() => expect((within(panel).getByRole("button", { name: w.whoOnlyDm }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(within(panel).getByRole("button", { name: w.whoOnlyDm }));
     await waitFor(() => expect(changes).toEqual([{ action: "who", id: "l1", who: "dm" }]));
-    expect(await screen.findByText(w.whoDoneDm)).toBeTruthy();
+    expect(await screen.findByText(`${w.whoNoLongerCommon} ${w.whoDoneDm}`)).toBeTruthy();
     await waitFor(() => expect((within(panel).getByRole("button", { name: w.whoEveryone }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(within(panel).getByRole("button", { name: w.whoEveryone }));
     await waitFor(() => expect(changes).toEqual([{ action: "who", id: "l1", who: "dm" }, { action: "who", id: "l1", who: "everyone" }]));
+    expect(await screen.findByText(w.whoDoneAll)).toBeTruthy();
+  });
+
+  it("taking back common knowledge with only the DM says so first", async () => {
+    const panel = await openPanel(pageWith(graph([held({ who: "common" })])));
+    await waitFor(() => expect((within(panel).getByRole("button", { name: w.whoOnlyDm }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(within(panel).getByRole("button", { name: w.whoOnlyDm }));
+    expect(await screen.findByText(`${w.whoNoLongerCommon} ${w.whoDoneDm}`)).toBeTruthy();
+  });
+
+  it("taking back common knowledge with everyone says so first", async () => {
+    const changes: WebLinkChange[] = [];
+    const panel = await openPanel(pageWith(graph([held({ who: "common" })]), changes));
+    await waitFor(() => expect((within(panel).getByRole("button", { name: w.whoEveryone }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(within(panel).getByRole("button", { name: w.whoEveryone }));
+    await waitFor(() => expect(changes).toEqual([{ action: "who", id: "l1", who: "everyone" }]));
+    expect(await screen.findByText(`${w.whoNoLongerCommon} ${w.whoDoneAll}`)).toBeTruthy();
+  });
+
+  it("taking back common knowledge with some characters says so first", async () => {
+    const panel = await openPanel(pageWith(graph([held({ who: "common" })])));
+    await waitFor(() => expect((within(panel).getByRole("button", { name: w.whoSome }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(within(panel).getByRole("button", { name: w.whoSome }));
+    fireEvent.click(await within(panel).findByRole("checkbox", { name: "Cerric" }));
+    fireEvent.click(within(panel).getByRole("button", { name: w.whoSave }));
+    expect(await screen.findByText(`${w.whoNoLongerCommon} ${w.whoDoneSome("Cerric")}`)).toBeTruthy();
+  });
+
+  it("an answer on a connection that was not common has no such line", async () => {
+    const panel = await openPanel(pageWith(graph([held({ who: "some", knownBy: [{ id: "pc-cerric", name: "Cerric" }] })])));
+    await waitFor(() => expect((within(panel).getByRole("button", { name: w.whoOnlyDm }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(within(panel).getByRole("button", { name: w.whoOnlyDm }));
+    expect(await screen.findByText(w.whoDoneDm)).toBeTruthy();
+    expect(screen.queryByText(new RegExp(w.whoNoLongerCommon))).toBeNull();
   });
 
   it("only the DM and everyone send at once, with no characters", async () => {

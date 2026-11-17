@@ -174,9 +174,11 @@ export function WhoKnows({
     setBusy(true);
     try {
       const done = who === "dm" ? words.whoDoneDm : who === "common" ? words.whoDoneCommon : words.whoDoneAll;
+      // Taking common knowledge back says so first; a failure shows its own error, as ever.
+      const taken = current === "common" && who !== "common" ? `${words.whoNoLongerCommon} ${done}` : done;
       // A refusal of common knowledge says what to do first: the names are shown to the players, then the answer is sent again.
       const own = who === "common" ? { "cannot-show": words.whoCannotShow } : undefined;
-      setProblem(await act({ action: "who", id: link.id, who }, done, own));
+      setProblem(await act({ action: "who", id: link.id, who }, taken, own));
     } finally {
       setBusy(false);
     }
@@ -202,7 +204,8 @@ export function WhoKnows({
     const named = ids.map((id) => names.get(id) ?? holders.find((h) => h.id === id)?.name ?? "");
     setBusy(true);
     try {
-      const problemNow = await act({ action: "who", id: link.id, who: "some", characters: ids }, words.whoDoneSome(words.whoNames(named)));
+      const said = words.whoDoneSome(words.whoNames(named));
+      const problemNow = await act({ action: "who", id: link.id, who: "some", characters: ids }, current === "common" ? `${words.whoNoLongerCommon} ${said}` : said);
       setProblem(problemNow);
       if (problemNow === null) setPicking(false); // a failure keeps the picker and the ticks
     } finally {
