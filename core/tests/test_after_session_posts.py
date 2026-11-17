@@ -73,3 +73,32 @@ class TheWords(unittest.TestCase):
 
     def test_private_scenes_keep_only_the_times(self) -> None:
         self.assertIn("never the words", private_scenes_list.notice(2))
+
+
+class TheDidTheyMeanCount(unittest.IsolatedAsyncioTestCase):
+    """(#3874 E1) the "Did they mean…?" count goes with the others"""
+
+    async def test_the_count_goes_through_the_after_session_post_with_its_button(self) -> None:
+        store = SimpleNamespace(
+            save=AsyncMock(), count=AsyncMock(return_value=2), forget_speaker=AsyncMock()
+        )
+        fake: Any = SimpleNamespace(
+            heard_questions=store,
+            consent=SimpleNamespace(consenting=AsyncMock(return_value={7})),
+            _post_after_session=AsyncMock(return_value=True),
+        )
+        asked = SimpleNamespace(speaker=7, started_ms=1, heard="Zed", options=[("e1", "Zed")])
+        tbl = SimpleNamespace(
+            guild_id=GUILD,
+            campaign_id="c" * 32,
+            transcript_session_id="s1",
+            unanswered=[asked],
+            screen_channel_id=SCREEN,
+        )
+        await DMBot.save_unanswered(fake, tbl)  # type: ignore[arg-type]
+        fake._post_after_session.assert_awaited_once()
+        args = fake._post_after_session.await_args.args
+        self.assertIs(args[0], tbl)
+        self.assertIn("2", args[1])
+        self.assertNotIn("Zed", args[1])  # (a count: never the word that was heard)
+        self.assertIsNotNone(args[2])  # (the DM-only review button)

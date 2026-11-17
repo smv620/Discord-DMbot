@@ -8912,7 +8912,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def save_unanswered(self, table: Table) -> None:
         """After a session: keep the questions that went unanswered for the after-session check,
         and say how many wait (#1572). Only for speakers who still agree, checked again after the
-        write; a person who stopped meanwhile has theirs removed. DM screen only."""
+        write; a person who stopped meanwhile has theirs removed. The count goes to the DM Bot
+        channel (else the DM screen; #3874 E1)."""
         items, table.unanswered = table.unanswered, []  # (lost if the save fails: only a reminder)
         session_id = table.transcript_session_id
         if (
@@ -8939,10 +8940,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             waiting = await self.heard_questions.count(gid, cid)
             log.info("Did they mean: %d question(s) wait for the DM", waiting)
             if waiting:
-                await self.post(
-                    table.screen_channel_id,
-                    heard_waiting_text(waiting),
-                    view=heard_review_view(cid),
+                # A count and a button only the DM can use: the DM Bot channel (else the screen)
+                await self._post_after_session(
+                    table, heard_waiting_text(waiting), heard_review_view(cid)
                 )
 
     async def answer_waiting_question(
