@@ -730,6 +730,100 @@ class ThePath(NamesTest):
         self.assertTrue(rel.secret)
         self.assertEqual(await self.memory.relations(GUILD, self.campaign.id), [])  # not public
 
+    async def pc(self, name: str) -> str:
+        made = await self.memory.add_entity(
+            GUILD, self.campaign.id, type="character", name=name, source="dm",
+            status="confirmed", role="player_character", played_by=9000 + len(name),
+        )  # fmt: skip
+        return made.value.id
+
+    async def backstory(self) -> list[Any]:
+        return [r for r in await self.relations() if r.predicate != "plays"]  # (who plays whom)
+
+    async def test_some_know_keeps_it_held_back_with_exactly_the_ticked_characters(self) -> None:
+        # (#4534) one change; the DM's own choice; the others hear it when it is said
+        cerric = await self.pc("Cerric")
+        await self.pc("Belleros")
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
+        some = self.button(view, "👥 Some know")
+        self.assertFalse(some.disabled)
+        picker_it = self.it()
+        await some.callback(picker_it)
+        picker = picker_it.edit_original_response.await_args.kwargs["view"]
+        self.assertIsInstance(picker, ui_bg.SomeKnowPicker)
+        self.assertEqual(await self.backstory(), [])  # (nothing is written before Save)
+        picker.select._values = [cerric]
+        await picker._ticked(self.it())
+        await picker._save(self.it())
+        rels = [r for r in await self.backstory() if r.unrevealed]
+        self.assertEqual(len(rels), 1)
+        (rel,) = rels
+        self.assertFalse(rel.secret)
+        knowing = await self.memory.connection_knowers(GUILD, self.campaign.id, [rel.id])
+        self.assertEqual(knowing.get(rel.id), [cerric])
+
+    async def test_back_writes_nothing_and_a_non_dm_is_refused_on_every_picker_button(self) -> None:
+        cerric = await self.pc("Cerric")
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
+        picker_it = self.it()
+        await self.button(view, "👥 Some know").callback(picker_it)
+        picker = picker_it.edit_original_response.await_args.kwargs["view"]
+        picker.chosen = [cerric]
+        for press in (picker._ticked, picker._save, picker._back):
+            await press(self.it(MANAGER))
+        self.assertEqual(await self.backstory(), [])
+        await picker._back(self.it())
+        self.assertEqual(await self.backstory(), [])
+
+    async def test_known_to_is_said_once_after_a_save_with_the_icon_for_how_many(self) -> None:
+        # (#4682) 👤 for one, 👥 for two or more; names only, never ids
+        cerric = await self.pc("Cerric")
+        belleros = await self.pc("Belleros")
+        await self.read()
+        await self.confirm_all()
+        for ticked, line in (
+            ([cerric], "👤 Known to: Cerric."),
+            ([cerric, belleros], "👥 Known to: Cerric and Belleros."),
+        ):
+            _, view = await self.offer()
+            picker_it = self.it()
+            await self.button(view, "👥 Some know").callback(picker_it)
+            picker = picker_it.edit_original_response.await_args.kwargs["view"]
+            picker.chosen = ticked
+            save = self.it()
+            await picker._save(save)
+            said = save.edit_original_response.await_args.kwargs["content"]
+            self.assertTrue(said.startswith(line), said)
+            self.assertNotIn(cerric, said)  # (an id, never)
+            self.assertNotIn("Known to", view.text())  # (once: the next render is the card again)
+
+    async def test_an_empty_save_writes_nothing_and_a_plain_add_after_it_is_everyones(self) -> None:
+        await self.pc("Cerric")
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
+        picker_it = self.it()
+        await self.button(view, "👥 Some know").callback(picker_it)
+        picker = picker_it.edit_original_response.await_args.kwargs["view"]
+        picker.chosen = []
+        await picker._save(self.it())
+        self.assertEqual(await self.backstory(), [])
+        # (the ticks are an argument of the one answer, never state the next ✅ could inherit)
+        await self.button(view, "✅ Add it").callback(self.it())
+        (rel,) = await self.backstory()
+        knowing = await self.memory.connection_knowers(GUILD, self.campaign.id, [rel.id])
+        self.assertEqual(knowing.get(rel.id, []), [])
+
+    async def test_some_know_is_off_with_no_player_characters(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
+        self.assertTrue(self.button(view, "👥 Some know").disabled)
+
     async def test_they_survive_a_rebuilt_view_and_a_closed_message(self) -> None:
         await self.read()
         await self.confirm_all()

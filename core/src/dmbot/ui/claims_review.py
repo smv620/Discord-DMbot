@@ -161,14 +161,19 @@ def knows(count: int) -> str:
     return "knows" if count == 1 else "know"
 
 
-def party_names(party: list[Entity], ids: list[str]) -> str:
-    """ "Cerric", "Cerric and Belleros", "Cerric, Belleros and Okthandom": the characters' names,
-    in the party list's order. Names only."""
-    wanted = set(ids)
-    names = [_md(e.name) for e in party if e.id in wanted]
-    if not names:  # (a stale list: nothing to name)
+def names_joined(names: list[str]) -> str:
+    """ "Cerric", "Cerric and Belleros", "Cerric, Belleros and Okthandom", escaped for Discord;
+    "nobody" for none (a stale list). Names only."""
+    shown = [_md(n) for n in names]
+    if not shown:
         return "nobody"
-    return names[0] if len(names) == 1 else ", ".join(names[:-1]) + " and " + names[-1]
+    return shown[0] if len(shown) == 1 else ", ".join(shown[:-1]) + " and " + shown[-1]
+
+
+def party_names(party: list[Entity], ids: list[str]) -> str:
+    """The characters' names, in the party list's order (`names_joined`). Names only."""
+    wanted = set(ids)
+    return names_joined([e.name for e in party if e.id in wanted])
 
 
 def knower_icon(count: int) -> str:

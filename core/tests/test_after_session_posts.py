@@ -205,3 +205,40 @@ class TheImportNamesReport(unittest.IsolatedAsyncioTestCase):
         self.assertIn("1 not sure", args[4])
         self.assertIn("2 new", args[4])
         self.assertNotIn("Zed", args[4])
+
+
+class TheUnhonouredRecapsLine(unittest.IsolatedAsyncioTestCase):
+    """(#3874 E1) the line for import recaps that weren't written holds fixed reasons only, so it
+    goes to the DM Bot channel when the campaign has one"""
+
+    async def go(self, bot_channel: int | None) -> Any:
+        from functools import partial
+
+        campaign = SimpleNamespace(
+            id="c" * 32, guild_id=GUILD, dm_bot_channel_id=bot_channel, dm_screen_channel_id=SCREEN
+        )
+        fake: Any = SimpleNamespace(
+            _import_reports={},
+            _import_party={},
+            _import_names={},
+            _import_unchecked={},
+            _import_speakers={},
+            _import_entries={},
+            _import_batches={},
+            _import_queued={},
+            _import_unhonoured={"c" * 32: ["recaps are switched off"]},
+            campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
+            post=AsyncMock(),
+        )
+        store = SimpleNamespace(pending_scans=AsyncMock(return_value=[]))
+        await partial(DMBot._tell_import_news, fake)(GUILD, store)  # type: ignore[arg-type]
+        return fake
+
+    async def test_it_goes_to_the_dm_bot_channel(self) -> None:
+        fake = await self.go(UPKEEP)
+        self.assertEqual(fake.post.await_args.args[0], UPKEEP)
+        self.assertIn("wasn't written", fake.post.await_args.args[1])
+
+    async def test_with_no_dm_bot_channel_it_stays_on_the_dm_screen(self) -> None:
+        fake = await self.go(None)
+        self.assertEqual(fake.post.await_args.args[0], SCREEN)

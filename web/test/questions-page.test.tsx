@@ -20,6 +20,14 @@ vi.mock("../src/content/questions-switch", () => ({
   },
 }));
 
+// The 🤫 Known or secret? question is answered on the page only while its switch is on (#4598).
+const secrets = vi.hoisted(() => ({ on: false }));
+vi.mock("../src/content/secret-questions-switch", () => ({
+  get SECRET_QUESTIONS_LIVE() {
+    return secrets.on;
+  },
+}));
+
 // DMbot's own matches are counted only where a test turns the switch on (#3701).
 const matches = vi.hoisted(() => ({ on: false }));
 vi.mock("../src/content/name-matches-switch", () => ({
@@ -96,6 +104,29 @@ describe("the Questions page", () => {
       `${kindWords("heard").label} · 2`,
       `${kindWords("connections").label} · 12`,
     ]); // (names, then what was said, then the connections: a connection is asked once its names are answered)
+  });
+
+  it("answers the known or secret kind on the page only while its switch is on, else says how in Discord", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const counts = async () => ({
+      serverNow: now,
+      campaigns: [{ ref: "100.cmp1", name: "The Ashen Road", total: 1, countedAt: now - 30, kinds: [{ kind: "secrets", count: 1, oldest: now - 60 }] }],
+    });
+    secrets.on = false;
+    const off = mockApi("table");
+    off.myQuestions = counts as never;
+    render(<Questions api={off} />);
+    const row = (await screen.findByText(`${kindWords("secrets").label} · 1`)).closest("li") as HTMLElement;
+    expect(within(row).queryByRole("link")).toBeNull();
+    expect(within(row).getByText(w.discord)).toBeTruthy();
+    cleanup();
+    secrets.on = true;
+    const on2 = mockApi("table");
+    on2.myQuestions = counts as never;
+    render(<Questions api={on2} />);
+    const row2 = (await screen.findByText(`${kindWords("secrets").label} · 1`)).closest("li") as HTMLElement;
+    expect(within(row2).queryByText(w.discord)).toBeNull();
+    secrets.on = false;
   });
 
   it("a kind that links goes to the page that answers it, and one that can't says how in Discord", async () => {

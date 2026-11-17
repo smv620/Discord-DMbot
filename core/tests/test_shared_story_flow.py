@@ -74,6 +74,7 @@ class Flow(ConfirmedMemoryTest):
             lookup=None,
             plan_allows=self.plan_allows,
             post=self.post,
+            ask_privately=AsyncMock(return_value=False),  # (#3874 E1: no private message)
             transcripts=None,
             clocks=None,
             tables={},
