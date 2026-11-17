@@ -644,6 +644,7 @@ class MapStore:
                     if str(r["id"]) not in before
                 )
                 done.layers, done.written = dict(counts), dict(written)
+                done.batch = w.batch
             await w.conn.execute(
                 "UPDATE campaign_maps SET pins_read_at = %s WHERE guild_id = %s"
                 " AND campaign_id = %s AND id = %s",

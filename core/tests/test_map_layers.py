@@ -8,7 +8,9 @@ from __future__ import annotations
 
 import json
 import unittest
+from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 from dmbot import images
 from dmbot.maps import layers_read
@@ -169,3 +171,136 @@ class TheWrite(PinsBase):  # (Postgres: Targos is a kept place; the map is the D
         await self.memory.undo(GUILD_A, self.one.id, int(batch))
         self.assertEqual(await self.rows(), [])
         self.assertEqual(await self.features(), [])
+
+
+class TheNote(unittest.IsolatedAsyncioTestCase):
+    """The DM's private note (#4259 8a; the ux-critic's words; Supervisor's timing ruling)."""
+
+    def test_the_label(self) -> None:
+        from dmbot.ui.map_layers_note import map_label
+
+        self.assertEqual(map_label("The Ten-Towns", 0), "the Ten-Towns map")
+        self.assertEqual(map_label("Icewind Dale Map", 0), "the Icewind Dale Map")
+        self.assertEqual(map_label("Harbour plan", 0), "the Harbour plan")
+        self.assertEqual(map_label("", 1_763_078_400), "a map posted on 14 Nov")
+
+    def test_the_words(self) -> None:
+        from dmbot.memory import map_facts as mf
+        from dmbot.ui.map_layers_note import note_text
+
+        written = {mf.TERRAIN: 3, mf.CONTROL: 1, mf.CULTURE: 2}
+        self.assertEqual(
+            note_text("the Ten-Towns map", written, {}, "https://example.org"),
+            "🗺️ DMbot read the Ten-Towns map: land for 3 places, ruler for 1, culture for 2."
+            " They're waiting in [🌍 World notes](<https://example.org/account/names>) for you"
+            " to check.",
+        )
+        self.assertEqual(
+            note_text("the Ten-Towns map", {mf.CLIMATE: 1}, {"corrected": 1, "noted": 1}),
+            "🗺️ DMbot read the Ten-Towns map: climate for 1 place. They're waiting in 🌍 World"
+            " notes for you to check. 1 of them replaces what DMbot read in your lore."
+            " 1 disagrees with what you kept. Yours stays; both are in World notes.",
+        )
+        self.assertEqual(
+            note_text("the Ten-Towns map", {}, {"noted": 1}),
+            "🗺️ The Ten-Towns map disagrees with 1 thing you kept. Yours stays; both are in"
+            " 🌍 World notes.",
+        )
+        self.assertIsNone(note_text("the Ten-Towns map", {}, {"added": 0}))
+
+    def test_undo_only_when_something_was_written(self) -> None:
+        from dmbot.ui.map_layers_note import UNDO, note_view
+
+        self.assertIsNone(note_view(1, "c" * 32, None, "x"))
+        view = note_view(1, "c" * 32, 5, "x")
+        labels = [getattr(getattr(i, "item", i), "label", None) for i in view.children]
+        self.assertEqual(labels, [UNDO])  # (one button; World notes is a link in the words)
+
+    def press(self, user: int, undo: Any) -> tuple[Any, Any]:
+        camp = SimpleNamespace(dm_user_ids=frozenset({7}))
+        followup = AsyncMock()
+        interaction = SimpleNamespace(
+            client=SimpleNamespace(
+                campaigns=SimpleNamespace(get=AsyncMock(return_value=camp)),
+                memory=SimpleNamespace(undo=undo),
+            ),
+            user=SimpleNamespace(id=user),
+            response=SimpleNamespace(send_message=AsyncMock(), defer=AsyncMock()),
+            followup=SimpleNamespace(send=followup),
+            message=SimpleNamespace(content="🗺️ DMbot read the Ten-Towns map: land for 1 place."),
+            edit_original_response=AsyncMock(),
+        )
+        return interaction, followup
+
+    async def test_undo_for_a_dm_only_and_its_words(self) -> None:
+        from dmbot.memory.models import MemoryRuleError, TooLateToUndo
+        from dmbot.ui import map_layers_note as note
+
+        button = note.UndoMapLayersButton(1, "c" * 32, 5)
+        undo = AsyncMock()
+        interaction, _ = self.press(9, undo)
+        await button.callback(interaction)
+        undo.assert_not_awaited()
+        self.assertEqual(interaction.response.send_message.await_args.args[0], note.ONLY_DM)
+        interaction, _ = self.press(7, undo)
+        await button.callback(interaction)
+        undo.assert_awaited_once_with(1, "c" * 32, 5)
+        self.assertEqual(
+            interaction.edit_original_response.await_args.kwargs["content"],
+            "↩ Undone. Nothing from the Ten-Towns map is in World notes now. The map itself is"
+            " still kept.",
+        )
+        for error, words in (
+            (TooLateToUndo("x"), note.NOT_UNDONE),
+            (MemoryRuleError("x"), note.ALREADY),
+        ):
+            interaction, followup = self.press(7, AsyncMock(side_effect=error))
+            await button.callback(interaction)
+            self.assertEqual(followup.await_args.args[0], words)
+
+
+class TheTiming(unittest.IsolatedAsyncioTestCase):
+    """At once with no session running for the campaign; held for its end when one is; once."""
+
+    def make(self, running: str | None) -> Any:
+        from dmbot.memory import map_facts as mf
+
+        a_map = SimpleNamespace(title="Ten-Towns", created_at=0)
+        bot = SimpleNamespace(
+            map_store=SimpleNamespace(get=AsyncMock(return_value=a_map)),
+            campaigns=SimpleNamespace(
+                get=AsyncMock(return_value=SimpleNamespace(dm_user_ids=frozenset({7, 8})))
+            ),
+            settings=SimpleNamespace(site_url=""),
+            tables={1: SimpleNamespace(guild_id=1, campaign_id=running)} if running else {},
+            _held_map_notes={},
+            _dm_message=AsyncMock(),
+        )
+        bot.got = SimpleNamespace(written={mf.TERRAIN: 1}, layers={"added": 1}, batch=4)
+        return bot
+
+    async def test_at_once_to_each_dm_with_no_session(self) -> None:
+        from dmbot.bot import _map_layers_note
+
+        bot = self.make(None)
+        await _map_layers_note(bot, 1, "c" * 32, "m", bot.got)
+        self.assertEqual([c.args[0] for c in bot._dm_message.await_args_list], [7, 8])
+
+    async def test_held_during_the_session_and_sent_once_after(self) -> None:
+        from dmbot.bot import DMBot, _map_layers_note
+
+        bot = self.make("c" * 32)
+        await _map_layers_note(bot, 1, "c" * 32, "m", bot.got)
+        bot._dm_message.assert_not_awaited()
+        table = bot.tables[1]
+        await DMBot.send_held_map_notes(bot, table)
+        self.assertEqual(bot._dm_message.await_count, 2)
+        await DMBot.send_held_map_notes(bot, table)
+        self.assertEqual(bot._dm_message.await_count, 2)  # (once)
+
+    async def test_another_campaigns_session_does_not_hold_it(self) -> None:
+        from dmbot.bot import _map_layers_note
+
+        bot = self.make("d" * 32)
+        await _map_layers_note(bot, 1, "c" * 32, "m", bot.got)
+        self.assertEqual(bot._dm_message.await_count, 2)
