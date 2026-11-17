@@ -31,6 +31,7 @@ ALLOWED = {
     "migrations/0472_campaign_maps.py": "adds the `map_id` column; nothing reads it (#4344)",
     "migrations/0466_place_world_table_door.py": "confirmed, shown rows; gate and for_players",
     "migrations/0463_place_world_door.py": "a DM-only door: NULL for anyone else (#4287; #4311)",
+    "migrations/0530_map_features.py": "a pin's foreign key to a row; nothing reads it (#4670)",
     "migrations/0481_world_notes_door.py": "World notes, DM-only: NULL for anyone else (#4285)",
 }
 NAMES = re.compile(r"memory_map_facts|\bMAP_FACTS\b")
