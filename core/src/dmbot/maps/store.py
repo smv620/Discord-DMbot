@@ -484,6 +484,93 @@ class MapStore:
             )
         return done
 
+    async def measure(self, guild_id: int, campaign_id: str, asked: Any, *, dm: bool) -> str | None:
+        """The words of a "how far" or "which way" answer (#4670 4b, `measure.answer`), or None
+        when the usual answer should go on instead: the two names are not both kept places the
+        asker may know, or (for "how far") the story or the DM has stated a length between them,
+        which beats a measured one (§9). `dm`: every map DMbot may use; otherwise only the table's
+        maps, and places the players have been shown, worked out as every list does (the knowledge
+        gate; with no party, `gate.public_entries`), so a DM-only map's pins, scale and distances
+        never reach a player (Supervisor's condition)."""
+        from dmbot.maps import measure, measure_phrase, positions
+        from dmbot.memory import gate
+        from dmbot.memory._changes import ALIASES, ENTITIES
+        from dmbot.memory.models import name_key
+        from dmbot.memory.store import _load_ontology
+
+        async with self._memory._read(guild_id, campaign_id, snapshot=True) as scope:
+            onto = await _load_ontology(scope)
+            entities = await scope.select(ENTITIES, " AND status = 'confirmed'")
+            # (a secret other name is the DM's: a player's question never matches by one)
+            aliases = await scope.select(
+                ALIASES, " AND status = 'confirmed'" + ("" if dm else " AND NOT secret")
+            )
+            names = positions.place_names(entities, aliases, lambda kind: onto.is_a(kind, "place"))
+            shown: set[str] | None = None
+            if not dm:
+                seen = await gate.party_entries(scope)
+                if seen is None:  # (no player character, or a list held by a group)
+                    statements = await gate.load(scope)
+                    if statements.player_characters:
+                        full = gate.visible(gate.Viewer.the_party(), statements)
+                        seen = frozenset(i for (k, i) in full.sureness if k == gate.ENTRY)
+                if seen is None:  # (no party yet: the names every player may read)
+                    every_name = await scope.select(ALIASES, " AND status = 'confirmed'")
+                    seen = gate.public_entries(entities, every_name)
+                shown = set(seen)
+
+            def place(said: str) -> str | None:
+                for key in (name_key(said), name_key(measure_phrase.without_article(said))):
+                    found = names.get(key)
+                    if found is not None:
+                        return found if shown is None or found in shown else None
+                return None
+
+            a, b = place(asked.a), place(asked.b)
+            if a is None or b is None or a == b:
+                return None
+            if asked.kind == measure_phrase.FAR:
+                cur = await scope.conn.execute(
+                    "SELECT 1 FROM memory_relations WHERE guild_id = %s AND campaign_id = %s"
+                    " AND predicate = 'route_to' AND status = 'confirmed' AND to_session_at IS NULL"
+                    " AND length_words IS NOT NULL AND ((subject_id = %s AND object_id = %s)"
+                    " OR (subject_id = %s AND object_id = %s)) LIMIT 1",
+                    (guild_id, campaign_id, a, b, b, a),
+                )
+                if await cur.fetchone() is not None:
+                    return None  # (a stated length: the usual answer gives it, by its own rules)
+            cur = await scope.conn.execute(
+                f"SELECT {COLUMNS}, scale_value, scale_unit, north_angle, north_from"
+                " FROM campaign_maps WHERE guild_id = %s AND campaign_id = %s"
+                # (section 8.1's one clause: a player, the table's maps DMbot may use)
+                + _seen(Viewer(dm=dm, table=not dm)),
+                (guild_id, campaign_id),
+            )
+            rows = await cur.fetchall()
+            cur = await scope.conn.execute(
+                "SELECT map_id, place_id, points FROM map_features WHERE guild_id = %s"
+                " AND campaign_id = %s AND shape = 'pin' AND status <> 'rejected'"
+                " AND place_id = ANY(%s)",
+                (guild_id, campaign_id, [a, b]),
+            )
+            pins = [
+                measure.Pin(str(r["map_id"]), str(r["place_id"]), r["points"][0], r["points"][1])
+                for r in await cur.fetchall()
+            ]
+        replaced = {str(r["replaces"]) for r in rows if r["replaces"]}
+        maps = [
+            measure.MapInfo(
+                m.id, m.title, m.kind, m.width, m.height, r["scale_value"],
+                str(r["scale_unit"] or ""), float(r["north_angle"]), r["north_from"] != "assumed",
+                m.created_at,
+            )
+            for r in rows
+            if (m := _map(r)).id not in replaced  # (a newer version answers, §4.4)
+            and may_use_map(m)  # (the one answer to "may DMbot use this map?")
+        ]  # fmt: skip
+        # (the names as the asker said them, so a misheard name is easy to spot)
+        return measure.answer(asked.kind, maps, pins, (a, asked.a), (b, asked.b), dm=dm)
+
     async def pins_waiting(self, guild_id: int) -> list[tuple[str, Map]]:
         """The maps in this server read closely before pins were read (Supervisor's ruling 1: a
         one-time re-read), oldest first, each with its campaign: DMbot may use them, their close
