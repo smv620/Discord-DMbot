@@ -360,6 +360,7 @@ async def add_read(
     source: str = mf.FROM_TEXT,
     map_id: str | None = None,
     shown_at: int | None = None,
+    layers_written: Counter[str] | None = None,
 ) -> Counter[str]:
     """What a text reader found, written as `read` for the DM to check (§7.2; never confirmed).
     Each follows §7.3 against an open row of the same place, layer and part (`map_facts.meet`):
@@ -476,6 +477,8 @@ async def add_read(
             },
         )  # fmt: skip
         counts["written"] += 1
+        if layers_written is not None:  # (new rows only, by layer: a map's note counts these)
+            layers_written[f.layer] += 1
     return counts
 
 

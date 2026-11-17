@@ -260,12 +260,15 @@ async def roads_off(
 
 
 async def _shown_at(w: Changes, map_id: str) -> int:
-    """The story time a map was shown (§7.4): the start of the session it was posted in or after,
-    the last that began before it was kept, else the campaign's own start."""
+    """The story time a map was shown (§7.4): the start of the last session that began before its
+    picture was posted (not when it was kept as a map, which can be later), else the campaign's
+    own start."""
     cur = await w.conn.execute(
         "SELECT COALESCE((SELECT max(s.started_at) FROM transcript_sessions s, campaign_maps m"
+        " JOIN campaign_pictures p ON p.guild_id = m.guild_id AND p.campaign_id = m.campaign_id"
+        " AND p.id = m.picture_id"
         " WHERE s.guild_id = %(g)s AND s.campaign_id = %(c)s AND m.guild_id = %(g)s"
-        " AND m.campaign_id = %(c)s AND m.id = %(m)s AND s.started_at <= m.created_at),"
+        " AND m.campaign_id = %(c)s AND m.id = %(m)s AND s.started_at <= p.made_at),"
         " (SELECT created_at FROM campaigns WHERE guild_id = %(g)s AND id = %(c)s)) AS at",
         {"g": w.guild_id, "c": w.campaign_id, "m": map_id},
     )
@@ -632,17 +635,11 @@ class MapStore:
                     lambda kind: onto.is_a(kind, "faction") or onto.is_a(kind, "place"),
                 )  # fmt: skip
                 rows = layers_read.reads(read.shows, names, rulers)
-                on_map = " AND map_id = %s"
-                before = {str(r["id"]) for r in await w.select(MAP_FACTS, on_map, [map_id])}
+                written: Counter[str] = Counter()
                 counts = await map_fact_store.add_read(
                     w, onto, rows, source=mf.FROM_MAP, map_id=map_id,
-                    shown_at=await _shown_at(w, map_id),
+                    shown_at=await _shown_at(w, map_id), layers_written=written,
                 )  # fmt: skip
-                written = Counter(
-                    str(r["layer"])
-                    for r in await w.select(MAP_FACTS, on_map, [map_id])
-                    if str(r["id"]) not in before
-                )
                 done.layers, done.written = dict(counts), dict(written)
                 done.batch = w.batch
             await w.conn.execute(

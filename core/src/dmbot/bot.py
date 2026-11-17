@@ -1609,9 +1609,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # restart simply tries once more)
         self._map_close_after: dict[str, float] = {}
         self._map_pins_day: dict[int, tuple[int, int]] = {}  # server -> (day, re-reads that day)
-        # (server, campaign) → the map notes held while a session runs (#4259 8a: nothing alerts
-        # during play; they go after the session, once each). In memory: a restart loses them.
-        self._held_map_notes: dict[tuple[int, str], list[tuple[str, Any]]] = {}
         self.image_desk: ImageDesk | None = (
             ImageDesk(
                 self.ai_client.tier(FEATURE_TIERS[Feature.IMAGE], Feature.IMAGE),
@@ -12306,11 +12303,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
     async def send_held_map_notes(self, table: Table) -> None:
         """The map notes held during the session (#4259 8a), each to every DM privately."""
+        held, table.held_map_notes = table.held_map_notes, []  # (once: in memory, on the session)
         if table.campaign_id is None:
             return
-        held = self._held_map_notes.pop((table.guild_id, table.campaign_id), [])
         for text, view in held:
-            await _send_map_note(self, table.guild_id, table.campaign_id, text, view)
+            try:  # (one that fails never stops the rest)
+                await _send_map_note(self, table.guild_id, table.campaign_id, text, view)
+            except Exception as exc:
+                log.warning("Map layers: a held note wasn't sent (%s)", type(exc).__name__)
 
     async def send_collected_asks(self, table: Table) -> None:
         """The after-session step that sends what the steps before it collected (#3210). After it,
@@ -16340,7 +16340,7 @@ async def _map_layers_note(bot: Any, gid: int, cid: str, map_id: str, got: Any) 
         view = note.note_view(gid, cid, got.batch if got.written else None, label)
         table = bot.tables.get(gid)
         if table is not None and table.campaign_id == cid:
-            bot._held_map_notes.setdefault((gid, cid), []).append((text, view))
+            table.held_map_notes.append((text, view))
             return
         await _send_map_note(bot, gid, cid, text, view)
     except Exception as exc:

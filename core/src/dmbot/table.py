@@ -9,6 +9,7 @@ import asyncio
 import time
 from collections import Counter
 from dataclasses import dataclass, field
+from typing import Any
 
 import discord
 
@@ -320,6 +321,9 @@ class Table:
     # Test recordings (#1019): the saved session, only in a test server.
     test_session: TestSession | None = None
     sidebar_limiter: AskLimiter = field(default_factory=AskLimiter)
+    # A map's private note held until this session's end (#4259 8a: nothing alerts during play):
+    # (text, view). On the session itself, so a new session never takes an old one's notes.
+    held_map_notes: list[tuple[str, Any]] = field(default_factory=list)
 
     @property
     def chat_id(self) -> int:

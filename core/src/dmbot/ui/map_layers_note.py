@@ -21,12 +21,15 @@ import discord
 
 from dmbot.logs import set_log_context
 from dmbot.memory import map_facts as mf
+from dmbot.memory._changes import ALREADY_UNDONE, MAP_PICTURE_GONE
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 
 log = logging.getLogger(__name__)
 
 UNDO = "↩ Undo"
-NOT_UNDONE = "Not undone: some of these were checked already. Change them in 🌍 World notes."
+NOT_UNDONE = "Not undone: some of these were changed since. Change them in 🌍 World notes."
+PICTURE_GONE = "Not undone: that map's picture was deleted since."
+TOO_OLD = "Not undone: that was too long ago. Change them in 🌍 World notes."
 ALREADY = "Already undone (by you or another DM)."
 GONE = "That campaign is gone, so there's nothing to undo."
 ONLY_DM = "Only a DM of this campaign can undo this."
@@ -126,7 +129,7 @@ class UndoMapLayersButton(
         return cls(int(match["guild"]), match["campaign"], int(match["batch"]))
 
     async def callback(self, interaction: discord.Interaction) -> Any:
-        set_log_context(guild_id=self.guild_id)
+        set_log_context(guild_id=self.guild_id, campaign_id=self.campaign_id)
         client = interaction.client
         store, memory = getattr(client, "campaigns", None), getattr(client, "memory", None)
         try:
@@ -147,11 +150,12 @@ class UndoMapLayersButton(
         await interaction.response.defer()
         try:
             await memory.undo(self.guild_id, self.campaign_id, self.batch)
-        except TooLateToUndo:
-            await interaction.followup.send(NOT_UNDONE, ephemeral=True)
+        except TooLateToUndo:  # (its history is gone: pruned, or a backup was loaded)
+            await interaction.followup.send(TOO_OLD, ephemeral=True)
             return
-        except MemoryRuleError:  # (taken back already, by this DM or another)
-            await interaction.followup.send(ALREADY, ephemeral=True)
+        except MemoryRuleError as exc:  # (the store's reason says which: `_changes`' words)
+            words = {ALREADY_UNDONE: ALREADY, MAP_PICTURE_GONE: PICTURE_GONE}.get(str(exc))
+            await interaction.followup.send(words or NOT_UNDONE, ephemeral=True)
             return
         except Exception:
             log.exception("A map note's Undo failed")

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import json
 import unittest
+import uuid
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
@@ -127,9 +128,10 @@ class TheWrite(PinsBase):  # (Postgres: Targos is a kept place; the map is the D
         await self.memory.add_read_map_facts(
             GUILD_A, self.one.id, [Read(self.targos, mf.TERRAIN, "arctic")], source="extractor"
         )
-        await self.record(shows=[
+        got = await self.record(shows=[
             {"place": "Targos", "layer": "terrain", "value": "arctic", "from": "legend"}
         ])  # fmt: skip
+        self.assertEqual(got.written, {})  # (nothing new: no note, no Undo for it)
         (row,) = await self.rows()  # (one row, never two)
         self.assertEqual(
             (row["source"], row["also_text"], row["map_id"]), (mf.FROM_MAP, True, self.map_id)
@@ -167,10 +169,52 @@ class TheWrite(PinsBase):  # (Postgres: Targos is a kept place; the map is the D
                 "SELECT max(batch) AS b FROM memory_changes WHERE table_name = 'memory_map_facts'"
             )
             batch = (await cur.fetchone() or {}).get("b")
-        assert batch is not None
-        await self.memory.undo(GUILD_A, self.one.id, int(batch))
+        self.assertEqual(got.batch, batch)  # (the note's button carries this read's batch)
+        await self.memory.undo(GUILD_A, self.one.id, got.batch)
         self.assertEqual(await self.rows(), [])
         self.assertEqual(await self.features(), [])
+
+    async def test_a_row_starts_at_the_session_the_picture_was_posted_in(self) -> None:
+        # (§7.4: the session that began last before the picture was posted, not before it was
+        # kept as a map; a session after it doesn't count)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT p.made_at FROM campaign_pictures p JOIN campaign_maps m"
+                " ON p.id = m.picture_id WHERE m.id = %s",
+                (self.map_id,),
+            )
+            made = int((await cur.fetchone() or {})["made_at"])
+            for at in (made - 100, made + 100):
+                await conn.execute(
+                    "INSERT INTO transcript_sessions (guild_id, campaign_id, id, started_at)"
+                    " VALUES (%s, %s, %s, %s)",
+                    (GUILD_A, self.one.id, uuid.uuid4().hex, at),
+                )
+        await self.record(shows=[
+            {"place": "Targos", "layer": "terrain", "value": "arctic", "from": "symbol"}
+        ])  # fmt: skip
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT from_session_at FROM memory_map_facts WHERE entity_id = %s", (self.targos,)
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["from_session_at"], made - 100)
+
+    async def test_a_row_the_text_says_after_the_read_stops_its_undo(self) -> None:
+        from dmbot.memory import _changes
+        from dmbot.memory.map_fact_store import Read
+        from dmbot.memory.models import MemoryRuleError
+
+        got = await self.record(shows=[
+            {"place": "Targos", "layer": "terrain", "value": "arctic", "from": "symbol"}
+        ])  # fmt: skip
+        await self.memory.add_read_map_facts(  # (the session's reader says it too, later)
+            GUILD_A, self.one.id, [Read(self.targos, mf.TERRAIN, "arctic")], source="extractor"
+        )
+        with self.assertRaises(MemoryRuleError) as caught:
+            await self.memory.undo(GUILD_A, self.one.id, got.batch)
+        self.assertEqual(str(caught.exception), _changes.CHANGED_SINCE)  # (the note: "changed")
 
 
 class TheNote(unittest.IsolatedAsyncioTestCase):
@@ -251,9 +295,13 @@ class TheNote(unittest.IsolatedAsyncioTestCase):
             "↩ Undone. DMbot took back everything it read from the Ten-Towns map, including where"
             " places are on it, and won't place them again. The map itself is still kept.",
         )
+        from dmbot.memory import _changes
+
         for error, words in (
-            (TooLateToUndo("x"), note.NOT_UNDONE),
-            (MemoryRuleError("x"), note.ALREADY),
+            (TooLateToUndo("x"), note.TOO_OLD),
+            (MemoryRuleError(_changes.ALREADY_UNDONE), note.ALREADY),
+            (MemoryRuleError(_changes.CHANGED_SINCE), note.NOT_UNDONE),
+            (MemoryRuleError(_changes.MAP_PICTURE_GONE), note.PICTURE_GONE),
         ):
             interaction, followup = self.press(7, AsyncMock(side_effect=error))
             await button.callback(interaction)
@@ -273,8 +321,9 @@ class TheTiming(unittest.IsolatedAsyncioTestCase):
                 get=AsyncMock(return_value=SimpleNamespace(dm_user_ids=frozenset({7, 8})))
             ),
             settings=SimpleNamespace(site_url=""),
-            tables={1: SimpleNamespace(guild_id=1, campaign_id=running)} if running else {},
-            _held_map_notes={},
+            tables={1: SimpleNamespace(guild_id=1, campaign_id=running, held_map_notes=[])}
+            if running
+            else {},
             _dm_message=AsyncMock(),
         )
         bot.got = SimpleNamespace(written={mf.TERRAIN: 1}, layers={"added": 1}, batch=4, pins=0)
