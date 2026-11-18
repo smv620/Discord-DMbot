@@ -23,7 +23,7 @@ export const lorePage = {
   notFound: "We can't find that campaign. Go back to your campaigns and choose it.",
   notDm: "Only a campaign's game master can upload lore.",
   whereLegend: "How do you want to add it?",
-  sources: { paste: "Paste it here", file: "A text file", link: "A link" },
+  sources: { paste: "Paste it here", file: "A text file", link: "A link", pdf: "A PDF" },
   pasteLabel: "The words",
   pasteHelp: `Up to ${LORE_TEXT_MAX.toLocaleString("en-US")} characters.`,
   count: (n: number): string => `${n.toLocaleString("en-US")} of ${LORE_TEXT_MAX.toLocaleString("en-US")}`,
@@ -34,6 +34,33 @@ export const lorePage = {
   fileChosen: (name: string): string => `Chosen: ${name}`,
   linkLabel: "The link",
   linkHelp: "A page anyone with the link can open, such as a shared Google Doc. Paste the full address.",
+  // A PDF (#4762, behind LORE_PDF_LIVE): sent, counted without any AI, then read after the DM's yes.
+  pdf: {
+    label: "Choose a PDF",
+    help: "A PDF of up to 50 MB. DMbot counts its pages and pictures first and tells you the cost. It reads none of the words until you say yes. A PDF you don't read is deleted within a day.",
+    sending: "Sending the PDF…",
+    counting: "Counting its pages and pictures…",
+    counted: (pages: number, pictures: number, usd: number | null): string =>
+      `That's ${pages} ${pages === 1 ? "page" : "pages"}${pictures > 0 ? ` and ${pictures} ${pictures === 1 ? "picture" : "pictures"}` : ""}.` +
+      (usd === null ? " DMbot can't tell the cost yet." : ` Reading it should cost about $${usd.toFixed(2)} of AI use.`) +
+      ' Answer the questions below, tick the box, then choose "Read this PDF".',
+    rights: "I have the right to use this PDF, and its pictures.",
+    rightsNeeded: "Check the box to confirm you have the right to use this PDF.",
+    dropped: "Okay. DMbot deleted the PDF and read nothing.",
+    slow: "This is taking longer than usual. You can choose the PDF again.",
+    rightsNote: "DMbot doesn't check this for you. It uses the PDF and its pictures for this campaign only, and keeps the names and connections it finds, not the PDF.",
+    read: "Read this PDF",
+    never: "Never mind",
+    gone: "That file expired before DMbot could count it. Choose it again.",
+    problems: {
+      "bad-file": "That doesn't look like a PDF, or it's empty or over 50 MB. Choose another.",
+      "uploads-off": "PDF uploads aren't open yet.",
+      "not-counted": "DMbot hasn't counted that PDF yet. Choose it again.",
+      "not-found": "That PDF isn't waiting any more. Choose it again.",
+      "slow-down": "DMbot is already reading something for this campaign. Here is where it is.",
+      "too-soon": "That's five uploads in the last hour. You can try again soon.",
+    } as Record<string, string>,
+  },
   speakerLabel: "Whose story is this?",
   speakerNone: "Nobody in particular (about the world)",
   speakerHelp: "Pick a character if this is one character's backstory. It does not change who knows it; the next question does.",
@@ -54,6 +81,8 @@ export const lorePage = {
   stages: {
     waiting: "Waiting for DMbot to pick it up.",
     reading: "Reading it.",
+    finding_pictures: "Finding its pictures.",
+    reading_pictures: "Reading the words in its pictures.",
     lore_waiting: "Waiting for DMbot to pick it up.",
     lore_reading: "Reading it.",
     finding_names: "Finding names.",
@@ -63,7 +92,7 @@ export const lorePage = {
   } as Record<string, string>,
   unit: "parts",
   /** What the API's count is of, by its unit code (#3534). */
-  units: { parts: "parts", names: "names", checks: "checks" } as Record<string, string>,
+  units: { parts: "parts", names: "names", checks: "checks", pictures: "pictures" } as Record<string, string>,
   found: (names: number, links: number): string =>
     `DMbot found ${names} ${names === 1 ? "name" : "names"} and ${links} ${links === 1 ? "connection" : "connections"}.`,
   foundNothing: "DMbot didn't find any names in that. Try a longer piece.",
@@ -85,6 +114,8 @@ export const lorePage = {
   } as Record<string, string>,
   failedReasons: {
     not_taken: "DMbot didn't pick it up in time. Try again in a few minutes.",
+    file_gone: "DMbot deleted that PDF before reading it, because it was waiting too long. Choose it again.",
+    file_unreadable: "DMbot couldn't open that PDF. It may be damaged or locked with a password. Save a fresh copy, then choose it again.",
   } as Record<string, string>,
   failedFallback: "DMbot couldn't read it. Check the text or link, then try again.",
   genericProblem: "Something went wrong. Try again.",

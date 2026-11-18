@@ -34,6 +34,9 @@ STALL_AFTER_S: Final[Mapping[str, int | None]] = {
     "lore_waiting": None,
     "lore_reading": 10 * 60,
     "finding_links": 10 * 60,
+    # A lore PDF's pictures, taken out and then read (#4762).
+    "finding_pictures": 10 * 60,
+    "reading_pictures": 10 * 60,
     # The story read of an imported session (#3307): a batch is one AI call (up to 5 minutes);
     # waiting for the daily limit never stalls, it carries on by itself.
     "reading_connections": 15 * 60,

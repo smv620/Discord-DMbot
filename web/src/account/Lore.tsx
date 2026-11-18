@@ -6,12 +6,14 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { AUTO_ADD_LIVE } from "../content/auto-add-switch";
 import { AI_FEED_LIVE } from "../content/ai-feed-switch";
+import { LORE_PDF_LIVE } from "../content/lore-pdf-switch";
 import { lorePage as words, LORE_TEXT_MAX } from "../content/lore-words";
 import { stageWords } from "../content/work-progress";
 import { type AccountApi, ApiError, type LoreInput, type LoreUpload, type NameRow } from "./api";
 import LazyPanel from "./LazyPanel";
 import WorkProgress from "./WorkProgress";
 import AddAll from "./AddAll";
+import { LorePdfButtons, LorePdfPicker, useLorePdf } from "./LorePdf";
 
 /** The campaign's address, read from `/account/lore/<server>.<campaign>`. */
 export function campaignFromPath(path: string): string | null {
@@ -24,7 +26,7 @@ const POLL_MAX_MS = 30_000;
 /** A taken upload quiet this long reads as stalled (the door puts it back at ten minutes). */
 const STALLED_S = 300;
 
-type Source = LoreInput["source"];
+type Source = LoreInput["source"] | "pdf"; // (a PDF is its own part, behind LORE_PDF_LIVE, #4762)
 type Known = LoreInput["choice"];
 
 function problemFor(err: unknown): string {
@@ -117,6 +119,9 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
     if (problem) alertBox.current?.focus();
   }, [problem]);
 
+  // (before the early return below: a hook is called on every render)
+  const pdfState = useLorePdf(api, ref, LORE_PDF_LIVE && source === "pdf", startedPdf, () => void pdfBusy());
+
   if (!ref) return <p>{words.notFound}</p>;
 
   async function chooseFile(file: File | undefined) {
@@ -138,11 +143,31 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
     }
   }
 
+  // The open read the PDF's yes ran into, or the upload it started: shown like any lore (#4762).
+  function startedPdf(got: LoreUpload) {
+    seen.current = -1;
+    idle.current = 0;
+    setStopped(false);
+    setOpened(false);
+    setUpload(got);
+    setRights(false);
+  }
+  async function pdfBusy() {
+    const got = await api.loreRead?.(ref ?? "").catch(() => null);
+    if (got) {
+      seen.current = -1;
+      idle.current = 0;
+      setStopped(false);
+      setOpened(true);
+      setUpload(got);
+    }
+  }
+
   const ready = source === "link" ? link.trim() !== "" : text.trim() !== "";
 
   async function send(e: Event) {
     e.preventDefault();
-    if (!api.loreAdd || !ref) return;
+    if (!api.loreAdd || !ref || source === "pdf") return;
     if (!ready) return setProblem(words.nothingYet);
     if (!rights) return setProblem(words.rightsNeeded);
     setBusy(true);
@@ -267,7 +292,7 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
       <p>{words.lead}</p>
       <fieldset class="stack">
         <legend>{words.whereLegend}</legend>
-        {(["paste", "file", "link"] as const).map((s) => (
+        {((LORE_PDF_LIVE ? ["paste", "file", "link", "pdf"] : ["paste", "file", "link"]) as readonly Source[]).map((s) => (
           <label key={s} class="choice">
             <input type="radio" name="lore-source" value={s} checked={source === s} onChange={() => { setSource(s); setProblem(""); }} /> {words.sources[s]}
           </label>
@@ -288,6 +313,9 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
           {fileName && <p role="status">{words.fileChosen(fileName)}</p>}
           {fileProblem && <p role="alert">{fileProblem}</p>}
         </div>
+      )}
+      {source === "pdf" && LORE_PDF_LIVE && (
+        <LorePdfPicker s={pdfState} />
       )}
       {source === "link" && (
         <div class="stack">
@@ -316,13 +344,16 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
         ))}
       </fieldset>
       <label class="choice">
-        <input type="checkbox" checked={rights} onChange={(e) => setRights((e.target as HTMLInputElement).checked)} /> {words.rights}
+        <input type="checkbox" checked={rights} onChange={(e) => setRights((e.target as HTMLInputElement).checked)} /> {source === "pdf" ? words.pdf.rights : words.rights}
       </label>
-      <p class="small">{words.rightsNote}</p>
-      {problem && <p role="alert" ref={alertBox} tabIndex={-1}>{problem}</p>}
-      <p>
-        <button type="submit" class="button" disabled={busy}>{busy ? words.sending : words.submit}</button>
-      </p>
+      <p class="small">{source === "pdf" ? words.pdf.rightsNote : words.rightsNote}</p>
+      {source === "pdf" && LORE_PDF_LIVE && <LorePdfButtons s={pdfState} onYes={() => void pdfState.yes({ choice: known, speaker, rights })} />}
+      {(source === "pdf" ? pdfState.problem || problem : problem) && <p role="alert" ref={alertBox} tabIndex={-1}>{source === "pdf" ? pdfState.problem || problem : problem}</p>}
+      {source !== "pdf" && (
+        <p>
+          <button type="submit" class="button" disabled={busy}>{busy ? words.sending : words.submit}</button>
+        </p>
+      )}
     </form>
   );
 }

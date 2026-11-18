@@ -1322,6 +1322,24 @@ export interface LoreInput {
   speaker: string;
   rights: boolean;
 }
+/** The lore PDF a DM sent from the website (#4762; core web/lore_pdf.py): numbers and words only, never the file's words. `ref`
+ * names this file to the yes (so a replaced file is never read on the old yes); `pages`, `pictures` and `estimateUsd` come once
+ * DMbot has counted it (nothing is sent to an AI before the yes); `estimateUsd` is dollars. `none` when nothing is waiting. */
+export interface LorePdf {
+  state: "none" | "staged" | "estimating" | "estimated" | "reading" | "done" | "failed";
+  ref?: string;
+  sizeBytes?: number;
+  pages?: number | null;
+  pictures?: number | null;
+  estimateUsd?: number | null;
+}
+/** What a DM says to read the counted PDF: the file's `ref`, how it is known, whose it is and the right-to-use box. */
+export interface LorePdfGo {
+  ref: string;
+  choice: "world" | "spoilers" | "smart";
+  speaker: string;
+  rights: boolean;
+}
 /** Where an upload stands: stages and counts only, never the words (#3022). Times are the server's seconds. */
 export interface LoreUpload {
   id: string;
@@ -1330,7 +1348,7 @@ export interface LoreUpload {
   state: "waiting" | "working" | "done" | "failed";
   stage: string;
   error: string;
-  source: "paste" | "file" | "link";
+  source: "paste" | "file" | "link" | "pdf";
   choice: "world" | "spoilers" | "smart";
   namesFound: number;
   linksFound: number;
@@ -2834,6 +2852,7 @@ export type ApiErrorKind =
   | "script-already" // the script was already made (#3899)
   | "script-off" // scripts are switched off on the server (#3899)
   | "nothing" // the speaker has no lines left to remove (#3305)
+  | "not-counted" // a lore PDF's pages and pictures are not counted yet (#4762)
   | "permanent-full" // the permanent pictures are full (400 MB): unmark one to make room (#3275)
   | "refused" // the bot refused a picture action; the error's `note` says why (#3275)
   | "sign-in-again" // acting for a server or deleting needs a sign-in from the last day
@@ -3259,6 +3278,16 @@ export interface AccountApi {
    * waiting are always included), for a campaign's game masters only (#3710). Missing from an older API. */
   aiFeed?(ref: string, kind: "lore" | "import", job: string, after: number): Promise<AiFeedRead>;
   loreRead?(campaignRef: string, id?: string): Promise<LoreUpload | null>;
+  /** A lore PDF (#4762, behind LORE_PDF_LIVE): what is waiting (`none` when nothing is), sending one (the file itself; a new one
+   * replaces the old), asking DMbot to count its pages and pictures (no AI; `onLook` hears the wait), the DM's yes (the same
+   * upload as any lore, polled with `loreRead`) and "Never mind". Refusals: `bad-file`, `uploads-off`, `slow-down` (one is
+   * already being read, or a read is open), `not-counted`, `needs-confirm`, `not-found` (nothing waiting, or another file than
+   * the one shown), `too-soon`, `bad-speaker`, `not-allowed`. */
+  lorePdf?(campaignRef: string): Promise<LorePdf>;
+  lorePdfSend?(campaignRef: string, file: Blob): Promise<LorePdf>;
+  lorePdfCount?(campaignRef: string, onLook?: (progress: JobProgress | null) => void): Promise<LorePdf>;
+  lorePdfGo?(campaignRef: string, input: LorePdfGo): Promise<LoreUpload>;
+  lorePdfDrop?(campaignRef: string): Promise<void>;
   /** One NPC's page. `campaignRef` is `<server>.<campaign>`, `entry` the NPC's id (#2266). */
   npcPage?(campaignRef: string, entry: string): Promise<NpcPage>;
   /** Save my private note on an NPC; an empty note clears it. */
@@ -3676,6 +3705,7 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   bad_file: "bad-file",
   uploads_off: "uploads-off",
   nothing: "nothing",
+  not_counted: "not-counted",
   read_too_soon: "read-too-soon",
   hour_full: "hour-full",
   bad_answer: "bad-answer",
@@ -3808,7 +3838,7 @@ export interface ApiHelpers {
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
 export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses"] as const satisfies readonly (keyof AccountApi)[];
-export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions"] as const satisfies readonly (keyof AccountApi)[];
+export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "lorePdf", "lorePdfSend", "lorePdfCount", "lorePdfGo", "lorePdfDrop", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
 function lazyArea<K extends keyof AccountApi>(names: readonly K[], load: () => Promise<{ default: (h: ApiHelpers) => Record<string, unknown> }>, h: ApiHelpers): Pick<AccountApi, K> {
