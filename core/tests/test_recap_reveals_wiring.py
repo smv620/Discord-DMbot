@@ -111,6 +111,52 @@ class TheChecks(unittest.TestCase):
     def test_without_a_marker_nothing_is_checked(self) -> None:
         self.assertEqual(rd.reveal_problems("Okthandom learned that Vane lied.", ()), [])
 
+    def test_reveal_confided_is_fine(self) -> None:
+        self.assertEqual(check("Okthandom confided something about Vane."), [])
+
+    def test_reveal_realised_is_fine(self) -> None:
+        self.assertEqual(check("Okthandom realised something about Vane."), [])
+
+    def test_reveal_something_then_rode_on_is_fine(self) -> None:
+        self.assertEqual(check("Okthandom learned something about Vane, then rode on."), [])
+
+    def test_reveal_whispered_that_is_one_problem_without_the_detail(self) -> None:
+        # (a regression guard: the message is a fixed string, so this asserts it names no detail)
+        problems = check("Okthandom whispered that Vane lied.")
+        self.assertEqual(len(problems), 1)
+        self.assertNotIn("lied", problems[0])
+
+    def test_reveal_scene_with_a_long_clause_is_fine(self) -> None:
+        line = pl.REVEAL_MARK + "Okthandom and Wulfgar had a private word."
+        self.assertEqual(
+            check("Okthandom and Wulfgar had a private word, and it was long.", line), []
+        )
+
+    def test_reveal_two_subjects_about_something_is_fine(self) -> None:
+        line = pl.REVEAL_MARK + "Wulfgar learned something about Vane and the Tower."
+        self.assertEqual(check("Wulfgar learned something about Vane and the Tower.", line), [])
+
+    def test_reveal_unmarked_line_is_not_read(self) -> None:
+        plain = "Okthandom learned something about Vane."
+        self.assertEqual(rd.reveal_problems("Okthandom learned that Vane lied.", (plain,)), [])
+
+    def test_reveal_unknown_sentence_is_not_read(self) -> None:
+        # (a narration that would be flagged, so the empty result comes from skipping the line)
+        line = pl.REVEAL_MARK + "not a sentence we know"
+        self.assertEqual(check("Okthandom learned that Vane lied.", line), [])
+
+    def test_reveal_not_cited_is_advisory_for_a_scene(self) -> None:
+        line = pl.REVEAL_MARK + "Okthandom and Wulfgar had a private word."
+        advisory: list[str] = []
+        self.assertEqual(check("They rode on.", line, advisory), [])
+        self.assertEqual(advisory, ["reveal"])
+
+    def test_reveal_a_named_person_counts_as_cited(self) -> None:
+        line = pl.REVEAL_MARK + "Okthandom and Wulfgar had a private word."
+        advisory: list[str] = []
+        self.assertEqual(check("Wulfgar had a quiet moment.", line, advisory), [])
+        self.assertEqual(advisory, [])
+
 
 class TheBotsReader(unittest.IsolatedAsyncioTestCase):
     def bot(self, recorded: set[int]) -> Any:
