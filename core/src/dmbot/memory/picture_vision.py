@@ -11,9 +11,10 @@ Rules kept here, not trusted to the model:
   skipped: none of its words reach the reader, and it is never kept (slice c).
 - **Sent smaller.** A copy no larger than `AI_SIDE` on its long side and under `images.MAX_BYTES`,
   never the file itself.
-- **Room to answer:** the background floor (`ai.OUTPUT_FLOOR`, ruling condition 2). A cut answer,
-  and words past `TEXT_CAP` (a runaway, never a real picture's), are counted and reported on the
-  upload's note, never dropped silently or retried bigger.
+- **Room to answer:** the background floor (`ai.OUTPUT_FLOOR`, ruling condition 2). An answer
+  that stopped early is counted and reported on the upload's note, never dropped silently or
+  retried bigger. Whatever comes back is used in full, however long (CLAUDE.md: lengths are
+  targets, never checks).
 - **Bounded:** at most `AT_ONCE` calls together, none started after `until`, and none allowed to run
   past it (a call still running then is stopped); the rest are counted. Out of AI credits stops the
   step at once.
@@ -39,7 +40,6 @@ from dmbot.memory.picture_read import WHERE, PictureText
 
 AI_SIDE = 1568  # the long side the AI is sent (its own recommended size: more costs, adds nothing)
 AT_ONCE = 4  # calls in flight together
-TEXT_CAP = 20_000  # a picture's words: far past any real page, so only a runaway is ever cut
 SHOWS_MAX = 300  # one plain sentence
 OTHER = "other"
 log = logging.getLogger(__name__)
@@ -129,8 +129,8 @@ def smaller(data: bytes) -> Image | None:
 
 def parse(answer: str) -> tuple[str, str, str] | None:
     """(where, text, shows) from the model's answer, every string cleaned and capped, or None when
-    it can't be used. An "other" picture's words are dropped here, whatever it said. Words past
-    TEXT_CAP are cut (the caller counts that as cut short, `capped`)."""
+    it can't be used. An "other" picture's words are dropped here, whatever it said; the words of
+    any other are kept in full, however many (only cleaned of control characters)."""
     try:
         data = json.loads(answer)
     except (json.JSONDecodeError, ValueError):
@@ -140,7 +140,8 @@ def parse(answer: str) -> tuple[str, str, str] | None:
     where = data.get("where")
     if where not in (*WHERE, OTHER):
         return None
-    text = clean(data.get("text", ""), TEXT_CAP, lines=True) if where != OTHER else ""
+    raw = data.get("text", "")
+    text = clean(raw, len(raw) if isinstance(raw, str) else 0, lines=True) if where != OTHER else ""
     shows = clean(data.get("shows", ""), SHOWS_MAX)
     return str(where), text, shows
 
@@ -240,19 +241,7 @@ async def _one(vision: Any, file: PictureFile, stop: asyncio.Event) -> tuple[str
         return "cut"
     if getattr(reply, "refused", False):
         return "failed"
-    got = parse(str(reply.text))
-    if got is None:
-        return "failed"
-    return "cut" if _capped(str(reply.text)) else got
-
-
-def _capped(answer: str) -> bool:
-    """Whether the answer's words ran past TEXT_CAP (and were cut by `parse`)."""
-    try:
-        text = json.loads(answer).get("text", "")
-    except (json.JSONDecodeError, ValueError, AttributeError):
-        return False
-    return isinstance(text, str) and len(text) > TEXT_CAP
+    return parse(str(reply.text)) or "failed"
 
 
 __all__ = ["AI_SIDE", "PICTURE_SYSTEM", "SCHEMA", "Seen", "parse", "read_pictures", "smaller"]

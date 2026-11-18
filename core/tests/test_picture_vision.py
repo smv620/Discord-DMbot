@@ -109,10 +109,13 @@ class Reading(unittest.IsolatedAsyncioTestCase):
         self.assertEqual((seen.failed, [p.page for p in seen.pictures]), (1, [2]))
         self.assertEqual(seen.unread_pages, (1,))
 
-    async def test_words_past_the_cap_count_as_cut(self) -> None:
-        ai = Fake({1: {"where": "table", "text": "x" * (picture_vision.TEXT_CAP + 1), "shows": ""}})
+    async def test_a_long_answer_is_read_in_full_and_never_counted_unread(self) -> None:
+        # (CLAUDE.md: lengths are targets, never checks; Supervisor's review of #4766)
+        words = "\n".join(f"Row {i} | {i * 3}" for i in range(2500))
+        self.assertGreater(len(words), 30_000)
+        ai = Fake({1: {"where": "table", "text": words, "shows": ""}})
         seen = await picture_vision.read_pictures(ai, self.files(1), until=float("inf"))
-        self.assertEqual((seen.cut, seen.pictures), (1, ()))
+        self.assertEqual((seen.unread, [p.text for p in seen.pictures]), (0, [words]))
 
     async def test_a_call_still_running_at_the_end_is_stopped(self) -> None:
         import asyncio
