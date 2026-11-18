@@ -13906,6 +13906,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         """ "Share this campaign's story to improve DMbot" chosen on the website (#3741)."""
         await self.campaigns.set_share_improve(campaign.guild_id, campaign.id, on)
 
+    async def apply_map_checks(self, campaign: Campaign, on: bool) -> None:
+        """ "Map checks" chosen on the website (#4687): the call Discord's button makes."""
+        await self.campaigns.set_map_checks(campaign.guild_id, campaign.id, on)
+
     async def apply_rulesets(self, campaign: Campaign, main: str, fallback: str) -> bool:
         """The main rules chosen on the website (#3112): saved, the new pair's names built ahead
         of use (in its own try: a failure there costs only the first lookup's wait), and whether
