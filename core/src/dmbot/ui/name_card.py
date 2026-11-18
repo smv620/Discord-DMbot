@@ -132,6 +132,7 @@ from dmbot.ui.names import (
     sees_secrets,
     split_names,
 )
+from dmbot.ui.remembered_players import add_remembered
 from dmbot.ui.who_knows import (
     ALREADY,
     NO_LONGER_COMMON,
@@ -2350,6 +2351,7 @@ class KindChange(_Menu):
                 player_id.type_id_button(campaign.guild_id, allowed, self._player_typed, self._back)
             )
             self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
+            await add_remembered(interaction, self, self._player_picked, campaign.guild_id)
             await _replace(interaction, f"**Who plays {_md(self.name)}?**", self)
             return
         try:

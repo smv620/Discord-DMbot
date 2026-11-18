@@ -301,6 +301,14 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,  # not live yet: on only after the before-and-after scores (#3172)
     ),
     Feature(
+        "remembered players",
+        "Pickers list the players you have played with first",
+        "",
+        lambda s: s.remembered_players_on,
+        ("remembered_players_on",),
+        for_dms=False,  # not live yet: on with the website's half (#4226)
+    ),
+    Feature(
         "test recordings",
         "Test recordings",
         "",
