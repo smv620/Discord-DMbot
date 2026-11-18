@@ -112,6 +112,13 @@ def said_far(stated: str, a: str, b: str, amount: str, map_title: str) -> str:
     return f"You said {stated} from {a} to {b}. {map_measures(amount, map_title)}"
 
 
+def said_time(stated: str, a: str, b: str, suggestion: str) -> str:
+    """The unasked travel-time offer (#4260; design §9 "When it is offered"): 'You said two days
+    from Targos to Bryn Shander. DMbot's estimate, in case it helps: About 1 day on foot … Your
+    call.' Never "wrong": the DM's time stands, the estimate is only offered."""
+    return f"You said {stated} from {a} to {b}. DMbot's estimate, in case it helps: {suggestion}"
+
+
 def said_way(a: str, direction: str, b: str, map_way: str, map_title: str) -> str:
     """'You said Bryn Shander is north of Targos. On the Ten-Towns map, Bryn Shander is about east
     of Targos.' (Only on a map whose north was read or set, so no "if north is at the top".)"""

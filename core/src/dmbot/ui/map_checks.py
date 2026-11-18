@@ -19,7 +19,7 @@ import discord
 from dmbot.logs import set_log_context
 from dmbot.maps import disagree
 from dmbot.maps import measure_words as words
-from dmbot.maps.store import SaidOff
+from dmbot.maps.store import SaidOff, SaidTrip
 
 log = logging.getLogger(__name__)
 
@@ -36,6 +36,11 @@ def note_text(found: SaidOff) -> str:
             said.words, found.a_name, found.b_name, disagree.amount(off), off.map.title
         )
     return words.said_way(found.a_name, said.words, found.b_name, off.map_way, off.map.title)
+
+
+def offer_text(found: SaidTrip) -> str:
+    """The unasked travel-time offer's words for one `maps.store.SaidTrip` (#4260)."""
+    return words.said_time(found.said.words, found.a_name, found.b_name, found.text)
 
 
 def note_view(guild_id: int, campaign_id: str) -> discord.ui.View:

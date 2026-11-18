@@ -281,11 +281,24 @@ async def _shown_at(w: Changes, map_id: str) -> int:
 _MILES = re.compile(r"^(?:about\s+)?(\d+(?:\.\d+)?)\s*(?:miles?|mi)\.?$", re.I)
 
 
-async def _trip(scope: Any, a: str, b: str, asked: Any, rules: tuple[str, str]) -> str:
+async def _trip(
+    scope: Any,
+    a: str,
+    b: str,
+    asked: Any,
+    rules: tuple[str, str],
+    *,
+    offer: bool = False,
+    stated_days: float | None = None,
+) -> str | None:
     """The travel-time suggestion's words (#4260 slice 10a; design §9), for the DM. The miles: a
     stated length in miles on the road between them, else a map's straight line. A stated length
     that isn't miles (a time, "two days by cart") is given back as it is, never summed. The pace:
-    on foot, capped by the land at either end. Nothing is stored or changed."""
+    on foot, capped by the land at either end. Nothing is stored or changed. `offer`: for the
+    unasked offer (design §9 "When it is offered"), None unless a time was worked out (a stated
+    time on the road is the DM's world already, and what is missing is no offer), and None when
+    `stated_days`, the DM's own time, is already within the estimate's paces (nothing new to say:
+    the ux-critic's and the reviewer's, so a DM who is right is never interrupted)."""
     from dmbot.maps import measure, travel, travel_words
     from dmbot.maps.measure_words import LORE_SAYS, SESSION_SAID
     from dmbot.memory import gate, map_fact_store
@@ -322,6 +335,8 @@ async def _trip(scope: Any, a: str, b: str, asked: Any, rules: tuple[str, str]) 
         by_dm, in_session = road["length_from"] == "dm", road["from_session_at"] is not None
         found = _MILES.match(stated)
         if found is None:  # (a time or another unit: the DM's own words, given back)
+            if offer:
+                return None
             said = "you set" if by_dm else SESSION_SAID if in_session else LORE_SAYS
             text = travel_words.stated_time(stated, *names, said)
             return f"{text} {travel_words.closed()}" if shut else text
@@ -337,7 +352,7 @@ async def _trip(scope: Any, a: str, b: str, asked: Any, rules: tuple[str, str]) 
         d = measure.distance(used, pa, pb) if used and pa and pb else None
         amount = measure.rounded(d, "miles") if d is not None else None
         if used is None or d is None or used.unit != "miles" or amount is None:
-            return far  # (what is missing, and its fix: no time without a distance)
+            return None if offer else far  # (what is missing, and its fix: no time without miles)
         miles = float(amount.split()[0])  # (the miles the answer says, so its sums match them)
         distance = travel_words.straight(amount, *names, used.title, road=road is not None)
     index = srd()
@@ -348,6 +363,10 @@ async def _trip(scope: Any, a: str, b: str, asked: Any, rules: tuple[str, str]) 
     # newer one is used and cited, tagged, as the edition rule says: never applied uncited)
     terrain = index.lookup("travel terrain", rules[0], "2024", kind="rule") if lands else None
     plan = travel.plan(miles, lands if terrain is not None else [])
+    if offer and stated_days is not None and plan.days:
+        quickest, slowest = min(d.days for d in plan.days), max(d.days for d in plan.days)
+        if quickest <= stated_days <= slowest:
+            return None
     on_foot = asked.how in ("", "foot", "mounted", "wagon")  # (a boat's time on foot means nothing)
     parts: list[str] = []
     if on_foot:
@@ -379,6 +398,17 @@ async def _other_map_showing(w: Changes, fact_id: str, map_id: str) -> str | Non
     )
     row = await cur.fetchone()
     return None if row is None else str(row["id"])
+
+
+@dataclass(frozen=True, slots=True)
+class SaidTrip:
+    """A travel time the DM said (#4260): what was said, the two places' names, and the
+    suggestion's words for the same trip."""
+
+    said: Said
+    a_name: str
+    b_name: str
+    text: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -907,7 +937,7 @@ class MapStore:
             aliases = await scope.select(ALIASES, " AND status = 'confirmed'")
             found = positions.place_names(entities, aliases, lambda kind: onto.is_a(kind, "place"))
             names = {key: entry for key, entry in found.items() if entry is not None}
-            said = said_phrases.read(line, names)
+            said = [s for s in said_phrases.read(line, names) if s.kind != said_phrases.TIME]
             if not said:
                 return []
             places = sorted({i for s in said for i in (s.a_id, s.b_id)})
@@ -922,6 +952,45 @@ class MapStore:
             )
             if off is not None:
                 out.append(SaidOff(s, called[s.a_id], called[s.b_id], off))
+        return out
+
+    async def said_trips(
+        self, guild_id: int, campaign_id: str, line: str, rules: tuple[str, str] = ("2024", "none")
+    ) -> list[SaidTrip]:
+        """The unasked travel-time offer (#4260; design §9 "When it is offered"): a travel time the
+        DM said between two kept places DMbot can measure, each with the suggestion "how long will
+        it take?" would give, on foot. Never a check of the DM's time and never stored: the DM's
+        own words are only the cue. Names as `said_off` (the DM's: secret other names too). No
+        offer where no time could be worked out (no miles, or the road's own length is a time),
+        for a time said riding, by cart or by boat (the estimate is on foot only), or when the DM's
+        time is already within the estimate's paces."""
+        from dmbot.maps import measure_phrase, positions, said_phrases
+        from dmbot.memory._changes import ALIASES, ENTITIES
+        from dmbot.memory.store import _load_ontology
+
+        if not said_phrases.may_state_time(line):
+            return []
+        out: list[SaidTrip] = []
+        async with self._memory._read(guild_id, campaign_id, snapshot=True) as scope:
+            onto = await _load_ontology(scope)
+            entities = await scope.select(ENTITIES, " AND status = 'confirmed'")
+            aliases = await scope.select(ALIASES, " AND status = 'confirmed'")
+            found = positions.place_names(entities, aliases, lambda kind: onto.is_a(kind, "place"))
+            names = {key: entry for key, entry in found.items() if entry is not None}
+            said = [
+                s
+                for s in said_phrases.read(line, names)
+                if s.kind == said_phrases.TIME and not said_phrases.NOT_ON_FOOT.search(s.words)
+            ]
+            called = {str(e["id"]): str(e["name"]) for e in entities}
+            for s in said:
+                a_name, b_name = called[s.a_id], called[s.b_id]
+                asked = measure_phrase.Asked(measure_phrase.LONG, a_name, b_name)
+                text = await _trip(
+                    scope, s.a_id, s.b_id, asked, rules, offer=True, stated_days=s.value
+                )
+                if text is not None:
+                    out.append(SaidTrip(s, a_name, b_name, text))
         return out
 
     async def pins_waiting(self, guild_id: int) -> list[tuple[str, Map]]:
@@ -979,6 +1048,6 @@ def _full(usage: Usage, need: int) -> bool:
 
 
 __all__ = [
-    "MB", "Map", "MapError", "MapStore", "RoadOff", "SaidOff", "Viewer", "maps_and_pins",
-    "may_use_map", "roads_off",
+    "MB", "Map", "MapError", "MapStore", "RoadOff", "SaidOff", "SaidTrip", "Viewer",
+    "maps_and_pins", "may_use_map", "roads_off",
 ]  # fmt: skip
