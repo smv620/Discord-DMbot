@@ -16,6 +16,7 @@ Every failure is a DocumentError in plain words, as from `text_of`.
 from __future__ import annotations
 
 import asyncio
+import functools
 import logging
 import multiprocessing
 import os
@@ -25,10 +26,17 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from multiprocessing.connection import Connection
 from pathlib import PurePath
+from typing import Any, cast
 
+from dmbot.memory import pdf_pictures
 from dmbot.memory.name_documents import UNREADABLE, DocumentError, ReadText, text_of
 
 READ_TIME_S = 30.0
+# Taking a PDF's pictures out (#4003): their own time, past the text's, which `pdf_pictures` stops
+# within (with room to spare, so a slow picture step never costs the text), and the memory to
+# decode the chosen ones, one at a time.
+PICTURES_TIME_S = pdf_pictures.BUDGET_S + 5.0
+PICTURES_MEMORY_BYTES = 128 * 1024 * 1024
 # Read in a process: pure-Python parsers that a hostile file can keep busy. Other types
 # are read in a thread (text decoding; web pages have their own time limit).
 IN_A_PROCESS = (".pdf", ".docx", ".xlsx")
@@ -89,30 +97,35 @@ def memory_for(size: int) -> int:
     return MEMORY_BYTES + 4 * max(0, size - MEMORY_BASE_FILE_BYTES)
 
 
-def _limit_memory(size: int = 0) -> None:
+def _limit_memory(size: int = 0, extra: int = 0) -> None:
     try:
         import resource
 
-        limit = memory_for(size)
+        limit = memory_for(size) + extra
         resource.setrlimit(resource.RLIMIT_AS, (limit, limit))
     except (ImportError, ValueError, OSError):  # not Linux, or not allowed: no limit
         pass
 
 
 def _child(conn: Connection, parse: Parse, filename: str, raw: bytes) -> None:
-    """In the child process. Answers b"ok\\n<pages>,<pictures>\\n<text>" (the two counts of a PDF,
-    #4000; 0,0 for any other file), b"error\\n<cause>\\n<plain words>"
+    """In the child process. Answers b"ok\\n<pages>,<pictures>,<found>,<over>\\n<text>" (a PDF's
+    counts: its pages, the pages of pictures only, #4000, and the pictures written for reading and
+    those past the limits, #4003; 0s for any other file), b"error\\n<cause>\\n<plain words>"
     or b"failed\\n<error kind>\\n", as plain bytes (never a pickle). A traceback from
     the child itself (not from `parse`) goes to stderr as plain lines."""
     if hasattr(os, "nice"):  # not on Windows
         os.nice(10)  # behind the bot's voice and replies on a small server
     os.environ.clear()  # the bot's keys and tokens: nothing here needs them
     logging.getLogger().addHandler(logging.NullHandler())  # the bot logs, not the child
-    _limit_memory(len(raw))
+    taking = isinstance(parse, functools.partial) and bool(parse.keywords.get("pictures_to"))
+    _limit_memory(len(raw), PICTURES_MEMORY_BYTES if taking else 0)
     try:
         # errors="replace": a broken PDF can give a lone surrogate; keep the rest
         read = parse(filename, raw)
-        counts = f"{getattr(read, 'pages', 0)},{getattr(read, 'picture_pages', 0)}"
+        counts = ",".join(
+            str(getattr(read, k, 0))
+            for k in ("pages", "picture_pages", "pictures_found", "pictures_over")
+        )
         parts = (b"ok", counts.encode(), read.encode(errors="replace"))
     except DocumentError as exc:
         cause = type(exc.__cause__).__name__ if exc.__cause__ is not None else ""
@@ -189,12 +202,20 @@ async def read_document(
     parse: Parse = text_of,
     limit_s: float | None = None,
     max_reply: int = MAX_REPLY_BYTES,
+    pictures_to: str | None = None,
 ) -> str:
     """The file's text, as `text_of` gives it. PDF and Word files are read in a child
     process that is ended after `limit_s` seconds. `parse` must be importable by name
     (a child process starts it afresh); tests pass a slow one. `max_reply`: the longest answer
-    read back (an adventure's text is longer than a names list's, #1698)."""
+    read back (an adventure's text is longer than a names list's, #1698). `pictures_to`: a PDF's
+    pictures are also written to this private folder (#4003), which takes a little longer."""
     suffix = PurePath(filename).suffix.casefold()
+    if pictures_to is not None and suffix == ".pdf":
+        # (a partial of an importable function pickles by name, as `spawn` needs)
+        # (`Parse` has no keyword; `text_of` and a test's own parse take `pictures_to`)
+        parse = functools.partial(cast(Any, parse), pictures_to=pictures_to)
+        if limit_s is None:
+            limit_s = read_time_for(len(raw)) + PICTURES_TIME_S
     if suffix not in IN_A_PROCESS:
         return await asyncio.to_thread(parse, filename, raw)
     if limit_s is None:  # (a caller's own limit, such as the adventure's, is kept as given)
@@ -223,9 +244,9 @@ async def read_document(
         log.exception("Couldn't read a %s file", suffix)
         raise DocumentError(UNREADABLE) from None
     if kind == "ok":
-        pages, _, pictures = cause.partition(",")
-        if pages.isdecimal() and pictures.isdecimal():
-            return ReadText(text, int(pages), int(pictures))
+        counts = cause.split(",")
+        if 2 <= len(counts) <= 4 and all(c.isdecimal() for c in counts):
+            return ReadText(text, *(int(c) for c in counts))
         return text
     if kind == "error":
         if cause:  # text_of's own "couldn't read" (the child doesn't log)

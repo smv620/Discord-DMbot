@@ -38,6 +38,7 @@ from dmbot.memory import (
     lore_read,
     map_fact_store,
     map_facts,
+    pdf_pictures,
     picture_read,
     place_levels,
     pronouns,
@@ -285,24 +286,31 @@ class UploadBackground(discord.ui.Modal, title="Your background, from a file"):
             await _tell(interaction, "No file was added. Press 📎 Upload a file and pick one.")
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        got, problem = await read_attachment(upload.values[0])
+        reading = bool(getattr(_bot(interaction).settings, "picture_reading_on", False))
+        got, problem = await read_attachment(upload.values[0], pictures=reading)
         if got is None:
             await _tell(interaction, problem or "DMbot couldn't read that.")
             return
-        await offer(interaction, self.campaign_id, got)
+        offered = False
+        try:
+            offered = await offer(interaction, self.campaign_id, got)
+        finally:
+            if not offered:
+                got.close()  # (no offer carries its pictures: their folder goes now)
 
 
-async def offer(interaction: discord.Interaction, campaign_id: str, upload: Upload) -> None:
-    """Say what reading it will do and cost, and wait for the DM's press."""
+async def offer(interaction: discord.Interaction, campaign_id: str, upload: Upload) -> bool:
+    """Say what reading it will do and cost, and wait for the DM's press. True when the offer was
+    sent, so its view now owns the upload (and closes its pictures' folder, #4003)."""
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
-        return
+        return False
     if interaction.user.id not in campaign.dm_user_ids:  # on every path in
         await _tell(interaction, ONLY_DMS)
-        return
+        return False
     if _bot(interaction).background_ai is None:
         await _tell(interaction, NO_AI_FOR_DOCUMENTS)
-        return
+        return False
     memory = _memory(interaction)
     choices = (
         await characters(memory, campaign)
@@ -315,6 +323,7 @@ async def offer(interaction: discord.Interaction, campaign_id: str, upload: Uplo
         offer_text(upload, False, ask=bool(choices)) + (NO_CHARACTERS if lone else ""),
         BackgroundOffer(campaign.id, upload, choices),
     )
+    return True
 
 
 KNOWS_LABELS = {
@@ -351,7 +360,15 @@ def offer_text(
     """The question before the AI reads a lore upload. Asked once per upload (#2447): lore that
     may change in play (the default), or 📌 100% truth, the DM's word, so DMbot tells the DM when
     a session goes against it."""
-    cost = credits.estimate_words("lore", credits.lore_estimate(len(upload.text)))
+    cost = (
+        credits.estimate_words(
+            "lore",
+            credits.lore_and_pictures(len(upload.text), upload.pictures_found),
+            what=credits.pictures_words(upload.pictures_found, more=upload.pictures_over > 0),
+        )
+        if upload.pictures_found
+        else credits.estimate_words("lore", credits.lore_estimate(len(upload.text)))
+    )
     how = (
         "📌 **100% truth.** Connections you keep are pinned, and DMbot tells you privately if a "
         "session goes against one."
@@ -373,6 +390,17 @@ def offer_text(
         + (whose_text(speaker) if ask else "")
         + f"{rights_text()}"
         + (f"\n\n{upload.note}" if upload.note else "")
+        + (f"\n\n{pictures_over_note(upload.pictures_over)}" if upload.pictures_over else "")
+    )
+
+
+def pictures_over_note(over: int) -> str:
+    """What the offer says about pictures past the limits (#4003: at most 30 an upload, 4 a page),
+    in counts only (the ux-critic's words: "skipped" is a limit, never a fault)."""
+    more = "1 more picture is" if over == 1 else f"{over:,} more pictures are"
+    return (
+        f"{more} skipped: DMbot reads up to {pdf_pictures.PER_UPLOAD} a file, and up to "
+        f"{pdf_pictures.PER_PAGE} a page."
     )
 
 
@@ -710,12 +738,20 @@ class BackgroundOffer(_Menu):
                 )
         finally:
             end_ai_read(guild)
+            # (the view's timeout ended with `stop()` above, so its pictures' folder goes here,
+            # whether the read finished, failed or was cancelled, #4003)
+            self.upload.close()
 
     async def _cancel(self, interaction: discord.Interaction) -> None:
         self.stop()
+        self.upload.close()  # (its pictures' folder, if it has one: never read now)
         await interaction.response.edit_message(
             content="Cancelled. Nothing was sent or added.", view=None
         )
+
+    async def on_timeout(self) -> None:
+        self.upload.close()  # (the offer was dropped: its pictures are never read)
+        await super().on_timeout()
 
 
 @dataclass(slots=True)

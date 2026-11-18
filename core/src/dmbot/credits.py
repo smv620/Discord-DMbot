@@ -77,6 +77,9 @@ CREDITS_PER_UNIT: dict[str, int] = {
     # Supervisor's ruling E: one call per 200 lines, well under a credit a line, so it stays high)
     "import": 5,
     "script": 120,  # per script (one imported session)
+    # per picture read out of an uploaded PDF (#4003, Supervisor's ruling C): about 1 credit each on
+    # the fast tier (a 1568 px copy is ~3,300 tokens in), so 5 is high on purpose, like the rest
+    "picture": 5,
 }
 # The words the DM sees for what is counted, by job kind.
 UNIT_WORDS: dict[str, str] = {
@@ -149,11 +152,34 @@ def lore_estimate(chars: int, *, allowance: int = 0, used: int = 0) -> Estimate:
     return Estimate(credits, left, credits >= ESTIMATE_BAR, credits <= left)
 
 
-def estimate_words(job_kind: str, est: Estimate) -> str:
+def lore_and_pictures(chars: int, pictures: int, *, allowance: int = 0, used: int = 0) -> Estimate:
+    """A lore read and the reading of its document's `pictures` (#4003), together: the DM is asked
+    once, before either runs."""
+    lore = lore_estimate(chars, allowance=allowance, used=used)
+    seen = estimate("picture", float(max(0, pictures)), allowance=allowance, used=used)
+    total = lore.credits + seen.credits
+    return Estimate(total, lore.left, total >= ESTIMATE_BAR, total <= lore.left)
+
+
+def pictures_words(pictures: int, *, more: bool = False) -> str:
+    """What the card counts when a lore read also reads its pictures: "for the lore and its 12
+    pictures" (one picture is "its picture"); "and 30 of its pictures" when the file has `more`
+    past the limits (the ux-critic's: the card's note says how many are skipped)."""
+    if more:
+        return f"for the lore and {pictures:,} of its pictures"
+    return (
+        "for the lore and its picture"
+        if pictures == 1
+        else f"for the lore and its {pictures:,} pictures"
+    )
+
+
+def estimate_words(job_kind: str, est: Estimate, *, what: str | None = None) -> str:
     """The sentence on the card, plain words: "About 120 AI credits for the script. You have 9,800
     left this month." The second sentence waits until the owner has set the allowances. Counts
-    only. The caller skips the card when `est.ask` is False."""
-    what = UNIT_WORDS.get(job_kind, "")
+    only. The caller skips the card when `est.ask` is False. `what`: the caller's own words for
+    what is counted (a lore read with its pictures, `pictures_words`)."""
+    what = UNIT_WORDS.get(job_kind, "") if what is None else what
     unit = "credit" if est.credits == 1 else "credits"
     words = f"About {est.credits:,} AI {unit}{(' ' + what) if what else ''}."
     if ALLOWANCES_SET:

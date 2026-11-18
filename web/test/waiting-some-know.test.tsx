@@ -126,3 +126,68 @@ describe("Some know on a waiting claim", () => {
     expect((screen.getByRole("button", { name: w.someSave }) as HTMLButtonElement).disabled).toBe(true);
   });
 });
+
+describe("Some know on a waiting backstory connection (#4728)", () => {
+  /** The panel of the backstory card with this text (its proposed line has the id `wb-…`). */
+  const cardOf = (id: string) => document.getElementById(`wb-${id}`)!.closest(".panel") as HTMLElement;
+  const someIn = (id: string) => within(cardOf(id)).queryByRole("button", { name: w.someButton });
+
+  it("a ready backstory card opens the same picker with nobody ticked", async () => {
+    await open();
+    fireEvent.click(within(cardOf("b1")).getByRole("button", { name: w.someButton }));
+    const boxes = (await within(cardOf("b1")).findAllByRole("checkbox")) as HTMLInputElement[];
+    expect(boxes.map((b) => b.checked)).toEqual([false, false]);
+    expect(within(cardOf("b1")).getByText(w.someBackstoryNote)).toBeTruthy();
+  });
+
+  it("save sends the ticked ids for the backstory card and says Known to, held back", async () => {
+    const { sent } = await open();
+    fireEvent.click(within(cardOf("b1")).getByRole("button", { name: w.someButton }));
+    fireEvent.click((await within(cardOf("b1")).findByRole("checkbox", { name: "Wren" })) as HTMLElement);
+    fireEvent.click(within(cardOf("b1")).getByRole("button", { name: w.someSave }));
+    expect(await screen.findByText(w.someDoneBackstoryOne("Wren"))).toBeTruthy();
+    expect(sent).toContainEqual({ kind: "backstory", action: "some", id: "b1", characters: ["p1"] });
+  });
+
+  it("a hand-over card, a secret card and a card not ready have no 👥 button", async () => {
+    const api = mockApi("table");
+    const real = api.webWaiting!.bind(api);
+    api.webWaiting = async (ref) => {
+      const got = await real(ref);
+      return { ...got, backstory: got.backstory.map((b) => (b.id === "b1" ? { ...b, handOver: "sold" as const, handOverName: "Mira Voss" } : b)) };
+    };
+    render(<WebWaiting api={api} campaignRef={`100.some${(n += 1)}`} />);
+    await screen.findByRole("heading", { name: w.heading });
+    expect(someIn("b1")).toBeNull(); // a hand-over
+    expect(someIn("b2")).toBeNull(); // a secret name
+    expect(someIn("b3")).toBeNull(); // not ready: a name in it is not confirmed yet
+  });
+
+  it("a refused pick shows its own words", async () => {
+    const api = mockApi("table");
+    api.answerWaiting = async () => {
+      throw new ApiError("bad-target");
+    };
+    render(<WebWaiting api={api} campaignRef={`100.some${(n += 1)}`} />);
+    await screen.findByRole("heading", { name: w.heading });
+    fireEvent.click(within(cardOf("b1")).getByRole("button", { name: w.someButton }));
+    fireEvent.click((await within(cardOf("b1")).findByRole("checkbox", { name: "Wren" })) as HTMLElement);
+    fireEvent.click(within(cardOf("b1")).getByRole("button", { name: w.someSave }));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.someBackstoryRefused);
+  });
+
+  it("a backstory card has no undo after a some know", async () => {
+    await open();
+    fireEvent.click(within(cardOf("b1")).getByRole("button", { name: w.someButton }));
+    fireEvent.click((await within(cardOf("b1")).findByRole("checkbox", { name: "Wren" })) as HTMLElement);
+    fireEvent.click(within(cardOf("b1")).getByRole("button", { name: w.someSave }));
+    await screen.findByText(w.someDoneBackstoryOne("Wren"));
+    expect(screen.queryByRole("button", { name: w.someUndo })).toBeNull();
+  });
+
+  it("the 👥 button is not on a backstory card while the switch is off", async () => {
+    live.on = false;
+    await open();
+    expect(someIn("b1")).toBeNull();
+  });
+});

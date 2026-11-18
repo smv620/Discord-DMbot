@@ -16,6 +16,9 @@ export const autoAddWords = {
     return `DMbot was not sure of anything to add${from}.`;
   },
   // After a 🌍 Common knowledge read made hidden things known to everyone (#4589), as Discord's notice says it.
+  revealedIntro: "Only you see this. Your players can now see these in DMbot, and their characters know them:",
+  revealedMore: (n: number): string => `…and ${n} more.`,
+  revealedHow: "Should one stay secret? Open its name card and hide it, or press Undo this upload to take back the whole upload.",
   revealed: (n: number): string => `🌍 ${n} hidden ${n === 1 ? "thing is" : "things are"} now known to everyone.`,
   seeNames: "Names added by this upload",
   seeAllNames: "All names",
