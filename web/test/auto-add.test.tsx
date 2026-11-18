@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError } from "../src/account/api";
 import CampaignSettings from "../src/account/CampaignSettings";
+import { keepRevealed } from "../src/account/api-names";
 import { mockApi } from "../src/account/mock";
 import { fromHash } from "../src/account/Names";
 import UploadNotice from "../src/account/UploadNotice";
@@ -197,5 +198,51 @@ describe("the Names filter", () => {
     expect(fromHash("#from=up1")).toBe("up1");
     expect(fromHash("#from=a-b_c9")).toBe("a-b_c9");
     for (const bad of ["", "from=up1", "#from=", "#from=a b", "#from=" + "x".repeat(70), "#said=Mira"]) expect(fromHash(bad), bad).toBe("");
+  });
+});
+
+// The hidden things an upload made known to everyone (#4661): under the count line, plain lines only, nothing after an Undo.
+describe("What the 🌍 upload revealed", () => {
+  it("lists what the 🌍 upload revealed under the count line", async () => {
+    show("100.cmp1.autoadd-revealed");
+    expect(await screen.findByText(w.revealedIntro)).toBeTruthy();
+    expect(screen.getByText("Ash Morrow")).toBeTruthy();
+    expect(screen.getByText("Ash Morrow is a member of Master Orlen")).toBeTruthy();
+    expect(screen.getByText("Bram Tull is also called The Grey Hand")).toBeTruthy();
+    expect(screen.getByText(w.revealedHow)).toBeTruthy();
+  });
+
+  it("says and N more past ten", async () => {
+    show("100.cmp1.autoadd-many");
+    expect(await screen.findByText("Person 10")).toBeTruthy();
+    expect(screen.queryByText("Person 11")).toBeNull();
+    expect(screen.getByText(w.revealedMore(4))).toBeTruthy();
+  });
+
+  it("shows no list when the API sends none", async () => {
+    show("100.cmp1");
+    await screen.findByRole("status");
+    expect(screen.queryByText(w.revealedIntro)).toBeNull();
+    expect(screen.queryByText(w.revealedHow)).toBeNull();
+  });
+
+  it("drops lines that are not plain text, too long or too many", () => {
+    const got = keepRevealed({
+      revealedLines: ["ok", "<b>bad</b>", "x".repeat(201), 42, "", ...Array.from({ length: 10 }, (_, i) => `line ${i}`)],
+      revealedMore: 9999,
+    });
+    expect(got.revealedLines).toEqual(["ok", ...Array.from({ length: 9 }, (_, i) => `line ${i}`)]);
+    expect(got.revealedMore).toBe(9999);
+    expect(keepRevealed({ revealedMore: 10000 }).revealedMore).toBeUndefined();
+    expect(keepRevealed({})).toEqual({});
+  });
+
+  it("the list is gone after the upload is undone", async () => {
+    show("100.cmp1.autoadd-revealed");
+    expect(await screen.findByText(w.revealedIntro)).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: w.undo }));
+    fireEvent.click(screen.getByRole("button", { name: w.undoYes }));
+    await waitFor(() => expect(screen.queryByRole("button", { name: w.undo })).toBeNull());
+    expect(screen.queryByText(w.revealedIntro)).toBeNull();
   });
 });
