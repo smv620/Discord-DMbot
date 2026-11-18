@@ -121,6 +121,7 @@ class TheChecks(unittest.TestCase):
         self.assertEqual(check("Okthandom learned something about Vane, then rode on."), [])
 
     def test_reveal_whispered_that_is_one_problem_without_the_detail(self) -> None:
+        # (a regression guard: the message is a fixed string, so this asserts it names no detail)
         problems = check("Okthandom whispered that Vane lied.")
         self.assertEqual(len(problems), 1)
         self.assertNotIn("lied", problems[0])
@@ -140,8 +141,9 @@ class TheChecks(unittest.TestCase):
         self.assertEqual(rd.reveal_problems("Okthandom learned that Vane lied.", (plain,)), [])
 
     def test_reveal_unknown_sentence_is_not_read(self) -> None:
+        # (a narration that would be flagged, so the empty result comes from skipping the line)
         line = pl.REVEAL_MARK + "not a sentence we know"
-        self.assertEqual(check("Okthandom learned something about Vane.", line), [])
+        self.assertEqual(check("Okthandom learned that Vane lied.", line), [])
 
     def test_reveal_not_cited_is_advisory_for_a_scene(self) -> None:
         line = pl.REVEAL_MARK + "Okthandom and Wulfgar had a private word."
