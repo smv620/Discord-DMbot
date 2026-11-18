@@ -1328,6 +1328,28 @@ class RecapFeatures:
             for i in everything.items
         ]
 
+    async def recap_colour(
+        self, gid: int, cid: str, job: Job, place_names: Sequence[str]
+    ) -> list[str]:
+        """Background for the writer about the places the beats visited (#4721,
+        `DMBOT_RECAP_COLOUR`): one line each of what the table knows of their land, climate,
+        ruler, culture and people.
+        Only what the players know: the places are looked up in the players' view of the names
+        (nothing the DM keeps to themselves, and no secret spelling), the line is the players' own
+        rows (`MemoryStore.recap_colour`), and the names are the ones the players use. A place the
+        players' view doesn't know by that name is left out, never looked up another way."""
+        if self.memory is None or self.lookup is None or not place_names:
+            return []
+        players = (await self.lookup.get(gid, cid)).for_viewer(False)
+        names = {e.id: e.name for e in players.entities.values() if not e.merged_into and e.name}
+        place_ids: list[str] = []
+        for heard in place_names:
+            for entry in players.exact(heard):
+                if entry.secret or entry.entry_hidden or entry.entity_id not in names:
+                    continue
+                place_ids.append(entry.entity_id)
+        return await self.memory.recap_colour(gid, cid, place_ids, names)
+
     async def recap_allowed(self, gid: int, cid: str, job: Job | None) -> bool:
         """The switch and the plan, checked at every stage and closed when they can't be."""
         if not self.settings.recaps_on:

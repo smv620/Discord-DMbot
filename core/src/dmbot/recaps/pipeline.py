@@ -282,6 +282,9 @@ Load = Callable[[int, str, Job], Awaitable["Inputs | None"]]
 Consenting = Callable[[], Awaitable[Collection[int]]]
 # (server, campaign, job, names in the beats) -> the confirmed story memory around them (#2254)
 Story = Callable[[int, str, Job, Sequence[str]], Awaitable[Sequence[sg.Memory]]]
+# The lines of background about the places a session visited, as the table knows them (#4721,
+# `DMBOT_RECAP_COLOUR`): given the place names the beats say, one line each, or none.
+Colour = Callable[[int, str, Job, Sequence[str]], Awaitable[Sequence[str]]]
 Notify = Callable[[int, str, Job], Awaitable[None]]  # (server, campaign, job): ready or failed
 
 
@@ -371,11 +374,15 @@ class RecapWorker:
         final_read: bool = False,
         cache_front: bool = False,
         stored_split: Callable[[int, str, int], Awaitable[sp.Split | None]] | None = None,
+        colour: Colour | None = None,
     ) -> None:
         # Two models write the prose (#2074): `creative` writes it as plain text, `formatting`
         # cuts it into the schema's sections without changing a word. With either missing, the one
         # structured call of before writes and shapes it at once (tests and small tools).
         self._story = story
+        # What the table knows of the places visited, as background (#4721). None when the switch
+        # is off: the writer's input is then exactly what it was.
+        self._colour = colour
         # What the writer reads (#2590): the beat sheet, or the cleaned transcript with PlotBot's
         # guide. A recap that is too long for the writer's model falls back to the beats, once,
         # remembered here for the job until it ends.
@@ -1200,6 +1207,26 @@ class RecapWorker:
         return self._sheets[key]
 
     async def _read_sheet(
+        self, gid: int, cid: str, job: Job, inputs: Inputs, shown: Sequence[bt.Beat]
+    ) -> tuple[str, ...]:
+        """The who-and-what lines, then (with the switch on) one line of background for each place
+        the beats visited (#4721). The colour is only what the players know, and given as
+        background to explain a place with, never as something that happened; a failure costs the
+        colour, never the recap."""
+        sheet = await self._read_people_sheet(gid, cid, job, inputs, shown)
+        if self._colour is None:
+            return sheet
+        places = sorted({b.where for b in shown if b.where})
+        if not places:
+            return sheet
+        try:
+            colour = [str(x) for x in await self._colour(gid, cid, job, places)]
+        except Exception as exc:  # optional context: the type, never the text
+            log.warning("Recap: couldn't read the places' colour (%s)", type(exc).__name__)
+            return sheet
+        return (*sheet, *colour)
+
+    async def _read_people_sheet(
         self, gid: int, cid: str, job: Job, inputs: Inputs, shown: Sequence[bt.Beat]
     ) -> tuple[str, ...]:
         """The players' view of story memory around the beats' names (kind, role and the
