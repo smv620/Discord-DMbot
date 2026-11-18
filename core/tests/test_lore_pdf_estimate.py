@@ -144,3 +144,73 @@ class Estimating(Staged):
         (key,) = self.bucket.objects
         self.assertEqual(await staged.sweep(self.g, now=1_000 + lp.ROW_KEEP_S + 1), [key])
         self.assertEqual(await lore_pdf.read(self.web, self.session, self.cref), {"state": "none"})
+
+    async def set_state(self, state: str) -> None:
+        await self.sql(
+            "UPDATE lore_pdf_staged SET state = %s WHERE guild_id = %s",
+            state, self.g,
+        )  # fmt: skip
+
+    async def test_a_row_being_read_is_not_counted_again(self) -> None:
+        await self.stage()
+        await lore_pdf.estimate(self.web, self.session, self.cref)
+        await self.set_state("reading")
+        (outcome,) = await self.bot_loop()
+        self.assertEqual(outcome.error, wa.BAD_TARGET)
+        self.assertEqual(self.counts, [])
+        self.assertEqual(
+            (await lore_pdf.read(self.web, self.session, self.cref))["state"], "reading"
+        )
+
+    async def test_sending_it_again_recovers_a_row_stuck_in_estimating(self) -> None:
+        await self.stage()
+        await self.set_state("estimating")  # (a worker died mid-count)
+        await lore_pdf.estimate(self.web, self.session, self.cref)
+        (outcome,) = await self.bot_loop()
+        self.assertEqual(outcome.error, "")
+        self.assertEqual(
+            (await lore_pdf.read(self.web, self.session, self.cref))["state"], "estimated"
+        )
+
+    async def test_bytes_over_the_limit_are_refused_whatever_the_row_says(self) -> None:
+        await self.stage()
+        await lore_pdf.estimate(self.web, self.session, self.cref)
+        small = lp.LorePdfs(self.staging, lp.StagedPdfs(self.db), self.count, 10)
+        (outcome,) = await self.bot_loop(small)
+        self.assertEqual(outcome.error, wa.BAD_TARGET)
+        self.assertEqual(self.counts, [])
+
+    async def test_a_crash_in_the_reader_puts_the_row_back_and_the_action_is_sent_again(
+        self,
+    ) -> None:
+        async def crash(raw: bytes) -> lp.Counted:
+            raise RuntimeError("reader died")
+
+        await self.stage()
+        await lore_pdf.estimate(self.web, self.session, self.cref)
+        with self.assertRaises(RuntimeError):
+            await self.bot_loop(self.parts(crash))
+        self.assertEqual(
+            (await lore_pdf.read(self.web, self.session, self.cref))["state"], "staged"
+        )
+
+    async def test_a_file_replaced_while_it_is_counted_is_gone_and_the_new_row_is_left_alone(
+        self,
+    ) -> None:
+        async def replace(raw: bytes) -> lp.Counted:
+            await self.stage(b"%PDF-1.4\n" + b"q" * 50)  # (the DM sends another while it counts)
+            return self.found
+
+        await self.stage()
+        await lore_pdf.estimate(self.web, self.session, self.cref)
+        (outcome,) = await self.bot_loop(self.parts(replace))
+        self.assertEqual(outcome.error, wa.GONE)
+        got = await lore_pdf.read(self.web, self.session, self.cref)
+        self.assertEqual((got["state"], got["pages"]), ("staged", None))  # (nothing written to it)
+
+    async def test_the_sweep_never_clears_a_row_being_read(self) -> None:
+        await self.stage()
+        await self.set_state("reading")
+        self.assertEqual(
+            await lp.StagedPdfs(self.db).sweep(self.g, now=1_000 + 10 * lp.ROW_KEEP_S), []
+        )

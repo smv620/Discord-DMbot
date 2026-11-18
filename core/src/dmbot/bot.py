@@ -14473,6 +14473,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         staged, gone = StagedPdfs(db), 0
         for guild in list(self.guilds):
             for key in await staged.sweep(guild.id, now=int(time.time())):
+                # (a delete that fails is left to the bucket's own 1-day rule)
                 with contextlib.suppress(BucketError):
                     await staging.delete(key)
                 gone += 1

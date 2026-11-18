@@ -30,7 +30,6 @@ log = logging.getLogger(__name__)
 
 EXPIRED = "expired"  # the staged file is gone: "That file expired before DMbot could count it."
 ROW_KEEP_S = 86400  # a row (and its object, if the bucket's own rule missed it) goes after a day
-MICRO_USD_PER_CREDIT = 1000  # a credit is a thousandth of a dollar (`credits.MICRO_PER_CREDIT`)
 
 
 class StagingBucket(Protocol):
@@ -88,27 +87,41 @@ class StagedPdfs:
         *,
         now: int,
         counted: tuple[int, int, float] | None = None,
+        only_from: tuple[str, ...] | None = None,
     ) -> bool:
-        """Move the row to `state` (and write the three numbers) when it is still this file's.
-        False when another file replaced it meanwhile."""
+        """Move the row to `state` (and write the three numbers) when it is still this file's, and,
+        with `only_from`, still in one of those states (so a count never writes over a read that
+        began meanwhile). False when another file replaced it or the state moved on."""
         pages, pictures, usd = counted if counted is not None else (None, None, None)
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE lore_pdf_staged SET state = %s, updated_at = %s,"
                 " pages = COALESCE(%s, pages), pictures = COALESCE(%s, pictures),"
                 " estimate_usd = COALESCE(%s, estimate_usd)"
-                " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
-                (state, now, pages, pictures, usd, guild_id, campaign_id, staged_id),
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s"
+                " AND (%s::text[] IS NULL OR state = ANY(%s::text[]))",
+                (
+                    state,
+                    now,
+                    pages,
+                    pictures,
+                    usd,
+                    guild_id,
+                    campaign_id,
+                    staged_id,
+                    list(only_from) if only_from is not None else None,
+                    list(only_from) if only_from is not None else None,
+                ),
             )
             return cur.rowcount == 1
 
     async def sweep(self, guild_id: int, *, now: int) -> list[str]:
-        """Delete the rows older than a day and give back their object keys, for the caller to
-        delete (the bucket's own rule usually has them already)."""
+        """Delete the rows older than a day (never one being read) and give back their object keys,
+        for the caller to delete (the bucket's own rule usually has them already)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "DELETE FROM lore_pdf_staged WHERE guild_id = %s AND created_at < %s"
-                " RETURNING object_key",
+                " AND state <> 'reading' RETURNING object_key",
                 (guild_id, now - ROW_KEEP_S),
             )
             return [str(r["object_key"]) for r in await cur.fetchall()]
@@ -133,7 +146,7 @@ def ref_of(staged_id: str) -> str:
 
 def usd_of(credit_count: int) -> float:
     """Dollars for a number of credits (a credit is a thousandth of a dollar)."""
-    return credit_count / MICRO_USD_PER_CREDIT
+    return credit_count * credits.MICRO_PER_CREDIT / 1_000_000
 
 
 async def estimate(
@@ -154,23 +167,35 @@ async def estimate(
     if row.size_bytes > lore.max_bytes:
         await lore.staged.mark(guild_id, campaign_id, row.id, "failed", now=now)
         return Outcome(error=BAD_TARGET)
-    await lore.staged.mark(guild_id, campaign_id, row.id, "estimating", now=now)
+    started = await lore.staged.mark(
+        guild_id, campaign_id, row.id, "estimating", now=now,
+        only_from=("staged", "estimating", "estimated", "failed"),
+    )  # fmt: skip
+    if not started:
+        return Outcome(error=BAD_TARGET)  # (a read began, or the file was replaced, meanwhile)
     try:
-        raw = await lore.staging.get(row.object_key)
-    except BucketError:
-        await lore.staged.mark(guild_id, campaign_id, row.id, "failed", now=now)
-        return Outcome(error=GONE, result_other=EXPIRED)
-    try:
+        try:
+            raw = await lore.staging.get(row.object_key)
+        except BucketError:
+            await lore.staged.mark(guild_id, campaign_id, row.id, "failed", now=now)
+            return Outcome(error=GONE, result_other=EXPIRED)
+        if len(raw) > lore.max_bytes:  # (the bot checks the bytes themselves, not the row's word)
+            await lore.staged.mark(guild_id, campaign_id, row.id, "failed", now=now)
+            return Outcome(error=BAD_TARGET)
         found = await lore.count(raw)
     except DocumentError as exc:
         await lore.staged.mark(guild_id, campaign_id, row.id, "failed", now=now)
         return Outcome(error=BAD_TARGET, result_other=str(exc)[:300])
     except BaseException:
-        await lore.staged.mark(guild_id, campaign_id, row.id, "staged", now=now)  # (again)
+        # (any other failure, the bucket's included: back to "staged", so the page never waits on
+        # an "estimating" nothing is doing; the action is sent again)
+        await lore.staged.mark(
+            guild_id, campaign_id, row.id, "staged", now=now, only_from=("estimating",)
+        )
         raise
     cost = credits.lore_and_pictures(found.chars, found.pictures)
     kept = await lore.staged.mark(
-        guild_id, campaign_id, row.id, "estimated", now=now,
+        guild_id, campaign_id, row.id, "estimated", now=now, only_from=("estimating",),
         counted=(found.pages, found.pictures, usd_of(cost.credits)),
     )  # fmt: skip
     if not kept:
