@@ -317,6 +317,14 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,  # not live yet: on only after the before-and-after scores (#4721)
     ),
     Feature(
+        "recap reveals",
+        "Recaps mention that someone learned something, without saying what",
+        "",
+        lambda s: s.recap_reveals_on,
+        ("recap_reveals_on",),
+        for_dms=False,  # not live yet: on only after the before-and-after scores (#4737)
+    ),
+    Feature(
         "test recordings",
         "Test recordings",
         "",
