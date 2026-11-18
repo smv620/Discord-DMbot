@@ -159,6 +159,7 @@ class TheDMsCopy(unittest.IsolatedAsyncioTestCase):
             knowledge_note="", revealed_lines=("**Ash Morrow**",),
             pictures_unread=0, unread_pages=(),
             pictures_kept=0, pictures_not_kept=0, pictures_undo=False,
+            maps_asked=0, maps_over=0, maps_unsent=False,
         )  # fmt: skip
         await ui_bg.announce(it, bot, campaign, done)  # type: ignore[arg-type]
         return shown[-1]

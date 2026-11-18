@@ -262,19 +262,36 @@ async def undo_upload_result(
 
 async def _take_back_pictures(bot: Any, guild_id: int, campaign_id: str, notice_id: str) -> None:
     """The pictures the upload kept for the DMs go with its Undo (#4003 slice c), files and all,
-    as a picture taken back goes (`PictureKeeper.discard`: its link then says it was removed). A
-    map made from one stays (#4344). Never stops the undo; counts only in the log."""
+    as a picture taken back goes (`PictureKeeper.discard`: its link then says it was removed). The
+    maps the DM made from them go first, through `MapStore.remove_map` (#4259); a map made from
+    one in another way stays (#4344). Never stops the undo; counts only in the log."""
     store, keeper = getattr(bot, "picture_store", None), getattr(bot, "picture_keeper", None)
     if store is None or keeper is None:
         return
-    try:
-        gone = 0
-        for picture in await store.for_notice(guild_id, campaign_id, notice_id):
-            gone += int(await keeper.discard(guild_id, campaign_id, picture, unless_map=True))
-        if gone:
-            log.info("Undoing an upload took back %d of its pictures", gone)
-    except Exception as exc:
-        log.warning("Undoing an upload's pictures failed (%s)", type(exc).__name__)
+    maps = getattr(bot, "map_store", None)
+    removed = gone = 0
+    # Twice: a yes to a map question pressed while the first pass ran made a map the second finds
+    # (the store refuses a yes once the upload is undone, so a third is never needed).
+    for _ in range(2):
+        if maps is not None:  # (its maps first, through the deletion rule §7.5, #4259)
+            try:
+                ids = await maps.for_notice(guild_id, campaign_id, notice_id)
+            except Exception as exc:
+                log.warning("Undoing an upload's maps failed (%s)", type(exc).__name__)
+                ids = []
+            for map_id in ids:  # (each on its own: one failure leaves the others to go)
+                try:
+                    out = await maps.remove_map(guild_id, campaign_id, map_id)
+                    removed += int(out.value is not None)
+                except Exception as exc:
+                    log.warning("Undoing an upload's map failed (%s)", type(exc).__name__)
+        try:
+            for picture in await store.for_notice(guild_id, campaign_id, notice_id):
+                gone += int(await keeper.discard(guild_id, campaign_id, picture, unless_map=True))
+        except Exception as exc:
+            log.warning("Undoing an upload's pictures failed (%s)", type(exc).__name__)
+    if removed or gone:
+        log.info("Undoing an upload removed %d of its maps and %d of its pictures", removed, gone)
 
 
 @dataclass(frozen=True, slots=True)
