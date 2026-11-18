@@ -48,6 +48,8 @@ from dmbot.memory.claims import (
 )
 from dmbot.memory.deed_proposals import DeedProposals
 from dmbot.memory.deed_reading import DEED_SYSTEM, DeedProposal, parse_deeds
+from dmbot.memory.language_reading import LANGUAGE_ADDENDUM, Heard, once_each, parse_languages
+from dmbot.memory.language_reading import PROMPT_SUFFIX as LANGUAGE_SUFFIX
 from dmbot.memory.met_reading import MET_ADDENDUM, Met, gathered, parse_met
 from dmbot.memory.met_reading import PROMPT_SUFFIX as MET_SUFFIX
 from dmbot.memory.met_store import speakers_of
@@ -346,6 +348,11 @@ class Report:
     met_again: int = 0  # already kept for this session
     met_named: int = 0  # the words are a name the campaign has
     met_proposals: list[Met] = field(default_factory=list, repr=False)  # (words: never logged)
+    # #4229 1d (DMBOT_SESSION_LANGUAGES): languages heard spoken, each a question for the DM later
+    languages: int = 0
+    languages_dropped: Counter[str] = field(default_factory=Counter)
+    languages_cut: int = 0  # claims answers cut short with the switch on: their languages are lost
+    heard_languages: list[Heard] = field(default_factory=list, repr=False)  # (words: never logged)
 
     def line(self) -> str:
         why = ", ".join(f"{n} {r}" for r, n in sorted(self.dropped.items())) or "none"
@@ -398,6 +405,12 @@ class Report:
                 f" {self.met_again} again, {self.met_named} named, {self.met_gone} speaker gone,"
                 f" {self.met_cut} cut short"
                 if self.met or self.met_refused or self.met_cut
+                else ""
+            )
+            + (
+                f", languages: {self.languages} heard, {self.languages_cut} cut short"
+                + "".join(f", {n} {k}" for k, n in sorted(self.languages_dropped.items()) if n)
+                if self.languages or self.languages_dropped or self.languages_cut
                 else ""
             )
             + (f", stopped: {self.stopped}" if self.stopped else "")
@@ -576,6 +589,7 @@ async def run(
     met: bool = False,
     met_store: MetStore | None = None,
     session_id: str | None = None,
+    languages: bool = False,
 ) -> Report:
     """Read the session's lines and store what the AI found as proposals, all at once at the end
     (the linker picks the most-said new names across the whole session). `consenting` is asked
@@ -631,7 +645,13 @@ async def run(
     met that is never named (`met_reading.MET_ADDENDUM`), in the same call, so it costs no call.
     Only the DM's own lines count; the session's items are joined by their words, capped, and kept
     by `met_store` (`memory_met`, apart from the names, so quiet) under `session_id` after the
-    claims. Never in `family_only`."""
+    claims. Never in `family_only`.
+
+    `languages` (#4229 1d, DMBOT_SESSION_LANGUAGES): the claims call is also asked which languages
+    a character was heard speaking (`language_reading.LANGUAGE_ADDENDUM`), in the same call, so it
+    costs no call. What holds is only gathered (`Report.heard_languages`, from lines of speakers
+    recorded at the answer): the caller asks the DM about each, nothing is written here. Never in
+    `family_only`."""
     report = Report()
     # (theories are the first kind of reading: asked when either switch is on, the rest only with
     # the readings switch)
@@ -650,8 +670,11 @@ async def run(
     deeds = deeds and not family_only
     reveals = reveals and not family_only
     met = met and not family_only
-    system = SYSTEM + MET_ADDENDUM if met else SYSTEM
-    prompt_version = PROMPT_VERSION + MET_SUFFIX if met else PROMPT_VERSION
+    languages = languages and not family_only
+    system = SYSTEM + (MET_ADDENDUM if met else "") + (LANGUAGE_ADDENDUM if languages else "")
+    prompt_version = (
+        PROMPT_VERSION + (MET_SUFFIX if met else "") + (LANGUAGE_SUFFIX if languages else "")
+    )
     deed_pairs: set[tuple[str, str]] = set()  # the pairs a deed was proposed for, so far
     answered: list[list[Said]] = []  # the batches whose claims were read
     collected: list[Extracted] = []
@@ -742,6 +765,12 @@ async def run(
             report.met_proposals.extend(got.met)
             report.met_cut += int(reply.cut)  # (never "none met": counted as cut short)
             when.update((str(s.number), s.started_ms) for s in batch)
+        if languages:
+            tongues = parse_languages(reply.text, {number: text for number, _who, text in rows})
+            report.languages += len(tongues.heard)
+            report.languages_dropped.update(tongues.dropped)
+            report.languages_cut += int(reply.cut)
+            report.heard_languages.extend(tongues.heard)
         answered_by = reply.model or answered_by
         everyone.update(speakers)
         heard.update((number, text) for number, _who, text in rows)
@@ -952,6 +981,21 @@ async def run(
     if met and met_store is not None and session_id is not None and report.met_proposals:
         await _keep_met(report, met_store, guild_id, campaign_id, session_id, everyone, when,
                         consenting, session_started_at, skip)  # fmt: skip
+    if report.heard_languages:
+        # (#4229 1d: asked again at the end, as met is: a language cited from a speaker who
+        # stopped meanwhile is dropped; one heard twice is one; a name that is never a story name
+        # is no one's)
+        still = await consenting()
+        heard_kept = once_each(
+            replace(h, speakers=tuple(speakers_of(h.lines, everyone)))
+            for h in report.heard_languages
+            if all(everyone.get(n) in still for n in h.lines) and name_key(h.who) not in skip
+        )  # fmt: skip
+        report.languages_dropped["language_speaker_gone"] += len(report.heard_languages) - len(
+            [h for h in report.heard_languages if all(everyone.get(n) in still for n in h.lines)]
+        )
+        report.heard_languages = heard_kept
+        report.languages = len(heard_kept)
     report.through_ms = reached
     return report
 

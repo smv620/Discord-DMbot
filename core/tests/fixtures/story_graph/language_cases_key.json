@@ -1,0 +1,127 @@
+{
+ "campaign": "language cases (invented)",
+ "source": "language_cases_lore.txt and language_cases_session.txt in this folder: invented text for DMbot's tests, written for #4229 (the session reader of languages; Supervisor's ruling A). Every name and line is made up; the four player characters are the sample's, by name only, so sample_run can say who plays each.",
+ "version": 1,
+ "how_to_read": {
+  "languages": "a character's languages heard in the session (#4229): {character, language, line, note, doc}; scored as found, missed, and extra (a language row the key does not list). A language a character with no sheet is heard using waits as a question for the DM (#4229 1c) until accepted, so score after the run's accept step.",
+  "must_not_languages": "lines that must give no language to anyone: a language named but not spoken (runes), one a character can't speak, a question, and a line with no language. One kept is counted as extra by the check.",
+  "line": "the line of the session file that holds it; blank lines count"
+ },
+ "nodes": [
+  {
+   "name": "Grey Reach",
+   "kind": "place",
+   "aliases": [],
+   "note": ""
+  },
+  {
+   "name": "Harrow",
+   "kind": "place",
+   "aliases": [
+    "the Harrow river"
+   ],
+   "note": "a river"
+  },
+  {
+   "name": "Pell Arrow",
+   "kind": "person",
+   "aliases": [
+    "Pell"
+   ],
+   "note": "an old halfling, the ferryman"
+  },
+  {
+   "name": "Duna Kell",
+   "kind": "person",
+   "aliases": [
+    "Sergeant Duna Kell"
+   ],
+   "note": "guards the landing"
+  },
+  {
+   "name": "Cerric Vanya'elen",
+   "kind": "person",
+   "aliases": [
+    "Cerric"
+   ],
+   "note": "player character"
+  },
+  {
+   "name": "Belleros Stormgrace",
+   "kind": "person",
+   "aliases": [
+    "Belleros"
+   ],
+   "note": "player character"
+  },
+  {
+   "name": "Okthandom Korran",
+   "kind": "person",
+   "aliases": [
+    "Okthandom"
+   ],
+   "note": "player character"
+  },
+  {
+   "name": "Claude Ambere",
+   "kind": "person",
+   "aliases": [
+    "Claude"
+   ],
+   "note": "player character"
+  }
+ ],
+ "pairs": [],
+ "languages": [
+  {
+   "character": "Okthandom Korran",
+   "language": "Dwarvish",
+   "line": 2,
+   "note": "heard used: 'Okthandom answers her in Dwarvish'",
+   "doc": "session"
+  },
+  {
+   "character": "Duna Kell",
+   "language": "Dwarvish",
+   "line": 3,
+   "note": "heard used: the DM says she answers in Dwarvish",
+   "doc": "session"
+  },
+  {
+   "character": "Pell Arrow",
+   "language": "Halfling",
+   "line": 4,
+   "note": "heard used: 'mutters a curse in Halfling'",
+   "doc": "session"
+  },
+  {
+   "character": "Belleros Stormgrace",
+   "language": "Elvish",
+   "line": 5,
+   "note": "misheard: speech to text wrote 'Elfish'; the language is Elvish",
+   "doc": "session"
+  }
+ ],
+ "must_not_languages": [
+  {
+   "line": 6,
+   "note": "named but not spoken: runes on a door are Elvish; nobody speaks it here"
+  },
+  {
+   "line": 7,
+   "note": "can't speak: Cerric doesn't speak Giant"
+  },
+  {
+   "line": 8,
+   "note": "a question: nobody is said to speak Orc"
+  },
+  {
+   "line": 9,
+   "note": "no language at all"
+  },
+  {
+   "line": 10,
+   "note": "no language at all"
+  }
+ ]
+}
