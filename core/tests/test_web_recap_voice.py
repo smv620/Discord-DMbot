@@ -585,7 +585,14 @@ class TheLoop(WithClips):
             setattr(stub, name, value)
         clip = asyncio.create_task(asyncio.sleep(60))
         stub._voice_tasks = {THURSDAY.id: clip}
-        with mock.patch.object(commands.AutoShardedBot, "close", AsyncMock()):
+        from dmbot.memory import document_reader
+
+        # (not the real reader's shutdown: it is the whole process's, and every document test
+        # after this one in the same run would read "DMbot is restarting")
+        with (
+            mock.patch.object(commands.AutoShardedBot, "close", AsyncMock()),
+            mock.patch.object(document_reader, "shutdown"),
+        ):
             await asyncio.wait_for(DMBot.close(bot), 5)
         self.assertTrue(clip.cancelled())
 
