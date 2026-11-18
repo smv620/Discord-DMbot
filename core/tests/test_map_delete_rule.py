@@ -1,7 +1,8 @@
 """When a map is deleted (#4259, MapBot slice 8b; docs/design/mapbot_layers.md §7.5; Supervisor's
 ruling on #4236 f): DMbot's read resting only on that map goes with it; a read the text also stated
 stays as the text's; the DM's own word stays, without the pointer; one Undo puts it all back. A
-picture deleted with its map follows the same rule, (backups: test_map_facts).
+picture deleted with its map follows the same rule, (backups: test_map_facts). A fact another
+usable map's area still shows is kept, re-pointed to the oldest such map (#4696).
 Invented names; needs Postgres."""
 
 from __future__ import annotations
@@ -65,18 +66,96 @@ class TheRule(Facts):
             await self.row(dms), {"status": "confirmed", "source": "map", "map_id": None}
         )  # (the DM's word stays, without the pointer)
 
-    async def test_a_pin_on_the_fact_does_not_stop_it(self) -> None:
-        only_map = await self.fact("arctic", status="read", source="map", also_text=False)
-        other = await self.add(await self.picture(self.one.id, 2), dm=True, width=10, height=10)
+    async def other_area(self, fact_id: str, *, usable: bool = True, n: int = 2) -> tuple[str, str]:
+        other = await self.add(await self.picture(self.one.id, n), dm=True, width=10, height=10)
+        feature = uuid.uuid4().hex
         async with self.db.guild(GUILD_A) as conn:  # (another map's area pointing at the fact)
             await conn.execute(
                 "INSERT INTO map_features (guild_id, campaign_id, id, map_id, shape, points,"
                 " fact_id, status, source, created_at) VALUES (%s, %s, %s, %s, 'area',"
                 " ARRAY[0.1, 0.1, 0.2, 0.1, 0.2, 0.2], %s, 'read', 'read', %s)",
-                (GUILD_A, self.one.id, uuid.uuid4().hex, other, only_map, int(time.time())),
+                (GUILD_A, self.one.id, feature, other, fact_id, int(time.time())),
+            )
+            if not usable:
+                await conn.execute(
+                    "UPDATE campaign_maps SET use_ok = FALSE WHERE guild_id = %s AND id = %s",
+                    (GUILD_A, other),
+                )
+        return other, feature
+
+    async def area_points_at(self, feature: str) -> str | None:
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute("SELECT fact_id FROM map_features WHERE id = %s", (feature,))
+            got = await cur.fetchone()
+        assert got is not None
+        return None if got["fact_id"] is None else str(got["fact_id"])
+
+    async def test_a_fact_another_map_shows_is_kept_and_re_pointed(self) -> None:
+        # (Supervisor's ruling 2 on #4694, #4696: it rests on that map now; its area untouched)
+        only_map = await self.fact("arctic", status="read", source="map", also_text=False)
+        other, feature = await self.other_area(only_map)
+        written = await self.maps.remove_map(GUILD_A, self.one.id, self.map_id)
+        self.assertEqual(
+            await self.row(only_map), {"status": "read", "source": "map", "map_id": other}
+        )
+        self.assertEqual(await self.area_points_at(feature), only_map)
+        assert written.batch is not None
+        await self.memory.undo(GUILD_A, self.one.id, written.batch)  # (the pointer back)
+        self.assertEqual(
+            await self.row(only_map), {"status": "read", "source": "map", "map_id": self.map_id}
+        )
+
+    async def test_the_oldest_other_map_and_never_a_turned_down_area(self) -> None:
+        only_map = await self.fact("arctic", status="read", source="map", also_text=False)
+        older, _ = await self.other_area(only_map)
+        newer, newer_area = await self.other_area(only_map, n=3)
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "UPDATE campaign_maps SET created_at = 1 WHERE guild_id = %s AND id = %s",
+                (GUILD_A, older),
+            )
+            await conn.execute(  # (the older one's area turned down: the newer one keeps it)
+                "UPDATE map_features SET status = 'rejected' WHERE guild_id = %s AND map_id = %s",
+                (GUILD_A, older),
             )
         await self.maps.remove_map(GUILD_A, self.one.id, self.map_id)
+        self.assertEqual((await self.row(only_map) or {}).get("map_id"), newer)
+        self.assertEqual(await self.area_points_at(newer_area), only_map)
+
+    async def test_a_dms_no_re_points_it_and_undo_puts_it_back(self) -> None:
+        dms = await self.fact("forest", status="confirmed", source="map", also_text=False)
+        other, _ = await self.other_area(dms)
+        written = await self.maps.answer_use(GUILD_A, self.one.id, self.map_id, dm_id=7, yes=False)
+        self.assertEqual(
+            await self.row(dms), {"status": "confirmed", "source": "map", "map_id": other}
+        )
+        assert written.batch is not None
+        await self.memory.undo(GUILD_A, self.one.id, written.batch)
+        self.assertEqual((await self.row(dms) or {}).get("map_id"), self.map_id)
+
+    async def test_a_map_dmbot_may_not_use_does_not_keep_it(self) -> None:
+        only_map = await self.fact("arctic", status="read", source="map", also_text=False)
+        _, feature = await self.other_area(only_map, usable=False)
+        await self.maps.remove_map(GUILD_A, self.one.id, self.map_id)
         self.assertIsNone(await self.row(only_map))
+        self.assertIsNone(await self.area_points_at(feature))
+
+    async def test_a_deleted_picture_re_points_it_too(self) -> None:
+        only_map = await self.fact("arctic", status="read", source="map", also_text=False)
+        other, feature = await self.other_area(only_map)
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT picture_id FROM campaign_maps WHERE id = %s", (self.map_id,)
+            )
+            picture = await cur.fetchone()
+        assert picture is not None
+        before = await self.version()
+        await self.pictures.delete(GUILD_A, self.one.id, int(picture["picture_id"]))
+        self.assertGreater(await self.version(), before)  # (a re-point alone moves it too)
+        self.assertEqual(
+            await self.row(only_map), {"status": "read", "source": "map", "map_id": other}
+        )
+        self.assertEqual(await self.area_points_at(feature), only_map)
 
     async def test_one_undo_puts_it_all_back(self) -> None:
         only_map, text_too, dms = await self.three()
@@ -184,3 +263,48 @@ class TheNo(Facts):
         said = await self.maps.measure(GUILD_A, self.one.id, asked, dm=True)
         assert isinstance(said, str)
         self.assertTrue(said.startswith("I can't find "), said)  # (no "how far" from it)
+
+
+class UndoAfterThePictureWent(Facts):
+    """#4697 (Supervisor's ruling 3 on #4694): an Undo of a map read's pins after the map's picture
+    was deleted (the map and its own log rows went with it, outside the log) changes nothing and
+    says so plainly; a map gone by a logged Remove is still "changed since"."""
+
+    async def pins_batch(self) -> int:
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT max(batch) AS b FROM memory_changes WHERE table_name = 'map_features'"
+            )
+            got = await cur.fetchone()
+        assert got is not None and got["b"] is not None
+        return int(got["b"])
+
+    async def test_nothing_comes_back_and_it_says_why(self) -> None:
+        from dmbot.memory._changes import MAP_PICTURE_GONE
+        from dmbot.memory.models import MemoryRuleError
+
+        await self.record()  # (the read's pins: a batch with no map row of its own)
+        batch = await self.pins_batch()
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute(
+                "SELECT picture_id FROM campaign_maps WHERE id = %s", (self.map_id,)
+            )
+            picture = await cur.fetchone()
+        assert picture is not None
+        await self.pictures.delete(GUILD_A, self.one.id, int(picture["picture_id"]))
+        before = await self.features()
+        with self.assertRaises(MemoryRuleError) as caught:
+            await self.memory.undo(GUILD_A, self.one.id, batch)
+        self.assertEqual(str(caught.exception), MAP_PICTURE_GONE)
+        self.assertEqual(await self.features(), before)  # (nothing changed)
+
+    async def test_a_map_gone_by_a_logged_remove_is_changed_since(self) -> None:
+        from dmbot.memory._changes import CHANGED_SINCE
+        from dmbot.memory.models import MemoryRuleError
+
+        await self.record()
+        batch = await self.pins_batch()
+        await self.maps.remove_map(GUILD_A, self.one.id, self.map_id)
+        with self.assertRaises(MemoryRuleError) as caught:
+            await self.memory.undo(GUILD_A, self.one.id, batch)
+        self.assertEqual(str(caught.exception), CHANGED_SINCE)

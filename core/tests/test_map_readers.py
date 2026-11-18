@@ -14,6 +14,8 @@ ALLOWED = {
     "migrations/0488_map_close_read.py",  # (the sweep's marks, #4349)
     "migrations/0472_campaign_maps.py",
     "migrations/0480_forget_maps.py",  # account deletion: the uploader's maps, the DM's id (#3274)
+    "migrations/0534_forget_map_reads.py",  # (the same function, with the deletion rule, #4693)
+    "migrations/0536_forget_map_version.py",  # (the same function: the version and re-point, #4711)
     "migrations/0457_map_facts.py",  # (its comment: where `map_id` was left for this table)
     "campaigns/tables.py",
     "lineage.py",
