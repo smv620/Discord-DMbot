@@ -1,0 +1,60 @@
+{
+ "campaign": "picture cases (invented)",
+ "source": "made by `python -m dmbot.devtools.picture_cases make OUT.pdf` for #4003 slice b (Supervisor's ruling on #4003). Every name and word is made up; nothing is from a published book.",
+ "version": 1,
+ "how_to_read": {
+  "pictures": "each picture page: the kind the read must give (`where`) and the words it must copy, each phrase found when all its words are in the answer",
+  "not_taken": "pages whose pictures are never sent to the AI, with why",
+  "page": "the PDF's page, 1-based; page 1 is text only"
+ },
+ "pictures": [
+  {
+   "page": 2,
+   "where": "map",
+   "words": [
+    "Gullhaven",
+    "Brinewick",
+    "Thornmoor",
+    "Ostry Ford",
+    "Kelpie Point"
+   ]
+  },
+  {
+   "page": 3,
+   "where": "table",
+   "words": [
+    "Mire Hound",
+    "Armor Class",
+    "13",
+    "Hit Points",
+    "22",
+    "Speed",
+    "40 ft."
+   ]
+  },
+  {
+   "page": 4,
+   "where": "handout",
+   "words": [
+    "To the keeper of Gullhaven",
+    "The ferry at Ostry Ford is closed until spring",
+    "Signed, Warden Halvard Crane"
+   ]
+  },
+  {
+   "page": 5,
+   "where": "other",
+   "words": []
+  }
+ ],
+ "not_taken": [
+  {
+   "page": 6,
+   "why": "too small: an ornament, skipped before any AI call"
+  },
+  {
+   "page": 7,
+   "why": "a vector drawing: no image to take out (ruling D)"
+  }
+ ]
+}
