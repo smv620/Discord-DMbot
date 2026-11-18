@@ -1935,6 +1935,24 @@ class TheEdits(Editing):
         waiting = {w.id for w in await self.backstory.waiting(self.g, self.one.id)}
         self.assertEqual(waiting, {secret, plain})  # (nothing was written)
 
+    async def test_some_know_on_a_backstory_connection_refuses_a_non_player_character(
+        self,
+    ) -> None:
+        npc = await self.memory.add_entity(
+            self.g, self.one.id, type="character", name="An NPC", source="dm", status="confirmed"
+        )
+        link = await self.waiting_link(self.mira, self.hall)
+        await self.queue(kind="backstory", action="some", id=link, characters=[npc.value.id])
+        (outcome,) = await self.apply_waiting()
+        self.assertNotEqual(outcome.error, "")
+        self.assertEqual([w.id for w in await self.backstory.waiting(self.g, self.one.id)], [link])
+
+    async def test_some_know_on_a_backstory_connection_counts_a_repeated_id_once(self) -> None:
+        (wren,) = await self.party("Wren")
+        link = await self.waiting_link(self.mira, self.hall)
+        await self.queue(kind="backstory", action="some", id=link, characters=[wren, wren])
+        self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+
     async def test_some_know_on_a_backstory_connection_needs_a_dm_and_one_to_25_people(
         self,
     ) -> None:

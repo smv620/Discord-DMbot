@@ -369,8 +369,9 @@ async def keep_all(
     "show", or "" for how it is now (a connection it replaces that is hidden stays hidden, one the
     players see stays seen); a secret name always stays hidden, whatever was chosen.
     `knowers` (one press only, #4680): 👥 Some know, as Discord's picker saves it: the connection
-    is kept held back from the players, never secret, and exactly these characters know it, as the
-    DM's own choice. A connection with a secret name or a hand-over is refused whole, as on the
+    is kept held back from the players, never secret, and these characters know it (a connection
+    that already existed keeps the characters it had, as Discord's card does), as the DM's own
+    choice. A connection with a secret name or a hand-over is refused whole, as on the
     card.
     """
     done = KeptAll()

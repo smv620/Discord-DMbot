@@ -10,7 +10,8 @@ from __future__ import annotations
 # the waiting connection (the door's own check that every `backstory-` action needs) and its text
 # is the characters who know it, ids joined by commas (1 to 25). The bot applies it through the
 # keep Discord's picker makes: held back from the players, never secret, and exactly those
-# characters know it, as the DM's own choice; one change, one Undo, as for any keep. It is refused
+# characters know it, as the DM's own choice (the keep's change is the bot's own; the website's
+# backstory cards have no Undo yet, and this adds none). It is refused
 # for a connection with a secret name or a hand-over, as on the card. The queue door's lists, shape
 # check and text limit are read back from the database as they are and each anchor must be found
 # exactly the number of times given, so a drift stops the migration. No row changes.
