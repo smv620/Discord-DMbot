@@ -6,6 +6,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testi
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { type AccountApi, type PictureItem } from "../src/account/api";
+import { keepDmOnlyMarks } from "../src/account/api-campaign";
 import { mockApi } from "../src/account/mock";
 import Pictures, { WAITING_RECHECK_MS } from "../src/account/Pictures";
 import { picturesPage as w } from "../src/content/pictures-words";
@@ -120,7 +121,8 @@ describe("the Pictures page", () => {
     await screen.findByAltText("A storm over the ford");
     fireEvent.click(screen.getByRole("button", { name: w.showMore }));
     await waitFor(() => expect(alts()).toContain("A torn page from a diary"));
-    expect(alts()).toHaveLength(5);
+    // Six pictures in all for a DM: the DM-only one from a document is the oldest, so it is on this page too (#4761).
+    expect(alts()).toHaveLength(6);
   });
 
   it("a waiting answer shows Working on it under the tile, and the list is asked again", async () => {
@@ -144,7 +146,8 @@ describe("the Pictures page", () => {
     await screen.findByAltText("A map of the Brass Ford");
     fireEvent.input(screen.getByLabelText(/Search the descriptions/), { target: { value: "map" } });
     fireEvent.click(screen.getByRole("button", { name: w.search }));
-    await waitFor(() => expect(alts()).toEqual(["A map of the Brass Ford"]));
+    // "map" also finds the DM-only picture from a document: a DM sees it in the search too (#4761).
+    await waitFor(() => expect(alts()).toEqual(["A map of the Brass Ford", "A map from the Keep's handout"]));
     fireEvent.input(screen.getByLabelText(/Search the descriptions/), { target: { value: "zzz" } });
     fireEvent.click(screen.getByRole("button", { name: w.search }));
     expect(await screen.findByText(w.noMatch)).toBeTruthy();
@@ -361,5 +364,61 @@ describe("the recheck after a waiting answer (#3322)", () => {
     const atLeaving = api.pictures.mock.calls.length;
     await passTime(WAITING_RECHECK_MS);
     expect(api.pictures.mock.calls.length).toBe(atLeaving);
+  });
+});
+
+// A picture DMbot read out of an uploaded document (#4761): the mark, where it came from, no Make public or private, and never a player's.
+const DM_ONLY = "A map from the Keep's handout";
+// The DM-only picture is the oldest of six, so it is on the second page: press Show more until it shows.
+async function dmOnlyTile(): Promise<HTMLElement> {
+  render(<Pictures api={mockApi("table")} path={PATH} />);
+  for (let i = 0; i < 4; i++) {
+    await waitFor(() => expect(alts().length).toBeGreaterThan(0));
+    const img = Array.from(document.querySelectorAll("img")).find((x) => x.getAttribute("alt") === DM_ONLY);
+    if (img) return img.closest("li") as HTMLElement;
+    const before = document.querySelectorAll("img").length;
+    fireEvent.click(await screen.findByRole("button", { name: w.showMore }));
+    await waitFor(() => expect(document.querySelectorAll("img").length).toBeGreaterThan(before));
+  }
+  throw new Error("the DM-only picture never showed");
+}
+
+describe("DM-only pictures from documents", () => {
+  it("a DM only picture shows the mark and where it came from", async () => {
+    const tile = await dmOnlyTile();
+    expect(within(tile).getByText(w.dmOnlyTag, { exact: false })).toBeTruthy();
+    expect(within(tile).getByText(w.fromUpload("The Sunken Keep"))).toBeTruthy();
+    expect(within(tile).queryByText(w.privateTag)).toBeNull();
+  });
+
+  it("a DM only picture has no Make public and no Make private", async () => {
+    const tile = await dmOnlyTile();
+    expect(within(tile).queryByRole("button", { name: w.makePublic })).toBeNull();
+    expect(within(tile).queryByRole("button", { name: w.makePrivate })).toBeNull();
+  });
+
+  it("a picture without the field looks as before", async () => {
+    render(<Pictures api={mockApi("table")} path={PATH} />);
+    await screen.findByAltText("A map of the Brass Ford");
+    const tile = tileFor("A map of the Brass Ford");
+    expect(within(tile).getByRole("button", { name: w.makePrivate })).toBeTruthy();
+    expect(within(tile).queryByText(w.dmOnlyTag, { exact: false })).toBeNull();
+  });
+
+  it("the label is dropped when it is not plain text", () => {
+    const base: PictureItem = {
+      code: "pic-x", cursor: "1:1", at: 1, sessionNumber: null, poster: "DMbot", description: "A map", previewUrl: "/p.webp",
+      permanent: false, isPublic: false, mine: false, dmOnly: true,
+    };
+    expect(keepDmOnlyMarks({ ...base, uploadLabel: "<b>The Keep</b>" }).uploadLabel).toBeUndefined();
+    expect(keepDmOnlyMarks({ ...base, uploadLabel: "" }).uploadLabel).toBeUndefined();
+    expect(keepDmOnlyMarks({ ...base, uploadLabel: "The Keep" }).uploadLabel).toBe("The Keep");
+    expect(keepDmOnlyMarks({ ...base, dmOnly: "yes" as unknown as boolean }).dmOnly).toBeUndefined();
+  });
+
+  it("a player's view never lists a DM only picture", async () => {
+    render(<Pictures api={mockApi("table")} path={PLAYER_PATH} />);
+    await waitFor(() => expect(alts().length).toBeGreaterThan(0));
+    expect(alts()).not.toContain(DM_ONLY);
   });
 });
