@@ -302,6 +302,10 @@ AUDIENCE: dict[str, str] = {
             "ui.story_watch.WordsButton",
             "ui.threads.ThreadListButton",
             "ui.threads.ThreadsButton",
+            # 🚪 Has left the party: why, ↩️ Back and ↩️ Undo (#4537 slice 2a)
+            "ui.party_card.WhyButton",
+            "ui.party_card.BackButton",
+            "ui.party_card.LeaveUndoButton",
         ],
         DM,
     ),

@@ -184,6 +184,8 @@ class BackButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], tem
         from dmbot.ui.name_card import show_card
 
         await _answer_first(interaction, in_place=True)
+        if await _dm_campaign(interaction, self.campaign_id) is None:  # (a DM only, as the card)
+            return
         await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
 
 
