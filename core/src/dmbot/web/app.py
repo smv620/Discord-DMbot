@@ -2672,6 +2672,24 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.post("/me/campaigns/{ref}/lore-pdf/go", status_code=202)
+    async def me_lore_pdf_go(ref: str, signed: Signed, request: Request) -> dict[str, Any]:
+        """The DM's yes to the counted PDF (#4762 step 3): `{"ref", "choice", "speaker", "rights":
+        true}`, queued like any lore upload and answered with its progress (poll
+        `/me/campaigns/{ref}/lore/{id}`). DM only; 409 `needs_confirm`, `not_counted` or `busy`,
+        404 when the file is gone or is not the one the DM saw, 429 `too_soon`. 404 while
+        DMBOT_WEB_LORE is off."""
+        session, _token = signed
+        if not settings.lore_on:
+            raise HTTPException(status_code=404, detail="not_found")
+        try:
+            return await lore_pdf.go(db, session, ref, await bounded_json(request, 4_096))
+        except RecapError as err:
+            status, detail = lore_refusals.get(err.code, (404, "not_found"))
+            if err.code == "not_counted":
+                status, detail = 409, "not_counted"
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.delete("/me/campaigns/{ref}/lore-pdf", status_code=204)
     async def me_lore_pdf_drop(ref: str, signed: Signed) -> None:
         """The DM's "Never mind": the staged PDF and its row go."""

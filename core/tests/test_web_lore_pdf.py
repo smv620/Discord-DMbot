@@ -180,6 +180,31 @@ class TheRoute(Staged):
         self.assertEqual((await self.client.get(self.url)).json(), {"state": "none"})
         self.assertEqual(self.bucket.objects, {})
 
+    async def test_the_yes_is_a_202_with_progress_and_its_refusals_have_their_words(self) -> None:
+        await self.stage()
+        await self.sql("UPDATE lore_pdf_staged SET state = 'estimated'")
+        ref = (await self.client.get(self.url)).json()["ref"]
+        body = {"ref": ref, "choice": "world", "speaker": "", "rights": True}
+        go = f"{self.url}/go"
+        self.assertEqual((await self.client.post(go, json=body)).status_code, 404)  # (switch off)
+        self.app = create_app(
+            settings(lore_on=True), self.web, FakeDiscord(),
+            payments=FakeProvider(b"h" * 32, "https://s.example"), clock=lambda: NOW,
+            upload_bucket=self.bucket,
+        )  # fmt: skip
+        self.client = await self.signed_client(ALICE)
+        unticked = await self.client.post(go, json={**body, "rights": False})
+        self.assertEqual((unticked.status_code, unticked.json()["error"]), (409, "needs_confirm"))
+        gone = await self.client.post(go, json={**body, "ref": "0" * 32})
+        self.assertEqual((gone.status_code, gone.json()["error"]), (404, "not_found"))
+        sent = await self.client.post(go, json=body)
+        self.assertEqual(sent.status_code, 202)
+        self.assertEqual(sent.json()["upload"]["state"], "waiting")
+        again = await self.client.post(go, json=body)
+        self.assertEqual((again.status_code, again.json()["error"]), (409, "busy"))
+        other = await self.signed_client(BOB)
+        self.assertEqual((await other.post(go, json=body)).status_code, 403)
+
     async def test_a_dm_of_another_campaign_is_refused_before_the_body_is_read(self) -> None:
         bob = await self.signed_client(BOB)  # DMs Two, not One
         for call in (bob.get(self.url), bob.post(self.url, content=PDF), bob.delete(self.url)):

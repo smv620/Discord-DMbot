@@ -58,6 +58,7 @@ class Staged:
     object_key: str
     size_bytes: int
     state: str
+    sha256: str = ""  # the file's own hash: what the right-to-use record carries (#4762 step 3)
 
 
 class StagedPdfs:
@@ -69,14 +70,28 @@ class StagedPdfs:
     async def get(self, guild_id: int, campaign_id: str) -> Staged | None:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT id, object_key, size_bytes, state FROM lore_pdf_staged"
+                "SELECT id, object_key, size_bytes, state, sha256 FROM lore_pdf_staged"
                 " WHERE guild_id = %s AND campaign_id = %s",
                 (guild_id, campaign_id),
             )
             row = await cur.fetchone()
         if row is None:
             return None
-        return Staged(str(row["id"]), str(row["object_key"]), int(row["size_bytes"]), row["state"])
+        return Staged(
+            str(row["id"]),
+            str(row["object_key"]),
+            int(row["size_bytes"]),
+            row["state"],
+            str(row["sha256"]),
+        )
+
+    async def drop(self, guild_id: int, campaign_id: str, staged_id: str) -> None:
+        """Delete this file's row (a later file's is never touched: the id must match)."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "DELETE FROM lore_pdf_staged WHERE guild_id = %s AND campaign_id = %s AND id = %s",
+                (guild_id, campaign_id, staged_id),
+            )
 
     async def mark(
         self,
@@ -113,16 +128,17 @@ class StagedPdfs:
                     list(only_from) if only_from is not None else None,
                 ),
             )
-            return cur.rowcount == 1
+            return bool(cur.rowcount == 1)
 
     async def sweep(self, guild_id: int, *, now: int) -> list[str]:
-        """Delete the rows older than a day (never one being read) and give back their object keys,
-        for the caller to delete (the bucket's own rule usually has them already)."""
+        """Delete the rows older than a day and give back their object keys, for the caller to
+        delete (the bucket's own rule usually has them already). A row being read is spared for
+        two days: past that its read ended without clearing it."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "DELETE FROM lore_pdf_staged WHERE guild_id = %s AND created_at < %s"
-                " AND state <> 'reading' RETURNING object_key",
-                (guild_id, now - ROW_KEEP_S),
+                " AND (state <> 'reading' OR created_at < %s) RETURNING object_key",
+                (guild_id, now - ROW_KEEP_S, now - 2 * ROW_KEEP_S),
             )
             return [str(r["object_key"]) for r in await cur.fetchall()]
 
