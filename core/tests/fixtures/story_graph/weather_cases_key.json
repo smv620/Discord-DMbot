@@ -1,12 +1,12 @@
 {
  "campaign": "weather cases (invented)",
  "source": "weather_cases_lore.txt and weather_cases_session.txt in this folder: invented text for DMbot's tests, written for #4260 slice 10c-2 (the session weather reader and the after-session note; Supervisor's ruling A). Every name and line is made up; the four player characters are the sample's, by name only.",
- "version": 2,
+ "version": 3,
  "how_to_read": {
   "climates": "the climate the lore gives each place (read from 'frozen' and 'sweltering' beside the name); the DM keeps both before the session is read, so the note judges against kept rows",
   "weather": "the weather the session reader must hear: {place, kind, line}. Found when the report's weather line numbers include the line",
   "notes": "the lines that must give the DM a weather note (the weather plainly can't fit the kept climate; no season is known)",
-  "must_not_weather": "lines that must give no weather: a player's guess, weather that isn't there, a question, rain (never a kind) and a figure of speech",
+  "must_not_weather": "lines that must give no weather: a player's guess, weather that isn't there, a question, rain (never a kind), a figure of speech, and a line said as an NPC (#4748)",
   "line": "the line of the session file; blank lines count"
  },
  "nodes": [
@@ -110,6 +110,10 @@
   {
    "line": 15,
    "note": "a question with no question mark (speech to text drops it)"
+  },
+  {
+   "line": 16,
+   "note": "said as an NPC the DM voices (Mayor Brask): in the story, it may be a lie or a mistake, never the DM's word (#4748). In play the line's label marks it; an imported text has no labels, so 'DM (as Mayor Brask)' is a speaker of its own, never the DM"
   }
  ]
 }

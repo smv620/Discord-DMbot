@@ -23,6 +23,7 @@ from tests.pg import DatabaseTest
 GUILD, OTHER, DM, SPEAKER = 111, 222, 9, 31
 A, B = sorted((new_id(), new_id()))  # two names ("a" sorts first, as some tables require)
 PLACE = new_id()  # a place, for its land, climate or ruler (#4256)
+CLIMATE_ROW = new_id()  # its climate row, which a weather note is judged against (#4748)
 QUEST = new_id()  # a story thread, for its parts (#4471)
 # a sub-step whose id sorts before its objective's, so the restore must load the objective first
 STEP, OBJECTIVE = "0" * 32, "f" * 32
@@ -220,7 +221,12 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 "INSERT INTO memory_map_facts (guild_id, campaign_id, id, entity_id, layer, value,"
                 " status, source, created_at) VALUES (%s, %s, %s, %s, 'climate', 'cold',"
                 " 'confirmed', 'dm', 1)",
-                (g, c, new_id(), PLACE),
+                (g, c, CLIMATE_ROW, PLACE),
+            ),
+            "memory_weather_notes": (  # the weather already noted for that place (#4748)
+                "INSERT INTO memory_weather_notes (guild_id, campaign_id, id, place_id, kind,"
+                " climate_id, climate, created_at) VALUES (%s, %s, %s, %s, 'heat', %s, 'cold', 1)",
+                (g, c, new_id(), PLACE, CLIMATE_ROW),
             ),
             "character_sheets": (
                 "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, url, sheet, source,"

@@ -2,7 +2,8 @@
 "Climate" and §9 "After the session"; Supervisor's ruling on #4260). Pure: no database, no Discord,
 no AI. It says only whether weather the session described in a place sits badly with that place's
 climate (and the season, when the campaign's calendar gives one), and the DM's private words for
-it. Nothing is stored or changed: §6 says weather is never stored and DMbot never makes any.
+it. Nothing is changed: §6 says weather is never stored and DMbot never makes any (the caller
+keeps only which notes were sent, by ids, #4748).
 
 Rules kept here:
 - **The DM's only, private, after the session**, never during a scene and never as a correction
@@ -23,8 +24,9 @@ Rules kept here:
 
 Wired by #4260 10c-2: the session reader of weather (`memory.weather_reading`) feeds it behind
 DMBOT_WEATHER_NOTES (off until dev1's counts on the invented `weather_cases` text), and one
-session's notes go in one private message under one heading (`message`). Nothing is stored, so a
-place's note can come again in a later session (§6: weather is never stored).
+session's notes go in one private message under one heading (`message`). The weather itself is never
+stored (§6); only that a note was sent, by ids (`memory/weather_marks.py`, #4748), so a place's note
+comes once for each kind until its kept climate changes.
 """
 
 from __future__ import annotations
@@ -81,6 +83,8 @@ class Note:
     climate: str  # the climate it doesn't fit (`mf` value)
     season: str | None  # the calendar's season, when it gave one and the season decided it
     from_place: str | None  # where the climate was read from, when read up the tree
+    climate_id: str = ""  # the kept climate row judged against (#4748: once until it changes)
+    kept_ids: tuple[str, ...] = ()  # every kept climate row it was judged among (#4748)
 
 
 def check(
@@ -103,12 +107,12 @@ def check(
         return None
     if len({f.value for f, _src in kept}) > 1:
         return None
-    fact, src = kept[0]
+    fact, src = kept[0]  # (one value; which row doesn't matter: the marks take them all, #4748)
     if fits(fact.value, kind, season):
         return None
     # (the season is said only when it decided the note: heat in an arctic climate needs none)
     decided = season if (fact.value, kind) not in _NEVER else None
-    return Note(place, kind, fact.value, decided, src)
+    return Note(place, kind, fact.value, decided, src, fact.id, tuple(f.id for f, _src in kept))
 
 
 def words(note: Note, when: str = "this session") -> str:

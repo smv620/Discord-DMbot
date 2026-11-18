@@ -21,5 +21,10 @@ The lore gives Frostmere a freezing climate ("frozen town") and Sunreach a hot o
 | 13 | a figure of speech ("snow-white") | nothing | no |
 | 14 | a figure of speech ("the heat of the moment") | nothing | no |
 | 15 | a question with no "?" | nothing | no |
+| 16 | said as an NPC (Mayor Brask), #4748 | nothing | no |
+
+Line 16: in play, a line the DM says as a named NPC carries that NPC's label, and the weather check never takes it as the DM's word (it may be a lie or a mistake in the story). An imported text has no labels: "DM (as Mayor Brask)" is a speaker of its own, never mapped to the DM, so it gives nothing either way. `tests/test_weather_reading.py` checks the labelled path.
+
+**Once per place** (#4748): a place's note for one kind comes once, and again only when its kept climate changes. Reading this session a second time gives no note; change Sunreach's climate and read it again, and line 5's note comes back.
 
 Scored from the bot's log line: `weather: N heard (lines …)` gives what was heard, and `Weather notes: N heard, M noted` gives the notes. A false note is a note the key doesn't list.

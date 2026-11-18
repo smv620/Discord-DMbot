@@ -76,6 +76,7 @@ from dmbot.memory.reveal_reading import (
 from dmbot.memory.weather_reading import PROMPT_SUFFIX as WEATHER_SUFFIX
 from dmbot.memory.weather_reading import WEATHER_ADDENDUM, Weather, parse_weather
 from dmbot.memory.weather_reading import once_each as weather_once
+from dmbot.sidebar.ask import voiced_by_npc
 from dmbot.transcript.models import Line
 from dmbot.transcript.topics import OFF_TOPIC
 
@@ -213,6 +214,10 @@ class Said:
     user_id: int
     text: str
     started_ms: int = 0  # when the line began: what a restart resumes after (#1367)
+    # said as a named NPC the DM was voicing (#53, `voiced_by_npc`): in the story, it can be a lie
+    # or a mistake, so the weather check never takes it as the DM's word (#4748, as #4708 does).
+    # A line whose label never settled ("") counts as the DM's own words, as `voiced_by_npc` says.
+    voiced: bool = False
 
 
 def readable(lines: Sequence[Line]) -> list[Said]:
@@ -221,7 +226,7 @@ def readable(lines: Sequence[Line]) -> list[Said]:
     a person who agreed, so it has no other lines), and never a line the off-topic filter left
     out. Consent is a separate check, made when each batch is sent."""
     return [
-        Said(n, line.user_id, line.text, line.started_ms)
+        Said(n, line.user_id, line.text, line.started_ms, voiced_by_npc(line.entity))
         for n, line in enumerate(lines, start=1)
         if not line.sidebar and line.topic != OFF_TOPIC and line.text.strip()
     ]
@@ -807,7 +812,8 @@ async def run(
             told = parse_weather(
                 reply.text,
                 {number: text for number, _who, text in rows},
-                dm_lines=[number for number, who, _text in rows if who == "DM"],
+                # (the DM's own words: never a line said as an NPC, #4748)
+                dm_lines=[str(s.number) for s in batch if s.user_id in dm_ids and not s.voiced],
             )
             report.weather += len(told.weather)
             report.weather_dropped.update(told.dropped)
