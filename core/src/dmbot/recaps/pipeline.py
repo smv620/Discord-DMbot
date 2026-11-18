@@ -1227,8 +1227,8 @@ class RecapWorker:
         background to explain a place with, never as something that happened; a failure costs the
         colour, never the recap."""
         sheet = await self._read_people_sheet(gid, cid, job, inputs, shown)
-        # The reveal sentences come first and keep their room: the colour and then the people's
-        # lines give way, never a reveal (a recap must cite each one, #4737).
+        # The reveal sentences keep their room: the people's lines give way, and the reveals sit
+        # before the colour so a later cut never takes one (a recap must cite each, #4737).
         cited = await self._reveal_lines(gid, cid, job)
         colour: list[str] = []
         places = sorted({b.where for b in shown if b.where})
@@ -1250,7 +1250,7 @@ class RecapWorker:
                 len(colour),
                 len(cited),
             )
-        return (*sheet[:room], *colour, *cited)
+        return (*sheet[:room], *cited, *colour)
 
     async def _reveal_lines(self, gid: int, cid: str, job: Job) -> list[str]:
         """The marked reveal sentences, or none (the switch off, or a failed read: costs the

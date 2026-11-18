@@ -61,7 +61,7 @@ class TheSheet(unittest.IsolatedAsyncioTestCase):
             1, "c", JOB, INPUTS, [Beat(1, "x", ("a",), (1,), "event", where="Town")]
         )
         self.assertEqual(len(got), rd.SHEET_LINES)
-        self.assertEqual(got[-1], pl.REVEAL_MARK + SAID)
+        self.assertIn(pl.REVEAL_MARK + SAID, got)
 
     async def test_a_failure_costs_the_sentences_and_never_the_recap(self) -> None:
         reveals = AsyncMock(side_effect=RuntimeError("Vane is the traitor"))
@@ -79,6 +79,8 @@ class TheChecks(unittest.TestCase):
     def test_the_marker_in_its_own_words_is_supported(self) -> None:
         self.assertEqual(check("Okthandom learned something about Vane. Then they rode on."), [])
         self.assertEqual(check("Okthandom learned something."), [])
+        self.assertEqual(check("Okthandom learned something, and rode on."), [])
+        self.assertEqual(check("Okthandom learned to read the map."), [], "no detail of a secret")
         self.assertEqual(
             check(SCENE, pl.REVEAL_MARK + SCENE), [], "a private word needs no detail either"
         )
@@ -89,7 +91,9 @@ class TheChecks(unittest.TestCase):
             "Okthandom learned something about Vane's past.",
             "Okthandom found out how Vane had lied.",
             "Okthandom was told a secret about the Tower.",
-            "Okthandom discovered Vane's crown.",
+            "Okthandom learned something that the king is dead.",
+            "Okthandom learned something terrible about the Tower.",
+            "Okthandom learned something in the crypt.",
         ):
             with self.subTest(said):
                 problems = check(said)

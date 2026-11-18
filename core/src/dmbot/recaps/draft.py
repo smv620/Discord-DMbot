@@ -1232,6 +1232,7 @@ _LEARNS = re.compile(
     r"|was told|were told|whisper(?:ed|s)|confided|reveal(?:ed|s)|admitted)\b",
     re.IGNORECASE,
 )
+_DETAIL = re.compile(r"^\s+(?:that|how|who|where|why|what|about|of|if|whether)\b", re.IGNORECASE)
 _REVEAL_SENTENCE = re.compile(
     r"^(?P<who>.+?) (?:learned something(?: about (?P<about>.+))?|had a private word)\.$"
 )
@@ -1272,14 +1273,25 @@ def reveal_problems(
             rf"\s+about\s+(?:{names})(?:(?:,|\s+and)\s+(?:{names}))*(?![\w'’])|" if about else ""
         )
         # ("something" alone is fine; "something about" anything but the subjects is detail)
-        allowed = re.compile(rf"^\s+something(?:{subjects}(?!\s+about\b))", re.IGNORECASE)
+        # ("something", then the subjects, then the end of the clause: anything else is detail)
+        end = r"(?=\s*(?:[.!?;]|$)|,?\s+(?:and|but|then|as|while|before|after)\b)"
+        allowed = re.compile(rf"^\s+something(?:{subjects}|){end}", re.IGNORECASE)
         named = False
         for sentence in sentences:
             if not any(re.search(rf"\b{re.escape(w)}\b", sentence) for w in who):
                 continue
             named = True
             for hit in _LEARNS.finditer(sentence):
-                if not allowed.match(sentence[hit.end() :]):
+                tail = sentence[hit.end() :]
+                # (a learn verb alone is fine, "learned to read the map": only "something" said
+                # wrongly, a clause or a "was told" says more than the line does)
+                if hit.group(0).lower().endswith("told") or (
+                    _DETAIL.match(tail)
+                    or (
+                        re.match(r"^\s+something\b", tail, re.IGNORECASE)
+                        and not allowed.match(tail)
+                    )
+                ):
                     problems.append(
                         "a sentence says more than the sheet's line allows about what someone "
                         'learned: use the sheet\'s own line, like "<Name> learned something.", '
