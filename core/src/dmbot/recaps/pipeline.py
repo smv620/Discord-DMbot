@@ -285,6 +285,9 @@ Story = Callable[[int, str, Job, Sequence[str]], Awaitable[Sequence[sg.Memory]]]
 # The lines of background about the places a session visited, as the table knows them (#4721,
 # `DMBOT_RECAP_COLOUR`): given the place names the beats say, one line each, or none.
 Colour = Callable[[int, str, Job, Sequence[str]], Awaitable[Sequence[str]]]
+# Each colour line is marked, in the same block as the people lines the writer explains names with,
+# so it reads as background and never as an event or as something said at the table.
+COLOUR_MARK = "Background about the place, not an event and never said by anyone: "
 Notify = Callable[[int, str, Job], Awaitable[None]]  # (server, campaign, job): ready or failed
 
 
@@ -1220,11 +1223,21 @@ class RecapWorker:
         if not places:
             return sheet
         try:
-            colour = [str(x) for x in await self._colour(gid, cid, job, places)]
+            colour = [COLOUR_MARK + str(x) for x in await self._colour(gid, cid, job, places)]
         except Exception as exc:  # optional context: the type, never the text
+            # (the colour is read once for the job, so a failure here is no colour for its retries)
             log.warning("Recap: couldn't read the places' colour (%s)", type(exc).__name__)
             return sheet
-        return (*sheet, *colour)
+        # The writer is given `SHEET_LINES` at most: the colour keeps its room and the people's
+        # lines give way (counts only in the log)
+        room = max(0, rd.SHEET_LINES - len(colour))
+        if len(sheet) > room:
+            log.info(
+                "Recap: %d sheet lines left out to make room for %d colour lines",
+                len(sheet) - room,
+                len(colour),
+            )
+        return (*sheet[:room], *colour)
 
     async def _read_people_sheet(
         self, gid: int, cid: str, job: Job, inputs: Inputs, shown: Sequence[bt.Beat]

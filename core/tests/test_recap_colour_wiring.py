@@ -11,8 +11,11 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 from dmbot.campaigns import CampaignStore
+from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.store import MemoryStore
+from dmbot.recaps import draft as rd
 from dmbot.recaps import pipeline as pl
+from dmbot.recaps.away import things_of
 from dmbot.recaps.beats import Beat
 from dmbot.recaps.discord import RecapFeatures
 from tests.pg import DatabaseTest
@@ -44,9 +47,25 @@ class TheSheet(unittest.IsolatedAsyncioTestCase):
         w = worker(colour)
         shown = [beat(1, "Bryn Shander"), beat(2, "Targos"), beat(3, "Bryn Shander"), beat(4, "")]
         got = await w._read_sheet(1, "c", JOB, INPUTS, shown)
-        self.assertEqual(got, ("Mira: the party's rogue", "Bryn Shander: land ice and snow."))
+        self.assertEqual(
+            got, ("Mira: the party's rogue", pl.COLOUR_MARK + "Bryn Shander: land ice and snow.")
+        )
         # only the places the beats visited, once each, none made up
         self.assertEqual(colour.await_args.args[3], ["Bryn Shander", "Targos"])
+
+    async def test_the_colour_keeps_its_room_when_the_sheet_is_full(self) -> None:
+        w = worker(AsyncMock(return_value=["Bryn Shander: land ice.", "Targos: land hills."]))
+        w._read_people_sheet = AsyncMock(return_value=tuple(f"Person {i}" for i in range(60)))
+        got = await w._read_sheet(1, "c", JOB, INPUTS, [beat(1, "Bryn Shander")])
+        self.assertEqual(len(got), rd.SHEET_LINES)
+        self.assertTrue(all(x.startswith(pl.COLOUR_MARK) for x in got[-2:]))
+        self.assertEqual(got[0], "Person 0")
+
+    async def test_a_colour_line_is_background_and_yields_no_thing_to_the_checks(self) -> None:
+        line = pl.COLOUR_MARK + "Bryn Shander: land ice and snow; ruled by Ten-Towns."
+        self.assertIn("never said by anyone", line)
+        given = rd.Given(who_and_what=(line,))
+        self.assertEqual(things_of(given.who_and_what), ())
 
     async def test_no_visited_place_asks_for_nothing(self) -> None:
         colour = AsyncMock(return_value=["never"])
@@ -63,17 +82,25 @@ class TheSheet(unittest.IsolatedAsyncioTestCase):
         self.assertNotIn("Secret words", logged.output[0])  # (the type, never the text)
 
 
-def entry(entity_id: str, *, secret: bool = False, hidden: bool = False) -> Any:
-    return SimpleNamespace(entity_id=entity_id, secret=secret, entry_hidden=hidden)
+def entry(
+    entity_id: str, text: str, *, secret: bool = False, hidden: bool = False, person: bool = False
+) -> Any:
+    return SimpleNamespace(
+        entity_id=entity_id, text=text, secret=secret, entry_hidden=hidden, person=person
+    )
+
+
+def entity(entity_id: str, kind: str = "place", merged: str | None = None) -> Any:
+    return SimpleNamespace(id=entity_id, type=kind, merged_into=merged)
 
 
 class TheBotsReader(unittest.IsolatedAsyncioTestCase):
-    def bot(self, found: dict[str, list[Any]], entities: dict[str, str]) -> Any:
+    def bot(self, entries: list[Any], entities: dict[str, Any]) -> Any:
+        by_text: dict[str, list[Any]] = {}
+        for e in entries:
+            by_text.setdefault(e.text, []).append(e)
         players = SimpleNamespace(
-            entities={
-                k: SimpleNamespace(id=k, name=v, merged_into=None) for k, v in entities.items()
-            },
-            exact=lambda heard: found.get(heard, ()),
+            entities=entities, names=tuple(entries), exact=lambda heard: by_text.get(heard, ())
         )
         lookup = SimpleNamespace(
             get=AsyncMock(return_value=SimpleNamespace(for_viewer=lambda secrets: players))
@@ -86,35 +113,62 @@ class TheBotsReader(unittest.IsolatedAsyncioTestCase):
 
     async def test_only_the_players_names_and_places_go_to_the_reader(self) -> None:
         bot = self.bot(
+            [
+                entry("p1", "Bryn Shander"),
+                entry("p2", "Secret Keep", secret=True),
+                entry("p3", "Unseen Hold", hidden=True),
+                entry("f1", "Ten-Towns"),
+                entry("f2", "The Veiled Court", secret=True),
+                entry("f3", "Hidden Throne", hidden=True),
+                entry("c1", "Cerric", person=True),
+            ],
             {
-                "Bryn Shander": [entry("p1")],
-                "Secret Keep": [entry("p2", secret=True)],
-                "Unseen Hold": [entry("p3", hidden=True)],
-                "Gone": [entry("p9")],  # (not among the players' entries)
+                e.id: e
+                for e in (
+                    entity("p1"),
+                    entity("p2"),
+                    entity("p3"),
+                    entity("f1", "faction"),
+                    entity("f2", "faction"),
+                    entity("f3", "faction"),
+                    entity("c1", "character"),
+                )
             },
-            {"p1": "Bryn Shander", "p2": "Secret Keep", "p3": "Unseen Hold", "f1": "Ten-Towns"},
         )
-        got = await self.go(bot, ["Bryn Shander", "Secret Keep", "Unseen Hold", "Gone", "Nowhere"])
+        got = await self.go(
+            bot, ["Bryn Shander", "Secret Keep", "Unseen Hold", "Cerric", "Nowhere"]
+        )
         self.assertEqual(got, ["a line"])
         args = bot.memory.recap_colour.await_args.args
         self.assertEqual(list(args[2]), ["p1"])  # the one place the players know by that name
-        self.assertEqual(args[3]["f1"], "Ten-Towns")  # (a ruler is named the way they know it)
-        self.assertNotIn("p9", args[3])
+        # a ruler is named only by a name the players may see: never a secret or unseen entry
+        self.assertEqual(args[3], {"p1": "Bryn Shander", "f1": "Ten-Towns"})
+
+    async def test_a_place_matched_through_an_alias_is_named_the_way_the_beat_said_it(self) -> None:
+        bot = self.bot(
+            [entry("p1", "Bryn Shander"), entry("p1", "the Frozen Town")],
+            {"p1": entity("p1")},
+        )
+        await self.go(bot, ["the Frozen Town"])
+        self.assertEqual(bot.memory.recap_colour.await_args.args[3]["p1"], "the Frozen Town")
+
+    async def test_a_merged_entity_and_a_thing_that_is_not_a_place_are_left_out(self) -> None:
+        bot = self.bot(
+            [entry("p1", "Old Town"), entry("i1", "Frostbrand")],
+            {"p1": entity("p1", merged="p2"), "i1": entity("i1", "item")},
+        )
+        await self.go(bot, ["Old Town", "Frostbrand"])
+        self.assertEqual(list(bot.memory.recap_colour.await_args.args[2]), [])
 
     async def test_nothing_without_places_or_story_memory(self) -> None:
-        bot = self.bot({}, {})
+        bot = self.bot([], {})
         self.assertEqual(await self.go(bot, []), [])
         bot.memory = None
         self.assertEqual(await self.go(bot, ["Bryn Shander"]), [])
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
-class TheStoreReader(DatabaseTest):
-    """`MemoryStore.recap_colour` through a real database: a row the DM kept and marked known to the
-    table shows; an unkept read, or a kept row the table doesn't know, never does."""
+class _StoreBase(DatabaseTest):
+    """A campaign with a place the players know and one player character (so the party sees)."""
 
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
@@ -144,6 +198,11 @@ class TheStoreReader(DatabaseTest):
                 (1, self.campaign, uuid.uuid4().hex, self.place, value, status, known, 1000),
             )  # fmt: skip
 
+
+class TheStoreReader(_StoreBase):
+    """`MemoryStore.recap_colour` through a real database: a row the DM kept and marked known to the
+    table shows; an unkept read, or a kept row the table doesn't know, never does."""
+
     async def test_only_what_the_dm_kept_and_the_table_knows_is_said(self) -> None:
         await self.fact("tundra", status="confirmed", known=True)
         await self.fact(
@@ -168,3 +227,51 @@ class TheStoreReader(DatabaseTest):
     async def test_a_place_with_no_name_in_the_players_view_is_left_out(self) -> None:
         await self.fact("tundra", status="confirmed", known=True)
         self.assertEqual(await self.memory.recap_colour(1, self.campaign, [self.place], {}), [])
+
+
+class TheRealLookup(_StoreBase):
+    """The whole path with the real lookup of the players' view: a ruler the DM hasn't shown the
+    players is never named in a line, and the place's line says only what the table knows."""
+
+    async def control(self, faction: str) -> None:
+        async with self.db.guild(1) as conn:
+            await conn.execute(
+                "INSERT INTO memory_map_facts (guild_id, campaign_id, id, entity_id, layer,"
+                " faction_id, how, status, source, also_text, table_knows, created_at)"
+                " VALUES (%s, %s, %s, %s, 'control', %s, 'rules', 'confirmed', 'dm', false, true,"
+                " %s)",
+                (1, self.campaign, uuid.uuid4().hex, self.place, faction, 1000),
+            )  # fmt: skip
+
+    async def test_a_ruler_the_players_don_t_know_is_never_named(self) -> None:
+        known = (
+            await self.memory.add_entity(
+                1, self.campaign, type="faction", name="Ten-Towns", source="dm",
+                status="confirmed",
+            )
+        ).value.id  # fmt: skip
+        async with self.db.guild(1) as conn:
+            await conn.execute(
+                "UPDATE memory_entities SET hidden_from_players = false WHERE id = %s", (known,)
+            )
+        unseen = (
+            await self.memory.add_entity(
+                1, self.campaign, type="faction", name="The Veiled Court", source="dm",
+                status="confirmed", hidden_from_players=True,
+            )
+        ).value.id  # fmt: skip
+        await self.fact("tundra", status="confirmed", known=True)
+        await self.control(known)
+        await self.control(unseen)
+        lookup = CampaignLookup.build(await self.memory.lookup_data(1, self.campaign))
+        bot: Any = SimpleNamespace(
+            lookup=SimpleNamespace(get=AsyncMock(return_value=lookup)), memory=self.memory
+        )
+        lines = await RecapFeatures.recap_colour(bot, 1, self.campaign, JOB, ["Bryn Shander"])
+        self.assertEqual(len(lines), 1)
+        self.assertIn("tundra", lines[0])
+        self.assertNotIn("Veiled", lines[0])
+
+
+if __name__ == "__main__":
+    unittest.main()

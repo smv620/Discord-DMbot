@@ -1341,12 +1341,23 @@ class RecapFeatures:
         if self.memory is None or self.lookup is None or not place_names:
             return []
         players = (await self.lookup.get(gid, cid)).for_viewer(False)
-        names = {e.id: e.name for e in players.entities.values() if not e.merged_into and e.name}
+        # The names are the players' own, taken from the name entries they may see (a place or a
+        # ruler whose only entries are secret spellings or "players don't know this one yet" has
+        # no name here, and is left out), never the entity's canonical name.
+        live = {e.id for e in players.entities.values() if not e.merged_into}
+        names: dict[str, str] = {}
+        for entry in players.names:
+            if entry.secret or entry.entry_hidden or entry.person or entry.entity_id not in live:
+                continue
+            names.setdefault(entry.entity_id, entry.text)
         place_ids: list[str] = []
         for heard in place_names:
             for entry in players.exact(heard):
-                if entry.secret or entry.entry_hidden or entry.entity_id not in names:
+                if entry.secret or entry.entry_hidden or entry.entity_id not in live:
                     continue
+                if players.entities[entry.entity_id].type != "place":
+                    continue
+                names[entry.entity_id] = entry.text  # (the spelling the beat used)
                 place_ids.append(entry.entity_id)
         return await self.memory.recap_colour(gid, cid, place_ids, names)
 
