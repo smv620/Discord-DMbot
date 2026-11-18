@@ -7,6 +7,7 @@
 // (`useLorePdf`) and draws the two parts where they belong.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { lorePdfWords as pdfWords } from "../content/lore-pdf-words";
 import { lorePage as words } from "../content/lore-words";
 import { type AccountApi, ApiError, type LorePdf, type LoreUpload } from "./api";
 import WorkProgress from "./WorkProgress";
@@ -63,7 +64,7 @@ export function useLorePdf(
     };
   }, [api, ref, enabled]);
 
-  const fail = (err: unknown) => setProblem(words.pdf.problems[err instanceof ApiError ? err.kind : ""] ?? words.genericProblem);
+  const fail = (err: unknown) => setProblem(pdfWords.problems[err instanceof ApiError ? err.kind : ""] ?? words.genericProblem);
 
   // The count: the bot reads the file's pages and pictures and writes three numbers back; nothing is sent to an AI.
   async function count() {
@@ -77,11 +78,11 @@ export function useLorePdf(
       const got = await api.lorePdfCount(ref);
       if (got.state === "none" || got.state === "staged") {
         setPdf(null);
-        setProblem(words.pdf.gone);
+        setProblem(pdfWords.gone);
       } else setPdf(got);
     } catch (err) {
       // (the bot says the file is gone when the bucket's one-day rule took it)
-      if (err instanceof ApiError && err.kind === "not-found") setProblem(words.pdf.gone);
+      if (err instanceof ApiError && err.kind === "not-found") setProblem(pdfWords.gone);
       else fail(err);
       setPdf(null);
     } finally {
@@ -94,7 +95,7 @@ export function useLorePdf(
     setNote("");
     if (!file || !api.lorePdfSend || !ref || inFlight.current) return;
     if (file.size > PDF_MAX_BYTES || file.size === 0) {
-      setProblem(words.pdf.problems["bad-file"] ?? words.genericProblem);
+      setProblem(pdfWords.problems["bad-file"] ?? words.genericProblem);
       return;
     }
     inFlight.current = touched.current = true;
@@ -114,7 +115,7 @@ export function useLorePdf(
 
   async function yes(input: { choice: "world" | "spoilers" | "smart"; speaker: string; rights: boolean }) {
     if (!api.lorePdfGo || !ref || !pdf?.ref) return;
-    if (!input.rights) return setProblem(words.pdf.rightsNeeded);
+    if (!input.rights) return setProblem(pdfWords.rightsNeeded);
     if (inFlight.current) return;
     inFlight.current = true;
     setStep("reading");
@@ -139,7 +140,7 @@ export function useLorePdf(
     setProblem("");
     try {
       await api.lorePdfDrop?.(ref);
-      setNote(words.pdf.dropped);
+      setNote(pdfWords.dropped);
     } catch {
       // (a file that could not be dropped goes by itself within a day)
     }
@@ -164,7 +165,7 @@ export function LorePdfPicker({ s }: { s: LorePdfState }) {
   const slow = busy && s.began > 0;
   return (
     <div class="stack">
-      <label for="lore-pdf">{words.pdf.label}</label>
+      <label for="lore-pdf">{pdfWords.label}</label>
       <input
         id="lore-pdf"
         type="file"
@@ -176,11 +177,11 @@ export function LorePdfPicker({ s }: { s: LorePdfState }) {
           void s.choose(input.files?.[0]);
         }}
       />
-      <p id="lore-pdf-help" class="small">{words.pdf.help}</p>
+      <p id="lore-pdf-help" class="small">{pdfWords.help}</p>
       {(s.step === "sending" || s.step === "counting") && <PdfWait step={s.step} began={s.began} slow={slow} />}
       {s.note && <p role="status">{s.note}</p>}
       {counted && s.pdf && (
-        <p role="status">{words.pdf.counted(s.pdf.pages ?? 0, s.pdf.pictures ?? 0, s.pdf.estimateWords ?? null)}</p>
+        <p role="status">{pdfWords.counted(s.pdf.pages ?? 0, s.pdf.pictures ?? 0, s.pdf.estimateWords ?? null)}</p>
       )}
     </div>
   );
@@ -199,13 +200,13 @@ function PdfWait({ step, began, slow }: { step: Step; began: number; slow: boole
   const stalled = slow && now - began > SLOW_AFTER_S;
   return (
     <WorkProgress
-      stage={step === "sending" ? words.pdf.sending : words.pdf.counting}
+      stage={step === "sending" ? pdfWords.sending : pdfWords.counting}
       startedAt={began}
       updatedAt={began}
       serverNow={null}
       state={stalled ? "stalled" : "running"}
       progressUnknown
-      whatToDo={stalled ? words.pdf.slow : undefined}
+      whatToDo={stalled ? pdfWords.slow : undefined}
     />
   );
 }
@@ -217,8 +218,8 @@ export function LorePdfButtons({ s, onYes }: { s: LorePdfState; onYes: () => voi
   if (!counted) return null;
   return (
     <p>
-      <button type="button" class="button" disabled={busy} onClick={onYes}>{words.pdf.read}</button>{" "}
-      <button type="button" class="button secondary" disabled={busy} onClick={() => void s.never()}>{words.pdf.never}</button>
+      <button type="button" class="button" disabled={busy} onClick={onYes}>{pdfWords.read}</button>{" "}
+      <button type="button" class="button secondary" disabled={busy} onClick={() => void s.never()}>{pdfWords.never}</button>
     </p>
   );
 }

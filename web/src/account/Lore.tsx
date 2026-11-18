@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { AUTO_ADD_LIVE } from "../content/auto-add-switch";
 import { AI_FEED_LIVE } from "../content/ai-feed-switch";
 import { LORE_PDF_LIVE } from "../content/lore-pdf-switch";
+import { lorePdfWords as pdfWords } from "../content/lore-pdf-words";
 import { lorePage as words, LORE_TEXT_MAX } from "../content/lore-words";
 import { stageWords } from "../content/work-progress";
 import { type AccountApi, ApiError, type LoreInput, type LoreUpload, type NameRow } from "./api";
@@ -345,9 +346,9 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
         ))}
       </fieldset>
       <label class="choice">
-        <input type="checkbox" checked={rights} onChange={(e) => setRights((e.target as HTMLInputElement).checked)} /> {source === "pdf" ? words.pdf.rights : words.rights}
+        <input type="checkbox" checked={rights} onChange={(e) => setRights((e.target as HTMLInputElement).checked)} /> {source === "pdf" ? pdfWords.rights : words.rights}
       </label>
-      <p class="small">{source === "pdf" ? words.pdf.rightsNote : words.rightsNote}</p>
+      <p class="small">{source === "pdf" ? pdfWords.rightsNote : words.rightsNote}</p>
       {source === "pdf" && LORE_PDF_LIVE && <LorePdfButtons s={pdfState} onYes={() => void pdfState.yes({ choice: known, speaker, rights })} />}
       {(source === "pdf" ? pdfState.problem || problem : problem) && <p role="alert" ref={alertBox} tabIndex={-1}>{source === "pdf" ? pdfState.problem || problem : problem}</p>}
       {source !== "pdf" && (
