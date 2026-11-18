@@ -121,7 +121,7 @@ export type CampaignSettingName = "visibility" | "level" | "retention";
 
 /** A choice the queue carries: the three above, an optional rule switched on or off (#2753), or a game master
  * added or removed (#2768: `value` is the person's id, `on` true to add). */
-export type QueuedSetting = CampaignSettingName | "optional_rule" | "co_dm" | "pause" | "story_mode" | "dndbeyond_invite" | "rulesets" | "share_improve" | "ask_before_adding";
+export type QueuedSetting = CampaignSettingName | "optional_rule" | "co_dm" | "pause" | "story_mode" | "dndbeyond_invite" | "rulesets" | "share_improve" | "ask_before_adding" | "map_checks";
 
 /** One of a campaign's game masters (#2768; core web/game_masters.py). `plan` is the one whose plan runs the
  * campaign (cannot be removed); `you` is the person looking (may leave). */
@@ -241,6 +241,8 @@ export interface CampaignSettings {
   fallbackRules?: "2024" | "2014" | "none";
   /** "Share this campaign's story to improve DMbot" (#3741): on or off; missing from an API older than that. */
   shareImprove?: boolean;
+  /** "Map checks" (#4687; core #4730): on or off, the private note when a distance said at the table is far off a map. Missing from an API older than that. */
+  mapChecks?: boolean;
   /** "Ask me before adding" (#3879; core #3887): on, DMbot asks before it adds what an upload found; off (the default), it adds what it is sure of. Missing from an API older than that. */
   askBeforeAdding?: boolean;
   gameMasters: number;
