@@ -46,6 +46,7 @@ EVERY_ACTION = (
     "clue-add", "clue-word", "clue-off", "clue-undo",  # a story thread's clues (#4625)
     "claim-some",  # keeps a waiting claim for the ticked characters only (#4680)
     "backstory-keep-some",  # keeps a waiting backstory connection for the ticked (#4680)
+    "lore-pdf-estimate",  # the bot counts a staged lore PDF before the yes (#4762)
 )  # fmt: skip
 
 

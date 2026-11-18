@@ -26,6 +26,7 @@ from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.document_reader import READING, read_document
 from dmbot.memory.lookup import CampaignLookup, NameEntry
+from dmbot.memory.lore_pdfs import Counted
 from dmbot.memory.models import (
     CONFIRMED,
     DM,
@@ -639,6 +640,40 @@ async def _document(
         ),
         None,
     )  # fmt: skip
+
+
+UNREADABLE_WORDS = "DMbot couldn't open that file. It may be damaged: save it again and try."
+
+
+async def open_pdf(raw: bytes, label: str, *, pictures: bool) -> Upload:
+    """A staged lore PDF opened for its read (#4762 step 3): the same reader as Discord's upload,
+    its pictures taken out into the Upload's private folder (the caller closes it). `DocumentError`
+    (plain words) for a file it cannot use."""
+    upload, problem = await _document("lore.pdf", raw, label, pictures=pictures)
+    if upload is None:
+        raise DocumentError(problem or UNREADABLE_WORDS)
+    return upload
+
+
+async def count_pdf(raw: bytes, *, pictures: bool) -> Counted:
+    """A staged lore PDF's counts for the website's estimate (#4762 step 2): the same reader as a
+    Discord upload, with the pictures taken out into its private folder, which is removed before
+    this returns. Nothing is sent to an AI. `DocumentError` (plain words) for a file it cannot
+    use. `pictures`: the same switches as Discord's upload (`name_background._reading_pictures`);
+    off, no picture is counted."""
+    upload, problem = await _document("lore.pdf", raw, "lore", pictures=pictures)
+    if upload is None:
+        raise DocumentError(problem or UNREADABLE_WORDS)
+    try:
+        return Counted(
+            len(upload.text),
+            int(getattr(upload.text, "pages", 0)),
+            upload.pictures_found,
+            upload.pictures_over,
+        )
+    finally:
+        if upload.picture_files is not None:
+            upload.picture_files.close()
 
 
 async def read_attachment(
