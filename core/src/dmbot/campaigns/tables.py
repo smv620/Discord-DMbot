@@ -185,6 +185,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "image_day_use": _RUNTIME,
     "hear_use": _RUNTIME,
     "campaign_channel_people": _MEMBER_IDS,  # members a DM let see the channels by hand (#3891)
+    "lore_pdf_staged": "a lore PDF sent from the website while it waits to be counted and "
+    "read (ids and numbers only, no file name or word; one for each campaign): a file in transit, "
+    "gone within a day, never in a backup (#4762)",
     "upload_notices": _RUNTIME,  # each lore upload's notice and the changes it made (#3878)
     "web_peeks": _RUNTIME,
     "plot_checks": "PlotBot's run state for a recap (running, failed, when): rebuilt by the next "

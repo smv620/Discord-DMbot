@@ -66,6 +66,7 @@ from dmbot.web import (
     languages,
     line_fixes,
     lore,
+    lore_pdf,
     maps_upload,
     member_lookup,
     met_list,
@@ -2608,6 +2609,66 @@ def create_app(
             status, detail = map_upload_refusals.get(
                 err.code, relationship_refusals.get(err.code, (404, "not_found"))
             )
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    # A lore PDF sent from the website (#4762, step 1): a DM only; staged for the bot to count.
+    pdf_upload_limit = RateLimit(10 * 60, count=6)
+
+    @app.get("/me/campaigns/{ref}/lore/pdf")
+    async def me_lore_pdf_read(ref: str, signed: Signed) -> dict[str, Any]:
+        """The staged PDF's state and numbers, or `{state: "none"}`. DM only."""
+        session, _token = signed
+        try:
+            return await lore_pdf.read(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/lore/pdf")
+    async def me_lore_pdf_stage(ref: str, request: Request, signed: Signed) -> dict[str, Any]:
+        """Send a lore PDF (the file itself as the body, at most `lore_pdf.MAX_BYTES`): staged and
+        noted, replacing the campaign's earlier one. DM only; the check comes before any of the
+        body is read."""
+        session, _token = signed
+        if pdf_upload_limit.take(f"user-{session.user_id}") != "ok":
+            raise HTTPException(status_code=429, detail="too_soon")
+        try:
+            await lore_pdf.ensure_dm(db, session, ref)
+        except RecapError as err:
+            pdf_upload_limit.give_back(f"user-{session.user_id}")
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+        data = bytearray()
+        too_big = HTTPException(status_code=413, detail="bad_file")
+        try:
+            if int(request.headers.get("content-length") or 0) > lore_pdf.MAX_BYTES:
+                raise too_big
+            async for chunk in request.stream():
+                data.extend(chunk)
+                if len(data) > lore_pdf.MAX_BYTES:
+                    raise too_big  # (a body that lies about its length is cut off here)
+        except ValueError:
+            raise HTTPException(status_code=400, detail="bad_file") from None
+        try:
+            return await lore_pdf.stage(
+                db, session, ref, upload_bucket, bytes(data), int(time.time())
+            )
+        except RecapError as err:
+            if err.code == "uploads_off":
+                pdf_upload_limit.give_back(f"user-{session.user_id}")
+            status, detail = map_upload_refusals.get(
+                err.code, relationship_refusals.get(err.code, (404, "not_found"))
+            )
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.delete("/me/campaigns/{ref}/lore/pdf", status_code=204)
+    async def me_lore_pdf_drop(ref: str, signed: Signed) -> None:
+        """The DM's "Never mind": the staged PDF and its row go."""
+        session, _token = signed
+        try:
+            await lore_pdf.drop(db, session, ref, upload_bucket)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
     @app.get("/me/campaigns/{ref}/maps/{map_id}/features")
