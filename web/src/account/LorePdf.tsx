@@ -30,6 +30,8 @@ export interface LorePdfState {
   choose: (file: File | undefined) => Promise<void>;
   yes: (input: { choice: "world" | "spoilers" | "smart"; speaker: string; rights: boolean }) => Promise<void>;
   never: () => Promise<void>;
+  /** Back to a clean part: after an upload ends, and when the DM changes the way of adding lore. */
+  reset: () => void;
 }
 
 export function useLorePdf(
@@ -44,6 +46,9 @@ export function useLorePdf(
   const [began, setBegan] = useState(0);
   const [problem, setProblem] = useState("");
   const [note, setNote] = useState("");
+  // A second press in the same tick (before the buttons are disabled by the next render) must not send twice.
+  const inFlight = useRef(false);
+  const touched = useRef(false); // the DM has chosen a file since this page loaded
 
   // A file already waiting (sent before a reload) is shown again, so a counted PDF is not lost.
   useEffect(() => {
@@ -51,7 +56,7 @@ export function useLorePdf(
     let live = true;
     void api
       .lorePdf(ref)
-      .then((got) => live && got.state !== "none" && got.state !== "reading" && setPdf(got))
+      .then((got) => live && !touched.current && !inFlight.current && got.state !== "none" && got.state !== "reading" && setPdf(got))
       .catch(() => undefined);
     return () => {
       live = false;
@@ -62,7 +67,10 @@ export function useLorePdf(
 
   // The count: the bot reads the file's pages and pictures and writes three numbers back; nothing is sent to an AI.
   async function count() {
-    if (!api.lorePdfCount || !ref) return;
+    if (!api.lorePdfCount || !ref) {
+      setStep("idle");
+      return;
+    }
     setStep("counting");
     setBegan(nowS());
     try {
@@ -84,35 +92,45 @@ export function useLorePdf(
   async function choose(file: File | undefined) {
     setProblem("");
     setNote("");
-    if (!file || !api.lorePdfSend || !ref) return;
+    if (!file || !api.lorePdfSend || !ref || inFlight.current) return;
     if (file.size > PDF_MAX_BYTES || file.size === 0) {
       setProblem(words.pdf.problems["bad-file"] ?? words.genericProblem);
       return;
     }
+    inFlight.current = touched.current = true;
     setPdf(null);
     setStep("sending");
     setBegan(nowS());
     try {
       setPdf(await api.lorePdfSend(ref, file));
+      await count();
     } catch (err) {
       fail(err);
       setStep("idle");
-      return;
+    } finally {
+      inFlight.current = false;
     }
-    await count();
   }
 
   async function yes(input: { choice: "world" | "spoilers" | "smart"; speaker: string; rights: boolean }) {
     if (!api.lorePdfGo || !ref || !pdf?.ref) return;
     if (!input.rights) return setProblem(words.pdf.rightsNeeded);
+    if (inFlight.current) return;
+    inFlight.current = true;
     setStep("reading");
     setProblem("");
     try {
-      onStarted(await api.lorePdfGo(ref, { ref: pdf.ref, ...input }));
+      const upload = await api.lorePdfGo(ref, { ref: pdf.ref, ...input });
+      // The file is the read's now: nothing of it stays on the page, so the next upload starts clean.
+      setPdf(null);
+      setStep("idle");
+      onStarted(upload);
     } catch (err) {
       if (err instanceof ApiError && err.kind === "slow-down") onBusy();
       else fail(err);
       setStep("idle");
+    } finally {
+      inFlight.current = false;
     }
   }
 
@@ -128,7 +146,15 @@ export function useLorePdf(
     setPdf(null);
   }
 
-  return { pdf, step, began, problem, note, setProblem, choose, yes, never };
+  const reset = () => {
+    setPdf(null);
+    setStep("idle");
+    setProblem("");
+    setNote("");
+    touched.current = false;
+  };
+
+  return { pdf, step, began, problem, note, setProblem, choose, yes, never, reset };
 }
 
 /** The file, the wait while it is sent and counted, and what the count found. Drawn first. */

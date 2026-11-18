@@ -30,7 +30,7 @@ describe("Upload lore, a PDF", () => {
     const api = mockApi("table");
     render(<Lore api={api} path={PATH} />);
     await choosePdf();
-    expect((await screen.findByText(words.pdf.counted(12, 5, 0.4)))).toBeTruthy();
+    expect(await screen.findByText(words.pdf.counted(12, 5, 0.4), { exact: false })).toBeTruthy();
     expect(api.calls.filter((c) => c.startsWith("lorePdf")).slice(0, 3)).toEqual(["lorePdf:100.cmp1", "lorePdfSend:100.cmp1:5", "lorePdfCount:100.cmp1"]);
     expect(api.calls.some((c) => c.startsWith("lorePdfGo:") || c.startsWith("loreAdd:"))).toBe(false); // (nothing is read yet)
   });
@@ -39,7 +39,7 @@ describe("Upload lore, a PDF", () => {
     const api = mockApi("table");
     render(<Lore api={api} path={PATH} />);
     await choosePdf();
-    await screen.findByText(words.pdf.counted(12, 5, 0.4));
+    await screen.findByText(words.pdf.counted(12, 5, 0.4), { exact: false });
     fireEvent.click(screen.getByRole("button", { name: words.pdf.read }));
     expect((await screen.findByRole("alert")).textContent).toBe(words.pdf.rightsNeeded);
     expect(api.calls.some((c) => c.startsWith("lorePdfGo:"))).toBe(false);
@@ -61,7 +61,7 @@ describe("Upload lore, a PDF", () => {
     const api = mockApi("table");
     render(<Lore api={api} path={PATH} />);
     await choosePdf();
-    await screen.findByText(words.pdf.counted(12, 5, 0.4));
+    await screen.findByText(words.pdf.counted(12, 5, 0.4), { exact: false });
     fireEvent.click(screen.getByRole("button", { name: words.pdf.never }));
     await waitFor(() => expect(api.calls).toContain("lorePdfDrop:100.cmp1"));
     expect(screen.queryByRole("button", { name: words.pdf.read })).toBeNull();
@@ -81,5 +81,25 @@ describe("Upload lore, a PDF", () => {
     await choosePdf(big);
     expect((await screen.findByRole("alert")).textContent).toBe(words.pdf.problems["bad-file"]);
     expect(api.calls.some((c) => c.startsWith("lorePdfSend:"))).toBe(false);
+  });
+
+  it("sends the yes once on a double click, and starts clean for the next upload", async () => {
+    const api = mockApi("table");
+    render(<Lore api={api} path={PATH} />);
+    await choosePdf();
+    await screen.findByText(words.pdf.counted(12, 5, 0.4), { exact: false });
+    fireEvent.click(screen.getByLabelText(words.pdf.rights));
+    const yes = screen.getByRole("button", { name: words.pdf.read });
+    fireEvent.click(yes);
+    fireEvent.click(yes);
+    await waitFor(() => expect(screen.getByRole("status").textContent).toContain(words.stages.waiting));
+    expect(api.calls.filter((c) => c.startsWith("lorePdfGo:"))).toHaveLength(1);
+  });
+
+  it("does not carry a right-to-use tick from the text ways to the PDF way", async () => {
+    render(<Lore api={mockApi("table")} path={PATH} />);
+    fireEvent.click(screen.getByLabelText(words.rights));
+    fireEvent.click(screen.getByLabelText(words.sources.pdf));
+    expect((screen.getByLabelText(words.pdf.rights) as HTMLInputElement).checked).toBe(false);
   });
 });

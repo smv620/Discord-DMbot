@@ -93,12 +93,13 @@ async def add(db: Database, session: Session, ref: str, body: object) -> dict[st
 # shaping, then the checks of the connections it found. Its stages are its own codes where a shared
 # code means something else for another job ("reading", "waiting").
 _STAGES = {"reading": "lore_reading", "waiting": "lore_waiting"}
+# (`reading_pictures`: a PDF's pictures, read one by one, #4762)
 _UNITS = {
     "lore_reading": "parts",
     "finding_names": "names",
     "finding_links": "checks",
     "reading_pictures": "pictures",
-}  # (a PDF's pictures, #4762)
+}
 
 
 def _progress(up: dict[str, Any]) -> dict[str, Any]:

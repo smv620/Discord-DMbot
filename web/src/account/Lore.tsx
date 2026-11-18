@@ -153,7 +153,7 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
     setRights(false);
   }
   async function pdfBusy() {
-    const got = await api.loreRead?.(ref ?? "").catch(() => null);
+    const got = await api.loreRead?.(ref as string).catch(() => null);
     if (got) {
       seen.current = -1;
       idle.current = 0;
@@ -277,6 +277,7 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
               }
               setUpload(null);
               setProblem("");
+              pdfState.reset();
             }}
           >
             {done ? words.again : words.retry}
@@ -294,7 +295,7 @@ export default function Lore({ api, path }: { api: AccountApi; path: string }) {
         <legend>{words.whereLegend}</legend>
         {((LORE_PDF_LIVE ? ["paste", "file", "link", "pdf"] : ["paste", "file", "link"]) as readonly Source[]).map((s) => (
           <label key={s} class="choice">
-            <input type="radio" name="lore-source" value={s} checked={source === s} onChange={() => { setSource(s); setProblem(""); }} /> {words.sources[s]}
+            <input type="radio" name="lore-source" value={s} checked={source === s} onChange={() => { setSource(s); setProblem(""); pdfState.reset(); if ((s === "pdf") !== (source === "pdf")) setRights(false); }} /> {words.sources[s]}
           </label>
         ))}
       </fieldset>
