@@ -2930,6 +2930,27 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       return { kept: change.action === "keep" ? places.length + languages.length : null, batch };
     },
     // The Maps page (#4347). A ref ending `.player` is a player's campaign: the player rule applies, and `shown` and `state` are only on their own rows.
+    // A map's pins, scale, grid and north (#4672): DM only. A ref ending `.pins-none` has none; `.pins-fail` cannot be read.
+    async mapFeatures(ref, map) {
+      calls.push(`mapFeatures:${ref}:${map}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      if (/\.pins-fail$/.test(ref)) throw new ApiError("server");
+      if (/\.pins-none$/.test(ref)) return { audience: "dm", scale: null, grid: { kind: "none", cellPx: null, cellDistance: null, from: null }, north: { angle: 0, from: "assumed" }, features: [] };
+      return {
+        audience: "dm",
+        scale: { value: 0.05, unit: "miles", from: "read" },
+        grid: { kind: "square", cellPx: 40, cellDistance: 5, from: "dm" },
+        north: { angle: 90, from: "read" },
+        features: [
+          { id: "f".repeat(32), shape: "pin", points: [0.2, 0.5], label: "Targos", status: "read", source: "read", targetKind: "place", target: "Targos" },
+          { id: "e".repeat(32), shape: "pin", points: [0.8, 0.5], label: "Kelvin's Cairn", status: "read", source: "read", targetKind: null, target: null },
+          { id: "d".repeat(32), shape: "pin", points: [0.5, 0.2], label: "Easthaven", status: "confirmed", source: "dm", targetKind: "place", target: "Easthaven" },
+          { id: "c".repeat(32), shape: "path", points: [0.2, 0.5, 0.5, 0.2, 0.8, 0.5], label: "Road", status: "read", source: "read", targetKind: "road", target: "Bryn Shander to Targos" },
+        ],
+      };
+    },
     async maps(ref) {
       calls.push(`maps:${ref}`);
       const player = /\.player$/.test(ref);

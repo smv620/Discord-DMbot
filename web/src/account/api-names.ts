@@ -42,7 +42,7 @@ import {
   SIGNED_OUT_EVENT,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
-import type { AccountApi, ApiHelpers, CharacterLanguages, HandOverQuestion, MapsRead, MapsResult, NodeSummary, PartyCharacter, SecretQuestion, StoryThreads, ThreadCard, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
+import type { AccountApi, ApiHelpers, CharacterLanguages, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, SecretQuestion, StoryThreads, ThreadCard, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
 export function countOf(counts: unknown, key: string): number | undefined {
@@ -630,6 +630,9 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     },
     // The Maps page (#4347): the list is read here; a press is queued for the bot, waited for, and gives back the change for Undo.
     maps: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/maps`)) as MapsRead,
+    // A map's pins, scale, grid and north (#4672): DM only; the door answers anyone else with nothing.
+    mapFeatures: async (ref, map) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/maps/${encodeURIComponent(map)}/features`)) as MapFeatures,
     changeMaps: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;
       const queued =

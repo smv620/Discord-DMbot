@@ -608,8 +608,14 @@ class Building(unittest.TestCase):
         ]
         monsters = [say("Monsters", TITLE, 23)]
         creatures = [say("Monsters A–Z", TITLE, 24), *goblin()]
+        pace = [  # ("Playing the Game"'s Travel Pace table, #4260)
+            say("Travel Pace", TITLE, 2),
+            say("Fast 400 feet 4 miles 30 miles", BODY, 2),
+            say("Normal 300 feet 3 miles 24 miles", BODY, 2),
+            say("Slow 200 feet 2 miles 18 miles", BODY, 2),
+        ]
         return [
-            contents, *[[]] * 9, classes, origins, feats, equipment, weapons, armor, tools,
+            contents, pace, *[[]] * 8, classes, origins, feats, equipment, weapons, armor, tools,
             gear_table, mounts, spells, glossary, toolbox, combat, items, monsters, creatures,
         ]  # fmt: skip
 

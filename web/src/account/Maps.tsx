@@ -7,7 +7,10 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { mapsWords as w } from "../content/maps-words";
 import { MAPS_LIVE } from "../content/maps-switch";
+import { MAP_PINS_LIVE } from "../content/map-pins-switch";
+import { mapPinsWords } from "../content/map-pins-words";
 import { ApiError, type AccountApi, type MapItem, type MapsChange, type MapsRead } from "./api";
+import LazyPanel from "./LazyPanel";
 import MapAddForm from "./MapAddForm";
 import WorkProgress from "./WorkProgress";
 
@@ -33,6 +36,7 @@ export default function Maps({ api, refId }: { api: AccountApi; refId: string })
   const [problem, setProblem] = useState<string | null>(null);
   const [said, setSaid] = useState<Said | null>(null);
   const [asking, setAsking] = useState<Asking | null>(null);
+  const [pinsOpen, setPinsOpen] = useState<string | null>(null); // the map whose "Pins and scale" panel is open (#4672)
   const [since, setSince] = useState<number | null>(null);
   const [now, setNow] = useState(() => Math.floor(Date.now() / 1000));
   const flight = useRef(false);
@@ -136,6 +140,21 @@ export default function Maps({ api, refId }: { api: AccountApi; refId: string })
             <p class="small">
               <a href={m.openUrl} target="_blank" rel="noopener noreferrer" aria-label={`${w.open}: ${m.title} (opens in a new tab)`}>{w.open}</a>
             </p>
+            {MAP_PINS_LIVE && read.canManage && api.mapFeatures !== undefined && (
+              <p class="small">
+                <button
+                  type="button"
+                  class="button secondary"
+                  aria-expanded={pinsOpen === m.id}
+                  onClick={() => setPinsOpen(pinsOpen === m.id ? null : m.id)}
+                >
+                  {mapPinsWords.button}
+                </button>
+              </p>
+            )}
+            {MAP_PINS_LIVE && read.canManage && pinsOpen === m.id && (
+              <LazyPanel load={() => import("./MapPins")} what="the pins and scale of this map" props={{ api, campaignRef: refId, map: m }} />
+            )}
             {read.canManage && m.state === "waiting" && (
               <div class="stack">
                 <p>{w.dmTitle(m.addedBy)}</p>
