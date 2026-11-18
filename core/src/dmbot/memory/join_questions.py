@@ -175,6 +175,17 @@ async def waiting_for(conn: Any, guild_id: int, campaign_id: str, entity_id: str
     return await cur.fetchone() is not None
 
 
+async def waiting_entities(conn: Any, guild_id: int, campaign_id: str) -> set[str]:
+    """The characters whose own join question is still unanswered: not yet caught up, so left
+    out of "what the party knows" (Supervisor's ruling on #4780)."""
+    cur = await conn.execute(
+        "SELECT DISTINCT entity_id FROM memory_join_questions WHERE guild_id = %s"
+        " AND campaign_id = %s AND status = 'waiting'",
+        (guild_id, campaign_id),
+    )
+    return {str(r["entity_id"]) for r in await cur.fetchall()}
+
+
 async def count_waiting(conn: Any, guild_id: int, campaign_id: str) -> tuple[int, int | None]:
     """How many characters wait for the DM's answer, and since when (the board's count)."""
     cur = await conn.execute(
@@ -202,6 +213,7 @@ __all__ = [
     "set_batch",
     "unclaim",
     "undo",
+    "waiting_entities",
     "waiting_for",
     "waiting_groups",
 ]

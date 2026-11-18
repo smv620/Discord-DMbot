@@ -200,9 +200,8 @@ class TheQuestion(Party):
         self.assertEqual(await self.memory.join_questions_to_send(GUILD, self.c), [])
 
     async def test_a_newcomer_answered_everyone_leaves_little_for_the_next(self) -> None:
-        # The rule as written (§5, rule 13.4): "what the party knows" is what EVERY other
-        # current member knows, so a member who was told only what everyone knows holds back
-        # a later newcomer's copy. Put to Supervisor on #4537; asserted so a change is seen.
+        # (§5 and Supervisor's ruling on #4780: a member told "Only what everyone knows" is one
+        # of the party, so a later newcomer's copy is only what that member knows too)
         cara = await self.pc("Cara", CARA)
         [q] = await self.memory.join_questions_to_send(GUILD, self.c)
         assert q.group_id is not None
@@ -215,6 +214,32 @@ class TheQuestion(Party):
         self.assertEqual(done.value, count)
         self.assertFalse(await self.sees(dan, ENTRY, self.npc))  # (Cara doesn't know it)
         self.assertFalse(await self.sees(cara, ENTRY, self.npc))
+
+    async def test_a_member_still_waiting_is_left_out_of_the_copy(self) -> None:
+        # (Supervisor's ruling on #4780: an unanswered newcomer's gaps aren't the party's)
+        cara = await self.pc("Cara", CARA)
+        await self.memory.join_questions_to_send(GUILD, self.c)  # (Cara's: sent, unanswered)
+        dan = await self.pc("Dan", DAN)
+        [q] = await self.memory.join_questions_to_send(GUILD, self.c)
+        assert q.group_id is not None
+        count = await self.memory.party_known_count(GUILD, self.c, [dan])
+        done = await self.memory.join_answer_party(GUILD, self.c, q.group_id)
+        self.assertEqual(done.value, count)
+        self.assertTrue(await self.sees(dan, ENTRY, self.npc))  # (what Vell and Tuck know)
+        self.assertFalse(await self.sees(cara, ENTRY, self.npc))  # (Cara still waits)
+
+    async def test_two_joining_together_get_what_the_party_knows_together(self) -> None:
+        cara = await self.pc("Cara", CARA)
+        dan = await self.pc("Dan", DAN)
+        sent = await self.memory.join_questions_to_send(GUILD, self.c)
+        [group] = {q.group_id for q in sent}
+        assert group is not None
+        count = await self.memory.party_known_count(GUILD, self.c, [cara, dan])
+        done = await self.memory.join_answer_party(GUILD, self.c, group)
+        self.assertEqual(done.value, count)
+        self.assertTrue(await self.sees(cara, ENTRY, self.npc))
+        self.assertTrue(await self.sees(dan, ENTRY, self.npc))
+        self.assertEqual(await self.memory.join_questions_waiting(GUILD, self.c), (0, None))
 
     async def test_undoing_the_join_takes_the_question(self) -> None:
         made = await self.memory.add_entity(

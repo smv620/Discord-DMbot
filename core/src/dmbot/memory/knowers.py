@@ -1306,7 +1306,7 @@ async def inherit_table_rows(w: Changes, joined: Sequence[str]) -> int:
         return 0
     new_views = {i: await _view_of(w, i) for i in new}
     w.player_views = None  # (made views may have changed the list)
-    others = {await _view_of(w, i) for i in ids - set(new)}
+    others = {await _view_of(w, i) for i in await _caught_up(w, ids - set(new))}
     made = await _inherit_plan(w, list(new_views.values()), others)
     await w.insert_many(
         KNOWERS, [_row(c, st, v, w.now) | {"confidence": sure} for c, st, v, sure in made]
@@ -1329,12 +1329,24 @@ async def party_known_count(r: Scope, joined: Sequence[str]) -> int:
         str(p["entity_id"]): str(p["id"])
         for p in await r.select(PERSPECTIVES, " AND entity_id = ANY(%s)", [sorted(ids)])
     }
-    if any(i not in views for i in ids - set(new)):
+    caught_up = await _caught_up(r, ids - set(new))
+    if any(i not in views for i in caught_up):
         return 0  # (another member with no point of view holds nothing: nothing is shared by all)
-    others = {views[i] for i in ids - set(new)}
+    others = {views[i] for i in caught_up}
     new_views = [views.get(i, f"(none:{i})") for i in new]
     made = await _inherit_plan(r, new_views, others)
     return len({(c, st) for c, st, _, _ in made})
+
+
+async def _caught_up(r: Scope, members: set[str]) -> set[str]:
+    """The other members a copy is taken from (Supervisor's ruling on #4780): not one whose own
+    join question is still waiting (not yet caught up, so its gaps aren't the party's). One told
+    "Only what everyone knows" stays in (§5). With none left, the copy falls back to what the
+    flags show, as for a campaign's first characters (`_inherit_plan` with no others)."""
+    from dmbot.memory import join_questions
+
+    waiting = await join_questions.waiting_entities(r.conn, *r.ids)
+    return members - waiting
 
 
 async def _inherit_plan(
