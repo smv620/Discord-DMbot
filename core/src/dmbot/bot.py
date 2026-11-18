@@ -588,6 +588,7 @@ from dmbot.ui import (
     map_send,
     map_show,
     name_pass_undo,
+    party_card,
     player_id,
     recap_audio,
     reveal_card,
@@ -1923,6 +1924,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             map_answer.ActButton, map_answer.OpenButton, map_answer.UndoButton
         )  # the DM's side, #4344
         self.add_dynamic_items(map_question.TakeBackButton, map_question.PosterUndoButton)  # #4344
+        self.add_dynamic_items(*party_card.DYNAMIC_ITEMS)  # 🚪 Has left the party, #4537
         self.add_dynamic_items(  # a DM shows or hides a map, #4414
             map_show.CampaignSelect, map_show.MapSelect, map_show.ActButton,
             map_show.BackButton, map_show.UndoButton,

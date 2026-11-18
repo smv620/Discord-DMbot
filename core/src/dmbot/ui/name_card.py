@@ -91,6 +91,7 @@ from dmbot.ui import (
     all_names,
     languages_card,
     logic,
+    party_card,
     place_links,
     place_size,
     place_world,
@@ -997,6 +998,21 @@ async def show_card(
         line = languages_card.languages_line(known.get(entity_id, []))
         if line and len(text) + len(line) <= CARD_MAX:
             text += line
+    leave = False
+    if secrets and entity.type == "character" and entity.is_player_character:
+        # the party record (#4537 2a): since when, or when they left; the DM's alone
+        try:
+            stretches = await memory.party_spans(campaign.guild_id, campaign.id, entity_id)
+            from dmbot.ui.recap_share import session_numbers
+
+            numbers = await session_numbers(interaction.client, campaign)
+        except Exception as exc:  # the type only; the card shows without the line
+            log.warning("Name card: the party record not read (%s)", type(exc).__name__)
+            stretches, numbers = [], {}
+        line = party_card.party_line(stretches, numbers)
+        if line and len(text) + len(line) <= CARD_MAX:
+            text += line
+        leave = not stretches or stretches[-1].open  # (in the party now; `secrets`: a DM)
     if secrets and (entity.status == PROPOSED or entity.unnamed):
         # The scene (#3596): DMbot's summary of who, where and what, for a question still open;
         # read after the sweep and the consent check, DM-only, "Where was it said?" is the source.
@@ -1093,6 +1109,7 @@ async def show_card(
         undo_connection=undo_connection,
         undo_spelling=undo_spelling,
         finish_past=finish_past,
+        leave=leave,
     )
     if replace:
         await _replace(interaction, text, view)
@@ -1244,6 +1261,7 @@ class NameCard(_Menu):
         undo_connection: int | None = None,
         undo_spelling: int | None = None,
         finish_past: int | None = None,
+        leave: bool = False,
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
@@ -1324,6 +1342,13 @@ class NameCard(_Menu):
                             row=row,
                         )
                     )  # fmt: skip
+                    break
+        if leave:  # the party record (#4537 2a): a DM says a character in the party has left it
+            for row in (3, 2, 1, 4):  # (first row with room)
+                if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                    self.add_item(
+                        _Button(self._leave, label=party_card.LEAVE_BUTTON, style=grey, row=row)
+                    )
                     break
         # a route place's stated length (#4255): its words, and ✅ for DMbot's read
         self.length_words = route_length[0] if route_length is not None else ""
@@ -1557,6 +1582,10 @@ class NameCard(_Menu):
     async def _travels(self, interaction: discord.Interaction) -> None:
         if await companion_ui.start(interaction, self.campaign_id, self.entity_id):
             self.stop()  # (only when the menu replaced the card; a refusal leaves it working)
+
+    async def _leave(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await party_card.ask_why(interaction, self.campaign_id, self.entity_id)
 
     async def _deed(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.deeds import start

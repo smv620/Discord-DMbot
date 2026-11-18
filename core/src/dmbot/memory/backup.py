@@ -51,6 +51,7 @@ from dmbot.memory._changes import (
     IMPRESSIONS,
     KNOWERS,
     MAP_FACTS,
+    PARTY_SPANS,
     PERSPECTIVES,
     PREDICATES,
     RELATIONS,
@@ -135,6 +136,7 @@ _TAGS: dict[str, Table] = {
     "story_language": STORY_LANGUAGES,  # a character's languages from the story (#4229)
     "culture": CULTURES,  # the campaign's named cultures (#4257 slice 3b), before their rows
     "thread_part": THREAD_PARTS,  # a story thread's parts (#4471), after its entries
+    "party_span": PARTY_SPANS,  # who was in the party when (#4537), after its characters
     "state": STATES,
     "claim": CLAIMS,
     "alias": ALIASES,
@@ -588,6 +590,25 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
                 and _valid("created_at", raw["created_at"])
             ):
                 raise CampaignError(DAMAGED)
+        elif table is PARTY_SPANS:  # (ids, times and two fixed words, #4537)
+            if not (
+                all(is_id(raw[c]) for c in ("id", "entity_id"))
+                and all(
+                    raw[c] is None
+                    or (isinstance(raw[c], int) and not isinstance(raw[c], bool)
+                        and 0 <= raw[c] <= INT64_MAX)
+                    for c in ("to_at", "from_minute", "to_minute")
+                )
+                and isinstance(raw["from_at"], int) and not isinstance(raw["from_at"], bool)
+                and 0 <= raw["from_at"] <= INT64_MAX
+                and raw["ended"] in (None, "left", "retired", "died", "away")
+                and (raw["to_at"] is None) == (raw["ended"] is None)
+                and (raw["to_at"] is None or raw["to_at"] >= raw["from_at"])
+                and (raw["to_minute"] is None or raw["to_at"] is not None)
+                and raw["source"] in ("dm", "start")
+                and _valid("created_at", raw["created_at"])
+            ):  # fmt: skip
+                raise CampaignError(DAMAGED)
         elif table is THREAD_GUESSES:  # (ids and a time only)
             if not (
                 all(is_id(raw[c]) for c in ("id", "thread_id", "belief_id"))
@@ -692,11 +713,14 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             noted.append(w)
     by_tag["weather_note"] = noted
     # A row asleep waits for entries of this campaign: a name in the mark that is not an entry of
-    # the file is dropped from it (a row left with none is awake), never a reason to refuse.
+    # the file is dropped from it (a row left with none is awake), never a reason to refuse. A
+    # who-knows row may also be marked with its own statement (a character who had left the party
+    # when it was hidden, #4537 §6): that mark is kept.
     entry_ids = {r["id"] for r in by_tag["entity"]}
     for tag in ("knower", "belief"):
         for row in by_tag[tag]:
-            row["hidden_by"] = [h for h in row["hidden_by"] if h in entry_ids]
+            own = {row.get(c) for c in ("about_entity_id", "state_id", "relation_id", "alias_id")}
+            row["hidden_by"] = [h for h in row["hidden_by"] if h in entry_ids or h in own]
     entities = {r["id"]: r for r in by_tag["entity"]}
     if any(r["entity_id"] not in entities for r in by_tag["sheet"]):
         raise CampaignError(DAMAGED)

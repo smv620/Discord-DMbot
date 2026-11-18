@@ -145,6 +145,12 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " perspective_id, created_at) SELECT %s, %s, %s, al.id, p.id, 1 FROM al, p",
                 (g, c, new_id(), A, g, c, new_id(), B, g, c, new_id()),
             ),
+            "memory_party_spans": (
+                # the player character's stretch in the party, closed (#4537)
+                "INSERT INTO memory_party_spans (guild_id, campaign_id, id, entity_id, from_at,"
+                " to_at, ended, source, created_at) VALUES (%s, %s, %s, %s, 1, 2, 'left', 'dm', 1)",
+                (g, c, new_id(), B),
+            ),
             "memory_told": (
                 # a secret name and the character the DM told it is an entry (#3089)
                 "WITH al AS (INSERT INTO memory_aliases (guild_id, campaign_id, id, entity_id,"

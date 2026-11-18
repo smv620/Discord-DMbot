@@ -1153,20 +1153,29 @@ _KNOWN_COLUMN_OF = {
 
 
 async def _player_views(w: Changes) -> list[str]:
-    """The player characters' points of view, made for a player's character that has none. Cached
-    for the write and dropped when a character entry is written (`Changes._knowers_follow`). A
-    player character added later knows nothing that was shown before it (Supervisor's answer on
-    #2995: it learns from then on; the DM adds older knowledge with Who knows this)."""
+    """The current party's points of view (`party_record.current_members`, #4537), made for a
+    player's character that has none. Cached for the write and dropped when a character entry is
+    written (`Changes._knowers_follow`). A player character added later knows nothing that was
+    shown before it (Supervisor's answer on #2995: it learns from then on; the DM adds older
+    knowledge with Who knows this)."""
     cached = w.player_views
     if cached is None:
-        pcs = await w.select(
-            ENTITIES,
-            " AND type = 'character' AND role = %s AND status = %s",
-            [PLAYER_CHARACTER, CONFIRMED],
-        )
-        cached = [await _view_of(w, str(e["id"])) for e in pcs]
+        from dmbot.memory import party_record  # ("the party" is one function, #4537 rule 13.1)
+
+        pcs = await party_record.current_members(w)
+        cached = [await _view_of(w, e) for e in pcs]
         w.player_views = cached
     return cached
+
+
+async def _all_player_views(w: Changes) -> list[str]:
+    """Every player character's point of view, one who left the party included (#4537): what
+    takes knowledge away or gives it back (a hide, a sleep, a wake) is about the players, not the
+    party. A character who left keeps what they knew (§6), so a statement hidden after they left
+    is put out of their reach too, and one woken again comes back to them as to everyone."""
+    from dmbot.memory import party_record
+
+    return [await _view_of(w, e) for e in await party_record.player_characters(w)]
 
 
 def _row(column: str, statement_id: str, view_id: str, now: int) -> dict[str, Any]:
@@ -1241,10 +1250,22 @@ async def _open(w: Changes, column: str, items: Sequence[tuple[str, bool]]) -> N
     """Make these statements known to every player character (`items`: id, is it new). A statement
     that existed may already have rows (the DM's own list): those stay."""
     views = await _player_views(w)
-    if not views or not items:
+    if not items:
         return
     have: set[tuple[str, str]] = set()
     old = [i for i, new in items if not new]
+    if old:  # (a row `_close` put to sleep for a character who had left wakes, #4537 §6)
+        rows = await w.select(KNOWERS, f" AND {column} = ANY(%s)", [old], dormant=True)
+        await w.update_rows(
+            KNOWERS,
+            {
+                r["id"]: {"hidden_by": [h for h in r["hidden_by"] if h != r[column]]}
+                for r in rows
+                if r[column] in r["hidden_by"]
+            },
+        )
+    if not views:
+        return
     if old:
         for r in await w.select(KNOWERS, f" AND {column} = ANY(%s)", [old], dormant=True):
             have.add(
@@ -1275,12 +1296,9 @@ async def inherit_table_rows(w: Changes, joined: Sequence[str]) -> int:
     Logged in the joining change, so one Undo takes it back. Returns the rows made."""
     if not joined:
         return 0
-    chars = await w.select(
-        ENTITIES,
-        " AND type = 'character' AND role = %s AND status = %s",
-        [PLAYER_CHARACTER, CONFIRMED],
-    )
-    ids = {str(e["id"]) for e in chars}
+    from dmbot.memory import party_record  # ("the party" is one function, #4537 rule 13.1)
+
+    ids = set(await party_record.current_members(w))
     new = [i for i in dict.fromkeys(joined) if i in ids]
     if not new:
         return 0
@@ -1372,6 +1390,11 @@ async def follow_flags(
             if _is_player_character(after)
             and not (before is not None and _is_player_character(before))
         ]
+        if joined:  # (the party record: each one's stretch opens in the same change, #4537 2a)
+            from dmbot.memory import party_record
+
+            for entity_id in joined:
+                await party_record.open_span(w, entity_id)
     elif table_name == "memory_states":  # a condition is shown with its entry, once, when made
         fresh = [after for before, after in rows if before is None]
         owners = await _entities_by_id(w, {a["entity_id"] for a in fresh})
@@ -1468,11 +1491,29 @@ async def forget_moved(
 async def _close(w: Changes, column: str, ids: Sequence[str]) -> None:
     """These statements stopped being shown to the players on their own flags: the player
     characters stop knowing them. An NPC's or a group's row stays: secret means kept from the
-    players, not unknown to the world (Supervisor, #3018). Logged, so Undo brings the rows back."""
+    players, not unknown to the world (Supervisor, #3018). Logged, so Undo brings the rows back.
+    A character who has left the party keeps what they knew (#4537 §6) and is not at the table to
+    be shown it again, so their row is put to sleep instead, marked with the statement itself
+    (`hidden_by`, which every reader honours), and `_open` wakes it when it is shown again."""
     views = await _player_views(w)
-    if not views:
-        return
-    await w.delete_where_in(KNOWERS, column, ids, views)
+    gone = sorted(set(await _all_player_views(w)) - set(views))
+    if views:
+        await w.delete_where_in(KNOWERS, column, ids, views)
+    if gone:
+        rows = await w.select(
+            KNOWERS,
+            f" AND {column} = ANY(%s) AND perspective_id = ANY(%s)",
+            [list(ids), gone],
+            dormant=True,
+        )
+        await w.update_rows(
+            KNOWERS,
+            {
+                r["id"]: {"hidden_by": _joined(r["hidden_by"], [r[column]])}
+                for r in rows
+                if r[column] not in r["hidden_by"]
+            },
+        )
 
 
 def _joined(held: Collection[str], more: Collection[str]) -> list[str]:
@@ -1487,7 +1528,7 @@ async def _sleep(w: Changes, column: str, hiders: Mapping[str, Collection[str]])
     is followed by a 0.0 belief carrying the same mark. Several entries can close the same row
     (a connection with two hidden ends), and the mark is what lets each be shown again in any
     order. Everything is logged, and one statement per table however many."""
-    views = await _player_views(w)
+    views = await _all_player_views(w)
     if not views or not hiders:
         return
     rows = await w.select(
@@ -1554,7 +1595,7 @@ async def _wake(
     the pair and the pair has no row the DM made since: a belief or row the DM wrote while it
     slept stays as the DM left it, both of them, since a (statement, point of view) is one
     thing (#3082)."""
-    views = await _player_views(w)
+    views = await _all_player_views(w)
     gone = set(shown)
     if not views or not gone:
         return
