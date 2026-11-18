@@ -42,7 +42,7 @@ describe("Upload lore", () => {
     expect(document.body.textContent).not.toContain("Ashen Crown");
   });
 
-  it("starts on Everyone in the story", async () => {
+  it("starts on Common knowledge", async () => {
     render(<Lore api={mockApi("table")} path={PATH} />);
     expect((screen.getByLabelText(words.known.world.label, { exact: false }) as HTMLInputElement).checked).toBe(true);
     expect((screen.getByLabelText(words.known.spoilers.label, { exact: false }) as HTMLInputElement).checked).toBe(false);
