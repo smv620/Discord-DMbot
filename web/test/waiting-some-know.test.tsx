@@ -3,14 +3,25 @@
 // "👥 Some know" on a waiting claim (#4680 part 1): the picker lists the party with nobody ticked; Save sends the ticked ids once
 // and says who knows it; Cancel changes nothing; Undo takes it back by its batch; each failure says its own words.
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { ApiError, type WaitingAnswer } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import WebWaiting from "../src/account/WebWaiting";
 import { waitingWords as w } from "../src/content/web-waiting";
 
-afterEach(cleanup);
+// The 👥 button is behind SOME_KNOW_LIVE (off until deploy 37 carries migration 0535); these tests turn it on.
+const live = vi.hoisted(() => ({ on: true }));
+vi.mock("../src/content/some-know-switch", () => ({
+  get SOME_KNOW_LIVE() {
+    return live.on;
+  },
+}));
+
+afterEach(() => {
+  cleanup();
+  live.on = true;
+});
 
 let n = 0;
 /** The claims are the pretend list ("Mira Voss knows Far Hall" can be secret; "Roan is dead" is a condition); `sent` records each answer. */
@@ -95,6 +106,12 @@ describe("Some know on a waiting claim", () => {
     fireEvent.click((await screen.findByRole("checkbox", { name: "Wren" })) as HTMLElement);
     fireEvent.click(screen.getByRole("button", { name: w.someSave }));
     expect((await screen.findByRole("alert")).textContent).toBe(w.someNotFound);
+  });
+
+  it("the button is not shown while the switch is off", async () => {
+    live.on = false;
+    await open();
+    expect(within(panelOf("Mira Voss knows Far Hall")).queryByRole("button", { name: w.someButton })).toBeNull();
   });
 
   it("a condition claim has no Some know button", async () => {

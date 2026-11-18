@@ -10,6 +10,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { handBracket, handKeeps } from "../content/hand-over-words";
 import { differs, waitingWords as w } from "../content/web-waiting";
+import { SOME_KNOW_LIVE } from "../content/some-know-switch";
 import { ApiError, type AccountApi, type PartyCharacter, type Waiting, type WaitingAnswer, type WaitingBackstory, type WaitingLook } from "./api";
 import { currentItem, itemDomId, openItem, pairFromItem } from "./itemLink";
 import WaitingBulk from "./WaitingBulk";
@@ -541,7 +542,7 @@ export default function WebWaiting({
                 >
                   {w.reject}
                 </button>
-                {c.canSecret && api.partyCharacters !== undefined && (
+                {SOME_KNOW_LIVE && c.canSecret && api.partyCharacters !== undefined && (
                   <button
                     type="button"
                     class="button secondary"
