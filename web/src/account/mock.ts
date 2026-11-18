@@ -1626,6 +1626,11 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       }
       // Sharing the story (#3741): `.ss-failed` is a refusal, with nothing changed; every other campaign says done at once.
       if (asked.setting === "ask_before_adding") return { ...base, state: "done" };
+      // Map checks (#4687): a refusal is `.mc-refused`, with nothing changed; every other campaign says done at once.
+      if (asked.setting === "map_checks") {
+        if (/\.mc-refused$/.test(ref)) return { ...base, state: "failed", error: "refused" };
+        return { ...base, state: "done" };
+      }
       if (asked.setting === "share_improve") {
         if (/\.ss-failed$/.test(ref)) return { ...base, state: "failed", error: "refused" };
         return { ...base, state: "done" };
@@ -2863,6 +2868,16 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         clues: structuredClone(clues),
       };
     },
+    // The table's guesses about a thread (#4665): `t1` has two lines (with the markdown the API keeps), `t2` one; a `.player` ref is refused.
+    async threadGuesses(ref, thread): Promise<{ lines: string[] }> {
+      calls.push(`threadGuesses:${ref}:${thread}`);
+      await reachable();
+      signedIn();
+      if (/\.player$/.test(ref)) throw new ApiError("not-allowed");
+      if (thread === "t1") return { lines: ["💭 **Guesses:**", "• Cerric is sure Mira Vell poisoned the Old Well", "• The whole party thinks the miller lied"] };
+      if (thread === "t2") return { lines: ["💭 **Guess:** Oswin doubts the old guide is honest"] };
+      return { lines: [] };
+    },
     async changeThreadClues(ref, thread, change: ThreadCluesChange): Promise<{ batch: number | null }> {
       calls.push(`changeThreadClues:${ref}:${thread}:${change.action}`);
       await reachable();
@@ -3145,7 +3160,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         ...(role === "player"
           ? {}
           : {
-              settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, storyMode: "off", shareImprove: false, askBeforeAdding: false, dndbeyondInvite: "", mainRules: "2024", fallbackRules: "2014", gameMasters: 2 } as const,
+              settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, storyMode: "off", shareImprove: false, mapChecks: true, askBeforeAdding: false, dndbeyondInvite: "", mainRules: "2024", fallbackRules: "2014", gameMasters: 2 } as const,
               // What the bot has switched on (#3693): a DM's page only, like the settings.
               features: {
                 writtenAt: 1_790_000_000,
@@ -3173,6 +3188,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (choice.setting === "rulesets" && !/^(2024|2014)\/(2024|2014|none)$/.test(choice.value)) throw new ApiError("bad-value");
       // The server's door: sharing the story is "on" or "off" (#3741).
       if (choice.setting === "share_improve" && choice.value !== "on" && choice.value !== "off") throw new ApiError("bad-value");
+      // The server's door: Map checks is "on" or "off" (#4687).
+      if (choice.setting === "map_checks" && choice.value !== "on" && choice.value !== "off") throw new ApiError("bad-value");
       if (choice.setting === "ask_before_adding" && choice.value !== "on" && choice.value !== "off") throw new ApiError("bad-value");
       if (choice.setting === "rulesets" && choice.value.split("/")[0] === choice.value.split("/")[1]) throw new ApiError("bad-value");
       // The server's door: the one standard invite shape, or empty to remove it.
@@ -3360,12 +3377,18 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const looks = (autoLooks.get(source.id) ?? 0) + 1;
       autoLooks.set(source.id, looks);
       const base = { label: "Lore, 24 Oct", serverNow: now, questionsLeft: 3, undone: undoneUploads.get(source.id) ?? null };
-      const counts = { names: 62, byKind: { npc: 30, place: 24, group: 8 }, connections: 48, revealed: /\.autoadd-revealed$/.test(ref) ? 3 : 0 };
+      const counts = { names: 62, byKind: { npc: 30, place: 24, group: 8 }, connections: 48, revealed: /\.autoadd-revealed$/.test(ref) ? 3 : /\.autoadd-many$/.test(ref) ? 14 : 0 };
+      // The hidden things the upload made known (#4661): three lines, or ten and four more past them.
+      const revealedFields = /\.autoadd-revealed$/.test(ref)
+        ? { revealedLines: ["Ash Morrow", "Ash Morrow is a member of Master Orlen", "Bram Tull is also called The Grey Hand"], revealedMore: 0 }
+        : /\.autoadd-many$/.test(ref)
+          ? { revealedLines: Array.from({ length: 10 }, (_, i) => `Person ${String(i + 1).padStart(2, "0")}`), revealedMore: 4 }
+          : {};
       if (/\.autoadd-none$/.test(ref)) return { ...base, state: "none", counts: { names: 0, byKind: {}, connections: 0 }, undoUntil: null };
       if (/\.autoadd-applying$/.test(ref) && looks <= 2) {
         return { ...base, state: "applying", counts, undoUntil: null, progress: { stage: "adding", done: looks * 20, total: 110, unit: "names", startedAt: now - 30, updatedAt: now - 2, serverNow: now, state: "running" } };
       }
-      return { ...base, state: "done", counts, undoUntil: /\.autoadd-old$/.test(ref) ? null : now + 7 * 86400 };
+      return { ...base, ...revealedFields, state: "done", counts, undoUntil: /\.autoadd-old$/.test(ref) ? null : now + 7 * 86400 };
     },
     async undoUpload(ref, source, onLook): Promise<UploadUndo> {
       calls.push(`undoUpload:${ref}:${source.kind}:${source.id}`);

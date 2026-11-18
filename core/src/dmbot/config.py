@@ -137,6 +137,9 @@ class Settings:
     # asked in the claims call itself. Off until the DM's list of them (#4045) has merged
     # (Supervisor, 2026-11-10).
     met_unnamed_on: bool = False
+    # #4229 1d: the session reader also asks which languages a character was heard speaking, each
+    # a question for the DM (DMBOT_SESSION_LANGUAGES, off until dev1's language_cases counts)
+    session_languages_on: bool = False
     # Private scenes between two player characters (#2996 rule 5), found by code after a session
     # from the game clock and who spoke: no AI call. Off until dev1 has checked it (Supervisor,
     # 2026-11-10).
@@ -150,6 +153,11 @@ class Settings:
     # in Names to check, its note saying so. Off until the picture reading (CloudDev-lead's half) is
     # built and dev1 has checked a sample.
     picture_names_on: bool = False
+    # Reading an uploaded PDF's pictures (#4003; Supervisor's ruling on #4003): its maps, tables
+    # and handouts are taken out (`memory.pdf_pictures`) and their cost shown before the DM's yes.
+    # Reading them (a vision call, slice b) and keeping them for the DMs alone (slice c) are still
+    # to come, so this stays off until they are and dev1's counts on the invented fixture are in.
+    picture_reading_on: bool = False
     # Who a waiting name is (#3602): after a session, the AI ranks the few entries each name to
     # check could be, kept for the DM's card and the website. It only ranks: nothing is applied.
     # Off until the extractor is; it only runs when the extractor does, inside the same call limits.
@@ -551,6 +559,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     met_raw = (get("DMBOT_MET_UNNAMED") or "0").lower()
     if met_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_MET_UNNAMED must be 1 (on) or 0 (off), got "' + met_raw + '".')
+    languages_raw = (get("DMBOT_SESSION_LANGUAGES") or "0").lower()
+    if languages_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_SESSION_LANGUAGES must be 1 (on) or 0 (off), got "' + languages_raw + '".'
+        )
     scene_filter_raw = (get("DMBOT_SCENE_FILTER") or "0").lower()
     if scene_filter_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -565,6 +578,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if picture_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
             'DMBOT_PICTURE_NAMES must be 1 (on) or 0 (off), got "' + picture_raw + '".'
+        )
+    reading_raw = (get("DMBOT_PICTURE_READING") or "0").lower()
+    if reading_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_PICTURE_READING must be 1 (on) or 0 (off), got "' + reading_raw + '".'
         )
     layers_raw = (get("DMBOT_MAP_LAYERS") or "0").lower()
     if layers_raw not in ("0", "1", "true", "on", "false", "off"):
@@ -791,9 +809,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         map_layers_on=layers_raw in ("1", "true", "on"),
         story_reveals_precheck=precheck_raw in ("1", "true", "on"),
         met_unnamed_on=met_raw in ("1", "true", "on"),
+        session_languages_on=languages_raw in ("1", "true", "on"),
         private_scenes_on=private_raw in ("1", "true", "on"),
         scene_filter_on=scene_filter_raw in ("1", "true", "on"),
         picture_names_on=picture_raw in ("1", "true", "on"),
+        picture_reading_on=reading_raw in ("1", "true", "on"),
         story_who_on=who_raw in ("1", "true", "on"),
         # (applying needs the ranking: on alone does nothing)
         story_who_apply_on=who_apply_raw in ("1", "true", "on") and who_raw in ("1", "true", "on"),

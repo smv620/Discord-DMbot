@@ -118,6 +118,15 @@ Paste only its `Story threads` line on #3545 (the names and ties of the invented
 
 ### The table's guesses and the guess cases (#4655, quests slice 7)
 
+**Languages heard in a session** (#4229 slice 1d, behind `DMBOT_SESSION_LANGUAGES`) are scored on an invented text too, since the sample session has none (Supervisor's ruling A on #4229). [language_cases_lore.txt](language_cases_lore.txt) is its lore (a ferry landing, two people), [language_cases_session.txt](language_cases_session.txt) its session (four languages heard used, one of them misheard, and runes, a language a character can't speak, a question and two lines with none, which must make nothing), and [language_cases_key.json](language_cases_key.json) / [.md](language_cases_key.md) its key. Run it with the switch on, as a sample of its own, then check the "both" backup against its key:
+
+```
+DMBOT_SESSION_LANGUAGES=1 python -m dmbot.devtools.sample_run ... --lore core/tests/fixtures/story_graph/language_cases_lore.txt --session core/tests/fixtures/story_graph/language_cases_session.txt --yes
+python -m dmbot.devtools.graph_key_check BOTH_BACKUP --key core/tests/fixtures/story_graph/language_cases_key.json --counts-only
+```
+
+The `languages` line gives found, missed and extra; an extra is a must-not line kept. These counts gate the switch.
+
 The table's guesses on a mystery (theories and accusations: a theory goes to the speaker's character, and to the party only when the whole table agreed) are scored on an invented text, since the sample session has no mystery and no theory (Supervisor's ruling on #4655). Every name and line of it is made up; the four player characters are the sample's, by name only, so the run says who plays each as usual. [guess_cases_lore.txt](guess_cases_lore.txt) is its lore (one village, one mystery), [guess_cases_session.txt](guess_cases_session.txt) its session (six guesses, and a joke, a question, the DM's own hint and a plan that must make none), and [guess_cases_key.json](guess_cases_key.json) / [.md](guess_cases_key.md) its key. Run it as a sample of its own, then check the "both" backup against its key:
 
 ```bash

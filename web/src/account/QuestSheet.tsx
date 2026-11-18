@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { questSheetWords as w } from "../content/quest-sheet-words";
 import { QUEST_EDIT_LIVE } from "../content/quest-edit-switch";
 import { THREAD_CLUES_LIVE } from "../content/thread-clues-switch";
+import { THREAD_GUESSES_LIVE } from "../content/thread-guesses-switch";
 import type { AccountApi, ThreadCard, ThreadCardPart } from "./api";
 import LazyPanel from "./LazyPanel";
 import QuestSheetEdit from "./QuestSheetEdit";
@@ -165,6 +166,9 @@ export default function QuestSheet({
       )}
       {THREAD_CLUES_LIVE && api.threadClues !== undefined && (
         <LazyPanel load={() => import("./ThreadClues")} what="the clues" props={{ api, refId, thread: thread.id }} />
+      )}
+      {THREAD_GUESSES_LIVE && api.threadGuesses !== undefined && (
+        <LazyPanel load={() => import("./ThreadGuesses")} what="the guesses" props={{ api, refId, thread: thread.id }} />
       )}
     </section>
   );
