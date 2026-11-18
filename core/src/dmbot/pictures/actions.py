@@ -26,6 +26,11 @@ log = logging.getLogger(__name__)
 GONE = "That picture isn't kept any more."
 NOT_YOURS = "Only the person who posted it or a DM can do that."
 DMS_ONLY = "Only a DM can do that."
+# A picture from a DM's file stays with the campaign's DMs (#4003 slice c).
+DM_ONLY_STAYS = (
+    "This picture came from a DM's file, so it can't be shared by link. "
+    "Only the campaign's DMs can see it."
+)
 DONE = {
     "public": "Anyone with the link can see it now.",
     "private": "It is private to the campaign now.",
@@ -75,9 +80,11 @@ class PictureActions:
             return Outcome("refused", GONE)
         dm = await self._is_dm(guild_id, campaign_id, user_id)
         poster = picture.poster_id == user_id
-        if action in ("permanent", "unpermanent"):
-            if not dm:
+        if action in ("permanent", "unpermanent") or picture.dm_only:
+            if not dm:  # (a DM-only picture is the DMs' alone, whoever uploaded it)
                 return Outcome("refused", DMS_ONLY)
+            if picture.dm_only and action == "public":
+                return Outcome("refused", DM_ONLY_STAYS)
         elif not (dm or poster):
             return Outcome("refused", NOT_YOURS)
         if action in ("public", "private"):

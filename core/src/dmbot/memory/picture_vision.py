@@ -8,7 +8,8 @@ Rules kept here, not trusted to the model:
 - **Only words written in it, exactly as spelled.** Never a word completed, corrected or guessed:
   an unreadable word is `[?]`, and nothing is said about what a picture means for the story.
 - **"map", "table" or "handout", else "other".** An "other" picture (art, a portrait, a logo) is
-  skipped: none of its words reach the reader, and it is never kept (slice c).
+  skipped: none of its words reach the reader, and it is never kept (slice c keeps the others for
+  the campaign's DMs, from `Seen.files`).
 - **Sent smaller.** A copy no larger than `AI_SIDE` on its long side and under `images.MAX_BYTES`,
   never the file itself.
 - **Room to answer:** the background floor (`ai.OUTPUT_FLOOR`, ruling condition 2). An answer
@@ -94,6 +95,8 @@ class Seen:
     failed: int = 0  # the call failed, or its answer could not be used
     late: int = 0  # not read: out of time, or out of AI credits
     counts: dict[str, int] = field(default_factory=dict)  # where -> how many, for the log
+    # Each of `pictures`' own file, in the same order, for keeping it for the DMs (slice c).
+    files: tuple[PictureFile, ...] = field(default=(), repr=False)
 
     @property
     def unread(self) -> int:
@@ -180,6 +183,7 @@ async def read_pictures(
 
     await asyncio.gather(*(one(i, f) for i, f in enumerate(files)))
     pictures: list[PictureText] = []
+    read_files: list[PictureFile] = []
     unread: list[int] = []
     counts: dict[str, int] = {}
     other = cut = failed = late = 0
@@ -200,7 +204,8 @@ async def read_pictures(
                 other += 1
             else:
                 pictures.append(PictureText(file.page, "", text, where, shows))
-    seen = Seen(tuple(pictures), tuple(unread), other, cut, failed, late, counts)
+                read_files.append(file)
+    seen = Seen(tuple(pictures), tuple(unread), other, cut, failed, late, counts, tuple(read_files))
     log.info(
         "Pictures read: %d of %d (%s), %d skipped as other, %d cut short, %d failed, %d not read",
         total - seen.unread, total, ", ".join(f"{k} {v}" for k, v in sorted(counts.items())),
