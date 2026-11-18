@@ -14,9 +14,10 @@ the rolling removal of old pictures never takes it; removing the map clears that
 
 from __future__ import annotations
 
+import dataclasses
 import re
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, NamedTuple
 
@@ -28,6 +29,7 @@ from dmbot.pictures.store import MB, Usage, _lock, _usage
 
 if TYPE_CHECKING:
     from dmbot.maps.disagree import Direction, Distance
+    from dmbot.maps.legs import Route, Total
     from dmbot.maps.measure import MapInfo, Pin
     from dmbot.maps.measure_words import NotShown
     from dmbot.maps.said_phrases import Said
@@ -281,6 +283,85 @@ async def _shown_at(w: Changes, map_id: str) -> int:
 _MILES = re.compile(r"^(?:about\s+)?(\d+(?:\.\d+)?)\s*(?:miles?|mi)\.?$", re.I)
 
 
+async def _road_route(
+    scope: Any,
+    a: str,
+    b: str,
+    viewer: Any,
+    ends: tuple[str, str],
+    *,
+    known: Collection[str] | None = None,
+) -> tuple[Route, Total | str, dict[str, str]] | None:
+    """A route of kept, open roads from `a` to `b` taken leg by leg (#4260 10d, `maps.legs`), when
+    no road joins them directly: the route, its total (or why there is none, `legs.total`) and
+    the stops' names. `known`: for a player's answer, the connections and places the
+    party knows; the route is then found among those only, so it never hints at a road or a place
+    the party doesn't know (Supervisor's ruling on #4260), and a length DMbot read and the DM
+    hasn't kept is no length (#4255). A secret or not-yet-said road, or one known only through a
+    secret other name, is never a player's leg, and a player's stops are named as the lists name
+    them (`gate.names_for`, never a secret main name; the reviewer's); a stop with no name for
+    them is no route. `ends`: the two names as the asker said them (as every map answer does).
+    Conditions through THE reader."""
+    from dmbot.maps import legs
+    from dmbot.memory import gate, map_fact_store
+
+    cur = await scope.conn.execute(
+        "SELECT r.id, r.subject_id, r.object_id, r.length_words, r.length_from, r.secret,"
+        " r.unrevealed, r.via_alias_id FROM memory_relations r"
+        " JOIN memory_entities s ON s.guild_id = r.guild_id AND s.campaign_id = r.campaign_id"
+        " AND s.id = r.subject_id JOIN memory_entities o ON o.guild_id = r.guild_id"
+        " AND o.campaign_id = r.campaign_id AND o.id = r.object_id"
+        " WHERE r.guild_id = %s AND r.campaign_id = %s AND r.predicate = 'route_to'"
+        " AND r.status = 'confirmed' AND r.to_session_at IS NULL"
+        " AND s.status = 'confirmed' AND o.status = 'confirmed' ORDER BY r.id",
+        (scope.guild_id, scope.campaign_id),
+    )
+    rows = [
+        r for r in await cur.fetchall()
+        if known is None or (
+            str(r["id"]) in known and str(r["subject_id"]) in known and str(r["object_id"]) in known
+            and not r["secret"] and not r["unrevealed"] and r["via_alias_id"] is None
+        )
+    ]  # fmt: skip
+    places = {str(r[k]) for r in rows for k in ("subject_id", "object_id")} | {a, b}
+    cur = await scope.conn.execute(
+        "SELECT id, name FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+        " AND id = ANY(%s) AND status = 'confirmed'",
+        (scope.guild_id, scope.campaign_id, sorted(places)),
+    )
+    names = {str(r["id"]): str(r["name"]) for r in await cur.fetchall()}
+    # (a length DMbot read is the DM's to check (#4255): a player's leg shows no length for it)
+    roads = [
+        legs.Road(
+            str(r["id"]), str(r["subject_id"]), str(r["object_id"]),
+            "" if known is not None and r["length_from"] == "read"
+            else str(r["length_words"] or "").strip(),
+        )
+        for r in rows
+    ]  # fmt: skip
+    found = legs.find(roads, a, b, names)
+    if found is None:
+        return None
+    if known is not None:
+        wanted = [*found.stops, *([found.other_via] if found.other_via else [])]
+        said = await gate.names_for(scope, viewer, wanted)
+        if any(said.get(i) is None for i in wanted):
+            return None  # (a stop the lists wouldn't name for them: today's answer)
+        names = {i: str(said[i]) for i in wanted}
+    names = {**names, a: ends[0], b: ends[1]}
+    ids = [leg.road.id for leg in found.legs]
+    now = await map_fact_store.conditions_for(scope, viewer, relation_ids=ids, shown=known)
+    shut = {i for i, c in now.items() if c.now.value == "closed"}
+    found = dataclasses.replace(
+        found,
+        legs=tuple(
+            dataclasses.replace(leg, road=dataclasses.replace(leg.road, closed=leg.road.id in shut))
+            for leg in found.legs
+        ),
+    )
+    return found, legs.total(found), names
+
+
 async def _trip(
     scope: Any,
     a: str,
@@ -293,15 +374,17 @@ async def _trip(
 ) -> str | None:
     """The travel-time suggestion's words (#4260 slice 10a; design §9), for the DM. The miles: a
     stated length in miles on the road between them, else a map's straight line. A stated length
-    that isn't miles (a time, "two days by cart") is given back as it is, never summed. The pace:
-    on foot, capped by the land at either end. Nothing is stored or changed. `offer`: for the
-    unasked offer (design §9 "When it is offered"), None unless a time was worked out (a stated
+    that isn't miles (a time, "two days by cart") is given back as it is, never summed. With no
+    road between them but a chain of roads (#4260 10d), the legs, and their total when it is in
+    miles. The pace: on foot, capped by the land at either end (at every stop on a route). Nothing
+    is stored or changed. `offer`: for the unasked offer (design §9 "When it is offered"), None
+    unless a time was worked out (a stated
     time on the road is the DM's world already, and what is missing is no offer), and None when
     `stated_days`, the DM's own time, is already within the estimate's paces (nothing new to say:
     the ux-critic's and the reviewer's, so a DM who is right is never interrupted)."""
-    from dmbot.maps import measure, travel, travel_words
+    from dmbot.maps import legs, legs_words, measure, travel, travel_words
     from dmbot.maps.measure_words import LORE_SAYS, SESSION_SAID
-    from dmbot.memory import gate, map_fact_store
+    from dmbot.memory import gate, map_fact_store, route_length
     from dmbot.memory import map_facts as mf
     from dmbot.rules.index import srd
     from dmbot.sidebar.context import source_of
@@ -343,6 +426,19 @@ async def _trip(
         where = "as you set it" if by_dm else "from a session" if in_session else "from your lore"
         miles = float(found[1])
         distance = travel_words.by_road(stated, *names, where)
+    elif (route := await _road_route(scope, a, b, dm_view, (asked.a, asked.b))) is not None:
+        # (#4260 10d: no road between them, but a chain of roads: the legs, and a time only from a
+        # total in miles; any other total, or none, is the legs as they were said)
+        on_road, whole, called = route
+        distance = legs_words.route(on_road, called, whole)
+        if not isinstance(whole, legs.Total) or whole.unit != route_length.MILES:
+            return None if offer else distance
+        miles = whole.amount
+        at_stops = await map_fact_store.facts_for(scope, list(on_road.stops), dm_view)
+        lands = [
+            f.value for kept in at_stops.values() for f in kept
+            if f.layer == mf.TERRAIN and f.value != mf.OTHER
+        ]  # fmt: skip
     else:
         maps, pins = await maps_and_pins(scope.conn, *ids, [a, b], dm=True)
         far = measure.answer("far", maps, pins, (a, asked.a), (b, asked.b), dm=True)
@@ -834,7 +930,7 @@ class MapStore:
         not yet known, or named by a secret other name): a DM's question then goes privately.
         "How long" (#4260 slice 10a) is the DM's only (`_trip`); `rules` are the campaign's target
         and fallback rulesets, for its citation."""
-        from dmbot.maps import measure, measure_phrase, positions
+        from dmbot.maps import legs_words, measure, measure_phrase, positions
         from dmbot.maps.measure_words import NOT_SHOWN
         from dmbot.memory import gate
         from dmbot.memory._changes import ALIASES, ENTITIES
@@ -905,6 +1001,20 @@ class MapStore:
                 )
                 if await cur.fetchone() is not None:
                     return None  # (a stated length: the usual answer gives it, by its own rules)
+                # (#4260 10d: no road between them, but a chain of roads with a length on some leg:
+                # the legs. A player's only among the roads and places the party knows, so a
+                # route the party doesn't know leaves today's answer as it was: no hint of it)
+                known: set[str] | None = None
+                if not dm:
+                    statements = await gate.load(scope)
+                    if statements.player_characters and shown is not None:
+                        full = gate.visible(gate.Viewer.the_party(), statements)
+                        known = shown | {i for (k, i) in full.sureness if k == gate.CONNECTION}
+                if dm or known is not None:
+                    viewer = gate.Viewer(dm=True) if dm else gate.Viewer.the_party()
+                    route = await _road_route(scope, a, b, viewer, (asked.a, asked.b), known=known)
+                    if route is not None and any(leg.road.length_words for leg in route[0].legs):
+                        return legs_words.route(route[0], route[2], route[1])
             maps, pins = await maps_and_pins(scope.conn, guild_id, campaign_id, [a, b], dm=dm)
         # (the names as the asker said them, so a misheard name is easy to spot)
         return measure.answer(asked.kind, maps, pins, (a, asked.a), (b, asked.b), dm=dm)

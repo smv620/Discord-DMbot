@@ -75,7 +75,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion } from "./api";
+import type { ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
@@ -879,6 +879,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const waitingState: Record<string, Waiting> = {}; // (fresh for each pretend API)
   const handOverState: Record<string, { list: HandOverQuestion[]; no: Map<string, HandOverQuestion> }> = {}; // by campaign (#4122)
   const traitState: Record<string, TraitOffer[]> = {}; // the lineage and class questions left, by campaign (#3946)
+  const threadClueState: Record<string, ThreadClue[]> = {}; // the clues of a story thread, by campaign and thread (#4625)
+  let clueBatch = 0;
   const threadProgressState: Record<string, ThreadProgressThread[]> = {}; // the 🧵 Progress to check threads left, by campaign (#4616)
   const secretState: Record<string, SecretQuestion[]> = {}; // the 🤫 Known or secret? questions left, by campaign (#4598)
   const readingState: Record<string, { list: Reading[]; kept: Map<string, Reading> }> = {}; // (#2412) by campaign
@@ -2827,6 +2829,46 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     // The story threads DMbot found (#4482): two suggestions, each with one step and one branch as a line; a keep, a turn-down and their Undo
     // are recorded and change the list as the bot would.
+    // A story thread's clues (#4625): DM only. The pretend thread `t1` has three; a `.player` ref is refused.
+    async threadClues(ref, thread): Promise<ThreadClues> {
+      calls.push(`threadClues:${ref}:${thread}`);
+      await reachable();
+      signedIn();
+      if (/\.player$/.test(ref)) throw new ApiError("not-allowed");
+      const key = `${ref}:${thread}`;
+      const clues = (threadClueState[key] ??= thread === "t1"
+        ? [
+            { id: "k1", name: "Torn map", falseLead: false, found: true },
+            { id: "k2", name: "Muddy boot print", falseLead: false, found: false },
+            { id: "k3", name: "Odd smell", falseLead: true, found: false },
+          ]
+        : []);
+      return {
+        count: thread === "t1" ? "1 of 3 clues found (1 is a false lead). Not yet found: 2." : "",
+        clues: structuredClone(clues),
+      };
+    },
+    async changeThreadClues(ref, thread, change: ThreadCluesChange): Promise<{ batch: number | null }> {
+      calls.push(`changeThreadClues:${ref}:${thread}:${change.action}`);
+      await reachable();
+      signedIn();
+      if (change.action === "undo") return { batch: null };
+      const key = `${ref}:${thread}`;
+      const clues = (threadClueState[key] ??= []);
+      if (change.action === "add") clues.push({ id: `n${clues.length + 1}`, name: change.name, falseLead: false, found: false });
+      if (change.action === "word") {
+        const clue = clues.find((c) => c.id === change.clue);
+        if (!clue) throw new ApiError("not-found");
+        clue.falseLead = change.falseLead;
+      }
+      if (change.action === "off") {
+        const at = clues.findIndex((c) => c.id === change.clue);
+        if (at < 0) throw new ApiError("not-found");
+        clues.splice(at, 1);
+      }
+      clueBatch += 1;
+      return { batch: 200 + clueBatch };
+    },
     // The 🧵 Progress to check lines (#4616): DM only. A keep or a none takes its lines off the list (a thread with none left goes).
     async threadProgress(ref): Promise<ThreadProgressThread[]> {
       calls.push(`threadProgress:${ref}`);

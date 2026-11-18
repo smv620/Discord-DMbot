@@ -167,10 +167,20 @@ class PlanChecksSetting(unittest.TestCase):
         self.assertTrue(load_settings({**BASE, "DMBOT_RECAP_BY_RANK": "1"}).recap_by_rank_on)
         with self.assertRaisesRegex(ConfigError, "DMBOT_RECAP_BY_RANK must be 1"):
             load_settings({**BASE, "DMBOT_RECAP_BY_RANK": "maybe"})
+        self.assertFalse(load_settings(BASE).remembered_players_on)  # off unless asked (#4724)
+        self.assertTrue(
+            load_settings({**BASE, "DMBOT_REMEMBERED_PLAYERS": "1"}).remembered_players_on
+        )
+        with self.assertRaisesRegex(ConfigError, "DMBOT_REMEMBERED_PLAYERS must be 1"):
+            load_settings({**BASE, "DMBOT_REMEMBERED_PLAYERS": "maybe"})
         self.assertFalse(load_settings(BASE).recap_colour_on)  # off unless asked (#4721)
         self.assertTrue(load_settings({**BASE, "DMBOT_RECAP_COLOUR": "1"}).recap_colour_on)
         with self.assertRaisesRegex(ConfigError, "DMBOT_RECAP_COLOUR must be 1"):
             load_settings({**BASE, "DMBOT_RECAP_COLOUR": "maybe"})
+        self.assertFalse(load_settings(BASE).recap_reveals_on)  # off unless asked (#4737)
+        self.assertTrue(load_settings({**BASE, "DMBOT_RECAP_REVEALS": "1"}).recap_reveals_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_RECAP_REVEALS must be 1"):
+            load_settings({**BASE, "DMBOT_RECAP_REVEALS": "maybe"})
         self.assertFalse(load_settings(BASE).story_family_only)
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_FAMILY_ONLY": "1"}).story_family_only)
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_FAMILY_ONLY must be 1"):

@@ -288,6 +288,12 @@ Colour = Callable[[int, str, Job, Sequence[str]], Awaitable[Sequence[str]]]
 # Each colour line is marked, in the same block as the people lines the writer explains names with,
 # so it reads as background and never as an event or as something said at the table.
 COLOUR_MARK = "Background about the place, not an event and never said by anyone: "
+# This session's partial reveals as sentences ("Okthandom learned something about Vane."), who
+# learned something and never what (#4737, `DMBOT_RECAP_REVEALS`), or none.
+Reveals = Callable[[int, str, Job], Awaitable[Sequence[str]]]
+# Each one is marked in the sheet: the one kind of line there the writer must cite, once, in these
+# words, and the checks read it back (`rd.reveal_problems`).
+REVEAL_MARK = rd.REVEAL_MARK
 Notify = Callable[[int, str, Job], Awaitable[None]]  # (server, campaign, job): ready or failed
 
 
@@ -378,6 +384,7 @@ class RecapWorker:
         cache_front: bool = False,
         stored_split: Callable[[int, str, int], Awaitable[sp.Split | None]] | None = None,
         colour: Colour | None = None,
+        reveals: Reveals | None = None,
     ) -> None:
         # Two models write the prose (#2074): `creative` writes it as plain text, `formatting`
         # cuts it into the schema's sections without changing a word. With either missing, the one
@@ -386,6 +393,9 @@ class RecapWorker:
         # What the table knows of the places visited, as background (#4721). None when the switch
         # is off: the writer's input is then exactly what it was.
         self._colour = colour
+        # This session's partial reveals, cited as non-specific sentences (#4737). None when the
+        # switch is off: the writer's input is then exactly what it was.
+        self._reveals = reveals
         # What the writer reads (#2590): the beat sheet, or the cleaned transcript with PlotBot's
         # guide. A recap that is too long for the writer's model falls back to the beats, once,
         # remembered here for the job until it ends.
@@ -1217,27 +1227,41 @@ class RecapWorker:
         background to explain a place with, never as something that happened; a failure costs the
         colour, never the recap."""
         sheet = await self._read_people_sheet(gid, cid, job, inputs, shown)
-        if self._colour is None:
-            return sheet
+        # The reveal sentences keep their room: the people's lines give way, and the reveals sit
+        # before the colour so a later cut never takes one (a recap must cite each, #4737).
+        cited = await self._reveal_lines(gid, cid, job)
+        colour: list[str] = []
         places = sorted({b.where for b in shown if b.where})
-        if not places:
+        if self._colour is not None and places:
+            try:
+                colour = [COLOUR_MARK + str(x) for x in await self._colour(gid, cid, job, places)]
+            except Exception as exc:  # optional context: the type, never the text
+                # (read once for the job, so a failure here is no colour for its retries)
+                log.warning("Recap: couldn't read the places' colour (%s)", type(exc).__name__)
+        if not colour and not cited:
             return sheet
-        try:
-            colour = [COLOUR_MARK + str(x) for x in await self._colour(gid, cid, job, places)]
-        except Exception as exc:  # optional context: the type, never the text
-            # (the colour is read once for the job, so a failure here is no colour for its retries)
-            log.warning("Recap: couldn't read the places' colour (%s)", type(exc).__name__)
-            return sheet
-        # The writer is given `SHEET_LINES` at most: the colour keeps its room and the people's
-        # lines give way (counts only in the log)
-        room = max(0, rd.SHEET_LINES - len(colour))
+        # The writer is given `SHEET_LINES` at most: the reveals and the colour keep their room and
+        # the people's lines give way (counts only in the log)
+        room = max(0, rd.SHEET_LINES - len(colour) - len(cited))
         if len(sheet) > room:
             log.info(
-                "Recap: %d sheet lines left out to make room for %d colour lines",
+                "Recap: %d sheet lines left out to make room for %d colour and %d reveal lines",
                 len(sheet) - room,
                 len(colour),
+                len(cited),
             )
-        return (*sheet[:room], *colour)
+        return (*sheet[:room], *cited, *colour)
+
+    async def _reveal_lines(self, gid: int, cid: str, job: Job) -> list[str]:
+        """The marked reveal sentences, or none (the switch off, or a failed read: costs the
+        sentences, never the recap)."""
+        if self._reveals is None:
+            return []
+        try:
+            return [REVEAL_MARK + str(x) for x in await self._reveals(gid, cid, job)]
+        except Exception as exc:  # the type, never the text
+            log.warning("Recap: couldn't read the partial reveals (%s)", type(exc).__name__)
+            return []
 
     async def _read_people_sheet(
         self, gid: int, cid: str, job: Job, inputs: Inputs, shown: Sequence[bt.Beat]

@@ -1,0 +1,157 @@
+"""The recap cites the session's partial reveals (#4737, `DMBOT_RECAP_REVEALS`, #2997): off, the
+writer's sheet is exactly what it was; on, each reveal's sentence goes in unchanged and marked, the
+checks accept it and refuse added detail, and a person not recorded now gives no sentence.
+Stand-ins, no database."""
+
+from __future__ import annotations
+
+import unittest
+from types import SimpleNamespace
+from typing import Any
+from unittest.mock import AsyncMock
+
+from dmbot.memory.models import OPEN
+from dmbot.recaps import draft as rd
+from dmbot.recaps import pipeline as pl
+from dmbot.recaps.beats import Beat
+from dmbot.recaps.discord import RecapFeatures
+
+SAID = "Okthandom learned something about Vane."
+SCENE = "Okthandom and Wulfgar had a private word."
+
+
+def beat(n: int) -> Beat:
+    return Beat(n, "Mira drew her blade.", ("Mira",), (n,), "event")
+
+
+def worker(reveals: Any = None, colour: Any = None) -> Any:
+    w: Any = pl.RecapWorker.__new__(pl.RecapWorker)
+    w._colour = colour
+    w._reveals = reveals
+    w._read_people_sheet = AsyncMock(return_value=("Mira: the party's rogue",))
+    return w
+
+
+JOB: Any = SimpleNamespace(session_at=100)
+INPUTS: Any = SimpleNamespace()
+
+
+class TheSheet(unittest.IsolatedAsyncioTestCase):
+    async def test_off_the_input_is_exactly_what_it_was(self) -> None:
+        got = await worker(None)._read_sheet(1, "c", JOB, INPUTS, [beat(1)])
+        self.assertEqual(got, ("Mira: the party's rogue",))
+        text = rd.prose_message([beat(1)], "", set(), None, who_and_what=got)
+        self.assertNotIn("Cite this", text)
+        self.assertNotIn("one exception", text)
+
+    async def test_on_the_sentences_are_passed_exactly_and_marked(self) -> None:
+        reveals = AsyncMock(return_value=[SAID, SCENE])
+        got = await worker(reveals)._read_sheet(1, "c", JOB, INPUTS, [beat(1)])
+        self.assertEqual(
+            got, ("Mira: the party's rogue", pl.REVEAL_MARK + SAID, pl.REVEAL_MARK + SCENE)
+        )
+        text = rd.prose_message([beat(1)], "", set(), None, who_and_what=got)
+        self.assertIn(pl.REVEAL_MARK + SAID, text)
+        self.assertIn("that line once, as narration", text)
+
+    async def test_a_reveal_keeps_its_room_when_the_sheet_is_full(self) -> None:
+        w = worker(AsyncMock(return_value=[SAID]), AsyncMock(return_value=["Town: hills."]))
+        w._read_people_sheet = AsyncMock(return_value=tuple(f"Person {i}" for i in range(60)))
+        got = await w._read_sheet(
+            1, "c", JOB, INPUTS, [Beat(1, "x", ("a",), (1,), "event", where="Town")]
+        )
+        self.assertEqual(len(got), rd.SHEET_LINES)
+        self.assertIn(pl.REVEAL_MARK + SAID, got)
+
+    async def test_a_failure_costs_the_sentences_and_never_the_recap(self) -> None:
+        reveals = AsyncMock(side_effect=RuntimeError("Vane is the traitor"))
+        with self.assertLogs("dmbot.recaps.pipeline", level="WARNING") as logged:
+            got = await worker(reveals)._read_sheet(1, "c", JOB, INPUTS, [beat(1)])
+        self.assertEqual(got, ("Mira: the party's rogue",))
+        self.assertNotIn("traitor", logged.output[0])  # (the type, never the text)
+
+
+def check(narration: str, line: str = pl.REVEAL_MARK + SAID, advisory: Any = None) -> list[str]:
+    return rd.reveal_problems(narration, (line,), advisory)
+
+
+class TheChecks(unittest.TestCase):
+    def test_the_marker_in_its_own_words_is_supported(self) -> None:
+        self.assertEqual(check("Okthandom learned something about Vane. Then they rode on."), [])
+        self.assertEqual(check("Okthandom learned something."), [])
+        self.assertEqual(check("Okthandom learned something, and rode on."), [])
+        self.assertEqual(check("Okthandom learned to read the map."), [], "no detail of a secret")
+        self.assertEqual(
+            check(SCENE, pl.REVEAL_MARK + SCENE), [], "a private word needs no detail either"
+        )
+
+    def test_an_added_detail_is_flagged(self) -> None:
+        for said in (
+            "Okthandom learned that Vane was a traitor.",
+            "Okthandom learned something about Vane's past.",
+            "Okthandom found out how Vane had lied.",
+            "Okthandom was told a secret about the Tower.",
+            "Okthandom learned something that the king is dead.",
+            "Okthandom learned something terrible about the Tower.",
+            "Okthandom learned something in the crypt.",
+        ):
+            with self.subTest(said):
+                problems = check(said)
+                self.assertEqual(len(problems), 1)
+                self.assertNotIn("traitor", problems[0])  # (never the detail, in the retry)
+
+    def test_a_sentence_without_the_person_is_not_read(self) -> None:
+        self.assertEqual(check("Mira learned that the bridge was out."), [])
+
+    def test_a_reveal_not_cited_is_counted_never_refused(self) -> None:
+        advisory: list[str] = []
+        self.assertEqual(check("They rode on.", advisory=advisory), [])
+        self.assertEqual(advisory, ["reveal"])
+
+    def test_without_a_marker_nothing_is_checked(self) -> None:
+        self.assertEqual(rd.reveal_problems("Okthandom learned that Vane lied.", ()), [])
+
+
+class TheBotsReader(unittest.IsolatedAsyncioTestCase):
+    def bot(self, recorded: set[int]) -> Any:
+        mira = SimpleNamespace(id="e1", is_player_character=True, played_by=11)
+        gone = SimpleNamespace(id="e2", is_player_character=True, played_by=22)
+        npc = SimpleNamespace(id="e3", is_player_character=False, played_by=None)
+        seen = SimpleNamespace(how_sure=lambda kind, i: "sure" if i == "t1" else None)
+        threads = [
+            SimpleNamespace(
+                thread=SimpleNamespace(id="t1"),
+                state=SimpleNamespace(condition=OPEN),
+                involved=[SimpleNamespace(who=SimpleNamespace(id="n1"))],
+            ),
+            SimpleNamespace(  # (the DM's own: the party doesn't know it)
+                thread=SimpleNamespace(id="t2"),
+                state=SimpleNamespace(condition=OPEN),
+                involved=[SimpleNamespace(who=SimpleNamespace(id="n2"))],
+            ),
+        ]
+        memory = SimpleNamespace(
+            entities=AsyncMock(return_value=[mira, gone, npc]),
+            visible_to=AsyncMock(return_value=seen),
+            threads=AsyncMock(return_value=threads),
+            recap_reveals=AsyncMock(return_value=[SAID]),
+        )
+        consent = SimpleNamespace(recorded_in=AsyncMock(return_value=recorded))
+        return SimpleNamespace(memory=memory, consent=consent)
+
+    async def test_the_table_is_the_speakers_characters_and_only_the_recorded_count(self) -> None:
+        bot = self.bot({11})
+        job: Any = SimpleNamespace(session_at=100, speakers=(11,))
+        got = await RecapFeatures.recap_reveals(bot, 1, "c", job)
+        self.assertEqual(got, [SAID])
+        args = bot.memory.recap_reveals.await_args.args
+        self.assertEqual(args[:3], (1, "c", 100))
+        self.assertEqual(set(args[3]), {"e1"})  # not the NPC, not a player who didn't speak
+        self.assertEqual(set(args[4]), {"t1", "n1"})  # only what the party knows is open
+        self.assertEqual(set(args[5]), {11})  # recorded now: the reader drops the rest
+
+    async def test_nobody_at_the_table_asks_for_nothing(self) -> None:
+        bot = self.bot({11})
+        job: Any = SimpleNamespace(session_at=100, speakers=(99,))
+        self.assertEqual(await RecapFeatures.recap_reveals(bot, 1, "c", job), [])
+        bot.memory.recap_reveals.assert_not_awaited()

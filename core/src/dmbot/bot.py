@@ -1488,6 +1488,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 formatting=self.recap_format_ai,
                 story=self.recap_story,
                 colour=self.recap_colour if settings.recap_colour_on else None,
+                reveals=self.recap_reveals if settings.recap_reveals_on else None,
                 critics=True,  # the critics read each draft until they agree (#2255)
                 reads=settings.recap_writer_reads,
                 final_read=settings.recap_final_read,
@@ -13905,6 +13906,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def apply_share_improve(self, campaign: Campaign, on: bool) -> None:
         """ "Share this campaign's story to improve DMbot" chosen on the website (#3741)."""
         await self.campaigns.set_share_improve(campaign.guild_id, campaign.id, on)
+
+    async def apply_map_checks(self, campaign: Campaign, on: bool) -> None:
+        """ "Map checks" chosen on the website (#4687): the call Discord's button makes."""
+        await self.campaigns.set_map_checks(campaign.guild_id, campaign.id, on)
 
     async def apply_rulesets(self, campaign: Campaign, main: str, fallback: str) -> bool:
         """The main rules chosen on the website (#3112): saved, the new pair's names built ahead

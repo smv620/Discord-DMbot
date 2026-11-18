@@ -301,12 +301,28 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,  # not live yet: on only after the before-and-after scores (#3172)
     ),
     Feature(
+        "remembered players",
+        "Pickers list the players you have played with first",
+        "",
+        lambda s: s.remembered_players_on,
+        ("remembered_players_on",),
+        for_dms=False,  # not live yet: on with the website's half (#4226)
+    ),
+    Feature(
         "recap colour",
         "Recaps use what the table knows of the places they visited",
         "",
         lambda s: s.recap_colour_on,
         ("recap_colour_on",),
         for_dms=False,  # not live yet: on only after the before-and-after scores (#4721)
+    ),
+    Feature(
+        "recap reveals",
+        "Recaps mention that someone learned something, without saying what",
+        "",
+        lambda s: s.recap_reveals_on,
+        ("recap_reveals_on",),
+        for_dms=False,  # not live yet: on only after the before-and-after scores (#4737)
     ),
     Feature(
         "test recordings",
