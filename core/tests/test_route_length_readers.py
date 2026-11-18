@@ -37,6 +37,9 @@ ALLOWED = {
     "caller's (`store._road_route` drops a read one for players, #4260 10d)",
     "maps/legs_words.py": "says the lengths it is given; shows players only what `_road_route` "
     "gave a player's answer (#4260 10d)",
+    "migrations/0543_world_roads_door.py": "a DM-only web door (NULL for anyone else): the roads "
+    "whose read length a kept map disagrees with, for World notes' Roads group (#4677); a read "
+    "length is shown to the DM alone and a length the DM kept is never listed",
     "memory/world_notes.py": "World notes, the DM's list only: lists DMbot's read of a length a "
     "map disagrees with, and ✅ makes it the DM's (#4670 4c)",
 }
