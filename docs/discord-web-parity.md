@@ -70,6 +70,7 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | Fix one transcript line; delete my own lines; remove a speaker | `/account/transcripts`, `/account` | built, switched off | `FIX_LINE_LIVE`, `DELETE_MY_LINES_LIVE`, `SPEAKER_REMOVAL_LIVE` |
 | Stop recording me | `/account` | live | none |
 | Lore upload and reading | `/account/lore` | built, switched off | `LORE_LIVE` |
+| A lore PDF's pictures (maps, tables, handouts) taken out and their cost shown before the yes, then read and kept for the DMs alone (#4003; Discord's lore file upload, behind `DMBOT_PICTURE_READING`) | `/account/lore` | missing: the website's lore upload takes text only; #4762 (a PDF upload) and #4761 (the gallery's "DM only" mark) | none yet |
 | Import older sessions (preview, members, consent, start, progress, clock) | `/account/import` | built, switched off | `IMPORT_LIVE`, `IMPORT_CONFIRM_LIVE` (consent), `IMPORT_CLOCK_LIVE` |
 | House rules (read), the house-rules file, rules sharing and rulesets | `/account/house-rules`, `/account/sharing` | read live; file and sharing switched off | `HOUSE_FILE_LIVE`, `RULE_SHARING_LIVE`, `RULESETS_LIVE` |
 | Homebrew (read and file) | `/account/homebrew` | live | none |
