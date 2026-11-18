@@ -7,8 +7,11 @@ from __future__ import annotations
 
 from typing import Any
 
+from dmbot.memory.models import DM
 from dmbot.web import world_notes
 from dmbot.web.recaps import RecapError
+from tests.test_recap_web import BOB
+from tests.test_web_api import THURSDAY
 from tests.test_web_map_pins import Pins
 
 
@@ -53,7 +56,7 @@ class Roads(Pins):
         self.assertIn("The Keep", line["note"])
         self.assertIn("about 40 miles in a straight line", line["note"])
 
-    async def test_a_close_length_a_dm_kept_one_and_a_travel_time_give_no_line(self) -> None:
+    async def test_a_close_length_gives_no_line(self) -> None:
         await self.road("38 miles", 38.0)
         self.assertEqual(await self.lines(), [])
 
@@ -87,3 +90,26 @@ class Roads(Pins):
         self.assertTrue(answer)
         with self.assertRaises(RecapError):  # (no 🚫 for a road: the shape check refuses it)
             await world_notes.queue_not(self.web, self.session, self.cref, {"id": f"road:{rid}"})
+
+    async def test_the_bots_keep_makes_the_length_the_dms_and_the_line_goes(self) -> None:
+        rid = await self.road()
+        self.assertEqual(len(await self.lines()), 1)
+        await self.memory.keep_world_notes(self.g, self.one.id, [f"road:{rid}"], source=DM)
+        self.assertEqual(await self.lines(), [])
+
+    async def test_a_length_from_a_session_says_so(self) -> None:
+        rid = await self.road()
+        await self.sql(
+            "UPDATE memory_relations SET from_session_at = 500 WHERE guild_id = %s AND id = %s",
+            self.g, rid,
+        )  # fmt: skip
+        (line,) = await self.lines()
+        self.assertTrue(line["note"].startswith("said in a session"))
+        self.assertEqual(line["fromSession"], 500)
+
+    async def test_another_campaigns_dm_gets_nothing(self) -> None:
+        await self.road()
+        bob = await self.signed(BOB, THURSDAY)  # DMs Two, not One
+        with self.assertRaises(RecapError) as refused:
+            await self.lines(bob)
+        self.assertEqual(refused.exception.code, "not_allowed")

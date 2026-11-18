@@ -20,7 +20,9 @@ from __future__ import annotations
 # door's `world-keep` shape takes a `road:` line id besides the place and language ones: Keep makes
 # the length the DM's own through the bot's own `world_notes.keep`, which has done so since 4c-1;
 # there is no 🚫 for a road (`world-not` is unchanged). The door's shape check is read back from
-# the database as it is and its anchor must be found once. No row changes.
+# the database as it is and its anchor must be found once. The door does not know
+# `DMBOT_MAP_MEASURE` (Discord shows Roads only while it is on): the website's Roads group has its
+# own switch, flipped with that setting, never before. No row changes.
 _OLD = (
     "act = 'world-keep' AND clean !~ '^(place|language):[0-9a-f]{32}"
     "( (place|language):[0-9a-f]{32}){0,24}$'"
