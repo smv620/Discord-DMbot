@@ -1500,6 +1500,7 @@ async def _maps(
     person's own done Maps action made, read again here. The store rechecks the map, so one gone
     meanwhile answers `gone`. Words and ids only."""
     from dmbot.maps.store import (  # (a late import: no cycle)
+        DMS_FILE,
         NOT_YOURS,
         AlreadyAnswered,
         MapError,
@@ -1564,7 +1565,8 @@ async def _maps(
         return Outcome()  # (the first answer stands: done, with no change to undo)
     except MapError as exc:
         # a map gone meanwhile, or not the sender's to take back
-        return _failed(NOT_ALLOWED if str(exc) == NOT_YOURS else GONE)
+        # (a DM's file's map is never shown to the table: not allowed, not gone, #4259)
+        return _failed(NOT_ALLOWED if str(exc) in (NOT_YOURS, DMS_FILE) else GONE)
     return Outcome(batches=(made,) if made is not None else ())
 
 
