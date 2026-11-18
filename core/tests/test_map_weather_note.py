@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import unittest
 import uuid
+from dataclasses import replace
 
 from dmbot.maps import weather_note as wn
 from dmbot.memory import map_facts as mf
@@ -47,14 +48,21 @@ class Fits(unittest.TestCase):
         self.assertTrue(wn.fits("somewhere", wn.HEAT, "winter"))
 
 
+def plain(note: wn.Note | None) -> wn.Note | None:
+    """The note without the climate rows it was judged against (#4748's marks), for comparing."""
+    return None if note is None else replace(note, climate_id="", kept_ids=())
+
+
 class Check(unittest.TestCase):
     def test_heat_in_a_freezing_place(self) -> None:
         note = wn.check("Bryn Shander", wn.HEAT, [(climate("arctic"), "Icewind Dale")], "winter")
-        self.assertEqual(note, wn.Note("Bryn Shander", wn.HEAT, "arctic", None, "Icewind Dale"))
+        self.assertEqual(
+            plain(note), wn.Note("Bryn Shander", wn.HEAT, "arctic", None, "Icewind Dale")
+        )
 
     def test_the_season_is_kept_when_it_decided(self) -> None:
         note = wn.check("Waterdeep", wn.SNOW, [(climate("temperate"), None)], "summer")
-        self.assertEqual(note, wn.Note("Waterdeep", wn.SNOW, "temperate", "summer", None))
+        self.assertEqual(plain(note), wn.Note("Waterdeep", wn.SNOW, "temperate", "summer", None))
 
     def test_an_unkept_climate_never_makes_a_note(self) -> None:
         for status in (mf.READ, mf.REJECTED):
@@ -75,7 +83,11 @@ class Check(unittest.TestCase):
     def test_the_same_climate_twice_is_one_note(self) -> None:
         twice = [(climate("arctic"), None), (climate("arctic"), "Icewind Dale")]
         note = wn.check("Bryn Shander", wn.HEAT, twice)
-        self.assertEqual(note, wn.Note("Bryn Shander", wn.HEAT, "arctic", None, None))
+        self.assertEqual(plain(note), wn.Note("Bryn Shander", wn.HEAT, "arctic", None, None))
+        # (judged among both kept rows, #4748: a second row with the same value is no change)
+        assert note is not None
+        self.assertEqual(set(note.kept_ids), {f.id for f, _src in twice})
+        self.assertIn(note.climate_id, note.kept_ids)
 
     def test_the_dms_own_words_are_silence(self) -> None:
         own = [(climate("arctic"), "Icewind Dale"), (climate(mf.OTHER), None)]

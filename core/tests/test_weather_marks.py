@@ -126,6 +126,9 @@ class TheBackup(unittest.TestCase):
         }  # fmt: skip
         # (well formed, but for a place and climate the file doesn't hold: dropped, never refused)
         self.assertEqual(_checked_rows([row])["weather_note"], [])
-        for bad in ({"kind": "rain"}, {"climate": ["hot"]}, {"kind": {}}, {"place_id": "x"}):
+        bads: list[dict[str, Any]] = [
+            {"kind": "rain"}, {"climate": ["hot"]}, {"kind": {}}, {"place_id": "x"},
+        ]  # fmt: skip
+        for bad in bads:
             with self.subTest(bad=bad), self.assertRaises(CampaignError):
                 _checked_rows([{**row, **bad}])
