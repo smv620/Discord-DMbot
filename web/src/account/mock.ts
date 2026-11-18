@@ -1626,6 +1626,11 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       }
       // Sharing the story (#3741): `.ss-failed` is a refusal, with nothing changed; every other campaign says done at once.
       if (asked.setting === "ask_before_adding") return { ...base, state: "done" };
+      // Map checks (#4687): a refusal is `.mc-refused`, with nothing changed; every other campaign says done at once.
+      if (asked.setting === "map_checks") {
+        if (/\.mc-refused$/.test(ref)) return { ...base, state: "failed", error: "refused" };
+        return { ...base, state: "done" };
+      }
       if (asked.setting === "share_improve") {
         if (/\.ss-failed$/.test(ref)) return { ...base, state: "failed", error: "refused" };
         return { ...base, state: "done" };
@@ -3145,7 +3150,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         ...(role === "player"
           ? {}
           : {
-              settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, storyMode: "off", shareImprove: false, askBeforeAdding: false, dndbeyondInvite: "", mainRules: "2024", fallbackRules: "2014", gameMasters: 2 } as const,
+              settings: { visibility: "peek", level: "normal", keepDays: 90, paused: false, storyMode: "off", shareImprove: false, mapChecks: true, askBeforeAdding: false, dndbeyondInvite: "", mainRules: "2024", fallbackRules: "2014", gameMasters: 2 } as const,
               // What the bot has switched on (#3693): a DM's page only, like the settings.
               features: {
                 writtenAt: 1_790_000_000,
@@ -3173,6 +3178,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (choice.setting === "rulesets" && !/^(2024|2014)\/(2024|2014|none)$/.test(choice.value)) throw new ApiError("bad-value");
       // The server's door: sharing the story is "on" or "off" (#3741).
       if (choice.setting === "share_improve" && choice.value !== "on" && choice.value !== "off") throw new ApiError("bad-value");
+      // The server's door: Map checks is "on" or "off" (#4687).
+      if (choice.setting === "map_checks" && choice.value !== "on" && choice.value !== "off") throw new ApiError("bad-value");
       if (choice.setting === "ask_before_adding" && choice.value !== "on" && choice.value !== "off") throw new ApiError("bad-value");
       if (choice.setting === "rulesets" && choice.value.split("/")[0] === choice.value.split("/")[1]) throw new ApiError("bad-value");
       // The server's door: the one standard invite shape, or empty to remove it.
