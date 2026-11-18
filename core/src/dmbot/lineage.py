@@ -110,6 +110,9 @@ NOT_STAMPED: dict[str, str] = {
     "thread_progress": "a progress line waiting for the DM; the kept parts are stamped",
     # (#4524: the DM's 🤫 questions; what an answer changes is an entry, name or connection, which
     # carries the stamp, and the question keeps its own evidence label)
+    # (#4762: a PDF from the website, waiting in transit for its count and the DM's yes; what its
+    # read finds is an entry, which carries the stamp)
+    "lore_pdf_staged": "a file in transit, gone within a day; what its read finds is stamped",
     "secret_questions": "a question waiting for the DM; what an answer changes is stamped",
     # (#4448: which time-limit messages were said; the limit itself is a stamped part)
     "time_limit_told": "a record of a private message said, not story; the limit is stamped",
