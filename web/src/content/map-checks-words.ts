@@ -2,7 +2,7 @@
 // Only a game master changes it; turning it on or off asks nothing. The Discord settings card says the same in its own words.
 export const mapChecksWords = {
   heading: "🗺️ Map checks",
-  lead: "When a distance or direction you say at the table is far off a map, DMbot tells you privately, once per pair of places, and it sends its own estimate when you say a travel time. You only get these notes once the map answers are on.",
+  lead: "When a distance, direction or travel time you say at the table is far off a map, DMbot tells you privately, once per pair of places, with its own estimate. Your players never see it.",
   on: "Map checks: on",
   off: "Map checks: off",
   saved: "Saved.",
