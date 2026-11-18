@@ -275,7 +275,7 @@ FEATURES: tuple[Feature, ...] = (
         "What your maps show about places",
         "",
         lambda s: s.map_layers_on,
-        ("map_layers_on",),
+        ("map_layers_on", "weather_notes_on"),  # (the weather check reads the kept climates)
         for_dms=False,  # not live yet: on only after dev1's scored run on the sample map (#4259)
     ),
     Feature(

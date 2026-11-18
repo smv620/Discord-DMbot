@@ -7570,6 +7570,78 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             except Exception:
                 log.exception("The live heads-up failed")
 
+    async def _weather_notes(
+        self, guild_id: int, campaign_id: str, report: extractor.Report, started_at: int
+    ) -> None:
+        """The after-session weather note (#4260 10c-2; design §6 and §9; Supervisor's ruling on
+        #4260): each place's snow, frost or heat the DM described, checked against the place's kept
+        climate, its own or read up the tree (`weather_note.check`: the DM's kept rows only, and
+        silence when anything is unclear). The notes go in one private message to the campaign's
+        DMs, after the session, never during play and never as a correction; nothing is stored. A
+        name two places share, or no kept place, is no note. No season is known yet (the calendar
+        gives none), so only the always-wrong pairs are noted. Held back while the campaign's table
+        is playing (an import can be read then). Never raises; counts in the log."""
+        from dmbot.maps import weather_note
+        from dmbot.memory import gate
+        from dmbot.memory import map_facts as mf
+        from dmbot.memory.lookup import CampaignLookup
+        from dmbot.memory.models import CONFIRMED, name_key
+        from dmbot.ui.thread_questions import session_label
+
+        try:
+            table = self.tables.get(guild_id)
+            if table is not None and table.campaign_id == campaign_id:
+                # (never during play: an import read while the table is live, or a session read
+                # after play restarted, sends nothing; nothing is stored, so nothing is lost but
+                # the note)
+                log.info("Weather notes: held back, the table is playing")
+                return
+            campaign = await self.campaigns.get(guild_id, campaign_id)
+            if campaign is None or self.memory is None:
+                return
+            lookup = CampaignLookup.build(await self.memory.lookup_data(guild_id, campaign_id))
+            onto = await self.memory.ontology(guild_id, campaign_id)
+            places: dict[str, set[str]] = {}
+            for named in lookup.names:
+                who = lookup.entities.get(named.entity_id)
+                if (
+                    named.confirmed  # (a proposed or misheard name never points the note)
+                    and who is not None
+                    and who.status == CONFIRMED
+                    and onto.is_a(who.type, "place")
+                ):
+                    places.setdefault(name_key(named.text), set()).add(who.id)
+            notes: list[weather_note.Note] = []
+            for heard in report.heard_weather:
+                ids = places.get(name_key(heard.place), set())
+                if len(ids) != 1:
+                    continue  # (none, or two places share the name: DMbot can't tell which)
+                place_id = next(iter(ids))
+                held = (
+                    await self.memory.map_facts_up(
+                        guild_id, campaign_id, place_id, gate.Viewer(dm=True)
+                    )
+                ).get(mf.CLIMATE)
+                if held is None:
+                    continue
+                if held.from_id is not None and held.from_id not in lookup.entities:
+                    continue  # (read from a place DMbot can't name: the working would be wrong)
+                outer = lookup.entities[held.from_id].name if held.from_id is not None else None
+                note = weather_note.check(
+                    lookup.entities[place_id].name,
+                    heard.kind,
+                    [(f, outer) for f in held.facts],
+                )
+                if note is not None:
+                    notes.append(note)
+            log.info("Weather notes: %d heard, %d noted", len(report.heard_weather), len(notes))
+            if notes:
+                text = weather_note.message(notes, session_label(started_at))
+                for dm in campaign.dm_accounts:
+                    await self._dm_message(dm, text, None)
+        except Exception as exc:
+            log.warning("Weather notes weren't checked (%s)", type(exc).__name__)
+
     async def _ask_heard_languages(
         self,
         guild_id: int,
@@ -10132,10 +10204,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     count_call=count_call,
                     progress=progress,
                     languages=self.settings.session_languages_on,
+                    weather=self.settings.weather_notes_on,
                 )
             log.info(report.line())
             if report.heard_languages:  # (#4229 1d: each a question for the DM, never written)
                 await self._ask_heard_languages(gid, cid, report, session.started_at, sid)
+            if report.heard_weather:  # (#4260 10c-2: a private note, after the session)
+                await self._weather_notes(gid, cid, report, session.started_at)
             # Counts and buttons go to the DM Bot channel when the campaign has one (the DM screen
             # otherwise); names go to the DMs privately, with a count-only pointer (#3874 E1)
             campaign = await self.campaigns.get(gid, cid)
