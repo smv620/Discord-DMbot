@@ -32,7 +32,7 @@ const splitReason = (code: string): string => (Object.hasOwn(gw.errors, code) ? 
  * #4116): it is shown as it is, not under "From the recap:", which would be wrong for it. */
 export const noteSaysWhere = (note: string): boolean => /^Read from a picture\b/.test(note);
 
-export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId: string }) {
+export default function RecapNameChecks({ api, refId, onLeft }: { api: AccountApi; refId: string; onLeft?: (left: number) => void }) {
   const [list, setList] = useState<NameCheckList | null>(null);
   const [failed, setFailed] = useState(false);
   const [busy, setBusy] = useState<Set<string>>(new Set());
@@ -67,6 +67,7 @@ export default function RecapNameChecks({ api, refId }: { api: AccountApi; refId
     try {
       const got = await api.nameChecks(refId);
       setList(got);
+      onLeft?.(got.names.length); // (the Questions page's walk moves on once every recap reports 0, #4740)
       setFailed(false);
       return got;
     } catch {
