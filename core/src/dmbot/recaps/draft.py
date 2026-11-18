@@ -668,7 +668,7 @@ def prose_message(
     if who_and_what:
         lines = "\n".join(f"- {quoted(x)}" for x in who_and_what[:SHEET_LINES])
         cite = (
-            ' A line that starts "Cite this" is the one exception to "never add an event": say '
+            ' A line that starts "Cite this" is the only kind that may be told as an event: say '
             "that line once, as narration, in its own words, and add nothing to it."
             if any(x.startswith(REVEAL_MARK) for x in who_and_what[:SHEET_LINES])
             else ""
