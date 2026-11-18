@@ -28,7 +28,7 @@ from dmbot.memory import claims as claims_mod
 from dmbot.memory import thread_clues as clues_mod
 from dmbot.memory import time_limits as tl
 from dmbot.memory import unnamed as unnamed_mod
-from dmbot.memory._changes import ALREADY_UNDONE, CLAIMS, Changes
+from dmbot.memory._changes import ALREADY_UNDONE, CLAIMS, MAP_PICTURE_GONE, Changes
 from dmbot.memory._changes import NOT_FOUND as STORE_NOT_FOUND
 from dmbot.memory.backstory_links import DONE, FULL, BackstoryLinks
 from dmbot.memory.claims import WAITING_NAME_REASON, ClaimStore
@@ -114,6 +114,7 @@ AMBIGUOUS = "ambiguous"  # ... and more than one entry has it: nothing is writte
 
 WAITING = (
     "claim-confirm",
+    "claim-some",  # 👥 Some know (#4680): kept held back, known by exactly the ticked characters
     "claim-reject",
     "claim-pick",  # "Which one?" for a claim kept because a name could be two entries (#3463)
     "claim-unpick",
@@ -583,13 +584,14 @@ class ActionStore:
     async def claim_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, claim_id: str, batch: int
     ) -> bool:
-        """Whether `batch` is the change this DM's own done `claim-confirm` of this claim made,
-        so an Undo can only take back what they answered themselves from the website (#3645)."""
+        """Whether `batch` is the change this DM's own done `claim-confirm` (or `claim-some`) of
+        this claim made, so an Undo can only take back what they answered themselves from the
+        website (#3645)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
-                " AND user_id = %s AND action = 'claim-confirm' AND target_id = %s"
-                " AND state = 'done' AND result_other = %s",
+                " AND user_id = %s AND action IN ('claim-confirm', 'claim-some')"
+                " AND target_id = %s AND state = 'done' AND result_other = %s",
                 (guild_id, campaign_id, user_id, claim_id, str(batch)),
             )
             return await cur.fetchone() is not None
@@ -1525,7 +1527,8 @@ async def _maps(
         except MemoryRuleError as exc:
             if str(exc) == ALREADY_UNDONE:
                 return Outcome()  # (taken back already: a retried Undo)
-            return _failed(GONE if str(exc) == STORE_NOT_FOUND else CHANGED)
+            # (the map went with its picture since: "gone", never "changed", #4697)
+            return _failed(GONE if str(exc) in (STORE_NOT_FOUND, MAP_PICTURE_GONE) else CHANGED)
         return Outcome()
     if a.action not in PLAYER_MAPS_ACTIONS and not is_dm:
         return _failed(NOT_ALLOWED)
@@ -2077,12 +2080,16 @@ async def _answer_waiting(
     checked again, and Undo is the same. A retried job finds the answer already given: done."""
     if a.action in ("claim-pick", "claim-unpick"):
         return await _answer_which_one(guild_id, cid, a, w)
-    if a.action in ("claim-confirm", "claim-reject"):
+    if a.action in ("claim-confirm", "claim-some", "claim-reject"):
         claim = await w.claims.get(guild_id, cid, a.target_id)
         if claim is None or claim.reason == WAITING_NAME_REASON:
             return _failed(NOT_FOUND)  # (a held claim is in no list the DM sees, #3749)
         if claim.status != CLAIM_PROPOSED:
-            done = CLAIM_CONFIRMED if a.action == "claim-confirm" else CLAIM_REJECTED
+            if a.action == "claim-some":
+                # Already kept for everyone (Discord, another tab): a stale 👥 must not read as
+                # "held back and known to exactly these characters".
+                return _failed(GONE)
+            done = CLAIM_REJECTED if a.action == "claim-reject" else CLAIM_CONFIRMED
             return (
                 Outcome(result_id=claim.fact_id or "")
                 if claim.status == done
@@ -2091,9 +2098,17 @@ async def _answer_waiting(
         if a.action == "claim-reject":
             await w.claims.reject(guild_id, cid, a.target_id)
             return Outcome()
+        # 👥 Some know (#4680): the same call as Discord's picker, `confirm(knowers=…)`: the
+        # connection is held back and exactly these characters know it, in the claim's own change
+        some = a.text.split(",") if a.action == "claim-some" else None
         try:
             confirmed = await w.claims.confirm(
-                guild_id, cid, a.target_id, opted_in=await w.opted_in(), secret=a.flag
+                guild_id,
+                cid,
+                a.target_id,
+                opted_in=await w.opted_in(),
+                secret=a.flag,
+                knowers=some,
             )
         except MemoryRuleError as exc:
             # the page words these: the question is gone, a new name has to be answered first,

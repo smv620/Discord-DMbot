@@ -1014,6 +1014,7 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
 # and "None of these" is the ordinary `reject`.
 WAITING_QUEUE = {
     ("claim", "confirm"): "claim-confirm",
+    ("claim", "some"): "claim-some",
     ("claim", "reject"): "claim-reject",
     ("claim", "pick"): "claim-pick",
     ("claim", "unpick"): "claim-unpick",
@@ -1086,6 +1087,15 @@ async def queue_waiting(db: Database, session: Session, ref: str, body: object) 
         if isinstance(batch, bool) or not isinstance(batch, int) or not 0 < batch < 10**12:
             raise RecapError("not_found")
         text = str(batch)
+    if action == "claim-some":
+        # 👥 Some know (#4680): the characters who know it, 1 to 25 distinct ids; the door checks
+        # the shape and the bot checks that each is a character of the campaign
+        who = body.get("characters")
+        if not isinstance(who, list) or not 1 <= len(who) <= 25:
+            raise RecapError("bad_action")
+        if not all(isinstance(i, str) and ID_PATTERN.match(i) for i in who):
+            raise RecapError("not_found")
+        text = ",".join(dict.fromkeys(who))
     if action == "claim-pick":
         side, entry = body.get("side"), str(body.get("entity") or "")
         if side not in ("subject", "object") or not ID_PATTERN.match(entry):
@@ -1217,7 +1227,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "kept": int(got["resultId"]) if keeping and got["resultId"] else None,
             # the change a kept fact made, for the Undo of an All true press (#3645)
             "batch": int(got["resultOther"])
-            if got["action"] == "claim-confirm"
+            if got["action"] in ("claim-confirm", "claim-some")
             and got["state"] == "done"
             and str(got["resultOther"] or "").isdigit()
             else None,

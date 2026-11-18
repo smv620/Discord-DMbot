@@ -18,6 +18,7 @@ import discord
 
 from dmbot.maps import words
 from dmbot.maps.store import GONE, AlreadyAnswered, MapError, Viewer
+from dmbot.memory._changes import MAP_PICTURE_GONE
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _tell
 from dmbot.ui.family_ties import _dm_campaign
@@ -110,8 +111,10 @@ class UndoButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], tem
         except TooLateToUndo as exc:  # (older than Undo works for: its own words)
             await _edit(interaction, str(exc))
             return
-        except MemoryRuleError:
-            await _edit(interaction, words.UNDO_FAILED)
+        except MemoryRuleError as exc:  # (the picture gone since: said plainly, #4697)
+            await _edit(
+                interaction, str(exc) if str(exc) == MAP_PICTURE_GONE else words.UNDO_FAILED
+            )
             return
         except Exception as exc:
             log.warning("A map undo failed (%s)", type(exc).__name__)
