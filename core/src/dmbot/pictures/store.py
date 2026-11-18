@@ -35,7 +35,7 @@ CODE_BYTES = 32  # 256 bits in the link code
 COLUMNS = (
     "id, campaign_id, poster_id, session_id, line_id, message_id, description, code, public,"
     " permanent, sha256, object_key, preview_key, size_bytes, preview_bytes, made_at, deleted_at,"
-    " removed_for_room, dm_only"
+    " removed_for_room, dm_only, notice_id"
 )
 
 
@@ -61,6 +61,8 @@ class Picture:
     removed_for_room: bool
     # Taken from a DM's uploaded file (#4003 slice c): for the campaign's DMs alone, never public.
     dm_only: bool = False
+    # The upload notice whose Undo takes it back (#4003 slice c); None for any other picture.
+    notice_id: str | None = None
 
     @property
     def gone(self) -> bool:
@@ -119,6 +121,7 @@ def _picture(row: Any) -> Picture:
         deleted_at=None if row["deleted_at"] is None else int(row["deleted_at"]),
         removed_for_room=bool(row["removed_for_room"]),
         dm_only=bool(row["dm_only"]),
+        notice_id=None if row["notice_id"] is None else str(row["notice_id"]),
     )
 
 
