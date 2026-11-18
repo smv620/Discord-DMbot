@@ -45,12 +45,45 @@ class TheShapes(unittest.TestCase):
                 (got.kind, got.a_id, got.b_id, got.value), (said.WAY, "t", "b", angle), line
             )
 
+    def test_travel_times_in_days(self) -> None:
+        # (#4260: only the cue for the DM's private estimate, never compared)
+        for line, days, stated in (
+            ("Targos is two days from Bryn Shander.", 2, "two days"),
+            (
+                "It's about three days' ride from Targos to Bryn Shander",
+                3,
+                "about three days' ride",
+            ),
+            ("From Targos to Bryn Shander is half a day.", 0.5, "half a day"),
+            ("It takes them a week to get from Targos to Bryn Shander", 7, "a week"),
+            ("Targos is 2 to 3 days on foot from Bryn Shander", 2, "2 to 3 days on foot"),
+        ):
+            got = self.one(line)
+            self.assertEqual(
+                (got.kind, got.a_id, got.b_id, got.value, got.words),
+                (said.TIME, "t", "b", days, stated),
+                line,
+            )
+        self.assertEqual(self.one("Targos is twelve hours from Bryn Shander").value, 0.5)
+
+    def test_a_time_that_is_no_trip_is_never_taken(self) -> None:
+        for line in (
+            "We rest two days in Targos and Bryn Shander",  # (no set shape)
+            "Is Targos two days from Bryn Shander?",  # (a question)
+            "Targos is a few days from Bryn Shander",  # (no amount)
+        ):
+            self.assertEqual(said.read(line, NAMES), [], line)
+        self.assertTrue(said.may_state_time("two days from Targos"))
+        self.assertFalse(said.may_state("two days from Targos"))  # (no map read for a time)
+        self.assertEqual(
+            self.one("Two days from Targos to Bryn Shander, the road is muddy").words, "two days"
+        )
+
     def test_the_longest_name_wins(self) -> None:
         self.assertEqual(self.one("Targos is 5 miles from Bryn Shander").b_id, "b")
 
     def test_what_is_never_taken(self) -> None:
         for line in (
-            "Targos is two days from Bryn Shander",  # (a time is never compared)
             "Luskan is 20 miles from Bryn Shander",  # (not a kept place)
             "we walked 20 miles north of Targos",  # (one name only)
             "Targos is 20 miles from here, not Bryn Shander",  # (no set shape)
