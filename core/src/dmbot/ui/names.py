@@ -487,6 +487,8 @@ class NamesHome(_Menu):
             await interaction.response.send_modal(AddNameForm(self.campaign_id, secrets=secrets))
 
     async def _character(self, interaction: discord.Interaction) -> None:
+        if _bot(interaction).settings.remembered_players_on:
+            await _answer_first(interaction)  # (the remembered players' lookup may take a moment)
         campaign = await _campaign_for(interaction, self.campaign_id)
         if campaign:
             view = PlayerPicker(self.campaign_id, campaign.guild_id)

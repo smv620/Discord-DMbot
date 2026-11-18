@@ -14,8 +14,9 @@ current Discord name, never the stored one. Bots are never listed. Behind `DMBOT
 
 from __future__ import annotations
 
+import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Collection
 from typing import Any
 
 import discord
@@ -42,18 +43,48 @@ async def remembered_ids(db: Database, dm_user_id: int) -> list[int]:
     return [int(r["player"]) for r in row["r"] if str(r.get("player", "")).isdigit()]
 
 
-def members_of(guild: discord.Guild, ids: list[int], dm_user_id: int) -> list[discord.Member]:
+CANDIDATES = 50  # the most of the list looked up (a DM's list can be long; a menu holds 25)
+LOOKUPS_AT_ONCE = 5
+LOOK_S = 2.0  # the whole lookup's time: a slow server costs the list, never Discord's 3 seconds
+
+
+async def _member_now(guild: discord.Guild, player: int) -> discord.Member | None:
+    """`player` as a member of `guild` now, or None. DMbot has no members intent, so the cache holds
+    only people it has seen lately: a person in the server who is quiet has to be asked of Discord
+    (`fetch_member`, which needs no privileged intent). Someone who isn't there, or a failed
+    lookup, is None."""
+    cached = guild.get_member(player)
+    if cached is not None:
+        return cached
+    try:
+        return await guild.fetch_member(player)
+    except discord.HTTPException:  # (not here any more, or Discord said no: either way, skip)
+        return None
+
+
+async def members_of(
+    guild: discord.Guild,
+    ids: list[int],
+    dm_user_id: int,
+    *,
+    only: Collection[int] | None = None,
+) -> list[discord.Member]:
     """Those of `ids` who are members of `guild` now, in the list's order; never a bot, never the
-    DM themselves, at most one menu's worth."""
-    out: list[discord.Member] = []
-    for player in ids:
-        member = guild.get_member(player)
-        if member is None or member.bot or member.id == dm_user_id:
-            continue
-        out.append(member)
-        if len(out) == MAX_OPTIONS:
-            break
-    return out
+    DM themselves, only those in `only` when it is given, at most one menu's worth. Looked up a few
+    at a time, within `LOOK_S`; a lookup that runs out of time gives none (the picker works)."""
+    wanted = [p for p in ids if p != dm_user_id and (only is None or p in only)][:CANDIDATES]
+    gate = asyncio.Semaphore(LOOKUPS_AT_ONCE)
+
+    async def one(player: int) -> discord.Member | None:
+        async with gate:
+            return await _member_now(guild, player)
+
+    try:
+        found = await asyncio.wait_for(asyncio.gather(*(one(p) for p in wanted)), LOOK_S)
+    except TimeoutError:
+        log.info("Remembered players: the lookup took too long, none listed")
+        return []
+    return [m for m in found if m is not None and not m.bot][:MAX_OPTIONS]
 
 
 class RememberedSelect(discord.ui.Select[Any]):
@@ -68,7 +99,7 @@ class RememberedSelect(discord.ui.Select[Any]):
         self.guild, self.on_pick = guild, on_pick
 
     async def callback(self, interaction: discord.Interaction) -> None:
-        member = self.guild.get_member(int(self.values[0]))  # (still here? asked again)
+        member = await _member_now(self.guild, int(self.values[0]))  # (still here? asked again)
         if member is None or member.bot:
             await interaction.response.send_message(GONE, ephemeral=True)
             return
@@ -76,10 +107,16 @@ class RememberedSelect(discord.ui.Select[Any]):
 
 
 async def add_remembered(
-    interaction: discord.Interaction, view: discord.ui.View, on_pick: Pick, guild_id: int
+    interaction: discord.Interaction,
+    view: discord.ui.View,
+    on_pick: Pick,
+    guild_id: int,
+    *,
+    only: Collection[int] | None = None,
 ) -> None:
     """Put the DM's remembered players above the other items of `view`, when the switch is on and
-    one of them is in the server now. Never raises: the picker works without it."""
+    one of them is in the server now (and in `only`, when the picker takes only some people).
+    Never raises: the picker works without it."""
     try:
         client: Any = interaction.client
         if not client.settings.remembered_players_on:
@@ -88,7 +125,7 @@ async def add_remembered(
         if guild is None:
             return
         ids = await remembered_ids(client.campaigns.db, interaction.user.id)
-        members = members_of(guild, ids, interaction.user.id)
+        members = await members_of(guild, ids, interaction.user.id, only=only)
         if not members:
             return
     except Exception as exc:  # optional: the type, never a name

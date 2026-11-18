@@ -244,7 +244,9 @@ class PeopleReview(_Menu):
         self.clear_items()
         self.add_item(_UserSelect(self._other_picked))
         self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
-        await add_remembered(interaction, self, self._other_picked, self.guild_id)
+        # (only people who agreed to be recorded here can be picked: so only they are listed)
+        agreed = await _bot(interaction).consent.agreed(self.guild_id)
+        await add_remembered(interaction, self, self._other_picked, self.guild_id, only=agreed)
         await _replace(interaction, f"**Who is {_md(got[1].name)}?**", self)
 
     async def _back(self, interaction: discord.Interaction) -> None:
