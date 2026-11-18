@@ -15,7 +15,7 @@ from unittest.mock import AsyncMock, patch
 from dmbot.ai import Reply
 from dmbot.config import ConfigError, load_settings
 from dmbot.memory import extractor, language_reading
-from dmbot.memory.language_reading import check, once_each, parse_languages
+from dmbot.memory.language_reading import Heard, check, once_each, parse_languages
 from tests.test_config import BASE
 from tests.test_extractor import DM, Kept, dm_session, go, line
 
@@ -112,6 +112,10 @@ class TheCases(unittest.TestCase):
         self.assertEqual(got.dropped, {"language_lines": 1})
         once = once_each([got.heard[0], got.heard[0]])
         self.assertEqual(len(once), 1)
+        # (#4745: heard in two batches, the one question carries both batches' lines and speakers)
+        a = Heard("Okthandom", "Dwarvish", ("2",), (7,))
+        b = Heard("okthandom", "dwarvish", ("12", "2"), (5,))
+        self.assertEqual(once_each([a, b]), [Heard("Okthandom", "Dwarvish", ("2", "12"), (5, 7))])
 
 
 class LanguageAnswer:
@@ -160,6 +164,10 @@ class InTheClaimsCall(unittest.IsolatedAsyncioTestCase):
         report = await go(ai, Kept(), lines, consenting, languages=True)
         self.assertEqual(report.heard_languages, [])
         self.assertIn("language_speaker_gone", report.line())
+        kept = await go(LanguageAnswer(answer(("Okthandom", "Dwarvish", 1))), Kept(),
+                        [line(1, DM, "Okthandom answers in Dwarvish."), *dm_session(10)[1:]],
+                        languages=True)  # fmt: skip
+        self.assertEqual(kept.heard_languages[0].speakers, (DM,))  # (#4745: who said it, ids)
         again = await go(LanguageAnswer(answer(("Okthandom", "Dwarvish", 1))), Kept(),
                          [line(1, DM, "Okthandom answers in Dwarvish."), *dm_session(20)[1:]],
                          languages=True)  # fmt: skip

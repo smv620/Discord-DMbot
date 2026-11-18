@@ -28,7 +28,7 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | Export my data; my email (add, change, confirm); support messages and replies | `/account` | live | none |
 | Add the bot to a server; link a server | `/install`, `/account` | built, switched off | `INVITE_LIVE` |
 | Campaigns list and a campaign's home page | `/account/campaigns` | live | none |
-| Campaign settings; optional rules; game masters (co-DMs); character sheets; pause; improvement sharing | campaign home | built, switched off | `OPTIONAL_RULES_LIVE`, `CO_DMS_LIVE`, `SHEETS_LIVE`, `PAUSE_LIVE`, `SHARE_STORY_LIVE` (improvement: built and switched off, #3741, #3784) |
+| Campaign settings; optional rules; game masters (co-DMs); character sheets; pause; improvement sharing | campaign home | built, switched off | `OPTIONAL_RULES_LIVE`, `CO_DMS_LIVE`, `SHEETS_LIVE`, `PAUSE_LIVE`, `SHARE_STORY_LIVE` (improvement: built and switched off, #3741, #3784), `MAP_CHECKS_LIVE` (map checks: built and switched off, #4687) |
 | Hand a campaign over (offer, accept, decline, take back, by email too) | `/handover`, campaign home | built, switched off | `HANDOVER_LIVE` |
 | Backup download; load a backup; delete a campaign | campaign home, `/account/restore` | backup and delete live; load a backup switched off | `WEB_RESTORE_LIVE` |
 | Recaps: list, read, edit, make again, approve, approve unchecked, audio (play, make again) | `/account/recaps` | live | `RECAPS_LIVE`, `RECAP_AUDIO_LIVE` |
@@ -61,7 +61,7 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | Story Graph: waiting connections (answer, All true / All secret / Undo all) | `/account/web` | live | none |
 | Story Graph: what people believe (readings); who knows a connection; secret names told; peek and reveal | `/account/web` | readings live; others switched off | `WHO_KNOWS_LIVE`, `TOLD_LIVE` |
 | Story Graph: change a connection, its feeling | `/account/web` | change live; feeling picker is in an open PR, switched off | `knows-feeling-switch` |
-| DMbot adds what it is sure of after a lore upload or an import: the counts notice, Undo this upload (7 days), the "From <upload>" Names filter, and "Ask me before adding" (Discord's twin is #3887) | lore and import pages, `/account/names`, campaign settings | page built, switched off; the doors are next | `AUTO_ADD_LIVE` (#3879) |
+| DMbot adds what it is sure of after a lore upload or an import: the counts notice (and the list of what a 🌍 upload revealed, #4661), Undo this upload (7 days), the "From <upload>" Names filter, and "Ask me before adding" (Discord's twin is #3887) | lore and import pages, `/account/names`, campaign settings | page built, switched off; the doors are next | `AUTO_ADD_LIVE` (#3879) |
 | The connection panel on the Story Graph: a compact list with Add a connection on top, edits kept until Save, the direction toggle, Ctrl/⌘+click or Connect to another name to join two names, a jump from a name's panel, and ↩ Undo this save (#4155; Discord's own menus are #4154 and #4156) | the connection edit menu in Discord | `/account/web` | built, switched off | `CONNECTION_PANEL_LIVE` (dev1 checks before the flip) |
 | How two people know each other on a `knows` connection: "has met", "has heard of", or plain "knows", and the DM's change (#3882; Discord's card and edit menu are #3889) | `/account/web` | page built, switched off; the website's door is next | `KNOWS_HOW_LIVE` |
 | Story Graph: PC icons | `/account/web` | in an open PR (not yet on development), switched off | `pc-icons-switch` |
@@ -280,3 +280,4 @@ Every row in Section 1 marked "built, switched off" or "in an open PR" is on the
   website's campaign settings (Supervisor's ruling on #3741). Discord shows it read-only in what is
   switched on (#3693).
 | The clues of a story thread (add, false lead, take off, Undo) | the clues card in 🧵 Story threads (Discord, #4625) | Yes, on the quest sheet (#4625), behind `THREAD_CLUES_LIVE` (page built, switched off) |
+| The table's guesses about a story thread (read only) | the guesses in 🧵 Story threads (Discord, #4665) | Yes, on the quest sheet (#4665), behind `THREAD_GUESSES_LIVE` (page built, switched off) |

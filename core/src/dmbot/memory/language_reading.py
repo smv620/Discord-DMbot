@@ -82,6 +82,7 @@ class Heard:
     who: str
     language: str
     lines: tuple[str, ...]
+    speakers: tuple[int, ...] = ()  # who spoke the lines (ids only), filled at the run's end
 
 
 @dataclass(slots=True)
@@ -217,12 +218,16 @@ def parse_languages(answer: str, lines: Mapping[str, str]) -> Parsed:
 
 
 def once_each(found: Iterable[Heard]) -> list[Heard]:
-    """One heard language per (character, language) across a session's batches, the first kept."""
-    out: list[Heard] = []
-    seen: set[tuple[str, str]] = set()
+    """One heard language per (character, language) across a session's batches: the first's name,
+    with every batch's lines and speakers, so the question goes with any of their forgets
+    (#4745)."""
+    out: dict[tuple[str, str], Heard] = {}
     for h in found:
         key = (h.who.casefold(), h.language.casefold())
-        if key not in seen:
-            seen.add(key)
-            out.append(h)
-    return out
+        first = out.get(key)
+        out[key] = h if first is None else Heard(
+            first.who, first.language,
+            tuple(dict.fromkeys((*first.lines, *h.lines))),
+            tuple(sorted({*first.speakers, *h.speakers})),
+        )  # fmt: skip
+    return list(out.values())
