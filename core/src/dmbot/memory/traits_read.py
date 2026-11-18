@@ -256,6 +256,7 @@ class Spoken:
     name: str
     language: str
     quote: str = ""  # the reader's quote, for a question about an existing character (#4229 1c)
+    speakers: tuple[int, ...] = ()  # heard in a session: who said it (ids only, #4745)
 
 
 def read_languages(
