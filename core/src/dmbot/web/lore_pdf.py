@@ -20,7 +20,7 @@ from typing import Any, Protocol
 
 from dmbot.db import Database
 from dmbot.pictures.bucket import BucketError
-from dmbot.web import relationships
+from dmbot.web import lore, relationships
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -158,3 +158,46 @@ async def _forget(bucket: Bucket, key: str) -> None:
         await bucket.delete(key)
     except BucketError as exc:
         log.warning("A staged lore PDF could not be deleted (%s)", exc)
+
+
+_GO_REFUSALS = {
+    "not_found",
+    "not_counted",
+    "needs_confirm",
+    "busy",
+    "too_soon",
+    "bad_text",
+    "bad_speaker",
+}
+
+
+async def go(db: Database, session: Session, ref: str, body: object) -> dict[str, Any]:
+    """The DM's yes: `{"ref": <the staged file's ref>, "choice": "world"|"spoilers"|"smart",
+    "speaker": <character id or "">, "rights": true}` queues the read of the counted file through
+    the website's lore queue and gives that upload's progress (the page polls the usual lore read).
+    The door marks the file as being read in the same statement, so a second press finds it taken.
+    Refusals are `RecapError` codes: `needs_confirm` (rights not ticked), `not_found` (no file, or
+    another one than the DM saw), `not_counted` (not counted yet), `busy`, `too_soon`, `bad_text`,
+    `bad_speaker`, `not_allowed`."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    if not isinstance(body, dict):
+        raise RecapError("bad_text")
+    pdf_ref, choice = body.get("ref"), body.get("choice")
+    who, rights = body.get("speaker", ""), body.get("rights", False)
+    if not isinstance(pdf_ref, str) or not isinstance(choice, str) or not isinstance(who, str):
+        raise RecapError("bad_text")
+    if not isinstance(rights, bool):
+        raise RecapError("bad_text")
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_lore_pdf_go(%s, %s, %s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, pdf_ref, who, choice, rights),
+        )
+        got = (await cur.fetchone() or {}).get("r")
+    if got is None:
+        raise RecapError("not_allowed")
+    if got["status"] != "ok":
+        raise RecapError(str(got["status"]) if got["status"] in _GO_REFUSALS else "bad_text")
+    return await lore.read(db, session, ref, str(got["id"]))

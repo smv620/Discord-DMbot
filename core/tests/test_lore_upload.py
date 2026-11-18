@@ -3,7 +3,10 @@ once, with the text blanked when it ends, and every refusal as one word. Invente
 
 from __future__ import annotations
 
+import asyncio
 import dataclasses
+import hashlib
+import inspect
 import json
 import logging
 import time
@@ -11,10 +14,12 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 from dmbot import ai_feed, lore_upload
+from dmbot.memory import lore_pdfs, lore_read
 from dmbot.memory import lore_queue as q
-from dmbot.memory import lore_read
 from dmbot.memory.lore_queue import LoreQueue
 from dmbot.memory.lore_read import LORE_TIME_LIMIT_S
+from dmbot.memory.name_documents import DocumentError
+from dmbot.pictures.bucket import BucketError
 from dmbot.ui import name_background as ui_bg
 from dmbot.ui import name_lists
 from dmbot.ui.name_lists import Upload, _ai_busy, _ai_reads
@@ -407,6 +412,167 @@ class TheWorker(NamesTest):
         self.bot.background_ai = self.bot.background_read_ai = empty  # type: ignore[assignment]
         await self.work()
         self.assertEqual((await self.row(uid))["error"], q.NOTHING_FOUND)
+
+    # --- a PDF from the website (#4762 step 3) ------------------------------------------------
+
+    PDF_BYTES = b"%PDF-1.7\n" + b"x" * 200
+    PDF_KEY = "p/" + "a" * 32 + ".pdf"
+
+    async def stage_pdf(self, raw: bytes | None = None, *, kept: bool = True) -> None:
+        """A counted-and-confirmed file: its row (`reading`) and, unless `kept` is off, its file."""
+        raw = self.PDF_BYTES if raw is None else raw
+        self.staging = _Staging({self.PDF_KEY: raw} if kept else {})
+        now = int(time.time())
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO lore_pdf_staged (guild_id, campaign_id, id, user_id, object_key,"
+                " sha256, size_bytes, state, created_at, updated_at) VALUES"
+                " (%s, %s, %s, %s, %s, %s, %s, 'reading', %s, %s)",
+                (GUILD, self.campaign.id, "b" * 32, DM, self.PDF_KEY,
+                 hashlib.sha256(self.PDF_BYTES).hexdigest(), len(self.PDF_BYTES), now, now),
+            )  # fmt: skip
+        self.bot._lore_pdfs = lambda: lore_pdfs.LorePdfs(  # type: ignore[attr-defined]
+            self.staging, lore_pdfs.StagedPdfs(self.db), None, 100 << 20
+        )
+
+    async def staged_rows(self) -> int:
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM lore_pdf_staged")
+            row = await cur.fetchone()
+        assert row is not None
+        return int(row["n"])
+
+    def pdf_reader(self, text: str = TEXT) -> Any:
+        async def opened(raw: bytes, label: str, *, pictures: bool) -> Upload:
+            self.opened_with = (raw, pictures)
+            return Upload(text, label, document=True, pictures_found=0)
+
+        return patch.object(lore_upload, "open_pdf", opened)
+
+    async def test_a_website_pdf_is_read_like_a_discord_upload_and_the_file_goes(self) -> None:
+        await self.stage_pdf()
+        uid = await self.add(source="pdf", text="")
+        with self.pdf_reader():
+            await self.work()
+        done = await self.row(uid)
+        self.assertEqual((done["state"], done["error"]), ("done", ""))
+        self.assertGreater(done["names_found"], 0)
+        self.assertEqual(self.opened_with[0], self.PDF_BYTES)
+        # the right to use it is recorded against the file's own hash, before the read
+        self.bot.campaigns.record_confirmation.assert_awaited_once_with(  # type: ignore[attr-defined]
+            GUILD, self.campaign.id, DM, lore_upload.OWN_WRITING,
+            hashlib.sha256(self.PDF_BYTES).hexdigest(),
+        )  # fmt: skip
+        self.assertEqual((await self.staged_rows(), self.staging.objects), (0, {}))
+
+    async def test_a_file_that_expired_or_changed_fails_with_its_word_and_is_cleared(self) -> None:
+        for kept, raw in ((False, None), (True, b"%PDF-1.7\nother")):
+            with self.subTest(kept=kept):
+                await self.stage_pdf(kept=kept)
+                if raw is not None:
+                    self.staging.objects[self.PDF_KEY] = raw
+                uid = await self.add(source="pdf", text="")
+                with self.pdf_reader():
+                    await self.work()
+                self.assertEqual((await self.row(uid))["error"], q.FILE_GONE)
+                self.assertEqual((await self.staged_rows(), self.staging.objects), (0, {}))
+
+    async def test_no_staged_row_fails_as_gone_and_a_reader_refusal_as_unreadable(self) -> None:
+        uid = await self.add(source="pdf", text="")
+        self.bot._lore_pdfs = lambda: lore_pdfs.LorePdfs(  # type: ignore[attr-defined]
+            _Staging({}), lore_pdfs.StagedPdfs(self.db), None, 100 << 20
+        )
+        await self.work()
+        self.assertEqual((await self.row(uid))["error"], q.FILE_GONE)
+        await self.stage_pdf()
+        uid = await self.add(source="pdf", text="")
+
+        async def refuse(*_a: Any, **_k: Any) -> Upload:
+            raise DocumentError("damaged")
+
+        with patch.object(lore_upload, "open_pdf", refuse):
+            await self.work()
+        self.assertEqual((await self.row(uid))["error"], q.FILE_UNREADABLE)
+        self.assertEqual(await self.staged_rows(), 0)
+
+    async def test_a_dm_who_left_or_a_used_up_day_reads_nothing_and_the_file_still_goes(
+        self,
+    ) -> None:
+        await self.stage_pdf()
+        uid = await self.add(source="pdf", text="", user=MANAGER)
+        with self.pdf_reader():
+            await self.work()
+        self.assertEqual((await self.row(uid))["error"], q.NOT_ALLOWED)
+        self.assertEqual(await self.staged_rows(), 0)
+        await self.stage_pdf()
+        uid = await self.add(source="pdf", text="")
+        for _ in range(name_lists.AI_READS_PER_DAY):
+            self.assertIsNone(name_lists.start_ai_read(GUILD, time.time()))
+            name_lists.end_ai_read(GUILD)
+        with self.pdf_reader():
+            await self.work()
+        self.assertEqual((await self.row(uid))["error"], q.NO_AI)  # (Discord's reads count)
+        self.assertEqual(await self.staged_rows(), 0)
+
+    async def test_a_discord_read_and_a_website_pdf_read_cannot_run_in_one_campaign_at_once(
+        self,
+    ) -> None:
+        """Supervisor's ruling (#4762): one count, one at a time, across Discord and the website."""
+        await self.stage_pdf()
+        uid = await self.add(source="pdf", text="")
+        # Discord's button is reading this campaign: the website's read waits, keeps its file, and
+        # does not use up a read of the day
+        self.assertIsNone(
+            name_lists.start_ai_read(GUILD, time.time(), self.campaign.id, per_day=20)
+        )
+        before = sum(_ai_reads.values())
+        with self.pdf_reader():
+            await self.work()
+        self.assertEqual((await self.row(uid))["state"], "waiting")
+        self.assertEqual((await self.staged_rows(), len(self.staging.objects)), (1, 1))
+        self.assertEqual(sum(_ai_reads.values()), before)
+        name_lists.end_ai_read(GUILD, self.campaign.id)
+        # ...and the other way: while the website's read runs, Discord's button is told "busy"
+        started, release = asyncio.Event(), asyncio.Event()
+
+        async def slow(*_a: Any, **_k: Any) -> Any:
+            started.set()
+            await release.wait()
+            return await real(*_a, **_k)
+
+        real = ui_bg.read_background
+        with self.pdf_reader(), patch.object(lore_upload, "read_background", slow):
+            task = asyncio.ensure_future(self.work())
+            await asyncio.wait_for(started.wait(), 30)
+            self.assertEqual(
+                name_lists.start_ai_read(GUILD, time.time(), self.campaign.id), name_lists.BUSY
+            )
+            release.set()
+            await asyncio.wait_for(task, 30)
+        self.assertEqual((await self.row(uid))["state"], "done")
+        # one read of the day for the one that ran, and none held after it
+        self.assertEqual(sum(_ai_reads.values()), before + 1)
+        self.assertIsNone(name_lists.start_ai_read(GUILD, time.time(), self.campaign.id))
+
+    async def test_a_discord_read_started_from_its_button_names_the_campaign(self) -> None:
+        """The button's read is keyed by its campaign, so the check above sees it: its call and its
+        end carry `campaign.id` (a read of the whole server, `at_once` 1, as before)."""
+        src = inspect.getsource(ui_bg)
+        self.assertRegex(src, r"start_ai_read\(\s*guild,\s*time\.time\(\),\s*campaign\.id,")
+        self.assertIn("end_ai_read(guild, campaign.id)", src)
+
+
+class _Staging:
+    def __init__(self, objects: dict[str, bytes]) -> None:
+        self.objects = objects
+
+    async def get(self, key: str) -> bytes:
+        if key not in self.objects:
+            raise BucketError("gone")
+        return self.objects[key]
+
+    async def delete(self, key: str) -> None:
+        self.objects.pop(key, None)
 
 
 _ = name  # (shared fixtures)

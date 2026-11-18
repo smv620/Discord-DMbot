@@ -645,6 +645,16 @@ async def _document(
 UNREADABLE_WORDS = "DMbot couldn't open that file. It may be damaged: save it again and try."
 
 
+async def open_pdf(raw: bytes, label: str, *, pictures: bool) -> Upload:
+    """A staged lore PDF opened for its read (#4762 step 3): the same reader as Discord's upload,
+    its pictures taken out into the Upload's private folder (the caller closes it). `DocumentError`
+    (plain words) for a file it cannot use."""
+    upload, problem = await _document("lore.pdf", raw, label, pictures=pictures)
+    if upload is None:
+        raise DocumentError(problem or UNREADABLE_WORDS)
+    return upload
+
+
 async def count_pdf(raw: bytes, *, pictures: bool) -> Counted:
     """A staged lore PDF's counts for the website's estimate (#4762 step 2): the same reader as a
     Discord upload, with the pictures taken out into its private folder, which is removed before

@@ -31,6 +31,8 @@ KEEP_FOR_S = 86400  # nothing stays longer than a day
 READING = "reading"
 FINDING_NAMES = "finding_names"
 FINDING_LINKS = "finding_links"
+FINDING_PICTURES = "finding_pictures"  # a website PDF: taking its pictures out (#4762)
+READING_PICTURES = "reading_pictures"  # a website PDF: the words in its pictures, n of m
 DONE = "done"
 
 # Why an upload failed: one word each, for the page to turn into plain ones.
@@ -38,6 +40,8 @@ NOT_ALLOWED = "not_allowed"  # the sender or the confirmer is not a DM of the ca
 TOO_LONG = "too_long"
 NO_AI = "no_ai"  # the AI is off, the plan has no AI, or today's reads are used
 LINK_FAILED = "link_failed"  # the link could not be opened or held nothing readable
+FILE_GONE = "file_gone"  # a website PDF's staged file expired or was replaced before the read
+FILE_UNREADABLE = "file_unreadable"  # the staged PDF could not be opened
 NOTHING_FOUND = "nothing_found"
 OUT_OF_TIME = "ran_out_of_time"
 NOT_TAKEN = "not_taken"

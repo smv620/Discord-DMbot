@@ -620,9 +620,12 @@ class BackgroundOffer(_Menu):
             f"🤖 Reading {_md(self.upload.label)}… this can take a few minutes for a long "
             "background."
         )
+        # (the campaign is named so a website read of the same campaign sees this one running;
+        # `at_once` stays 1, so Discord's button still takes the whole server)
         why_not = start_ai_read(
             guild,
             time.time(),
+            campaign.id,
             per_day=int(getattr(_bot(interaction).settings, "lore_reads_per_day", 20)),
         )
         if why_not == BUSY:
@@ -766,7 +769,7 @@ class BackgroundOffer(_Menu):
                     "keeps happening, tell your server owner."
                 )
         finally:
-            end_ai_read(guild)
+            end_ai_read(guild, campaign.id)
             # (the view's timeout ended with `stop()` above, so its pictures' folder goes here,
             # whether the read finished, failed or was cancelled, #4003)
             self.upload.close()
