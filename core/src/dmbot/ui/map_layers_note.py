@@ -28,7 +28,7 @@ log = logging.getLogger(__name__)
 
 UNDO = "↩ Undo"
 NOT_UNDONE = "Not undone: some of these were changed since. Change them in 🌍 World notes."
-PICTURE_GONE = "Not undone: that map's picture was deleted since."
+PICTURE_GONE = MAP_PICTURE_GONE  # (the store's plain words, #4697)
 TOO_OLD = "Not undone: that was too long ago. Change them in 🌍 World notes."
 ALREADY = "Already undone (by you or another DM)."
 GONE = "That campaign is gone, so there's nothing to undo."
@@ -149,7 +149,7 @@ class UndoMapLayersButton(
             await interaction.followup.send(TOO_OLD, ephemeral=True)
             return
         except MemoryRuleError as exc:  # (the store's reason says which: `_changes`' words)
-            # (picture gone: defensive, as the rows' batch holds no map row since #4700)
+            # (picture gone: the rows' batch names the map, which went with its picture, #4697)
             words = {ALREADY_UNDONE: ALREADY, MAP_PICTURE_GONE: PICTURE_GONE}.get(str(exc))
             await interaction.followup.send(words or NOT_UNDONE, ephemeral=True)
             return
