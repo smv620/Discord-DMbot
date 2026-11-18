@@ -354,6 +354,7 @@ async def keep_all(
     one_press: bool = False,
     players: str = "",
     listed: Collection[str] = (),
+    knowers: Sequence[str] = (),
 ) -> KeptAll:
     """Keep each of these ready connections. A refused one stays in the list. A connection DMbot
     inferred (#2959 item 5) is never kept by Keep all or the sure step: only by the DM's press on
@@ -367,10 +368,16 @@ async def keep_all(
     `players` (one press only, #4432): what the DM chose about the players on the card: "hide",
     "show", or "" for how it is now (a connection it replaces that is hidden stays hidden, one the
     players see stays seen); a secret name always stays hidden, whatever was chosen.
+    `knowers` (one press only, #4680): 👥 Some know, as Discord's picker saves it: the connection
+    is kept held back from the players, never secret, and exactly these characters know it, as the
+    DM's own choice. A connection with a secret name or a hand-over is refused whole, as on the
+    card.
     """
     done = KeptAll()
     if one_press and len(links) != 1:
         raise ValueError("One press keeps one connection.")
+    if knowers and not one_press:
+        raise ValueError("Some know is one press.")
     if not one_press:
         # (nor a hand-over, #4115: it ends what someone else holds, so it is seen before it is kept)
         links = [
@@ -384,6 +391,13 @@ async def keep_all(
     onto = await memory.ontology(guild_id, campaign_id) if links else None
     shown = await shown_entry_ids(memory, guild_id, campaign_id) if links else set()
     for tried, c in enumerate(links, 1):
+        if knowers and (c.secret or c.hand_over):
+            # 👥 Some know is never for a secret name or a hand-over: the card says so and writes
+            # nothing (Discord's SOME_KNOW_REFUSED), so here it is refused whole.
+            done.refused += 1
+            if progress is not None:
+                await progress(tried, total)
+            continue
         # (a 🤫 question a keep asks cites this connection's upload: #4524)
         with secret_questions.evidence(c.upload or ""):
             now = int(time.time())
@@ -400,7 +414,11 @@ async def keep_all(
             start = change_start(old, now)
             secret, unrevealed, flags = c.secret, kept_unrevealed(c, c.secret, shown), keep_flags
             pair = [r for r in old if {r.subject_id, r.object_id} == {c.subject_id, c.object_id}]
-            if one_press and not c.secret and (players or pair):
+            if knowers:
+                # 👥 Some know (#4680): held back from the players, never secret, and exactly the
+                # ticked characters know it; the DM's own choice, as Discord's picker makes it.
+                secret, unrevealed, flags = False, True, False
+            elif one_press and not c.secret and (players or pair):
                 # the card's Players line (#4432): the choice, else how the connection it replaces
                 # is
                 now_hidden = bool(pair) and all(r.secret or r.unrevealed for r in pair)
@@ -417,7 +435,7 @@ async def keep_all(
                     memory, guild_id, campaign_id, old, start, ended, held=held, link=c,
                     hidden=secret or unrevealed,
                 # (the same choice as the keep's own below: 🤫 Keep as secret, or Players: hide)
-                dm_chose_secret=not keep_flags or players == "hide",
+                dm_chose_secret=not keep_flags or players == "hide" or bool(knowers),
                 )  # fmt: skip
                 written = await memory.add_relation(
                     guild_id, campaign_id, c.subject_id, c.predicate, c.object_id,
@@ -427,14 +445,16 @@ async def keep_all(
                     # the uploader's character knows it, unless it uses a secret name (#2935)
                     # (a disguise is secret by nature, yet its character knows it, #3091)
                     known_by=(
-                        [c.known_by]
+                        list(knowers)
+                        if knowers
+                        else [c.known_by]
                         if c.known_by and (not secret or c.predicate == DISGUISED_AS)
                         else ()
                     ),
                     from_session_at=start if old else None,  # (starts as the old one ends)
                     keep_flags=flags,
                     # (🤫 Keep as secret or Players: hide is the DM's own word, #4524)
-                    dm_chose_secret=not keep_flags or players == "hide",
+                    dm_chose_secret=not keep_flags or players == "hide" or bool(knowers),
                     # whether they've met, from the quote's own words (#3881)
                     knows_how=kept_how(c, old),
                 )  # fmt: skip

@@ -123,6 +123,7 @@ WAITING = (
     # "Let players see it" (#4432): a keep that also lets the players see a connection it replaces
     # that was hidden (`keep_all(players="show")`, #4438). The plain `backstory-keep` never does.
     "backstory-keep-show",
+    "backstory-keep-some",  # 👥 Some know (#4680 part 2): held back, exactly the ticked know it
     "backstory-skip",
     "backstory-keep-all",
     "backstory-which-pick",
@@ -2182,11 +2183,31 @@ async def _answer_waiting(
     # (a hand-over is kept here too, #4122: the website's list says what keeping it ends, as the
     # Discord card does, and the same keep ends the previous holder's part; a hidden keep never
     # ends what the players see. Keep all still leaves it out: only its own press keeps it.)
+    ticked: list[str] = []
+    if a.action == "backstory-keep-some":
+        # 👥 Some know (#4680 part 2): the call Discord's picker makes. Never for a secret name or a
+        # hand-over (the card refuses both: nothing is written), and every ticked id must be a
+        # player character of this campaign now: a stale pick writes nothing rather than leave
+        # the connection known to nobody.
+        ticked = list(dict.fromkeys(a.text.split(",")))
+        if link.secret or link.hand_over or not ticked or len(ticked) > 25:
+            return _failed(BAD_TARGET)
+        for character in ticked:
+            found = await memory.entity(guild_id, cid, character)
+            if (
+                found is None
+                or found.type != "character"
+                or found.role != "player_character"
+                or found.status != "confirmed"
+                or found.merged_into is not None
+            ):
+                return _failed(BAD_TARGET)
     one = replace(link, secret=link.secret or a.flag)  # "keep as secret" only ever hides more
     # (the DM's own "Keep as secret" press hides an existing public twin; a spelling does not)
     kept = await keep.keep_all(
         memory, w.backstory, guild_id, cid, [one], keep_flags=not a.flag, one_press=True,
         players="show" if a.action == "backstory-keep-show" else "",
+        knowers=ticked,
     )  # fmt: skip
     return Outcome(result_id="1") if kept.kept else _failed(BAD_TARGET)
 

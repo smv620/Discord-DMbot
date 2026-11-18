@@ -1903,6 +1903,57 @@ class TheEdits(Editing):
         self.assertEqual(knows.get(rel.id), [wren])
         self.assertNotIn(ash, knows.get(rel.id, []))
 
+    async def test_some_know_keeps_a_backstory_connection_held_back_for_the_ticked(self) -> None:
+        """#4680 part 2: the call Discord's picker on a backstory card makes."""
+        wren, ash = await self.party("Wren", "Ash")
+        link = await self.waiting_link(self.mira, self.hall)
+        answer = await self.queue(kind="backstory", action="some", id=link, characters=[wren])
+        self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+        self.assertEqual((await self.poll(answer))["state"], "done")
+        (rel,) = [
+            r
+            for r in await self.memory.relations(self.g, self.one.id, include_secret=True)
+            if r.predicate == "knows" and r.object_id == self.hall
+        ]
+        self.assertTrue(rel.unrevealed)  # (held back from the players)
+        self.assertFalse(rel.secret)
+        knows = await self.memory.statement_knowers(self.g, self.one.id, "connection", [rel.id])
+        self.assertEqual(knows.get(rel.id), [wren])
+        self.assertNotIn(ash, knows.get(rel.id, []))
+        self.assertEqual(await self.backstory.waiting(self.g, self.one.id), [])  # (no longer waits)
+
+    async def test_some_know_on_a_backstory_connection_is_refused_for_a_secret_or_a_stranger(
+        self,
+    ) -> None:
+        (wren,) = await self.party("Wren")
+        secret = await self.waiting_link(self.mira, self.hall, secret=True)
+        plain = await self.waiting_link(self.rook, self.hall)
+        await self.queue(kind="backstory", action="some", id=secret, characters=[wren])
+        await self.queue(kind="backstory", action="some", id=plain, characters=[self.hall])
+        outcomes = await self.apply_waiting()
+        self.assertTrue(all(o.error for o in outcomes) and len(outcomes) == 2)
+        waiting = {w.id for w in await self.backstory.waiting(self.g, self.one.id)}
+        self.assertEqual(waiting, {secret, plain})  # (nothing was written)
+
+    async def test_some_know_on_a_backstory_connection_needs_a_dm_and_one_to_25_people(
+        self,
+    ) -> None:
+        (wren,) = await self.party("Wren")
+        link = await self.waiting_link(self.mira, self.hall)
+        body = {"kind": "backstory", "action": "some", "id": link}
+        self.assertEqual(
+            await self.refused_queue(self.player, **body, characters=[wren]), "not_allowed"
+        )
+        self.assertEqual(await self.refused_queue(**body, characters=[]), "bad_action")
+        self.assertEqual(await self.refused_queue(**body), "bad_action")
+        self.assertEqual(await self.refused_queue(**body, characters=["x"]), "not_found")
+        self.assertEqual(
+            await self.refused_queue(
+                kind="backstory", action="some", id="a" * 32, characters=[wren]
+            ),
+            "not_found",
+        )
+
     async def test_the_undo_of_some_know_puts_the_question_back(self) -> None:
         (wren,) = await self.party("Wren")
         claim = await self.claim()
