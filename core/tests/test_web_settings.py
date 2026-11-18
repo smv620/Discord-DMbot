@@ -773,7 +773,12 @@ class TheDoor(Settings):
         # (and "share to improve DMbot", on or off, #3741: the website's own switch)
         self.assertEqual(
             campaign_settings.CHOICES,
-            {**offered, "story_mode": STORY_MODES, "share_improve": ("on", "off")},
+            {
+                **offered,
+                "story_mode": STORY_MODES,
+                "share_improve": ("on", "off"),
+                "map_checks": ("on", "off"),  # (#4687: the website's switch for Discord's button)
+            },
         )
         async with self.web.user(self.session.user_id, session=self.session.id_hash) as conn:
             await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(self.g),))
