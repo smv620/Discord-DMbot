@@ -1,0 +1,10 @@
+[0:00:05] DM: Sergeant Duna Kell blocks the gangplank and asks your business in a gruff voice.
+[0:00:18] player_eri: Okthandom answers her in Dwarvish. We're only passing through.
+[0:00:30] DM: She understands him, and answers in Dwarvish too: then pay the toll.
+[0:00:44] DM: Pell Arrow mutters a curse in Halfling as he counts the coins.
+[0:00:58] player_jac: Belleros replies to him in Elfish, just to be polite.
+[0:01:10] DM: The runes carved on the toll hut's door are Elvish.
+[0:01:22] player_ist: Cerric doesn't speak Giant, so he just nods at the big carter.
+[0:01:35] player_owe: Does anyone here speak Orc?
+[0:01:48] player_owe: Claude buys a round of cider for the ferry crew.
+[0:02:00] DM: The ferry pushes off into the grey water.

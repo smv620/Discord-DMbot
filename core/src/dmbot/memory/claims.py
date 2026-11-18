@@ -1985,6 +1985,7 @@ class ClaimStore:
             secret_questions,
             thread_progress,
             thread_suggestions,
+            trait_offers,
         )
 
         async with self._store._db.guild(guild_id) as conn:
@@ -1997,6 +1998,8 @@ class ClaimStore:
             readings += await deed_proposals.forget(conn, guild_id, user_id)
             readings += await reveal_proposals.forget(conn, guild_id, user_id)  # (#2996)
             readings += await met_store.forget_speaker(conn, guild_id, user_id)  # (#3172 slice 5)
+            # (the language questions heard in their lines, #4745)
+            readings += await trait_offers.forget_speaker(conn, guild_id, user_id)
             # (the private scenes they spoke in, #2996 rule 5)
             readings += await private_scene_store.forget_speaker(conn, guild_id, user_id)
             readings += await scenes.forget(conn, guild_id, user_id)
