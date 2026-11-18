@@ -52,7 +52,7 @@ class TheSheet(unittest.IsolatedAsyncioTestCase):
         )
         text = rd.prose_message([beat(1)], "", set(), None, who_and_what=got)
         self.assertIn(pl.REVEAL_MARK + SAID, text)
-        self.assertIn("say it once, as narration", text)
+        self.assertIn("that line once, as narration", text)
 
     async def test_a_reveal_keeps_its_room_when_the_sheet_is_full(self) -> None:
         w = worker(AsyncMock(return_value=[SAID]), AsyncMock(return_value=["Town: hills."]))

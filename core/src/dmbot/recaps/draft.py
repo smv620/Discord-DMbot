@@ -668,7 +668,8 @@ def prose_message(
     if who_and_what:
         lines = "\n".join(f"- {quoted(x)}" for x in who_and_what[:SHEET_LINES])
         cite = (
-            ' A line that starts "Cite this" is the one exception: say it once, as narration.'
+            ' A line that starts "Cite this" is the one exception to "never add an event": say '
+            "that line once, as narration, in its own words, and add nothing to it."
             if any(x.startswith(REVEAL_MARK) for x in who_and_what[:SHEET_LINES])
             else ""
         )
@@ -1223,8 +1224,8 @@ def tie_notes(text: str, ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]]
 # A sheet line that is a partial reveal for the recap to cite (#4737, `DMBOT_RECAP_REVEALS`): who
 # learned something, never what. The ux-critic's wording: cited once, in these words, nothing added.
 REVEAL_MARK = (
-    "Cite this once, as narration, in these words or very close to them; add nothing about what "
-    "was learned or said, and don't guess: "
+    "Cite this once, as narration, in these exact words, in the part of the recap where it "
+    "happened; do not say what was learned, how, or why: "
 )
 _LEARNS = re.compile(
     r"\b(?:learn(?:ed|s|t)|discover(?:ed|s)|found out|realis(?:ed|es)|realiz(?:ed|es)"
@@ -1280,8 +1281,9 @@ def reveal_problems(
             for hit in _LEARNS.finditer(sentence):
                 if not allowed.match(sentence[hit.end() :]):
                     problems.append(
-                        "a sentence says what someone learned: a secret learned by only some of "
-                        'the characters is cited as "learned something" and nothing more'
+                        "a sentence says more than the sheet's line allows about what someone "
+                        'learned: use the sheet\'s own line, like "<Name> learned something.", '
+                        "and add nothing after it"
                     )
                     return problems
         if not named and advisory is not None:
