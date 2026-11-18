@@ -2868,6 +2868,16 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         clues: structuredClone(clues),
       };
     },
+    // The table's guesses about a thread (#4665): `t1` has two lines (with the markdown the API keeps), `t2` one; a `.player` ref is refused.
+    async threadGuesses(ref, thread): Promise<{ lines: string[] }> {
+      calls.push(`threadGuesses:${ref}:${thread}`);
+      await reachable();
+      signedIn();
+      if (/\.player$/.test(ref)) throw new ApiError("not-allowed");
+      if (thread === "t1") return { lines: ["💭 **Guesses:**", "• Cerric is sure Mira Vell poisoned the Old Well", "• The whole party thinks the miller lied"] };
+      if (thread === "t2") return { lines: ["💭 **Guess:** Oswin doubts the old guide is honest"] };
+      return { lines: [] };
+    },
     async changeThreadClues(ref, thread, change: ThreadCluesChange): Promise<{ batch: number | null }> {
       calls.push(`changeThreadClues:${ref}:${thread}:${change.action}`);
       await reachable();
