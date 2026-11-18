@@ -279,3 +279,4 @@ Every row in Section 1 marked "built, switched off" or "in an open PR" is on the
   website's campaign settings (Supervisor's ruling on #3741). Discord shows it read-only in what is
   switched on (#3693).
 | The clues of a story thread (add, false lead, take off, Undo) | the clues card in 🧵 Story threads (Discord, #4625) | Yes, on the quest sheet (#4625), behind `THREAD_CLUES_LIVE` (page built, switched off) |
+| The table's guesses about a story thread (read only) | the guesses in 🧵 Story threads (Discord, #4665) | Yes, on the quest sheet (#4665), behind `THREAD_GUESSES_LIVE` (page built, switched off) |
