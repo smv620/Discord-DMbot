@@ -1,0 +1,7 @@
+Two Harbours (invented for DMbot's tests; every name here is made up)
+
+Frostmere is a frozen town on a grey northern bay. Its fishers mend their nets by lamplight.
+
+Sunreach is a sweltering port far to the south, where the market opens before dawn to beat the sun.
+
+Four travellers sail between the two: Cerric Vanya'elen, Belleros Stormgrace, Okthandom Korran and Claude Ambere.
