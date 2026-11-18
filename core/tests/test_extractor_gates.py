@@ -207,6 +207,7 @@ class Gates(unittest.IsolatedAsyncioTestCase):
                 story_reveals_on=False,
                 story_reveals_precheck=False,
                 met_unnamed_on=False,
+                session_languages_on=False,
                 story_who_on=False,
                 story_family_only=False,
                 story_extractor_max_calls=480,
