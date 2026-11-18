@@ -252,10 +252,29 @@ async def undo_upload_result(
     if broke and done == 0:
         await notices.give_back_undo(guild_id, notice_id)  # nothing changed: again
         return Undone(COULD_NOT)
+    # (only once the undo has really started, so COULD_NOT's "nothing was changed" stays true)
+    await _take_back_pictures(bot, campaign.guild_id, campaign.id, notice_id)
     if broke:
         return Undone(STOPPED.format(done=done, total=total), done, total, stopped=True)
     answer = NOTHING_LEFT if done == total else PARTLY.format(done=done, total=total)
     return Undone(answer, done, total)
+
+
+async def _take_back_pictures(bot: Any, guild_id: int, campaign_id: str, notice_id: str) -> None:
+    """The pictures the upload kept for the DMs go with its Undo (#4003 slice c), files and all,
+    as a picture taken back goes (`PictureKeeper.discard`: its link then says it was removed). A
+    map made from one stays (#4344). Never stops the undo; counts only in the log."""
+    store, keeper = getattr(bot, "picture_store", None), getattr(bot, "picture_keeper", None)
+    if store is None or keeper is None:
+        return
+    try:
+        gone = 0
+        for picture in await store.for_notice(guild_id, campaign_id, notice_id):
+            gone += int(await keeper.discard(guild_id, campaign_id, picture, unless_map=True))
+        if gone:
+            log.info("Undoing an upload took back %d of its pictures", gone)
+    except Exception as exc:
+        log.warning("Undoing an upload's pictures failed (%s)", type(exc).__name__)
 
 
 @dataclass(frozen=True, slots=True)

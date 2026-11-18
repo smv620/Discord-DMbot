@@ -5,7 +5,9 @@ Two routes live on this module:
 * `GET /pictures/{code}` (and `/preview`): the link anyone can open in a new tab. The code is the
   whole key (256 random bits). A public picture answers with a short redirect to a signed address
   of the private bucket, good for a few minutes, so the link itself never expires. A private one
-  answers the same way only to a signed-in person whose server holds the campaign. A removed one,
+  answers the same way only to a signed-in person whose server holds the campaign, and a DM-only
+  one (from a DM's uploaded file, #4003 slice c) only to the campaign's DMs: to anyone else it is
+  the one `not_found`, as a code that names nothing. A removed one,
   and a private one for anyone else, answer with a few plain words and nothing else: no poster, no
   description, no campaign. A code that names nothing is one `not_found`.
 * `GET /me/campaigns/{ref}/pictures`: the gallery, for any member of the campaign's server.
@@ -114,6 +116,8 @@ async def resolve_link(
         found = (await cur.fetchone() or {}).get("r")
     if found is None:
         return None
+    if found.get("dmOnly") and not await _is_dm_of(db, session, code, str(found["guild"])):
+        return None  # (#4003 slice c: to anyone but its DMs, one "not found", removed or not)
     if found["removed"]:
         words = REMOVED_FOR_ROOM_WORDS if found["forRoom"] else REMOVED_WORDS
         return Link("removed", words=words)
@@ -127,6 +131,20 @@ async def resolve_link(
     if sign is None or not key:
         return Link("not_open", words=NOT_OPEN_WORDS)
     return Link("redirect", url=sign(key))
+
+
+async def _is_dm_of(db: Database, session: Session | None, code: str, guild: str) -> bool:
+    """Whether the signed-in person is a DM of the DM-only picture's campaign, asked now as that
+    person in that server (`dmbot_picture_for_dm`). Anyone else, a member who is not a DM
+    included, is no."""
+    if session is None or not guild.isdigit():
+        return False
+    if not any(str(g.id) == guild for g in session.guilds):
+        return False
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, int(guild))
+        cur = await conn.execute("SELECT dmbot_picture_for_dm(%s) AS ok", (code,))
+        return bool((await cur.fetchone() or {}).get("ok"))
 
 
 def _cursor(raw: object) -> tuple[int, int]:
@@ -216,6 +234,7 @@ async def read_pictures(
                 "permanent": bool(p["permanent"]),
                 "isPublic": bool(p["public"]),
                 "mine": bool(p["mine"]),
+                "dmOnly": bool(p.get("dmOnly", False)),  # (#4003 slice c; shown by #4761)
             }
             for p in got["pictures"]
         ],
