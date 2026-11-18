@@ -426,10 +426,10 @@ class TheWorker(NamesTest):
         now = int(time.time())
         async with self.db.guild(GUILD) as conn:
             await conn.execute(
-                "INSERT INTO lore_pdf_staged (guild_id, campaign_id, id, user_id, object_key,"
+                "INSERT INTO lore_pdf_staged (guild_id, campaign_id, id, object_key,"
                 " sha256, size_bytes, state, created_at, updated_at) VALUES"
-                " (%s, %s, %s, %s, %s, %s, %s, 'reading', %s, %s)",
-                (GUILD, self.campaign.id, "b" * 32, DM, self.PDF_KEY,
+                " (%s, %s, %s, %s, %s, %s, 'reading', %s, %s)",
+                (GUILD, self.campaign.id, "b" * 32, self.PDF_KEY,
                  hashlib.sha256(self.PDF_BYTES).hexdigest(), len(self.PDF_BYTES), now, now),
             )  # fmt: skip
         self.bot._lore_pdfs = lambda: lore_pdfs.LorePdfs(  # type: ignore[method-assign]
