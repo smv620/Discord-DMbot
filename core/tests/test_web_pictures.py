@@ -79,6 +79,7 @@ class Kept(Base):
         gone: bool = False,
         for_room: bool = False,
         size: int = 2 * MB,
+        dm_only: bool = False,
     ) -> str:
         link = code()
         async with self.db.guild(THURSDAY.id) as conn:
@@ -86,7 +87,8 @@ class Kept(Base):
                 "INSERT INTO campaign_pictures (guild_id, campaign_id, poster_id, session_id,"
                 " description, code, public, permanent, consent_version, right_granted_at, sha256,"
                 " object_key, preview_key, size_bytes, preview_bytes, made_at, deleted_at,"
-                " removed_for_room) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,7,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+                " removed_for_room, dm_only)"
+                " VALUES (%s,%s,%s,%s,%s,%s,%s,%s,7,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
                 (
                     THURSDAY.id,
                     campaign or self.one.id,
@@ -105,6 +107,7 @@ class Kept(Base):
                     at,
                     at + 1 if gone else None,
                     for_room,
+                    dm_only,
                 ),
             )
         return link
@@ -124,6 +127,95 @@ class Kept(Base):
             api_url="https://api.example",
             **filters,
         )
+
+
+class TheDmOnlyPictures(Kept):
+    """A picture from a DM's uploaded file (#4003 slice c, Supervisor's ruling condition 1): its
+    link answers "not found" to a player and to a member who is not a DM, and the gallery leaves it
+    out for them; the campaign's DMs open and list it."""
+
+    async def test_its_link_is_not_found_to_anyone_but_the_campaigns_dms(self) -> None:
+        link = await self.keep(public=False, dm_only=True)
+        self.assertIsNone(await pictures.resolve_link(self.web, link, None, sign=sign))
+        player = await self.signed_in(BOB)  # plays in "One", a DM of "Two" only
+        self.assertIsNone(await pictures.resolve_link(self.web, link, player, sign=sign))
+        member = await self.signed_in(CAROL)  # in the server, no part in the campaign
+        self.assertIsNone(await pictures.resolve_link(self.web, link, member, sign=sign))
+        dm = await pictures.resolve_link(self.web, link, self.session, sign=sign)  # Alice
+        assert dm is not None
+        self.assertEqual(dm.kind, "redirect")
+        preview = await pictures.resolve_link(self.web, link, self.session, sign=sign, preview=True)
+        assert preview is not None
+        self.assertTrue(preview.url.endswith(".webp?signed"))
+
+    async def test_removed_it_is_still_not_found_to_a_player_and_removed_to_a_dm(self) -> None:
+        link = await self.keep(public=False, dm_only=True, gone=True)
+        player = await self.signed_in(BOB)
+        self.assertIsNone(await pictures.resolve_link(self.web, link, player, sign=sign))
+        dm = await pictures.resolve_link(self.web, link, self.session, sign=sign)
+        assert dm is not None
+        self.assertEqual(dm.kind, "removed")
+
+    async def test_the_dm_check_is_the_databases_and_needs_the_server(self) -> None:
+        link = await self.keep(public=False, dm_only=True)
+        chat = await self.keep(public=False)  # a chat picture is never "for a DM"
+        async with self.web.user(ALICE.id, session=self.session.id_hash) as conn:
+            cur = await conn.execute("SELECT dmbot_picture_for_dm(%s) AS ok", (link,))
+            unscoped = await cur.fetchone()
+            await conn.execute("SELECT set_config('dmbot.guild_id', %s, true)", (str(THURSDAY.id),))
+            cur = await conn.execute(
+                "SELECT dmbot_picture_for_dm(%s) AS a, dmbot_picture_for_dm(%s) AS b,"
+                " dmbot_picture_for_dm(%s) AS c",
+                (link, chat, code()),
+            )
+            got = await cur.fetchone()
+        assert unscoped is not None and got is not None
+        self.assertFalse(unscoped["ok"])
+        self.assertEqual((got["a"], got["b"], got["c"]), (True, False, False))
+
+    async def test_the_gallery_lists_it_to_the_dms_only_marked_and_its_lists_too(self) -> None:
+        await self.keep(description="a chat map")
+        secret_sid = await self.session_with_lines(START + 7200)
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE transcript_sessions SET speaker_names = %s WHERE id = %s",
+                (Jsonb({"4004": "Vex"}), secret_sid),
+            )
+        hidden = await self.keep(
+            public=False, dm_only=True, poster=4004, sid=secret_sid, at=START + 30
+        )
+        dm = await self.gallery()
+        first = dm["pictures"][0]
+        self.assertEqual((first["code"], first["dmOnly"]), (hidden, True))
+        self.assertEqual(len(dm["pictures"]), 2)
+        self.assertIn(2, dm["sessions"])
+        self.assertIn("Vex", dm["posters"])
+        player = await self.gallery(await self.signed_in(BOB))
+        self.assertEqual([p["dmOnly"] for p in player["pictures"]], [False])
+        self.assertNotIn(2, player["sessions"])  # (its session is not even listed)
+        self.assertNotIn("Vex", player["posters"])  # (nor who posted it)
+
+    async def test_its_poster_who_is_not_a_dm_does_not_see_it_either(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:  # (only its own pictures for outsiders)
+            await conn.execute(
+                "UPDATE campaigns SET channels_visibility = 'people' WHERE guild_id = %s",
+                (THURSDAY.id,),
+            )
+        await self.keep(public=False, dm_only=True, poster=CAROL.id)  # (a DM, once)
+        await self.keep(poster=CAROL.id, description="her own")
+        got = await self.gallery(await self.signed_in(CAROL))
+        self.assertEqual([p["dmOnly"] for p in got["pictures"]], [False])
+
+    async def test_it_can_never_be_made_public(self) -> None:
+        async with self.db.guild(THURSDAY.id) as conn:
+            with self.assertRaises(Exception):  # noqa: B017 (the check constraint, any error)
+                await conn.execute(
+                    "INSERT INTO campaign_pictures (guild_id, campaign_id, poster_id, session_id,"
+                    " description, code, public, sha256, object_key, preview_key, size_bytes,"
+                    " preview_bytes, made_at, dm_only) VALUES (%s, %s, 1001, '', '', %s, TRUE,"
+                    " %s, 'k', 'p', 1, 1, 1, TRUE)",
+                    (THURSDAY.id, self.one.id, code(), secrets.token_hex(32)),
+                )
 
 
 class TheOpenLink(Kept):

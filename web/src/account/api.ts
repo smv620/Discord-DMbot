@@ -646,6 +646,10 @@ export interface PictureItem {
   isPublic: boolean;
   /** The viewer posted it, so the viewer may make it private or delete it. */
   mine: boolean;
+  /** A picture DMbot read out of an uploaded document (#4761): only the campaign's DMs are ever sent it. Absent from an older API. */
+  dmOnly?: boolean;
+  /** The upload it came from, when the API says (#4761). */
+  uploadLabel?: string;
 }
 /** The storage a game master can see: the campaign's total and its permanent part, in megabytes (#3275). */
 export interface PictureUsage {

@@ -157,6 +157,25 @@ class TheChecks(unittest.TestCase):
         self.assertEqual(check("Wulfgar had a quiet moment.", line, advisory), [])
         self.assertEqual(advisory, [])
 
+    def test_reveal_scene_detail_after_the_word_is_flagged(self) -> None:
+        line = pl.REVEAL_MARK + "Okthandom and Wulfgar had a private word."
+        narration = (
+            "Okthandom and Wulfgar had a private word, and Okthandom learned that Vane lied."
+        )
+        problems = check(narration, line)
+        self.assertEqual(len(problems), 1)
+        self.assertNotIn("lied", problems[0])
+
+    def test_reveal_one_of_two_subjects_is_fine(self) -> None:
+        line = pl.REVEAL_MARK + "Wulfgar learned something about Vane and the Tower."
+        self.assertEqual(check("Wulfgar learned something about the Tower.", line), [])
+
+    def test_reveal_confided_that_is_flagged(self) -> None:
+        self.assertEqual(len(check("Okthandom confided that Vane lied.")), 1)
+
+    def test_reveal_realised_that_is_flagged(self) -> None:
+        self.assertEqual(len(check("Okthandom realised that Vane lied.")), 1)
+
 
 class TheBotsReader(unittest.IsolatedAsyncioTestCase):
     def bot(self, recorded: set[int]) -> Any:
@@ -263,3 +282,18 @@ class TheBotsReader(unittest.IsolatedAsyncioTestCase):
         job: Any = SimpleNamespace(session_at=100, speakers=(11,))
         self.assertEqual(await RecapFeatures.recap_reveals(bot, 1, "c", job), [])
         bot.memory.recap_reveals.assert_not_awaited()
+
+    async def test_recap_reveals_a_thread_the_party_does_not_know_does_not_matter(self) -> None:
+        threads = [
+            self._thread("t-known", OPEN, ["n-known"]),
+            self._thread("t-hidden", OPEN, ["n-hidden"]),
+        ]
+        bot = self._reader(threads)
+        bot.memory.visible_to = AsyncMock(
+            return_value=SimpleNamespace(
+                how_sure=lambda kind, i: "sure" if i == "t-known" else None
+            )
+        )
+        job: Any = SimpleNamespace(session_at=100, speakers=(11,))
+        await RecapFeatures.recap_reveals(bot, 1, "c", job)
+        self.assertEqual(set(bot.memory.recap_reveals.await_args.args[4]), {"t-known", "n-known"})

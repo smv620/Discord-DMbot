@@ -585,6 +585,12 @@ class Upload:
     picture_files: PictureFiles | None = field(default=None, compare=False)
     pictures_found: int = 0
     pictures_over: int = 0
+    # The DM who uploaded it (#4003 slice c: its kept pictures are theirs as poster); 0 when not
+    # known, and then nothing is kept.
+    uploader_id: int = 0
+    # Whether its read pictures will be kept for the DMs (kept pictures are set up): the offer then
+    # says so before the DM's yes, and only then are they kept (#4003 slice c).
+    keeps_pictures: bool = False
 
     def close(self) -> None:
         """The upload is done with: its pictures' folder goes (a no-op without one)."""
