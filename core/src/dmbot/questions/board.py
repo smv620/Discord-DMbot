@@ -90,6 +90,7 @@ def view(guild_id: int, campaign_id: str, found: Mapping[str, Counted]) -> disco
     from dmbot.ui.heard_review import HeardReviewButton
     from dmbot.ui.map_answer import OpenButton as MapsOpenButton
     from dmbot.ui.names import RecapNamesButton
+    from dmbot.ui.party_join import JoinsOpenButton
     from dmbot.ui.secret_questions import SecretQuestionsButton
     from dmbot.ui.thread_questions import ThreadQuestionsButton
     from dmbot.ui.trait_questions import TraitQuestionsButton
@@ -115,6 +116,8 @@ def view(guild_id: int, campaign_id: str, found: Mapping[str, Counted]) -> disco
         out.add_item(ThreadQuestionsButton(campaign_id))
     if kinds.SECRETS in waiting:
         out.add_item(SecretQuestionsButton(campaign_id))
+    if kinds.JOINS in waiting:
+        out.add_item(JoinsOpenButton(campaign_id))
     if kinds.MAPS in waiting:
         out.add_item(MapsOpenButton(campaign_id))
     if kinds.CLAIMS in waiting:

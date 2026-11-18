@@ -70,6 +70,7 @@ from dmbot.memory import (
 )
 from dmbot.memory import hand_over as hand_over_mod
 from dmbot.memory import isolated as isolated_mod
+from dmbot.memory import join_questions as join_questions_mod
 from dmbot.memory import lies as lies_mod
 from dmbot.memory import map_facts as mf
 from dmbot.memory import party as party_mod
@@ -793,6 +794,9 @@ class MemoryStore:
         self._db = db
         self._clock = clock
         self.keep_days = keep_days  # how long Undo works: older change-log rows are pruned
+        # `DMBOT_PARTY_JOIN` (#4537 slice 2b): a character joining a party with members is asked
+        # about, never silently copied what the party knows. Off: today's copy (#2995).
+        self.party_join = False
         # The memory version each campaign's flags were last checked at (#347): nothing
         # changed since, nothing to check. Only in this process; a restart checks again.
         # A deleted campaign's entry stays: a few bytes, and never matched again.
@@ -841,6 +845,7 @@ class MemoryStore:
                 conn, guild_id, campaign_id, start, source=source, now=int(self._clock()),
                 undoes=undoes, dm_chose_secret=dm_chose_secret,
             )  # fmt: skip
+            changes.party_join = self.party_join
             # The DM's own fix to a name no chain linked to the party is checked later, 15 minutes
             # after the last one, when the campaign shares its story to improve DMbot (#3741). Who
             # was isolated is read before the write, in its transaction; with the switch off this
@@ -866,6 +871,8 @@ class MemoryStore:
                     " AND campaign_id = %s AND id = ANY(%s)",
                     (changes.batch, guild_id, campaign_id, changes.asked),
                 )
+            if changes.join_asked and changes.batch is not None:
+                await join_questions_mod.set_batch(changes, changes.join_asked, changes.batch)
             if changes.relation_changes or changes.belief_additions or changes.deleted_items:
                 await self._report_fixed(conn, guild_id, campaign_id, changes)
             if changes.restored or changes.unbelieved:
@@ -3131,6 +3138,141 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, DM) as w:
             try:
                 span = await party_record.close_span(w, entity_id, ended)
+            except party_record.PartyError as exc:
+                raise MemoryRuleError(str(exc)) from exc
+            return Written(span, w.batch)
+
+    # The join question (#4537 slice 2b, §5; `memory/join_questions.py`). The answers are the
+    # DM's: "Only what everyone knows" writes nothing, "What the party knows" and "From the first
+    # session" copy what the party knows in one change with its Undo. Answering again is refused
+    # (`AlreadyAnswered`), except "What the party knows" after "Only what everyone knows".
+
+    async def join_questions_to_send(
+        self, guild_id: int, campaign_id: str
+    ) -> list[join_questions_mod.Question]:
+        """Claim the join questions not sent yet, to send as one message, with none taken while
+        one of the campaign's sessions is running. Give them back with `unclaim_join_questions`
+        when no DM could be reached."""
+        async with self._db.guild(guild_id) as conn:
+            return await join_questions_mod.claim(conn, guild_id, campaign_id, int(self._clock()))
+
+    async def unclaim_join_questions(self, guild_id: int, campaign_id: str, group_id: str) -> None:
+        async with self._db.guild(guild_id) as conn:
+            await join_questions_mod.unclaim(conn, guild_id, campaign_id, group_id)
+
+    async def join_question_group(
+        self, guild_id: int, campaign_id: str, group_id: str
+    ) -> list[join_questions_mod.Question]:
+        async with self._db.guild(guild_id) as conn:
+            return await join_questions_mod.group(conn, guild_id, campaign_id, group_id)
+
+    async def join_question_groups_waiting(self, guild_id: int, campaign_id: str) -> list[str]:
+        """The sent join questions still unanswered (❓ Questions for you), oldest first."""
+        async with self._db.guild(guild_id) as conn:
+            return await join_questions_mod.waiting_groups(conn, guild_id, campaign_id)
+
+    async def join_questions_waiting(
+        self, guild_id: int, campaign_id: str
+    ) -> tuple[int, int | None]:
+        """How many characters wait for the DM's join answer, and since when."""
+        async with self._db.guild(guild_id) as conn:
+            return await join_questions_mod.count_waiting(conn, guild_id, campaign_id)
+
+    async def party_known_count(
+        self, guild_id: int, campaign_id: str, entity_ids: Sequence[str]
+    ) -> int:
+        """How many things "What the party knows" would give these characters now."""
+        async with self._read(guild_id, campaign_id) as scope:
+            return await knowers.party_known_count(scope, entity_ids)
+
+    async def join_question_waiting_for(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> bool:
+        """Whether this character has a join question waiting (the since-when prompt's test)."""
+        async with self._db.guild(guild_id) as conn:
+            return await join_questions_mod.waiting_for(conn, guild_id, campaign_id, entity_id)
+
+    async def join_answer_everyone(
+        self, guild_id: int, campaign_id: str, group_id: str
+    ) -> list[join_questions_mod.Question]:
+        """ "Only what everyone knows": nothing is written. Returns the questions it answered;
+        `AlreadyAnswered` when none was still waiting."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE memory_join_questions SET status = 'everyone', answered_at = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND group_id = %s"
+                " AND status = 'waiting' RETURNING id, entity_id, status, group_id, sent_at,"
+                " created_at",
+                (int(self._clock()), guild_id, campaign_id, group_id),
+            )
+            done = [join_questions_mod._question(r) for r in await cur.fetchall()]
+        if not done:
+            raise join_questions_mod.AlreadyAnswered("Another DM already answered this.")
+        return done
+
+    async def join_answer_party(
+        self, guild_id: int, campaign_id: str, group_id: str
+    ) -> Written[int]:
+        """ "What the party knows": the characters of this message who are still in the party are
+        given what every other current member knows (`knowers.inherit_table_rows`), one change,
+        one Undo. Allowed after "Only what everyone knows"; `AlreadyAnswered` once copied. When
+        there was nothing to copy the question is left as it was, so it can be answered again once
+        the party knows something."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            cur = await w.conn.execute(
+                "SELECT id, entity_id FROM memory_join_questions WHERE guild_id = %s"
+                " AND campaign_id = %s AND group_id = %s AND status IN ('waiting', 'everyone')"
+                " ORDER BY created_at, id FOR UPDATE",
+                (*w.ids, group_id),
+            )
+            rows = await cur.fetchall()
+            if not rows:
+                raise join_questions_mod.AlreadyAnswered("Another DM already answered this.")
+            given = await knowers.inherit_table_rows(w, [str(r["entity_id"]) for r in rows])
+            if given and w.batch is not None:
+                await w.conn.execute(
+                    "UPDATE memory_join_questions SET status = 'party', answered_at = %s,"
+                    " answered_batch = %s WHERE guild_id = %s AND campaign_id = %s"
+                    " AND id = ANY(%s)",
+                    (w.now, w.batch, *w.ids, [str(r["id"]) for r in rows]),
+                )
+            return Written(given, w.batch)
+
+    async def join_from_first_session(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> Written[int]:
+        """ "From the first session" (Supervisor's ruling B on #4537): the character was at the
+        table all along, so the stretch is dated from the campaign's first session and, in the
+        same change (one Undo), the character is given what the party knows; a join question
+        still waiting is answered by it. Refused (`MemoryRuleError`) with no session yet or for a
+        character not in the party."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            first = await party_record.first_session_start(w)
+            if first is None:
+                raise MemoryRuleError("This campaign has no sessions yet.")
+            try:
+                await party_record.move_start(w, entity_id, first)
+            except party_record.PartyError as exc:
+                raise MemoryRuleError(str(exc)) from exc
+            given = await knowers.inherit_table_rows(w, [entity_id])
+            # (the stretch moved, so the change has its number: its Undo makes this wait again,
+            # still unsent if it was, so it is sent as the DM is then told)
+            await w.conn.execute(
+                "UPDATE memory_join_questions SET status = 'first', answered_at = %s,"
+                " answered_batch = %s WHERE guild_id = %s AND campaign_id = %s"
+                " AND entity_id = %s AND status = 'waiting'",
+                (w.now, w.batch, *w.ids, entity_id),
+            )
+            return Written(given, w.batch)
+
+    async def join_from_session(
+        self, guild_id: int, campaign_id: str, entity_id: str, started_at: int
+    ) -> Written[party_record.Span]:
+        """ "Or pick a session…" with a later session: the stretch is dated from that session's
+        start (one change, one Undo). Sessions were missed, so the join question stands."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            try:
+                span = await party_record.move_start(w, entity_id, started_at)
             except party_record.PartyError as exc:
                 raise MemoryRuleError(str(exc)) from exc
             return Written(span, w.batch)
@@ -9335,6 +9477,7 @@ class MemoryStore:
             async with self._write(guild_id, campaign_id, source, undoes=batch) as w:
                 await undo_batch(w, batch)
                 await secret_questions_mod.undo(w, batch)
+                await join_questions_mod.undo(w, batch)
                 await _recheck_led_to_after_undo(w, batch)
                 await _settle_kinds_after_undo(w, batch)
                 await _reopen_claims_after_undo(w, batch)

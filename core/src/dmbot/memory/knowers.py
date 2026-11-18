@@ -1293,7 +1293,9 @@ async def inherit_table_rows(w: Changes, joined: Sequence[str]) -> int:
     character holds it), nor a DM-only, NPC-only or sleeping row (those are held by no player
     character, or are left out of `select`). With no other player character there is no table
     to copy, so what the flags show the players is given instead (the rule of `follow_flags`).
-    Logged in the joining change, so one Undo takes it back. Returns the rows made."""
+    Logged in the joining change, so one Undo takes it back. With `DMBOT_PARTY_JOIN` on it runs
+    only on the DM's word (#4537 rule 13.4: "What the party knows"). Returns how many statements
+    were given (to one character or several), the number `party_known_count` showed."""
     if not joined:
         return 0
     from dmbot.memory import party_record  # ("the party" is one function, #4537 rule 13.1)
@@ -1305,17 +1307,51 @@ async def inherit_table_rows(w: Changes, joined: Sequence[str]) -> int:
     new_views = {i: await _view_of(w, i) for i in new}
     w.player_views = None  # (made views may have changed the list)
     others = {await _view_of(w, i) for i in ids - set(new)}
+    made = await _inherit_plan(w, list(new_views.values()), others)
+    await w.insert_many(
+        KNOWERS, [_row(c, st, v, w.now) | {"confidence": sure} for c, st, v, sure in made]
+    )
+    return len({(c, st) for c, st, _, _ in made})
+
+
+async def party_known_count(r: Scope, joined: Sequence[str]) -> int:
+    """How many statements `inherit_table_rows` would give these characters now, read without
+    writing (the join question's "212 things", which the answer then copies: Supervisor's ruling
+    on #4537, "the count uses the gate's own count"). A character with no point of view yet holds
+    nothing."""
+    from dmbot.memory import party_record
+
+    ids = set(await party_record.current_members(r))
+    new = [i for i in dict.fromkeys(joined) if i in ids]
+    if not new:
+        return 0
+    views = {
+        str(p["entity_id"]): str(p["id"])
+        for p in await r.select(PERSPECTIVES, " AND entity_id = ANY(%s)", [sorted(ids)])
+    }
+    if any(i not in views for i in ids - set(new)):
+        return 0  # (another member with no point of view holds nothing: nothing is shared by all)
+    others = {views[i] for i in ids - set(new)}
+    new_views = [views.get(i, f"(none:{i})") for i in new]
+    made = await _inherit_plan(r, new_views, others)
+    return len({(c, st) for c, st, _, _ in made})
+
+
+async def _inherit_plan(
+    r: Scope, new_views: Sequence[str], others: set[str]
+) -> list[tuple[str, str, str, float]]:
+    """(column, statement, view, sureness) for each row `inherit_table_rows` would make."""
     held: dict[tuple[str, str], dict[str, float]] = {}
     asleep: set[tuple[str, str, str]] = set()  # (column, statement, view) put to sleep by a hide
-    for r in await w.select(KNOWERS, " AND cardinality(hidden_by) > 0", dormant=True):
+    for row in await r.select(KNOWERS, " AND cardinality(hidden_by) > 0", dormant=True):
         for column in ("about_entity_id", "state_id", "relation_id", "alias_id"):
-            if r[column] is not None:
-                asleep.add((column, r[column], r["perspective_id"]))
-    for r in await w.select(KNOWERS):
+            if row[column] is not None:
+                asleep.add((column, row[column], row["perspective_id"]))
+    for row in await r.select(KNOWERS):
         for column in ("about_entity_id", "state_id", "relation_id", "alias_id"):
-            if r[column] is not None:
-                held.setdefault((column, r[column]), {})[r["perspective_id"]] = float(
-                    r["confidence"]
+            if row[column] is not None:
+                held.setdefault((column, row[column]), {})[row["perspective_id"]] = float(
+                    row["confidence"]
                 )
     wanted: dict[tuple[str, str], float] = {}
     if others:
@@ -1323,19 +1359,17 @@ async def inherit_table_rows(w: Changes, joined: Sequence[str]) -> int:
             if others <= set(who):
                 wanted[key] = min(who[o] for o in others)
     else:
-        wanted = await _shown_by_flags(w)
-    made = [
-        _row(column, statement, view, w.now) | {"confidence": sure}
+        wanted = await _shown_by_flags(r)
+    return [
+        (column, statement, view, sure)
         for (column, statement), sure in wanted.items()
-        for view in new_views.values()
+        for view in new_views
         if view not in held.get((column, statement), {})
         and (column, statement, view) not in asleep  # (a sleeping row wakes by itself)
     ]
-    await w.insert_many(KNOWERS, made)
-    return len(made)
 
 
-async def _shown_by_flags(w: Changes) -> dict[tuple[str, str], float]:
+async def _shown_by_flags(w: Scope) -> dict[tuple[str, str], float]:
     """Every statement the flags show the players (entries, conditions, names, connections), for
     `inherit_table_rows` when the first player character joins: the same rule as `follow_flags`."""
     entities = {str(r["id"]): r for r in await w.select(ENTITIES)}
@@ -1459,7 +1493,28 @@ async def follow_flags(
     if closed:
         await _close(w, column, closed)
     if table_name == "memory_entities" and joined:
-        await inherit_table_rows(w, joined)
+        if w.party_join:
+            await _ask_about(w, joined)
+        else:
+            await inherit_table_rows(w, joined)
+
+
+async def _ask_about(w: Changes, joined: Sequence[str]) -> None:
+    """`DMBOT_PARTY_JOIN` on (#4537 slice 2b, rule 13.4): characters who joined a party that
+    already had members are asked about; nothing is copied until the DM answers. A campaign's
+    first characters have no "before" and are asked nothing (§5): those made before its first
+    session, when there is nothing yet to have missed. They are given what the flags show, as
+    always (the party's table to copy is only being set up)."""
+    from dmbot.memory import join_questions, party_record
+
+    ids = await party_record.current_members(w)
+    new = [i for i in dict.fromkeys(joined) if i in ids]
+    if not new:
+        return
+    if set(ids) - set(new) and await party_record.first_session_start(w) is not None:
+        await join_questions.ask(w, new)
+    else:
+        await inherit_table_rows(w, new)
 
 
 async def forget_moved(

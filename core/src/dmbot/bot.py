@@ -589,6 +589,7 @@ from dmbot.ui import (
     map_show,
     name_pass_undo,
     party_card,
+    party_join,
     player_id,
     recap_audio,
     reveal_card,
@@ -1077,6 +1078,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # Campaign memory (#126): names the DM gives, suggestions after each session, and
         # an in-memory copy of each campaign's names, kept up to date by notifications.
         self.memory = memory
+        if memory is not None:  # (#4537 slice 2b: a joining character is asked about)
+            memory.party_join = settings.party_join_on
         # Secrets said at the table, recorded for the DM's summary; nothing applies them yet (#2410)
         self.exposures = ExposureStore(memory._db) if memory is not None else None
         # The offers to set the clock from an imported session, read by the website too (#3199).
@@ -1925,6 +1928,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )  # the DM's side, #4344
         self.add_dynamic_items(map_question.TakeBackButton, map_question.PosterUndoButton)  # #4344
         self.add_dynamic_items(*party_card.DYNAMIC_ITEMS)  # 🚪 Has left the party, #4537
+        self.add_dynamic_items(*party_join.DYNAMIC_ITEMS)  # the join question, #4537 slice 2b
         self.add_dynamic_items(  # a DM shows or hides a map, #4414
             map_show.CampaignSelect, map_show.MapSelect, map_show.ActButton,
             map_show.BackButton, map_show.UndoButton,
@@ -3490,6 +3494,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             ("questions for the DM", lambda: self.send_collected_asks(table)),
             # What maps posted during the session showed (#4259 8a), privately, once each
             ("map notes", lambda: self.send_held_map_notes(table)),
+            # Characters who joined the party: "What does Mira know about what came before?",
+            # one private message, never during play (#4537 slice 2b; off unless its switch is on)
+            ("party join questions", lambda: self.send_join_questions(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
             # The biggest clashes PlotBot graded, up to three; no AI call here (#2660)
             ("big clashes", lambda: self.tell_contradictions(table)),
@@ -12554,6 +12561,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if message.id != pressed_message_id:
                 with contextlib.suppress(discord.HTTPException):
                     await message.edit(content=shown, view=None)
+
+    async def send_join_questions(self, table: Table) -> None:
+        """The after-session step for the party join question (#4537 slice 2b)."""
+        if table.campaign_id is not None:
+            await party_join.send_join_questions(self, table.guild_id, table.campaign_id)
 
     async def send_held_map_notes(self, table: Table) -> None:
         """The map notes held during the session (#4259 8a), each to every DM privately."""

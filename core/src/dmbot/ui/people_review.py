@@ -209,6 +209,12 @@ class PeopleReview(_Menu):
             await _tell(interaction, GONE)
             return
         await self._next(interaction, done)
+        if s.kind != "name":  # (a character joined the party: asked about now, or after play)
+            from dmbot.ui import party_join  # (#4537 slice 2b; lazy, as the name card does)
+
+            await party_join.send_join_questions(
+                interaction.client, self.guild_id, self.campaign_id
+            )
 
     async def _no(self, interaction: discord.Interaction) -> None:
         got = await self._check(interaction)

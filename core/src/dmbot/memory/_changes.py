@@ -583,6 +583,11 @@ class Changes(Scope):
         self.dm_chose_secret = dm_chose_secret
         self.held_back = 0
         self.asked: list[str] = []  # the 🤫 questions this write asked, for their batch
+        # (#4537 slice 2b) with `DMBOT_PARTY_JOIN` on, a character joining a party that has
+        # members is asked about (`join_questions.ask`) instead of copied what the party knows;
+        # `join_asked` holds the questions this write asked, for their batch
+        self.party_join = False
+        self.join_asked: list[str] = []
         # Rows this write brought back from turned down (#4524): the players saw none of them
         # before, so holding one back in the same write takes nothing from them (`public_guard`).
         self.revived: set[tuple[str, str]] = set()
