@@ -14,7 +14,7 @@ from __future__ import annotations
 import logging
 import secrets
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Protocol
 
 from dmbot.pictures.bucket import BucketError
@@ -47,6 +47,9 @@ class Context:
     # is no such yes, and none is made up.
     consent_version: int | None = None
     right_granted_at: int | None = None
+    # A picture from a DM's uploaded file (#4003 slice c): for the campaign's DMs alone, and kept
+    # only when it fits without removing the table's own pictures (`make_room` False).
+    dm_only: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -117,6 +120,9 @@ class PictureKeeper:
             return Result(None, why_not="refused")
         known = await self._store.find(ctx.guild_id, ctx.campaign_id, ready.sha256)
         if known is not None:
+            if known.dm_only and not ctx.dm_only:  # (posted at the table: the table's now)
+                await self._store.share_with_table(ctx.guild_id, ctx.campaign_id, known.id)
+                known = replace(known, dm_only=False)
             return Result(known)
         key, preview_key = new_keys(ready.ext)
         try:
@@ -142,6 +148,8 @@ class PictureKeeper:
             size_bytes=len(ready.data),
             preview_bytes=len(ready.preview),
             storage_mb=self._storage_mb,
+            dm_only=ctx.dm_only,
+            make_room=not ctx.dm_only,
         )
         if added.picture is None or not added.new:
             # It did not fit, or the same file was kept at the same moment: the new files are not

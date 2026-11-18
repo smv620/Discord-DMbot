@@ -35,7 +35,7 @@ CODE_BYTES = 32  # 256 bits in the link code
 COLUMNS = (
     "id, campaign_id, poster_id, session_id, line_id, message_id, description, code, public,"
     " permanent, sha256, object_key, preview_key, size_bytes, preview_bytes, made_at, deleted_at,"
-    " removed_for_room"
+    " removed_for_room, dm_only, notice_id"
 )
 
 
@@ -59,6 +59,10 @@ class Picture:
     made_at: int
     deleted_at: int | None
     removed_for_room: bool
+    # Taken from a DM's uploaded file (#4003 slice c): for the campaign's DMs alone, never public.
+    dm_only: bool = False
+    # The upload notice whose Undo takes it back (#4003 slice c); None for any other picture.
+    notice_id: str | None = None
 
     @property
     def gone(self) -> bool:
@@ -116,6 +120,8 @@ def _picture(row: Any) -> Picture:
         made_at=int(row["made_at"]),
         deleted_at=None if row["deleted_at"] is None else int(row["deleted_at"]),
         removed_for_room=bool(row["removed_for_room"]),
+        dm_only=bool(row["dm_only"]),
+        notice_id=None if row["notice_id"] is None else str(row["notice_id"]),
     )
 
 
@@ -169,11 +175,14 @@ class PictureStore:
         size_bytes: int,
         preview_bytes: int,
         storage_mb: int,
+        dm_only: bool = False,
+        make_room: bool = True,
     ) -> Added:
         """Keep a picture. The same file already kept in this campaign is returned as it is
         (`new` False) and nothing changes; a removed one is kept again with a new link. When it
         would not fit, the oldest pictures that are not permanent are removed first, in the same
-        transaction."""
+        transaction, unless `make_room` is False: then it is not kept. `dm_only` (a picture from
+        a DM's file, #4003 slice c): for the campaign's DMs alone, so never public."""
         need = size_bytes + preview_bytes
         now = int(self._clock())
         async with self._db.guild(guild_id) as conn:
@@ -191,11 +200,14 @@ class PictureStore:
                 return Added(None, False, ())
             used = (await _usage(conn, guild_id, campaign_id, storage_mb)).used_bytes
             removed: list[Picture] = []
+            if used + need > limit and not make_room:  # (never at the cost of the table's own)
+                return Added(None, False, ())
             if used + need > limit:
                 cur = await conn.execute(
                     f"SELECT {COLUMNS} FROM campaign_pictures"
                     " WHERE guild_id = %s AND campaign_id = %s AND deleted_at IS NULL"
-                    " AND NOT permanent ORDER BY id",
+                    # (a DM's file's pictures go first, so they never cost the table its own)
+                    " AND NOT permanent ORDER BY dm_only DESC, id",
                     (guild_id, campaign_id),
                 )
                 for row in await cur.fetchall():
@@ -217,8 +229,9 @@ class PictureStore:
             cur = await conn.execute(
                 "INSERT INTO campaign_pictures (guild_id, campaign_id, poster_id, session_id,"
                 " line_id, message_id, description, code, consent_version, right_granted_at,"
-                " sha256, object_key, preview_key, size_bytes, preview_bytes, made_at)"
-                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
+                " sha256, object_key, preview_key, size_bytes, preview_bytes, made_at, dm_only,"
+                " public)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)"
                 f" RETURNING {COLUMNS}",
                 (
                     guild_id,
@@ -237,6 +250,8 @@ class PictureStore:
                     size_bytes,
                     preview_bytes,
                     now,
+                    dm_only,
+                    not dm_only,  # (a chat picture is public by default, as before)
                 ),
             )
             made = await cur.fetchone()
@@ -309,12 +324,12 @@ class PictureStore:
         self, guild_id: int, campaign_id: str, picture_id: int, public: bool
     ) -> bool:
         """Make a picture public (anyone with the link) or private to the campaign. False when it
-        is not kept here."""
+        is not kept here, or when it is a DM-only picture asked to be public (#4003 slice c)."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "UPDATE campaign_pictures SET public = %s WHERE guild_id = %s AND campaign_id = %s"
-                " AND id = %s AND deleted_at IS NULL",
-                (public, guild_id, campaign_id, picture_id),
+                " AND id = %s AND deleted_at IS NULL AND NOT (dm_only AND %s)",
+                (public, guild_id, campaign_id, picture_id, public),
             )
             return bool(cur.rowcount)
 
@@ -403,6 +418,45 @@ class PictureStore:
                 (guild_id, campaign_id, batch, user_id),
             )
             return await cur.fetchone() is not None
+
+    async def share_with_table(self, guild_id: int, campaign_id: str, picture_id: int) -> bool:
+        """A DM-only picture whose very file someone then posted at the table, or sent as a map:
+        it is the table's own from now on (private to the campaign, as it was, and no longer an
+        upload's to undo). The one row per file stays one row. True when it changed."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE campaign_pictures SET dm_only = FALSE, notice_id = NULL"
+                " WHERE guild_id = %s AND campaign_id = %s AND id = %s AND dm_only",
+                (guild_id, campaign_id, picture_id),
+            )
+            return bool(cur.rowcount)
+
+    async def tag_notice(
+        self, guild_id: int, campaign_id: str, picture_ids: Sequence[int], notice_id: str
+    ) -> int:
+        """Tie pictures an upload kept to its notice, so its Undo takes them back (#4003 slice c).
+        Only DM-only pictures with no notice yet: a chat picture is never an upload's to undo."""
+        if not picture_ids:
+            return 0
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE campaign_pictures SET notice_id = %s WHERE guild_id = %s"
+                " AND campaign_id = %s AND id = ANY(%s) AND dm_only AND notice_id IS NULL",
+                (notice_id, guild_id, campaign_id, list(picture_ids)),
+            )
+            return int(cur.rowcount or 0)
+
+    async def for_notice(
+        self, guild_id: int, campaign_id: str, notice_id: str
+    ) -> Sequence[Picture]:
+        """The kept pictures an upload's notice took in (not removed ones), for its Undo."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                f"SELECT {COLUMNS} FROM campaign_pictures WHERE guild_id = %s AND campaign_id = %s"
+                " AND notice_id = %s AND deleted_at IS NULL ORDER BY id",
+                (guild_id, campaign_id, notice_id),
+            )
+            return [_picture(r) for r in await cur.fetchall()]
 
     async def delete(
         self, guild_id: int, campaign_id: str, picture_id: int, *, unless_map: bool = False

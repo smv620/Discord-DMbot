@@ -30,6 +30,7 @@ NO_CHAT = (
     "and its line stays in the transcript."
 )
 NO_PRIVATE = "OK. DMbot didn't keep it."
+NO_FILE = "OK. DMbot didn't keep it, and it's gone from Pictures too."  # (a map in a DM's file)
 
 GONE = "That picture isn't kept any more."
 NO_CONSENT = "You've stopped DMbot recording pictures, so it isn't keeping this one."
@@ -58,7 +59,9 @@ def said_yes(is_dm: bool, from_chat: bool) -> str:
     return PLAYER_YES_CHAT if from_chat else PLAYER_YES_PRIVATE
 
 
-def said_no(from_chat: bool) -> str:
+def said_no(from_chat: bool, from_file: bool = False) -> str:
+    if from_file:  # (its picture was kept for the DMs when the file was read; it goes now, #4259)
+        return NO_FILE
     return NO_CHAT if from_chat else NO_PRIVATE
 
 
