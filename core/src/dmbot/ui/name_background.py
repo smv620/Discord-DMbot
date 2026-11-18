@@ -1519,6 +1519,29 @@ def trait_questions_line(n: int) -> str:
 SHEET_LANGUAGES_SHOWN = 5  # the note names a few; the rest are counted
 
 
+def heard_sheet_languages(campaign: str, session: str, found: Sequence[tuple[str, str]]) -> str:
+    """The DM's private message for languages a session heard a player character speak that their
+    sheet lacks (#4229 1d; the ux-critic's words): the campaign and the session first, what was
+    heard in the past tense (it can be misheard), and what to do. "" for none."""
+    if not found:
+        return ""
+    shown = found[:SHEET_LANGUAGES_SHOWN]
+    lines = [
+        f"• **{_md(who)}** spoke **{_md(lang)}**, which isn't on their sheet."
+        for who, lang in shown
+    ]
+    more = len(found) - len(shown)
+    if more > 0:
+        lines.append(f"…and {more} more.")
+    return "\n".join(
+        [
+            f"🗣️ **{_md(campaign)}**, {session}: DMbot heard",
+            *lines,
+            "If that's right, the player can add it to their sheet. Nothing was changed.",
+        ]
+    )
+
+
 def sheet_languages_line(found: Sequence[tuple[str, str]]) -> str:
     """One plain line for the lore languages that player characters' sheets lack (#4229 slice 1c):
     named, never stored, since the sheet is the truth: "🗣️ Your lore says Testa speaks Elvish,
