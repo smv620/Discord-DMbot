@@ -31,7 +31,12 @@ ALLOWED = {
     "maps/said_phrases.py": "parses words the DM just said with `route_length.parse`; reads no "
     "stored length, shows nothing (#4670 4c-2)",
     "maps/store.py": "a stated length beats a measured one (4b), and a kept road's length is "
-    "checked against the DM's maps for the DM alone (#4670 4c); shows players nothing",
+    "checked against the DM's maps for the DM alone (#4670 4c); a route's legs drop a read "
+    "length for players (`_road_route`, #4260 10d)",
+    "maps/legs.py": "adds up the lengths it is given; which lengths a player may have is the "
+    "caller's (`store._road_route` drops a read one for players, #4260 10d)",
+    "maps/legs_words.py": "says the lengths it is given; shows players only what `_road_route` "
+    "gave a player's answer (#4260 10d)",
     "memory/world_notes.py": "World notes, the DM's list only: lists DMbot's read of a length a "
     "map disagrees with, and ✅ makes it the DM's (#4670 4c)",
 }

@@ -100,6 +100,17 @@ def parse(words: str) -> Length | None:
     return Length(clean)
 
 
+def is_range(words: str) -> bool:
+    """Whether these words give a range ("20 to 30 miles", "two or three days"), whose amount is
+    its low end: a sum of ranges would understate (#4260 10d)."""
+    text = " ".join(words.split()).casefold()
+    for word in _APPROX:
+        if text.startswith(word + " "):
+            text = text[len(word) + 1 :]
+            break
+    return _RANGE.match(text) is not None
+
+
 def _sized(words: str, amount: float, unit: str, *, approx: bool) -> Length:
     amount = round(amount, 2)
     if not 0 < amount <= AMOUNT_MAX:
