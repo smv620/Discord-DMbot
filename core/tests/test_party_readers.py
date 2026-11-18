@@ -19,7 +19,13 @@ from pathlib import Path
 SRC = Path(__file__).resolve().parents[1] / "src" / "dmbot"
 ROLE = re.compile(r"\bPLAYER_CHARACTER\b|'player_character'")
 # (the role's own definition and the one function are not readers)
-NOT_READERS = {"memory/models.py", "memory/party_record.py"}
+NOT_READERS = {
+    "memory/models.py",
+    "memory/party_record.py",
+    # (#4537 2b) the role there asks "is this still a player character", beside the open stretch
+    # that says "in the party": a waiting join question about one made an NPC is not sent
+    "memory/join_questions.py",
+}
 
 # Files that test the role today, to be checked one by one (slice 5). Alphabetical.
 FILES: tuple[str, ...] = (
