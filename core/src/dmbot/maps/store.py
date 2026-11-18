@@ -288,6 +288,8 @@ async def _trip(scope: Any, a: str, b: str, asked: Any, rules: tuple[str, str]) 
     on foot, capped by the land at either end. Nothing is stored or changed."""
     from dmbot.maps import measure, travel, travel_words
     from dmbot.maps.measure_words import LORE_SAYS, SESSION_SAID
+    from dmbot.memory import gate, map_fact_store
+    from dmbot.memory import map_facts as mf
     from dmbot.rules.index import srd
     from dmbot.sidebar.context import source_of
 
@@ -301,22 +303,18 @@ async def _trip(scope: Any, a: str, b: str, asked: Any, rules: tuple[str, str]) 
         (*ids, a, b, b, a),
     )
     road = await cur.fetchone()
-    cur = await scope.conn.execute(
-        "SELECT value FROM memory_map_facts WHERE guild_id = %s AND campaign_id = %s"
-        " AND entity_id = ANY(%s) AND layer = 'terrain' AND status <> 'rejected'"
-        " AND to_session_at IS NULL",
-        (*ids, [a, b]),
-    )
-    lands = [str(r["value"]) for r in await cur.fetchall()]
+    # (through THE readers of the layer rows, as the DM sees them: a row DMbot read and the DM
+    # hasn't checked counts too, since the answer is the DM's own and says "about")
+    dm_view = gate.Viewer(dm=True)
+    rows = await map_fact_store.facts_for(scope, [a, b], dm_view)
+    lands = [
+        f.value for found in rows.values() for f in found
+        if f.layer == mf.TERRAIN and f.value != mf.OTHER
+    ]  # fmt: skip
     shut = False
     if road is not None:
-        cur = await scope.conn.execute(
-            "SELECT 1 FROM memory_map_facts WHERE guild_id = %s AND campaign_id = %s"
-            " AND relation_id = %s AND layer = 'condition' AND value = 'closed'"
-            " AND status <> 'rejected' AND to_session_at IS NULL LIMIT 1",
-            (*ids, str(road["id"])),
-        )
-        shut = await cur.fetchone() is not None
+        now = await map_fact_store.conditions_for(scope, dm_view, relation_ids=[str(road["id"])])
+        shut = any(c.now.value == "closed" for c in now.values())
     names = (asked.a, asked.b)
     stated = str(road["length_words"] or "").strip() if road is not None else ""
     if stated:
@@ -325,7 +323,8 @@ async def _trip(scope: Any, a: str, b: str, asked: Any, rules: tuple[str, str]) 
         found = _MILES.match(stated)
         if found is None:  # (a time or another unit: the DM's own words, given back)
             said = "you set" if by_dm else SESSION_SAID if in_session else LORE_SAYS
-            return travel_words.stated_time(stated, *names, said)
+            text = travel_words.stated_time(stated, *names, said)
+            return f"{text} {travel_words.closed()}" if shut else text
         where = "as you set it" if by_dm else "from a session" if in_session else "from your lore"
         miles = float(found[1])
         distance = travel_words.by_road(stated, *names, where)
@@ -340,27 +339,31 @@ async def _trip(scope: Any, a: str, b: str, asked: Any, rules: tuple[str, str]) 
         if used is None or d is None or used.unit != "miles" or amount is None:
             return far  # (what is missing, and its fix: no time without a distance)
         miles = float(amount.split()[0])  # (the miles the answer says, so its sums match them)
-        distance = travel_words.straight(amount, *names, used.title)
+        distance = travel_words.straight(amount, *names, used.title, road=road is not None)
     index = srd()
     pace = index.lookup("travel pace table", *rules, kind="rule") or index.lookup(
         "travel pace", *rules, kind="rule"
     )
-    terrain = index.lookup("travel terrain", *rules, kind="rule") if lands else None
-    plan = travel.plan(miles, lands)
+    # (the land's cap is SRD 5.2's Travel Terrain; a 2014 campaign has none of its own, so the
+    # newer one is used and cited, tagged, as the edition rule says: never applied uncited)
+    terrain = index.lookup("travel terrain", rules[0], "2024", kind="rule") if lands else None
+    plan = travel.plan(miles, lands if terrain is not None else [])
+    on_foot = asked.how in ("", "foot", "mounted", "wagon")  # (a boat's time on foot means nothing)
     parts: list[str] = []
-    if asked.how in ("", "foot", "mounted", "wagon"):  # (a boat's time on foot means nothing)
+    if on_foot:
         parts.append(travel_words.lead(plan, miles))
     if asked.how not in ("", "foot"):
         parts.append(travel_words.cannot(asked.how))
     if shut:
         parts.append(travel_words.closed())
     parts.append(distance)
-    if not lands:
-        parts.append(travel_words.no_land())
-    sources = [source_of(h) for h in (pace, terrain) if h is not None]
-    if sources:
-        parts.append(travel_words.cite(sources))
-    parts.append(travel_words.YOUR_CALL)
+    if on_foot:
+        if not lands:
+            parts.append(travel_words.no_land())
+        sources = [source_of(h) for h in (pace, terrain) if h is not None]
+        if sources:
+            parts.append(travel_words.cite(sources))
+        parts.append(travel_words.YOUR_CALL)
     return " ".join(parts)
 
 

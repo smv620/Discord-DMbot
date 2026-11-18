@@ -71,7 +71,9 @@ class MapMeasuring:
             if refused is None and asked.kind == measure_phrase.LONG and not (is_dm and not table):
                 # (#4260: travel time is the DM's, as the SRD's travel entries are. A player gets
                 # "That's one for your DM." before any map is read; the DM at the table gets it
-                # privately, re-asked with every map)
+                # privately, re-asked with every map. A player's question of this shape that isn't
+                # about places ("from level 3 to level 4") is told the same, on purpose: asking the
+                # store first would hint, by its answer or its time, at which names are places.)
                 if is_dm:
                     return Answer(
                         text=ONE_FOR_DM, in_game=False, question=_restated(asked), model="",

@@ -5,8 +5,8 @@ uses, the pace from the SRD, and the terrain caps it. Nothing here changes the g
 a journey travelled.
 
 The numbers:
-- **Miles a day on foot** for each pace (the SRD's travel pace table). `PACE_SOURCE` names the entry
-  cited; which edition's table is used is Supervisor's ruling on #4260.
+- **Miles a day on foot** for each pace (SRD 5.2.1's Travel Pace table, Playing the Game, p. 12;
+  the answer cites it from the rules index, Supervisor's ruling (a) on #4260).
 - **The Maximum Pace each terrain allows** (SRD 5.2 Travel Terrain, p. 192): the slowest of the two
   places' terrains caps the pace. Arctic allows Fast only with the right equipment (skis).
 - **Days** are rounded up to the next half day, and never less than half a day: travel is planned
@@ -24,8 +24,6 @@ _ORDER = {SLOW: 0, NORMAL: 1, FAST: 2}
 
 # Miles a day for 8 hours on foot (the travel pace table); the source is cited with every answer
 MILES_A_DAY = {FAST: 30, NORMAL: 24, SLOW: 18}
-PACE_SOURCE = "SRD Travel Pace, p. 192"
-TERRAIN_SOURCE = "SRD Travel Terrain, p. 192"
 
 # The Maximum Pace column of the SRD 5.2 Travel Terrain table, by the terrain layer's own words
 # (`memory/map_facts.py`); "waterborne" depends on the vessel, so it gives no foot pace at all

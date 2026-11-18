@@ -19,7 +19,6 @@ from dmbot.maps import travel
 from dmbot.maps.measure_words import on_map
 
 YOUR_CALL = "Your call."
-FOR_DM = "That's one for your DM."
 # The land as the DM's menu says it (`ui/place_world.LAND`), lower case, for "<land> allow only …"
 LAND = {
     "arctic": "ice and snow", "coastal": "the coast", "desert": "desert", "forest": "forest",
@@ -45,11 +44,11 @@ def _hours(miles: float, pace: str) -> str:
 
 
 def _short(plan: travel.Plan, miles: float, pace: str) -> str:
-    """One pace's time: hours under a day at a Normal pace, else days."""
+    """One pace's time: hours when that pace covers it within its own day, else days."""
     found = next((d for d in plan.days if d.pace == pace), None)
     if found is None:
         return ""
-    if miles < travel.MILES_A_DAY[travel.NORMAL]:
+    if miles < travel.MILES_A_DAY[pace]:
         return _hours(miles, pace)
     return amount(found.days)
 
@@ -77,10 +76,16 @@ def lead(plan: travel.Plan, miles: float) -> str:
     return text
 
 
-def straight(amount_said: str, a: str, b: str, map_title: str) -> str:
+def straight(amount_said: str, a: str, b: str, map_title: str, *, road: bool = False) -> str:
+    """A map's straight line; `road`: a road is kept between them, but with no length in miles."""
+    why = (
+        " The road between them has no length in miles, so a real path is longer."
+        if road
+        else " No road is marked, so this is across open country, and a real path is longer."
+    )
     return (
         f"That's about {amount_said} in a straight line from {a} to {b} on {on_map(map_title)}."
-        " No road is marked, so this is across open country, and a real path is longer."
+        + why
     )
 
 

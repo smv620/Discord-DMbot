@@ -13,6 +13,7 @@ from typing import Any
 
 from dmbot.maps import measure_phrase, travel
 from dmbot.maps import travel_words as words
+from dmbot.sidebar.answer import ONE_FOR_DM
 from dmbot.sidebar.map_answers import MapMeasuring
 from tests.test_map_measure import Inner
 from tests.test_map_pins import PinsBase
@@ -77,6 +78,14 @@ class TheWords(unittest.TestCase):
             words.lead(travel.plan(40, ["forest"]), 40),
             "About 2 days on foot at a Normal pace; 2½ days if Slow. No Fast pace through forest.",
         )
+        self.assertEqual(  # (Slow covers 18 miles a day: 20 miles is days, never 10 hours)
+            words.lead(travel.plan(20, ["mountain"]), 20),
+            "About 1½ days on foot: only a Slow pace through mountains.",
+        )
+        self.assertEqual(
+            words.lead(travel.plan(23, []), 23),
+            "About 8 hours on foot at a Normal pace; 6 hours if Fast; 1½ days if Slow.",
+        )
         self.assertEqual(  # (under a day: hours)
             words.lead(travel.plan(12, []), 12),
             "About 4 hours on foot at a Normal pace; 3 hours if Fast; 6 hours if Slow.",
@@ -106,7 +115,7 @@ class TheDMOnly(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_player_is_told_its_the_dms_before_any_map_is_read(self) -> None:
         got, dms = await self.ask(PLAYER, table=True)
-        self.assertEqual((got.text, dms), (words.FOR_DM, []))
+        self.assertEqual((got.text, dms), (ONE_FOR_DM, []))
 
     async def test_the_dm_at_the_table_gets_it_privately(self) -> None:
         got, dms = await self.ask(DM, table=True)
@@ -140,11 +149,13 @@ class TheAnswer(PinsBase):  # (Postgres: Targos and Bryn Shander 60 miles apart 
                 (GUILD_A, self.one.id, uuid.uuid4().hex, place, value, int(time.time())),
             )
 
-    async def road(self, length: str) -> None:
+    async def road(self, length: str | None) -> None:
         await self.memory.add_relation(
             GUILD_A, self.one.id, self.targos, "route_to", self.bryn, source="dm",
             confidence=1.0, status="confirmed",
         )  # fmt: skip
+        if length is None:  # (a road with no length at all)
+            return
         async with self.db.guild(GUILD_A) as conn:
             await conn.execute(
                 "UPDATE memory_relations SET length_words = %s, length_from = 'dm'"
@@ -172,6 +183,52 @@ class TheAnswer(PinsBase):  # (Postgres: Targos and Bryn Shander 60 miles apart 
         self.assertTrue(said.startswith("About 2 days on foot"), said)
         self.assertIn("That's 40 miles by road from Targos to Bryn Shander, as you set it.", said)
 
+    async def closed(self) -> None:
+        async with self.db.guild(GUILD_A) as conn:
+            cur = await conn.execute("SELECT id FROM memory_relations WHERE predicate = 'route_to'")
+            road = await cur.fetchone()
+            assert road is not None
+            await conn.execute(
+                "INSERT INTO memory_map_facts (guild_id, campaign_id, id, relation_id, layer,"
+                " value, status, source, also_text, created_at) VALUES (%s, %s, %s, %s,"
+                " 'condition', 'closed', 'confirmed', 'dm', FALSE, %s)",
+                (GUILD_A, self.one.id, uuid.uuid4().hex, str(road["id"]), int(time.time())),
+            )
+
+    async def test_a_closed_road_is_said_even_with_a_stated_time(self) -> None:
+        await self.road("two days by cart")
+        await self.closed()
+        said = await self.ask("how long will it take to get from Targos to Bryn Shander?")
+        self.assertTrue(said.endswith(words.closed()), said)
+
+    async def test_a_road_with_no_length_is_not_called_no_road(self) -> None:
+        await self.road(None)
+        said = await self.ask("how long will it take to get from Targos to Bryn Shander?")
+        self.assertIn("The road between them has no length in miles", said)
+        self.assertNotIn("No road is marked", said)
+
+    async def test_a_2014_campaign_cites_its_pace_and_the_newer_terrain_tagged(self) -> None:
+        await self.land(self.targos, "mountain")
+        asked = measure_phrase.read("how long will it take to get from Targos to Bryn Shander?")
+        assert asked is not None
+        said = await self.maps.measure(GUILD_A, self.one.id, asked, dm=True, rules=("2014", "none"))
+        assert isinstance(said, str)
+        self.assertIn("[Legacy 2014]", said)
+        self.assertIn("only a Slow pace through mountains", said)
+        self.assertIn("SRD 5.2.1 p. 192", said)  # (the cap is cited, never applied uncited)
+
+    async def test_mounted_gets_the_time_on_foot_and_says_so(self) -> None:
+        said = await self.ask(
+            "how long will it take to ride from Targos to Bryn Shander on horseback?"
+        )
+        self.assertTrue(said.startswith("About 2½ days on foot"), said)
+        self.assertIn("I can't work out mounted travel yet.", said)
+
+    async def test_never_for_a_player(self) -> None:
+        asked = measure_phrase.read("how long will it take to get from Targos to Bryn Shander?")
+        assert asked is not None
+        self.assertIsNone(await self.maps.measure(GUILD_A, self.one.id, asked, dm=False))
+
     async def test_a_stated_time_is_given_back_and_never_summed(self) -> None:
         await self.road("two days by cart")
         said = await self.ask("how long will it take to get from Targos to Bryn Shander?")
@@ -183,7 +240,10 @@ class TheAnswer(PinsBase):  # (Postgres: Targos and Bryn Shander 60 miles apart 
 
     async def test_no_scale_says_whats_missing(self) -> None:
         async with self.db.guild(GUILD_A) as conn:
-            await conn.execute("UPDATE campaign_maps SET scale_value = NULL, scale_unit = NULL, scale_from = NULL")
+            await conn.execute(
+                "UPDATE campaign_maps SET scale_value = NULL, scale_unit = NULL, scale_from = NULL"
+            )
         said = await self.ask("how long will it take to get from Targos to Bryn Shander?")
+        self.assertIn("has no scale", said)  # (the "how far" miss words, and no time)
         self.assertNotIn("days", said)
         self.assertNotIn(words.YOUR_CALL, said)
