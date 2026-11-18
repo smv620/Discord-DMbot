@@ -1149,6 +1149,11 @@ async def _read_background(
             source=("lore", upload.source_id) if upload.source_id else None,
             earlier=shown.batches,
             revealed=shown.total,
+            revealed_ids={
+                "entries": shown.entry_ids,
+                "links": shown.link_ids,
+                "aliases": shown.alias_ids,
+            },
         )
         if added is None and shown.batches and items is not None:
             # no notice, so no Undo for the reveals: they are taken back now (ruling C on #4524),

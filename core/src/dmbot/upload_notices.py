@@ -9,7 +9,7 @@ from __future__ import annotations
 import json
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 
 from dmbot.db import Database
@@ -42,6 +42,14 @@ class Notice:
         )
 
 
+REVEALED_KEEP = 50  # ids of each kind kept for the website's list (it shows ten)
+
+
+def _capped_ids(ids: Mapping[str, Sequence[str]] | None) -> dict[str, list[str]]:
+    """What a 🌍 read made known, as ids only and at most `REVEALED_KEEP` of each kind."""
+    return {k: list(v)[:REVEALED_KEEP] for k, v in (ids or {}).items() if v}
+
+
 class UploadNotices:
     def __init__(self, db: Database, *, clock: Callable[[], float] = time.time) -> None:
         self._db = db
@@ -57,14 +65,15 @@ class UploadNotices:
         *,
         source_kind: str | None = None,
         source_id: str | None = None,
+        revealed_ids: Mapping[str, Sequence[str]] | None = None,
     ) -> Notice:
         notice_id = secrets.token_hex(16)
         now = int(self._now())
         async with self._db.guild(guild_id) as conn:
             await conn.execute(
                 "INSERT INTO upload_notices (guild_id, campaign_id, id, label, created_at,"
-                " counts, changes, source_kind, source_id)"
-                " VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s)",
+                " counts, changes, source_kind, source_id, revealed_ids)"
+                " VALUES (%s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s, %s::jsonb)",
                 (
                     guild_id,
                     campaign_id,
@@ -75,6 +84,8 @@ class UploadNotices:
                     changes,
                     source_kind if source_id else None,
                     source_id or None,
+                    # ids only, never words: the website resolves them when a DM reads (#4661)
+                    json.dumps(_capped_ids(revealed_ids)),
                 ),
             )
             # (the old ones go with the next new one: counts and ids, small and few)
