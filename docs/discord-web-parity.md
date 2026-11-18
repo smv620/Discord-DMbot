@@ -277,3 +277,4 @@ Every row in Section 1 marked "built, switched off" or "in an open PR" is on the
 - "Share this campaign's story to improve DMbot" (#3741): the DM's switch, off by default, in the
   website's campaign settings (Supervisor's ruling on #3741). Discord shows it read-only in what is
   switched on (#3693).
+| The clues of a story thread (add, false lead, take off, Undo) | the clues card in 🧵 Story threads (Discord, #4625) | Yes, on the quest sheet (#4625), behind `THREAD_CLUES_LIVE` (page built, switched off) |
