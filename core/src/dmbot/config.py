@@ -140,6 +140,10 @@ class Settings:
     # #4229 1d: the session reader also asks which languages a character was heard speaking, each
     # a question for the DM (DMBOT_SESSION_LANGUAGES, off until dev1's language_cases counts)
     session_languages_on: bool = False
+    # a character who joins a party with members is asked about ("What does Mira know about what
+    # came before?") instead of copied what the party knows (DMBOT_PARTY_JOIN, #4537 slice 2b; off
+    # until dev1's check on the test server)
+    party_join_on: bool = False
     # #4260 10c-2: the session reader also hears snow, frost or heat the DM described in a named
     # place, and the DM gets a private note when it plainly can't fit the kept climate
     # (DMBOT_WEATHER_NOTES, off until dev1's weather_cases counts)
@@ -752,6 +756,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     sidebar_raw = (get("DMBOT_SIDEBAR") or "0").lower()
     if sidebar_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_SIDEBAR must be 1 (on) or 0 (off), got "' + sidebar_raw + '".')
+    party_join_raw = (get("DMBOT_PARTY_JOIN") or "0").lower()
+    if party_join_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_PARTY_JOIN must be 1 (on) or 0 (off), got "' + party_join_raw + '".'
+        )
 
     ai_models, ai_notice = parse_ai_models(get)
     ai_provider_creative, ai_models, gemini_notice = parse_creative_provider(get, ai_models)
@@ -819,6 +828,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_reveals_precheck=precheck_raw in ("1", "true", "on"),
         met_unnamed_on=met_raw in ("1", "true", "on"),
         session_languages_on=languages_raw in ("1", "true", "on"),
+        party_join_on=party_join_raw in ("1", "true", "on"),
         weather_notes_on=weather_raw in ("1", "true", "on"),
         private_scenes_on=private_raw in ("1", "true", "on"),
         scene_filter_on=scene_filter_raw in ("1", "true", "on"),

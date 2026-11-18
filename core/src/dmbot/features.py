@@ -36,6 +36,14 @@ class Feature:
 
 FEATURES: tuple[Feature, ...] = (
     Feature(
+        "party join question",
+        "Catching up a new party member",
+        "When a character joins the party, DMbot asks you what they know about what came before.",
+        lambda s: s.party_join_on,
+        ("party_join_on",),
+        for_dms=False,  # (a server trial until dev1's check, like the other story switches)
+    ),
+    Feature(
         "handover by email",
         "Hand over by email",
         "A campaign is handed over by a link sent to an email address.",

@@ -2424,6 +2424,9 @@ class KindChange(_Menu):
         changed(interaction, campaign)
         self.stop()
         await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
+        from dmbot.ui import party_join  # ("Since when…?", #4537 slice 2b; lazy: it imports this)
+
+        await party_join.ask_since_when(interaction, campaign, self.entity_id)
 
     async def _back(self, interaction: discord.Interaction) -> None:
         self.stop()

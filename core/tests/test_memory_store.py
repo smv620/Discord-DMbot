@@ -375,6 +375,12 @@ class Isolation(MemoryTest):
                 " updated_at) VALUES (%s, %s, 'main', 0, %s, 5)",
                 (GUILD_A, self.c, dale),
             )
+            # and a join question about a character who joined the party (#4537 slice 2b)
+            await conn.execute(
+                "INSERT INTO memory_join_questions (guild_id, campaign_id, id, entity_id,"
+                " created_at) VALUES (%s, %s, %s, %s, 5)",
+                (GUILD_A, self.c, new_id(), view),
+            )
         return a, b
 
     async def test_another_server_sees_nothing(self) -> None:

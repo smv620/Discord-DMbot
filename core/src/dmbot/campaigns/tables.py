@@ -226,6 +226,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     # (the 🤫 questions waiting for the DM, #4524: point at items by id, and quote people whose
     # consent a backup doesn't carry; what the DM answered is in the items themselves)
     "secret_questions": _WAIT,
+    # (#4537: "What does Mira know about what came before?"; what the DM answered is in the
+    # who-knows rows themselves, and a restored campaign's DM tells a character more from any card)
+    "memory_join_questions": _WAIT,
     "thread_progress": _WAIT,  # (a re-read rebuilds it: #4522 5b, ruling A)
     "name_actions": _WAIT,
     "setting_actions": _WAIT,

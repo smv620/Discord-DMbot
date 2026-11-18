@@ -137,6 +137,32 @@ async def running_session_start(scope: Scope) -> int | None:
     return None if row is None or row["at"] is None else int(row["at"])
 
 
+async def first_session_start(scope: Scope) -> int | None:
+    """When the campaign's first session began ("From the first session"), if it has one: a
+    session with lines, as the session list counts them (an empty test join is no session)."""
+    cur = await scope.conn.execute(
+        "SELECT min(started_at) AS at FROM transcript_sessions WHERE guild_id = %s"
+        " AND campaign_id = %s AND line_count > 0",
+        scope.ids,
+    )
+    row = await cur.fetchone()
+    return None if row is None or row["at"] is None else int(row["at"])
+
+
+async def move_start(w: Changes, entity_id: str, from_at: int) -> Span:
+    """Date the character's open stretch from `from_at` instead ("Since when has Mira been in the
+    party?": the first session or a picked one, #4537 slice 2b). Logged, so one Undo puts it back.
+    Refused for a character not in the party, and when it would overlap an earlier stretch."""
+    held = await spans(w, [entity_id])
+    open_ = [s for s in held if s.open]
+    if not open_:
+        raise PartyError("That character isn't in the party now.")
+    if any(s.to_at is not None and s.to_at > from_at for s in held):
+        raise PartyError("That would overlap a time already recorded.")
+    row = await w.update(PARTY_SPANS, open_[0].id, {"from_at": from_at})
+    return _span(row)
+
+
 async def open_span(
     w: Changes, entity_id: str, *, from_at: int | None = None, source: str = "dm"
 ) -> Span | None:
@@ -195,7 +221,9 @@ __all__ = [
     "Span",
     "close_span",
     "current_members",
+    "first_session_start",
     "members_at",
+    "move_start",
     "open_span",
     "player_characters",
     "running_session_start",

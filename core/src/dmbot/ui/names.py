@@ -1955,6 +1955,9 @@ class SuggestionReview(_Menu):
         changed(interaction, campaign)
         note = f"✅ Added {self._added(entity)}, played by **{_md(name)}**."
         await self._saved(interaction, campaign, memory, note)
+        from dmbot.ui import party_join  # ("Since when…?", #4537 slice 2b; lazy: it imports this)
+
+        await party_join.ask_since_when(interaction, campaign, entity.id)
 
     async def _same(self, interaction: discord.Interaction) -> None:
         # Reading the campaign can take over 3 seconds; Discord gives up then (#537).

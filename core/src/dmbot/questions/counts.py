@@ -226,6 +226,14 @@ async def _secrets(src: Sources, g: int, c: str) -> Counted:
     return Counted(await src.memory.secret_questions_count(g, c))
 
 
+async def _joins(src: Sources, g: int, c: str) -> Counted:
+    """Characters who joined the party, waiting for the DM's "what do they know?" (#4537 2b)."""
+    if src.memory is None:
+        return Counted(0)
+    n, oldest = await src.memory.join_questions_waiting(g, c)
+    return Counted(n, oldest)
+
+
 async def _maps(src: Sources, g: int, c: str) -> Counted:
     """Maps a player kept that no DM has answered yet (`MapStore.waiting_for_a_dm`)."""
     if src.maps is None:
@@ -245,6 +253,7 @@ _COUNTERS: dict[str, Callable[[Sources, int, str], Awaitable[Counted]]] = {
     kinds.WORLD: _world,
     kinds.THREADS: _threads,
     kinds.SECRETS: _secrets,
+    kinds.JOINS: _joins,
     kinds.MAPS: _maps,
     kinds.CLAIMS: _claims,
     kinds.READINGS: _readings,
