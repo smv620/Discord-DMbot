@@ -15,6 +15,7 @@ import discord
 from dmbot.campaigns import Campaign
 from dmbot.memory import gate, place_peoples
 from dmbot.memory import map_facts as mf
+from dmbot.memory.layer_words import STRENGTH, culture_words, people_words
 from dmbot.memory.models import DM, MemoryRuleError
 from dmbot.memory.store import MemoryStore
 from dmbot.ui.dmbot_commands import _answer_first, _Button, _Menu, _replace, _Select, _tell
@@ -25,9 +26,6 @@ from dmbot.ui.place_world import (
     NOT_SURE,
     PEOPLES_BUTTON,
     READ_MARK,
-    STRENGTH,
-    culture_words,
-    people_words,
 )
 
 log = logging.getLogger(__name__)
