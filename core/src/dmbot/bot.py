@@ -7566,7 +7566,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 log.exception("The live heads-up failed")
 
     async def _ask_heard_languages(
-        self, guild_id: int, campaign_id: str, report: extractor.Report, started_at: int
+        self,
+        guild_id: int,
+        campaign_id: str,
+        report: extractor.Report,
+        started_at: int,
+        session_id: str | None = None,
     ) -> None:
         """The languages a session's read heard a character speak (#4229 1d), asked of the DM as a
         lore upload's are for a character the campaign already has (`ask_languages`, #4229 1c): a
@@ -7581,9 +7586,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             campaign = await self.campaigns.get(guild_id, campaign_id)
             if campaign is None or self.memory is None:
                 return
-            spoken = [Spoken(h.who, h.language) for h in report.heard_languages]
+            # (who said each, ids only, and the session: so the question goes with them, #4745)
+            spoken = [
+                Spoken(h.who, h.language, speakers=h.speakers) for h in report.heard_languages
+            ]
             label = session_label(started_at)
-            asked, on_sheets = await ask_languages(self.memory, campaign, spoken, label, None)
+            asked, on_sheets = await ask_languages(
+                self.memory, campaign, spoken, label, None, session_id
+            )
             log.info("Session languages: %d asked, %d on sheets", asked, len(on_sheets))
             text = heard_sheet_languages(campaign.name, label, on_sheets)
             if text:  # (as an upload's sheet lines: one message, to the DMs alone)
@@ -10120,7 +10130,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 )
             log.info(report.line())
             if report.heard_languages:  # (#4229 1d: each a question for the DM, never written)
-                await self._ask_heard_languages(gid, cid, report, session.started_at)
+                await self._ask_heard_languages(gid, cid, report, session.started_at, sid)
             # Counts and buttons go to the DM Bot channel when the campaign has one (the DM screen
             # otherwise); names go to the DMs privately, with a count-only pointer (#3874 E1)
             campaign = await self.campaigns.get(gid, cid)
