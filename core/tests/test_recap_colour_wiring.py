@@ -51,7 +51,7 @@ class TheSheet(unittest.IsolatedAsyncioTestCase):
             got, ("Mira: the party's rogue", pl.COLOUR_MARK + "Bryn Shander: land ice and snow.")
         )
         # only the places the beats visited, once each, none made up
-        self.assertEqual(colour.await_args.args[3], ["Bryn Shander", "Targos"])
+        self.assertEqual(colour.await_args_list[-1].args[3], ["Bryn Shander", "Targos"])
 
     async def test_the_colour_keeps_its_room_when_the_sheet_is_full(self) -> None:
         w = worker(AsyncMock(return_value=["Bryn Shander: land ice.", "Targos: land hills."]))
