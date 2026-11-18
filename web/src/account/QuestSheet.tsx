@@ -6,7 +6,9 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { questSheetWords as w } from "../content/quest-sheet-words";
 import { QUEST_EDIT_LIVE } from "../content/quest-edit-switch";
+import { THREAD_CLUES_LIVE } from "../content/thread-clues-switch";
 import type { AccountApi, ThreadCard, ThreadCardPart } from "./api";
+import LazyPanel from "./LazyPanel";
 import QuestSheetEdit from "./QuestSheetEdit";
 
 type Load = { kind: "loading" } | { kind: "card"; card: ThreadCard } | { kind: "none" };
@@ -160,6 +162,9 @@ export default function QuestSheet({
       )}
       {QUEST_EDIT_LIVE && api.changeThreadParts !== undefined && (
         <QuestSheetEdit api={api} refId={refId} threadId={thread.id} card={card} reload={() => fetchCard(false)} />
+      )}
+      {THREAD_CLUES_LIVE && api.threadClues !== undefined && (
+        <LazyPanel load={() => import("./ThreadClues")} what="the clues" props={{ api, refId, thread: thread.id }} />
       )}
     </section>
   );
