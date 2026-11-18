@@ -23,7 +23,7 @@ export const lorePage = {
   notFound: "We can't find that campaign. Go back to your campaigns and choose it.",
   notDm: "Only a campaign's game master can upload lore.",
   whereLegend: "How do you want to add it?",
-  sources: { paste: "Paste it here", file: "A text file", link: "A link" },
+  sources: { paste: "Paste it here", file: "A text file", link: "A link", pdf: "A PDF" },
   pasteLabel: "The words",
   pasteHelp: `Up to ${LORE_TEXT_MAX.toLocaleString("en-US")} characters.`,
   count: (n: number): string => `${n.toLocaleString("en-US")} of ${LORE_TEXT_MAX.toLocaleString("en-US")}`,
@@ -54,6 +54,8 @@ export const lorePage = {
   stages: {
     waiting: "Waiting for DMbot to pick it up.",
     reading: "Reading it.",
+    finding_pictures: "Finding its pictures.",
+    reading_pictures: "Reading the words in its pictures.",
     lore_waiting: "Waiting for DMbot to pick it up.",
     lore_reading: "Reading it.",
     finding_names: "Finding names.",
@@ -63,7 +65,7 @@ export const lorePage = {
   } as Record<string, string>,
   unit: "parts",
   /** What the API's count is of, by its unit code (#3534). */
-  units: { parts: "parts", names: "names", checks: "checks" } as Record<string, string>,
+  units: { parts: "parts", names: "names", checks: "checks", pictures: "pictures" } as Record<string, string>,
   found: (names: number, links: number): string =>
     `DMbot found ${names} ${names === 1 ? "name" : "names"} and ${links} ${links === 1 ? "connection" : "connections"}.`,
   foundNothing: "DMbot didn't find any names in that. Try a longer piece.",
@@ -85,6 +87,8 @@ export const lorePage = {
   } as Record<string, string>,
   failedReasons: {
     not_taken: "DMbot didn't pick it up in time. Try again in a few minutes.",
+    file_gone: "DMbot deleted that PDF before reading it, because it was waiting too long. Choose it again.",
+    file_unreadable: "DMbot couldn't open that PDF. It may be damaged or locked with a password. Save a fresh copy, then choose it again.",
   } as Record<string, string>,
   failedFallback: "DMbot couldn't read it. Check the text or link, then try again.",
   genericProblem: "Something went wrong. Try again.",

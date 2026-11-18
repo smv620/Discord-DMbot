@@ -76,7 +76,7 @@ import type {
   RuleSharingChoice,
 } from "./api";
 import type { ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion } from "./api";
-import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
+import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type LorePdf, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
 import { knowsHowOf, withKnowsHow } from "../content/knows-how-words";
@@ -890,6 +890,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   let moveState: "none" | "moving" | "failing" = "none"; // a campaign the bot is moving: `look` says ended meanwhile (#2550)
   let movedIn = 0; // looks at /me before a campaign the bot is moving shows up (#2550)
   let loreNow: LoreUpload | null = null; // the pretend upload (#3022)
+  let lorePdfNow: LorePdf | null = null; // the pretend staged lore PDF (#4762)
   // Pretend house-rules file (#2985): `.hf-match` compares equal, `.hf-fail` cannot be read, `.hf-player` is for a non-game-master,
   // `.hf-none` is off. The link is never kept; only its site.
   let houseFileSite = "";
@@ -2696,6 +2697,50 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       loreLooks = 0;
       loreNow = { id: "0".repeat(31) + "1", state: "waiting", stage: "waiting", error: "", source: input.source, choice: input.choice, namesFound: 0, linksFound: 0, done: 0, total: 0, createdAt: at, updatedAt: at, serverNow: at };
       return loreNow;
+    },
+    // Pretend a lore PDF (#4762): sending one stages it, counting gives pages, pictures and a cost, the yes opens an upload like any
+    // lore (polled with `loreRead`). A file named "bad" is refused as not a PDF; a yes with the wrong ref is `not-found`.
+    async lorePdf(ref): Promise<LorePdf> {
+      calls.push(`lorePdf:${ref}`);
+      await reachable();
+      signedIn();
+      return lorePdfNow ?? { state: "none" };
+    },
+    async lorePdfSend(ref, file): Promise<LorePdf> {
+      calls.push(`lorePdfSend:${ref}:${file.size}`);
+      await reachable();
+      signedIn();
+      if ((file as File).name === "bad.pdf") throw new ApiError("bad-file");
+      lorePdfNow = { state: "staged", ref: "a".repeat(31) + String(file.size % 10), sizeBytes: file.size, pages: null, pictures: null, estimateUsd: null };
+      return lorePdfNow;
+    },
+    async lorePdfCount(ref): Promise<LorePdf> {
+      calls.push(`lorePdfCount:${ref}`);
+      await reachable();
+      signedIn();
+      if (!lorePdfNow) throw new ApiError("not-found");
+      lorePdfNow = { ...lorePdfNow, state: "estimated", pages: 12, pictures: 5, estimateUsd: 0.4, estimateWords: "About 400 AI credits for the lore and its 5 pictures." };
+      return lorePdfNow;
+    },
+    async lorePdfGo(ref, input): Promise<LoreUpload> {
+      calls.push(`lorePdfGo:${ref}:${input.choice}:${input.speaker || "-"}:${input.rights ? "rights" : "no-rights"}`);
+      await reachable();
+      signedIn();
+      if (!input.rights) throw new ApiError("needs-confirm");
+      if (!lorePdfNow || lorePdfNow.ref !== input.ref) throw new ApiError("not-found");
+      if (lorePdfNow.state !== "estimated") throw new ApiError("not-counted");
+      if (loreNow && loreNow.state !== "done" && loreNow.state !== "failed") throw new ApiError("slow-down");
+      const at = Math.floor(Date.now() / 1000);
+      loreLooks = 0;
+      lorePdfNow = { ...lorePdfNow, state: "reading" };
+      loreNow = { id: "0".repeat(31) + "2", state: "waiting", stage: "waiting", error: "", source: "pdf", choice: input.choice, namesFound: 0, linksFound: 0, done: 0, total: 0, createdAt: at, updatedAt: at, serverNow: at };
+      return loreNow;
+    },
+    async lorePdfDrop(ref): Promise<void> {
+      calls.push(`lorePdfDrop:${ref}`);
+      await reachable();
+      signedIn();
+      lorePdfNow = null;
     },
     async houseFile(ref, id): Promise<HouseFileState> {
       calls.push(`houseFile:${ref}:${id ?? "-"}`);

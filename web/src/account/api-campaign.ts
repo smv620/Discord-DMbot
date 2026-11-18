@@ -15,6 +15,7 @@ import type {
   HouseFileState,
   AiFeedRead,
   LoreUpload,
+  LorePdf,
   CampaignPage,
   CampaignSettingAnswer,
   CharacterSheets,
@@ -93,7 +94,7 @@ export function keepDmOnlyMarks(p: PictureItem): PictureItem {
   return out;
 }
 
-export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> {
+export default function campaignArea({ call, waitForAnswer }: ApiHelpers): Partial<AccountApi> {
   return {
     transcriptCampaigns: async () =>
       (
@@ -365,6 +366,21 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/house-file`, input)) as HouseFileState,
     aiFeed: async (ref, kind, job, after) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/ai-feed/${kind}/${encodeURIComponent(job)}?after=${after}`)) as AiFeedRead,
+    lorePdf: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/lore-pdf`)) as LorePdf,
+    // The file goes as it is, not as JSON: the API reads it with a running cap.
+    lorePdfSend: async (ref, file) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/lore-pdf`, undefined, false, new Blob([file], { type: "application/octet-stream" }))) as LorePdf,
+    lorePdfCount: async (ref, onLook) => {
+      const queued = (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/lore-pdf/estimate`, {})) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`/me/campaigns/${encodeURIComponent(ref)}/web/answers/${encodeURIComponent(queued.answer)}`, (look) => onLook?.(sharedOf(look.progress as never)));
+      return (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/lore-pdf`)) as LorePdf;
+    },
+    lorePdfGo: async (ref, input) =>
+      ((await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/lore-pdf/go`, input)) as { upload: LoreUpload }).upload,
+    lorePdfDrop: async (ref) => {
+      await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/lore-pdf`);
+    },
     loreRead: async (ref, id) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/lore${id ? `/${encodeURIComponent(id)}` : ""}`)) as { upload: LoreUpload | null }).upload,
   };
