@@ -247,6 +247,15 @@ CHECKS_ONLY = {
 }
 
 
+# DM-only doors that read an unproved connection on purpose: a table's guess sits on a connection
+# the DM has not confirmed (a theory or an accusation is not a fact, §7), and the DM's card shows
+# it to them in Discord. They answer NULL to anyone who is not a DM of the campaign.
+DM_ONLY_UNPROVED = {
+    "dmbot_web_thread_guesses": "0539: the guesses on a story thread's card (#4665), for a DM "
+    "only; a guess's connection is proposed, never confirmed, and a turned-down one is left out",
+}
+
+
 class TheDoors(DatabaseTest):
     async def test_every_door_that_reads_connections_filters_confirmed(self) -> None:
         """The doors as the database has them (the last definition of each, not a string in the
@@ -263,7 +272,7 @@ class TheDoors(DatabaseTest):
         keywords = {"where", "on", "join", "left", "inner", "set", "using", "as", "cross", "for"}
         loose: list[str] = []
         for name, src in doors.items():
-            if name in CHECKS_ONLY:
+            if name in CHECKS_ONLY or name in DM_ONLY_UNPROVED:
                 continue
             for found in re.finditer(r"memory_relations(?:\s+(?:AS\s+)?([A-Za-z_]\w*))?", src):
                 alias = found.group(1)
