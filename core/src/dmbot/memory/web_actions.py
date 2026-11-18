@@ -25,6 +25,7 @@ from dmbot.db import Database
 from dmbot.memory import backstory_keep as keep
 from dmbot.memory import beliefs, evidence, link_edits, map_uploads, name_edits, placing, told
 from dmbot.memory import claims as claims_mod
+from dmbot.memory import lore_pdfs as lore_pdfs_mod
 from dmbot.memory import thread_clues as clues_mod
 from dmbot.memory import time_limits as tl
 from dmbot.memory import unnamed as unnamed_mod
@@ -685,6 +686,7 @@ async def apply(
     uploads: MapUploads | None = None,
     reads: Callable[[int], Awaitable[bool]] | None = None,
     game_now: GameNowFn | None = None,
+    lore_pdfs: lore_pdfs_mod.LorePdfs | None = None,
 ) -> Outcome:
     """Do one action the way Discord's name card does. Nothing here logs the DM's words."""
     if action.action in MAPS_PAGE_ACTIONS:
@@ -692,6 +694,11 @@ async def apply(
     if action.user_id not in dm_user_ids:
         return _failed(NOT_ALLOWED)
     cid = action.campaign_id
+    if action.action == "lore-pdf-estimate":
+        # (#4762 step 2: count a staged lore PDF; the sender is a DM, checked above)
+        return await lore_pdfs_mod.estimate(
+            lore_pdfs, guild_id, cid, a=action, now=int(time.time())
+        )
     if action.action in CLOCK_ACTIONS:
         if clock is None:
             return _failed(FAILED)
