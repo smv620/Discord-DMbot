@@ -306,6 +306,13 @@ AUDIENCE: dict[str, str] = {
             "ui.party_card.WhyButton",
             "ui.party_card.BackButton",
             "ui.party_card.LeaveUndoButton",
+            # A character joining the party: the join question, since when, 🧭 (#4537 slice 2b)
+            "ui.party_join.EveryoneButton",
+            "ui.party_join.PartyButton",
+            "ui.party_join.JoinUndoButton",
+            "ui.party_join.SinceButton",
+            "ui.party_join.FirstUndoButton",
+            "ui.party_join.JoinsOpenButton",
         ],
         DM,
     ),
