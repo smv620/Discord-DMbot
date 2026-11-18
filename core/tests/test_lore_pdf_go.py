@@ -56,7 +56,7 @@ class Going(Reading):
             (await lore_pdf.read(self.web, self.session, self.cref))["state"], "reading"
         )
         # a second press finds the file taken and the campaign busy
-        self.assertEqual(await self.turned_away(ref), "not_counted")
+        self.assertEqual(await self.turned_away(ref), "busy")
 
     async def test_nothing_is_queued_without_the_right_to_use_box(self) -> None:
         ref = await self.counted()

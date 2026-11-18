@@ -59,6 +59,9 @@ SQL = r"""
            OR substr(encode(sha256(convert_to(s.id, 'UTF8')), 'hex'), 1, 32) <> pdf_ref THEN
             RETURN jsonb_build_object('status', 'not_found');
         END IF;
+        IF s.state = 'reading' THEN
+            RETURN jsonb_build_object('status', 'busy');
+        END IF;
         IF s.state <> 'estimated' THEN
             RETURN jsonb_build_object('status', 'not_counted');
         END IF;

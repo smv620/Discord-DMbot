@@ -514,6 +514,57 @@ class TheWorker(NamesTest):
         self.assertEqual((await self.row(uid))["error"], q.NO_AI)  # (Discord's reads count)
         self.assertEqual(await self.staged_rows(), 0)
 
+    async def test_a_file_replaced_mid_read_is_never_recorded_or_deleted_as_the_old_one(
+        self,
+    ) -> None:
+        await self.stage_pdf()
+        uid = await self.add(source="pdf", text="")
+        newer = "c" * 32
+        real = ui_bg.read_background
+
+        async def swap(*a: Any, **k: Any) -> Any:
+            # the DM sends another file while this one is read: the stage door replaces the row
+            async with self.db.guild(GUILD) as conn:
+                await conn.execute(
+                    "UPDATE lore_pdf_staged SET id = %s, state = 'staged', sha256 = %s",
+                    (newer, "d" * 64),
+                )
+            return await real(*a, **k)
+
+        with self.pdf_reader(), patch.object(lore_upload, "read_background", swap):
+            await self.work()
+        self.assertEqual((await self.row(uid))["state"], "done")
+        self.bot.campaigns.record_confirmation.assert_awaited_once()  # type: ignore[attr-defined]
+        self.assertEqual(
+            self.bot.campaigns.record_confirmation.await_args.args[-1],  # type: ignore[attr-defined]
+            hashlib.sha256(self.PDF_BYTES).hexdigest(),  # (the file read, not the newer one)
+        )
+        self.assertEqual(await self.staged_rows(), 1)  # the newer file is untouched
+
+    async def test_the_pictures_folder_is_closed_however_the_read_ends(self) -> None:
+        for fail in (False, True):
+            with self.subTest(fail=fail):
+                await self.stage_pdf()
+                await self.add(source="pdf", text="")
+                closed: list[bool] = []
+
+                async def opened(raw: bytes, label: str, *, pictures: bool) -> Upload:
+                    return Upload(TEXT, label, document=True)
+
+                async def boom(*_a: Any, **_k: Any) -> Any:
+                    raise RuntimeError("x")
+
+                with (
+                    patch.object(lore_upload, "open_pdf", opened),
+                    patch.object(Upload, "close", lambda _self, c=closed: c.append(True)),
+                ):
+                    if fail:
+                        with patch.object(lore_upload, "read_background", boom):
+                            await self.work()
+                    else:
+                        await self.work()
+                self.assertEqual(closed, [True])
+
     async def test_a_discord_read_and_a_website_pdf_read_cannot_run_in_one_campaign_at_once(
         self,
     ) -> None:

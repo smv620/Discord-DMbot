@@ -201,7 +201,7 @@ class TheRoute(Staged):
         self.assertEqual(sent.status_code, 202)
         self.assertEqual(sent.json()["upload"]["state"], "waiting")
         again = await self.client.post(go, json=body)
-        self.assertEqual((again.status_code, again.json()["error"]), (409, "not_counted"))
+        self.assertEqual((again.status_code, again.json()["error"]), (409, "busy"))
         other = await self.signed_client(BOB)
         self.assertEqual((await other.post(go, json=body)).status_code, 403)
 

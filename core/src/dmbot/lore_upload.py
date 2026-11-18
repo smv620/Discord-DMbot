@@ -27,6 +27,7 @@ from dmbot.ai import AIError
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import lore_queue as q
 from dmbot.memory import lore_read
+from dmbot.memory.lore_pdfs import Staged
 from dmbot.memory.lore_queue import Claim, LoreQueue
 from dmbot.memory.name_documents import DocumentError
 from dmbot.pictures.bucket import BucketError
@@ -145,12 +146,13 @@ async def run_upload(bot: Any, queue: LoreQueue, claim: Claim, guild_id: int) ->
     """Read one claimed upload and end it. Never raises: the row must never stay "working" for a
     bug. Counts only in the log."""
     error, names, links = q.FAILED, 0, 0
+    staged_out: list[Staged] = []  # the staged file this read opened (a website PDF), if it did
     found: dict[str, list[str]] = {}  # the names this read proposed, kind by kind (#3207)
     try:
         # The whole read has a limit: a hung call must not hold the claim (the reporter keeps it
         # alive) or the server's queue for good.
         async with asyncio.timeout(lore_read.LORE_TIME_LIMIT_S + READ_MARGIN_S):
-            error, names, links = await _read(bot, queue, claim, guild_id, found)
+            error, names, links = await _read(bot, queue, claim, guild_id, found, staged_out)
     except TimeoutError:
         error = q.OUT_OF_TIME
     except asyncio.CancelledError:
@@ -167,7 +169,7 @@ async def run_upload(bot: Any, queue: LoreQueue, claim: Claim, guild_id: int) ->
     if claim.source == "pdf":
         # However the read ended (done, failed, refused, out of time), the file is no longer
         # needed: it is not kept past its read (#4762).
-        await _drop_pdf(bot, guild_id, claim)
+        await _drop_pdf(bot, guild_id, claim, staged_out[0].id if staged_out else None)
     for attempt in (1, 2):  # once more: a row left working is read again, and proposed twice
         try:
             if not await queue.finish(
@@ -185,15 +187,17 @@ async def run_upload(bot: Any, queue: LoreQueue, claim: Claim, guild_id: int) ->
     )
 
 
-async def _drop_pdf(bot: Any, guild_id: int, claim: Claim) -> None:
-    """Delete the staged file's object and row. Never raises: a miss is left to the bucket's own
-    1-day rule and the daily sweep."""
+async def _drop_pdf(bot: Any, guild_id: int, claim: Claim, read_id: str | None) -> None:
+    """Delete the staged file's object and row: the file this read opened (`read_id`), or, when it
+    ended before opening one, the campaign's file still marked `reading`. A file the DM sent or
+    dropped meanwhile is another one (`staged` again, or none) and is never touched. Never raises:
+    a miss is left to the bucket's own 1-day rule and the daily sweep."""
     try:
         pdfs = bot._lore_pdfs()
         if pdfs.staged is None:
             return
         staged = await pdfs.staged.get(guild_id, claim.campaign_id)
-        if staged is None:
+        if staged is None or staged.state != "reading" or read_id not in (None, staged.id):
             return
         if pdfs.staging is not None:
             with contextlib.suppress(BucketError):
@@ -203,7 +207,9 @@ async def _drop_pdf(bot: Any, guild_id: int, claim: Claim) -> None:
         log.warning("A lore PDF could not be cleared: %s", type(exc).__name__)
 
 
-async def _staged_pdf(bot: Any, queue: LoreQueue, claim: Claim, guild_id: int) -> Upload | str:
+async def _staged_pdf(
+    bot: Any, queue: LoreQueue, claim: Claim, guild_id: int, staged_out: list[Staged]
+) -> Upload | str:
     """The campaign's staged PDF opened for reading, or the error word: still the file the DM
     counted and said yes to (its row is `reading`), its object still there and the same bytes."""
     pdfs = bot._lore_pdfs()
@@ -212,6 +218,7 @@ async def _staged_pdf(bot: Any, queue: LoreQueue, claim: Claim, guild_id: int) -
     staged = await pdfs.staged.get(guild_id, claim.campaign_id)
     if staged is None or staged.state != "reading":
         return q.FILE_GONE
+    staged_out.append(staged)  # (this file's id and hash are what the read records and drops)
     try:
         raw = await pdfs.staging.get(staged.object_key)
     except BucketError:
@@ -234,7 +241,12 @@ async def _put_back(queue: LoreQueue, claim: Claim, guild_id: int) -> None:
 
 
 async def _read(
-    bot: Any, queue: LoreQueue, claim: Claim, guild_id: int, found: dict[str, list[str]]
+    bot: Any,
+    queue: LoreQueue,
+    claim: Claim,
+    guild_id: int,
+    found: dict[str, list[str]],
+    staged_out: list[Staged],
 ) -> tuple[str, int, int]:
     """(error word or "", names, connections). An error word is an upload that read nothing.
     `found` is filled with the names the read proposed, by kind, for the website's Add all."""
@@ -268,16 +280,15 @@ async def _read(
         return _RELEASED, 0, 0
     if why_not == LIMIT:
         return q.NO_AI, 0, 0
+    pdf: Upload | None = None  # a website PDF's upload: its pictures' folder is closed below
     try:
         text = claim.text
-        pdf: Upload | None = None
         if claim.source == "pdf":
-            got_pdf = await _staged_pdf(bot, queue, claim, guild_id)
+            got_pdf = await _staged_pdf(bot, queue, claim, guild_id, staged_out)
             if isinstance(got_pdf, str):
                 return got_pdf, 0, 0
             pdf, text = got_pdf, str(got_pdf.text)
             if len(text) > TEXT_MAX:
-                pdf.close()
                 return q.TOO_LONG, 0, 0
         elif claim.source == "link":
             # The same reader as Discord's link upload: https only, public addresses only (checked
@@ -293,15 +304,13 @@ async def _read(
             if len(text) > TEXT_MAX:
                 return q.TOO_LONG, 0, 0
         if not text.strip() and not (pdf is not None and pdf.pictures_found):
-            if pdf is not None:
-                pdf.close()
             return q.NOTHING_FOUND, 0, 0
         # Whose backstory it is: the DM's answer on the page, checked against the campaign's own
         # characters (never taken on trust), and a player character is who knows the connections.
         speaker, known_by = await _speaker(memory, campaign, claim.speaker)
         # The DM said it is their own writing; a lasting record, before anything is read.
         # (a PDF: the file's own hash, which the staging door recorded and the bot just checked)
-        document = fingerprint(text) if pdf is None else await _pdf_hash(bot, guild_id, claim)
+        document = fingerprint(text) if pdf is None else staged_out[0].sha256
         await bot.campaigns.record_confirmation(
             guild_id, campaign.id, claim.rights_by, OWN_WRITING, document
         )
@@ -337,12 +346,9 @@ async def _read(
         found.update({kind: list(ids) for kind, ids in done.stored.items()})
         return _outcome(done)
     finally:
+        if pdf is not None:
+            pdf.close()  # (however the read ended: done, failed, cancelled or out of time)
         end_ai_read(guild_id, claim.campaign_id)
-
-
-async def _pdf_hash(bot: Any, guild_id: int, claim: Claim) -> str:
-    staged = await bot._lore_pdfs().staged.get(guild_id, claim.campaign_id)  # (checked just before)
-    return staged.sha256 if staged is not None else ""
 
 
 async def _speaker(memory: Any, campaign: Any, entry_id: str) -> tuple[str | None, str]:

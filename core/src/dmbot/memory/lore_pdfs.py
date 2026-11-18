@@ -131,13 +131,14 @@ class StagedPdfs:
             return bool(cur.rowcount == 1)
 
     async def sweep(self, guild_id: int, *, now: int) -> list[str]:
-        """Delete the rows older than a day (never one being read) and give back their object keys,
-        for the caller to delete (the bucket's own rule usually has them already)."""
+        """Delete the rows older than a day and give back their object keys, for the caller to
+        delete (the bucket's own rule usually has them already). A row being read is spared for
+        two days: past that its read ended without clearing it."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "DELETE FROM lore_pdf_staged WHERE guild_id = %s AND created_at < %s"
-                " AND state <> 'reading' RETURNING object_key",
-                (guild_id, now - ROW_KEEP_S),
+                " AND (state <> 'reading' OR created_at < %s) RETURNING object_key",
+                (guild_id, now - ROW_KEEP_S, now - 2 * ROW_KEEP_S),
             )
             return [str(r["object_key"]) for r in await cur.fetchall()]
 

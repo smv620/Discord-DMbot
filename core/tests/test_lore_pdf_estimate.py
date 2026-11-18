@@ -208,9 +208,9 @@ class Estimating(Staged):
         got = await lore_pdf.read(self.web, self.session, self.cref)
         self.assertEqual((got["state"], got["pages"]), ("staged", None))  # (nothing written to it)
 
-    async def test_the_sweep_never_clears_a_row_being_read(self) -> None:
+    async def test_the_sweep_spares_a_row_being_read_until_two_days_have_passed(self) -> None:
         await self.stage()
         await self.set_state("reading")
-        self.assertEqual(
-            await lp.StagedPdfs(self.db).sweep(self.g, now=1_000 + 10 * lp.ROW_KEEP_S), []
-        )
+        staged = lp.StagedPdfs(self.db)
+        self.assertEqual(await staged.sweep(self.g, now=1_000 + 2 * lp.ROW_KEEP_S - 1), [])
+        self.assertEqual(len(await staged.sweep(self.g, now=1_000 + 2 * lp.ROW_KEEP_S + 1)), 1)
