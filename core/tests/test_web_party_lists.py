@@ -47,13 +47,14 @@ class PartyLists(Web):
         """Close this character's open stretch now ("retired"), as the DM's action does."""
         now = int(time.time())
         async with self.db.guild(self.g) as conn:
-            await conn.execute(
+            cur = await conn.execute(
                 "UPDATE memory_party_spans SET to_at = GREATEST(from_at, %s), ended = 'retired'"
-                " WHERE guild_id = %s AND entity_id = %s AND to_at IS NULL",
-                (now, self.g, character),
+                " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s AND to_at IS NULL",
+                (now, self.g, self.one.id, character),
             )
+            self.assertEqual(cur.rowcount, 1)  # (a made character has an open stretch)
 
-    async def names(self, got: dict[str, Any]) -> list[str]:
+    def names(self, got: dict[str, Any]) -> list[str]:
         return [c["name"] for c in got["characters"]]
 
     async def knowers_data(self) -> dict[str, Any]:
@@ -80,8 +81,8 @@ class PartyLists(Web):
         await self.left_span(self.tavin)  # (Rook has no stretch at all: still in the party)
         pick = await party_characters.read(self.web, self.session, self.cref)
         tick = await relationships.read_characters(self.web, self.session, self.cref)
-        self.assertEqual(await self.names(pick), ["Rook"])
-        self.assertEqual(await self.names(tick), ["Rook"])
+        self.assertEqual(self.names(pick), ["Rook"])
+        self.assertEqual(self.names(tick), ["Rook"])
         self.assertEqual((await self.knowers_data())["playerCharacters"], [self.rook])
 
     async def test_a_character_who_left_still_shows_as_knowing_what_it_knew(self) -> None:
