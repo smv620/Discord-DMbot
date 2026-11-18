@@ -74,7 +74,7 @@ stays false until the core half is deployed and dev1 has checked it (`docs/GO_LI
 | Import older sessions (preview, members, consent, start, progress, clock) | `/account/import` | built, switched off | `IMPORT_LIVE`, `IMPORT_CONFIRM_LIVE` (consent), `IMPORT_CLOCK_LIVE` |
 | House rules (read), the house-rules file, rules sharing and rulesets | `/account/house-rules`, `/account/sharing` | read live; file and sharing switched off | `HOUSE_FILE_LIVE`, `RULE_SHARING_LIVE`, `RULESETS_LIVE` |
 | Homebrew (read and file) | `/account/homebrew` | live | none |
-| Pictures gallery | `/account/pictures` | built, switched off | `PICTURES_LIVE` |
+| Pictures gallery | `/account/pictures` | built, switched off; DM-only pictures from documents are marked (#4761) | `PICTURES_LIVE` |
 | Maps page: the list, a DM's yes or no, show or hide for the table, remove, a poster's take-back, Undo | `/account/maps` | built, switched off | `MAPS_LIVE` (#4347); Discord: `/dmbot maps` shows a map to the table or hides it, with the same warning and an Undo (#4414); the rest of the page (the DM's yes or no, a poster's take-back) is in Questions and the map's own question |
 | Story timeline | `/account/timeline` | live | none |
 | Plot check (ask, answer an issue, chat, decide a proposal) | campaign | built, switched off | `PLOT_CHECK_LIVE` |

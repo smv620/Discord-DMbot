@@ -350,7 +350,17 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
                   <span class="muted">{sessionDay(tile.at)}</span>
                   {tile.sessionNumber !== null && <span class="muted"> · {words.sessionTag(tile.sessionNumber)}</span>}
                   <div>{tile.poster}</div>
-                  {!tile.isPublic && <div class="tag">{words.privateTag}</div>}
+                  {tile.dmOnly ? (
+                    <>
+                      <div class="tag" title={words.dmOnlyHelp}>
+                        {words.dmOnlyTag}
+                        <span class="sr-only"> {words.dmOnlyHelp}</span>
+                      </div>
+                      {tile.uploadLabel && <div class="small muted">{words.fromUpload(tile.uploadLabel)}</div>}
+                    </>
+                  ) : (
+                    !tile.isPublic && <div class="tag">{words.privateTag}</div>
+                  )}
                   {tile.permanent && <div class="tag">{words.permanentTag}</div>}
                   {waiting[tile.code] && (
                     <WorkProgress
@@ -391,14 +401,16 @@ export default function Pictures({ api, path }: { api: AccountApi; path: string 
                           {tile.permanent ? words.notPermanent : words.permanent}
                         </button>
                       )}
-                      <button
-                        type="button"
-                        class="button secondary"
-                        disabled={busy !== null}
-                        onClick={() => void act(tile, tile.isPublic ? "make-private" : "make-public")}
-                      >
-                        {tile.isPublic ? words.makePrivate : words.makePublic}
-                      </button>
+                      {!tile.dmOnly && (
+                        <button
+                          type="button"
+                          class="button secondary"
+                          disabled={busy !== null}
+                          onClick={() => void act(tile, tile.isPublic ? "make-private" : "make-public")}
+                        >
+                          {tile.isPublic ? words.makePrivate : words.makePublic}
+                        </button>
+                      )}
                       <button type="button" class="button secondary" disabled={busy !== null} onClick={() => setConfirming(tile.code)}>
                         {words.remove}
                       </button>

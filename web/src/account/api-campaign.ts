@@ -4,6 +4,7 @@
 import type {
   PictureAction,
   PictureActionResult,
+  PictureItem,
   PictureList,
   SessionNotes,
   SessionNotesList,
@@ -80,6 +81,18 @@ const PICTURE_WIRE_ACTION: Record<PictureAction, string> = {
 /** What the must-haves routes refuse with (#3329, CloudDev-lead's #3340): `too_many` would otherwise read as the game masters' limit. */
 const MUSTS_REFUSALS: Record<string, ApiErrorKind> = { too_many: "musts-full", empty: "musts-empty", too_long: "musts-too-long", bad_arg: "bad-choice" };
 
+/** The DM-only mark and upload label of a picture (#4761): `dmOnly` only when true; `uploadLabel` only plain text of 1 to 200
+ * characters. Everything else on the picture is passed through as the API sent it. */
+export function keepDmOnlyMarks(p: PictureItem): PictureItem {
+  const { dmOnly: _dm, uploadLabel: _label, ...rest } = p;
+  const out: PictureItem = { ...rest };
+  if (p.dmOnly === true) out.dmOnly = true;
+  if (typeof p.uploadLabel === "string" && p.uploadLabel.length >= 1 && p.uploadLabel.length <= 200 && !/[<>]/.test(p.uploadLabel)) {
+    out.uploadLabel = p.uploadLabel;
+  }
+  return out;
+}
+
 export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> {
   return {
     transcriptCampaigns: async () =>
@@ -106,10 +119,11 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
       if (filter.q) params.set("q", filter.q);
       if (filter.before) params.set("before", filter.before);
       const query = params.toString();
-      return (await call(
+      const got = (await call(
         "GET",
         `/me/campaigns/${encodeURIComponent(campaignRef)}/pictures${query ? `?${query}` : ""}`,
       )) as PictureList;
+      return { ...got, pictures: got.pictures.map(keepDmOnlyMarks) };
     },
     pictureAction: async (campaignRef, code, action) =>
       (await call(

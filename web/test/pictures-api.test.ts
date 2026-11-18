@@ -17,7 +17,8 @@ describe("the pictures list", () => {
     expect(first.more).toBe(true);
     expect(first.pictures[2]!.cursor).toBe("1791002000:3");
     const next = await api.pictures!(REF, { before: first.pictures[2]!.cursor });
-    expect(codes(next)).toEqual(["pic-4", "pic-5"]);
+    // pic-6 is a DM-only picture from a document (#4761): a DM sees it as the oldest of the six.
+    expect(codes(next)).toEqual(["pic-4", "pic-5", "pic-6"]);
     expect(next.more).toBe(false);
   });
 
@@ -25,7 +26,8 @@ describe("the pictures list", () => {
     const api = mockApi("table");
     expect(codes(await api.pictures!(REF, { session: 2 }))).toEqual(["pic-1", "pic-2", "pic-3"]);
     expect(codes(await api.pictures!(REF, { poster: "Cerric" }))).toEqual(["pic-2", "pic-4"]);
-    expect(codes(await api.pictures!(REF, { q: "MAP" }))).toEqual(["pic-1"]);
+    // pic-6 ("A map from the Keep's handout") is DM-only and matches too, for a DM (#4761).
+    expect(codes(await api.pictures!(REF, { q: "MAP" }))).toEqual(["pic-1", "pic-6"]);
   });
 
   it("a player's campaign has no usage, isDm false, and mine only on Mira's pictures", async () => {
@@ -78,7 +80,8 @@ describe("the game master's actions", () => {
     const first = await api.pictures!(REF, {});
     await api.pictureAction!(REF, "pic-3", "delete");
     const next = await api.pictures!(REF, { before: first.pictures[2]!.cursor });
-    expect(codes(next)).toEqual(["pic-4", "pic-5"]);
+    // pic-6 is a DM-only picture from a document (#4761): a DM sees it as the oldest of the six.
+    expect(codes(next)).toEqual(["pic-4", "pic-5", "pic-6"]);
   });
 
   it("a player cannot change another poster's picture, and the refusal says why", async () => {

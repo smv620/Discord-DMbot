@@ -1292,6 +1292,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     { code: "pic-3", at: 1791002000, sessionNumber: 2, poster: "Mira", description: "A storm over the ford", permanent: false, isPublic: false },
     { code: "pic-4", at: 1790002000, sessionNumber: null, poster: "Cerric", description: "The ferryman's boat", permanent: false, isPublic: true },
     { code: "pic-5", at: 1790001000, sessionNumber: null, poster: "Mira", description: "A torn page from a diary", permanent: false, isPublic: true },
+    // A picture DMbot read out of an uploaded document (#4761): DM only, never public; a player's view never lists it.
+    { code: "pic-6", at: 1790000500, sessionNumber: null, poster: "DMbot", description: "A map from the Keep's handout", permanent: false, isPublic: false, dmOnly: true, uploadLabel: "The Sunken Keep" },
   ].map((p, i) => ({ ...p, n: i + 1 }));
   const PICTURE_MB = 100;
   const PERMANENT_LIMIT_MB = 400;
@@ -1699,6 +1701,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         const [at, n] = filter.before.split(":").map(Number);
         rows = rows.filter((p) => p.at < at! || (p.at === at && p.n < n!));
       }
+      if (!dm) rows = rows.filter((p) => !(p as { dmOnly?: boolean }).dmOnly);
       if (filter.session !== undefined) rows = rows.filter((p) => p.sessionNumber === filter.session);
       if (filter.poster) rows = rows.filter((p) => p.poster === filter.poster);
       if (filter.q) {
@@ -1718,6 +1721,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           permanent: p.permanent,
           isPublic: p.isPublic,
           mine: p.poster === "Mira",
+          ...((p as { dmOnly?: boolean }).dmOnly ? { dmOnly: true, uploadLabel: (p as { uploadLabel?: string }).uploadLabel } : {}),
         })),
         more: rows.length > 3,
         isDm: dm,
