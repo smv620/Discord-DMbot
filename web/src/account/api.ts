@@ -1349,6 +1349,9 @@ export interface UploadNotice {
     /** Hidden things a 🌍 Common knowledge read made known to everyone (#4589); absent from an older API. */
     revealed?: number;
   };
+  /** The hidden things the upload made known to everyone (#4661; core #4746): at most 10 plain lines, and how many more. Absent from an older API. */
+  revealedLines?: string[];
+  revealedMore?: number;
   /** Until when Undo works (Unix seconds); null when it no longer does or never did. */
   undoUntil: number | null;
   /** What an Undo took back, once pressed. */

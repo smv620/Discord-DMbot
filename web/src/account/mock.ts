@@ -3377,12 +3377,18 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const looks = (autoLooks.get(source.id) ?? 0) + 1;
       autoLooks.set(source.id, looks);
       const base = { label: "Lore, 24 Oct", serverNow: now, questionsLeft: 3, undone: undoneUploads.get(source.id) ?? null };
-      const counts = { names: 62, byKind: { npc: 30, place: 24, group: 8 }, connections: 48, revealed: /\.autoadd-revealed$/.test(ref) ? 3 : 0 };
+      const counts = { names: 62, byKind: { npc: 30, place: 24, group: 8 }, connections: 48, revealed: /\.autoadd-revealed$/.test(ref) ? 3 : /\.autoadd-many$/.test(ref) ? 14 : 0 };
+      // The hidden things the upload made known (#4661): three lines, or ten and four more past them.
+      const revealedFields = /\.autoadd-revealed$/.test(ref)
+        ? { revealedLines: ["Ash Morrow", "Ash Morrow is a member of Master Orlen", "Bram Tull is also called The Grey Hand"], revealedMore: 0 }
+        : /\.autoadd-many$/.test(ref)
+          ? { revealedLines: Array.from({ length: 10 }, (_, i) => `Person ${String(i + 1).padStart(2, "0")}`), revealedMore: 4 }
+          : {};
       if (/\.autoadd-none$/.test(ref)) return { ...base, state: "none", counts: { names: 0, byKind: {}, connections: 0 }, undoUntil: null };
       if (/\.autoadd-applying$/.test(ref) && looks <= 2) {
         return { ...base, state: "applying", counts, undoUntil: null, progress: { stage: "adding", done: looks * 20, total: 110, unit: "names", startedAt: now - 30, updatedAt: now - 2, serverNow: now, state: "running" } };
       }
-      return { ...base, state: "done", counts, undoUntil: /\.autoadd-old$/.test(ref) ? null : now + 7 * 86400 };
+      return { ...base, ...revealedFields, state: "done", counts, undoUntil: /\.autoadd-old$/.test(ref) ? null : now + 7 * 86400 };
     },
     async undoUpload(ref, source, onLook): Promise<UploadUndo> {
       calls.push(`undoUpload:${ref}:${source.kind}:${source.id}`);

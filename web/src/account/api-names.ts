@@ -45,6 +45,21 @@ import { countsOf, sharedOf } from "./api";
 import type { AccountApi, ApiHelpers, CharacterLanguages, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
+/** The revealed list of an upload notice (#4661): plain lines of at most 200 characters, at most ten; anything else is dropped. */
+export function keepRevealed(raw: unknown): { revealedLines?: string[]; revealedMore?: number } {
+  const r = (raw ?? {}) as { revealedLines?: unknown; revealedMore?: unknown };
+  const out: { revealedLines?: string[]; revealedMore?: number } = {};
+  if (Array.isArray(r.revealedLines)) {
+    out.revealedLines = r.revealedLines
+      .filter((l): l is string => typeof l === "string" && l.length > 0 && l.length <= 200 && !/[<>\u0000-\u001f]/.test(l))
+      .slice(0, 10);
+  }
+  if (typeof r.revealedMore === "number" && Number.isInteger(r.revealedMore) && r.revealedMore >= 0 && r.revealedMore <= 9999) {
+    out.revealedMore = r.revealedMore;
+  }
+  return out;
+}
+
 export function countOf(counts: unknown, key: string): number | undefined {
   if (typeof counts !== "string") return undefined;
   for (const [, name, digits] of counts.matchAll(/(?<![a-z_])([a-z_]+):(\d+)/g)) {
@@ -381,7 +396,7 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     },
     // What DMbot added by itself after one upload (#3879, core #3887): counts and the label only.
     uploadNotice: async (ref, source) =>
-      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/upload-notice?kind=${source.kind}&id=${encodeURIComponent(source.id)}`)) as UploadNotice,
+      { const raw = (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/upload-notice?kind=${source.kind}&id=${encodeURIComponent(source.id)}`)) as UploadNotice; return { ...raw, ...keepRevealed(raw) }; },
     // Undo this upload is queued for the bot, then polled like any queued change: once, within 7 days, newest first.
     undoUpload: async (ref, source, onLook) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}/upload-notice/undo`;
