@@ -1332,6 +1332,8 @@ export interface LorePdf {
   pages?: number | null;
   pictures?: number | null;
   estimateUsd?: number | null;
+  /** The cost in Discord's own sentence, in AI credits ("About 3 AI credits for the lore and its 5 pictures."), from core so the two cannot drift. Null until counted. */
+  estimateWords?: string | null;
 }
 /** What a DM says to read the counted PDF: the file's `ref`, how it is known, whose it is and the right-to-use box. */
 export interface LorePdfGo {

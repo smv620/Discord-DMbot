@@ -18,6 +18,7 @@ import logging
 import secrets
 from typing import Any, Protocol
 
+from dmbot import credits
 from dmbot.db import Database
 from dmbot.pictures.bucket import BucketError
 from dmbot.web import lore, relationships
@@ -49,6 +50,22 @@ async def ensure_dm(db: Database, session: Session, ref: str) -> None:
     await read(db, session, ref)
 
 
+def _cost_words(usd: Any, pictures: Any) -> str | None:
+    """The cost in Discord's own sentence ("About 3 AI credits for the lore and its 5 pictures."):
+    the same `credits` functions as Discord's offer (`name_background.offer_text`), so the two
+    cannot drift. The counted cost is kept in dollars (a credit is a thousandth of one), so the
+    credits are read back from it. None until the bot has counted the file."""
+    if usd is None or pictures is None:
+        return None
+    count = round(float(usd) * 1_000_000 / credits.MICRO_PER_CREDIT)
+    seen = int(pictures)
+    return credits.estimate_words(
+        "lore",
+        credits.Estimate(count, 0, True, True),
+        what=credits.pictures_words(seen) if seen else None,
+    )
+
+
 async def read(db: Database, session: Session, ref: str) -> dict[str, Any]:
     """The staged file in numbers and words (`state` and, once the bot has counted, `pages`,
     `pictures` and `estimateUsd`), or `{state: "none"}`. `not_allowed` for anyone who is not a DM
@@ -73,6 +90,7 @@ async def read(db: Database, session: Session, ref: str) -> dict[str, Any]:
         "pages": got["pages"],
         "pictures": got["pictures"],
         "estimateUsd": None if got["estimateUsd"] is None else float(got["estimateUsd"]),
+        "estimateWords": _cost_words(got["estimateUsd"], got["pictures"]),
         "createdAt": int(got["createdAt"]),
         "updatedAt": int(got["updatedAt"]),
         "serverNow": int(got["now"]),

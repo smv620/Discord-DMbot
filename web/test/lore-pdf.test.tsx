@@ -12,6 +12,7 @@ import Lore from "../src/account/Lore";
 import { mockApi } from "../src/account/mock";
 
 const PATH = "/account/lore/100.cmp1";
+const COST = "About 400 AI credits for the lore and its 5 pictures."; // (the mock API's sentence, as core words it)
 
 afterEach(() => {
   cleanup();
@@ -30,16 +31,23 @@ describe("Upload lore, a PDF", () => {
     const api = mockApi("table");
     render(<Lore api={api} path={PATH} />);
     await choosePdf();
-    expect(await screen.findByText(words.pdf.counted(12, 5, 0.4), { exact: false })).toBeTruthy();
+    expect(await screen.findByText(words.pdf.counted(12, 5, COST), { exact: false })).toBeTruthy();
     expect(api.calls.filter((c) => c.startsWith("lorePdf")).slice(0, 3)).toEqual(["lorePdf:100.cmp1", "lorePdfSend:100.cmp1:5", "lorePdfCount:100.cmp1"]);
     expect(api.calls.some((c) => c.startsWith("lorePdfGo:") || c.startsWith("loreAdd:"))).toBe(false); // (nothing is read yet)
+  });
+
+  it("says the cost in AI credits, in the API's own sentence, never in dollars", async () => {
+    render(<Lore api={mockApi("table")} path={PATH} />);
+    await choosePdf();
+    const line = await screen.findByText(COST, { exact: false });
+    expect(line.textContent).not.toContain("$");
   });
 
   it("asks for the right to use it before the yes, then starts the read with the choices and shows the wait", async () => {
     const api = mockApi("table");
     render(<Lore api={api} path={PATH} />);
     await choosePdf();
-    await screen.findByText(words.pdf.counted(12, 5, 0.4), { exact: false });
+    await screen.findByText(words.pdf.counted(12, 5, COST), { exact: false });
     fireEvent.click(screen.getByRole("button", { name: words.pdf.read }));
     expect((await screen.findByRole("alert")).textContent).toBe(words.pdf.rightsNeeded);
     expect(api.calls.some((c) => c.startsWith("lorePdfGo:"))).toBe(false);
@@ -61,7 +69,7 @@ describe("Upload lore, a PDF", () => {
     const api = mockApi("table");
     render(<Lore api={api} path={PATH} />);
     await choosePdf();
-    await screen.findByText(words.pdf.counted(12, 5, 0.4), { exact: false });
+    await screen.findByText(words.pdf.counted(12, 5, COST), { exact: false });
     fireEvent.click(screen.getByRole("button", { name: words.pdf.never }));
     await waitFor(() => expect(api.calls).toContain("lorePdfDrop:100.cmp1"));
     expect(screen.queryByRole("button", { name: words.pdf.read })).toBeNull();
@@ -87,7 +95,7 @@ describe("Upload lore, a PDF", () => {
     const api = mockApi("table");
     render(<Lore api={api} path={PATH} />);
     await choosePdf();
-    await screen.findByText(words.pdf.counted(12, 5, 0.4), { exact: false });
+    await screen.findByText(words.pdf.counted(12, 5, COST), { exact: false });
     fireEvent.click(screen.getByLabelText(words.pdf.rights));
     const yes = screen.getByRole("button", { name: words.pdf.read });
     fireEvent.click(yes);

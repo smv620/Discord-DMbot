@@ -2719,7 +2719,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (!lorePdfNow) throw new ApiError("not-found");
-      lorePdfNow = { ...lorePdfNow, state: "estimated", pages: 12, pictures: 5, estimateUsd: 0.4 };
+      lorePdfNow = { ...lorePdfNow, state: "estimated", pages: 12, pictures: 5, estimateUsd: 0.4, estimateWords: "About 400 AI credits for the lore and its 5 pictures." };
       return lorePdfNow;
     },
     async lorePdfGo(ref, input): Promise<LoreUpload> {

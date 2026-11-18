@@ -40,9 +40,9 @@ export const lorePage = {
     help: "A PDF of up to 50 MB. DMbot counts its pages and pictures first and tells you the cost. It reads none of the words until you say yes. A PDF you don't read is deleted within a day.",
     sending: "Sending the PDF…",
     counting: "Counting its pages and pictures…",
-    counted: (pages: number, pictures: number, usd: number | null): string =>
+    counted: (pages: number, pictures: number, cost: string | null): string =>
       `That's ${pages} ${pages === 1 ? "page" : "pages"}${pictures > 0 ? ` and ${pictures} ${pictures === 1 ? "picture" : "pictures"}` : ""}.` +
-      (usd === null ? " DMbot can't tell the cost yet." : ` Reading it should cost about $${usd.toFixed(2)} of AI use.`) +
+      (cost === null ? " DMbot can't tell the cost yet." : ` ${cost}`) +
       ' Answer the questions below, tick the box, then choose "Read this PDF".',
     rights: "I have the right to use this PDF, and its pictures.",
     rightsNeeded: "Check the box to confirm you have the right to use this PDF.",

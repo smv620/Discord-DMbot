@@ -78,6 +78,31 @@ class Estimating(Staged):
         want = credits.lore_and_pictures(40_000, 5).credits / 1000
         self.assertAlmostEqual(got["estimateUsd"], want, places=3)
 
+    async def test_the_cost_is_worded_exactly_as_discords_offer_words_it(self) -> None:
+        """Supervisor's ruling (#4781): credits, in Discord's own sentence, never dollars, and the
+        same sentence as the offer for the same counts, with and without pictures."""
+        from dmbot import credits
+
+        for pictures in (5, 1, 0):
+            with self.subTest(pictures=pictures):
+                self.found = lp.Counted(chars=40_000, pages=12, pictures=pictures)
+                await self.stage()
+                await lore_pdf.estimate(self.web, self.session, self.cref)
+                await self.bot_loop()
+                got = await lore_pdf.read(self.web, self.session, self.cref)
+                if pictures:
+                    want = credits.estimate_words(
+                        "lore",
+                        credits.lore_and_pictures(40_000, pictures),
+                        what=credits.pictures_words(pictures),
+                    )
+                else:
+                    want = credits.estimate_words("lore", credits.lore_estimate(40_000))
+                self.assertEqual(got["estimateWords"], want)
+                self.assertNotIn("$", got["estimateWords"])
+        await self.stage(PDF + b"y")  # (a new file: nothing counted yet, so no words)
+        self.assertIsNone((await lore_pdf.read(self.web, self.session, self.cref))["estimateWords"])
+
     async def test_the_website_never_sees_the_staged_id_only_its_short_hash(self) -> None:
         await self.stage()
         got = await lore_pdf.read(self.web, self.session, self.cref)

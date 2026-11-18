@@ -180,7 +180,7 @@ export function LorePdfPicker({ s }: { s: LorePdfState }) {
       {(s.step === "sending" || s.step === "counting") && <PdfWait step={s.step} began={s.began} slow={slow} />}
       {s.note && <p role="status">{s.note}</p>}
       {counted && s.pdf && (
-        <p role="status">{words.pdf.counted(s.pdf.pages ?? 0, s.pdf.pictures ?? 0, typeof s.pdf.estimateUsd === "number" ? s.pdf.estimateUsd : null)}</p>
+        <p role="status">{words.pdf.counted(s.pdf.pages ?? 0, s.pdf.pictures ?? 0, s.pdf.estimateWords ?? null)}</p>
       )}
     </div>
   );
