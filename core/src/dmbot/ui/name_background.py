@@ -1524,6 +1524,29 @@ def trait_questions_line(n: int) -> str:
 SHEET_LANGUAGES_SHOWN = 5  # the note names a few; the rest are counted
 
 
+def heard_sheet_languages(campaign: str, session: str, found: Sequence[tuple[str, str]]) -> str:
+    """The DM's private message for languages a session heard a player character speak that their
+    sheet lacks (#4229 1d; the ux-critic's words): the campaign and the session first, what was
+    heard in the past tense (it can be misheard), and what to do. "" for none."""
+    if not found:
+        return ""
+    shown = found[:SHEET_LANGUAGES_SHOWN]
+    lines = [
+        f"• **{_md(who)}** spoke **{_md(lang)}**, which isn't on their sheet."
+        for who, lang in shown
+    ]
+    more = len(found) - len(shown)
+    if more > 0:
+        lines.append(f"…and {more} more.")
+    return "\n".join(
+        [
+            f"🗣️ **{_md(campaign)}**, {session}: DMbot heard",
+            *lines,
+            "If that's right, the player can add it to their sheet. Nothing was changed.",
+        ]
+    )
+
+
 def sheet_languages_line(found: Sequence[tuple[str, str]]) -> str:
     """One plain line for the lore languages that player characters' sheets lack (#4229 slice 1c):
     named, never stored, since the sheet is the truth: "🗣️ Your lore says Testa speaks Elvish,
@@ -1924,13 +1947,15 @@ async def ask_languages(
     spoken: Sequence[traits_read.Spoken],
     upload: str,
     notice_id: str | None,
+    session_id: str | None = None,
 ) -> tuple[int, list[tuple[str, str]]]:
     """The languages the lore gives characters the campaign already had (#4229 slice 1c,
     Supervisor's ruling): one with no sheet that doesn't know it yet gets a question, as #3926 does
     for a lineage ("Does Brewner speak Giant?"); a player character whose sheet lacks it is named
     to the DM alone instead (a private line after the upload's note), with nothing stored. Only a
     confirmed character, and never a name two entries share. Returns the new questions and the
-    sheet lines. Never raises."""
+    sheet lines. Never raises. `session_id`: heard in that session (#4229 1d), so the question goes
+    with its transcript and its speakers' "delete my data" (#4745)."""
     offers: list[trait_offers_mod.Offer] = []
     on_sheets: list[tuple[str, str]] = []
     try:
@@ -1965,7 +1990,12 @@ async def ask_languages(
                 continue
             offers.append(
                 trait_offers_mod.Offer(
-                    entity_id, Trait(LANGUAGE, s.language, "", None, False), s.quote, upload
+                    entity_id,
+                    Trait(LANGUAGE, s.language, "", None, False),
+                    s.quote,
+                    upload,
+                    speaker_ids=s.speakers,
+                    session_id=session_id,
                 )
             )
     except Exception as exc:  # the type only: a database error can quote a row

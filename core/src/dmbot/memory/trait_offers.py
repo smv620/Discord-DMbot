@@ -13,10 +13,11 @@ The rows are this campaign's only (row-level security and composite keys). Count
 from __future__ import annotations
 
 import time
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Collection, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
+from dmbot.consent import still_recorded
 from dmbot.db import Database
 from dmbot.memory.models import (
     CLASS,
@@ -70,6 +71,10 @@ class Offer:
     entity_name: str = ""
     current: str = ""
     classes: tuple[str, ...] = ()  # the classes DMbot has for them now, for a class question
+    # (#4745) a question heard in a session: who said those lines (ids only) and the session, so
+    # it goes with their "delete my data" and with the transcript; empty and None for an upload's
+    speaker_ids: tuple[int, ...] = ()
+    session_id: str | None = None
 
     @property
     def key(self) -> str:
@@ -101,12 +106,25 @@ class TraitOfferStore:
         notice_id: str | None = None,
     ) -> int:
         """Leave these questions waiting; returns how many are new. One the DM already answered
-        "Not this", or that waits already, is left as it is, and one whose character is not
-        confirmed (or is gone) is left out."""
+        "Not this", or that waits already, is left as it is (the first one's speakers and session
+        are kept: a later session's hearing adds nothing new to ask), and one whose character is
+        not confirmed (or is gone) is left out. One heard in a session (#4745) is written only
+        while that session is there and everyone it cites still has lines in it and is still
+        recorded, read under the session's row lock, as `MetStore.add` does: the reader's consent
+        check was an AI call ago, and a forget in between must not be outrun."""
         added = 0
         now = int(self._now())
         async with self._db.guild(guild_id) as conn:
+            present: dict[str, set[int] | None] = {}
             for o in offers:
+                if o.session_id is not None:
+                    if o.session_id not in present:
+                        present[o.session_id] = await _still_there(
+                            conn, guild_id, campaign_id, o.session_id
+                        )
+                    there = present[o.session_id]
+                    if there is None or not set(o.speaker_ids) <= there:
+                        continue
                 t = o.trait
                 name, key = t.name[:LINK_NAME_MAX].strip(), o.key[:LINK_NAME_MAX]
                 source = t.rules_source[:LINK_SOURCE_MAX] if t.known else ""
@@ -114,14 +132,16 @@ class TraitOfferStore:
                     continue
                 cur = await conn.execute(
                     "INSERT INTO memory_trait_offers (guild_id, campaign_id, entity_id, kind, name,"
-                    " name_key, rules_source, edition, known, quote, upload, notice_id, created_at)"
-                    " SELECT %s, %s, e.id, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s"
+                    " name_key, rules_source, edition, known, quote, upload, notice_id, created_at,"
+                    " speaker_ids, session_id)"
+                    " SELECT %s, %s, e.id, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::bigint[], %s"
                     " FROM memory_entities e WHERE e.guild_id = %s AND e.campaign_id = %s"
                     " AND e.id = %s AND e.status = 'confirmed' ON CONFLICT DO NOTHING",
                     (
                         guild_id, campaign_id, t.kind, name, key, source, t.edition,
                         bool(source), " ".join(o.quote.split())[:QUOTE_MAX],
-                        o.upload[:UPLOAD_MAX], notice_id, now, guild_id, campaign_id, o.entity_id,
+                        o.upload[:UPLOAD_MAX], notice_id, now, sorted(set(o.speaker_ids)),
+                        o.session_id, guild_id, campaign_id, o.entity_id,
                     ),
                 )  # fmt: skip
                 added += cur.rowcount
@@ -239,3 +259,82 @@ class TraitOfferStore:
                 (guild_id, campaign_id, notice_id),
             )
             return int(cur.rowcount)
+
+
+async def _still_there(
+    conn: Any, guild_id: int, campaign_id: str, session_id: str
+) -> set[int] | None:
+    """Who still has lines in this campaign's session and is still recorded, read under the
+    session's row lock (the lock "Delete my transcripts" and a speaker's removal take first), or
+    None when the session is gone. As `MetStore.add` (#4091, #4153)."""
+    cur = await conn.execute(
+        "SELECT id FROM transcript_sessions WHERE guild_id = %s AND campaign_id = %s AND id = %s"
+        " FOR UPDATE",
+        (guild_id, campaign_id, session_id),
+    )
+    if await cur.fetchone() is None:
+        return None
+    cur = await conn.execute(
+        "SELECT DISTINCT user_id FROM transcript_lines WHERE guild_id = %s AND session_id = %s",
+        (guild_id, session_id),
+    )
+    spoke = {int(r["user_id"]) for r in await cur.fetchall()}
+    return set(await still_recorded(conn, guild_id, campaign_id, spoke))
+
+
+async def forget_speaker(
+    conn: Any, guild_id: int, user_id: int, campaign_id: str | None = None
+) -> int:
+    """Someone's words are forgotten (Stop recording me, Delete my transcripts, a DM's removal of a
+    speaker; #4745): every waiting question heard in their lines goes. A "never" is the DM's own
+    answer and stays, without their id (as a kept private scene loses it). `campaign_id`: only
+    that campaign's. In the caller's transaction. Returns how many questions went."""
+    cur = await conn.execute(
+        "DELETE FROM memory_trait_offers WHERE guild_id = %s AND %s = ANY(speaker_ids)"
+        " AND state = 'waiting' AND (%s::text IS NULL OR campaign_id = %s)",
+        (guild_id, user_id, campaign_id, campaign_id),
+    )
+    gone = int(cur.rowcount or 0)
+    await conn.execute(
+        "UPDATE memory_trait_offers SET speaker_ids = array_remove(speaker_ids, %s::bigint)"
+        " WHERE guild_id = %s AND %s = ANY(speaker_ids) AND (%s::text IS NULL OR campaign_id = %s)",
+        (user_id, guild_id, user_id, campaign_id, campaign_id),
+    )
+    return gone
+
+
+async def forget_session(conn: Any, guild_id: int, session_id: str) -> int:
+    """A session's transcript is deleted: the waiting questions heard in it go too (#4745), and an
+    answered one forgets which session it came from. In the caller's transaction. Returns how
+    many questions went."""
+    cur = await conn.execute(
+        "DELETE FROM memory_trait_offers WHERE guild_id = %s AND session_id = %s"
+        " AND state = 'waiting'",
+        (guild_id, session_id),
+    )
+    gone = int(cur.rowcount or 0)
+    await conn.execute(
+        "UPDATE memory_trait_offers SET session_id = NULL WHERE guild_id = %s AND session_id = %s",
+        (guild_id, session_id),
+    )
+    return gone
+
+
+async def keep_recorded(
+    conn: Any, guild_id: int, campaign_id: str, recorded: Collection[int]
+) -> None:
+    """A campaign moved to another server (`guild_id` is the new one): a waiting question heard
+    from someone not recorded there goes, and an answered one keeps only the ids of those who are,
+    as for the private scenes. In the caller's transaction."""
+    who = sorted(set(recorded))
+    await conn.execute(
+        "DELETE FROM memory_trait_offers WHERE guild_id = %s AND campaign_id = %s"
+        " AND state = 'waiting' AND NOT (speaker_ids <@ %s::bigint[])",
+        (guild_id, campaign_id, who),
+    )
+    await conn.execute(
+        "UPDATE memory_trait_offers SET speaker_ids = ARRAY(SELECT u FROM unnest(speaker_ids)"
+        " AS u WHERE u = ANY(%s::bigint[]) ORDER BY u) WHERE guild_id = %s AND campaign_id = %s"
+        " AND NOT (speaker_ids <@ %s::bigint[])",
+        (who, guild_id, campaign_id, who),
+    )
