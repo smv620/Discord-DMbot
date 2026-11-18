@@ -14,6 +14,7 @@ the rolling removal of old pictures never takes it; removing the map clears that
 
 from __future__ import annotations
 
+import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -275,6 +276,92 @@ async def _shown_at(w: Changes, map_id: str) -> int:
     )
     row = await cur.fetchone()
     return int(row["at"]) if row is not None and row["at"] is not None else int(w.now)
+
+
+_MILES = re.compile(r"^(?:about\s+)?(\d+(?:\.\d+)?)\s*(?:miles?|mi)\.?$", re.I)
+
+
+async def _trip(scope: Any, a: str, b: str, asked: Any, rules: tuple[str, str]) -> str:
+    """The travel-time suggestion's words (#4260 slice 10a; design §9), for the DM. The miles: a
+    stated length in miles on the road between them, else a map's straight line. A stated length
+    that isn't miles (a time, "two days by cart") is given back as it is, never summed. The pace:
+    on foot, capped by the land at either end. Nothing is stored or changed."""
+    from dmbot.maps import measure, travel, travel_words
+    from dmbot.maps.measure_words import LORE_SAYS, SESSION_SAID
+    from dmbot.rules.index import srd
+    from dmbot.sidebar.context import source_of
+
+    ids = (scope.guild_id, scope.campaign_id)
+    cur = await scope.conn.execute(
+        "SELECT id, length_words, length_from, from_session_at FROM memory_relations"
+        " WHERE guild_id = %s AND campaign_id = %s AND predicate = 'route_to'"
+        " AND status = 'confirmed' AND to_session_at IS NULL AND ((subject_id = %s AND"
+        " object_id = %s) OR (subject_id = %s AND object_id = %s))"
+        " ORDER BY length_words IS NULL, id LIMIT 1",
+        (*ids, a, b, b, a),
+    )
+    road = await cur.fetchone()
+    cur = await scope.conn.execute(
+        "SELECT value FROM memory_map_facts WHERE guild_id = %s AND campaign_id = %s"
+        " AND entity_id = ANY(%s) AND layer = 'terrain' AND status <> 'rejected'"
+        " AND to_session_at IS NULL",
+        (*ids, [a, b]),
+    )
+    lands = [str(r["value"]) for r in await cur.fetchall()]
+    shut = False
+    if road is not None:
+        cur = await scope.conn.execute(
+            "SELECT 1 FROM memory_map_facts WHERE guild_id = %s AND campaign_id = %s"
+            " AND relation_id = %s AND layer = 'condition' AND value = 'closed'"
+            " AND status <> 'rejected' AND to_session_at IS NULL LIMIT 1",
+            (*ids, str(road["id"])),
+        )
+        shut = await cur.fetchone() is not None
+    names = (asked.a, asked.b)
+    stated = str(road["length_words"] or "").strip() if road is not None else ""
+    if stated:
+        assert road is not None
+        by_dm, in_session = road["length_from"] == "dm", road["from_session_at"] is not None
+        found = _MILES.match(stated)
+        if found is None:  # (a time or another unit: the DM's own words, given back)
+            said = "you set" if by_dm else SESSION_SAID if in_session else LORE_SAYS
+            return travel_words.stated_time(stated, *names, said)
+        where = "as you set it" if by_dm else "from a session" if in_session else "from your lore"
+        miles = float(found[1])
+        distance = travel_words.by_road(stated, *names, where)
+    else:
+        maps, pins = await maps_and_pins(scope.conn, *ids, [a, b], dm=True)
+        far = measure.answer("far", maps, pins, (a, asked.a), (b, asked.b), dm=True)
+        used, _ = measure.choose(maps, pins, a, b, need_scale=True)
+        pa = measure.pin_of(pins, used.id, a) if used is not None else None
+        pb = measure.pin_of(pins, used.id, b) if used is not None else None
+        d = measure.distance(used, pa, pb) if used and pa and pb else None
+        amount = measure.rounded(d, "miles") if d is not None else None
+        if used is None or d is None or used.unit != "miles" or amount is None:
+            return far  # (what is missing, and its fix: no time without a distance)
+        miles = float(amount.split()[0])  # (the miles the answer says, so its sums match them)
+        distance = travel_words.straight(amount, *names, used.title)
+    index = srd()
+    pace = index.lookup("travel pace table", *rules, kind="rule") or index.lookup(
+        "travel pace", *rules, kind="rule"
+    )
+    terrain = index.lookup("travel terrain", *rules, kind="rule") if lands else None
+    plan = travel.plan(miles, lands)
+    parts: list[str] = []
+    if asked.how in ("", "foot", "mounted", "wagon"):  # (a boat's time on foot means nothing)
+        parts.append(travel_words.lead(plan, miles))
+    if asked.how not in ("", "foot"):
+        parts.append(travel_words.cannot(asked.how))
+    if shut:
+        parts.append(travel_words.closed())
+    parts.append(distance)
+    if not lands:
+        parts.append(travel_words.no_land())
+    sources = [source_of(h) for h in (pace, terrain) if h is not None]
+    if sources:
+        parts.append(travel_words.cite(sources))
+    parts.append(travel_words.YOUR_CALL)
+    return " ".join(parts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -673,7 +760,13 @@ class MapStore:
         return done
 
     async def measure(
-        self, guild_id: int, campaign_id: str, asked: Any, *, dm: bool
+        self,
+        guild_id: int,
+        campaign_id: str,
+        asked: Any,
+        *,
+        dm: bool,
+        rules: tuple[str, str] = ("2024", "none"),
     ) -> str | NotShown | None:
         """The words of a "how far" or "which way" answer (#4670 4b, `measure.answer`), or None
         when the usual answer should go on instead: the two names are not both kept places the
@@ -683,7 +776,9 @@ class MapStore:
         gate; with no party, `gate.public_entries`), so a DM-only map's pins, scale and distances
         never reach a player (Supervisor's condition). `NOT_SHOWN` (#4692): not `dm`, and both
         names are kept places to the DM, but one is not shown to the players (hidden, limited,
-        not yet known, or named by a secret other name): a DM's question then goes privately."""
+        not yet known, or named by a secret other name): a DM's question then goes privately.
+        "How long" (#4260 slice 10a) is the DM's only (`_trip`); `rules` are the campaign's target
+        and fallback rulesets, for its citation."""
         from dmbot.maps import measure, measure_phrase, positions
         from dmbot.maps.measure_words import NOT_SHOWN
         from dmbot.memory import gate
@@ -691,8 +786,8 @@ class MapStore:
         from dmbot.memory.models import name_key
         from dmbot.memory.store import _load_ontology
 
-        if asked.kind not in (measure_phrase.FAR, measure_phrase.WAY):
-            return None  # (#4260 slice 10a: "how long" is built next; until then, the usual answer)
+        if asked.kind == measure_phrase.LONG and not dm:
+            return None  # (travel time is the DM's: the sidebar says so before asking here)
 
         async with self._memory._read(guild_id, campaign_id, snapshot=True) as scope:
             onto = await _load_ontology(scope)
@@ -743,6 +838,8 @@ class MapStore:
                     return NOT_SHOWN
             if a is None or b is None or a == b:
                 return None
+            if asked.kind == measure_phrase.LONG:
+                return await _trip(scope, a, b, asked, rules)
             if asked.kind == measure_phrase.FAR:
                 cur = await scope.conn.execute(
                     "SELECT 1 FROM memory_relations WHERE guild_id = %s AND campaign_id = %s"

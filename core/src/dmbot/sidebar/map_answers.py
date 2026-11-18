@@ -37,6 +37,8 @@ def _restated(asked: measure_phrase.Asked) -> str:
     """The question as the transcript keeps it."""
     if asked.kind == measure_phrase.FAR:
         return f"how far from {asked.a} to {asked.b}"
+    if asked.kind == measure_phrase.LONG:
+        return f"how long from {asked.a} to {asked.b}"
     return f"which way is {asked.a} from {asked.b}"
 
 
@@ -65,10 +67,23 @@ class MapMeasuring:
             check = getattr(self.inner, "_gate", None)
             refused = await check(campaign, asker_id) if check is not None else None
             text = None
+            is_dm = asker_id in getattr(campaign, "dm_user_ids", ())
+            if refused is None and asked.kind == measure_phrase.LONG and not (is_dm and not table):
+                # (#4260: travel time is the DM's, as the SRD's travel entries are. A player gets
+                # "That's one for your DM." before any map is read; the DM at the table gets it
+                # privately, re-asked with every map)
+                if is_dm:
+                    return Answer(
+                        text=ONE_FOR_DM, in_game=False, question=_restated(asked), model="",
+                        prompt_version=PROMPT_VERSION, one_for_dm=True, parts=(ONE_FOR_DM,),
+                    )  # fmt: skip
+                return Answer(
+                    text=ONE_FOR_DM, in_game=table, question=_restated(asked), model="",
+                    prompt_version=PROMPT_VERSION, parts=(ONE_FOR_DM,),
+                )  # fmt: skip
             if refused is None:
                 try:
                     got = await self._measure(campaign, asked, not table)
-                    is_dm = asker_id in getattr(campaign, "dm_user_ids", ())
                     if isinstance(got, words.NotShown):
                         # (#4692: a place the players haven't been shown. A player's question goes
                         # the usual way, never hinting at it; the DM's goes privately, re-asked

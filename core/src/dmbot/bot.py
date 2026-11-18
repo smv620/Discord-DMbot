@@ -9921,7 +9921,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         store = self.map_store
         if store is None:
             return None
-        return await store.measure(campaign.guild_id, campaign.id, asked, dm=dm)
+        rules = (
+            str(getattr(campaign, "target_ruleset", "") or "2024"),
+            str(getattr(campaign, "fallback_ruleset", "") or "none"),
+        )  # (the travel answer's citation, in the campaign's own ruleset, #4260)
+        return await store.measure(campaign.guild_id, campaign.id, asked, dm=dm, rules=rules)
 
     async def _extract_session(
         self,
