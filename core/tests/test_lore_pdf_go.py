@@ -83,8 +83,9 @@ class Going(Reading):
 
     async def test_only_a_dm_of_the_campaign_may_say_yes(self) -> None:
         ref = await self.counted()
+        who: Any = BOB
         bob = await sessions.find(
-            self.web, await sessions.sign_in(self.web, BOB, [THURSDAY], now=NOW, days=30), now=NOW
+            self.web, await sessions.sign_in(self.web, who, [THURSDAY], now=NOW, days=30), now=NOW
         )
         assert bob is not None
         self.assertEqual(await self.turned_away(ref, who=bob), "not_allowed")

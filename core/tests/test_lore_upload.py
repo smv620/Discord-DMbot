@@ -14,6 +14,7 @@ from typing import Any
 from unittest.mock import AsyncMock, patch
 
 from dmbot import ai_feed, lore_upload
+from dmbot.campaigns.models import OWN_WRITING
 from dmbot.memory import lore_pdfs, lore_read
 from dmbot.memory import lore_queue as q
 from dmbot.memory.lore_queue import LoreQueue
@@ -431,7 +432,7 @@ class TheWorker(NamesTest):
                 (GUILD, self.campaign.id, "b" * 32, DM, self.PDF_KEY,
                  hashlib.sha256(self.PDF_BYTES).hexdigest(), len(self.PDF_BYTES), now, now),
             )  # fmt: skip
-        self.bot._lore_pdfs = lambda: lore_pdfs.LorePdfs(  # type: ignore[attr-defined]
+        self.bot._lore_pdfs = lambda: lore_pdfs.LorePdfs(  # type: ignore[method-assign]
             self.staging, lore_pdfs.StagedPdfs(self.db), None, 100 << 20
         )
 
@@ -460,7 +461,7 @@ class TheWorker(NamesTest):
         self.assertEqual(self.opened_with[0], self.PDF_BYTES)
         # the right to use it is recorded against the file's own hash, before the read
         self.bot.campaigns.record_confirmation.assert_awaited_once_with(  # type: ignore[attr-defined]
-            GUILD, self.campaign.id, DM, lore_upload.OWN_WRITING,
+            GUILD, self.campaign.id, DM, OWN_WRITING,
             hashlib.sha256(self.PDF_BYTES).hexdigest(),
         )  # fmt: skip
         self.assertEqual((await self.staged_rows(), self.staging.objects), (0, {}))
@@ -479,7 +480,7 @@ class TheWorker(NamesTest):
 
     async def test_no_staged_row_fails_as_gone_and_a_reader_refusal_as_unreadable(self) -> None:
         uid = await self.add(source="pdf", text="")
-        self.bot._lore_pdfs = lambda: lore_pdfs.LorePdfs(  # type: ignore[attr-defined]
+        self.bot._lore_pdfs = lambda: lore_pdfs.LorePdfs(  # type: ignore[method-assign]
             _Staging({}), lore_pdfs.StagedPdfs(self.db), None, 100 << 20
         )
         await self.work()
