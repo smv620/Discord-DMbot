@@ -2614,7 +2614,7 @@ def create_app(
     # A lore PDF sent from the website (#4762, step 1): a DM only; staged for the bot to count.
     pdf_upload_limit = RateLimit(10 * 60, count=6)
 
-    @app.get("/me/campaigns/{ref}/lore/pdf")
+    @app.get("/me/campaigns/{ref}/lore-pdf")
     async def me_lore_pdf_read(ref: str, signed: Signed) -> dict[str, Any]:
         """The staged PDF's state and numbers, or `{state: "none"}`. DM only."""
         session, _token = signed
@@ -2624,7 +2624,7 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
-    @app.post("/me/campaigns/{ref}/lore/pdf")
+    @app.post("/me/campaigns/{ref}/lore-pdf")
     async def me_lore_pdf_stage(ref: str, request: Request, signed: Signed) -> dict[str, Any]:
         """Send a lore PDF (the file itself as the body, at most `lore_pdf.MAX_BYTES`): staged and
         noted, replacing the campaign's earlier one. DM only; the check comes before any of the
@@ -2661,7 +2661,7 @@ def create_app(
             )
             raise HTTPException(status_code=status, detail=detail) from None
 
-    @app.delete("/me/campaigns/{ref}/lore/pdf", status_code=204)
+    @app.delete("/me/campaigns/{ref}/lore-pdf", status_code=204)
     async def me_lore_pdf_drop(ref: str, signed: Signed) -> None:
         """The DM's "Never mind": the staged PDF and its row go."""
         session, _token = signed

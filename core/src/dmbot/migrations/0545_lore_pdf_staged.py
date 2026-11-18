@@ -15,7 +15,8 @@ from dmbot.migrations._shared import _isolate
 # and by the bot's sweep after a day (step 2). The three numbers (`pages`, `pictures`,
 # `estimate_usd`) are what the bot's count before the yes writes back; nothing else is kept from
 # it. Foreign key `ON UPDATE CASCADE` on the campaign (it moves with its `guild_id`); forced
-# row-level security; not in a backup (a file in transit, gone within a day).
+# row-level security (the table's 100 MB CHECK is the outer bound; the website's cap is lower, see
+# `web/lore_pdf.py`); not in a backup (a file in transit, gone within a day).
 #
 # Three doors for a DM of the campaign (each NULL for anyone else, 0404's check):
 # - `dmbot_web_lore_pdf_stage(g, c, token, sha256, size, now)`: puts the row, replacing one. Gives
@@ -63,8 +64,11 @@ SQL = (
         IF token IS NULL OR token !~ '^[0-9a-f]{32}$' THEN
             RETURN jsonb_build_object('status', 'bad_file');
         END IF;
+        -- one stage at a time for a campaign: with no old row there is nothing for FOR UPDATE to
+        -- lock, so two first files sent together would collide on the key
+        PERFORM pg_advisory_xact_lock(hashtextextended('lore_pdf:' || g::TEXT || c, 0));
         SELECT s.object_key INTO old FROM lore_pdf_staged s
-            WHERE s.guild_id = g AND s.campaign_id = c FOR UPDATE;
+            WHERE s.guild_id = g AND s.campaign_id = c;
         DELETE FROM lore_pdf_staged WHERE guild_id = g AND campaign_id = c;
         INSERT INTO lore_pdf_staged (guild_id, campaign_id, id, user_id, object_key, sha256,
                                      size_bytes, created_at, updated_at)

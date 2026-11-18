@@ -7,11 +7,16 @@ from __future__ import annotations
 
 from typing import Any
 
+import httpx
+
 from dmbot.memory.name_documents import MAX_PDF_BYTES
-from dmbot.web import lore_pdf
+from dmbot.pictures.bucket import BucketError
+from dmbot.web import lore_pdf, sessions
+from dmbot.web.app import create_app
+from dmbot.web.payments import FakeProvider
 from dmbot.web.recaps import RecapError
-from tests.test_recap_web import BOB
-from tests.test_web_api import THURSDAY
+from tests.test_recap_web import BOB, NOW
+from tests.test_web_api import ALICE, THURSDAY, FakeDiscord, settings
 from tests.test_web_name_actions import Acting
 
 PDF = b"%PDF-1.7\n" + b"x" * 200
@@ -66,6 +71,7 @@ class Staged(Acting):
         await self.stage(b"%PDF-1.4\n" + b"y" * 50)
         (second,) = self.bucket.objects
         self.assertNotEqual(first, second)
+        self.assertNotIn(first, self.bucket.objects)  # (the replaced file's object is gone)
         async with self.db.guild(self.g) as conn:
             cur = await conn.execute("SELECT count(*) AS n FROM lore_pdf_staged")
             self.assertEqual((await cur.fetchone() or {})["n"], 1)
@@ -101,5 +107,103 @@ class Staged(Acting):
             cur = await conn.execute("SELECT * FROM lore_pdf_staged")
             row = await cur.fetchone()
         assert row is not None
-        self.assertNotIn(PDF[:20].decode(), str(row))
+        self.assertEqual(
+            sorted(row),
+            ["campaign_id", "created_at", "estimate_usd", "guild_id", "id", "object_key", "pages",
+             "pictures", "sha256", "size_bytes", "state", "updated_at", "user_id"],
+        )  # fmt: skip
         self.assertLessEqual(lore_pdf.MAX_BYTES, MAX_PDF_BYTES)
+
+    async def test_a_dm_of_another_campaign_cannot_drop_or_read_this_ones(self) -> None:
+        await self.stage()
+        bob = await self.signed(BOB, THURSDAY)  # DMs Two, not One
+        with self.assertRaises(RecapError) as dropped:
+            await lore_pdf.drop(self.web, bob, self.cref, self.bucket)
+        self.assertEqual(dropped.exception.code, "not_allowed")
+        self.assertEqual(len(self.bucket.objects), 1)  # (nothing was touched)
+        self.assertEqual(
+            (await lore_pdf.read(self.web, self.session, self.cref))["state"], "staged"
+        )
+
+    async def test_never_mind_with_nothing_staged_is_fine_and_a_failed_put_keeps_no_row(
+        self,
+    ) -> None:
+        await lore_pdf.drop(self.web, self.session, self.cref, None)  # (no row, no bucket)
+
+        class Failing(FakeBucket):
+            async def put(self, key: str, data: bytes) -> None:
+                raise BucketError("no space")
+
+        self.assertEqual(await self.refused(bucket=Failing()), "failed")
+        self.assertEqual(await lore_pdf.read(self.web, self.session, self.cref), {"state": "none"})
+
+    async def test_two_stages_at_once_leave_one_row_and_one_object(self) -> None:
+        import asyncio
+
+        await asyncio.gather(self.stage(PDF + b"1"), self.stage(PDF + b"2"))
+        self.assertEqual(len(self.bucket.objects), 1)
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute("SELECT count(*) AS n FROM lore_pdf_staged")
+            self.assertEqual((await cur.fetchone() or {})["n"], 1)
+
+
+class TheRoute(Staged):
+    """The three routes over HTTP: who may call them, what a bad body gets, and the limits."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.app = create_app(
+            settings(), self.web, FakeDiscord(), payments=FakeProvider(b"h" * 32, "https://s.example"),
+            clock=lambda: NOW, upload_bucket=self.bucket,
+        )  # fmt: skip
+        self.url = f"/me/campaigns/{self.cref}/lore-pdf"
+        self.client = await self.signed_client(ALICE)
+
+    async def signed_client(self, who: Any) -> httpx.AsyncClient:
+        token = await sessions.sign_in(self.web, who, [THURSDAY], now=NOW, days=30)
+        client = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            follow_redirects=False,
+            headers={"X-DMbot-Request": "1"},  # (a website call, as the page sends)
+        )
+        client.cookies.set("__Host-dmbot_session", token, domain="web-api.internal.test")
+        self.addAsyncCleanup(client.aclose)
+        return client
+
+    async def test_a_dm_stages_reads_and_drops_over_http(self) -> None:
+        sent = await self.client.post(self.url, content=PDF)
+        self.assertEqual(sent.status_code, 200)
+        self.assertEqual(sent.json()["state"], "staged")
+        self.assertEqual((await self.client.get(self.url)).json()["state"], "staged")
+        self.assertEqual((await self.client.delete(self.url)).status_code, 204)
+        self.assertEqual((await self.client.get(self.url)).json(), {"state": "none"})
+        self.assertEqual(self.bucket.objects, {})
+
+    async def test_a_dm_of_another_campaign_is_refused_before_the_body_is_read(self) -> None:
+        bob = await self.signed_client(BOB)  # DMs Two, not One
+        for call in (bob.get(self.url), bob.post(self.url, content=PDF), bob.delete(self.url)):
+            got = await call
+            self.assertEqual(
+                (got.status_code, got.json()), (403, {"error": "not_allowed"}), got.request.method
+            )
+        self.assertEqual(self.bucket.objects, {})
+
+    async def test_a_file_that_is_not_a_pdf_is_a_400_and_a_lying_length_is_a_413(self) -> None:
+        bad = await self.client.post(self.url, content=b"GIF89a....")
+        self.assertEqual((bad.status_code, bad.json()), (400, {"error": "bad_file"}))
+        big = await self.client.post(
+            self.url,
+            content=b"%PDF-" + b"x" * (lore_pdf.MAX_BYTES + 1),
+        )
+        self.assertEqual((big.status_code, big.json()), (413, {"error": "bad_file"}))
+        self.assertEqual(self.bucket.objects, {})
+
+    async def test_a_signed_out_caller_gets_401(self) -> None:
+        anonymous = httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=self.app),
+            base_url="https://web-api.internal.test",
+            headers={"X-DMbot-Request": "1"},
+        )
+        self.addAsyncCleanup(anonymous.aclose)
+        self.assertEqual((await anonymous.post(self.url, content=PDF)).status_code, 401)

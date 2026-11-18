@@ -19,7 +19,6 @@ import secrets
 from typing import Any, Protocol
 
 from dmbot.db import Database
-from dmbot.memory.name_documents import MAX_PDF_BYTES
 from dmbot.pictures.bucket import BucketError
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -28,8 +27,7 @@ from dmbot.web.sessions import Session
 log = logging.getLogger(__name__)
 
 # The website's own cap: the core's limit is higher, and the page says this number.
-MAX_BYTES = 50 * 1024 * 1024
-assert MAX_BYTES <= MAX_PDF_BYTES
+MAX_BYTES = 50 * 1024 * 1024  # (a test holds it under `MAX_PDF_BYTES`)
 
 
 class Bucket(Protocol):
@@ -45,7 +43,8 @@ def sniff(data: bytes) -> bool:
 
 async def ensure_dm(db: Database, session: Session, ref: str) -> None:
     """Refuse anyone who is not a DM of the campaign (`not_allowed`) before any of their upload is
-    read. The staging door asks again, so a change in between never lets one by."""
+    read. It is `read`'s one round trip (the same check as the staging door's own, which asks
+    again, so a change in between never lets one by)."""
     await read(db, session, ref)
 
 
@@ -107,6 +106,8 @@ async def stage(
             )
             found = await cur.fetchone()
     except BaseException:
+        # (a commit that went through but whose answer was lost leaves a row for a missing object:
+        # the bot's count, step 2, says "gone" for a missing object, and the 1-day sweep clears it)
         await _forget(bucket, key)
         raise
     got = found["r"] if found else None
