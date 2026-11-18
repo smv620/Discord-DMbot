@@ -16,7 +16,9 @@ from dmbot.migrations._shared import _isolate
 # `estimate_usd`) are what the bot's count before the yes writes back; nothing else is kept from
 # it. Foreign key `ON UPDATE CASCADE` on the campaign (it moves with its `guild_id`); forced
 # row-level security (the table's 100 MB CHECK is the outer bound; the website's cap is lower, see
-# `web/lore_pdf.py`); not in a backup (a file in transit, gone within a day).
+# `web/lore_pdf.py`); no column names a person (the row is the campaign's, its DMs are checked at
+# each door), so "delete my data" has nothing of a person's to remove here (#4148's catalog);
+# not in a backup (a file in transit, gone within a day).
 #
 # Three doors for a DM of the campaign (each NULL for anyone else, 0404's check):
 # - `dmbot_web_lore_pdf_stage(g, c, token, sha256, size, now)`: puts the row, replacing one. Gives
@@ -31,7 +33,6 @@ SQL = (
         FOREIGN KEY (campaign_id, guild_id)
             REFERENCES campaigns (id, guild_id) ON DELETE CASCADE ON UPDATE CASCADE,
         id           TEXT NOT NULL CHECK (id ~ '^[0-9a-f]{32}$'),
-        user_id      BIGINT NOT NULL,
         object_key   TEXT NOT NULL CHECK (object_key ~ '^p/[0-9a-f]{32}[.]pdf$'),
         sha256       TEXT NOT NULL CHECK (sha256 ~ '^[0-9a-f]{64}$'),
         size_bytes   BIGINT NOT NULL CHECK (size_bytes > 0 AND size_bytes <= 104857600),
@@ -70,9 +71,9 @@ SQL = (
         SELECT s.object_key INTO old FROM lore_pdf_staged s
             WHERE s.guild_id = g AND s.campaign_id = c;
         DELETE FROM lore_pdf_staged WHERE guild_id = g AND campaign_id = c;
-        INSERT INTO lore_pdf_staged (guild_id, campaign_id, id, user_id, object_key, sha256,
+        INSERT INTO lore_pdf_staged (guild_id, campaign_id, id, object_key, sha256,
                                      size_bytes, created_at, updated_at)
-            VALUES (g, c, token, dmbot_current_user(), 'p/' || token || '.pdf', digest, bytes_in,
+            VALUES (g, c, token, 'p/' || token || '.pdf', digest, bytes_in,
                     now_s, now_s);
         RETURN jsonb_build_object('status', 'ok', 'id', token, 'replaced', old);
     END

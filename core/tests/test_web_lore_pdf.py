@@ -110,7 +110,7 @@ class Staged(Acting):
         self.assertEqual(
             sorted(row),
             ["campaign_id", "created_at", "estimate_usd", "guild_id", "id", "object_key", "pages",
-             "pictures", "sha256", "size_bytes", "state", "updated_at", "user_id"],
+             "pictures", "sha256", "size_bytes", "state", "updated_at"],
         )  # fmt: skip
         self.assertLessEqual(lore_pdf.MAX_BYTES, MAX_PDF_BYTES)
 
