@@ -4,7 +4,7 @@
 import type { KnowWord } from "./api";
 
 /** The states that are faded: only the DM (or the NPCs) know, so the players do not see them yet. */
-const FADED: KnowWord[] = ["secret", "hidden_from_the_players", "known_to_an_npc"];
+const FADED: KnowWord[] = ["secret", "hidden_from_the_players", "known_to_an_npc", "left_the_party"];
 
 /** The 🤫 mark shows for a secret only. */
 export function markSecret(x: { secret?: boolean; knowWord?: KnowWord }): boolean {

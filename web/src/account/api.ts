@@ -1805,7 +1805,7 @@ export type RecapAudioLinks = Partial<
 export type RecapAction = "post" | "again" | "drop";
 
 /** Who knows a name or a connection, for the DM's full view (#3167; core #3166). Five plain states. */
-export type KnowWord = "secret" | "hidden_from_the_players" | "known_to_an_npc" | "partly_revealed" | "known_to_the_party";
+export type KnowWord = "secret" | "hidden_from_the_players" | "known_to_an_npc" | "partly_revealed" | "known_to_the_party" | "left_the_party";
 
 /** One name on the Story Graph (#2324). `secret` is sent to the campaign's DMs only. */
 export interface WebNode {

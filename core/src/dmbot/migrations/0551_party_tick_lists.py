@@ -18,7 +18,10 @@ from __future__ import annotations
 # who has left drops out of the lists the DM CHOOSES from, never out of what it knows: the
 # `knownBy` lists (0281) and the knowers table are untouched, because nothing a character knew is
 # forgotten (§6), and a departed character who knows a connection still shows as knowing it.
-# No table changes, no rows change, no new door.
+# The knowers door also gains `leftParty` (Supervisor's ruling on #4782): the confirmed player
+# characters who have a stretch but none open, so the page can word what only they know as "Known
+# to a character who has left the party" and never as an NPC. No table changes, no rows change, no
+# new door.
 _ALIVE = (
     "AND NOT (EXISTS (SELECT 1 FROM memory_party_spans ps\n"
     "                              WHERE ps.guild_id = {a}.guild_id\n"
@@ -28,6 +31,24 @@ _ALIVE = (
     "                              WHERE ps.guild_id = {a}.guild_id\n"
     "                                AND ps.campaign_id = {a}.campaign_id\n"
     "                                AND ps.entity_id = {a}.id AND ps.to_at IS NULL))"
+)
+
+# (the leavers: has a stretch, none of them open)
+_LEFT = (
+    "'leftParty', COALESCE((\n"
+    "                SELECT jsonb_agg(x.id ORDER BY x.id) FROM memory_entities x\n"
+    "                WHERE x.guild_id = g AND x.campaign_id = c AND x.type = 'character'\n"
+    "                  AND x.role = 'player_character' AND x.status = 'confirmed'\n"
+    "                  AND x.merged_into IS NULL\n"
+    "                  AND EXISTS (SELECT 1 FROM memory_party_spans ps\n"
+    "                              WHERE ps.guild_id = x.guild_id\n"
+    "                                AND ps.campaign_id = x.campaign_id\n"
+    "                                AND ps.entity_id = x.id)\n"
+    "                  AND NOT EXISTS (SELECT 1 FROM memory_party_spans ps\n"
+    "                                  WHERE ps.guild_id = x.guild_id\n"
+    "                                    AND ps.campaign_id = x.campaign_id\n"
+    "                                    AND ps.entity_id = x.id AND ps.to_at IS NULL)),\n"
+    "                '[]'::jsonb),\n            "
 )
 
 
@@ -55,6 +76,12 @@ _SWAPS = (
         "AND x.role = 'player_character' AND x.status = 'confirmed'\n                  "
         + _ALIVE.format(a="x")
         + "), '[]'::jsonb),",
+    ),
+    (
+        "dmbot_web_knowers_data",
+        "-- one row for each (statement, character): kind, statement id, character, certainty",
+        _LEFT
+        + "-- one row for each (statement, character): kind, statement id, character, certainty",
     ),
 )
 

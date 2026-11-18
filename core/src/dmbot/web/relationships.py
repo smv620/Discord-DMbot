@@ -459,6 +459,11 @@ def _knowers(
     return data, who
 
 
+# The word for a statement only a player character who has left the party knows (`gate.word_of`
+# knows the party, not its leavers); the page says "Known to a character who has left the party".
+LEFT_THE_PARTY = "left_the_party"
+
+
 def know_words(
     known: dict[str, Any],
     shared: tuple[gate.Statements, Callable[[str, str], set[str]]] | None = None,
@@ -471,8 +476,18 @@ def know_words(
     says "secret" of something this read does not know."""
     data, who = shared or _knowers(known)
     party = data.player_characters
-    entries = {str(e): gate.word_of(who(gate.ENTRY, str(e)), party) for e in known["liveEntries"]}
-    links = {str(c): gate.word_of(who(gate.CONNECTION, str(c)), party) for c in data.connections}
+    left = frozenset(str(c) for c in known.get("leftParty", ()))
+
+    def word(kind: str, item: str) -> str:
+        knowers = who(kind, item)
+        # What only characters who have left the party know is never worded as an NPC's
+        # (Supervisor's ruling on #4782): it is theirs, and nothing they knew is forgotten.
+        if knowers and knowers <= left:
+            return LEFT_THE_PARTY
+        return gate.word_of(knowers, party)
+
+    entries = {str(e): word(gate.ENTRY, str(e)) for e in known["liveEntries"]}
+    links = {str(c): word(gate.CONNECTION, str(c)) for c in data.connections}
     return entries, links
 
 

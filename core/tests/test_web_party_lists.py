@@ -101,3 +101,28 @@ class PartyLists(Web):
                     )
                     return
         self.fail("the connection is not in the answer")
+
+    async def test_what_only_a_leaver_knows_is_worded_as_theirs_never_as_an_npcs(self) -> None:
+        """Supervisor's ruling on #4782: "Known to a character who has left the party"."""
+        await self.memory.set_connection_knowers(
+            self.g, self.one.id, self.secret_link, [self.tavin],
+            source=DM_SOURCE, dm_chose_secret=True,
+        )  # fmt: skip
+        await self.leave(self.tavin)
+        self.assertEqual((await self.knowers_data())["leftParty"], [self.tavin])
+        words = {
+            x["id"]: x["knowWord"] for e in (await self.graph(hops=2))["edges"] for x in e["links"]
+        }
+        self.assertEqual(words[self.links["mira-heir"]], "left_the_party")
+        # with an NPC beside the leaver, it is no longer only a leaver's
+        await self.memory.set_connection_knowers(
+            self.g, self.one.id, self.secret_link, [self.tavin, self.heir],
+            source=DM_SOURCE, dm_chose_secret=True,
+        )  # fmt: skip
+        words = {
+            x["id"]: x["knowWord"] for e in (await self.graph(hops=2))["edges"] for x in e["links"]
+        }
+        self.assertNotEqual(words[self.links["mira-heir"]], "left_the_party")
+        # nobody who is in the party is listed as having left
+        await self.forget_spans()
+        self.assertEqual((await self.knowers_data())["leftParty"], [])
