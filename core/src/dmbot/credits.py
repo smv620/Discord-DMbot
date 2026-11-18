@@ -161,13 +161,16 @@ def lore_and_pictures(chars: int, pictures: int, *, allowance: int = 0, used: in
     return Estimate(total, lore.left, total >= ESTIMATE_BAR, total <= lore.left)
 
 
-def pictures_words(pictures: int) -> str:
+def pictures_words(pictures: int, *, more: bool = False) -> str:
     """What the card counts when a lore read also reads its pictures: "for the lore and its 12
-    pictures" (one picture is "its picture")."""
+    pictures" (one picture is "its picture"); "and 30 of its pictures" when the file has `more`
+    past the limits (the ux-critic's: the card's note says how many are skipped)."""
+    if more:
+        return f"for the lore and {pictures:,} of its pictures"
     return (
         "for the lore and its picture"
         if pictures == 1
-        else (f"for the lore and its {pictures:,} pictures")
+        else f"for the lore and its {pictures:,} pictures"
     )
 
 

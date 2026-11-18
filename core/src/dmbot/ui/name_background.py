@@ -364,7 +364,7 @@ def offer_text(
         credits.estimate_words(
             "lore",
             credits.lore_and_pictures(len(upload.text), upload.pictures_found),
-            what=credits.pictures_words(upload.pictures_found),
+            what=credits.pictures_words(upload.pictures_found, more=upload.pictures_over > 0),
         )
         if upload.pictures_found
         else credits.estimate_words("lore", credits.lore_estimate(len(upload.text)))
@@ -396,11 +396,11 @@ def offer_text(
 
 def pictures_over_note(over: int) -> str:
     """What the offer says about pictures past the limits (#4003: at most 30 an upload, 4 a page),
-    in counts only."""
-    more = "1 more picture" if over == 1 else f"{over:,} more pictures"
+    in counts only (the ux-critic's words: "skipped" is a limit, never a fault)."""
+    more = "1 more picture is" if over == 1 else f"{over:,} more pictures are"
     return (
-        f"{more} in it won't be read (DMbot reads up to {pdf_pictures.PER_UPLOAD}, and up to "
-        f"{pdf_pictures.PER_PAGE} a page)."
+        f"{more} skipped: DMbot reads up to {pdf_pictures.PER_UPLOAD} a file, and up to "
+        f"{pdf_pictures.PER_PAGE} a page."
     )
 
 

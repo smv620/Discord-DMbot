@@ -274,9 +274,15 @@ class TheUpload(unittest.IsolatedAsyncioTestCase):
         upload = name_lists.Upload("x" * 4000, "a.pdf", True, pictures_found=12, pictures_over=3)
         text = name_background.offer_text(upload, False)
         lore = credits.lore_estimate(4000).credits
-        self.assertIn(f"About {lore + 60:,} AI credits for the lore and its 12 pictures.", text)
-        self.assertIn("3 more pictures in it won't be read (DMbot reads up to 30, and up to 4 a "
-                      "page).", text)  # fmt: skip
+        self.assertIn(f"About {lore + 60:,} AI credits for the lore and 12 of its pictures.", text)
+        self.assertIn("3 more pictures are skipped: DMbot reads up to 30 a file, and up to 4 a "
+                      "page.", text)  # fmt: skip
+        self.assertIn(
+            "and its 12 pictures.",
+            name_background.offer_text(
+                name_lists.Upload("x" * 4000, "a.pdf", True, pictures_found=12), False
+            ),
+        )
         plain = name_background.offer_text(name_lists.Upload("x" * 4000, "a.pdf", True), False)
         self.assertIn("for the lore.", plain)
         self.assertNotIn("picture", plain)
@@ -288,6 +294,12 @@ class TheCost(unittest.TestCase):
         both = credits.lore_and_pictures(10_000, 30)
         self.assertEqual(both.credits, lore.credits + 150)
         self.assertEqual(credits.pictures_words(1), "for the lore and its picture")
+        self.assertEqual(
+            credits.pictures_words(30, more=True), "for the lore and 30 of its pictures"
+        )
+        self.assertEqual(name_background.pictures_over_note(1),
+                         "1 more picture is skipped: DMbot reads up to 30 a file, and up to 4 a "
+                         "page.")  # fmt: skip
         self.assertEqual(credits.lore_and_pictures(10_000, -2).credits, lore.credits)
 
 
