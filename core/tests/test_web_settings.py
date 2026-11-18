@@ -109,6 +109,10 @@ class FakeBot:
         await self.store.set_rulesets(campaign.guild_id, campaign.id, main, fallback)
         return self.live
 
+    async def apply_map_checks(self, campaign: Campaign, on: bool) -> None:
+        self.calls.append(("map_checks", f"{on}"))
+        await self.store.set_map_checks(campaign.guild_id, campaign.id, on)
+
     async def apply_share_improve(self, campaign: Campaign, on: bool) -> None:
         self.calls.append(("share_improve", f"{on}"))
         await self.store.set_share_improve(campaign.guild_id, campaign.id, on)
@@ -216,6 +220,35 @@ class ShareToImprove(Settings):
 
     async def test_only_on_or_off(self) -> None:
         self.assertEqual(await self.refused(setting="share_improve", value="yes"), "bad_value")
+
+
+class MapChecks(Settings):
+    """The "Map checks" switch (#4687): on by default, queued like every setting, and the bot
+    makes the call Discord's button makes."""
+
+    async def page_says(self) -> bool:
+        from dmbot.web import campaign_page
+
+        got = await campaign_page.read_campaign(self.web, self.session, self.cref)
+        return bool(got["settings"]["mapChecks"])
+
+    async def test_on_by_default_off_and_on_again_from_the_website(self) -> None:
+        self.assertTrue(await self.page_says())
+        await self.queue(setting="map_checks", value="off")
+        self.assertEqual([o.error for o in await self.run_bot()], [""])
+        self.assertFalse(await self.page_says())
+        self.assertFalse((await self.campaign()).map_checks)
+        await self.queue(setting="map_checks", value="on")
+        self.assertEqual([o.error for o in await self.run_bot()], [""])
+        self.assertTrue(await self.page_says())
+        self.assertEqual(self.bot.calls, [("map_checks", "False"), ("map_checks", "True")])
+
+    async def test_only_on_or_off(self) -> None:
+        self.assertEqual(await self.refused(setting="map_checks", value="maybe"), "bad_value")
+
+    async def test_a_player_cannot_change_it(self) -> None:
+        bob = await self.signed(BOB, THURSDAY)  # DMs Two, not One
+        self.assertEqual(await self.refused(bob, setting="map_checks", value="off"), "not_allowed")
 
 
 class TheChoices(Settings):
