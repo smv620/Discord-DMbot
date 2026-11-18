@@ -143,6 +143,10 @@ WHO_SUMMARY_MARGIN_S = 60.0
 # time, and is skipped with less than `PICTURES_MIN_S` left.
 PICTURES_UNTIL_S = lore_read.LORE_TIME_LIMIT_S - 240.0
 PICTURES_MIN_S = 60.0
+# Reading a PDF's pictures (#4003 slice b) runs beside the text read, from the same start, so it
+# never adds to the upload's one time limit; no call runs past this, and the names read from them
+# (`PICTURES_UNTIL_S`) come after.
+PICTURE_READ_UNTIL_S = 240.0
 
 
 NOT_A_BOOK = "your own notes or background, not a published book"
@@ -287,7 +291,7 @@ class UploadBackground(discord.ui.Modal, title="Your background, from a file"):
             await _tell(interaction, "No file was added. Press 📎 Upload a file and pick one.")
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        reading = bool(getattr(_bot(interaction).settings, "picture_reading_on", False))
+        reading = _reading_pictures(_bot(interaction))  # (both switches: never paid for and unused)
         got, problem = await read_attachment(upload.values[0], pictures=reading)
         if got is None:
             await _tell(interaction, problem or "DMbot couldn't read that.")
@@ -659,8 +663,8 @@ class BackgroundOffer(_Menu):
                             done,
                             total,
                         )
-                    elif stage == "seeing":  # (#4003 slice b: before the text, counts only)
-                        waiting.step("First: reading its pictures", done, total)
+                    elif stage == "seeing":  # (#4003 slice b: only once the text is read, counts)
+                        waiting.step("Finishing reading its pictures", done, total)
                     elif stage == "pictures":  # (#4003)
                         waiting.step(
                             f"Step 2 of {steps}: reading the words in its pictures", done, total
@@ -711,7 +715,7 @@ class BackgroundOffer(_Menu):
                     + thread_suggestions_line(done.thread_suggestions, done.threads_short)
                     + secret_questions_ui.count_line(done.secret_questions)
                     + picture_held_line(len(done.picture_held))
-                    + pictures_unread_line(done.pictures_unread),
+                    + pictures_unread_line(done.pictures_unread, done.unread_pages),
                     held=done.picture_held,
                 )
             # What waits for the DM also comes once to their private chat, like a live session's
@@ -793,6 +797,7 @@ class BackgroundRead:
     # Pictures that weren't read in full (#4003 slice b: an answer cut short, a failed call, out
     # of time or credits), counted on the DM's note, never dropped silently (Supervisor's ruling)
     pictures_unread: int = 0
+    unread_pages: tuple[int, ...] = ()  # their pages, for the DM to look at (never their words)
     # Story threads the lore holds (#4453): how many new suggestions wait in ❓ Questions for you
     thread_suggestions: int = 0
     threads_short: str = ""  # why the story threads weren't read in full, a `THREADS_SHORT` key
@@ -824,28 +829,33 @@ async def read_background(
     A PDF's pictures, when taken out (#4003, DMBOT_PICTURE_READING), are read first, each call
     charged as the "picture" job the DM was shown the cost of; their words then reach the lore read
     (`_read_pictures`, with DMBOT_PICTURE_NAMES on)."""
-    unread = 0
-    if upload.picture_files is not None and getattr(bot.settings, "picture_reading_on", False):
+    seeing: _Seeing | None = None
+    if upload.picture_files is not None and _reading_pictures(bot):
+        # (a task of its own, made inside the "picture" scope, so its calls are charged as the
+        # pictures the DM was shown the cost of while the text is read beside it as "lore")
+        seeing = _Seeing()
         with credits.preparing(campaign.guild_id, campaign.id, "picture"):
-            seen = await _see_pictures(bot, upload, progress, started)
-        if seen is not None:
-            upload = replace(upload, pictures=seen.pictures)
-            unread = seen.unread
+            seeing.task = asyncio.create_task(_see_pictures(bot, upload, seeing.tick, started))
     with (
         credits.preparing(campaign.guild_id, campaign.id, "lore"),
         secret_questions.evidence(upload_label(upload.label, time.time())) as asked,
     ):
-        done = await _read_background(
-            bot,
-            campaign,
-            upload,
-            truth=truth,
-            speaker=speaker,
-            known_by=known_by,
-            started=started,
-            progress=progress,
-            choice=choice,
-        )
+        try:
+            done = await _read_background(
+                bot,
+                campaign,
+                upload,
+                truth=truth,
+                speaker=speaker,
+                known_by=known_by,
+                started=started,
+                progress=progress,
+                choice=choice,
+                seeing=seeing,
+            )
+        finally:
+            if seeing is not None and seeing.task is not None:
+                seeing.task.cancel()  # (a no-op once it is done; else no call is left running)
     # (its 🤫 questions are counted on its note and open from its button: slice 2)
     memory = bot.memory
     if asked and memory is not None:
@@ -856,37 +866,67 @@ async def read_background(
             n = 0
         done.secret_questions = n
         done.questions_left += n
-    done.pictures_unread = unread
     return done
 
 
-# The pictures' own share of the lore read's time (#4003): read first, so the text read still has
-# most of its limit; a picture not started by then is counted as not read.
-SEE_PICTURES_S = 180
+def _reading_pictures(bot: Any) -> bool:
+    """A PDF's pictures are read only when what they give is used: their names
+    (DMBOT_PICTURE_NAMES) as well as the reading itself (DMBOT_PICTURE_READING). Never paid for and
+    thrown away."""
+    settings = getattr(bot, "settings", None)
+    return bool(
+        getattr(settings, "picture_reading_on", False)
+        and getattr(settings, "picture_names_on", False)
+    )
+
+
+class _Seeing:
+    """The pictures' read, running beside the text read: its task, and its latest counts for the
+    wait's step once the text read is done and it is still going."""
+
+    def __init__(self) -> None:
+        self.task: asyncio.Task[picture_vision.Seen | None] | None = None
+        self.done = 0
+        self.total = 0
+        self.forward: Callable[[str, int, int], None] | None = None
+
+    def tick(self, done: int, total: int) -> None:
+        self.done, self.total = done, total
+        if self.forward is not None:
+            self.forward("seeing", done, total)
+
+    async def result(
+        self, progress: Callable[[str, int, int], None] | None
+    ) -> picture_vision.Seen | None:
+        """Its result, showing its step while it is still going (the wait rule: what it is at,
+        how far along)."""
+        if self.task is None:
+            return None
+        if not self.task.done() and progress is not None:
+            self.forward = progress
+            progress("seeing", self.done, self.total)
+        return await self.task
 
 
 async def _see_pictures(
     bot: Any,
     upload: Upload,
-    progress: Callable[[str, int, int], None] | None,
+    tick: Callable[[int, int], None] | None,
     started: float,
 ) -> picture_vision.Seen | None:
     """The upload's pictures read with the fast model (`picture_vision.read_pictures`), or None
     without an AI client or a picture. Never raises: the text is the upload's reason, and is read
-    either way."""
+    either way. `tick(done, total)`: counts only."""
     files = upload.picture_files.files() if upload.picture_files is not None else []
     client = getattr(bot, "ai_client", None)
     if not files or client is None:
         return None
     try:
         vision = client.tier(FEATURE_TIERS[Feature.IMAGE], Feature.IMAGE)
-        if progress is not None:
-            progress("seeing", 0, len(files))
+        if tick is not None:
+            tick(0, len(files))
         return await picture_vision.read_pictures(
-            vision,
-            files,
-            until=started + SEE_PICTURES_S,
-            progress=(lambda d, t: progress("seeing", d, t)) if progress is not None else None,
+            vision, files, until=started + PICTURE_READ_UNTIL_S, progress=tick
         )
     except Exception as exc:  # (a bug or a store failure: the pictures go, the text stays)
         log.warning("An upload's pictures couldn't be read (%s)", type(exc).__name__)
@@ -904,6 +944,7 @@ async def _read_background(
     started: float,
     progress: Callable[[str, int, int], None] | None = None,
     choice: str = lore_knowledge.DEFAULT,
+    seeing: _Seeing | None = None,
 ) -> BackgroundRead:
     """The read itself, with no Discord interaction: both passes over the text, the names stored
     as proposals and the connections queued for the DM's answers. Discord's 🤖 Find names and the
@@ -977,6 +1018,14 @@ async def _read_background(
         known_keys=known,
         players=player_keys,
     )
+    # (the pictures' read, beside the text's until now: its words for the names step, #4003)
+    unread = 0
+    unread_pages: tuple[int, ...] = ()
+    if seeing is not None:
+        seen = await seeing.result(progress)
+        if seen is not None:
+            upload = replace(upload, pictures=seen.pictures)
+            unread, unread_pages = seen.unread, seen.unread_pages
     pictures = await _read_pictures(
         bot, upload, read, (read_ai, ai), own, known, aliases, player_keys,
         _picture_progress(progress, counted), until=started + PICTURES_UNTIL_S,
@@ -1203,6 +1252,9 @@ async def _read_background(
         stored, queued, read.cut, read.stats.links_listed, ready, changes,
         read.stats.dropped, questions, suggested, note,
         picture_held=frozenset(held_ids),
+        # (pictures not read in full, and those read whose names step was skipped for time)
+        pictures_unread=unread + (len(upload.pictures) if pictures is None else 0),
+        unread_pages=(*unread_pages, *(p.page for p in upload.pictures if pictures is None)),
     )  # fmt: skip
     items: _WorldItems | None = None
     if revealable is not None:  # (a World read: what it states plainly, #4524 slice 1b)
@@ -1571,13 +1623,41 @@ async def _party_keys(memory: MemoryStore, campaign: Campaign) -> set[str]:
         return set()
 
 
-def pictures_unread_line(n: int) -> str:
-    """The note's line for pictures that weren't read in full (#4003 slice b), counts only. Pure."""
+PAGES_SHOWN = 5  # pages named in the note; more are counted ("and 3 more")
+
+
+def pictures_unread_line(n: int, pages: Sequence[int] = ()) -> str:
+    """The note's line for pictures that weren't read in full (#4003 slice b): how many, and on
+    which pages, so the DM can look at them (the ux-critic's words). Counts and page numbers
+    only. Pure."""
     if not n:
         return ""
+    shown = sorted(set(pages))
+    if not shown:  # (the whole read failed: every picture was missed)
+        what = "1 picture" if n == 1 else f"{n} pictures"
+        verb = "its" if n == 1 else "their"
+        return (
+            f"\n🖼️ {what} couldn't be read in full, so {verb} words may be missing. Check the "
+            "file's maps and handouts yourself."
+        )
+    named = [str(p) for p in shown[:PAGES_SHOWN]]
+    more = len(shown) - len(named)
+    if more:
+        where = f"pages {', '.join(named)} and {more} more"
+    elif len(named) == 1:
+        where = f"page {named[0]}"
+    else:
+        where = f"pages {', '.join(named[:-1])} and {named[-1]}"
     if n == 1:
-        return "\n🖼️ 1 picture couldn't be read in full, so its words may be missing."
-    return f"\n🖼️ {n} pictures couldn't be read in full, so their words may be missing."
+        return (
+            f"\n🖼️ 1 picture ({where}) couldn't be read in full, so its words may be missing. "
+            "Check it yourself."
+        )
+    ending = "Check that page yourself." if len(shown) == 1 else "Check those pages yourself."
+    return (
+        f"\n🖼️ {n} pictures ({where}) couldn't be read in full, so their words may be missing. "
+        + ending
+    )
 
 
 def picture_held_line(n: int) -> str:
@@ -2829,7 +2909,8 @@ async def announce(
         view = notice_view(notice, site_url=bot.settings.site_url, asks=[m() for m in asks])
     if done.knowledge_note:
         card += done.knowledge_note
-    card += pictures_unread_line(done.pictures_unread)  # (#4003 slice b: on the DM's own card)
+    # (#4003 slice b: on the DM's own card)
+    card += pictures_unread_line(done.pictures_unread, done.unread_pages)
     if interaction.user.id in campaign.dm_user_ids:  # (a manager who isn't a DM: counts only)
         card += private
     with contextlib.suppress(discord.HTTPException):

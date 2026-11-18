@@ -13,8 +13,8 @@ model as the bot does (`picture_vision.read_pictures`, ANTHROPIC_API_KEY and the
 settings from the environment), and compares the answers with the key
 (`core/tests/fixtures/story_graph/picture_cases_key.json`). It prints counts only, for #3545:
 the kind right or wrong, the key's words found or missed, words read that the picture doesn't
-hold, pictures skipped by reason, and the tokens used against the estimate. It writes nothing
-anywhere but `--json`.
+hold, pictures not read in full (never scored as a wrong kind), and the estimate in credits. It
+writes nothing anywhere but `--json`.
 """
 
 from __future__ import annotations
@@ -147,19 +147,27 @@ def make() -> bytes:
 
 
 def _words(text: str) -> list[str]:
-    return [w.casefold() for w in re.findall(r"[\w'.]+", text)]
+    """Words for comparing, without the punctuation at their ends ("spring." and "spring" meet,
+    and "40 ft." is "40" and "ft")."""
+    return [w.casefold() for w in re.findall(r"\w+(?:['’]\w+)*", text)]
 
 
-def score(found: Sequence[Any], key: Mapping[str, Any], taken: Any) -> dict[str, Any]:
-    """Counts from what the pictures gave against the key (no words of the answers)."""
+def score(
+    found: Sequence[Any], key: Mapping[str, Any], taken: Any, unread: Sequence[int] = ()
+) -> dict[str, Any]:
+    """Counts from what the pictures gave against the key (no words of the answers). `unread`: the
+    pages whose picture was not read in full, counted apart, never as a wrong kind."""
     expected = {int(p["page"]): p for p in key["pictures"]}
     out: dict[str, Any] = {
         "pictures_taken": taken.found, "pictures_over": taken.over, "kind_right": 0,
         "kind_wrong": 0, "words_found": 0, "words_missed": 0, "words_not_in_picture": 0,
-        "other_skipped": 0,
+        "other_skipped": 0, "not_read_in_full": 0,
     }  # fmt: skip
     read_pages = {p.page: p for p in found}
     for page, want in sorted(expected.items()):
+        if page in unread:
+            out["not_read_in_full"] += 1
+            continue
         got = read_pages.get(page)
         if want["where"] == "other":
             out["other_skipped" if got is None else "kind_wrong"] += 1
@@ -170,7 +178,7 @@ def score(found: Sequence[Any], key: Mapping[str, Any], taken: Any) -> dict[str,
             continue
         out["kind_right"] += 1
         said = set(_words(got.text))
-        allowed = {w for phrase in want["words"] for w in _words(phrase)} | {"|", "[?]"}
+        allowed = {w for phrase in want["words"] for w in _words(phrase)}
         for phrase in want["words"]:
             hit = all(w in said for w in _words(phrase))
             out["words_found" if hit else "words_missed"] += 1
@@ -181,7 +189,7 @@ def score(found: Sequence[Any], key: Mapping[str, Any], taken: Any) -> dict[str,
 async def _score(raw: bytes, key: Mapping[str, Any]) -> dict[str, Any]:
     from pypdf import PdfReader
 
-    from dmbot.ai import AIModelTier, AnthropicClient, Feature
+    from dmbot.ai import FEATURE_TIERS, AnthropicClient, Feature
     from dmbot.config import parse_ai_models
     from dmbot.memory import pdf_pictures, picture_vision
 
@@ -192,11 +200,11 @@ async def _score(raw: bytes, key: Mapping[str, Any]) -> dict[str, Any]:
         files = pdf_pictures.PictureFiles(Path(folder)).files()
         try:
             seen = await picture_vision.read_pictures(
-                client.tier(AIModelTier.FAST, Feature.IMAGE), files, until=float("inf")
+                client.tier(FEATURE_TIERS[Feature.IMAGE], Feature.IMAGE), files, until=float("inf")
             )
         finally:
             await client.close()
-    counts = score(seen.pictures, key, taken)
+    counts = score(seen.pictures, key, taken, seen.unread_pages)
     counts.update(
         cut=seen.cut, failed=seen.failed, not_read=seen.late,
         estimate_credits=5 * taken.found,

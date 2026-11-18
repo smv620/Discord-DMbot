@@ -103,6 +103,50 @@ class Reading(unittest.IsolatedAsyncioTestCase):
         seen = await picture_vision.read_pictures(ai, self.files(3), until=float("inf"))
         self.assertEqual((len(ai.sent), seen.late), (1, 3))
 
+    async def test_an_unexpected_error_costs_that_picture_only(self) -> None:
+        ai = Fake({1: RuntimeError("socket"), 2: {"where": "map", "text": "A", "shows": ""}})
+        seen = await picture_vision.read_pictures(ai, self.files(2), until=float("inf"))
+        self.assertEqual((seen.failed, [p.page for p in seen.pictures]), (1, [2]))
+        self.assertEqual(seen.unread_pages, (1,))
+
+    async def test_words_past_the_cap_count_as_cut(self) -> None:
+        ai = Fake({1: {"where": "table", "text": "x" * (picture_vision.TEXT_CAP + 1), "shows": ""}})
+        seen = await picture_vision.read_pictures(ai, self.files(1), until=float("inf"))
+        self.assertEqual((seen.cut, seen.pictures), (1, ()))
+
+    async def test_a_call_still_running_at_the_end_is_stopped(self) -> None:
+        import asyncio
+
+        class Slow:
+            async def complete(self, *a: Any, **kw: Any) -> Any:
+                await asyncio.sleep(30)
+
+        seen = await picture_vision.read_pictures(
+            Slow(), self.files(1), until=time.monotonic() + 0.05
+        )
+        self.assertEqual(seen.late, 1)
+
+    async def test_calls_together_keep_page_order(self) -> None:
+        import asyncio
+
+        class Backwards:
+            """The later pages answer first: each call waits less than the one before it."""
+
+            def __init__(self) -> None:
+                self.calls = 0
+
+            async def complete(self, system: str, text: str, **kw: Any) -> Any:
+                self.calls += 1
+                page = self.calls
+                await asyncio.sleep(0.01 * (5 - page))
+                answer = {"where": "map", "text": f"P{page}", "shows": ""}
+                return SimpleNamespace(text=json.dumps(answer), cut=False, refused=False)
+
+        ai = Backwards()
+        with patch.object(picture_vision, "AT_ONCE", 4):
+            seen = await picture_vision.read_pictures(ai, self.files(4), until=float("inf"))
+        self.assertEqual([p.page for p in seen.pictures], [1, 2, 3, 4])
+
     async def test_progress_counts_each_picture(self) -> None:
         ai = Fake({i: {"where": "handout", "text": "x", "shows": ""} for i in (1, 2)})
         steps: list[tuple[int, int]] = []
@@ -126,6 +170,21 @@ class TheAnswer(unittest.TestCase):
         ) or ("", "", "")
         self.assertEqual((where, text), ("map", "AB\nC"))  # (control characters out, lines kept)
 
+    def test_a_transparent_picture_is_sent_on_white(self) -> None:
+        from PIL import ImageDraw
+
+        clear = PILImage.new("RGBA", (600, 400), (0, 0, 0, 0))
+        ImageDraw.Draw(clear).rectangle((100, 100, 200, 200), fill=(0, 0, 0, 255))
+        out = io.BytesIO()
+        clear.save(out, "PNG")
+        copy = picture_vision.smaller(out.getvalue())
+        assert copy is not None
+        with PILImage.open(io.BytesIO(copy.data)) as sent:
+            light: Any = sent.getpixel((10, 10))
+            dark: Any = sent.getpixel((150, 150))
+        self.assertGreater(min(light), 240)  # (white, not black)
+        self.assertLess(max(dark), 30)  # (the dark mark stays dark)
+
     def test_the_ai_gets_a_smaller_copy_under_the_limit(self) -> None:
         copy = picture_vision.smaller(jpeg(3000, 2000))
         assert copy is not None
@@ -147,6 +206,21 @@ class TheFixture(unittest.TestCase):
         self.assertEqual(pages, [p["page"] for p in key["pictures"]])
         self.assertEqual((taken.found, taken.over), (4, 0))
         self.assertEqual({n["page"] for n in key["not_taken"]}, {6, 7})
+
+    def test_the_score_of_the_fixture_s_own_words_is_perfect(self) -> None:
+        key = json.loads(KEY.read_text(encoding="utf-8"))
+        exact = [
+            PictureText(2, "", "\n".join(picture_cases.MAP_PLACES), "map"),
+            PictureText(3, "", "\n".join(" | ".join(r) for r in picture_cases.TABLE_ROWS), "table"),
+            PictureText(4, "", "\n".join(picture_cases.LETTER), "handout"),
+        ]
+        got = picture_cases.score(exact, key, pdf_pictures.Taken(4, 0))
+        self.assertEqual(
+            (got["words_missed"], got["words_not_in_picture"], got["kind_right"]), (0, 0, 3)
+        )
+        # (a picture not read in full is counted apart, never as a wrong kind)
+        apart = picture_cases.score(exact[:2], key, pdf_pictures.Taken(4, 0), unread=(4,))
+        self.assertEqual((apart["not_read_in_full"], apart["kind_wrong"]), (1, 0))
 
     def test_the_score_counts_a_perfect_read_and_an_invented_word(self) -> None:
         key = json.loads(KEY.read_text(encoding="utf-8"))
@@ -186,30 +260,77 @@ class InTheLoreRead(unittest.IsolatedAsyncioTestCase):
             return ai
 
         client = SimpleNamespace(tier=tier)
-        steps: list[tuple[str, int, int]] = []
+        steps: list[tuple[int, int]] = []
         seen = await name_background._see_pictures(
             SimpleNamespace(ai_client=client), upload, lambda *a: steps.append(a), time.monotonic()
         )
         assert seen is not None
         self.assertEqual(asked, [(FEATURE_TIERS[Feature.IMAGE], Feature.IMAGE)])
         self.assertEqual([p.text for p in seen.pictures], ["Gullhaven"])
-        self.assertEqual(steps, [("seeing", 0, 1), ("seeing", 1, 1)])
+        self.assertEqual(steps, [(0, 1), (1, 1)])
         # (no AI client, or no picture: nothing to read, and nothing breaks)
         none = await name_background._see_pictures(
             SimpleNamespace(), upload, None, time.monotonic()
         )
         self.assertIsNone(none)
 
-    def test_the_note_says_how_many_werent_read_in_full(self) -> None:
+    def test_the_note_says_how_many_werent_read_in_full_and_where(self) -> None:
+        from dmbot.ui import name_background as nb
+
+        self.assertEqual(nb.pictures_unread_line(0), "")
+        self.assertEqual(
+            nb.pictures_unread_line(1, (12,)),
+            "\n🖼️ 1 picture (page 12) couldn't be read in full, so its words may be missing. "
+            "Check it yourself.",
+        )
+        self.assertEqual(
+            nb.pictures_unread_line(3, (30, 4, 12, 4)),
+            "\n🖼️ 3 pictures (pages 4, 12 and 30) couldn't be read in full, so their words may "
+            "be missing. Check those pages yourself.",
+        )
+        self.assertIn("(pages 1, 2, 3, 4, 5 and 2 more)", nb.pictures_unread_line(7, range(1, 8)))
+        self.assertIn("(page 3) couldn't", nb.pictures_unread_line(2, (3, 3)))
+        self.assertTrue(nb.pictures_unread_line(2, (3, 3)).endswith("Check that page yourself."))
+        self.assertTrue(  # (no pages: the whole read failed)
+            nb.pictures_unread_line(3).endswith("Check the file's maps and handouts yourself.")
+        )
+
+
+class TheSwitches(unittest.TestCase):
+    def test_pictures_are_read_only_when_their_names_are_used_too(self) -> None:
         from dmbot.ui import name_background
 
-        self.assertEqual(name_background.pictures_unread_line(0), "")
-        self.assertEqual(
-            name_background.pictures_unread_line(1),
-            "\n🖼️ 1 picture couldn't be read in full, so its words may be missing.",
-        )
-        self.assertIn("3 pictures couldn't", name_background.pictures_unread_line(3))
+        def bot(reading: bool, names: bool) -> Any:
+            return SimpleNamespace(
+                settings=SimpleNamespace(picture_reading_on=reading, picture_names_on=names)
+            )
+
+        self.assertTrue(name_background._reading_pictures(bot(True, True)))
+        self.assertFalse(name_background._reading_pictures(bot(True, False)))
+        self.assertFalse(name_background._reading_pictures(bot(False, True)))
+        self.assertFalse(name_background._reading_pictures(SimpleNamespace()))
 
 
-if __name__ == "__main__":
-    unittest.main()
+class TheWait(unittest.IsolatedAsyncioTestCase):
+    async def test_a_read_still_going_shows_its_step_then_moves(self) -> None:
+        import asyncio
+
+        from dmbot.ui import name_background
+
+        seeing = name_background._Seeing()
+        gate = asyncio.Event()
+
+        async def read() -> Any:
+            seeing.tick(1, 3)
+            await gate.wait()
+            seeing.tick(3, 3)
+            return picture_vision.Seen()
+
+        seeing.task = asyncio.create_task(read())
+        await asyncio.sleep(0)
+        steps: list[tuple[str, int, int]] = []
+        waiting = asyncio.create_task(seeing.result(lambda *a: steps.append(a)))
+        await asyncio.sleep(0)
+        gate.set()
+        await waiting
+        self.assertEqual(steps, [("seeing", 1, 3), ("seeing", 3, 3)])

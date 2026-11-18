@@ -11,10 +11,12 @@ Rules kept here, not trusted to the model:
   skipped: none of its words reach the reader, and it is never kept (slice c).
 - **Sent smaller.** A copy no larger than `AI_SIDE` on its long side and under `images.MAX_BYTES`,
   never the file itself.
-- **Room to answer:** the background floor (`ai.OUTPUT_FLOOR`, ruling condition 2). A cut answer
-  is counted and reported on the upload's note, never dropped silently or retried bigger.
-- **Bounded:** at most `AT_ONCE` calls together, and none started after `until`; the rest are
-  counted. Out of AI credits stops the step at once.
+- **Room to answer:** the background floor (`ai.OUTPUT_FLOOR`, ruling condition 2). A cut answer,
+  and words past `TEXT_CAP` (a runaway, never a real picture's), are counted and reported on the
+  upload's note, never dropped silently or retried bigger.
+- **Bounded:** at most `AT_ONCE` calls together, none started after `until`, and none allowed to run
+  past it (a call still running then is stopped); the rest are counted. Out of AI credits stops the
+  step at once.
 
 Only counts are logged; the words read never are.
 """
@@ -31,12 +33,13 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from dmbot.ai import OUTPUT_FLOOR, AIError, AIOutOfFunds, Image
-from dmbot.images import MAX_BYTES, TEXT_MAX, clean
+from dmbot.images import MAX_BYTES, clean
 from dmbot.memory.pdf_pictures import PictureFile
 from dmbot.memory.picture_read import WHERE, PictureText
 
 AI_SIDE = 1568  # the long side the AI is sent (its own recommended size: more costs, adds nothing)
 AT_ONCE = 4  # calls in flight together
+TEXT_CAP = 20_000  # a picture's words: far past any real page, so only a runaway is ever cut
 SHOWS_MAX = 300  # one plain sentence
 OTHER = "other"
 log = logging.getLogger(__name__)
@@ -85,6 +88,7 @@ class Seen:
     page order, and counts of the rest (never their words)."""
 
     pictures: tuple[PictureText, ...] = ()
+    unread_pages: tuple[int, ...] = ()  # the pages of the pictures not read in full (counts only)
     other: int = 0  # read, and "other": skipped
     cut: int = 0  # the answer stopped early (reported to the DM)
     failed: int = 0  # the call failed, or its answer could not be used
@@ -105,7 +109,14 @@ def smaller(data: bytes) -> Image | None:
 
         with PILImage.open(io.BytesIO(data)) as picture:
             picture.thumbnail((AI_SIDE, AI_SIDE))
-            rgb = picture.convert("RGB")
+            if picture.mode in ("RGBA", "LA", "PA", "P"):
+                # (on white: a map's transparent background would be black as JPEG, and dark
+                # lettering on it unreadable)
+                rgba = picture.convert("RGBA")
+                rgb = PILImage.new("RGB", rgba.size, (255, 255, 255))
+                rgb.paste(rgba, mask=rgba.getchannel("A"))
+            else:
+                rgb = picture.convert("RGB")
         for quality in (85, 70, 55):
             out = io.BytesIO()
             rgb.save(out, "JPEG", quality=quality)
@@ -118,7 +129,8 @@ def smaller(data: bytes) -> Image | None:
 
 def parse(answer: str) -> tuple[str, str, str] | None:
     """(where, text, shows) from the model's answer, every string cleaned and capped, or None when
-    it can't be used. An "other" picture's words are dropped here, whatever it said."""
+    it can't be used. An "other" picture's words are dropped here, whatever it said. Words past
+    TEXT_CAP are cut (the caller counts that as cut short, `capped`)."""
     try:
         data = json.loads(answer)
     except (json.JSONDecodeError, ValueError):
@@ -128,7 +140,7 @@ def parse(answer: str) -> tuple[str, str, str] | None:
     where = data.get("where")
     if where not in (*WHERE, OTHER):
         return None
-    text = clean(data.get("text", ""), TEXT_MAX, lines=True) if where != OTHER else ""
+    text = clean(data.get("text", ""), TEXT_CAP, lines=True) if where != OTHER else ""
     shows = clean(data.get("shows", ""), SHOWS_MAX)
     return str(where), text, shows
 
@@ -153,25 +165,33 @@ async def read_pictures(
     async def one(i: int, file: PictureFile) -> None:
         nonlocal done
         async with gate:
-            if stop.is_set() or clock() > until:
+            left = until - clock()
+            if stop.is_set() or left <= 0:
                 results[i] = "late"
             else:
-                results[i] = await _one(vision, file, stop)
+                try:  # (a call still running at `until` is stopped: the upload's time is shared)
+                    results[i] = await asyncio.wait_for(_one(vision, file, stop), left)
+                except TimeoutError:
+                    results[i] = "late"
         done += 1
         if progress is not None:
             progress(done, total)
 
     await asyncio.gather(*(one(i, f) for i, f in enumerate(files)))
     pictures: list[PictureText] = []
+    unread: list[int] = []
     counts: dict[str, int] = {}
     other = cut = failed = late = 0
     for file, got in zip(files, results, strict=True):
         if got == "late":
             late += 1
+            unread.append(file.page)
         elif got == "cut":
             cut += 1
+            unread.append(file.page)
         elif not isinstance(got, tuple):
             failed += 1
+            unread.append(file.page)
         else:
             where, text, shows = got
             counts[where] = counts.get(where, 0) + 1
@@ -179,7 +199,7 @@ async def read_pictures(
                 other += 1
             else:
                 pictures.append(PictureText(file.page, "", text, where, shows))
-    seen = Seen(tuple(pictures), other, cut, failed, late, counts)
+    seen = Seen(tuple(pictures), tuple(unread), other, cut, failed, late, counts)
     log.info(
         "Pictures read: %d of %d (%s), %d skipped as other, %d cut short, %d failed, %d not read",
         total - seen.unread, total, ", ".join(f"{k} {v}" for k, v in sorted(counts.items())),
@@ -208,13 +228,31 @@ async def _one(vision: Any, file: PictureFile, stop: asyncio.Event) -> tuple[str
     except AIOutOfFunds:
         stop.set()  # (no credits left: the rest are not started)
         return "late"
-    except (AIError, TimeoutError):
+    except asyncio.CancelledError:
+        raise
+    except (
+        Exception
+    ) as exc:  # (any error the client didn't wrap: this picture only, never the rest)
+        if not isinstance(exc, AIError | TimeoutError):
+            log.warning("A picture's read failed (%s)", type(exc).__name__)
         return "failed"
     if getattr(reply, "cut", False):
         return "cut"
     if getattr(reply, "refused", False):
         return "failed"
-    return parse(str(reply.text)) or "failed"
+    got = parse(str(reply.text))
+    if got is None:
+        return "failed"
+    return "cut" if _capped(str(reply.text)) else got
+
+
+def _capped(answer: str) -> bool:
+    """Whether the answer's words ran past TEXT_CAP (and were cut by `parse`)."""
+    try:
+        text = json.loads(answer).get("text", "")
+    except (json.JSONDecodeError, ValueError, AttributeError):
+        return False
+    return isinstance(text, str) and len(text) > TEXT_CAP
 
 
 __all__ = ["AI_SIDE", "PICTURE_SYSTEM", "SCHEMA", "Seen", "parse", "read_pictures", "smaller"]
