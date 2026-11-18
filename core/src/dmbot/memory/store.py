@@ -1704,6 +1704,20 @@ class MemoryStore:
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             return await map_fact_store.facts_for(scope, place_ids, viewer, shown)
 
+    async def recap_colour(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        place_ids: Sequence[str],
+        names: Mapping[str, str],
+    ) -> list[str]:
+        """The background lines of `maps.recap_colour` for the places a session visited, read in
+        one snapshot (#4721): the party's view only, under the names the caller gives."""
+        from dmbot.maps import recap_colour  # (here: `dmbot.maps` imports this module)
+
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await recap_colour.lines(scope, place_ids, names)
+
     async def map_facts_up(
         self,
         guild_id: int,

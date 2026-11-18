@@ -1022,6 +1022,7 @@ WAITING_QUEUE = {
     ("backstory", "keep"): "backstory-keep",
     ("backstory", "skip"): "backstory-skip",
     ("backstory", "keep_all"): "backstory-keep-all",
+    ("backstory", "some"): "backstory-keep-some",
     ("which", "pick"): "backstory-which-pick",
     ("which", "neither"): "backstory-which-neither",
 }
@@ -1087,7 +1088,7 @@ async def queue_waiting(db: Database, session: Session, ref: str, body: object) 
         if isinstance(batch, bool) or not isinstance(batch, int) or not 0 < batch < 10**12:
             raise RecapError("not_found")
         text = str(batch)
-    if action == "claim-some":
+    if action in ("claim-some", "backstory-keep-some"):
         # 👥 Some know (#4680): the characters who know it, 1 to 25 distinct ids; the door checks
         # the shape and the bot checks that each is a character of the campaign
         who = body.get("characters")

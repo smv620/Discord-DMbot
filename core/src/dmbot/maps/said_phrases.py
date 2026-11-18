@@ -11,7 +11,9 @@ talk is never taken for a statement:
 - a direction: "Targos is north of Bryn Shander", "Targos lies to the north-east of Bryn Shander",
   "Targos sits due west of Bryn Shander".
 The length's words go through `route_length.parse`, so "two leagues" is 6 miles and a range keeps
-its lower end; only lengths in miles are kept (a time is never compared, §9).
+its lower end; only lengths in miles are kept (a time is never compared, §9). A travel time
+("Targos is two days from Bryn Shander", "it takes three days to get from Targos to Bryn Shander")
+is read too, in days (#4260): only as the cue for the DM's private travel suggestion, never checked.
 """
 
 from __future__ import annotations
@@ -24,7 +26,8 @@ from dmbot.maps import disagree
 from dmbot.memory import route_length
 from dmbot.memory.models import name_key
 
-FAR, WAY = "far", "way"
+FAR, WAY, TIME = "far", "way", "time"
+TIME_UNITS = (route_length.DAYS, route_length.HOURS)
 
 _NUMBER = r"(?:\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?|a|an|one|two|three|four|five|six|seven|eight"
 _NUMBER += (
@@ -34,6 +37,14 @@ _LENGTH = (
     rf"(?P<len>(?:(?:about|around|roughly|some|nearly|almost)\s+)?{_NUMBER}"
     rf"(?:\s*(?:or|to|-|–)\s*{_NUMBER})?\s+(?:miles?|leagues?))"
 )
+# A travel time (#4260, design §9 "When it is offered"): never compared, only a cue for the DM's
+# private suggestion. "two days", "about three days' ride", "five hours on foot", "a week by cart".
+_TIME = (
+    rf"(?P<time>(?:(?:about|around|roughly|some|nearly|almost)\s+)?(?:half\s+an?|{_NUMBER}"
+    rf"(?:\s*(?:or|to|-|–)\s*{_NUMBER})?)\s+(?:hours?|days?|weeks?)(?:'s?|’s?)?"
+    r"(?:\s+(?:walk|ride|march|travel|journey|trek|hike))?"
+    r"(?:\s+(?:on\s+foot|by\s+(?:cart|wagon|horse|road)|on\s+horseback))?)"
+)
 _DIRECTION = r"(?P<dir>(?:north|south|east|west)(?:[- ]?(?:north|south|east|west)){0,2})"
 _IS = r"(?:is|'s|’s|lies|sits|stands)"
 _SHAPES = (
@@ -42,6 +53,14 @@ _SHAPES = (
     (FAR, rf"^\s*(?:it\s*{_IS}\s+|that\s*{_IS}\s+)?{_LENGTH}\s+between\s+A\s+and\s+B\s*$"),
     (FAR, rf"^\s*from\s+A\s+to\s+B\s+{_IS}\s+{_LENGTH}\s*$"),
     (WAY, rf"^\s*A\s+{_IS}\s+(?:(?:to\s+the|due)\s+)?{_DIRECTION}\s+of\s+B\s*$"),
+    (TIME, rf"^\s*A\s+{_IS}\s+{_TIME}\s+(?:away\s+)?from\s+B\s*$"),
+    (TIME, rf"^\s*(?:it\s*{_IS}\s+|that\s*{_IS}\s+)?{_TIME}\s+from\s+A\s+to\s+B\s*$"),
+    (TIME, rf"^\s*from\s+A\s+to\s+B\s+{_IS}\s+{_TIME}\s*$"),
+    (
+        TIME,
+        rf"^\s*it\s+takes\s+(?:you\s+|them\s+)?{_TIME}\s+to\s+(?:get|go|travel|walk|ride)"
+        rf"\s+from\s+A\s+to\s+B\s*$",
+    ),
 )
 # (a full stop or comma inside a number is part of it: "2.5 miles", "1,200 miles", never 5 or 200)
 _SENTENCES = re.compile(r"((?<!\d)\.(?!\d)|[!?;\n])")
@@ -50,16 +69,27 @@ _CLAUSES = re.compile(r"\s*(?:(?<!\d),(?!\d{3})|\band\s+then\b|\bbut\b)\s*", re.
 
 @dataclass(frozen=True, slots=True)
 class Said:
-    """One statement: `kind` FAR (miles from a to b) or WAY (a lies `value`° of b, from north)."""
+    """One statement: `kind` FAR (miles from a to b), WAY (a lies `value`° of b, from north) or
+    TIME (`value` days to travel between them)."""
 
     kind: str
     a_id: str
     b_id: str
     value: float
-    words: str  # the length's or the direction's own words ("20 miles", "north-east")
+    words: str  # the length's, time's or direction's own words ("20 miles", "two days' ride")
 
 
 _MAY = re.compile(r"\b(?:miles?|leagues?)\b|\b(?:north|south|east|west)\w*\s+of\b", re.I)
+_MAY_TIME = re.compile(r"\b(?:hours?|days?|weeks?)\b", re.I)
+# A time said for riding, a cart or a boat: the estimate is on foot only for now (#4260 10a), so
+# such a time gets no offer (the reviewer's: a walking time against "a day's ride" is off topic)
+NOT_ON_FOOT = re.compile(r"\b(?:ride|horse|horseback|cart|wagon|sail|boat)\b", re.I)
+
+
+def may_state_time(line: str) -> bool:
+    """`may_state` for a travel time (#4260): a time word. Kept apart, since "days" and "hours" are
+    common at the table and a time never needs the maps' read."""
+    return bool(_MAY_TIME.search(line))
 
 
 def may_state(line: str) -> bool:
@@ -119,6 +149,12 @@ def read(line: str, names: Mapping[str, str]) -> list[Said]:
                     )
                     if miles is not None:
                         out.append(Said(FAR, first, second, miles, length.words if length else ""))
+                elif kind == TIME:
+                    took = route_length.parse(m.group("time"))
+                    if took is not None and took.amount is not None and took.unit in TIME_UNITS:
+                        days = took.amount if took.unit == route_length.DAYS else took.amount / 24
+                        stated = took.words[:1].lower() + took.words[1:]  # ("Two days, …" mid-line)
+                        out.append(Said(TIME, first, second, days, stated))
                 else:
                     angle = disagree.angle_of(m.group("dir"))
                     if angle is not None:

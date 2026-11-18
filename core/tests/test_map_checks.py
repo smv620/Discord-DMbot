@@ -15,7 +15,7 @@ from dmbot.campaigns.store import CampaignStore, decode_backup, encode_backup
 from dmbot.dm_screen.settings import MapChecksButton, settings_view
 from dmbot.maps import disagree, said_phrases
 from dmbot.maps import measure_words as words
-from dmbot.maps.store import SaidOff
+from dmbot.maps.store import SaidOff, SaidTrip
 from dmbot.ui import map_checks
 from tests.pg import DatabaseTest
 from tests.test_map_measure import a_map
@@ -93,6 +93,44 @@ class WhatTheDMSaid(PinsBase):  # (Postgres: Targos and Bryn Shander 60 miles ap
         self.assertEqual(found.off.map_way, "west")
         self.assertEqual(await self.said("Targos is west of Bryn Shander."), [])
 
+    async def test_a_travel_time_gets_the_estimate_never_a_check(self) -> None:
+        # (#4260: the DM's time is never compared; with a map's 60 miles, the on-foot estimate)
+        line = "Targos is a week from Bryn Shander."
+        self.assertEqual(await self.said(line), [])
+        (trip,) = await self.maps.said_trips(GUILD_A, self.one.id, line)
+        self.assertEqual(
+            (trip.a_name, trip.b_name, trip.said.words), ("Targos", "Bryn Shander", "a week")
+        )
+        self.assertTrue(trip.text.startswith("About 2½ days on foot at a Normal pace"), trip.text)
+        self.assertTrue(trip.text.endswith("Your call."), trip.text)
+
+    async def test_no_offer_when_the_dms_time_is_within_the_estimate_or_said_riding(self) -> None:
+        # (60 miles: 2 days at Fast, 2½ Normal, 3½ Slow; two and a half days is one of them)
+        for line in (
+            "It's two days from Targos to Bryn Shander.",
+            "Targos is three days from Bryn Shander",
+            "Targos is a day's ride from Bryn Shander",
+            "Targos is one day by cart from Bryn Shander",
+        ):
+            self.assertEqual(await self.maps.said_trips(GUILD_A, self.one.id, line), [], line)
+        self.assertEqual(await self.maps.said_trips(GUILD_A, self.one.id, "We rest two days."), [])
+
+    async def test_no_estimate_without_miles_or_when_the_road_says_a_time(self) -> None:
+        line = "Targos is a week from Bryn Shander."
+        await self.memory.add_relation(
+            GUILD_A, self.one.id, self.targos, "route_to", self.bryn, source="dm",
+            confidence=1.0, status="confirmed",
+        )  # fmt: skip
+        async with self.db.guild(GUILD_A) as conn:  # (the road's own length is a time)
+            await conn.execute(
+                "UPDATE memory_relations SET length_words = 'three days by cart', length_from ="
+                " 'dm' WHERE predicate = 'route_to'"
+            )
+        self.assertEqual(await self.maps.said_trips(GUILD_A, self.one.id, line), [])
+        await self.place("Easthaven")  # (on no map: no miles, no estimate)
+        far = "Targos is a week from Easthaven."
+        self.assertEqual(await self.maps.said_trips(GUILD_A, self.one.id, far), [])
+
     async def test_talk_that_states_nothing_reads_nothing(self) -> None:
         self.assertEqual(await self.said("We ride for Bryn Shander at dawn."), [])
         self.assertEqual(await self.said("Luskan is 2 miles from Targos."), [])
@@ -166,9 +204,14 @@ class TheBot(unittest.IsolatedAsyncioTestCase):  # (`DMBot._map_check` on a stan
             guild_id=GUILD, campaign_id="c" * 32, live_heads_up=LiveSession(), label_waits={},
             speakers=SimpleNamespace(window_s=0.05),
         )  # fmt: skip
-        camp = SimpleNamespace(dm_user_ids=frozenset({DM}), map_checks=checks)
+        camp = SimpleNamespace(
+            dm_user_ids=frozenset({DM}), map_checks=checks, target_ruleset="2014",
+            fallback_ruleset="none",
+        )  # fmt: skip
         bot = SimpleNamespace(
-            map_store=SimpleNamespace(said_off=AsyncMock(return_value=[found()])),
+            map_store=SimpleNamespace(
+                said_off=AsyncMock(return_value=[found()]), said_trips=AsyncMock(return_value=[])
+            ),
             campaigns=SimpleNamespace(get=AsyncMock(return_value=camp)),
             consent=SimpleNamespace(has_consent=lambda g, u: u in {DM, OTHER}),
             plan_allows=AsyncMock(return_value=plan),
@@ -227,6 +270,53 @@ class TheBot(unittest.IsolatedAsyncioTestCase):  # (`DMBot._map_check` on a stan
         bot.map_store.said_off = said_off
         await self.check(bot, table)
         bot._dm_message.assert_not_awaited()
+
+    async def test_a_travel_time_gets_one_offer_for_a_pair_in_a_session(self) -> None:
+        bot, table = self.make()
+        bot.map_store.said_off = AsyncMock(return_value=[])
+        said = said_phrases.Said(said_phrases.TIME, "a" * 32, "b" * 32, 2.0, "two days")
+        trip = SaidTrip(said, "Targos", "Bryn Shander", "About 1 day on foot. Your call.")
+        bot.map_store.said_trips = AsyncMock(return_value=[trip])
+        await self.check(bot, table)
+        bot._dm_message.assert_awaited_once()
+        _user, text, view = bot._dm_message.await_args.args
+        self.assertEqual(
+            text,
+            "You said two days from Targos to Bryn Shander. DMbot's estimate, in case it helps:"
+            " About 1 day on foot. Your call.",
+        )
+        self.assertIsNotNone(view)
+        self.assertEqual(bot.map_store.said_trips.await_args.args[3], ("2014", "none"))
+        await self.check(bot, table)  # (said again: quiet for the rest of the session)
+        self.assertEqual(bot._dm_message.await_count, 1)
+
+    def trips(self, bot: Any) -> None:
+        said = said_phrases.Said(said_phrases.TIME, "a" * 32, "b" * 32, 2.0, "two days")
+        trip = SaidTrip(said, "Targos", "Bryn Shander", "About 1 day on foot. Your call.")
+        bot.map_store.said_off = AsyncMock(return_value=[])
+        bot.map_store.said_trips = AsyncMock(return_value=[trip])
+
+    async def test_no_offer_for_a_player_or_with_map_checks_off(self) -> None:
+        for bot, table, speaker in ((*self.make(), OTHER), (*self.make(checks=False), DM)):
+            self.trips(bot)
+            await self.check(bot, table, speaker)
+            bot._dm_message.assert_not_awaited()
+
+    async def test_consent_withdrawn_while_the_trip_is_worked_out_sends_nothing(self) -> None:
+        bot, table = self.make()
+        self.trips(bot)
+        agreed = {DM}
+        bot.consent = SimpleNamespace(has_consent=lambda g, u: u in agreed)
+        found = bot.map_store.said_trips.return_value
+
+        async def said_trips(*args: Any) -> list[SaidTrip]:
+            agreed.clear()
+            return list(found)
+
+        bot.map_store.said_trips = said_trips
+        await self.check(bot, table)
+        bot._dm_message.assert_not_awaited()
+        self.assertEqual(table.live_heads_up.map_pairs, set())  # (nothing claimed)
 
 
 class TheSpeakerLabel(unittest.IsolatedAsyncioTestCase):  # (#4690: an NPC's line is no note)

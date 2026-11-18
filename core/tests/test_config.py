@@ -173,6 +173,10 @@ class PlanChecksSetting(unittest.TestCase):
         )
         with self.assertRaisesRegex(ConfigError, "DMBOT_REMEMBERED_PLAYERS must be 1"):
             load_settings({**BASE, "DMBOT_REMEMBERED_PLAYERS": "maybe"})
+        self.assertFalse(load_settings(BASE).recap_colour_on)  # off unless asked (#4721)
+        self.assertTrue(load_settings({**BASE, "DMBOT_RECAP_COLOUR": "1"}).recap_colour_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_RECAP_COLOUR must be 1"):
+            load_settings({**BASE, "DMBOT_RECAP_COLOUR": "maybe"})
         self.assertFalse(load_settings(BASE).story_family_only)
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_FAMILY_ONLY": "1"}).story_family_only)
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_FAMILY_ONLY must be 1"):

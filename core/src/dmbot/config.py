@@ -164,6 +164,10 @@ class Settings:
     # Discord's player pickers list the DM's remembered players first, marked (#4724, the Discord
     # half of #4226). Off until the website's half goes live with it (`REMEMBERED_PLAYERS_LIVE`).
     remembered_players_on: bool = False
+    # The recap writer is given the land, climate, ruler, culture and people of the places a session
+    # visited, as the players know them, as background (#4721, MapBot slice 10b). Off until dev1's
+    # before-and-after `recap_run --score` counts are in and the owner's go.
+    recap_colour_on: bool = False
     # Mine family connections only (#2960; owner, 2026-10-29): a claim that is not a family role
     # is dropped in code, and no readings are asked. Off: every kind of claim, as before.
     story_family_only: bool = False
@@ -527,6 +531,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_REMEMBERED_PLAYERS must be 1 (on) or 0 (off), got "' + remembered_raw + '".'
         )
+    colour_raw = (get("DMBOT_RECAP_COLOUR") or "0").lower()
+    if colour_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_RECAP_COLOUR must be 1 (on) or 0 (off), got "' + colour_raw + '".')
     precheck_raw = (get("DMBOT_STORY_REVEALS_PRECHECK") or "0").lower()
     if precheck_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -784,6 +791,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_npc_guess_on=npc_guess_raw in ("1", "true", "on"),
         recap_by_rank_on=by_rank_raw in ("1", "true", "on"),
         remembered_players_on=remembered_raw in ("1", "true", "on"),
+        recap_colour_on=colour_raw in ("1", "true", "on"),
         story_family_only=family_raw in ("1", "true", "on"),
         theatre_on=theatre_raw in ("1", "true", "on"),
         rel_read_on=rel_read_raw in ("1", "true", "on"),

@@ -24,6 +24,7 @@ from dmbot.discord_limits import MESSAGE_MAX, SELECT_OPTIONS_MAX
 from dmbot.maps import measure_words
 from dmbot.memory import map_facts as mf
 from dmbot.memory import world_notes as wn
+from dmbot.memory.layer_words import RULED, climate_words, culture_words, land_words, people_words
 from dmbot.memory.models import DM, MemoryRuleError, TooLateToUndo
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
@@ -36,7 +37,6 @@ from dmbot.ui.dmbot_commands import (
     _tell,
 )
 from dmbot.ui.names import _campaign_for, _md, _memory, changed, sees_secrets
-from dmbot.ui.place_world import RULED, climate_words, culture_words, land_words, people_words
 from dmbot.ui.route_condition import words as condition_words
 
 log = logging.getLogger(__name__)

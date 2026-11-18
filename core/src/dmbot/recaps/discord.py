@@ -1328,6 +1328,44 @@ class RecapFeatures:
             for i in everything.items
         ]
 
+    async def recap_colour(
+        self, gid: int, cid: str, job: Job, place_names: Sequence[str]
+    ) -> list[str]:
+        """Background for the writer about the places the beats visited (#4721,
+        `DMBOT_RECAP_COLOUR`): one line each of what the table knows of their land, climate,
+        ruler, culture and people.
+        Only what the players know: the places are looked up in the players' view of the names
+        (nothing the DM keeps to themselves, and no secret spelling), the line is the players' own
+        rows (`MemoryStore.recap_colour`), and the names are the ones the players use. A place the
+        players' view doesn't know by that name is left out, never looked up another way."""
+        if self.memory is None or self.lookup is None or not place_names:
+            return []
+        players = (await self.lookup.get(gid, cid)).for_viewer(False)
+        # The names are the players' own, taken from the name entries they may see (a place or a
+        # ruler whose only entries are secret spellings or "players don't know this one yet" has
+        # no name here, and is left out), never the entity's canonical name.
+        live = {e.id for e in players.entities.values() if not e.merged_into}
+        names: dict[str, str] = {}
+        for name_entry in players.names:
+            if (
+                name_entry.secret
+                or name_entry.entry_hidden
+                or name_entry.person
+                or name_entry.entity_id not in live
+            ):
+                continue
+            names.setdefault(name_entry.entity_id, name_entry.text)
+        place_ids: list[str] = []
+        for heard in place_names:
+            for name_entry in players.exact(heard):
+                if name_entry.secret or name_entry.entry_hidden or name_entry.entity_id not in live:
+                    continue
+                if players.entities[name_entry.entity_id].type != "place":
+                    continue
+                names[name_entry.entity_id] = name_entry.text  # (the spelling the beat used)
+                place_ids.append(name_entry.entity_id)
+        return await self.memory.recap_colour(gid, cid, place_ids, names)
+
     async def recap_allowed(self, gid: int, cid: str, job: Job | None) -> bool:
         """The switch and the plan, checked at every stage and closed when they can't be."""
         if not self.settings.recaps_on:
