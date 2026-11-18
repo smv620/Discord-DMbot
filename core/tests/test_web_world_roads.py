@@ -51,7 +51,18 @@ class Roads(Pins):
         rid = await self.road()
         (line,) = await self.lines()
         self.assertEqual(line["id"], f"road:{rid}")
-        self.assertEqual(line["name"], "Targos to Bryn Shander")
+        # named in the road's own order, subject to object, as Discord's `world_notes._roads` does
+        # (a symmetric road may be stored either way round, by its ids)
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT subject_id FROM memory_relations WHERE guild_id = %s AND id = %s",
+                (self.g, rid),
+            )
+            first = (await cur.fetchone() or {})["subject_id"]
+        first_name, second_name = (
+            ("Targos", "Bryn Shander") if first == self.targos else ("Bryn Shander", "Targos")
+        )
+        self.assertEqual(line["name"], f"{first_name} to {second_name}")
         self.assertIn("10 miles", line["note"])
         self.assertIn("The Keep", line["note"])
         self.assertIn("about 40 miles in a straight line", line["note"])
