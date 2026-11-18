@@ -12,6 +12,7 @@ import shutil
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any, cast
 from unittest.mock import patch
 
 from PIL import Image
@@ -54,9 +55,10 @@ def pdf(*pages: list[Image.Image] | str) -> bytes:
         page[0].save(made, "PDF", save_all=True, append_images=page[1:])
         # (Pillow puts each picture on its own page; their images are moved onto one page here)
         one = PdfReader(io.BytesIO(made.getvalue()))
-        first = one.pages[0]
+        first: Any = one.pages[0]  # (pypdf's own types can't index a page's resources)
         objects = first["/Resources"]["/XObject"]
         content = first.get_contents().get_data()
+        extra: Any
         for n, extra in enumerate(one.pages[1:], start=1):
             for name, ref in extra["/Resources"]["/XObject"].items():
                 objects[NameObject(f"{name}x{n}")] = ref
@@ -235,7 +237,7 @@ class TheUpload(unittest.IsolatedAsyncioTestCase):
             patch.object(name_background, "_bot", return_value=bot),
             patch.object(name_background, "_tell", AsyncMock()),
         ):
-            sent = await name_background.offer(interaction, "c" * 32, upload)
+            sent = await name_background.offer(cast(Any, interaction), "c" * 32, upload)
         self.assertFalse(sent)
         file = SimpleNamespace(component=SimpleNamespace(values=[object()]))
         modal = SimpleNamespace(campaign_id="c" * 32, file=file)
@@ -248,7 +250,9 @@ class TheUpload(unittest.IsolatedAsyncioTestCase):
             patch.object(name_background, "offer", AsyncMock(return_value=False)),
         ):
             interaction.response = SimpleNamespace(defer=AsyncMock())
-            await name_background.UploadBackground.on_submit(modal, interaction)  # type: ignore[arg-type]
+            await name_background.UploadBackground.on_submit(
+                cast(Any, modal), cast(Any, interaction)
+            )
         assert read.await_args is not None
         self.assertEqual(read.await_args.kwargs, {"pictures": True})
         self.assertEqual(list(self.root.iterdir()), [])
@@ -264,7 +268,7 @@ class TheUpload(unittest.IsolatedAsyncioTestCase):
             view = name_background.BackgroundOffer("c" * 32, upload)
             if way == "cancel":
                 press = SimpleNamespace(response=SimpleNamespace(edit_message=AsyncMock()))
-                await view._cancel(press)
+                await view._cancel(cast(Any, press))
             else:
                 await view.on_timeout()
             with self.subTest(way=way):
