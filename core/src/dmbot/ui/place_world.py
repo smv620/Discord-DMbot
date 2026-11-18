@@ -11,8 +11,17 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 
 import discord
 
-from dmbot.memory import gate, place_peoples
+from dmbot.memory import gate
 from dmbot.memory import map_facts as mf
+from dmbot.memory.layer_words import (  # (one wording: the card, World notes, the recap)
+    LAND,
+    RULED,
+    WARMTH,
+    climate_words,
+    culture_words,
+    land_words,
+    people_words,
+)
 from dmbot.memory.models import DM, MemoryRuleError
 from dmbot.ui.dmbot_commands import _answer_first, _Button, _Menu, _replace, _Select, _tell
 from dmbot.ui.names import GONE, _campaign_for, _md, _memory, changed, sees_secrets
@@ -34,25 +43,10 @@ READ_MARK = " (DMbot read this)"
 # A place's culture and who lives there (#4257; the ux-critic's words, never "people", which is an
 # entry kind, nor "species" or "lineage"): their own screen, `ui/place_peoples`.
 PEOPLES_BUTTON = "🏛️ Culture, who lives here"
-STRENGTH = {"strong": "strongly", "some": "somewhat", "traces": "a little", "once": "once"}
 GROUPS_SHOWN = 23  # (Discord's 25 a menu, less "Not sure" and room for the current ruler)
 
 # The land menu (the SRD's Travel Terrain underneath, in plain words; the D&D word is in the
 # description so a DM still finds it).
-LAND: dict[str, tuple[str, str]] = {
-    "arctic": ("Ice and snow", "Arctic, glaciers, tundra"),
-    "coastal": ("Coast", "Shore, beach, sea cliffs"),
-    "desert": ("Desert", "Sand or bare rock"),
-    "forest": ("Forest", "Woods or jungle"),
-    "grassland": ("Grassland", "Plains, farms, meadows"),
-    "hill": ("Hills", "Rolling hills, moors"),
-    "mountain": ("Mountains", "Peaks and passes"),
-    "swamp": ("Swamp", "Marsh, bog, wetland"),
-    "underdark": ("Underdark", "Deep caves below the world"),
-    "urban": ("Town or city", "Streets and buildings"),
-    "waterborne": ("Open water", "Travel by boat or ship"),
-}
-WARMTH = {"arctic": "Freezing", "cold": "Cold", "temperate": "Mild", "warm": "Warm", "hot": "Hot"}
 CLIMATE_HINTS = {
     ("arctic", ""): "Arctic",
     ("temperate", ""): "Temperate",
@@ -60,36 +54,10 @@ CLIMATE_HINTS = {
     ("hot", "wet"): "Like a jungle",
     ("cold", "wet"): "Like a rainy coast",
 }
-RULED = {"rules": "Ruled by", "claims": "Claimed by", "occupies": "Taken over by",
-         "protects": "Protected by"}  # fmt: skip
 HOW_BUTTONS = {"rules": "👑 Rules it", "claims": "🚩 Claims it", "occupies": "⚔️ Took it over",
                "protects": "🛡️ Protects it"}  # fmt: skip
 NOTED_HOW = {"rules": "rules", "claims": "claims", "occupies": "has taken over",
              "protects": "protects"}  # fmt: skip
-
-
-def land_words(f: mf.Fact) -> str:
-    word = f.words if f.value == mf.OTHER else LAND.get(f.value, (f.value,))[0].lower()
-    return f"partly {word}" if f.how == "partly" else word
-
-
-def climate_words(f: mf.Fact) -> str:
-    word = f.words if f.value == mf.OTHER else WARMTH.get(f.value, f.value).lower()
-    return f"{word} and {f.how}" if f.how in ("dry", "wet") else word
-
-
-def culture_words(f: mf.Fact) -> str:
-    """ "strongly dwarven", or "dwarven (in the dwarven quarter)" for part of the place."""
-    word = place_peoples.words_of(f.value, f.words, plural=False)
-    said = f"{STRENGTH[f.how]} {word}" if f.how in STRENGTH else word
-    return f"{said} (in {f.part})" if f.part else said
-
-
-def people_words(f: mf.Fact) -> str:
-    """ "mostly halflings", or "halflings" when no share was said."""
-    word = place_peoples.words_of(f.value, f.words, plural=True)
-    share = place_peoples.HOW_WORDS.get(f.how, "")
-    return f"{share} {word}" if share else word
 
 
 def card_lines(
