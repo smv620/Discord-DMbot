@@ -36,7 +36,7 @@ type Sending = {
   lastMovedAt: number;
 };
 
-export default function WebReadings({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
+export default function WebReadings({ api, campaignRef, onLeft }: { api: AccountApi; campaignRef: string; onLeft?: (left: number) => void }) {
   const [list, setList] = useState<Readings | null>(null);
   const [failed, setFailed] = useState(false);
   const [sending, setSending] = useState<Sending | null>(null);
@@ -58,6 +58,7 @@ export default function WebReadings({ api, campaignRef }: { api: AccountApi; cam
       if (mine === latest.current && shown.current === asked) {
         setList(got);
         setFailed(false);
+        onLeft?.(got.counts.readings); // (after each read, #4740)
       }
     } catch (error) {
       if (mine !== latest.current) return;

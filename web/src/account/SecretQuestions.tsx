@@ -19,7 +19,17 @@ function sayFailure(error: unknown, undoing: boolean): string {
   return w.couldNot; // (bad target, failed, lost, anything else: nothing was changed)
 }
 
-export default function SecretQuestions({ api, campaignRef, id }: { api: AccountApi; campaignRef: string; id: string }) {
+export default function SecretQuestions({
+  api,
+  campaignRef,
+  id,
+  onLeft,
+}: {
+  api: AccountApi;
+  campaignRef: string;
+  id: string;
+  onLeft?: (left: number) => void;
+}) {
   const [list, setList] = useState<SecretQuestion[] | null>(null);
   const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -36,7 +46,7 @@ export default function SecretQuestions({ api, campaignRef, id }: { api: Account
     if (!api.secretQuestions) return;
     try {
       const got = await api.secretQuestions(campaignRef);
-      if (live.current) (setList(got), setFailed(false));
+      if (live.current) (setList(got), setFailed(false), onLeft?.(got.length));
     } catch {
       if (live.current) setFailed(true);
     }
