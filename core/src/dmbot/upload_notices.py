@@ -42,12 +42,13 @@ class Notice:
         )
 
 
+REVEALED_KINDS = ("entries", "links", "aliases")  # the only keys kept
 REVEALED_KEEP = 50  # ids of each kind kept for the website's list (it shows ten)
 
 
 def _capped_ids(ids: Mapping[str, Sequence[str]] | None) -> dict[str, list[str]]:
     """What a 🌍 read made known, as ids only and at most `REVEALED_KEEP` of each kind."""
-    return {k: list(v)[:REVEALED_KEEP] for k, v in (ids or {}).items() if v}
+    return {k: list(ids[k])[:REVEALED_KEEP] for k in REVEALED_KINDS if ids and ids.get(k)}
 
 
 class UploadNotices:

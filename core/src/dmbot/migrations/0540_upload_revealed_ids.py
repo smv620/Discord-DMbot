@@ -19,8 +19,25 @@ from __future__ import annotations
 # The ids are resolved to words **at read time**, and only what players can see NOW is listed:
 # an entry still confirmed and not held back, unnamed or audience-limited; a connection still
 # confirmed, not secret and not waiting to be said, with both its ends shown; an other name still
-# confirmed and not secret on an entry that is shown. So anything the DM hid again since is never
-# listed (Supervisor's ruling). Words and kinds only, never an id. No row changes.
+# confirmed and not secret on an entry that is shown. An entry is shown by its main name as
+# `gate._public_entry` has it (its own name not a secret one included) and a connection that came
+# through a still-secret other name (`via_alias_id`) is left out, as the gate files it under that
+# name. So anything the DM hid again since is never listed (Supervisor's ruling). Words and kinds
+# only, never an id. No row changes.
+
+
+def _shown(e: str) -> str:
+    """What players are shown of entry `e` by its main name (`gate._public_entry`): confirmed (a
+    merged entry is not), not held back, unnamed or limited to some, and its own name not a secret
+    one (an alias row of that same name, the way the entry's own name is stored)."""
+    return f"""{e}.status = 'confirmed'
+                  AND NOT ({e}.hidden_from_players OR {e}.unnamed OR {e}.audience_limited)
+                  AND NOT EXISTS (
+                      SELECT 1 FROM memory_aliases m
+                      WHERE m.guild_id = g AND m.campaign_id = c AND m.entity_id = {e}.id
+                        AND m.secret AND lower(btrim(m.text)) = lower(btrim({e}.name)))"""
+
+
 SQL = r"""
     ALTER TABLE upload_notices
         ADD COLUMN revealed_ids JSONB NOT NULL DEFAULT '{}'::jsonb
@@ -53,8 +70,7 @@ SQL = r"""
                 FROM jsonb_array_elements_text(COALESCE(n.revealed_ids -> 'entries', '[]')
                          ) WITH ORDINALITY AS t(id, n)
                 JOIN memory_entities e ON e.guild_id = g AND e.campaign_id = c AND e.id = t.id
-                WHERE e.status = 'confirmed'
-                  AND NOT (e.hidden_from_players OR e.unnamed OR e.audience_limited)), '[]'),
+                WHERE @@e@@), '[]'),
             'links', COALESCE((
                 SELECT jsonb_agg(jsonb_build_object(
                            'subject', s.name, 'subjectKind', s.type, 'predicate', r.predicate,
@@ -67,10 +83,12 @@ SQL = r"""
                 JOIN memory_entities o ON o.guild_id = g AND o.campaign_id = c
                                       AND o.id = r.object_id
                 WHERE r.status = 'confirmed' AND NOT (r.secret OR r.unrevealed)
-                  AND s.status = 'confirmed'
-                  AND NOT (s.hidden_from_players OR s.unnamed OR s.audience_limited)
-                  AND o.status = 'confirmed'
-                  AND NOT (o.hidden_from_players OR o.unnamed OR o.audience_limited)), '[]'),
+                  AND (r.via_alias_id IS NULL OR EXISTS (
+                      SELECT 1 FROM memory_aliases v
+                      WHERE v.guild_id = g AND v.campaign_id = c AND v.id = r.via_alias_id
+                        AND NOT v.secret))
+                  AND @@s@@
+                  AND @@o@@), '[]'),
             'aliases', COALESCE((
                 SELECT jsonb_agg(jsonb_build_object('owner', e.name, 'text', a.text)
                                  ORDER BY t.n)
@@ -80,8 +98,7 @@ SQL = r"""
                 JOIN memory_entities e ON e.guild_id = g AND e.campaign_id = c
                                       AND e.id = a.entity_id
                 WHERE a.status = 'confirmed' AND NOT a.secret
-                  AND e.status = 'confirmed'
-                  AND NOT (e.hidden_from_players OR e.unnamed OR e.audience_limited)), '[]'));
+                  AND @@e@@), '[]'));
     END
     $fn$;
 
@@ -94,6 +111,7 @@ SQL = r"""
     $do$;
     REVOKE ALL ON FUNCTION dmbot_web_upload_revealed(BIGINT, TEXT, TEXT, TEXT) FROM PUBLIC;
     """
+SQL = SQL.replace("@@e@@", _shown("e")).replace("@@s@@", _shown("s")).replace("@@o@@", _shown("o"))
 
 ISOLATED_TABLES: tuple[str, ...] = ()
 

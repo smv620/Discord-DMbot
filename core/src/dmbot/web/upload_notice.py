@@ -83,27 +83,6 @@ async def read(
         "serverNow": now,
         **await _revealed(db, session, guild_id, campaign_id, kind, source_id, stored, got),
     }
-    stored = {str(k): int(v) for k, v in (got.get("counts") or {}).items() if isinstance(v, int)}
-    by_kind = {k: v for k, v in stored.items() if k not in _NOT_KINDS and v > 0}
-    return {
-        "state": "done",
-        "label": str(got.get("label") or ""),
-        "counts": {
-            "names": sum(by_kind.values()),
-            "byKind": by_kind,
-            "connections": stored.get("connections", 0),
-            # (a 🌍 Common knowledge read's hidden things now known to everyone, #4589: a count
-            # only, as the upload's notice in Discord says it)
-            "revealed": stored.get("revealed", 0),
-        },
-        "undoUntil": got.get("undoUntil"),
-        # An Undo already done: how many it took back is not kept, so no numbers (`took` 0 of 0 is
-        # the page's "taken back" without a count).
-        "undone": {"took": 0, "of": 0} if got.get("undone") else None,
-        # The questions an upload left are the bot's to count; not read here yet (#3879).
-        "questionsLeft": 0,
-        "serverNow": now,
-    }
 
 
 async def _revealed(

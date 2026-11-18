@@ -204,6 +204,43 @@ class RevealedList(Acting):
         got = await self.read("lore", "up9")
         self.assertEqual(got["revealedLines"], ["Ash Morrow"])
 
+    async def test_an_entry_whose_own_name_turned_secret_is_not_listed_nor_its_ties(self) -> None:
+        """The gate shows an entry by its main name only while that name is not a secret one."""
+        ash = await self.entry("Ash Morrow")
+        orlen = await self.entry("Master Orlen")
+        link = await self.memory.add_relation(
+            THURSDAY.id, self.one.id, ash, "member_of", orlen, source="dm", confidence=1.0,
+            status="confirmed",
+        )  # fmt: skip
+        await self.notice_with(entries=[ash, orlen], links=[link.value[0].id])
+        async with self.db.guild(THURSDAY.id) as conn:  # (the DM made Ash's own name secret)
+            await conn.execute(
+                "UPDATE memory_aliases SET secret = true WHERE entity_id = %s AND text = %s",
+                (ash, "Ash Morrow"),
+            )
+        got = await self.read("lore", "up9")
+        self.assertEqual(got["revealedLines"], ["Master Orlen"])
+
+    async def test_a_connection_that_came_through_a_secret_other_name_is_not_listed(self) -> None:
+        ash = await self.entry("Ash Morrow")
+        orlen = await self.entry("Master Orlen")
+        link = await self.memory.add_relation(
+            THURSDAY.id, self.one.id, ash, "member_of", orlen, source="dm", confidence=1.0,
+            status="confirmed",
+        )  # fmt: skip
+        await self.notice_with(links=[link.value[0].id])
+        self.assertEqual(len((await self.read("lore", "up9"))["revealedLines"]), 1)
+        alias = await self.memory.add_alias(
+            THURSDAY.id, self.one.id, ash, "The Grey Hand", kind="nickname", source="dm",
+            secret=True,
+        )  # fmt: skip
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE memory_relations SET via_alias_id = %s WHERE id = %s",
+                (alias.value.id, link.value[0].id),
+            )
+        self.assertNotIn("revealedLines", await self.read("lore", "up9"))
+
     async def test_only_ten_are_listed_and_the_rest_are_counted(self) -> None:
         names = [await self.entry(f"Person {n:02d}") for n in range(12)]
         await self.notice_with(entries=names)
