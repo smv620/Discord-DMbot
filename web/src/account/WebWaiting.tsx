@@ -114,7 +114,7 @@ export default function WebWaiting({
   // The claim whose "Which one?" pick can still be taken back (#3463): only the latest pick offers Undo.
   const [undo, setUndo] = useState<string | null>(null);
   // The "Some know" picker open on one claim (#4680 part 1): nobody is ticked when it opens.
-  const [picker, setPicker] = useState<{ id: string; party: PartyCharacter[] | null; chosen: string[] } | null>(null);
+  const [picker, setPicker] = useState<{ kind: "claim" | "backstory"; id: string; party: PartyCharacter[] | null; chosen: string[] } | null>(null);
   // The last "Some know" can be taken back by its batch, until the next answer.
   const [someUndo, setSomeUndo] = useState<{ id: string; batch: number } | null>(null);
   const counter = useRef(0);
@@ -192,12 +192,12 @@ export default function WebWaiting({
   }
 
   // "Some know" (#4680 part 1): the picker lists the party's characters with nobody ticked; Save sends the ticked ids once.
-  async function openSome(id: string): Promise<void> {
+  async function openSome(kind: "claim" | "backstory", id: string): Promise<void> {
     if (sending !== null || bulkOn || !api.partyCharacters) return;
-    setPicker({ id, party: null, chosen: [] });
+    setPicker({ kind, id, party: null, chosen: [] });
     try {
       const party = await api.partyCharacters(campaignRef);
-      setPicker((now) => (now && now.id === id ? { ...now, party } : now));
+      setPicker((now) => (now && now.kind === kind && now.id === id ? { ...now, party } : now));
     } catch (error) {
       setPicker(null);
       setSaid({ ok: false, text: errorWords(error), n: ++counter.current });
@@ -208,16 +208,57 @@ export default function WebWaiting({
       now ? { ...now, chosen: now.chosen.includes(characterId) ? now.chosen.filter((x) => x !== characterId) : [...now.chosen, characterId] } : now,
     );
   }
-  async function saveSome(id: string): Promise<void> {
-    if (!picker || picker.id !== id || picker.party === null || picker.chosen.length === 0) return;
+  async function saveSome(kind: "claim" | "backstory", id: string): Promise<void> {
+    if (!picker || picker.kind !== kind || picker.id !== id || picker.party === null || picker.chosen.length === 0) return;
     const names = picker.party.filter((p) => picker.chosen.includes(p.id)).map((p) => p.name);
     const characters = [...picker.chosen];
     setPicker(null);
+    if (kind === "backstory") {
+      await send(
+        { kind: "backstory", action: "some", id, characters },
+        () => (names.length === 1 ? w.someDoneBackstoryOne(names[0]!) : w.someDoneBackstoryMany(names.join(", "))),
+        w.savingStage,
+        { gone: w.someGone, "not-found": w.someNotFound, "bad-target": w.someBackstoryRefused },
+      );
+      return;
+    }
     await send(
       { kind: "claim", action: "some", id, characters },
       () => (names.length === 1 ? w.someDoneOne(names[0]!) : w.someDoneMany(names.join(", "))),
       w.savingStage,
       { gone: w.someGone, "not-found": w.someNotFound },
+    );
+  }
+  // The picker's box, the same for a claim card and a backstory card (#4728): nobody is ticked when it opens; a backstory card
+  // also says that its players won't see it until it is said.
+  function pickerBox(kind: "claim" | "backstory", id: string, backstoryNote = false) {
+    if (!picker) return null;
+    return (
+      <fieldset class="stack">
+        <legend>{w.someLegend}</legend>
+        {backstoryNote && <p class="small">{w.someBackstoryNote}</p>}
+        <p class="small">{w.someHelp}</p>
+        {picker.party === null ? (
+          <p class="muted" role="status">{w.someLoading}</p>
+        ) : picker.party.length === 0 ? (
+          <p class="muted">{w.someEmpty}</p>
+        ) : (
+          picker.party.map((p) => (
+            <label class="choice" key={p.id}>
+              <input type="checkbox" checked={picker.chosen.includes(p.id)} onChange={() => toggleSome(p.id)} />
+              <span>{p.name}</span>
+            </label>
+          ))
+        )}
+        <div class="row">
+          <button type="button" class="button" disabled={busy || picker.party === null || picker.chosen.length === 0} onClick={() => void saveSome(kind, id)}>
+            {w.someSave}
+          </button>
+          <button type="button" class="button secondary" onClick={() => setPicker(null)}>
+            {w.someCancel}
+          </button>
+        </div>
+      </fieldset>
     );
   }
 
@@ -552,43 +593,13 @@ export default function WebWaiting({
                     class="button secondary"
                     disabled={busy}
                     aria-describedby={`wc-${c.id}`}
-                    onClick={() => void openSome(c.id)}
+                    onClick={() => void openSome("claim", c.id)}
                   >
                     {w.someButton}
                   </button>
                 )}
               </div>
-              {picker?.id === c.id && (
-                <fieldset class="stack">
-                  <legend>{w.someLegend}</legend>
-                  <p class="small">{w.someHelp}</p>
-                  {picker.party === null ? (
-                    <p class="muted" role="status">{w.someLoading}</p>
-                  ) : picker.party.length === 0 ? (
-                    <p class="muted">{w.someEmpty}</p>
-                  ) : (
-                    picker.party.map((p) => (
-                      <label class="choice" key={p.id}>
-                        <input type="checkbox" checked={picker.chosen.includes(p.id)} onChange={() => toggleSome(p.id)} />
-                        <span>{p.name}</span>
-                      </label>
-                    ))
-                  )}
-                  <div class="row">
-                    <button
-                      type="button"
-                      class="button"
-                      disabled={busy || picker.party === null || picker.chosen.length === 0}
-                      onClick={() => void saveSome(c.id)}
-                    >
-                      {w.someSave}
-                    </button>
-                    <button type="button" class="button secondary" onClick={() => setPicker(null)}>
-                      {w.someCancel}
-                    </button>
-                  </div>
-                </fieldset>
-              )}
+              {picker?.kind === "claim" && picker.id === c.id && pickerBox("claim", c.id)}
             </div>
           ))}
         </div>
@@ -652,6 +663,11 @@ export default function WebWaiting({
                             onClick={() => void send(answer("skip"), b.now ? w.done.leftAsIs : w.done.leftOut)}>
                             {b.now ? w.leaveAsIs : w.leaveOut}
                           </button>
+                          {SOME_KNOW_LIVE && !b.secret && !handOf(b) && api.partyCharacters !== undefined && (
+                            <button type="button" class="button secondary" disabled={busy} aria-describedby={`wb-${b.id}`} onClick={() => void openSome("backstory", b.id)}>
+                              {w.someButton}
+                            </button>
+                          )}
                         </div>
                         {!b.secret && (
                           <div class="row">
@@ -673,6 +689,7 @@ export default function WebWaiting({
                         </div>
                       </>
                     )}
+                    {picker?.kind === "backstory" && picker.id === b.id && pickerBox("backstory", b.id, true)}
                   </div>
                   );
                 })}

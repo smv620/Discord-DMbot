@@ -117,6 +117,11 @@ export const waitingWords = {
   someNotFound: "DMbot could not find one of those characters. Reload and try again.",
   someUndo: "↩ Undo",
   someUndone: "Taken back. The claim is waiting again.",
+  // "Some know" on a backstory connection (#4728): held back from the players; there is no website Undo for it.
+  someDoneBackstoryOne: (name: string): string => `👤 Known to: ${name}. Held back from your players.`,
+  someDoneBackstoryMany: (names: string): string => `👥 Known to: ${names}. Held back from your players.`,
+  someBackstoryNote: "Your players won't see this until it is said. If the card replaces a connection they can see now, they won't see that one any more.",
+  someBackstoryRefused: "DMbot couldn't keep that one. Check the characters and try again.",
   pronounHeading: "Who is this?",
   pronounNote: "DMbot isn't sure who a word like \"she\" means.",
   pronounQuestion: (word: string): string => `Who is ${word}?`,
