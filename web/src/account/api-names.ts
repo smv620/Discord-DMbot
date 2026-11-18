@@ -42,7 +42,7 @@ import {
   SIGNED_OUT_EVENT,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
-import type { AccountApi, ApiHelpers, CharacterLanguages, HandOverQuestion, MapsRead, MapsResult, NodeSummary, SecretQuestion, StoryThreads, ThreadCard, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
+import type { AccountApi, ApiHelpers, CharacterLanguages, HandOverQuestion, MapsRead, MapsResult, NodeSummary, PartyCharacter, SecretQuestion, StoryThreads, ThreadCard, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
 export function countOf(counts: unknown, key: string): number | undefined {
@@ -580,6 +580,9 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     // The 🤫 Known or secret? questions, oldest first (#4598): the DM's own; the door answers anyone else with nothing.
     secretQuestions: async (ref) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/secret-questions`)) as { questions: SecretQuestion[] }).questions,
+    // The party's player characters for the "Some know" picker (#4680 part 1): DM only; the door answers anyone else with nothing.
+    partyCharacters: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/party-characters`)) as { characters: PartyCharacter[] }).characters,
     // Queued for the bot (202 {answer}); this waits for it and gives back the batch of a make, for Undo (#4598).
     answerSecret: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;
