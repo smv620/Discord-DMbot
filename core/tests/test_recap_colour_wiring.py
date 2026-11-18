@@ -28,6 +28,7 @@ def beat(n: int, where: str) -> Beat:
 def worker(colour: Any = None) -> Any:
     w: Any = pl.RecapWorker.__new__(pl.RecapWorker)
     w._colour = colour
+    w._reveals = None
     w._read_people_sheet = AsyncMock(return_value=("Mira: the party's rogue",))
     return w
 

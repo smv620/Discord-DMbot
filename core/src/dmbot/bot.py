@@ -1488,6 +1488,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 formatting=self.recap_format_ai,
                 story=self.recap_story,
                 colour=self.recap_colour if settings.recap_colour_on else None,
+                reveals=self.recap_reveals if settings.recap_reveals_on else None,
                 critics=True,  # the critics read each draft until they agree (#2255)
                 reads=settings.recap_writer_reads,
                 final_read=settings.recap_final_read,
