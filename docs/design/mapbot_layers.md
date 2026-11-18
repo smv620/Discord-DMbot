@@ -1,8 +1,9 @@
 # Design basis: MapBot's maps, positions and layers
 
-**Status:** revision 2, 2026-11-12, on the owner's direction. It replaces revision 1 (merged the
-same day, issue #4236). **Revision 2 is not binding until Supervisor approves it.** What changed is
-listed in [section 15](#15-what-changed-from-revision-1).
+**Status:** revision 3, 2026-11-18. Revision 2 (2026-11-12, on the owner's direction) is binding.
+Revision 3 folds in seven rulings Supervisor made while the slices were built, each recorded on its
+own issue or PR; they are listed in [section 15a](#15a-what-changed-in-revision-3). **Revision 3's
+wording is not binding until Supervisor approves it;** the rulings themselves already are.
 
 **Who builds it:** GraphEngineer owns the layers and the map reading (they extend the places work
 of #4173). CloudDev-lead owns the kept pictures the maps are stored in (`core/src/dmbot/pictures/`).
@@ -28,6 +29,7 @@ there" and "Pictures are kept, and shared by link".
 13. [Rules developers must keep](#13-rules-developers-must-keep)
 14. [Slice order](#14-slice-order)
 15. [What changed from revision 1](#15-what-changed-from-revision-1)
+    - [15a. What changed in revision 3](#15a-what-changed-in-revision-3)
 16. [Open questions](#16-open-questions)
 
 ---
@@ -138,8 +140,17 @@ Every time a map is found, DMbot asks the person who uploaded it, once for that 
      no links or layer rows, and is used in no answer. It waits in the DM's "❓ Questions for you"
      as "A map from <player>: use it?", and on the Maps page. The DM's yes is recorded too.
   - A DM's no leaves the picture kept and unused. Removing it is a separate tap.
-- **No:** the picture is removed from storage. Only its short transcript line stays, when it was
-  posted in the table's chat.
+- **No** (the uploader's, or a DM's to a player's map):
+  - **Nothing DMbot took from the map stays in use.** The No runs the deletion rule of section 7.5
+    on what the map said, in the No's own write, with one ↩ Undo: its pins go, what DMbot read only
+    from it goes, a read the text also stated becomes the text's, and the DM's own word stays
+    without its pointer.
+  - **The refused map's record stays,** as the record of the answer. The first answer stands, and
+    the poster still sees that their map was refused (Supervisor, #4695).
+  - **Nothing reads a refused map again:** it is never read closely, measured, shown to the table
+    or used in an answer. A later Yes brings nothing back; only Undo does.
+  - **The picture itself** is treated as the pictures rules already treat a No: nothing is kept but
+    its short transcript line, when it was posted in the table's chat.
 - **Not answered:** it is not used as a map: no close reading, no positions, no answers from it.
   The picture itself is treated as any picture posted in the table's chat is today, under the
   pictures rules its poster already agreed to (#3268), and a map added on the website is simply
@@ -348,18 +359,36 @@ None of this raises an alert or a question during play.
 - A map's rows start at the story time the map was shown, unless the map states a date or the DM
   sets one.
 - **A map never ends anything by leaving it out.** "Not on the map" is never "not there".
-- One map's changes are one grouped private note, with counts and one Undo.
+- **A map read has two Undos, each taking back exactly what it reports** (Supervisor, #4699 and
+  #4701; revision 2 said one):
+  - **the placements** (pins, scale and north) are DMbot's own write, with its own Undo;
+  - **the layer rows** are a batch of their own, and the private note that reports them carries the
+    ↩ Undo that takes back those rows and nothing else.
 
-### 7.5 When a map is deleted
-A map goes when its poster deletes their own lines or pictures, or their account; when a DM removes
-it; or when the answer to the right-to-use question is "No". In the same transaction:
+  An Undo that removed pins the note never mentioned would take back more than the DM was told.
+- The note is one private message to each DM, with counts only.
+
+### 7.5 When a map is deleted or refused
+The rule runs when a map goes (its poster deletes their own lines or pictures, or their account; a
+DM removes it) **and when the answer to the right-to-use question is "No"** (section 3.3, where the
+map's record stays and only what it said goes). In the same transaction:
 
 - its features (pins, paths, areas) are deleted;
-- **a `read` layer row or link that rests only on that map is deleted** (`source = map`, that map,
-  `also_text` false);
+- **a fact that another usable map's area still shows is kept, and re-pointed to the oldest such
+  map** (Supervisor, #4694 ruling 2; #4712, #4713). It rests on that map too, so it has not lost
+  its evidence. "Usable" means a map DMbot may use, and an area the DM hasn't turned down. This is
+  checked first, whoever stated the fact;
+- otherwise **a `read` layer row or link that rests only on that map is deleted** (`source = map`,
+  that map, `also_text` false);
 - **a `read` row the text also stated stays,** as a text row;
 - **a `confirmed` row stays,** as the DM's word, with the map pointer set to NULL;
 - a test covers each case.
+
+- **Undo:** a DM's removal and a No are one logged write, so one Undo puts everything back,
+  re-pointed pointers included. A poster's own deletion and an account deletion have no Undo, as
+  elsewhere, and apply the same rule.
+- **A change to stored facts moves the campaign's memory version,** so an open World notes page
+  reads again.
 
 A map dropped only to make room in storage is different: its rows stay and lose the pointer
 (Supervisor, on #4240).
@@ -405,6 +434,13 @@ flip it.
 ### 8.4 Answers
 - **An answer for a player uses only `table` maps and what that player can see.** A route or a
   distance must never hint at a hidden place.
+- **A DM's question asked at the table goes to the DM privately** whenever the table's maps can't
+  answer it, or it names a place the players haven't been shown (Supervisor, #4691 and #4705). The
+  table hears the same words either way ("Sent to the DM privately"), whether or not a DM-only map
+  or a hidden place exists. If the table heard "I can't find that" in one case and "sent
+  privately" in the other, a player could tell that a hidden map exists.
+- **A player's question** about a place they haven't been shown gets the usual answer for an
+  unknown name, with no hint that the place exists.
 - Every reader of `campaign_maps`, `map_features` and `map_facts` goes through one function that
   applies this section, with a CI test like `test_relation_readers.py`.
 
@@ -432,6 +468,16 @@ Every answer is short, says "about", names the map it used, and carries the map'
   player's table question about travel time gets "That's one for your DM." A player may ask how
   far and which way, from `table` maps.
 - **No map, or no scale:** DMbot says what is missing and what would fix it. It never guesses.
+- **A route along several roads is given leg by leg** (Supervisor, #4260 and #4734): at most four
+  legs, fewest first, each with its stated length and its condition. A leg with no length is
+  named, never guessed.
+  - **A total only when it is true:** every leg has a plain number in one unit. No total for a
+    range, for words that aren't a number, or across mixed ways of travelling. A time comes only
+    from a total in miles.
+  - **A player gets the legs only when the party knows every leg:** each road and each stop, by a
+    name they may see. A length DMbot read that the DM hasn't kept shows as "no length set". If
+    any leg is unknown to them, the answer is exactly what it would be with no route at all, so
+    nothing hints at a hidden road.
 
 **Bringing a map back during play:**
 
@@ -494,6 +540,14 @@ different times, so a stated time is never treated as a conflict with a map.
   road on the map, so across open tundra").
 - **When it is offered:** when the DM asks, or once, in the DM's private chat, when the DM states
   a travel time for a pair of places DMbot can measure. It is DM-side, an estimate, and the DM decides.
+- **When the unasked offer stays silent** (Supervisor, #4729):
+  - **the DM's time already falls within the estimate's paces.** A DM who is right isn't
+    interrupted: "quick, short and on topic" outranks an estimate that agrees;
+  - **the time was said for riding, a cart or a boat.** The unasked estimate is for travel on foot
+    only, so it has nothing sound to offer beside those.
+
+  Silence is not a check: the offer still never compares or judges, and an asked question is
+  always answered.
 - **What it never does:** change the game clock, mark a journey as travelled, or tell the DM their
   time is wrong.
 
@@ -567,6 +621,8 @@ source of positions.
 - **Never flag a travel time as wrong.** Time is only ever suggested, with its working.
 - **Never put a coordinate on a place entry,** and never merge positions across maps.
 - **Never keep a picture as a map before its uploader said yes** to the right-to-use question.
+- **Never read, measure, show or answer from a refused map,** and never let the table's words
+  differ according to whether a hidden map, place or road exists.
 - **Never read a player's map into the graph, positions, layers or answers before a DM said yes**
   to using it.
 - **Never judge who owns a picture.** DMbot asks, records the answer and acts on it.
@@ -615,7 +671,10 @@ source of positions.
 6. **Vocabularies are fixed lists in code,** each with "other" plus words, and the read report
    counts `unknown` per layer.
 7. **A reader or an import writes `read`, never `confirmed`.** Only the DM confirms.
-8. **Every write goes through the change log,** and one map, one upload or one import is one Undo.
+8. **Every write goes through the change log,** and each Undo takes back exactly what its message
+   reports: one upload or one import is one Undo; a map read is two (section 7.4).
+   **Nothing reads a refused map:** every reader asks one function whether DMbot may use a map, and
+   a test proves a refused map gives no pins, no layers and no distance.
 9. **The measuring module is pure Python,** tested without a database or a network.
 10. **Every wait shows progress** (reading a map, an import): stage, how far, how long, and what
     to do if it stops.
@@ -683,6 +742,21 @@ unchanged from revision 1.
 Unchanged: `map_facts` and its layers, "the atlas is not the plot", reading up the tree,
 correction against history, World notes, the players' three-part rule for layer rows, and slices 1
 and 2.
+
+---
+
+## 15a. What changed in revision 3
+
+Each is a ruling by Supervisor, made while the slices were built, folded in here as a decision.
+
+| Revision 2 | Revision 3 | Why | Where ruled |
+|---|---|---|---|
+| One map's changes are one Undo | A map read has two: the placements, and the layer rows from the note | An Undo takes back exactly what its message reports | #4699, #4701 |
+| A map-only fact is deleted with its map | A fact another usable map's area still shows is kept, re-pointed to the oldest such map | It still has evidence | #4694, #4712, #4713 |
+| A No removes the map | A No runs the deletion rule on what the map said and keeps the refused map's record. Nothing reads a refused map | The first answer stands and the poster can see it; nothing from a refused map stays in use | #4695, #4706 |
+| The unasked travel offer comes whenever the DM states a time | Silent when the DM's time is within the estimate's paces, and for riding, cart or boat times | Don't interrupt a DM who is right; the estimate is on foot only | #4729 |
+| A route's legs and totals, with players seeing what they can see | Legs only when the party knows every leg, else the no-route answer; totals only from plain numbers in one unit | No hint of a hidden road; no total that isn't true | #4260, #4734 |
+| A DM's table question is answered where table questions go | It goes to the DM privately when the table's maps can't answer or it names a place the players aren't shown, with the same table words either way | The table's words must not reveal a hidden map or place | #4691, #4705 |
 
 ---
 
