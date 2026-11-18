@@ -1346,19 +1346,24 @@ class RecapFeatures:
         # no name here, and is left out), never the entity's canonical name.
         live = {e.id for e in players.entities.values() if not e.merged_into}
         names: dict[str, str] = {}
-        for entry in players.names:
-            if entry.secret or entry.entry_hidden or entry.person or entry.entity_id not in live:
+        for name_entry in players.names:
+            if (
+                name_entry.secret
+                or name_entry.entry_hidden
+                or name_entry.person
+                or name_entry.entity_id not in live
+            ):
                 continue
-            names.setdefault(entry.entity_id, entry.text)
+            names.setdefault(name_entry.entity_id, name_entry.text)
         place_ids: list[str] = []
         for heard in place_names:
-            for entry in players.exact(heard):
-                if entry.secret or entry.entry_hidden or entry.entity_id not in live:
+            for name_entry in players.exact(heard):
+                if name_entry.secret or name_entry.entry_hidden or name_entry.entity_id not in live:
                     continue
-                if players.entities[entry.entity_id].type != "place":
+                if players.entities[name_entry.entity_id].type != "place":
                     continue
-                names[entry.entity_id] = entry.text  # (the spelling the beat used)
-                place_ids.append(entry.entity_id)
+                names[name_entry.entity_id] = name_entry.text  # (the spelling the beat used)
+                place_ids.append(name_entry.entity_id)
         return await self.memory.recap_colour(gid, cid, place_ids, names)
 
     async def recap_allowed(self, gid: int, cid: str, job: Job | None) -> bool:
