@@ -2661,6 +2661,17 @@ def create_app(
             )
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.post("/me/campaigns/{ref}/lore-pdf/estimate", status_code=202)
+    async def me_lore_pdf_estimate(ref: str, signed: Signed) -> dict[str, str]:
+        """Ask the bot to count the staged PDF's pages and pictures and price the read (no AI is
+        called): 202 with the answer id the page polls. DM only."""
+        session, _token = signed
+        try:
+            return {"answer": await lore_pdf.estimate(db, session, ref)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.delete("/me/campaigns/{ref}/lore-pdf", status_code=204)
     async def me_lore_pdf_drop(ref: str, signed: Signed) -> None:
         """The DM's "Never mind": the staged PDF and its row go."""

@@ -371,6 +371,7 @@ from dmbot.memory.importance_backup import ImportanceSection
 from dmbot.memory.kind_offers_backup import KindOffersSection
 from dmbot.memory.live_heads_up import heads_up as live_heads_up_for
 from dmbot.memory.lookup import CampaignLookup, LookupCache
+from dmbot.memory.lore_pdfs import LorePdfs, StagedPdfs
 from dmbot.memory.map_uploads import MapUploads
 from dmbot.memory.met_store import MetStore
 from dmbot.memory.models import (
@@ -383,6 +384,7 @@ from dmbot.memory.models import (
     lookup_key,
     name_key,
 )
+from dmbot.memory.name_documents import MAX_PDF_BYTES
 from dmbot.memory.ontology import Tally
 from dmbot.memory.party import party_notice
 from dmbot.memory.pc_icons_backup import PcIconsSection
@@ -422,7 +424,7 @@ from dmbot.mentions import NO_PINGS
 from dmbot.off_the_record import NOT_TOLD, WAKE_MINUTES, OffTheRecord, Paused, paused_text
 from dmbot.pictures import sweep as picture_sweep
 from dmbot.pictures.actions import PictureActions
-from dmbot.pictures.bucket import Bucket
+from dmbot.pictures.bucket import Bucket, BucketError
 from dmbot.pictures.keeper import Context as PictureContext
 from dmbot.pictures.keeper import PictureKeeper
 from dmbot.pictures.store import PictureStore
@@ -587,6 +589,7 @@ from dmbot.ui import (
     map_question,
     map_send,
     map_show,
+    name_lists,
     name_pass_undo,
     player_id,
     recap_audio,
@@ -636,6 +639,7 @@ from dmbot.ui.live_heads_up import LiveHeadsUpButton, heads_up_text, heads_up_vi
 from dmbot.ui.map_checks import StopMapChecksButton
 from dmbot.ui.map_layers_note import UndoMapLayersButton
 from dmbot.ui.migrate import dmbot_migrate  # noqa: F401 (registers it)
+from dmbot.ui.name_background import _reading_pictures as reading_pictures
 from dmbot.ui.name_card import (
     FinishPastButton,
     UndoButton,
@@ -13827,6 +13831,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                     self.settings.picture_storage_mb,
                                 ),
                                 reads=self._reads_campaign(guild.id, campaign),
+                                lore_pdfs=self._lore_pdfs(),
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -14460,6 +14465,32 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         await picture_sweep.sweep(db, bucket)
         if self.maps_staging is not None:  # (sent maps nobody picked up, #4347)
             await picture_sweep.sweep_staging(self.maps_staging)
+            await self._sweep_lore_pdfs(db, self.maps_staging)
+
+    async def _sweep_lore_pdfs(self, db: Database, staging: Bucket) -> None:
+        """The staged lore PDFs' rows older than a day, and their objects (the bucket's own rule
+        usually has them already): counts only in the log (#4762)."""
+        staged, gone = StagedPdfs(db), 0
+        for guild in list(self.guilds):
+            for key in await staged.sweep(guild.id, now=int(time.time())):
+                # (a delete that fails is left to the bucket's own 1-day rule)
+                with contextlib.suppress(BucketError):
+                    await staging.delete(key)
+                gone += 1
+        if gone:
+            log.info("%s staged lore PDFs were cleared", gone)
+
+    def _lore_pdfs(self) -> LorePdfs:
+        """What `lore-pdf-estimate` needs (#4762): the staging bucket, the staged-file table and the
+        document reader Discord's upload uses (`name_lists.count_pdf`). Missing pieces fail the
+        action, which is sent again."""
+        db = self._picture_db
+        return LorePdfs(
+            self.maps_staging,
+            StagedPdfs(db) if db is not None else None,
+            partial(name_lists.count_pdf, pictures=reading_pictures(self)),
+            MAX_PDF_BYTES,
+        )
 
     async def run_web_report_requests(self) -> None:
         """The reports DMs asked for again on the website (#2805): each asker must still be a DM of

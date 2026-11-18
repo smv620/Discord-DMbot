@@ -20,6 +20,7 @@ from typing import Any, Protocol
 
 from dmbot.db import Database
 from dmbot.pictures.bucket import BucketError
+from dmbot.web import relationships
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -66,6 +67,7 @@ async def read(db: Database, session: Session, ref: str) -> dict[str, Any]:
     if got.get("status") != "ok":
         return {"state": "none"}
     return {
+        "ref": hashlib.sha256(str(got["id"]).encode()).hexdigest()[:32],  # (never the id itself)
         "state": str(got["state"]),
         "sizeBytes": int(got["sizeBytes"]),
         "pages": got["pages"],
@@ -75,6 +77,20 @@ async def read(db: Database, session: Session, ref: str) -> dict[str, Any]:
         "updatedAt": int(got["updatedAt"]),
         "serverNow": int(got["now"]),
     }
+
+
+async def estimate(db: Database, session: Session, ref: str) -> str:
+    """Queue `lore-pdf-estimate` for the staged file and give the answer id the page polls
+    (`.../web/answers/{id}`, with the usual stage, counts and times). `not_found` when nothing is
+    staged, `not_allowed` for anyone who is not a DM. The bot counts only: no AI is called before
+    the DM's yes."""
+    staged = await read(db, session, ref)
+    if staged["state"] == "none":
+        raise RecapError("not_found")
+    return await relationships._queue(
+        db, session, ref, entity=None, action="lore-pdf-estimate", target="", text=staged["ref"],
+        flag=False,
+    )  # fmt: skip
 
 
 async def stage(
