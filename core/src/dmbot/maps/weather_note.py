@@ -2,7 +2,8 @@
 "Climate" and §9 "After the session"; Supervisor's ruling on #4260). Pure: no database, no Discord,
 no AI. It says only whether weather the session described in a place sits badly with that place's
 climate (and the season, when the campaign's calendar gives one), and the DM's private words for
-it. Nothing is stored or changed: §6 says weather is never stored and DMbot never makes any.
+it. Nothing is changed: §6 says weather is never stored and DMbot never makes any (the caller
+keeps only which notes were sent, by ids, #4748).
 
 Rules kept here:
 - **The DM's only, private, after the session**, never during a scene and never as a correction
@@ -21,10 +22,11 @@ Rules kept here:
   of its own, or one that started at a point in the story, §6), a climate for only part of the
   place, or "other" in the DM's words: no note.
 
-Not wired yet: the session reader of weather (an AI read) follows once AI calls are possible, with
-its false-note count on the sample; the switch comes with it. For the wiring (the ux-critic): one
-note per place and kind until that place's climate changes, and one session's notes in one
-message, a line each, under one "🌦️ Weather check" heading.
+Wired by #4260 10c-2: the session reader of weather (`memory.weather_reading`) feeds it behind
+DMBOT_WEATHER_NOTES (off until dev1's counts on the invented `weather_cases` text), and one
+session's notes go in one private message under one heading (`message`). The weather itself is never
+stored (§6); only that a note was sent, by ids (`memory/weather_marks.py`, #4748), so a place's note
+comes once for each kind until its kept climate changes.
 """
 
 from __future__ import annotations
@@ -81,6 +83,8 @@ class Note:
     climate: str  # the climate it doesn't fit (`mf` value)
     season: str | None  # the calendar's season, when it gave one and the season decided it
     from_place: str | None  # where the climate was read from, when read up the tree
+    climate_id: str = ""  # the kept climate row judged against (#4748: once until it changes)
+    kept_ids: tuple[str, ...] = ()  # every kept climate row it was judged among (#4748)
 
 
 def check(
@@ -103,18 +107,19 @@ def check(
         return None
     if len({f.value for f, _src in kept}) > 1:
         return None
-    fact, src = kept[0]
+    fact, src = kept[0]  # (one value; which row doesn't matter: the marks take them all, #4748)
     if fits(fact.value, kind, season):
         return None
     # (the season is said only when it decided the note: heat in an arctic climate needs none)
     decided = season if (fact.value, kind) not in _NEVER else None
-    return Note(place, kind, fact.value, decided, src)
+    return Note(place, kind, fact.value, decided, src, fact.id, tuple(f.id for f, _src in kept))
 
 
-def words(note: Note) -> str:
+def words(note: Note, when: str = "this session") -> str:
     """The DM's private note: the weather and the place first, why it may not fit, and that the DM
     may ignore it. One line (the ux-critic's wording: "there", never "<place>'s", which reads badly
-    after names like Baldur's Gate)."""
+    after names like Baldur's Gate). `when`: "this session", or "in the session of …" for an
+    imported one."""
     climate = CLIMATE_SAID[note.climate]
     where = (
         f"it's in {note.from_place}, whose climate is {climate}"
@@ -123,6 +128,16 @@ def words(note: Note) -> str:
     )
     season = f", and it's {note.season} there by your calendar" if note.season else ""
     return (
-        f"🌦️ Weather check: {SAID[note.kind]} in {note.place} this session, but {where}{season}. "
+        f"🌦️ Weather check: {SAID[note.kind]} in {note.place}{f' {when}' if when else ''}, but"
+        f" {where}{season}. "
         "If that's on purpose, like magic or a story turn, you can ignore this."
     )
+
+
+def message(notes: Sequence[Note], session: str) -> str:
+    """One session's notes in one message (the ux-critic's wiring rule): one line alone, or under
+    one heading, a line each. `session`: "the session of 14 Nov 2026"."""
+    if len(notes) == 1:
+        return words(notes[0], f"in {session}")
+    lines = [w.removeprefix("🌦️ Weather check: ") for w in (words(n, "") for n in notes)]
+    return "\n".join([f"🌦️ Weather check, {session}:", *(f"• {line}" for line in lines)])

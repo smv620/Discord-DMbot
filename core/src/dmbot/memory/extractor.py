@@ -73,6 +73,10 @@ from dmbot.memory.reveal_reading import (
     parse_reveals,
     reveal_reason,
 )
+from dmbot.memory.weather_reading import PROMPT_SUFFIX as WEATHER_SUFFIX
+from dmbot.memory.weather_reading import WEATHER_ADDENDUM, Weather, parse_weather
+from dmbot.memory.weather_reading import once_each as weather_once
+from dmbot.sidebar.ask import voiced_by_npc
 from dmbot.transcript.models import Line
 from dmbot.transcript.topics import OFF_TOPIC
 
@@ -210,6 +214,10 @@ class Said:
     user_id: int
     text: str
     started_ms: int = 0  # when the line began: what a restart resumes after (#1367)
+    # said as a named NPC the DM was voicing (#53, `voiced_by_npc`): in the story, it can be a lie
+    # or a mistake, so the weather check never takes it as the DM's word (#4748, as #4708 does).
+    # A line whose label never settled ("") counts as the DM's own words, as `voiced_by_npc` says.
+    voiced: bool = False
 
 
 def readable(lines: Sequence[Line]) -> list[Said]:
@@ -218,7 +226,7 @@ def readable(lines: Sequence[Line]) -> list[Said]:
     a person who agreed, so it has no other lines), and never a line the off-topic filter left
     out. Consent is a separate check, made when each batch is sent."""
     return [
-        Said(n, line.user_id, line.text, line.started_ms)
+        Said(n, line.user_id, line.text, line.started_ms, voiced_by_npc(line.entity))
         for n, line in enumerate(lines, start=1)
         if not line.sidebar and line.topic != OFF_TOPIC and line.text.strip()
     ]
@@ -353,6 +361,11 @@ class Report:
     languages_dropped: Counter[str] = field(default_factory=Counter)
     languages_cut: int = 0  # claims answers cut short with the switch on: their languages are lost
     heard_languages: list[Heard] = field(default_factory=list, repr=False)  # (words: never logged)
+    # #4260 10c-2 (DMBOT_WEATHER_NOTES): snow, frost or heat the DM described in a named place
+    weather: int = 0
+    weather_dropped: Counter[str] = field(default_factory=Counter)
+    weather_cut: int = 0
+    heard_weather: list[Weather] = field(default_factory=list, repr=False)  # (no words held)
 
     def line(self) -> str:
         why = ", ".join(f"{n} {r}" for r, n in sorted(self.dropped.items())) or "none"
@@ -411,6 +424,14 @@ class Report:
                 f", languages: {self.languages} heard, {self.languages_cut} cut short"
                 + "".join(f", {n} {k}" for k, n in sorted(self.languages_dropped.items()) if n)
                 if self.languages or self.languages_dropped or self.languages_cut
+                else ""
+            )
+            + (
+                f", weather: {self.weather} heard (lines "
+                + ", ".join(n for w in self.heard_weather for n in w.lines)
+                + f"), {self.weather_cut} cut short"
+                + "".join(f", {n} {k}" for k, n in sorted(self.weather_dropped.items()) if n)
+                if self.weather or self.weather_dropped or self.weather_cut
                 else ""
             )
             + (f", stopped: {self.stopped}" if self.stopped else "")
@@ -590,6 +611,7 @@ async def run(
     met_store: MetStore | None = None,
     session_id: str | None = None,
     languages: bool = False,
+    weather: bool = False,
 ) -> Report:
     """Read the session's lines and store what the AI found as proposals, all at once at the end
     (the linker picks the most-said new names across the whole session). `consenting` is asked
@@ -651,7 +673,13 @@ async def run(
     a character was heard speaking (`language_reading.LANGUAGE_ADDENDUM`), in the same call, so it
     costs no call. What holds is only gathered (`Report.heard_languages`, from lines of speakers
     recorded at the answer): the caller asks the DM about each, nothing is written here. Never in
-    `family_only`."""
+    `family_only`.
+
+    `weather` (#4260 10c-2, DMBOT_WEATHER_NOTES): the claims call is also asked for the snow, frost
+    or heat the DM described in a named place (`weather_reading.WEATHER_ADDENDUM`), in the same
+    call. What holds is only gathered (`Report.heard_weather`, place names and line numbers, no
+    words): the caller checks it against the kept climate and notes the DM. Never stored: weather
+    never is (design §6). Never in `family_only`."""
     report = Report()
     # (theories are the first kind of reading: asked when either switch is on, the rest only with
     # the readings switch)
@@ -671,9 +699,18 @@ async def run(
     reveals = reveals and not family_only
     met = met and not family_only
     languages = languages and not family_only
-    system = SYSTEM + (MET_ADDENDUM if met else "") + (LANGUAGE_ADDENDUM if languages else "")
+    weather = weather and not family_only
+    system = (
+        SYSTEM
+        + (MET_ADDENDUM if met else "")
+        + (LANGUAGE_ADDENDUM if languages else "")
+        + (WEATHER_ADDENDUM if weather else "")
+    )
     prompt_version = (
-        PROMPT_VERSION + (MET_SUFFIX if met else "") + (LANGUAGE_SUFFIX if languages else "")
+        PROMPT_VERSION
+        + (MET_SUFFIX if met else "")
+        + (LANGUAGE_SUFFIX if languages else "")
+        + (WEATHER_SUFFIX if weather else "")
     )
     deed_pairs: set[tuple[str, str]] = set()  # the pairs a deed was proposed for, so far
     answered: list[list[Said]] = []  # the batches whose claims were read
@@ -771,6 +808,17 @@ async def run(
             report.languages_dropped.update(tongues.dropped)
             report.languages_cut += int(reply.cut)
             report.heard_languages.extend(tongues.heard)
+        if weather:
+            told = parse_weather(
+                reply.text,
+                {number: text for number, _who, text in rows},
+                # (the DM's own words: never a line said as an NPC, #4748)
+                dm_lines=[str(s.number) for s in batch if s.user_id in dm_ids and not s.voiced],
+            )
+            report.weather += len(told.weather)
+            report.weather_dropped.update(told.dropped)
+            report.weather_cut += int(reply.cut)
+            report.heard_weather.extend(told.weather)
         answered_by = reply.model or answered_by
         everyone.update(speakers)
         heard.update((number, text) for number, _who, text in rows)
@@ -996,6 +1044,16 @@ async def run(
         )
         report.heard_languages = heard_kept
         report.languages = len(heard_kept)
+    if report.heard_weather:
+        # (asked again at the end, as languages are: an item cited from a speaker who stopped
+        # meanwhile is dropped; one place's same kind twice is one)
+        still = await consenting()
+        recorded = [
+            w for w in report.heard_weather if all(everyone.get(n) in still for n in w.lines)
+        ]
+        report.weather_dropped["weather_speaker_gone"] += len(report.heard_weather) - len(recorded)
+        report.heard_weather = weather_once(recorded)
+        report.weather = len(report.heard_weather)
     report.through_ms = reached
     return report
 

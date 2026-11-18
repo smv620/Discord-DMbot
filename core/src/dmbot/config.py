@@ -140,6 +140,10 @@ class Settings:
     # #4229 1d: the session reader also asks which languages a character was heard speaking, each
     # a question for the DM (DMBOT_SESSION_LANGUAGES, off until dev1's language_cases counts)
     session_languages_on: bool = False
+    # #4260 10c-2: the session reader also hears snow, frost or heat the DM described in a named
+    # place, and the DM gets a private note when it plainly can't fit the kept climate
+    # (DMBOT_WEATHER_NOTES, off until dev1's weather_cases counts)
+    weather_notes_on: bool = False
     # Private scenes between two player characters (#2996 rule 5), found by code after a session
     # from the game clock and who spoke: no AI call. Off until dev1 has checked it (Supervisor,
     # 2026-11-10).
@@ -564,6 +568,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_SESSION_LANGUAGES must be 1 (on) or 0 (off), got "' + languages_raw + '".'
         )
+    weather_raw = (get("DMBOT_WEATHER_NOTES") or "0").lower()
+    if weather_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_WEATHER_NOTES must be 1 (on) or 0 (off), got "' + weather_raw + '".'
+        )
     scene_filter_raw = (get("DMBOT_SCENE_FILTER") or "0").lower()
     if scene_filter_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -810,6 +819,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_reveals_precheck=precheck_raw in ("1", "true", "on"),
         met_unnamed_on=met_raw in ("1", "true", "on"),
         session_languages_on=languages_raw in ("1", "true", "on"),
+        weather_notes_on=weather_raw in ("1", "true", "on"),
         private_scenes_on=private_raw in ("1", "true", "on"),
         scene_filter_on=scene_filter_raw in ("1", "true", "on"),
         picture_names_on=picture_raw in ("1", "true", "on"),

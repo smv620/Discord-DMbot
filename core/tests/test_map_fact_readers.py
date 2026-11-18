@@ -37,6 +37,8 @@ ALLOWED = {
     "migrations/0481_world_notes_door.py": "World notes, DM-only: NULL for anyone else (#4285)",
     "migrations/0534_forget_map_reads.py": "account deletion: deletes and unpoints rows (#4693)",
     "migrations/0536_forget_map_version.py": "account deletion: re-points and bumps (#4711)",
+    "memory/weather_marks.py": "joins a climate row's id only, to mark a weather note sent (#4748)",
+    "migrations/0542_weather_notes_sent.py": "a weather mark's foreign key to a row (#4748)",
 }
 NAMES = re.compile(r"memory_map_facts|\bMAP_FACTS\b")
 

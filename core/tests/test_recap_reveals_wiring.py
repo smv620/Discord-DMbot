@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock
 
-from dmbot.memory.models import OPEN
+from dmbot.memory.models import ABANDONED, GOING, HINTED, OPEN, RESOLVED
 from dmbot.recaps import draft as rd
 from dmbot.recaps import pipeline as pl
 from dmbot.recaps.beats import Beat
@@ -199,5 +199,67 @@ class TheBotsReader(unittest.IsolatedAsyncioTestCase):
     async def test_nobody_at_the_table_asks_for_nothing(self) -> None:
         bot = self.bot({11})
         job: Any = SimpleNamespace(session_at=100, speakers=(99,))
+        self.assertEqual(await RecapFeatures.recap_reveals(bot, 1, "c", job), [])
+        bot.memory.recap_reveals.assert_not_awaited()
+
+    def _reader(self, threads: list[Any]) -> Any:
+        """A memory whose one player character spoke, with the given threads and a sure party."""
+        pc = SimpleNamespace(id="e1", is_player_character=True, played_by=11)
+        seen = SimpleNamespace(how_sure=lambda kind, i: "sure")
+        memory = SimpleNamespace(
+            entities=AsyncMock(return_value=[pc]),
+            visible_to=AsyncMock(return_value=seen),
+            threads=AsyncMock(return_value=threads),
+            recap_reveals=AsyncMock(return_value=[SAID]),
+        )
+        return SimpleNamespace(
+            memory=memory, consent=SimpleNamespace(recorded_in=AsyncMock(return_value={11}))
+        )
+
+    @staticmethod
+    def _thread(tid: str, condition: Any, who: list[str], state: bool = True) -> Any:
+        return SimpleNamespace(
+            thread=SimpleNamespace(id=tid),
+            state=SimpleNamespace(condition=condition) if state else None,
+            involved=[SimpleNamespace(who=SimpleNamespace(id=w)) for w in who],
+        )
+
+    async def test_recap_reveals_no_memory_asks_for_nothing(self) -> None:
+        bot = self._reader([])
+        bot.memory = None
+        job: Any = SimpleNamespace(session_at=100, speakers=(11,))
+        self.assertEqual(await RecapFeatures.recap_reveals(bot, 1, "c", job), [])
+
+    async def test_recap_reveals_only_open_threads_matter(self) -> None:
+        threads = [
+            self._thread("t-none", OPEN, ["n-none"], state=False),
+            self._thread("t-resolved", RESOLVED, ["n-resolved"]),
+            self._thread("t-abandoned", ABANDONED, ["n-abandoned"]),
+            self._thread("t-open", OPEN, ["n-open"]),
+        ]
+        bot = self._reader(threads)
+        job: Any = SimpleNamespace(session_at=100, speakers=(11,))
+        await RecapFeatures.recap_reveals(bot, 1, "c", job)
+        self.assertEqual(set(bot.memory.recap_reveals.await_args.args[4]), {"t-open", "n-open"})
+
+    async def test_recap_reveals_open_going_and_hinted_all_matter(self) -> None:
+        threads = [
+            self._thread("t-open", OPEN, ["n-open"]),
+            self._thread("t-going", GOING, ["n-going"]),
+            self._thread("t-hinted", HINTED, ["n-hinted"]),
+        ]
+        bot = self._reader(threads)
+        job: Any = SimpleNamespace(session_at=100, speakers=(11,))
+        await RecapFeatures.recap_reveals(bot, 1, "c", job)
+        self.assertEqual(
+            set(bot.memory.recap_reveals.await_args.args[4]),
+            {"t-open", "n-open", "t-going", "n-going", "t-hinted", "n-hinted"},
+        )
+
+    async def test_recap_reveals_a_character_not_played_asks_for_nothing(self) -> None:
+        pc = SimpleNamespace(id="e1", is_player_character=True, played_by=None)
+        bot = self._reader([])
+        bot.memory.entities = AsyncMock(return_value=[pc])
+        job: Any = SimpleNamespace(session_at=100, speakers=(11,))
         self.assertEqual(await RecapFeatures.recap_reveals(bot, 1, "c", job), [])
         bot.memory.recap_reveals.assert_not_awaited()

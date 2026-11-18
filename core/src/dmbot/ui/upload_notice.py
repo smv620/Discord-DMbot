@@ -303,6 +303,7 @@ async def add_sure(
     dm_claims: DmClaims | None = None,
     earlier: Sequence[int] = (),
     revealed: int = 0,
+    revealed_ids: Mapping[str, Sequence[str]] | None = None,
 ) -> tuple[Notice, int] | None:
     """Add what DMbot is sure of from this reading, as the DM's own calls (`memory.auto_accept`),
     and keep the upload's notice with the changes it made. Returns the notice and the number of
@@ -313,7 +314,8 @@ async def add_sure(
     DM's own lines state, once their names are in (#3897; an import's); who may be recorded is read
     again just before. `earlier`: changes this upload made before (a World read's reveals, #4524
     slice 1b), kept first so ↩️ Undo takes them back too; `revealed`: how many things they made
-    known to everyone, for the notice's count. Never raises."""
+    known to everyone, for the notice's count; `revealed_ids`: which, as ids only (never words), for
+    the website's list for the DMs (#4661). Never raises."""
     from dmbot.memory import auto_accept as auto
     from dmbot.memory import backstory_keep
     from dmbot.ui.names import background_kind
@@ -383,6 +385,7 @@ async def add_sure(
             [*earlier, *tally.batches],  # (in the order made: Undo goes newest first)
             source_kind=source[0] if source else None,
             source_id=source[1] if source else None,
+            revealed_ids=revealed_ids,
         )
         return notice, questions
     except Exception:

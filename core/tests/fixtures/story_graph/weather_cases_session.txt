@@ -1,0 +1,16 @@
+[0:00:05] DM: Snow falls softly over the rooftops of Frostmere.
+[0:00:20] DM: Then, in Frostmere, a scorching heatwave melts every icicle by noon.
+[0:00:35] player_jac: I bet it'll snow in Sunreach tomorrow.
+[0:00:50] DM: A hard frost covers the docks of Sunreach this morning.
+[0:01:05] DM: Snow piles up in the streets of Sunreach.
+[0:01:20] DM: There is no snow in Frostmere this year.
+[0:01:35] DM: Is that snow on the hills above Sunreach?
+[0:01:50] DM: Rain drums on the roofs of Sunreach.
+[0:02:05] DM: The harbourmaster of Frostmere answers in a voice as cold as ice.
+[0:02:20] DM: It doesn't snow in Sunreach, ever.
+[0:02:35] DM: Snow is coming to Sunreach next week, the sailors say.
+[0:02:50] DM: Belleros casts Scorching Ray across the square of Frostmere.
+[0:03:05] DM: The old sailor of Sunreach has snow-white hair.
+[0:03:20] DM: In Frostmere, in the heat of the moment, the guard swings.
+[0:03:35] DM: is that snow on the roofs of Sunreach, the guard asks.
+[0:03:50] DM (as Mayor Brask): Snow piles up in the streets of Sunreach, I swear it.

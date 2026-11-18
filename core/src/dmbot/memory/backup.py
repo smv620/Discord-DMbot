@@ -21,6 +21,7 @@ from psycopg.types.json import Jsonb
 from dmbot import lineage
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn
+from dmbot.maps import weather_note
 from dmbot.memory import (
     beliefs,
     evidence,
@@ -61,6 +62,7 @@ from dmbot.memory._changes import (
     THREAD_PARTS,
     TOLD,
     TYPES,
+    WEATHER_NOTES,
     Table,
     row_of,
     scoped_select,
@@ -140,6 +142,7 @@ _TAGS: dict[str, Table] = {
     # a place's land, climate and who rules it (#4256), after the connections since a road's
     # condition names one (#4258)
     "map_fact": MAP_FACTS,
+    "weather_note": WEATHER_NOTES,  # the weather noted for a place (#4748), after its climate
     "perspective": PERSPECTIVES,  # who holds beliefs (#2409)
     "alias_knower": ALIAS_KNOWERS,  # which characters know an other name (#2935)
     "knower": KNOWERS,  # which characters know each statement (#2995)
@@ -575,6 +578,16 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             _check_culture(raw)
         elif table is THREAD_PARTS:
             _check_thread_part(raw)  # (its own words for `kind`, `state`, `status` and `source`)
+        elif table is WEATHER_NOTES:  # (ids, two fixed words and a time, #4748)
+            if not (
+                all(is_id(raw[c]) for c in ("id", "place_id", "climate_id"))
+                and isinstance(raw["kind"], str)
+                and isinstance(raw["climate"], str)
+                and raw["kind"] in weather_note.KINDS
+                and raw["climate"] in weather_note.CLIMATE_SAID
+                and _valid("created_at", raw["created_at"])
+            ):
+                raise CampaignError(DAMAGED)
         elif table is THREAD_GUESSES:  # (ids and a time only)
             if not (
                 all(is_id(raw[c]) for c in ("id", "thread_id", "belief_id"))
@@ -666,6 +679,18 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
                 }
             )  # fmt: skip
     _check_thread_guesses(by_tag)  # which mystery a guess is about (#4655)
+    # The weather already noted (#4748): one for a place or a climate row the file doesn't hold is
+    # dropped, never a reason to refuse it (the note may only come once more).
+    facts = {r["id"] for r in by_tag["map_fact"]}
+    entries = {r["id"] for r in by_tag["entity"]}
+    seen: set[tuple[str, str]] = set()
+    noted = []
+    for w in by_tag["weather_note"]:
+        key = (w["place_id"], w["kind"])
+        if w["place_id"] in entries and w["climate_id"] in facts and key not in seen:
+            seen.add(key)
+            noted.append(w)
+    by_tag["weather_note"] = noted
     # A row asleep waits for entries of this campaign: a name in the mark that is not an entry of
     # the file is dropped from it (a row left with none is awake), never a reason to refuse.
     entry_ids = {r["id"] for r in by_tag["entity"]}
