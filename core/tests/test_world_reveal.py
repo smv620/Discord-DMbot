@@ -256,11 +256,12 @@ class TheRead(NamesTest):
         assert notices is not None
         async with notices._db.guild(GUILD) as conn:
             cur = await conn.execute(
-                "SELECT revealed_ids FROM upload_notices WHERE id = %s", (done.notice.id,)
+                "SELECT revealed_entry_ids, revealed_link_ids FROM upload_notices WHERE id = %s",
+                (done.notice.id,),
             )
             row = await cur.fetchone()
         assert row is not None
-        kept = row["revealed_ids"]
+        kept = {"entries": row["revealed_entry_ids"], "links": row["revealed_link_ids"]}
         self.assertIn(self.ash, kept["entries"])
         self.assertIn(tie, kept["links"])
         self.assertNotIn("Ash", str(kept))  # (ids only: a name the DM hides later is not kept here)

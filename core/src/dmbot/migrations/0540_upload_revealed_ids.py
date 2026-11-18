@@ -7,8 +7,9 @@ The website lists, for a DM, what a 🌍 Common knowledge upload made known to e
 from __future__ import annotations
 
 # Discord builds that list in memory and never logs it; the website needs something stored, so the
-# upload's notice record keeps **ids only**, never words, in `revealed_ids`:
-# `{"entries": [...], "links": [...], "aliases": [...]}`, at most 50 of each (the page shows ten).
+# upload's notice record keeps **ids only**, never words, in three text-array columns,
+# `revealed_entry_ids`, `revealed_link_ids` and `revealed_alias_ids`, at most 50 of each (the page
+# shows ten).
 # It goes with the notice record, which goes with its campaign (the foreign key cascades) and
 # 30 days after the upload with the notice's own clean-up. It is not in a backup (the notice is
 # not).
@@ -40,9 +41,15 @@ def _shown(e: str) -> str:
 
 SQL = r"""
     ALTER TABLE upload_notices
-        ADD COLUMN revealed_ids JSONB NOT NULL DEFAULT '{}'::jsonb
-            CONSTRAINT upload_notices_revealed_ids_check
-            CHECK (jsonb_typeof(revealed_ids) = 'object' AND pg_column_size(revealed_ids) <= 12000);
+        ADD COLUMN revealed_entry_ids TEXT[] NOT NULL DEFAULT '{}'
+            CONSTRAINT upload_notices_revealed_entry_ids_check
+            CHECK (cardinality(revealed_entry_ids) <= 50),
+        ADD COLUMN revealed_link_ids TEXT[] NOT NULL DEFAULT '{}'
+            CONSTRAINT upload_notices_revealed_link_ids_check
+            CHECK (cardinality(revealed_link_ids) <= 50),
+        ADD COLUMN revealed_alias_ids TEXT[] NOT NULL DEFAULT '{}'
+            CONSTRAINT upload_notices_revealed_alias_ids_check
+            CHECK (cardinality(revealed_alias_ids) <= 50);
 
     CREATE FUNCTION dmbot_web_upload_revealed(g BIGINT, c TEXT, kind TEXT, sid TEXT) RETURNS JSONB
     LANGUAGE plpgsql STABLE SECURITY DEFINER AS $fn$
@@ -67,16 +74,14 @@ SQL = r"""
             'status', 'ok',
             'entries', COALESCE((
                 SELECT jsonb_agg(jsonb_build_object('name', e.name, 'kind', e.type) ORDER BY t.n)
-                FROM jsonb_array_elements_text(COALESCE(n.revealed_ids -> 'entries', '[]')
-                         ) WITH ORDINALITY AS t(id, n)
+                FROM unnest(n.revealed_entry_ids) WITH ORDINALITY AS t(id, n)
                 JOIN memory_entities e ON e.guild_id = g AND e.campaign_id = c AND e.id = t.id
                 WHERE @@e@@), '[]'),
             'links', COALESCE((
                 SELECT jsonb_agg(jsonb_build_object(
                            'subject', s.name, 'subjectKind', s.type, 'predicate', r.predicate,
                            'detail', COALESCE(r.detail, ''), 'object', o.name) ORDER BY t.n)
-                FROM jsonb_array_elements_text(COALESCE(n.revealed_ids -> 'links', '[]')
-                         ) WITH ORDINALITY AS t(id, n)
+                FROM unnest(n.revealed_link_ids) WITH ORDINALITY AS t(id, n)
                 JOIN memory_relations r ON r.guild_id = g AND r.campaign_id = c AND r.id = t.id
                 JOIN memory_entities s ON s.guild_id = g AND s.campaign_id = c
                                       AND s.id = r.subject_id
@@ -92,8 +97,7 @@ SQL = r"""
             'aliases', COALESCE((
                 SELECT jsonb_agg(jsonb_build_object('owner', e.name, 'text', a.text)
                                  ORDER BY t.n)
-                FROM jsonb_array_elements_text(COALESCE(n.revealed_ids -> 'aliases', '[]')
-                         ) WITH ORDINALITY AS t(id, n)
+                FROM unnest(n.revealed_alias_ids) WITH ORDINALITY AS t(id, n)
                 JOIN memory_aliases a ON a.guild_id = g AND a.campaign_id = c AND a.id = t.id
                 JOIN memory_entities e ON e.guild_id = g AND e.campaign_id = c
                                       AND e.id = a.entity_id

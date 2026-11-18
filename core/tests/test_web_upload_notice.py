@@ -266,7 +266,7 @@ class RevealedList(Acting):
         await self.notice_with(entries=[f"{n:032x}" for n in range(80)])
         async with self.db.guild(THURSDAY.id) as conn:
             cur = await conn.execute(
-                "SELECT jsonb_array_length(revealed_ids -> 'entries') AS n FROM upload_notices"
+                "SELECT cardinality(revealed_entry_ids) AS n FROM upload_notices"
                 " WHERE source_id = 'up9'"
             )
             row = await cur.fetchone()
