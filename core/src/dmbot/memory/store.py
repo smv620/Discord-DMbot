@@ -53,6 +53,7 @@ from dmbot.memory import (
     map_fact_store,
     merge_restore,
     notify,
+    party_record,
     place_levels,
     place_words,
     report_fixed,
@@ -3108,6 +3109,31 @@ class MemoryStore:
             if row is None:
                 raise MemoryRuleError(NOT_FOUND)
             return _entity(row)
+
+    async def party_spans(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> list[party_record.Span]:
+        """One character's stretches in the party, oldest first (#4537 slice 2a), for its card."""
+        async with self._read(guild_id, campaign_id) as scope:
+            return await party_record.spans(scope, [entity_id])
+
+    async def current_party(self, guild_id: int, campaign_id: str) -> list[str]:
+        """THE current party (`party_record.current_members`, #4537): entry ids, oldest first."""
+        async with self._read(guild_id, campaign_id) as scope:
+            return await party_record.current_members(scope)
+
+    async def leave_party(
+        self, guild_id: int, campaign_id: str, entity_id: str, ended: str
+    ) -> Written[party_record.Span]:
+        """ "Has left the party" (#4537 slice 2a, §6): the DM closes the character's stretch, why in
+        one word (`party_record.ENDED`). One change, one Undo; every row the character holds stays.
+        Refused (`MemoryRuleError`) for a character not in the party now, or a word not offered."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            try:
+                span = await party_record.close_span(w, entity_id, ended)
+            except party_record.PartyError as exc:
+                raise MemoryRuleError(str(exc)) from exc
+            return Written(span, w.batch)
 
     async def make_party(self, guild_id: int, campaign_id: str) -> party_mod.Filled:
         """The party of a campaign (#3954): made with every new campaign, and once for each

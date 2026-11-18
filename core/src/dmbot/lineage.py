@@ -71,7 +71,7 @@ STAMPED_MEMORY = (
     "memory_private_scene_entries",
     "memory_hand_over_both",
     "memory_story_languages", "memory_map_facts", "memory_cultures", "memory_thread_parts",
-    "memory_thread_guesses", "map_features", "memory_weather_notes",
+    "memory_thread_guesses", "map_features", "memory_weather_notes", "memory_party_spans",
 )  # fmt: skip
 # Part 2: recaps and the theatre script (migration 0380).
 STAMPED_RECAPS = (

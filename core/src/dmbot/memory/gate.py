@@ -41,7 +41,7 @@ from dmbot.memory._changes import (
     Scope,
     Table,
 )
-from dmbot.memory.models import CONFIRMED, PLAYER_CHARACTER, lookup_key, spelling_key
+from dmbot.memory.models import CONFIRMED, lookup_key, spelling_key
 
 ENTRY, PROPERTY, CONNECTION, ALIAS = "entry", "property", "connection", "alias"
 KINDS = (ENTRY, PROPERTY, CONNECTION, ALIAS)
@@ -359,13 +359,9 @@ async def load(scope: Scope) -> Statements:
         ):
             if row[column] is not None:
                 knowers.setdefault((kind, row[column]), {})[character] = float(row["confidence"])
-    pcs = frozenset(
-        r["id"]
-        for r in await scope.select(
-            ENTITIES, " AND type = 'character' AND role = %s AND status = %s",
-            [PLAYER_CHARACTER, CONFIRMED],
-        )
-    )  # fmt: skip
+    from dmbot.memory import party_record  # ("the party" is one function, #4537 rule 13.1)
+
+    pcs = frozenset(await party_record.current_members(scope))
     wanted_states = [i for k, i in knowers if k == PROPERTY]
     wanted_relations = [i for k, i in knowers if k == CONNECTION]
     wanted_aliases = [i for k, i in knowers if k == ALIAS]
@@ -535,13 +531,9 @@ async def party_entries(scope: Scope) -> frozenset[str] | None:
     and for common knowledge (#4537);
     a list held by a group (a faction as a knower) is reach the aggregate does not follow, so then
     the full gate answers."""
-    pcs = {
-        str(r["id"]): str(r["id"])
-        for r in await scope.select(
-            ENTITIES, " AND type = 'character' AND role = %s AND status = %s",
-            [PLAYER_CHARACTER, CONFIRMED],
-        )
-    }  # fmt: skip
+    from dmbot.memory import party_record  # ("the party" is one function, #4537 rule 13.1)
+
+    pcs = {c: c for c in await party_record.current_members(scope)}
     if not pcs:
         return None
     views = {

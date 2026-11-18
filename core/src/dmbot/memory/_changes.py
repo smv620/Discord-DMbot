@@ -383,7 +383,16 @@ WEATHER_NOTES = Table(
     "memory_weather_notes", "id", ("id", "place_id", "kind", "climate_id", "climate", "created_at"),
     logged=False,
 )  # fmt: skip
-ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
+# One stretch of one player character in the party (#4537, party knowledge slice 2a; 0549): the
+# party record. Logged: each is the DM's action (a character made a player character, "Has left the
+# party"), so it is one ↩ Undo; it goes with its character by the database.
+PARTY_SPANS = Table(
+    "memory_party_spans", "id",
+    ("id", "entity_id", "from_at", "to_at", "from_minute", "to_minute", "ended", "source",
+     "created_at"),
+)  # fmt: skip
+ALL = (TYPES, PREDICATES, ENTITIES, PARTY_SPANS, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS,
+       RULE_LINKS,
        STORY_LANGUAGES, CULTURES, MAP_FACTS, MAPS, MAP_FEATURES, THREAD_PARTS,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
        BELIEFS, EVIDENCE, THREAD_GUESSES, ALIAS_KNOWERS, KNOWERS, TOLD,
@@ -774,6 +783,10 @@ class Changes(Scope):
         if table is ENTITIES:  # and so does what a character was told, each logged (#3089)
             for told in await self.select(TOLD, " AND character_id = %s", [row_id]):
                 await self.delete(TOLD, told["id"])
+            # and its stretches in the party, each logged (#4537): the database would take them
+            # unlogged, and an Undo would bring back one who had left as in the party
+            for span in await self.select(PARTY_SPANS, " AND entity_id = %s", [row_id]):
+                await self.delete(PARTY_SPANS, span["id"])
         if table.name in _KNOWN_COLUMN:  # who knows a statement goes with it, each logged (#2995)
             column = _KNOWN_COLUMN[table.name]
             for knower in await self.select(KNOWERS, f" AND {column} = %s", [row_id], dormant=True):
