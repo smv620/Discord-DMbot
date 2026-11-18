@@ -13,6 +13,7 @@ from dmbot.web.recaps import RecapError
 from dmbot.web.sessions import Session
 from tests.test_recap_web import BOB
 from tests.test_web_api import THURSDAY
+from tests.test_web_name_actions import Acting
 from tests.test_web_theatre_script import Script
 
 COUNTS = {"npc": 30, "place": 24, "connections": 48, "other_names": 3}
@@ -140,3 +141,134 @@ class UploadNoticeRead(Script):
             THURSDAY.id, self.two.id, "Other", COUNTS, [1], source_kind="lore", source_id="up1"
         )
         self.assertEqual((await self.read())["state"], "none")
+
+
+class RevealedList(Acting):
+    """#4661: the DMs see which hidden things a 🌍 upload made known to everyone, in words, read
+    from the ids the notice kept; a thing hidden again since is never listed."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.notices = UploadNotices(self.db)
+
+    async def read(
+        self, kind: str = "lore", source_id: str = "up1", who: Session | None = None
+    ) -> dict[str, Any]:
+        return await upload_notice.read(self.web, who or self.session, self.cref, kind, source_id)
+
+    async def plain_notice(self) -> Notice:
+        return await self.notices.add(
+            THURSDAY.id, self.one.id, "The Sunken Keep", COUNTS, [1, 2, 3],
+            source_kind="lore", source_id="up1",
+        )  # fmt: skip
+
+    async def entry(self, name: str, kind: str = "character", **kw: Any) -> str:
+        made = await self.memory.add_entity(
+            THURSDAY.id, self.one.id, name=name, type=kind, source="dm", status="confirmed", **kw
+        )
+        return str(made.value.id)
+
+    async def notice_with(self, **ids: list[str]) -> None:
+        total = sum(len(v) for v in ids.values())
+        await self.notices.add(
+            THURSDAY.id, self.one.id, "The Sunken Keep", {"npc": 2, "revealed": total}, [1],
+            source_kind="lore", source_id="up9", revealed_ids=ids,
+        )  # fmt: skip
+
+    async def test_a_dm_sees_what_was_revealed_in_words(self) -> None:
+        ash = await self.entry("Ash Morrow")
+        orlen = await self.entry("Master Orlen")
+        link = await self.memory.add_relation(
+            THURSDAY.id,
+            self.one.id,
+            ash,
+            "member_of",
+            orlen,
+            source="dm",
+            confidence=1.0,
+            status="confirmed",
+        )
+        await self.notice_with(entries=[ash], links=[link.value[0].id])
+        got = await self.read("lore", "up9")
+        self.assertEqual(got["revealedLines"][0], "Ash Morrow")
+        self.assertEqual(got["revealedLines"][1], "Ash Morrow is a member of Master Orlen")
+        self.assertEqual(got["revealedMore"], 0)
+
+    async def test_a_thing_hidden_again_since_is_not_listed(self) -> None:
+        ash = await self.entry("Ash Morrow")
+        bram = await self.entry("Bram Tull")
+        await self.notice_with(entries=[ash, bram])
+        await self.memory.set_hidden_from_players(
+            THURSDAY.id, self.one.id, bram, True, source="dm", dm_chose_secret=True
+        )
+        got = await self.read("lore", "up9")
+        self.assertEqual(got["revealedLines"], ["Ash Morrow"])
+
+    async def test_an_entry_whose_own_name_turned_secret_is_not_listed_nor_its_ties(self) -> None:
+        """The gate shows an entry by its main name only while that name is not a secret one."""
+        ash = await self.entry("Ash Morrow")
+        orlen = await self.entry("Master Orlen")
+        link = await self.memory.add_relation(
+            THURSDAY.id, self.one.id, ash, "member_of", orlen, source="dm", confidence=1.0,
+            status="confirmed",
+        )  # fmt: skip
+        await self.notice_with(entries=[ash, orlen], links=[link.value[0].id])
+        async with self.db.guild(THURSDAY.id) as conn:  # (the DM made Ash's own name secret)
+            await conn.execute(
+                "UPDATE memory_aliases SET secret = true WHERE entity_id = %s AND text = %s",
+                (ash, "Ash Morrow"),
+            )
+        got = await self.read("lore", "up9")
+        self.assertEqual(got["revealedLines"], ["Master Orlen"])
+
+    async def test_a_connection_that_came_through_a_secret_other_name_is_not_listed(self) -> None:
+        ash = await self.entry("Ash Morrow")
+        orlen = await self.entry("Master Orlen")
+        link = await self.memory.add_relation(
+            THURSDAY.id, self.one.id, ash, "member_of", orlen, source="dm", confidence=1.0,
+            status="confirmed",
+        )  # fmt: skip
+        await self.notice_with(links=[link.value[0].id])
+        self.assertEqual(len((await self.read("lore", "up9"))["revealedLines"]), 1)
+        alias = await self.memory.add_alias(
+            THURSDAY.id, self.one.id, ash, "The Grey Hand", kind="nickname", source="dm",
+            secret=True,
+        )  # fmt: skip
+        async with self.db.guild(THURSDAY.id) as conn:
+            await conn.execute(
+                "UPDATE memory_relations SET via_alias_id = %s WHERE id = %s",
+                (alias.value.id, link.value[0].id),
+            )
+        self.assertNotIn("revealedLines", await self.read("lore", "up9"))
+
+    async def test_only_ten_are_listed_and_the_rest_are_counted(self) -> None:
+        names = [await self.entry(f"Person {n:02d}") for n in range(12)]
+        await self.notice_with(entries=names)
+        got = await self.read("lore", "up9")
+        self.assertEqual((len(got["revealedLines"]), got["revealedMore"]), (10, 2))
+
+    async def test_no_list_when_nothing_was_revealed_or_the_upload_has_none_stored(self) -> None:
+        await self.plain_notice()
+        got = await self.read()
+        self.assertNotIn("revealedLines", got)
+        await self.notice_with()  # (a count of 0: nothing to list)
+        self.assertNotIn("revealedLines", await self.read("lore", "up9"))
+
+    async def test_a_stranger_or_a_non_dm_gets_none(self) -> None:
+        ash = await self.entry("Ash Morrow")
+        await self.notice_with(entries=[ash])
+        bob = await self.signed(BOB, THURSDAY)  # DMs Two, not One
+        with self.assertRaises(RecapError) as caught:
+            await self.read("lore", "up9", bob)
+        self.assertEqual(caught.exception.code, "not_found")
+
+    async def test_the_ids_kept_are_capped(self) -> None:
+        await self.notice_with(entries=[f"{n:032x}" for n in range(80)])
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT cardinality(revealed_entry_ids) AS n FROM upload_notices"
+                " WHERE source_id = 'up9'"
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["n"], 50)

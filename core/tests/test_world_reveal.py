@@ -247,6 +247,25 @@ class TheRead(NamesTest):
         self.assertTrue(any("Master Orlen" in line and "Ash Morrow" in line for line in ties))
         self.assertFalse(await self.tie_secret(tie))
 
+    async def test_the_notice_keeps_the_ids_of_what_was_revealed_never_words(self) -> None:
+        """#4661: the website lists them from these, resolved when a DM reads."""
+        await self.hide(self.ash)
+        tie = await self.secret_tie()
+        done = await self.read("world")
+        notices = self.bot.upload_notices
+        assert notices is not None
+        async with notices._db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT revealed_entry_ids, revealed_link_ids FROM upload_notices WHERE id = %s",
+                (done.notice.id,),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        kept = {"entries": row["revealed_entry_ids"], "links": row["revealed_link_ids"]}
+        self.assertIn(self.ash, kept["entries"])
+        self.assertIn(tie, kept["links"])
+        self.assertNotIn("Ash", str(kept))  # (ids only: a name the DM hides later is not kept here)
+
     async def test_undo_hides_a_revealed_connection_again(self) -> None:
         tie = await self.secret_tie()
         done = await self.read("world")
