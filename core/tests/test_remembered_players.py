@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 import unittest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 import discord
@@ -36,7 +36,8 @@ def guild(*members: Any, cached: tuple[int, ...] = (), away: tuple[int, ...] = (
         asked.append(user_id)
         if user_id in by_id:
             return by_id[user_id]
-        raise discord.NotFound(SimpleNamespace(status=404, reason="gone"), "unknown member")  # type: ignore[arg-type]
+        gone = SimpleNamespace(status=404, reason="gone")
+        raise discord.NotFound(cast(Any, gone), "unknown member")
 
     return SimpleNamespace(
         get_member=lambda user_id: by_id.get(user_id) if user_id in holds else None,
@@ -159,7 +160,7 @@ class TheMenu(unittest.IsolatedAsyncioTestCase):
         send = AsyncMock()
         await select.callback(SimpleNamespace(response=SimpleNamespace(send_message=send)))  # type: ignore[arg-type]
         picked.assert_not_awaited()
-        self.assertEqual(send.await_args.args[0], rp.GONE)
+        self.assertEqual(send.await_args_list[-1].args[0], rp.GONE)
 
 
 class TheCallSites(unittest.IsolatedAsyncioTestCase):
@@ -219,7 +220,7 @@ class TheCallSites(unittest.IsolatedAsyncioTestCase):
         send = AsyncMock()
         await select.callback(SimpleNamespace(response=SimpleNamespace(send_message=send)))  # type: ignore[arg-type]
         picked.assert_not_awaited()
-        self.assertEqual(send.await_args.args[0], rp.GONE)
+        self.assertEqual(send.await_args_list[-1].args[0], rp.GONE)
 
 
 class TheList(DatabaseTest):
