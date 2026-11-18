@@ -20,6 +20,7 @@ from discord import app_commands
 
 from dmbot.maps import words
 from dmbot.maps.store import DM_ONLY, GONE, TABLE, MapError, Viewer, may_use_map
+from dmbot.memory._changes import MAP_PICTURE_GONE
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.ui.dmbot_commands import _answer_first, _bot, _tell, dmbot_group
 from dmbot.ui.family_ties import _dm_campaign
@@ -231,8 +232,10 @@ class UndoButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], tem
         except TooLateToUndo as exc:  # (older than Undo works for: its own words)
             await _edit(interaction, str(exc))
             return
-        except MemoryRuleError:
-            await _edit(interaction, words.UNDO_FAILED)
+        except MemoryRuleError as exc:  # (the picture gone since: said plainly, #4697)
+            await _edit(
+                interaction, str(exc) if str(exc) == MAP_PICTURE_GONE else words.UNDO_FAILED
+            )
             return
         except Exception as exc:
             log.warning("A map show or hide could not be undone (%s)", type(exc).__name__)

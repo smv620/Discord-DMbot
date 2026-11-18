@@ -23,6 +23,7 @@ import discord
 
 from dmbot.maps import words
 from dmbot.maps.store import MapError
+from dmbot.memory._changes import MAP_PICTURE_GONE
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.ui.dmbot_commands import _answer_first, _bot
 
@@ -227,8 +228,11 @@ class PosterUndoButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]
         except TooLateToUndo as exc:
             await _finish(interaction, str(exc))
             return
-        except MemoryRuleError:
-            await _finish(interaction, words.TAKE_BACK_UNDO_FAILED)
+        except MemoryRuleError as exc:  # (the picture gone since: said plainly, #4697)
+            await _finish(
+                interaction,
+                str(exc) if str(exc) == MAP_PICTURE_GONE else words.TAKE_BACK_UNDO_FAILED,
+            )
             return
         except Exception as exc:
             log.warning("A poster's map undo failed (%s)", type(exc).__name__)
