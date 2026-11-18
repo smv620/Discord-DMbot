@@ -127,6 +127,17 @@ python -m dmbot.devtools.graph_key_check BOTH_BACKUP --key core/tests/fixtures/s
 
 Give the run a deploy number of its own (for example 900 plus the deploy's, `--deploy 935`) so its campaign never takes a kept sample's place or becomes the baseline `--compare` reads. Paste only its `Readings: found, missed, wrong holder, false` line on #3545. The direction of a statement is not scored, and a guess in the party's view where the key has a character's (or the other way round) is a wrong holder. A guess counts as found kept as a belief or waiting as a reading, in the key's point of view; the relationship's own word is not scored. Before slice 7b, the bot reads theories only with `DMBOT_STORY_READINGS` on, so the before figures on a deploy without it are every guess missed.
 
+### Pictures in an uploaded PDF: the picture cases (#4003 slice b)
+
+DMbot's reading of a PDF's pictures (`DMBOT_PICTURE_READING`) is scored on an invented PDF, which a devtool draws: a page of text, a map with five labelled places, a stat table, a handout letter, a portrait (which must be skipped as "other"), an ornament too small to read, and a map drawn as vector lines (nothing to take out). Every name and word in it is made up. [picture_cases_key.json](picture_cases_key.json) says what each picture is and the words it holds. Make the PDF, then score it; the score reads each picture with the fast model, as the bot does, and prints counts only:
+
+```bash
+python -m dmbot.devtools.picture_cases make /tmp/picture_cases.pdf
+python -m dmbot.devtools.picture_cases score /tmp/picture_cases.pdf
+```
+
+Paste its lines on #3545: `kind_right`/`kind_wrong` (map, table, handout or other), `words_found`/`words_missed` (each phrase of the key), `words_not_in_picture` (words read that the picture doesn't hold, the false reads), `other_skipped`, the `cut`, `failed` and `not_read` counts, and `estimate_credits` (5 a picture) beside the run's cost. The switch stays off until these counts are in (Supervisor's ruling on #4003).
+
 ## Changes to the keys
 
 - **2026-11-17, the guess cases (#4655, quests slice 7a):** `guess_cases_lore.txt`, `guess_cases_session.txt` and `guess_cases_key.json` / `.md` added (invented, Supervisor's ruling), with the check's `readings` / `must_not_readings` rows and its `Readings:` line.

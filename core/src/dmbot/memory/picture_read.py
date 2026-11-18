@@ -37,12 +37,14 @@ class PictureText:
     """One picture's words as the vision read gave them. `page`: the PDF page (1-based);
     `picture_id`: the kept picture's opaque id for the DM's link ("" when not kept; never a path or
     an address); `text`: its words, a table row by row, a map's labels one per line; `where`: "map",
-    "table", "handout", or "" when the read can't say."""
+    "table", "handout", or "" when the read can't say; `shows`: one plain sentence of what it shows,
+    for the DM's link (#4003 slice b), never read for names."""
 
     page: int
     picture_id: str
     text: str
     where: str = ""
+    shows: str = ""
 
 
 @dataclass(frozen=True, slots=True)

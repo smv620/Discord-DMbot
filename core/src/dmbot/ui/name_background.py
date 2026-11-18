@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any, cast
 import discord
 
 from dmbot import credits
-from dmbot.ai import AIError
+from dmbot.ai import FEATURE_TIERS, AIError, Feature
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
@@ -40,6 +40,7 @@ from dmbot.memory import (
     map_facts,
     pdf_pictures,
     picture_read,
+    picture_vision,
     place_levels,
     pronouns,
     route_condition,
@@ -658,6 +659,8 @@ class BackgroundOffer(_Menu):
                             done,
                             total,
                         )
+                    elif stage == "seeing":  # (#4003 slice b: before the text, counts only)
+                        waiting.step("First: reading its pictures", done, total)
                     elif stage == "pictures":  # (#4003)
                         waiting.step(
                             f"Step 2 of {steps}: reading the words in its pictures", done, total
@@ -707,7 +710,8 @@ class BackgroundOffer(_Menu):
                     + trait_questions_line(done.trait_questions)
                     + thread_suggestions_line(done.thread_suggestions, done.threads_short)
                     + secret_questions_ui.count_line(done.secret_questions)
-                    + picture_held_line(len(done.picture_held)),
+                    + picture_held_line(len(done.picture_held))
+                    + pictures_unread_line(done.pictures_unread),
                     held=done.picture_held,
                 )
             # What waits for the DM also comes once to their private chat, like a live session's
@@ -786,6 +790,9 @@ class BackgroundRead:
     # waiting in the DM's Names to check with a note saying so, never added by themselves and
     # never in an "Add all".
     picture_held: frozenset[str] = frozenset()
+    # Pictures that weren't read in full (#4003 slice b: an answer cut short, a failed call, out
+    # of time or credits), counted on the DM's note, never dropped silently (Supervisor's ruling)
+    pictures_unread: int = 0
     # Story threads the lore holds (#4453): how many new suggestions wait in ❓ Questions for you
     thread_suggestions: int = 0
     threads_short: str = ""  # why the story threads weren't read in full, a `THREADS_SHORT` key
@@ -812,7 +819,18 @@ async def read_background(
     lore read is made because the DM added material, so it is the owner's to meter. Every way in
     (the 🤖 button, the website, the queue) comes through here, so none can forget the scope. A 🤫
     question the read asks (#4524) cites the upload as the DM sees it ("Tavin's backstory, 24
-    Oct")."""
+    Oct").
+
+    A PDF's pictures, when taken out (#4003, DMBOT_PICTURE_READING), are read first, each call
+    charged as the "picture" job the DM was shown the cost of; their words then reach the lore read
+    (`_read_pictures`, with DMBOT_PICTURE_NAMES on)."""
+    unread = 0
+    if upload.picture_files is not None and getattr(bot.settings, "picture_reading_on", False):
+        with credits.preparing(campaign.guild_id, campaign.id, "picture"):
+            seen = await _see_pictures(bot, upload, progress, started)
+        if seen is not None:
+            upload = replace(upload, pictures=seen.pictures)
+            unread = seen.unread
     with (
         credits.preparing(campaign.guild_id, campaign.id, "lore"),
         secret_questions.evidence(upload_label(upload.label, time.time())) as asked,
@@ -838,7 +856,41 @@ async def read_background(
             n = 0
         done.secret_questions = n
         done.questions_left += n
+    done.pictures_unread = unread
     return done
+
+
+# The pictures' own share of the lore read's time (#4003): read first, so the text read still has
+# most of its limit; a picture not started by then is counted as not read.
+SEE_PICTURES_S = 180
+
+
+async def _see_pictures(
+    bot: Any,
+    upload: Upload,
+    progress: Callable[[str, int, int], None] | None,
+    started: float,
+) -> picture_vision.Seen | None:
+    """The upload's pictures read with the fast model (`picture_vision.read_pictures`), or None
+    without an AI client or a picture. Never raises: the text is the upload's reason, and is read
+    either way."""
+    files = upload.picture_files.files() if upload.picture_files is not None else []
+    client = getattr(bot, "ai_client", None)
+    if not files or client is None:
+        return None
+    try:
+        vision = client.tier(FEATURE_TIERS[Feature.IMAGE], Feature.IMAGE)
+        if progress is not None:
+            progress("seeing", 0, len(files))
+        return await picture_vision.read_pictures(
+            vision,
+            files,
+            until=started + SEE_PICTURES_S,
+            progress=(lambda d, t: progress("seeing", d, t)) if progress is not None else None,
+        )
+    except Exception as exc:  # (a bug or a store failure: the pictures go, the text stays)
+        log.warning("An upload's pictures couldn't be read (%s)", type(exc).__name__)
+        return picture_vision.Seen(late=len(files))
 
 
 async def _read_background(
@@ -1517,6 +1569,15 @@ async def _party_keys(memory: MemoryStore, campaign: Campaign) -> set[str]:
     except Exception as exc:  # the type only: a database error can quote a row
         log.warning("The party's names couldn't be read (%s)", type(exc).__name__)
         return set()
+
+
+def pictures_unread_line(n: int) -> str:
+    """The note's line for pictures that weren't read in full (#4003 slice b), counts only. Pure."""
+    if not n:
+        return ""
+    if n == 1:
+        return "\n🖼️ 1 picture couldn't be read in full, so its words may be missing."
+    return f"\n🖼️ {n} pictures couldn't be read in full, so their words may be missing."
 
 
 def picture_held_line(n: int) -> str:
@@ -2768,6 +2829,7 @@ async def announce(
         view = notice_view(notice, site_url=bot.settings.site_url, asks=[m() for m in asks])
     if done.knowledge_note:
         card += done.knowledge_note
+    card += pictures_unread_line(done.pictures_unread)  # (#4003 slice b: on the DM's own card)
     if interaction.user.id in campaign.dm_user_ids:  # (a manager who isn't a DM: counts only)
         card += private
     with contextlib.suppress(discord.HTTPException):
