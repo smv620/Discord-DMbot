@@ -98,6 +98,7 @@ from dmbot.web import (
     theatre_script,
     thread_card,
     thread_clues,
+    thread_guesses,
     thread_progress,
     thread_suggestions,
     timeline,
@@ -2818,6 +2819,17 @@ def create_app(
         session, _token = signed
         try:
             return await thread_clues.read(db, session, ref, thread)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/threads/{thread}/guesses")
+    async def me_campaign_thread_guesses(ref: str, thread: str, signed: Signed) -> dict[str, Any]:
+        """The table's guesses at a story thread, in Discord's words (#4665): DM only, nothing for
+        anyone else."""
+        session, _token = signed
+        try:
+            return await thread_guesses.read(db, session, ref, thread)
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

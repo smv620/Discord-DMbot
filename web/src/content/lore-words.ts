@@ -40,7 +40,7 @@ export const lorePage = {
   speakerLoading: "Loading the characters…",
   knownLegend: "Who knows it?",
   known: {
-    world: { label: "Everyone in the story", note: "Every player's character knows all of it. Good for common knowledge about the world." },
+    world: { label: "🌍 Common knowledge", note: "Everyone in the world knows this. Every player's character knows all of it." }, // (the owner's one name everywhere, #4559)
     spoilers: { label: "Only me (the DM)", note: "A secret. Players won't see any of it on the Story Graph." },
     smart: { label: "Let DMbot guess", note: "DMbot guesses for each fact: everyone knows it, or only you. It can be wrong. Fix any later with \"Who knows this?\" on the Story Graph." },
   },
