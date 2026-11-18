@@ -5,7 +5,7 @@
 import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, type AccountApi } from "../src/account/api";
+import { ApiError } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import QuestSheet from "../src/account/QuestSheet";
 import ThreadClues from "../src/account/ThreadClues";
@@ -24,7 +24,7 @@ afterEach(() => {
 });
 
 const REF = "100.cmp1";
-function open(api: AccountApi = mockApi("table")) {
+function open(api = mockApi("table")) {
   render(<ThreadClues api={api} refId={REF} thread="t1" />);
   return api;
 }
