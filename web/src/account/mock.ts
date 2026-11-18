@@ -2342,6 +2342,19 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         },
       });
     },
+    // The party's player characters, for the "Some know" picker on a waiting claim (#4680 part 1): DM only. A ref ending
+    // `.party-none` has an empty party.
+    async partyCharacters(ref) {
+      calls.push(`partyCharacters:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      if (/\.party-none$/.test(ref)) return [];
+      return [
+        { id: "p1", name: "Wren" },
+        { id: "p2", name: "Ash" },
+      ];
+    },
     async answerWaiting(ref, answer, onLook) {
       calls.push(
         `answerWaiting:${ref}:${answer.kind}:${answer.action}:${"ids" in answer ? answer.ids.join(",") : answer.id}${"entity" in answer ? `:${answer.entity}` : ""}${"secret" in answer && answer.secret ? ":secret" : ""}`,
@@ -2391,6 +2404,8 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       waiting.backstory = waiting.backstory.filter((b) => !(ids.includes(b.id) && (b.ready || answer.action === "skip")));
       waiting.which = waiting.which.filter((q) => !ids.includes(q.id));
       if (before === waiting.claims.length + waiting.backstory.length + waiting.which.length) throw new ApiError("gone");
+      // "Some know" (#4680 part 1) takes the claim off the list like a yes, and gives a batch so Undo takes it back.
+      if (answer.kind === "claim" && answer.action === "some") return { batch: 100 + Number(answer.id.replace(/\D/g, "")) };
       if (answer.kind === "claim" && answer.action === "confirm") {
         // A yes the bot showed to the players, or kept hidden beside another hidden connection (#3974, #3986).
         // (each also gives a batch, so Undo takes it back, as for an ordinary yes)
