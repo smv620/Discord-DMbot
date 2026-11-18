@@ -241,7 +241,9 @@ class TheUpload(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(sent)
         file = SimpleNamespace(component=SimpleNamespace(values=[object()]))
         modal = SimpleNamespace(campaign_id="c" * 32, file=file)
-        bot = SimpleNamespace(settings=SimpleNamespace(picture_reading_on=True))
+        bot = SimpleNamespace(
+            settings=SimpleNamespace(picture_reading_on=True, picture_names_on=True)
+        )
         read = AsyncMock(return_value=(upload, None))
         with (
             patch.object(name_background, "_campaign_for", AsyncMock(return_value=campaign)),
