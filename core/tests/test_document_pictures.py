@@ -163,13 +163,16 @@ class KeepingAFilesPictures(Kept):
     def upload(self, **fields: object) -> Upload:
         return Upload("text", "file.pdf", document=True, uploader_id=DM, **fields)  # type: ignore[arg-type]
 
-    async def test_its_maps_tables_and_handouts_are_kept_for_the_dms(self) -> None:
+    async def test_itsmaps_tables_and_handouts_are_kept_for_the_dms(self) -> None:
         seen = self.seen((2, drawn(1), "map"), (3, drawn(2), "table"))
         steps: list[tuple[str, int, int]] = []
-        new, missed = await name_background._keep_pictures(
+        new, missed, maps = await name_background._keep_pictures(
             self.bot(), self.campaign, self.upload(), seen, lambda *a: steps.append(a)
         )
         self.assertEqual((len(new), missed), (2, 0))
+        self.assertEqual(
+            maps, ((new[0], 2),)
+        )  # (the map picture and its page, for its question: #4259)
         kept = [await self.store.get(GUILD, self.campaign.id, pid) for pid in new]
         for picture in kept:
             assert picture is not None
@@ -183,10 +186,10 @@ class KeepingAFilesPictures(Kept):
     async def test_a_file_the_campaign_keeps_already_is_left_never_taken_over(self) -> None:
         chat = await self.from_chat(drawn(1))
         seen = self.seen((2, drawn(1), "map"))
-        new, missed = await name_background._keep_pictures(
+        new, missed, maps = await name_background._keep_pictures(
             self.bot(), self.campaign, self.upload(), seen
         )
-        self.assertEqual((new, missed), ((), 0))  # (not the upload's: its Undo leaves it)
+        self.assertEqual((new, missed, maps), ((), 0, ()))  # (not the upload's: its Undo leaves it)
         found = await self.store.get(GUILD, self.campaign.id, chat)
         assert found is not None
         self.assertFalse(found.dm_only)
@@ -195,11 +198,13 @@ class KeepingAFilesPictures(Kept):
         seen = self.seen((2, drawn(1), "map"))
         nobody = Upload("text", "file.pdf", document=True)
         self.assertEqual(
-            await name_background._keep_pictures(self.bot(), self.campaign, nobody, seen), ((), 0)
+            await name_background._keep_pictures(self.bot(), self.campaign, nobody, seen),
+            ((), 0, ()),
         )
         off = SimpleNamespace(picture_keeper=None, picture_store=self.store)
         self.assertEqual(
-            await name_background._keep_pictures(off, self.campaign, self.upload(), seen), ((), 0)
+            await name_background._keep_pictures(off, self.campaign, self.upload(), seen),
+            ((), 0, ()),
         )
         self.assertEqual(await self.store.list(GUILD, self.campaign.id), [])
 
@@ -216,7 +221,9 @@ class KeepingAFilesPictures(Kept):
 
         seen = self.seen((2, drawn(1), "map"), (3, drawn(2), "handout"))
         bot = SimpleNamespace(picture_keeper=FirstIsFull(), picture_store=self.store)
-        new, missed = await name_background._keep_pictures(bot, self.campaign, self.upload(), seen)
+        new, missed, _ = await name_background._keep_pictures(
+            bot, self.campaign, self.upload(), seen
+        )
         self.assertEqual((len(new), missed), (1, 1))
         self.assertTrue(all(c.dm_only for c in calls))
 

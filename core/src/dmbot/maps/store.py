@@ -49,6 +49,10 @@ FULL = "Permanent pictures are full. Remove one to make room."
 BAD = "That isn't one of the choices."
 NOT_YOURS = "Only the person who posted it can take it back."
 GONE = "That map is gone. Open the Maps page again to see it as it is now."
+# A map from a DM's uploaded file stays with the DMs (#4259; its picture is DM-only, #4003 slice c)
+DMS_FILE = (
+    "This map can't be shown to the table: it came from a DM's file, so it stays with the DMs."
+)
 
 
 class MapError(Exception):
@@ -548,12 +552,16 @@ class MapStore:
         width: int | None = None,
         height: int | None = None,
         storage_mb: int,
+        from_notice: str | None = None,
+        right_at: int | None = None,
     ) -> Written[Map]:
         """Keep a kept picture as a map. Refused (`MapError`) unless the uploader said yes to "Is
         this a map you're allowed to use and save in this campaign?" (`right_to_use`). A DM's own
         upload carries the DM's yes to using it as well; a player's waits for a DM. The picture is
         made permanent in the same step (so the rolling removal never takes it), refused when
-        permanent pictures are full. The result's batch is the Undo."""
+        permanent pictures are full. The result's batch is the Undo. `from_notice` (#4259): the
+        upload notice of the document it came from, whose Undo removes it; `right_at`: when the
+        right-to-use yes was given, when it was given before now (the upload's own stamp)."""
         if not right_to_use:
             raise MapError(NOT_YET)
         if kind not in KINDS or came_from not in CAME_FROM or audience not in AUDIENCES:
@@ -580,6 +588,14 @@ class MapStore:
                     raise MapError(BAD)
             if await w.select(MAPS, " AND picture_id = %s", [picture_id]):
                 raise MapError(ALREADY)
+            if from_notice is not None:  # (its upload was undone: its pictures are going, #4259)
+                cur = await w.conn.execute(
+                    "SELECT 1 FROM upload_notices WHERE guild_id = %s AND campaign_id = %s"
+                    " AND id = %s AND undone_at IS NOT NULL",
+                    (guild_id, campaign_id, from_notice),
+                )
+                if await cur.fetchone() is not None:
+                    raise MapError(NOT_KEPT)
             if not pic["permanent"]:
                 usage = await _usage(w.conn, guild_id, campaign_id, storage_mb)
                 if _full(usage, int(pic["size_bytes"]) + int(pic["preview_bytes"])):
@@ -596,14 +612,36 @@ class MapStore:
                     "grid_kind": "none", "grid_cell_px": None, "grid_cell_distance": None,
                     "north_angle": 0.0, "north_from": "assumed", "audience": audience,
                     "came_from": came_from, "import_tool": import_tool, "right_by": uploader_id,
-                    "right_at": now, "use_ok": True if uploader_is_dm else None,
+                    "right_at": right_at if right_at is not None else now,
+                    "use_ok": True if uploader_is_dm else None,
                     "use_by": uploader_id if uploader_is_dm else None,
                     "use_at": now if uploader_is_dm else None, "as_of": None, "replaces": None,
                     "grid_from": None,
                     "created_at": now,
                 },
             )  # fmt: skip
+            if from_notice is not None:
+                # (not a logged column: an Undo that puts a removed map back must never point it at
+                # a notice cleaned up since; the upload's own Undo is what reads it). Tied only to
+                # a notice still there: one cleaned up since leaves the map as any other kept one.
+                await w.conn.execute(
+                    "UPDATE campaign_maps SET from_notice = %s WHERE guild_id = %s"
+                    " AND campaign_id = %s AND id = %s AND EXISTS (SELECT 1 FROM upload_notices n"
+                    " WHERE n.guild_id = %s AND n.campaign_id = %s AND n.id = %s)",
+                    (from_notice, guild_id, campaign_id, row["id"], guild_id, campaign_id,
+                     from_notice),
+                )  # fmt: skip
             return Written(_map(row), w.batch)
+
+    async def for_notice(self, guild_id: int, campaign_id: str, notice_id: str) -> list[str]:
+        """The ids of the maps an upload's document gave (#4259), for its Undo."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM campaign_maps WHERE guild_id = %s AND campaign_id = %s"
+                " AND from_notice = %s ORDER BY created_at, id",
+                (guild_id, campaign_id, notice_id),
+            )
+            return [str(r["id"]) for r in await cur.fetchall()]
 
     async def answer_use(
         self,
@@ -649,8 +687,18 @@ class MapStore:
             raise MapError(BAD)
         async with self._memory.map_write(guild_id, campaign_id) as w:
             await _lock(w.conn, guild_id, campaign_id)
-            if await w.get(MAPS, map_id) is None:
+            current = await w.get(MAPS, map_id)
+            if current is None:
                 raise MapError(GONE)
+            if audience == TABLE:  # (a DM's file's map: its picture is for the DMs alone, #4259)
+                cur = await w.conn.execute(
+                    "SELECT dm_only FROM campaign_pictures WHERE guild_id = %s"
+                    " AND campaign_id = %s AND id = %s",
+                    (guild_id, campaign_id, int(current["picture_id"])),
+                )
+                pic = await cur.fetchone()
+                if pic is not None and pic["dm_only"]:
+                    raise MapError(DMS_FILE)
             row = await w.update(MAPS, map_id, {"audience": audience})
             return Written(_map(row), w.batch)
 
