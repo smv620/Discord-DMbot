@@ -38,6 +38,9 @@ CHOICES: dict[str, tuple[str, ...]] = {
     "story_mode": ("off", "watch", "guide"),  # the Shared story switch (#2985)
     # a tenth: "Share this campaign's story to improve DMbot", off by default (#3741)
     "share_improve": ("on", "off"),
+    # an eleventh: "Map checks", the private note when a distance or direction said at the table
+    # is far off a kept map (#4687; on by default)
+    "map_checks": ("on", "off"),
 }
 
 

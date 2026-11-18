@@ -6,7 +6,7 @@
 // (`question_counts`); older than five minutes, the page says it is catching up.
 import { matchWords } from "../content/name-matches-words";
 import { NAME_MATCHES_LIVE } from "../content/name-matches-switch";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
 import { RECAP_NAME_CHECKS_LIVE } from "../content/recap-words";
 import { WEB_READINGS_LIVE } from "../content/web-readings";
@@ -93,26 +93,52 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
   const [resume, setResume] = useState(0);
   const [stopped, setStopped] = useState(false); // (stopping on the first part must still read "Carry on")
   const [note, setNote] = useState<string | null>(null);
+  // How many items the walking part still has, as its panel reports them (#4740); null until the panel has reported.
+  const [left, setLeft] = useState<number | null>(null);
+  const movedFrom = useRef<number | null>(null); // the part whose empty list already moved the walk on: once per part
+  const statusRef = useRef<HTMLParagraphElement>(null);
+  const startRef = useRef<HTMLButtonElement>(null);
+  const focusStart = useRef(false); // Stop or the end sends focus back to the start button
   const goTo = (i: number): void => {
     // (an earlier "stopped" or "ended" line goes when a walk starts again)
     setNote(walk !== null ? words.partDone(parts[walk]?.label ?? "", parts[i]?.label ?? "", parts[i]?.count ?? 0) : null);
+    setLeft(null);
+    movedFrom.current = null;
+    focusStart.current = false;
     setWalk(i);
     setResume(i);
     setStopped(false);
   };
   const stop = (): void => {
+    focusStart.current = true;
     setResume(walk ?? 0);
     setStopped(true);
     setWalk(null);
     setNote(words.walkStopped);
   };
   const finish = (): void => {
+    focusStart.current = true;
     setResume(0);
     setStopped(false);
     setWalk(null);
     setNote(words.walkEnded);
   };
   const walking = walk !== null ? parts[walk] : undefined;
+  // An empty part moves the walk on by itself (#4740): once per part, and the last part's end finishes the walk.
+  useEffect(() => {
+    if (walk === null || left !== 0 || movedFrom.current === walk) return;
+    movedFrom.current = walk;
+    if (walk + 1 < parts.length) goTo(walk + 1);
+    else finish();
+  }, [left, walk]);
+  // Focus follows the walk: the progress line when a part starts or changes, the start button after Stop or the end (#4740).
+  useEffect(() => {
+    if (walk !== null) statusRef.current?.focus();
+    else if (focusStart.current) {
+      startRef.current?.focus();
+      focusStart.current = false;
+    }
+  }, [walk]);
   // The bot has never counted this campaign (null) or not lately: the numbers can't be vouched for, so there is no all-clear.
   // DMbot's own matches (#3701): shown with the Names page's panel, so both go live together.
   const guesses = NAME_MATCHES_LIVE && api.nameMatches !== undefined ? (campaign.guesses ?? 0) : 0;
@@ -137,17 +163,24 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
           {parts.length >= 2 && (
             <div class="stack">
               {walking === undefined ? (
-                <button type="button" class="button" onClick={() => goTo(resume)}>
+                <button ref={startRef} type="button" class="button" onClick={() => goTo(resume)}>
                   {!stopped
                     ? words.checkEverything(parts.reduce((n, p) => n + p.count, 0))
                     : words.carryOn(parts.slice(resume).reduce((n, p) => n + p.count, 0))}
                 </button>
               ) : (
                 <section class="stack" aria-label={walking.label}>
-                  <p role="status">
-                    <strong>{words.partLine(walking.label, (walk ?? 0) + 1, parts.length, walking.count)}</strong>
+                  <p ref={statusRef} tabIndex={-1} role="status">
+                    <strong>{words.partLine(walking.label, (walk ?? 0) + 1, parts.length, left ?? walking.count)}</strong>
                   </p>
-                  <QuestionsHere key={walking.group} api={api} campaignRef={campaign.ref} group={walking.group} id={`q-${campaign.ref}-walk`} />
+                  <QuestionsHere
+                    key={walking.group}
+                    api={api}
+                    campaignRef={campaign.ref}
+                    group={walking.group}
+                    id={`q-${campaign.ref}-walk`}
+                    onLeft={setLeft}
+                  />
                   <div class="row">
                     {(walk ?? 0) + 1 < parts.length ? (
                       <button type="button" class="button" onClick={() => goTo((walk ?? 0) + 1)}>

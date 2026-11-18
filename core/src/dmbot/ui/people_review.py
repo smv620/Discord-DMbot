@@ -14,6 +14,7 @@ from dmbot.memory.models import MemoryRuleError, PeopleSuggestion
 from dmbot.ui.check_everything import add_stop, next_part, progress
 from dmbot.ui.dmbot_commands import _bot, _Button, _Menu, _replace, _send, _tell
 from dmbot.ui.names import _campaign_for, _md, _memory
+from dmbot.ui.remembered_players import add_remembered
 from dmbot.walk import Walk
 
 log = logging.getLogger(__name__)
@@ -243,6 +244,9 @@ class PeopleReview(_Menu):
         self.clear_items()
         self.add_item(_UserSelect(self._other_picked))
         self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
+        # (only people who agreed to be recorded here can be picked: so only they are listed)
+        agreed = await _bot(interaction).consent.agreed(self.guild_id)
+        await add_remembered(interaction, self, self._other_picked, self.guild_id, only=agreed)
         await _replace(interaction, f"**Who is {_md(got[1].name)}?**", self)
 
     async def _back(self, interaction: discord.Interaction) -> None:

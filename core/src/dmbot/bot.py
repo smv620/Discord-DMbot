@@ -1487,6 +1487,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 creative=self.recap_write_ai,
                 formatting=self.recap_format_ai,
                 story=self.recap_story,
+                colour=self.recap_colour if settings.recap_colour_on else None,
+                reveals=self.recap_reveals if settings.recap_reveals_on else None,
                 critics=True,  # the critics read each draft until they agree (#2255)
                 reads=settings.recap_writer_reads,
                 final_read=settings.recap_final_read,
@@ -5524,7 +5526,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # (the table's own DM list first, in memory: a player's "miles" costs nothing; the
             # campaign's DMs are checked again inside, as the one that counts. A line waiting for
             # its speaker label waits for it there: one said as an NPC is no note, #4690)
-            if table.is_dm(utterance.user_id) and said_phrases.may_state(line):
+            if table.is_dm(utterance.user_id) and (
+                said_phrases.may_state(line) or said_phrases.may_state_time(line)
+            ):
                 # (registered now, before anything awaits, so no labelling of it ends unseen)
                 waiter = (
                     self._label_waiter(table, (utterance.user_id, utterance.start_ms))
@@ -7569,7 +7573,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         label: asyncio.Future[str] | None = None,
     ) -> None:
         """MapBot's live note (#4670 4c-2; design §9; Supervisor's ruling on #4670): the DM said a
-        distance or direction between two kept places that a kept map's is far from. One private
+        distance or direction between two kept places that a kept map's is far from; or a travel
+        time between two DMbot can measure, which gets DMbot's estimate (#4260). One private
         message to that DM with 🔕 Stop map checks and nothing else, once for each pair of places in
         a session. Only the campaign's DMs' own lines, only while they are recorded (asked again
         after every wait), while the session runs, on a plan with story memory, and while the
@@ -7628,6 +7633,28 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     )
                     if sent is not None:
                         log.info("Map check note sent")  # no names, no words
+                # (#4260, design §9 "When it is offered": a travel time the DM said, once for each
+                # pair in a session, with DMbot's estimate for the same trip. Never a check: the
+                # DM's time stands; no offer where no time could be worked out)
+                rules = (campaign.target_ruleset, campaign.fallback_ruleset)  # (its citation)
+                trips = await self.map_store.said_trips(gid, cid, line, rules)
+                for trip in trips:
+                    first, second = sorted((trip.said.a_id, trip.said.b_id))
+                    pair = (trip.said.kind, first, second)
+                    if pair in live.map_pairs:
+                        continue
+                    if (
+                        not self.consent.has_consent(gid, speaker)
+                        or self.tables.get(gid) is not table
+                        or table.campaign_id != cid
+                    ):
+                        return
+                    live.map_pairs.add(pair)  # (claimed before the send: never twice)
+                    sent = await self._dm_message(
+                        speaker, map_checks.offer_text(trip), map_checks.note_view(gid, cid)
+                    )
+                    if sent is not None:
+                        log.info("Travel time offer sent")  # no names, no words
             except Exception:
                 log.exception("The map check failed")
 
@@ -9921,7 +9948,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         store = self.map_store
         if store is None:
             return None
-        return await store.measure(campaign.guild_id, campaign.id, asked, dm=dm)
+        rules = (
+            str(getattr(campaign, "target_ruleset", "") or "2024"),
+            str(getattr(campaign, "fallback_ruleset", "") or "none"),
+        )  # (the travel answer's citation, in the campaign's own ruleset, #4260)
+        return await store.measure(campaign.guild_id, campaign.id, asked, dm=dm, rules=rules)
 
     async def _extract_session(
         self,
@@ -13875,6 +13906,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def apply_share_improve(self, campaign: Campaign, on: bool) -> None:
         """ "Share this campaign's story to improve DMbot" chosen on the website (#3741)."""
         await self.campaigns.set_share_improve(campaign.guild_id, campaign.id, on)
+
+    async def apply_map_checks(self, campaign: Campaign, on: bool) -> None:
+        """ "Map checks" chosen on the website (#4687): the call Discord's button makes."""
+        await self.campaigns.set_map_checks(campaign.guild_id, campaign.id, on)
 
     async def apply_rulesets(self, campaign: Campaign, main: str, fallback: str) -> bool:
         """The main rules chosen on the website (#3112): saved, the new pair's names built ahead

@@ -1704,6 +1704,40 @@ class MemoryStore:
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             return await map_fact_store.facts_for(scope, place_ids, viewer, shown)
 
+    async def recap_colour(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        place_ids: Sequence[str],
+        names: Mapping[str, str],
+    ) -> list[str]:
+        """The background lines of `maps.recap_colour` for the places a session visited, read in
+        one snapshot (#4721): the party's view only, under the names the caller gives."""
+        from dmbot.maps import recap_colour  # (here: `dmbot.maps` imports this module)
+
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await recap_colour.lines(scope, place_ids, names)
+
+    async def recap_reveals(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        session_started_at: int,
+        at_session: Collection[str],
+        mattering: Collection[str],
+        opted_in: Collection[int],
+    ) -> list[str]:
+        """The sentences for this session's partial reveals (`memory.reveal_markers.words`), read
+        in one snapshot (#4737, `DMBOT_RECAP_REVEALS`): who learned something and at most about
+        whom, never what. Only people recorded now (`opted_in`)."""
+        from dmbot.memory import reveal_markers  # (here: it imports the gate, as this module does)
+
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            found = await reveal_markers.session_markers(
+                scope, session_started_at, at_session, mattering, opted_in
+            )
+        return [reveal_markers.words(m) for m in found]
+
     async def map_facts_up(
         self,
         guild_id: int,

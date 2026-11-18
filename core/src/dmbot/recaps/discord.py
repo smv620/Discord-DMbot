@@ -1328,6 +1328,75 @@ class RecapFeatures:
             for i in everything.items
         ]
 
+    async def recap_colour(
+        self, gid: int, cid: str, job: Job, place_names: Sequence[str]
+    ) -> list[str]:
+        """Background for the writer about the places the beats visited (#4721,
+        `DMBOT_RECAP_COLOUR`): one line each of what the table knows of their land, climate,
+        ruler, culture and people.
+        Only what the players know: the places are looked up in the players' view of the names
+        (nothing the DM keeps to themselves, and no secret spelling), the line is the players' own
+        rows (`MemoryStore.recap_colour`), and the names are the ones the players use. A place the
+        players' view doesn't know by that name is left out, never looked up another way."""
+        if self.memory is None or self.lookup is None or not place_names:
+            return []
+        players = (await self.lookup.get(gid, cid)).for_viewer(False)
+        # The names are the players' own, taken from the name entries they may see (a place or a
+        # ruler whose only entries are secret spellings or "players don't know this one yet" has
+        # no name here, and is left out), never the entity's canonical name.
+        live = {e.id for e in players.entities.values() if not e.merged_into}
+        names: dict[str, str] = {}
+        for name_entry in players.names:
+            if (
+                name_entry.secret
+                or name_entry.entry_hidden
+                or name_entry.person
+                or name_entry.entity_id not in live
+            ):
+                continue
+            names.setdefault(name_entry.entity_id, name_entry.text)
+        place_ids: list[str] = []
+        for heard in place_names:
+            for name_entry in players.exact(heard):
+                if name_entry.secret or name_entry.entry_hidden or name_entry.entity_id not in live:
+                    continue
+                if players.entities[name_entry.entity_id].type != "place":
+                    continue
+                names[name_entry.entity_id] = name_entry.text  # (the spelling the beat used)
+                place_ids.append(name_entry.entity_id)
+        return await self.memory.recap_colour(gid, cid, place_ids, names)
+
+    async def recap_reveals(self, gid: int, cid: str, job: Job) -> list[str]:
+        """This session's partial reveals as the sentences the writer cites (#4737,
+        `DMBOT_RECAP_REVEALS`): who learned something, never what. The table is the player
+        characters whose players spoke in the session; `mattering` is the open story threads the
+        party knows (and who they involve), so a check's discovery is cited only when it touches
+        one; only people recorded now count. A failure costs the sentences, never the recap."""
+        if self.memory is None:
+            return []
+        everyone = await self.memory.entities(gid, cid)
+        at_session = {
+            e.id
+            for e in everyone
+            if e.is_player_character and e.played_by is not None and e.played_by in job.speakers
+        }
+        if not at_session:
+            return []
+        seen = await self.memory.visible_to(gid, cid, gate.Viewer.the_party())
+        mattering: set[str] = set()
+        for t in await self.memory.threads(gid, cid):
+            if (
+                t.state is not None
+                and t.state.condition in (OPEN, GOING, HINTED)
+                and seen.how_sure(gate.ENTRY, t.thread.id) is not None
+            ):
+                mattering.add(t.thread.id)
+                mattering.update(i.who.id for i in t.involved)
+        opted_in = await self.consent.recorded_in(gid, cid)
+        return await self.memory.recap_reveals(
+            gid, cid, job.session_at, at_session, mattering, opted_in
+        )
+
     async def recap_allowed(self, gid: int, cid: str, job: Job | None) -> bool:
         """The switch and the plan, checked at every stage and closed when they can't be."""
         if not self.settings.recaps_on:

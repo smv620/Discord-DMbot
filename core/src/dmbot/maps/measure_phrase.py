@@ -12,7 +12,17 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
-FAR, WAY = "far", "way"
+FAR, WAY, LONG = "far", "way", "long"
+# How the party travels and how fast (#4260 slice 10a): said after the places, or not at all
+FOOT, MOUNTED, WAGON, BOAT = "foot", "mounted", "wagon", "boat"
+_HOW = {
+    "on foot": FOOT, "walking": FOOT,
+    "on horseback": MOUNTED, "by horse": MOUNTED, "riding": MOUNTED, "mounted": MOUNTED,
+    "by wagon": WAGON, "by cart": WAGON, "by carriage": WAGON,
+    "by boat": BOAT, "by ship": BOAT, "by sea": BOAT, "by river": BOAT,
+}  # fmt: skip
+_TRAVEL = r"(?:\s+(?P<how>" + "|".join(sorted(_HOW, key=len, reverse=True)) + r"))?"
+_PACE = r"(?:\s+at an? (?P<pace>fast|normal|slow) pace)?"
 
 _NAME = r"(?P<{}>[^?,;.!]{{2,80}}?)"
 _LEAD = r"^(?:hey\s+)?(?:dm\s*bot[,:]?\s+)?(?:please\s+)?(?:can you tell me\s+)?"
@@ -26,6 +36,13 @@ _SHAPES = [
     (WAY, r"which (?:way|direction) is {a} from {b}"),
     (WAY, r"what direction is {a} (?:from|of) {b}"),
     (WAY, r"in which direction is {a} from {b}"),
+    (
+        LONG,
+        r"how long (?:will|does|would) it take(?: us| them| the party)? to"
+        r" (?:get|travel|go|walk|ride|sail) from {a} to {b}" + _TRAVEL + _PACE,
+    ),
+    (LONG, r"how long is the (?:trip|journey|walk|ride|road) from {a} to {b}" + _TRAVEL + _PACE),
+    (LONG, r"how many days (?:is it )?from {a} to {b}" + _TRAVEL + _PACE),
 ]
 _COMPILED = [
     (kind, re.compile(_LEAD + shape.format(a=_NAME.format("a"), b=_NAME.format("b")) + _TAIL, re.I))
@@ -36,9 +53,11 @@ _ARTICLE = re.compile(r"^(?:the)\s+", re.I)
 
 @dataclass(frozen=True, slots=True)
 class Asked:
-    kind: str  # FAR or WAY
+    kind: str  # FAR, WAY or LONG
     a: str  # as said: "how far is A from B", "which way is A from B"
     b: str
+    how: str = ""  # LONG only: FOOT, MOUNTED, WAGON or BOAT as said, "" if not said
+    pace: str = ""  # LONG only: "fast", "normal" or "slow" as said, "" if not said
 
 
 def read(question: str) -> Asked | None:
@@ -51,7 +70,10 @@ def read(question: str) -> Asked | None:
             continue
         a, b = found["a"].strip(), found["b"].strip()
         if a and b and a.casefold() != b.casefold():
-            return Asked(kind, a, b)
+            if kind != LONG:
+                return Asked(kind, a, b)
+            how = _HOW.get((found["how"] or "").casefold(), "")
+            return Asked(kind, a, b, how, (found["pace"] or "").casefold())
     return None
 
 

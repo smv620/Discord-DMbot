@@ -192,7 +192,8 @@ def _map_checks_line(campaign: Campaign) -> str:
     return (
         f"• **Map checks:** {'on' if campaign.map_checks else 'off'}. When a distance or direction"
         " you say at the table is far off a map, DMbot tells you privately, once per pair of"
-        " places. Change it with 🗺️ Map checks."
+        " places, and it sends its own estimate when you say a travel time. Change it with"
+        " 🗺️ Map checks."
     )
 
 
@@ -971,7 +972,8 @@ class MapChecksButton(
 ):
     """🗺️ Map checks: On or Off, one tap changes it (#4670 4c-2). On (the default), DMbot may tell
     the DM privately, once per pair of places a session, when a distance or direction they say is
-    far off a kept map's; the note's 🔕 Stop map checks turns it off, and this turns it back on
+    far off a kept map's, or its estimate when they say a travel time (#4260); the note's 🔕 Stop
+    map checks turns it off, and this turns it back on
     (every choice visible and revocable). Only the campaign's DMs have it."""
 
     def __init__(self, campaign_id: str, on: bool) -> None:

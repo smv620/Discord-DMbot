@@ -64,6 +64,7 @@ from dmbot.ui.dmbot_commands import (
     dmbot_group,
 )
 from dmbot.ui.private_server import guild_id_for
+from dmbot.ui.remembered_players import add_remembered
 from dmbot.walk import Walk
 
 if TYPE_CHECKING:
@@ -486,9 +487,12 @@ class NamesHome(_Menu):
             await interaction.response.send_modal(AddNameForm(self.campaign_id, secrets=secrets))
 
     async def _character(self, interaction: discord.Interaction) -> None:
+        if _bot(interaction).settings.remembered_players_on:
+            await _answer_first(interaction)  # (the remembered players' lookup may take a moment)
         campaign = await _campaign_for(interaction, self.campaign_id)
         if campaign:
             view = PlayerPicker(self.campaign_id, campaign.guild_id)
+            await add_remembered(interaction, view, view.picked, campaign.guild_id)
             await _send(interaction, "**Who plays this character?**", view)
 
     async def _check(self, interaction: discord.Interaction) -> None:
@@ -1882,6 +1886,7 @@ class SuggestionReview(_Menu):
         self.add_item(_UserSelect(self._player_picked))
         self.add_item(self._type_id(campaign, entity))
         self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
+        await add_remembered(interaction, self, self._player_picked, campaign.guild_id)
         await _replace(interaction, f"**Who plays {_md(entity.name)}?**", self)
 
     async def _kind_picked(self, interaction: discord.Interaction) -> None:

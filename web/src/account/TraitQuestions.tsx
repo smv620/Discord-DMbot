@@ -22,7 +22,17 @@ function sayFailure(error: unknown, offer: TraitOffer): string {
 
 const QUOTE_SHOWN = 200; // as Discord's card: the quote stays short
 
-export default function TraitQuestions({ api, campaignRef, id }: { api: AccountApi; campaignRef: string; id: string }) {
+export default function TraitQuestions({
+  api,
+  campaignRef,
+  id,
+  onLeft,
+}: {
+  api: AccountApi;
+  campaignRef: string;
+  id: string;
+  onLeft?: (left: number) => void;
+}) {
   const [list, setList] = useState<TraitOffer[] | null>(null);
   const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
@@ -38,7 +48,7 @@ export default function TraitQuestions({ api, campaignRef, id }: { api: AccountA
     if (!api.traitOffers) return;
     try {
       const got = await api.traitOffers(campaignRef);
-      if (live.current) (setList(got), setFailed(false));
+      if (live.current) (setList(got), setFailed(false), onLeft?.(got.length));
     } catch {
       if (live.current) setFailed(true);
     }

@@ -89,11 +89,14 @@ export default function WebWaiting({
   api,
   campaignRef,
   onChanged,
+  onLeft,
 }: {
   api: AccountApi;
   campaignRef: string;
   /** Called after an answer was applied, so the page can read the graph again. */
   onChanged?: () => void;
+  /** The claims, backstory and "which" questions still waiting, after each read (#4740, the walk on the Questions page). */
+  onLeft?: (left: number) => void;
 }) {
   const [list, setList] = useState<Waiting | null>(null);
   const [failed, setFailed] = useState(false);
@@ -129,6 +132,7 @@ export default function WebWaiting({
       if (mine === latest.current && shown.current === asked) {
         setList(got);
         setFailed(false);
+        onLeft?.(got.claims.length + got.backstory.length + got.which.length);
       }
     } catch (error) {
       // A player (or another DM) gets "not found": the part is simply not there.
