@@ -22,7 +22,17 @@ function sayFailure(error: unknown, undoing = false): string {
 
 const key = (q: HandOverQuestion): string => `${q.olderTie}:${q.newerTie}`;
 
-export default function HandOverQuestions({ api, campaignRef, id }: { api: AccountApi; campaignRef: string; id: string }) {
+export default function HandOverQuestions({
+  api,
+  campaignRef,
+  id,
+  onLeft,
+}: {
+  api: AccountApi;
+  campaignRef: string;
+  id: string;
+  onLeft?: (left: number) => void;
+}) {
   const [list, setList] = useState<HandOverQuestion[] | null>(null);
   const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
   const [undo, setUndo] = useState<{ q: HandOverQuestion; answerId: string } | null>(null); // the last "no", until something else is answered
@@ -43,7 +53,7 @@ export default function HandOverQuestions({ api, campaignRef, id }: { api: Accou
     const mine = (looks.current += 1);
     try {
       const got = await api.handOverQuestions(campaignRef);
-      if (live.current && mine === looks.current) (setList(got), setFailed(false));
+      if (live.current && mine === looks.current) (setList(got), setFailed(false), onLeft?.(got.length));
     } catch (error) {
       if (!live.current || mine !== looks.current) return;
       if (error instanceof ApiError && (error.kind === "not-found" || error.kind === "not-allowed")) setNotYours(true);
