@@ -2764,6 +2764,8 @@ export type WaitingAnswer =
   | { kind: "claim"; action: "some"; id: string; characters: string[] }
   | { kind: "backstory"; action: "keep" | "skip"; id: string; secret?: boolean }
   | { kind: "backstory"; action: "keep_all"; ids: string[] }
+  // "Some know" on a backstory connection (#4680 part 2): kept held back from the players, known to exactly these characters.
+  | { kind: "backstory"; action: "some"; id: string; characters: string[] }
   | { kind: "which"; action: "pick"; id: string; entity: string }
   | { kind: "which"; action: "neither"; id: string };
 
