@@ -301,6 +301,14 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,  # not live yet: on only after the before-and-after scores (#3172)
     ),
     Feature(
+        "recap colour",
+        "Recaps use what the table knows of the places they visited",
+        "",
+        lambda s: s.recap_colour_on,
+        ("recap_colour_on",),
+        for_dms=False,  # not live yet: on only after the before-and-after scores (#4721)
+    ),
+    Feature(
         "test recordings",
         "Test recordings",
         "",
