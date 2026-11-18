@@ -7572,12 +7572,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         #4260): each place's snow, frost or heat the DM described, checked against the place's kept
         climate, its own or read up the tree (`weather_note.check`: the DM's kept rows only, and
         silence when anything is unclear). The notes go in one private message to the campaign's
-        DMs, after the session, never during play and never as a correction; nothing is stored. A
-        name two places share, or no kept place, is no note. No season is known yet (the calendar
-        gives none), so only the always-wrong pairs are noted. Held back while the campaign's table
-        is playing (an import can be read then). Never raises; counts in the log."""
+        DMs, after the session, never during play and never as a correction. Once for each place and
+        kind until the kept climate it was judged against changes (`weather_marks`, #4748): only
+        that a note was sent is stored, by ids, never the weather. A name two places share, or no
+        kept place, is no note. No season is known yet (the calendar gives none), so only the
+        always-wrong pairs are noted. Held back while the campaign's table is playing (an import can
+        be read then). Never raises; counts in the log."""
         from dmbot.maps import weather_note
-        from dmbot.memory import gate
+        from dmbot.memory import gate, weather_marks
         from dmbot.memory import map_facts as mf
         from dmbot.memory.lookup import CampaignLookup
         from dmbot.memory.models import CONFIRMED, name_key
@@ -7587,8 +7589,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             table = self.tables.get(guild_id)
             if table is not None and table.campaign_id == campaign_id:
                 # (never during play: an import read while the table is live, or a session read
-                # after play restarted, sends nothing; nothing is stored, so nothing is lost but
-                # the note)
+                # after play restarted, sends nothing and marks nothing)
                 log.info("Weather notes: held back, the table is playing")
                 return
             campaign = await self.campaigns.get(guild_id, campaign_id)
@@ -7607,6 +7608,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 ):
                     places.setdefault(name_key(named.text), set()).add(who.id)
             notes: list[weather_note.Note] = []
+            marks: list[weather_marks.Mark] = []
             for heard in report.heard_weather:
                 ids = places.get(name_key(heard.place), set())
                 if len(ids) != 1:
@@ -7627,9 +7629,23 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     heard.kind,
                     [(f, outer) for f in held.facts],
                 )
-                if note is not None:
+                if note is not None and note.climate_id:
                     notes.append(note)
-            log.info("Weather notes: %d heard, %d noted", len(report.heard_weather), len(notes))
+                    marks.append(
+                        weather_marks.Mark(
+                            place_id, note.kind, note.climate_id, note.climate, note.kept_ids
+                        )
+                    )
+            if not campaign.dm_accounts:
+                return  # (nobody to tell: nothing is marked, so a later read may)
+            # (once per place and kind until its climate changes: marked before it is sent)
+            new = await weather_marks.first_time(self.memory._db, guild_id, campaign_id, marks)
+            already = len(notes) - sum(new)
+            notes = [n for n, first in zip(notes, new, strict=True) if first]
+            log.info(
+                "Weather notes: %d heard, %d noted, %d noted before",
+                len(report.heard_weather), len(notes), already,
+            )  # fmt: skip
             if notes:
                 text = weather_note.message(notes, session_label(started_at))
                 for dm in campaign.dm_accounts:

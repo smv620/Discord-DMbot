@@ -339,6 +339,15 @@ class Isolation(MemoryTest):
         # and a place's climate (#4256)
         dale = await self.add("Icewind Dale", type="place", status="confirmed")
         await self.memory.set_map_fact(GUILD_A, self.c, dale, "climate", "cold", source="dm")
+        # and the weather already noted there (#4748), judged against that climate
+        async with self.db.guild(GUILD_A) as conn:
+            await conn.execute(
+                "INSERT INTO memory_weather_notes (guild_id, campaign_id, id, place_id, kind,"
+                " climate_id, climate, created_at) SELECT guild_id, campaign_id, %s, entity_id,"
+                " 'heat', id, value, 1 FROM memory_map_facts WHERE guild_id = %s"
+                " AND campaign_id = %s AND entity_id = %s AND layer = 'climate'",
+                (new_id(), GUILD_A, self.c, dale),
+            )
         # and a named culture on it (#4257 slice 3b)
         await self.memory.set_map_fact(
             GUILD_A, self.c, dale, "culture", "other", how="strong", words="Reghed", source="dm"

@@ -376,11 +376,18 @@ GUESS_LINK = "thread_guess"  # its kind among a belief's links carried in the lo
 THREAD_GUESSES = Table(
     "memory_thread_guesses", "id", ("id", "thread_id", "belief_id", "created_at"), logged=False
 )
+# Which weather the after-session check has already noted for a place (#4748, 0542): ids, a fixed
+# word and a time. Unlogged: it is no story fact, so an Undo never touches it; it goes with its
+# place or its climate row by the database.
+WEATHER_NOTES = Table(
+    "memory_weather_notes", "id", ("id", "place_id", "kind", "climate_id", "climate", "created_at"),
+    logged=False,
+)  # fmt: skip
 ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
        STORY_LANGUAGES, CULTURES, MAP_FACTS, MAPS, MAP_FEATURES, THREAD_PARTS,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
        BELIEFS, EVIDENCE, THREAD_GUESSES, ALIAS_KNOWERS, KNOWERS, TOLD,
-       SECRET_QUESTIONS)  # fmt: skip
+       SECRET_QUESTIONS, WEATHER_NOTES)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
 
 # The columns whose change can change whether the players are shown a statement (#2995).

@@ -21,6 +21,7 @@ from dmbot.maps import weather_note as wn
 from dmbot.memory import extractor, weather_reading
 from dmbot.memory import map_facts as mf
 from dmbot.memory.weather_reading import check, once_each, parse_weather
+from dmbot.transcript.models import NARRATING
 from tests.test_config import BASE
 from tests.test_extractor import ALICE, DM, Kept, dm_session, go, line
 
@@ -50,6 +51,7 @@ class TheCases(unittest.TestCase):
                 ("Sunreach", "snow", 7), ("Sunreach", "snow", 8), ("Frostmere", "frost", 9),
                 ("Sunreach", "snow", 10), ("Sunreach", "snow", 11), ("Frostmere", "heat", 12),
                 ("Sunreach", "snow", 13), ("Frostmere", "heat", 14), ("Sunreach", "snow", 15),
+                ("Sunreach", "snow", 16),
             ),
             said,
             dm,
@@ -61,7 +63,7 @@ class TheCases(unittest.TestCase):
         self.assertEqual(
             got.dropped,
             {
-                "weather_not_dm": 1,  # (3: a player's guess)
+                "weather_not_dm": 2,  # (3: a player's guess; 16: said as an NPC, #4748)
                 "weather_not_there": 2,  # (6: no snow; 10: doesn't snow)
                 "weather_asked": 2,  # (7 with a "?", 15 without one)
                 "weather_not_in_line": 2,  # (8: rain; 9: "cold as ice", Frostmere's own name)
@@ -70,7 +72,7 @@ class TheCases(unittest.TestCase):
             },
         )
         must_not = {str(m["line"]) for m in key["must_not_weather"]}
-        self.assertEqual(must_not, {str(n) for n in range(3, 16)} - {"4", "5"})
+        self.assertEqual(must_not, {str(n) for n in range(3, 17)} - {"4", "5"})
 
     def test_the_key_gives_its_notes_against_the_climates(self) -> None:
         key = json.loads((CASES / "weather_cases_key.json").read_text(encoding="utf-8"))
@@ -153,6 +155,19 @@ class InTheClaimsCall(unittest.IsolatedAsyncioTestCase):
         self.assertIn("weather: 1 heard (lines 1)", report.line())
         self.assertNotIn("Frostmere", report.line())
 
+    async def test_a_line_said_as_an_npc_gives_no_weather(self) -> None:
+        # (#4748, as #4708 for the map checks: a line labelled as a named NPC can be a lie or a
+        # mistake in the story; narrating, or no label, is the DM's own words)
+        ai = WeatherAnswer(answer(("Sunreach", "snow", 1), ("Frostmere", "heat", 2)))
+        lines = [
+            line(1, DM, "Snow piles up in the streets of Sunreach.", entity="Mayor Brask"),
+            line(2, DM, "In Frostmere, a scorching heatwave.", entity=NARRATING),
+            *dm_session(10)[2:],
+        ]
+        report = await go(ai, Kept(), lines, weather=True)
+        self.assertEqual([(w.place, w.kind) for w in report.heard_weather], [("Frostmere", "heat")])
+        self.assertEqual(report.weather_dropped["weather_not_dm"], 1)
+
     async def test_a_speaker_who_stops_meanwhile_leaves_nothing(self) -> None:
         ai = WeatherAnswer(answer(("Frostmere", "heat", 1)))
         lines = [line(1, DM, "In Frostmere, a scorching heatwave."), *dm_session(20)[1:]]
@@ -189,6 +204,8 @@ class TheNote(unittest.IsolatedAsyncioTestCase):
                 is_a=lambda kind, base: kind == base)),
             map_facts_up=AsyncMock(return_value={mf.CLIMATE: held} if held else {}),
         )  # fmt: skip
+        # (the marks are stood in for in `run_it`; `test_weather_marks` has the database's)
+        memory._db = None
         bot = SimpleNamespace(
             campaigns=SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(
                 dm_accounts=frozenset({7})))),
@@ -196,19 +213,35 @@ class TheNote(unittest.IsolatedAsyncioTestCase):
         )  # fmt: skip
         return bot, lookup
 
-    async def run_it(self, bot: Any, lookup: Any, *kinds: str) -> None:
+    async def run_it(self, bot: Any, lookup: Any, *kinds: str, first: bool = True) -> list[Any]:
+        """Runs the note; `first`: whether the marks say each note is new. Returns the marks."""
         from unittest.mock import patch
 
         from dmbot.bot import DMBot
         from dmbot.memory.weather_reading import Weather
 
+        marked: list[Any] = []
+
+        async def first_time(_db: Any, _g: int, _c: str, marks: Any) -> list[bool]:
+            marked.extend(marks)
+            return [first] * len(marks)
+
         report = SimpleNamespace(heard_weather=[Weather("Frostmere", k, ("2",)) for k in kinds])
-        with patch("dmbot.memory.lookup.CampaignLookup.build", return_value=lookup):
+        with (
+            patch("dmbot.memory.lookup.CampaignLookup.build", return_value=lookup),
+            patch("dmbot.memory.weather_marks.first_time", first_time),
+        ):
             await DMBot._weather_notes(bot, 1, "c" * 32, report, 1)  # type: ignore[arg-type]
+        return marked
 
     async def test_heat_in_a_freezing_place_is_noted_privately_with_its_working(self) -> None:
-        bot, lookup = await self.bot(mf.Held((fact("arctic"),), "r" * 32))
-        await self.run_it(bot, lookup, wn.HEAT)
+        climate = fact("arctic")
+        bot, lookup = await self.bot(mf.Held((climate,), "r" * 32))
+        marked = await self.run_it(bot, lookup, wn.HEAT)
+        # (marked before it is sent: the place, the kind, and the climate row and value, #4748)
+        self.assertEqual(
+            [tuple(m) for m in marked], [("p" * 32, wn.HEAT, climate.id, "arctic", (climate.id,))]
+        )
         bot._dm_message.assert_awaited_once()
         assert bot._dm_message.await_args is not None
         self.assertEqual(
@@ -217,6 +250,12 @@ class TheNote(unittest.IsolatedAsyncioTestCase):
             " the Cold Coast, whose climate is freezing. If that's on purpose, like magic or a"
             " story turn, you can ignore this.",
         )
+
+    async def test_a_note_already_sent_is_not_sent_again(self) -> None:
+        bot, lookup = await self.bot(mf.Held((fact("arctic"),)))
+        marked = await self.run_it(bot, lookup, wn.HEAT, first=False)
+        self.assertEqual(len(marked), 1)
+        bot._dm_message.assert_not_awaited()
 
     async def test_never_while_the_table_plays_or_from_a_place_it_cant_name(self) -> None:
         bot, lookup = await self.bot(mf.Held((fact("arctic"),)))
