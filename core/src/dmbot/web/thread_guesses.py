@@ -47,6 +47,7 @@ def _guess(row: dict[str, Any]) -> guesses_mod.Guess:
     """One door row as Discord's `Guess`: the words are the connection's own, as the store makes
     them (`MemoryStore.thread_guesses`)."""
     said = str(row["detail"] or "") or link_words.connection_words(str(row["predicate"]))
+    # (`belief_id` carries the guess's own link id here: nothing past `card_lines` reads it)
     return guesses_mod.Guess(
         str(row["id"]),
         str(row["holder"] or ""),

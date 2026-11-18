@@ -84,6 +84,12 @@ class Guesses(Acting):
         for word in ("right", "wrong", "warm", "cold", "solved"):
             self.assertNotIn(word, line.lower())
 
+    async def test_an_accusation_reads_as_the_store_reads_it(self) -> None:
+        await self.place("pc:Mira", status="accusation")
+        got = (await self.door())["lines"]
+        self.assertEqual(got, await self.lines_of_the_store())
+        self.assertEqual(len(got), 1)
+
     async def test_no_guess_is_no_line(self) -> None:
         self.assertEqual(await self.door(), {"lines": []})
 
