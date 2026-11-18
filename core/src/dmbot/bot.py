@@ -1824,6 +1824,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # packaged data stops start-up here, on purpose: better now than at the table.
         await asyncio.to_thread(rules_index.srd)
         log.info(features.features_line(self.settings))  # what is switched on (#1831)
+        # An uploaded PDF's pictures left in their private folder by a stop mid-read (#4003): gone.
+        from dmbot.memory import pdf_pictures
+
+        if left := await asyncio.to_thread(pdf_pictures.sweep):
+            log.info("Removed %d upload picture folders left from before a restart", left)
         # The DM-visible list for the web (#3693). It never raises: a failed write is logged once
         # inside it and start-up goes on. An empty DMBOT_STATUS_DIR means the default, not ".".
         await asyncio.to_thread(

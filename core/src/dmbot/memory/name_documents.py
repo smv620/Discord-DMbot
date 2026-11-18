@@ -21,10 +21,13 @@ import zipfile
 from collections.abc import Callable
 from html.parser import HTMLParser
 from pathlib import PurePath
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from dmbot.memory.models import name_key
 from dmbot.memory.name_list import MAX_PER_LINE, join_cell, lines_for, split_cell
+
+if TYPE_CHECKING:
+    from dmbot.memory import pdf_pictures
 
 MAX_DOCUMENT_BYTES = 10 * 1024 * 1024
 # A PDF may be much bigger than any other file: illustrated adventures are 30 to 200 MB of art that
@@ -61,17 +64,29 @@ class DocumentError(ValueError):
 
 class ReadText(str):
     """A document's text, which is also how many pages a PDF had and how many of them had only
-    pictures (#4000). It is a plain `str` to every caller that does not ask: only a PDF sets the
-    counts, and both are 0 for any other file. The counts cross the reader's child process as
-    plain numbers (`memory.document_reader`), never a pickle."""
+    pictures (#4000), and, when its pictures were taken out (#4003), how many were and how many
+    more there were past the limits. It is a plain `str` to every caller that does not ask: only
+    a PDF sets the counts, and all are 0 for any other file. The counts cross the reader's child
+    process as plain numbers (`memory.document_reader`), never a pickle."""
 
     pages: int
     picture_pages: int
+    pictures_found: int
+    pictures_over: int
 
-    def __new__(cls, text: str, pages: int = 0, picture_pages: int = 0) -> ReadText:
+    def __new__(
+        cls,
+        text: str,
+        pages: int = 0,
+        picture_pages: int = 0,
+        pictures_found: int = 0,
+        pictures_over: int = 0,
+    ) -> ReadText:
         made = super().__new__(cls, text)
         made.pages = pages
         made.picture_pages = picture_pages
+        made.pictures_found = pictures_found
+        made.pictures_over = pictures_over
         return made
 
 
@@ -114,18 +129,25 @@ TYPES_HELP = (
 )
 
 
-def text_of(filename: str, raw: bytes, *, max_chars: int = MAX_DOCUMENT_CHARS) -> str:
+def text_of(
+    filename: str,
+    raw: bytes,
+    *,
+    max_chars: int = MAX_DOCUMENT_CHARS,
+    pictures_to: str | None = None,
+) -> str:
     """The text of a .txt, .pdf or .docx file. Raises DocumentError in plain words, for
     any problem at all (a damaged or hostile file must never escape as another error).
     `max_chars`: the longest text taken (the names screen's 200,000; an adventure's is more,
-    #1698)."""
+    #1698). `pictures_to`: a PDF's pictures worth reading are also written to this folder
+    (`pdf_pictures.take`, #4003); a failure there costs the pictures, never the text."""
     if len(raw) > max_bytes_for(filename):
         raise DocumentError(too_big_words(filename))
     suffix = PurePath(filename).suffix.casefold()
     text: str
     try:
         if suffix == ".pdf":
-            text = _pdf_text(raw, max_chars)
+            text = _pdf_text(raw, max_chars, pictures_to)
         elif suffix == ".docx":
             text = _docx_text(raw, max_chars)
         elif suffix == ".xlsx":
@@ -147,6 +169,7 @@ def text_of(filename: str, raw: bytes, *, max_chars: int = MAX_DOCUMENT_CHARS) -
         log.warning("Couldn't read a %s file: %s", suffix or "text", type(exc).__name__)
         raise DocumentError(UNREADABLE) from exc
     pages, pictures = getattr(text, "pages", 0), getattr(text, "picture_pages", 0)
+    found, over = getattr(text, "pictures_found", 0), getattr(text, "pictures_over", 0)
     text = text.replace("\x00", "")
     if not text.strip():
         raise DocumentError(NO_TEXT)
@@ -155,7 +178,7 @@ def text_of(filename: str, raw: bytes, *, max_chars: int = MAX_DOCUMENT_CHARS) -
             f"That document is too long for one go (about {max_chars // 2000} pages at most). "
             "Split it into parts and add them one at a time."
         )
-    return ReadText(text, pages, pictures)
+    return ReadText(text, pages, pictures, found, over)
 
 
 def decode_text(raw: bytes) -> str:
@@ -166,7 +189,9 @@ def decode_text(raw: bytes) -> str:
         return raw.decode("cp1252", errors="replace")
 
 
-def _pdf_text(raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS) -> ReadText:
+def _pdf_text(
+    raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS, pictures_to: str | None = None
+) -> ReadText:
     from pypdf import PdfReader
 
     reader = PdfReader(io.BytesIO(raw))
@@ -200,7 +225,22 @@ def _pdf_text(raw: bytes, max_chars: int = MAX_DOCUMENT_CHARS) -> ReadText:
     # too long anyway (`text_of` refuses that text as too long).
     if not text.strip():
         raise DocumentError(SCANNED_PDF)
-    return ReadText(text, len(reader.pages), pictures)
+    # (not for a text too long anyway, which `text_of` refuses: no work for nothing)
+    taken = _pictures(reader, pictures_to) if pictures_to and size <= max_chars else None
+    found, over = (taken.found, taken.over) if taken is not None else (0, 0)
+    return ReadText(text, len(reader.pages), pictures, found, over)
+
+
+def _pictures(reader: Any, out_dir: str) -> pdf_pictures.Taken | None:
+    """The PDF's pictures, written for reading (#4003), or None when taking them failed: the text
+    stands either way."""
+    from dmbot.memory import pdf_pictures as pictures
+
+    try:
+        return pictures.take(reader, out_dir)
+    except Exception as exc:  # (memory, a strange image: the pictures go, the text stays)
+        log.warning("A PDF's pictures couldn't be taken out (%s)", type(exc).__name__)
+        return None
 
 
 # A page whose plain reading came apart into a few words a line (the owner's report, 2026-11-13: a
