@@ -121,7 +121,7 @@ export type CampaignSettingName = "visibility" | "level" | "retention";
 
 /** A choice the queue carries: the three above, an optional rule switched on or off (#2753), or a game master
  * added or removed (#2768: `value` is the person's id, `on` true to add). */
-export type QueuedSetting = CampaignSettingName | "optional_rule" | "co_dm" | "pause" | "story_mode" | "dndbeyond_invite" | "rulesets" | "share_improve" | "ask_before_adding";
+export type QueuedSetting = CampaignSettingName | "optional_rule" | "co_dm" | "pause" | "story_mode" | "dndbeyond_invite" | "rulesets" | "share_improve" | "ask_before_adding" | "map_checks";
 
 /** One of a campaign's game masters (#2768; core web/game_masters.py). `plan` is the one whose plan runs the
  * campaign (cannot be removed); `you` is the person looking (may leave). */
@@ -241,6 +241,8 @@ export interface CampaignSettings {
   fallbackRules?: "2024" | "2014" | "none";
   /** "Share this campaign's story to improve DMbot" (#3741): on or off; missing from an API older than that. */
   shareImprove?: boolean;
+  /** "Map checks" (#4687; core #4730): on or off, the private note when a distance said at the table is far off a map. Missing from an API older than that. */
+  mapChecks?: boolean;
   /** "Ask me before adding" (#3879; core #3887): on, DMbot asks before it adds what an upload found; off (the default), it adds what it is sure of. Missing from an API older than that. */
   askBeforeAdding?: boolean;
   gameMasters: number;
@@ -1347,6 +1349,9 @@ export interface UploadNotice {
     /** Hidden things a 🌍 Common knowledge read made known to everyone (#4589); absent from an older API. */
     revealed?: number;
   };
+  /** The hidden things the upload made known to everyone (#4661; core #4746): at most 10 plain lines, and how many more. Absent from an older API. */
+  revealedLines?: string[];
+  revealedMore?: number;
   /** Until when Undo works (Unix seconds); null when it no longer does or never did. */
   undoUntil: number | null;
   /** What an Undo took back, once pressed. */
@@ -2161,6 +2166,10 @@ export interface ThreadClue {
 export interface ThreadClues {
   count: string;
   clues: ThreadClue[];
+}
+/** The table's guesses about a story thread (#4665): the lines as the API gives them, in Discord's words. DM only. */
+export interface ThreadGuesses {
+  lines: string[];
 }
 /** One change to a thread's clues: add by name, mark or unmark a false lead, take one off, or Undo a change by its batch. */
 export type ThreadCluesChange =
@@ -3340,6 +3349,8 @@ export interface AccountApi {
   partyCharacters?(ref: string): Promise<PartyCharacter[]>;
   /** A story thread's clues (#4625): DM only; the door answers anyone else with nothing. */
   threadClues?(ref: string, thread: string): Promise<ThreadClues>;
+  /** The table's guesses about a story thread (#4665), read only: DM only; the door answers anyone else with nothing. */
+  threadGuesses?(ref: string, thread: string): Promise<ThreadGuesses>;
   /** Add, mark, take off or undo a clue on a thread (#4625). */
   changeThreadClues?(ref: string, thread: string, change: ThreadCluesChange): Promise<{ batch: number | null }>;
   /** A character's languages (#4621): DM only; a place has none. */
@@ -3790,7 +3801,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */

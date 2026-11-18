@@ -1029,7 +1029,8 @@ async def run(
         # is no one's)
         still = await consenting()
         heard_kept = once_each(
-            h for h in report.heard_languages
+            replace(h, speakers=tuple(speakers_of(h.lines, everyone)))
+            for h in report.heard_languages
             if all(everyone.get(n) in still for n in h.lines) and name_key(h.who) not in skip
         )  # fmt: skip
         report.languages_dropped["language_speaker_gone"] += len(report.heard_languages) - len(
