@@ -3377,7 +3377,7 @@ class MemoryStore:
 
     # "Let me choose" (#4537 slice 4c, §5; Supervisor's ruling G on #4537): the question's
     # characters are caught up one session or one story thread at a time, each pick its own change
-    # with its own Undo. The first pick answers the question ("chosen", 0557); later ones only add.
+    # with its own Undo. The first pick answers the question ("chosen", 0558); later ones only add.
 
     async def _choosing(self, w: Scope, group_id: str, *, lock: bool = False) -> list[str]:
         """The characters of one sent question still to catch up (in the party now). `lock`: a

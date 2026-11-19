@@ -35,7 +35,7 @@ WAITING = "waiting"
 EVERYONE = "everyone"
 PARTY = "party"
 FIRST = "first"
-CHOSEN = "chosen"  # ("Let me choose": the first pick answered it, #4537 slice 4c, 0557)
+CHOSEN = "chosen"  # ("Let me choose": the first pick answered it, #4537 slice 4c, 0558)
 JOIN = "join"  # (the question's kind: new to the party)
 BACK = "back"  # (or back in it after leaving, #4537 slice 4a)
 

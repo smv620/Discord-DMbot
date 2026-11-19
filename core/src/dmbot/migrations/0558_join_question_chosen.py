@@ -1,4 +1,4 @@
-"""0557_join_question_chosen
+"""0558_join_question_chosen
 
 "Let me choose" answers the join question too (#4537, party knowledge slice 4c;
 `docs/design/party_knowledge.md` §5; Supervisor's ruling on #4537, 2026-11-19).
