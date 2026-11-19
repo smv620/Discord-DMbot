@@ -144,3 +144,50 @@ class JoinOnTheWeb(Web):
         with self.assertRaises(RecapError) as err:
             await join_questions.queue_undo(self.web, self.session, self.cref, "x1")
         self.assertEqual(err.exception.code, "not_found")
+
+    async def test_the_party_answer_may_follow_everyone_and_a_second_party_press_is_gone(
+        self,
+    ) -> None:
+        await self.ask(self.tavin)
+        await self.memory.set_connection_knowers(
+            self.g, self.one.id, self.secret_link, [self.rook],
+            source=DM_SOURCE, dm_chose_secret=True,
+        )  # fmt: skip
+        await self.answer("everyone")
+        await self.bot_loop()
+        await self.answer("party")  # (as in Discord: "everyone" first, then "the party")
+        (done,) = await self.bot_loop()
+        self.assertEqual((done.error, len(done.batches)), ("", 1))
+        await self.answer("party")
+        (again,) = await self.bot_loop()
+        self.assertEqual(again.error, wa.GONE)
+
+    async def test_a_retried_undo_is_done_and_another_dm_cannot_undo_this_dms_change(self) -> None:
+        await self.ask(self.tavin)
+        await self.memory.set_connection_knowers(
+            self.g, self.one.id, self.secret_link, [self.rook],
+            source=DM_SOURCE, dm_chose_secret=True,
+        )  # fmt: skip
+        await self.answer("party")
+        (done,) = await self.bot_loop()
+        (batch,) = done.batches
+        # the same batch asked by a user who did not make it is `gone`: read in the store
+        self.assertFalse(await self.actions.join_batch_made(self.g, self.one.id, 12345, batch))
+        self.assertTrue(await self.actions.join_batch_made(self.g, self.one.id, ALICE.id, batch))
+        await join_questions.queue_undo(self.web, self.session, self.cref, str(batch))
+        await self.bot_loop()
+        await join_questions.queue_undo(self.web, self.session, self.cref, str(batch))
+        (retried,) = await self.bot_loop()
+        self.assertEqual(retried.error, "")  # (taken back already: not an error)
+
+    async def test_a_group_lists_only_the_characters_still_in_the_party(self) -> None:
+        wren = await self.add("Wren", "character", role="player_character")
+        await self.ask(self.tavin)
+        await self.ask(wren)
+        await self.sql(
+            "UPDATE memory_party_spans SET to_at = GREATEST(from_at, 1), ended = 'left'"
+            " WHERE entity_id = %s",
+            wren,
+        )
+        got = await join_questions.read(self.web, self.session, self.cref)
+        self.assertEqual([g["names"] for g in got["groups"]], [["Tavin"]])

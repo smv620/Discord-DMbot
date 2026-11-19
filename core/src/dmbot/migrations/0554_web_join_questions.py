@@ -6,14 +6,6 @@ ruling on #4537; behind `DMBOT_PARTY_JOIN` and the page's switch).
 
 from __future__ import annotations
 
-# `lore-pdf-estimate` goes on the queue door as the clue actions of 0533 did: filed under no name,
-# with no target and no flag. Its text is the staged file's id (32 hex), so a press made on an
-# older file than the one now staged finds nothing to count. The door checks only the shape and
-# that the sender is a DM, as it does for every action; the bot checks the sender again, reads
-# the staged object, counts and writes the three numbers back (`web_actions`, `lore_pdfs`). The
-# queue door's lists, shape check and the table's action list are read back from the database as
-# they are and each anchor must be found exactly once, so a drift stops the migration. No row is
-# changed.
 # The DM's answer to "What does Mira know about what came before?" goes on the queue door as the
 # World notes ones did: filed under no name, no target, no flag. `join-everyone` ("Only what
 # everyone knows": nothing is written) and `join-party` ("What the party knows": one change, one
@@ -23,8 +15,10 @@ from __future__ import annotations
 # DM's own done `join-party` made (read again). The read door, `dmbot_web_join_questions`, lists
 # the DM's waiting groups: only questions already sent (`sent_at`, never during play) whose
 # character is still a confirmed player character in the party (open stretch), by character
-# names only; DM only (NULL for anyone else). Ids and names, never a word of the story. The queue
-# door's lists, shape check and the table's action list are read back as they are and each anchor
+# names only; DM only (NULL for anyone else). The door and the actions do not check
+# `DMBOT_PARTY_JOIN`: with it off the bot makes no join questions, so there is nothing to list, and
+# the page's own switch keeps the card off until the bot step is deployed. Ids and names, never a
+# word of the story. The queue door's lists, shape check and the table's action list are read back as they are and each anchor
 # must be found exactly once, so a drift stops the migration. No row is changed.
 ACTIONS = ("join-everyone", "join-party", "join-undo")
 _ID = "[0-9a-f]{32}"
