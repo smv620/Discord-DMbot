@@ -153,6 +153,7 @@ MAP_ACTIONS = ("map-terrain", "map-climate", "map-control", "map-show")
 # World notes (#4285, slice 1c): ✅ on the lines the page showed (their ids, space-separated), 🚫 on
 # one line, or ↩ Undo of one of those (the text is its change number). Filed under no name.
 WORLD_ACTIONS = ("world-keep", "world-not", "world-undo")
+JOIN_ACTIONS = ("join-everyone", "join-party", "join-undo")  # the DM's join question (#4778)
 # The story threads DMbot found in an upload (#4457, quests slice 1): the same store calls as
 # Discord's 📜 card, so each keep is one change and one Undo.
 THREAD_ACTIONS = ("thread-keep", "thread-not", "thread-undo")
@@ -451,6 +452,20 @@ class ActionStore:
             )
             return await cur.fetchone() is not None
 
+    async def join_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int
+    ) -> bool:
+        """Whether `batch` is the change this DM's own done "What the party knows" made from the
+        website (#4778), so the page's Undo can only take back what they did themselves."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action = 'join-party'"
+                " AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
+                (guild_id, campaign_id, user_id, batch),
+            )
+            return await cur.fetchone() is not None
+
     async def thread_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, batch: int
     ) -> bool:
@@ -721,6 +736,10 @@ async def apply(
         if actions is None and action.action == "world-undo":
             return _failed(FAILED)
         return await _world(memory, actions, guild_id, cid, action)
+    if action.action in JOIN_ACTIONS:
+        if actions is None:
+            return _failed(FAILED)
+        return await _join(memory, actions, guild_id, cid, action)
     if action.action in PART_ACTIONS:
         if actions is None and action.action == "part-undo":
             return _failed(FAILED)
@@ -1130,6 +1149,41 @@ async def _world(
     except MemoryRuleError:
         return _failed(GONE)
     return Outcome(batches=(done.batch,) if done.batch is not None else ())
+
+
+async def _join(
+    memory: MemoryStore, actions: ActionStore, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """The DM's answer to the join question from the page (#4778 part b), the same store calls as
+    Discord's buttons: "Only what everyone knows" writes nothing, "What the party knows" is one
+    change with one Undo. The store checks the question is still waiting (another DM may have
+    answered: `gone`). ↩ Undo takes back only a change this DM's own done `join-party` made, read
+    again here (a made-up number must never reach `undo`)."""
+    if a.action == "join-undo":
+        if not (a.text.isascii() and a.text.isdigit()) or len(a.text) > 15:
+            return _failed(GONE)
+        batch = int(a.text)
+        if not await actions.join_batch_made(guild_id, cid, a.user_id, batch):
+            return _failed(GONE)
+        try:
+            await memory.undo(guild_id, cid, batch)
+        except TooLateToUndo:
+            return _failed(TOO_LATE)
+        except MemoryRuleError as exc:
+            if str(exc) == ALREADY_UNDONE:
+                return Outcome()  # (taken back already: a retried Undo)
+            return _failed(GONE if str(exc) == STORE_NOT_FOUND else CHANGED)
+        return Outcome()
+    try:
+        if a.action == "join-everyone":
+            await memory.join_answer_everyone(guild_id, cid, a.text)
+            return Outcome()
+        done = await memory.join_answer_party(guild_id, cid, a.text)
+    except MemoryRuleError:  # (AlreadyAnswered is one)
+        return _failed(GONE)
+    return Outcome(
+        counts=f"given:{done.value}", batches=(done.batch,) if done.batch is not None else ()
+    )
 
 
 def _changed(batch: int | None) -> Outcome:

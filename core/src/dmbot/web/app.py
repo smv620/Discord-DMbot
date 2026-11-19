@@ -63,6 +63,7 @@ from dmbot.web import (
     house_file,
     import_clock,
     imports,
+    join_questions,
     languages,
     line_fixes,
     lore,
@@ -2817,6 +2818,41 @@ def create_app(
         session, _token = signed
         try:
             return {"answer": await world_notes.queue_undo(db, session, ref, batch)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/join-questions")
+    async def me_campaign_join_questions(ref: str, signed: Signed) -> dict[str, Any]:
+        """The join questions waiting for the DM (#4778): "What does Mira know about what came
+        before?", by character names. DM only, nothing for anyone else."""
+        session, _token = signed
+        try:
+            return await join_questions.read(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/join-questions/answer", status_code=202)
+    async def me_campaign_join_answer(ref: str, request: Request, signed: Signed) -> dict[str, str]:
+        """`{"group", "answer": "everyone" | "party"}`; polled at `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await join_questions.queue_answer(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/join-questions/{batch}/undo", status_code=202)
+    async def me_campaign_join_undo(ref: str, batch: str, signed: Signed) -> dict[str, str]:
+        """↩ Undo of "What the party knows" by the change number its answer carried."""
+        session, _token = signed
+        try:
+            return {"answer": await join_questions.queue_undo(db, session, ref, batch)}
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

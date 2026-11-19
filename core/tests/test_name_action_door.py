@@ -47,6 +47,9 @@ EVERY_ACTION = (
     "claim-some",  # keeps a waiting claim for the ticked characters only (#4680)
     "backstory-keep-some",  # keeps a waiting backstory connection for the ticked (#4680)
     "lore-pdf-estimate",  # the bot counts a staged lore PDF before the yes (#4762)
+    "join-everyone",  # the DM's join question, answered from the page (#4778)
+    "join-party",
+    "join-undo",
 )  # fmt: skip
 
 

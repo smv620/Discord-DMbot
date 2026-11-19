@@ -47,7 +47,7 @@ class Skips(unittest.TestCase):
             got = asyncio.run(
                 map_step.run(
                     None, None, 1, "c", dm, path, path.parent, say=said.append,
-                    settings=SimpleNamespace(pictures_ready=ready), **patches,
+                    settings=SimpleNamespace(pictures_ready=ready, table_images_on=True), **patches,
                 )
             )  # fmt: skip
         return dict(got), said
@@ -56,6 +56,21 @@ class Skips(unittest.TestCase):
         got, said = self.go(False, Path("/nowhere/map.jpg"))
         self.assertEqual(got, {"skipped": 1})
         self.assertEqual(said, ["map: skipped (kept pictures are off on this server)"])
+
+    def test_a_server_that_does_not_read_pictures_is_said_and_skipped(self) -> None:
+        # (#4743: the sweep never runs without the picture reader, so the step doesn't wait)
+        said: list[str] = []
+        with mock.patch.object(accept_all, "check_campaign", _sample):
+            got = asyncio.run(
+                map_step.run(
+                    None, None, 1, "c", 2, Path("/nowhere/map.jpg"), Path("/nowhere"),
+                    say=said.append,
+                    settings=SimpleNamespace(pictures_ready=True, table_images_on=False),
+                )
+            )  # fmt: skip
+        self.assertEqual(dict(got), {"skipped": 1})
+        self.assertEqual(len(said), 1)
+        self.assertIn("DMBOT_TABLE_IMAGES", said[0])
 
     def test_a_dm_who_hasnt_agreed_to_pictures_is_said_and_skipped(self) -> None:
         got, said = self.go(True, Path("/nowhere/map.jpg"), dm=3)
@@ -79,7 +94,7 @@ class Skips(unittest.TestCase):
             asyncio.run(
                 map_step.run(
                     None, None, 1, "c", 2, Path("/x"), Path("/"), say=lambda _: None,
-                    settings=SimpleNamespace(pictures_ready=True),
+                    settings=SimpleNamespace(pictures_ready=True, table_images_on=True),
                 )
             )  # fmt: skip
 
