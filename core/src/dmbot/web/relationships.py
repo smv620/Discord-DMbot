@@ -494,18 +494,28 @@ def know_words(
 def know_lines(
     known: dict[str, Any],
     shared: tuple[gate.Statements, Callable[[str, str], set[str]]] | None = None,
+    shown: tuple[Collection[str], Collection[str]] = ((), ()),
 ) -> tuple[dict[str, str], dict[str, str]]:
     """The one line of who knows each name and each connection, worded by core's own
     `party_icons.line` (🌍 / ✅ / 👥 / 👤 / 🤫, "Known to: …", a leaver with why), so the website
     and Discord cannot drift (Supervisor's ruling on #4537, §7). Worked out now against the current
     party (`playerCharacters`, 0551) and never stored. Returns (names by entry id, connections by
-    connection id), only for ids in the data. A guess counts as knowing, as in Discord."""
+    connection id), only for ids in the data. A guess counts as knowing, as in Discord. `shown`: the
+    entry ids and connection ids the table sees outright (nothing held back, no list kept), which
+    Discord counts as known to every member (`who_knows.knows_line`, "everyone")."""
     data, who = shared or _knowers(known)
     viewers = {str(v["id"]): (str(v["name"]), str(v.get("kind", "npc"))) for v in known["viewers"]}
-    members = sorted(
-        ((c, viewers[c][0]) for c in data.player_characters if c in viewers),
+    # (the party in Discord's order: oldest character first, as `party_record.current_members`)
+    order = [str(c) for c in known.get("partyOrder", ())]
+    current = set(data.player_characters)
+    members = [(c, viewers[c][0]) for c in order if c in current and c in viewers]
+    members += sorted(
+        ((c, viewers[c][0]) for c in current if c in viewers and c not in order),
         key=lambda m: (m[1].casefold(), m[0]),
     )
+    everyone = [c for c, _ in members]
+    common_rows = {(str(k), str(s)) for k, s, c, _ in known["knowers"] if c == gate.COMMON}
+    shown_entries, shown_links = set(shown[0]), set(shown[1])
     why = {str(k): str(v) for k, v in dict(known.get("leftWhy", {})).items()}
     left = {
         str(c): (viewers[str(c)][0], why.get(str(c), "left"))
@@ -515,14 +525,17 @@ def know_lines(
     npcs = {c: v[0] for c, v in viewers.items() if v[1] == "npc"}
     outsiders = party_icons.ordered_outsiders(left, npcs)
 
-    def line(kind: str, item: str) -> str:
-        holders = who(kind, item)
+    def line(kind: str, item: str, seen: bool) -> str:
+        # (the "everyone" row is read from the raw rows: `who` swaps it for every player character)
+        holders = everyone if seen else who(kind, item)
         return party_icons.line(
-            holders, members, common=gate.COMMON in holders, outsiders=outsiders
+            holders, members, common=(kind, item) in common_rows, outsiders=outsiders
         )
 
-    entries = {str(e): line(gate.ENTRY, str(e)) for e in known["liveEntries"]}
-    links = {str(c): line(gate.CONNECTION, str(c)) for c in data.connections}
+    entries = {
+        str(e): line(gate.ENTRY, str(e), str(e) in shown_entries) for e in known["liveEntries"]
+    }
+    links = {str(c): line(gate.CONNECTION, str(c), str(c) in shown_links) for c in data.connections}
     return entries, links
 
 
@@ -572,7 +585,20 @@ async def with_know_words(
         return
     shared = _knowers(known)  # worked out once for both
     names, links = know_words(known, shared)
-    name_lines, link_lines = know_lines(known, shared)
+    # what the table sees outright: nothing held back (a name not secret and revealed, a connection
+    # neither secret nor unrevealed), so no list is kept (Discord's "everyone")
+    seen_names = {
+        str(n["id"])
+        for n in [*page.get("nodes", []), *page.get("tray", [])]
+        if not n.get("secret") and n.get("revealed") is not False
+    }
+    seen_links = {
+        str(x["id"])
+        for e in page.get("edges", [])
+        for x in e["links"]
+        if not x.get("secret") and x.get("revealed") is not False
+    }
+    name_lines, link_lines = know_lines(known, shared, (seen_names, seen_links))
     holders = link_holders(known, shared)
     # the connections the "everyone" point of view holds (the door lists them only while shown)
     common = {

@@ -163,3 +163,24 @@ class PartyLists(Web):
             source=DM_SOURCE, dm_chose_secret=True,
         )  # fmt: skip
         self.assertEqual((await self.lines())[link], "✅ The whole party knows (Rook)")
+
+    async def test_common_knowledge_a_shown_connection_and_the_party_order_read_as_in_discord(
+        self,
+    ) -> None:
+        """What the first version got wrong: 🌍 (the raw "everyone" row, which the gate swaps for
+        the party), a connection the table sees outright (✅, never 🤫), and the party in the order
+        Discord lists it (oldest first), not A to Z."""
+        plain = self.links["mira-keep"]
+        self.assertEqual((await self.lines())[plain], party_icons.WHOLE)
+        await self.memory.add_common_knowledge(
+            self.g, self.one.id, "connection", [plain], source=DM_SOURCE
+        )
+        self.assertEqual((await self.lines())[plain], party_icons.EVERYONE)
+        # a character made after the others, who comes first A to Z
+        aaron = await self.add("Aaron", "character", role="player_character")
+        await self.memory.set_connection_knowers(
+            self.g, self.one.id, self.secret_link, [aaron, self.rook],
+            source=DM_SOURCE, dm_chose_secret=True,
+        )  # fmt: skip
+        got = (await self.lines())[self.links["mira-heir"]]
+        self.assertIn(got, ("👥 Known to: Rook and Aaron",))
