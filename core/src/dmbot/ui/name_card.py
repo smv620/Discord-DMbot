@@ -143,7 +143,8 @@ from dmbot.ui.who_knows import (
     WhoKnowsMenu,
     called,
     common_done,
-    player_characters,
+    knows_line,
+    pick_choices,
     taken_back,
     who_text,
 )
@@ -3033,7 +3034,8 @@ async def show_who_page(
     if not sees_secrets(campaign, interaction.user.id):
         await _tell(interaction, "Only the campaign's DMs can change secret names.")
         return
-    pcs = await player_characters(memory, campaign)
+    party = await memory.party_and_others(campaign.guild_id, campaign.id)
+    pcs, notes = pick_choices(party)  # (the party first, then who left, then NPCs: #4537 §10)
     knowing = (await memory.alias_knowers(campaign.guild_id, campaign.id, [alias.id])).get(
         alias.id, []
     )
@@ -3046,12 +3048,21 @@ async def show_who_page(
     names = dict(pcs)
     view = WhoKnowsName(
         campaign_id, entity_id, alias.id, pcs,
-        chosen=[c for c in knowing if c in names], now=who, undo=undo,
+        chosen=[c for c in knowing if c in names], now=who, undo=undo, notes=notes,
         holders=[c for c in knowing if c in names and c not in told],
         told=[c for c in told if c in names], alias_text=alias.text, entry_name=entry,
     )  # fmt: skip
-    text = who_text(
-        f"**{_md(alias.text)}**", who, knowing, names, has_characters=bool(names), thing="name"
+    text = (
+        knows_line(party, knowing, who=who, common=who == link_edits.COMMON)
+        + "\n"
+        + who_text(
+            f"**{_md(alias.text)}**",
+            who,
+            knowing,
+            names,
+            has_characters=bool(party.party or party.left),
+            thing="name",
+        )
     )
     lines = told_name.told_lines(told, names, alias.text, entry)
     if lines:
@@ -3078,8 +3089,9 @@ class WhoKnowsName(WhoKnowsMenu):
         alias_text: str = "",
         entry_name: str = "",
         undo: Sequence[int] = (),
+        notes: Mapping[str, str] | None = None,
     ) -> None:
-        super().__init__(pcs, chosen=chosen, now=now, undo=undo)
+        super().__init__(pcs, chosen=chosen, now=now, undo=undo, notes=notes)
         self.campaign_id, self.entity_id, self.alias_id = campaign_id, entity_id, alias_id
         # Telling one character the name is the entry, and taking it back (#3542): a menu each,
         # on the two rows under the buttons, only when there is someone to offer.

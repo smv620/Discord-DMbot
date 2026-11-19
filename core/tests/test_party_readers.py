@@ -17,7 +17,7 @@ import unittest
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[1] / "src" / "dmbot"
-ROLE = re.compile(r"\bPLAYER_CHARACTER\b|'player_character'")
+ROLE = re.compile(r"\bPLAYER_CHARACTER\b|'player_character'|\"player_character\"")
 # (the role's own definition and the one function are not readers)
 NOT_READERS = {
     "memory/models.py",
@@ -27,36 +27,53 @@ NOT_READERS = {
     "memory/join_questions.py",
 }
 
-# Files that test the role today, to be checked one by one (slice 5). Alphabetical.
+# Files that test the role today, to be checked one by one (slice 5). Alphabetical. (#4537 3a:
+# the pattern now also catches "player_character" in double quotes, which found 18 more.)
 FILES: tuple[str, ...] = (
+    "devtools/graph_key_check.py",
+    "devtools/sample_run/characters.py",
     "devtools/sample_run/decide.py",
     "members.py",
     "memory/auto_accept.py",
+    "memory/background.py",
     "memory/backstory_keep.py",
     "memory/backup.py",
     "memory/book_links.py",
     "memory/claims.py",
+    "memory/importance_rank.py",
+    "memory/importance_read.py",
+    "memory/importance_step.py",
     "memory/kinds.py",
     "memory/knowers.py",
+    "memory/lore_read.py",
+    "memory/name_list.py",
     "memory/ontology.py",
     "memory/party.py",
+    "memory/place_words.py",
     "memory/private_scene_store.py",
+    "memory/pronouns.py",
     "memory/recall.py",
+    "memory/reveal_proposals.py",
     "memory/revealed_aloud.py",
+    "memory/roles_backed.py",
     "memory/store.py",
     "memory/story_chain_store.py",
     "memory/voice.py",
     "memory/web_actions.py",
+    "memory/whereabouts.py",
+    "memory/who_ranking.py",
+    "recaps/inputs.py",
     "recaps/name_answers.py",
     "timebot/stamp.py",
     "timebot/store.py",
-    "ui/claims_review.py",
     "ui/companion.py",
     "ui/name_background.py",
     "ui/name_lists.py",
+    "ui/name_questions.py",
     "ui/names.py",
-    "ui/who_knows.py",
+    "web/all_names.py",
     "web/graph_cleanup.py",
+    "web/relationships.py",
     "wizard_finish.py",
 )
 
