@@ -75,6 +75,12 @@ async def run(
     if not settings.pictures_ready:
         skipped(say, "kept pictures are off on this server")
         return {"skipped": 1}
+    if not settings.table_images_on:
+        # (#4743: the bot builds its picture reader only with DMBOT_TABLE_IMAGES on, and without
+        # it the close-read sweep never runs, so waiting 25 minutes would only say "not in time")
+        skipped(say, "reading pictures is off on this server (DMBOT_TABLE_IMAGES), so DMbot "
+                "won't read the map")  # fmt: skip
+        return {"skipped": 1}
     consent = ConsentStore(db)
     await consent.consenting(guild_id)  # (fills the cache `has_image_consent` reads)
     if not consent.has_image_consent(guild_id, dm):
