@@ -307,7 +307,7 @@ async def set_statement_knowers(
         raise MemoryRuleError(BAD_CERTAINTY)
     chosen = await _known_characters(w, list(sure))
     views = {i: await _view_for(w, i, player) for i, player in chosen.items()}
-    await _drop_asleep(w, column, statement_id)
+    marks = await _drop_asleep(w, column, statement_id)
     have = {
         r["perspective_id"]: r
         for r in await w.select(KNOWERS, f" AND {column} = %s", [statement_id])
@@ -318,7 +318,8 @@ async def set_statement_knowers(
                 KNOWERS,
                 {"id": new_id(), "perspective_id": view_id, "about_entity_id": None,
                  "state_id": None, "relation_id": None, "alias_id": None,
-                 column: statement_id, "created_at": w.now, "confidence": sure[entity_id]},
+                 column: statement_id, "created_at": w.now, "confidence": sure[entity_id],
+                 "backstory_of": marks.get(view_id)},
             )  # fmt: skip
         elif have[view_id]["confidence"] != sure[entity_id]:
             await w.update(KNOWERS, have[view_id]["id"], {"confidence": sure[entity_id]})
@@ -432,13 +433,15 @@ async def learn(w: Changes, kind: str, statement_id: str, character_id: str) -> 
         raise MemoryRuleError(NOT_ONE_CHARACTER)
     player = found[0]["role"] == PLAYER_CHARACTER
     view = await _view_for(w, character_id, player)
-    await _drop_asleep(w, column, statement_id, [view])
+    marks = await _drop_asleep(w, column, statement_id, [view])
     changed = False
     have = await w.select(
         KNOWERS, f" AND {column} = %s AND perspective_id = %s", [statement_id, view]
     )
     if not have:
-        await w.insert(KNOWERS, _row(column, statement_id, view, w.now))
+        await w.insert(
+            KNOWERS, _row(column, statement_id, view, w.now) | {"backstory_of": marks.get(view)}
+        )
         changed = True
     elif have[0]["confidence"] < KNOWN:
         await w.update(KNOWERS, have[0]["id"], {"confidence": 1.0})  # (never down: up to sure)
@@ -642,6 +645,18 @@ _ROW_OF: dict[str, LiteralString] = {
 }
 
 
+async def holds(w: Scope, kind: str, statement_id: str, entity_id: str) -> bool:
+    """Whether the character holds a row for this statement now (asleep or awake): a backstory's
+    write marks only a row it made, never one learned before (#4795)."""
+    column, _ = _COLUMNS[kind]
+    views = await w.select(PERSPECTIVES, " AND entity_id = %s", [entity_id])
+    if not views:
+        return False
+    return bool(
+        await w.select(KNOWERS, _ROW_OF[column], [statement_id, views[0]["id"]], dormant=True)
+    )
+
+
 async def mark_backstory(w: Changes, kind: str, statement_id: str, entity_id: str) -> None:
     """The character's row for this statement came from the character's own backstory (#4795,
     migration 0556): marked, in the caller's change (one Undo), so the party's copies never pass
@@ -676,7 +691,7 @@ async def _follow_player_list(
     (#2995, slice 2b)."""
     column, _ = _COLUMNS[kind]
     views = {i: await _view_for(w, i, player) for i, player in chosen.items()}
-    await _drop_asleep(w, column, statement_id)
+    marks = await _drop_asleep(w, column, statement_id)
     pcs = await _character_views(w, players_only)
     have = {
         r["perspective_id"]: r
@@ -684,7 +699,10 @@ async def _follow_player_list(
     }
     for view_id in views.values():
         if view_id not in have:
-            await w.insert(KNOWERS, _row(column, statement_id, view_id, w.now))
+            await w.insert(
+                KNOWERS,
+                _row(column, statement_id, view_id, w.now) | {"backstory_of": marks.get(view_id)},
+            )
     for view_id, row in have.items():
         if view_id in pcs and view_id not in views.values():
             await w.delete(KNOWERS, row["id"])
@@ -1206,12 +1224,15 @@ def _row(column: str, statement_id: str, view_id: str, now: int) -> dict[str, An
 
 async def _drop_asleep(
     w: Changes, column: str, statement_id: str, views: Collection[str] | None = None
-) -> None:
+) -> dict[str, str]:
     """The DM names who knows a statement: the rows a hide put to sleep for it are final now, the
     DM's list replaces them (they go, Undo brings them back), and a hide's 0.0 belief in a
     connection becomes the DM's own, so nothing the hide marked comes back over what the DM said
     (#3082). A (statement, point of view) is one thing: the row and the belief change together.
-    `views`: only these points of view (one character learning it, `learn`), else all."""
+    `views`: only these points of view (one character learning it, `learn`), else all. Returns the
+    marks of the rows it dropped (point of view → whose backstory, #4795), so a row written again
+    for the same point of view keeps it: a list saved over a hidden backstory row never unmarks
+    it."""
     asleep = await w.select(
         KNOWERS,
         f" AND {column} = %s AND cardinality(hidden_by) > 0"
@@ -1220,10 +1241,13 @@ async def _drop_asleep(
         dormant=True,
     )
     if not asleep:
-        return
+        return {}
+    kept_marks = {
+        str(r["perspective_id"]): str(r["backstory_of"]) for r in asleep if r["backstory_of"]
+    }
     await w.delete_where_in(KNOWERS, "id", [r["id"] for r in asleep])
     if column != "relation_id":
-        return
+        return kept_marks
     marked: dict[str, dict[str, Any]] = {}
     for row in await w.select(
         BELIEFS,
@@ -1235,6 +1259,7 @@ async def _drop_asleep(
         else:
             marked.pop(row["perspective_id"], None)  # (a newer belief is the DM's already)
     await w.update_rows(BELIEFS, {r["id"]: {"hidden_by": []} for r in marked.values()})
+    return kept_marks
 
 
 async def rehome_hidden_by(
