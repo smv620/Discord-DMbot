@@ -77,16 +77,17 @@ class WithFeed(DatabaseTest):
             )
             return [dict(r) for r in await cur.fetchall()]
 
-    async def marker_row(self) -> dict[str, Any]:
-        """The one bookkeeping row that counts calls not shown, waited for until it is written
-        (a count is written on a task that `settle` doesn't see), never read after a fixed pause."""
+    async def marker_row(self, lost: int = 1) -> dict[str, Any]:
+        """The one bookkeeping row that counts calls not shown, waited for until it counts `lost`
+        (never read after a fixed pause, and not the first count that lands when two are coming:
+        #4829, #4838)."""
         deadline = asyncio.get_running_loop().time() + SETTLE_S
         while True:
             found = await self.rows()
-            if len(found) == 1 and found[0]["lost"]:
+            if len(found) == 1 and found[0]["lost"] == lost:
                 return found[0]
             if asyncio.get_running_loop().time() > deadline:
-                raise AssertionError(f"no count of calls not shown after {SETTLE_S} seconds")
+                raise AssertionError(f"no count of {lost} calls not shown after {SETTLE_S} s")
             await asyncio.sleep(0.02)
 
     def job(self, step: str = "reading part 1 of 3") -> Any:
@@ -248,7 +249,7 @@ class TheEdges(WithFeed):
             self.assertLessEqual(ai_feed._pending, 2)
             gate.set()
             await settle()
-        marker = await self.marker_row()  # (the count is written on a task of its own)
+        marker = await self.marker_row(2)  # (each count is written on a task of its own)
         self.assertEqual(marker["lost"], 2)
 
     async def test_the_real_error_and_a_cancel_come_through_unchanged_and_are_noted(self) -> None:
