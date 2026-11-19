@@ -336,6 +336,7 @@ class Clues(ConfirmedMemoryTest):
             self.secret,
             await self.memory.relations(GUILD_A, self.c, entity_id=self.secret),
             secrets=True,
+            table=frozenset(),  # (a clue only some people know: the table doesn't hold it)
         )
         assert clue_card is not None
         self.assertNotIn("Secret:", clue_card)  # its own name is the title, not a second line

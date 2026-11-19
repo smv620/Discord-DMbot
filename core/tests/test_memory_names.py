@@ -1625,7 +1625,7 @@ class NameCards(NamesTest):
         names = await self.bot.lookup.get(GUILD, self.campaign.id)  # type: ignore[union-attr]
         rel = await self.memory.relations(GUILD, self.campaign.id, entity_id=self.bell.id)
         self.assertEqual(name_card.cut_sections(names, self.bell.id, rel, secrets=False), [])
-        text = name_card.card_text(names, self.bell.id, rel, secrets=False)
+        text = name_card.card_text(names, self.bell.id, rel, secrets=False, seen={self.bell.id})
         assert text is not None
         lines = text.split("\n")
         self.assertIn("**Connections:**", lines)
