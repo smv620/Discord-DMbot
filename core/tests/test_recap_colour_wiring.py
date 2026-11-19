@@ -4,6 +4,7 @@ as the players know it, and nothing for a place the beats didn't name. Stand-ins
 
 from __future__ import annotations
 
+import time
 import unittest
 import uuid
 from types import SimpleNamespace
@@ -184,11 +185,10 @@ class _StoreBase(DatabaseTest):
             1, self.campaign, name="Cerric", type="character", role="player_character",
             played_by=4242, status="confirmed", source="dm",
         )  # fmt: skip
-        async with self.db.guild(1) as conn:  # (a name a DM adds starts unseen by the players)
-            await conn.execute(
-                "UPDATE memory_entities SET hidden_from_players = false WHERE id = %s",
-                (self.place,),
-            )
+        # (a name a DM adds starts unseen: the writer tells the party, as the DM does)
+        await self.memory.set_hidden_from_players(
+            1, self.campaign, self.place, False, source="dm", dm_chose_secret=True
+        )
 
     async def fact(self, value: str, *, status: str, known: bool) -> None:
         async with self.db.guild(1) as conn:
@@ -251,10 +251,10 @@ class TheRealLookup(_StoreBase):
                 status="confirmed",
             )
         ).value.id  # fmt: skip
-        async with self.db.guild(1) as conn:
-            await conn.execute(
-                "UPDATE memory_entities SET hidden_from_players = false WHERE id = %s", (known,)
-            )
+        # (the writer: the party is told, not just flagged)
+        await self.memory.set_hidden_from_players(
+            1, self.campaign, known, False, source="dm", dm_chose_secret=True
+        )
         unseen = (
             await self.memory.add_entity(
                 1, self.campaign, type="faction", name="The Veiled Court", source="dm",
@@ -268,7 +268,9 @@ class TheRealLookup(_StoreBase):
         bot: Any = SimpleNamespace(
             lookup=SimpleNamespace(get=AsyncMock(return_value=lookup)), memory=self.memory
         )
-        lines = await RecapFeatures.recap_colour(bot, 1, self.campaign, JOB, ["Bryn Shander"])
+        # (the party is as it was at the session: Cerric joined just now, so the session is later)
+        later: Any = SimpleNamespace(session_at=int(time.time()) + 3600)
+        lines = await RecapFeatures.recap_colour(bot, 1, self.campaign, later, ["Bryn Shander"])
         self.assertEqual(len(lines), 1)
         self.assertIn("tundra", lines[0])
         self.assertNotIn("Veiled", lines[0])
