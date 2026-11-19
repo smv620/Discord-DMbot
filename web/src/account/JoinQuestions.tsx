@@ -133,12 +133,12 @@ export default function JoinQuestions({
             </button>
           </div>
           {undo && (
-            <p>
+            <div class="stack">
               <p class="small muted">{w.undoFor(undo.names)}</p>
               <button type="button" class="button secondary" disabled={busy} onClick={() => void takeBack(undo)}>
                 {w.undo}
               </button>
-            </p>
+            </div>
           )}
           <SavingWait active={busy} stage={w.saving} />
         </>
