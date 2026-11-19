@@ -33,8 +33,8 @@ describe("catch up on a name's row", () => {
     expect(await screen.findByText("Wren and Ash are missing things on this card that the rest of the party knows.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: w.manyLabel }));
     expect(await screen.findByText(w.pickQuestion)).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Wren (1)" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Ash (3)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Wren (1 thing)" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Ash (3 things)" })).toBeTruthy();
     expect(screen.getByRole("button", { name: w.back })).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: w.back }));
     expect(await screen.findByText("Wren and Ash are missing things on this card that the rest of the party knows.")).toBeTruthy();
@@ -43,7 +43,7 @@ describe("catch up on a name's row", () => {
   it("Done says what was told, and Undo says what was taken back", async () => {
     await open("n24");
     fireEvent.click(await screen.findByRole("button", { name: w.manyLabel }));
-    fireEvent.click(await screen.findByRole("button", { name: "Wren (1)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Wren (1 thing)" }));
     expect(await screen.findByText("✅ Wren now knows the 1 thing on this card the rest of the party knew. Nothing was sent to Wren's player.")).toBeTruthy();
     await waitFor(() => expect((screen.getByRole("button", { name: w.undo }) as HTMLButtonElement).disabled).toBe(false));
     fireEvent.click(screen.getByRole("button", { name: w.undo }));
@@ -89,7 +89,7 @@ describe("catch up on a name's row", () => {
     const api = mockApi("table");
     await open("n24", api);
     fireEvent.click(await screen.findByRole("button", { name: w.manyLabel }));
-    fireEvent.click(await screen.findByRole("button", { name: "Wren (1)" }));
+    fireEvent.click(await screen.findByRole("button", { name: "Wren (1 thing)" }));
     await screen.findByText("✅ Wren now knows the 1 thing on this card the rest of the party knew. Nothing was sent to Wren's player.");
     api.partyUndo = async () => {
       throw new ApiError("undo-late");
@@ -122,5 +122,13 @@ describe("catch up on a name's row", () => {
     await new Promise((r) => setTimeout(r, 0));
     expect(screen.queryByRole("button", { name: w.oneLabel("Ash") })).toBeNull();
     expect(api.calls.some((c) => c.startsWith("catchUp:"))).toBe(false);
+  });
+
+  it("cuts a long name in a label as core does, never the count", () => {
+    expect(w.oneLabel("Mira")).toBe("📖 Catch up: Mira");
+    expect(w.oneLabel("Mira Stormborn-of-the-Northern-Wastes")).toBe("📖 Catch up: Mira Stormbo…");
+    expect(w.pickLabel("Mira", 1)).toBe("Mira (1 thing)");
+    expect(w.pickLabel("Mira Stormborn-of-the-Northern-Wastes", 1)).toBe("Mira Stormborn… (1 thing)");
+    expect(w.pickLabel("Mira Stormborn-of-the-Northern-Wastes", 6)).toBe("Mira Stormbor… (6 things)");
   });
 });
