@@ -43,14 +43,16 @@ FILES: dict[str, tuple[str, str, str]] = {
     ),
     "memory/_changes.py": (WRITES, "GraphEngineer", "the change log's row writers and Undo"),
     "memory/backstory_keep.py": (
-        SWITCH,
+        READS,
         "GraphEngineer",
-        "`shown_entry_ids`: which entries a backstory's keep may link, offered to the DM only",
+        "`shown_entry_ids` decides whether a kept connection is stored unrevealed or made common "
+        "knowledge (`kept_unrevealed`, `common_connection`): a player's view, to the gate",
     ),
     "memory/backstory_links.py": (
-        SWITCH,
+        READS,
         "GraphEngineer",
-        "`waiting` and `_entities`: a connection with a limited end, on the DM's review list",
+        "`waiting`: a limited end sets the kept connection's secret bit (fails closed, but a "
+        "player's view): to the gate",
     ),
     "memory/backup.py": (DEFINES, "GraphEngineer", "a backup carries the flags as they are"),
     "memory/book_links.py": (
@@ -67,7 +69,9 @@ FILES: dict[str, tuple[str, str, str]] = {
         DEFINES,
         "GraphEngineer",
         "rule 1's switch inside the gate: the common rows while shown, the group mask, and "
-        "`_public_entry`'s main name; no caller outside the gate reads it (ruling L, 5c)",
+        "`_public_entry` (the main name `name_entries` gives a known entry, or an unnamed "
+        "person's anchor, when the viewer holds no name row); no caller outside the gate reads "
+        "it (ruling L, 5c)",
     ),
     "memory/knowers.py": (MIRRORS, "GraphEngineer", "follow_flags and the 'is it shown' checks"),
     "memory/lookup.py": (
@@ -87,7 +91,8 @@ FILES: dict[str, tuple[str, str, str]] = {
     "memory/revealed_aloud.py": (
         SWITCH,
         "GraphEngineer",
-        "`unrevealed_names`: hidden names said aloud, asked of the DM only",
+        "`unrevealed_names`: which hidden names were said aloud, so `reveal_said` turns the switch "
+        "on for them (the DM is told, with Undo); it reads and flips the switch itself",
     ),
     "memory/states.py": (WRITES, "GraphEngineer", "clears `audience_limited` on a change of kind"),
     "memory/store.py": (
@@ -152,4 +157,4 @@ class TheFlagReaders(unittest.TestCase):
     def test_the_readers_still_to_convert_are_counted_for_the_record(self) -> None:
         # (a number to watch go down, not a limit: the slice is done when it reaches zero)
         reading = sorted(path for path, (kind, _, _) in FILES.items() if kind == READS)
-        self.assertEqual(len(reading), 5, reading)
+        self.assertEqual(len(reading), 7, reading)

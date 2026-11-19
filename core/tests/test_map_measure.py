@@ -449,4 +449,16 @@ class NoPartyYet(PinsBase):  # (no player character: the table's answer is commo
         asked = measure_phrase.read("how far is Targos from Bryn Shander?")
         assert asked is not None
         said = await self.maps.measure(GUILD_A, self.one.id, asked, dm=False)
-        self.assertFalse(isinstance(said, str) and said.startswith("About "), said)
+        self.assertIs(said, words.NOT_SHOWN)  # (both kept places, neither known: to the DM)
+
+    async def test_what_everyone_knows_is_answered(self) -> None:
+        # (fails closed to common knowledge, not to nothing)
+        await self.maps.set_audience(GUILD_A, self.one.id, self.map_id, "table")
+        await self.memory.add_common_knowledge(
+            GUILD_A, self.one.id, "entry", [self.targos, self.bryn], source="dm"
+        )
+        asked = measure_phrase.read("how far is Targos from Bryn Shander?")
+        assert asked is not None
+        said = await self.maps.measure(GUILD_A, self.one.id, asked, dm=False)
+        assert isinstance(said, str)
+        self.assertTrue(said.startswith("About "), said)
