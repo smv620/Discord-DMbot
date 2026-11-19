@@ -66,7 +66,12 @@ FILES: dict[str, tuple[str, str, str]] = {
     ),
     "schema.py": (DEFINES, "GraphEngineer", "the lookup's SQL view over the aliases"),
     "ui/clue_audience.py": (WRITES, "CloudDev-lead", "the DM's audience menu for a clue"),
-    "ui/name_card.py": (READS, "CloudDev-lead", "the card's hidden line, audience line, toggle"),
+    "ui/name_card.py": (
+        WRITES,
+        "CloudDev-lead",
+        "the DM's switch: the card's 'hidden from the players' line and toggle, DM only; what a "
+        "player or the table holds is the gate's (#4804)",
+    ),
     "ui/name_lists.py": (READS, "CloudDev-lead", "a list's secret-name rule"),
     "ui/name_unnamed.py": (DEFINES, "CloudDev-lead", "a docstring naming `unseen_by_players`"),
     "ui/names.py": (
@@ -115,4 +120,4 @@ class TheFlagReaders(unittest.TestCase):
     def test_the_readers_still_to_convert_are_counted_for_the_record(self) -> None:
         # (a number to watch go down, not a limit: the slice is done when it reaches zero)
         reading = sorted(path for path, (kind, _, _) in FILES.items() if kind == READS)
-        self.assertEqual(len(reading), 11, reading)
+        self.assertEqual(len(reading), 10, reading)

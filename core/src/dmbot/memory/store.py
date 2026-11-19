@@ -1743,6 +1743,22 @@ class MemoryStore:
             )
             return await recap_colour.lines(scope, place_ids, names, viewer)
 
+    async def entries_held(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        viewer: gate.Viewer | None = None,
+        *,
+        live_at: int | None = None,
+    ) -> frozenset[str]:
+        """The entries `viewer` holds in their own right (the gate's `entries_for`), read in one
+        snapshot and never written (party knowledge slice 5, §9 rules 2 and 6). With no viewer it
+        is the table: the party at the live session (`live_at`), else the current party, else
+        common knowledge only (`gate.table_viewer`, ruling M). For a card or a list asking "may
+        this person see it", where the flags only say what the DM switched on."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await gate.entries_for(scope, viewer or await gate.table_viewer(scope, live_at))
+
     async def recap_reveals(
         self,
         guild_id: int,

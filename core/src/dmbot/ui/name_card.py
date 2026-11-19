@@ -17,7 +17,7 @@ import dataclasses
 import logging
 import re
 import time
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -27,6 +27,7 @@ from discord import app_commands
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory import (
+    gate,
     hand_over,
     kin,
     link_edits,
@@ -604,18 +605,33 @@ def card_text(
     more_url: str = "",
     title: str = "",
     standing: Mapping[tuple[str, str], int] | None = None,
+    seen: Collection[str] | None = None,
+    table: Collection[str] | None = None,
 ) -> str | None:
     """The card for one name, or None if it's gone. `player`: who plays it (a player's
     character); `sheet`: its D&D Beyond sheet line (#723). `item`: it is an item, of the core
     kind or one a campaign added under it (None: only the core kind counts). `title`: the name with
     its tag for the DM's card, when it is only a description (#3431). `more_url`: the
     website page that lists every connection, for the ones that don't fit (#2323). `standing`: the
-    DM's own Reputation for pairs, whose word wins on a `knows` line (#3642; DMs only)."""
+    DM's own Reputation for pairs, whose word wins on a `knows` line (#3642; DMs only).
+    `seen`: the entries this reader holds, from the gate (a player's own characters; party
+    knowledge slice 5, §9 rule 2): a player's card is only for what the player holds, and with
+    none given it is nothing (fail closed). `table`: the entries the whole table holds, which says
+    which entries only some people know: the flags are the DM's switch for "shown now", never the
+    answer to "may this player see it"."""
     entity = lookup.entities.get(entity_id)
     if entity is None or entity.status != CONFIRMED:
         return None
-    if entity.unseen_by_players and not secrets:
+    if not secrets and entity_id not in (seen or ()):
         return None  # a clue only some people know (#1649), or a name they don't know yet (#2321)
+    # Only some people hold it (not the whole table): the card says so, and its own name is the
+    # card's title though "secret" for the Cleaner. The DM's switch (hidden from the players) has
+    # its own line below.
+    limited = (
+        table is not None
+        and entity_id not in table
+        and not (secrets and entity.hidden_from_players)
+    )
     own = name_key(entity.name)
     mine = [e for e in lookup.names if e.entity_id == entity_id and e.confirmed]
     others = [
@@ -624,9 +640,7 @@ def card_text(
         if not e.secret and e.key != own
     ]
     # (a limited clue's own name is "secret" for the Cleaner, but it is the card's title)
-    hidden = [
-        _md(e.text) for e in mine if e.secret and not (entity.unseen_by_players and e.key == own)
-    ]
+    hidden = [_md(e.text) for e in mine if e.secret and not (limited and e.key == own)]
     heard = lookup.heard.get(entity_id)
     when = (
         f"Last heard <t:{heard.last_session_at}:D>"
@@ -657,7 +671,7 @@ def card_text(
         lines.append(book_line)
     if entity.hidden_from_players and secrets:
         lines.append(HIDDEN_LINE)
-    if entity.audience_limited:
+    if limited:
         knowers = sorted(
             (
                 lookup.entities[r.subject_id].name
@@ -683,6 +697,29 @@ def card_text(
     if rows:
         text = _with_connections(text, rows, limit, more_url)
     return cut(text, limit)
+
+
+async def _gate_sets(
+    interaction: discord.Interaction,
+    memory: MemoryStore,
+    campaign: Campaign,
+    names: CampaignLookup,
+    secrets: bool,
+) -> tuple[frozenset[str] | None, frozenset[str]]:
+    """(the entries this reader holds, the entries the whole table holds), both from the gate and
+    read only (party knowledge slice 5, §9 rules 2 and 6): a player holds what their own
+    characters know, and with no character of theirs, common knowledge only (fail closed). The DM
+    needs no filter, so no first set. The flags only say what the DM switched on for the table."""
+    table = await memory.entries_held(campaign.guild_id, campaign.id)
+    if secrets:
+        return None, table
+    mine = [
+        e.id
+        for e in names.entities.values()
+        if e.is_player_character and e.played_by == interaction.user.id
+    ]
+    viewer = gate.Viewer.player(mine) if mine else gate.Viewer.the_world()
+    return await memory.entries_held(campaign.guild_id, campaign.id, viewer), table
 
 
 async def _dm_standing(
@@ -779,6 +816,7 @@ async def show_card(
     )
     dm_standing = await _dm_standing(memory, campaign, entity_id, secrets)
     entity = names.entities.get(entity_id)
+    seen, table = await _gate_sets(interaction, memory, campaign, names, secrets)
     player = sheet = None
     has_sheet = False
     if entity is not None and entity.played_by is not None:
@@ -895,6 +933,8 @@ async def show_card(
         more_url=all_names.page_url(site, campaign.guild_id, campaign.id),
         title=title,
         standing=dm_standing,
+        seen=seen,
+        table=table,
     )
     if text is None or entity is None:
         if replace:  # never leave the message pressed on a step that's over
@@ -906,7 +946,7 @@ async def show_card(
     if not cuts and text != card_text(
         names, entity_id, connections, secrets=secrets, player=player, sheet=sheet,
         limit=10**6, item=is_item, thread_lines=lines_of_thread, book_line=book_line, title=title,
-        standing=dm_standing,
+        standing=dm_standing, seen=seen, table=table,
     ):  # fmt: skip
         # Every section is short, but the whole card still didn't fit one message (a long note,
         # a sheet line, many groups): offer every section that has anything in it.
@@ -1931,7 +1971,8 @@ async def _names_around(
     kept = any(a.entity_id == entity_id and a.key == old_key and a.kind == "old" for a in everyone)
     longer = [a.text for a in everyone if a.key != old_key and contains(a.text, old)]
     entities = await memory.entities(campaign.guild_id, campaign.id)
-    private = {e.id: e.name for e in entities if e.unseen_by_players or e.type in DM_ONLY_TYPES}
+    held = await memory.entries_held(campaign.guild_id, campaign.id)  # (the table, from the gate)
+    private = {e.id: e.name for e in entities if e.id not in held or e.type in DM_ONLY_TYPES}
     hidden = [a.text for a in everyone if a.secret or a.entity_id in private]
     hidden += private.values()
     return kept, longer, hidden
@@ -1957,8 +1998,8 @@ async def _respell_past(
     if (
         written.batch is None
         or not renamed_key(old, new)
-        or entity.unseen_by_players
         or entity.type in DM_ONLY_TYPES
+        or entity.id not in await memory.entries_held(campaign.guild_id, campaign.id)
     ):
         return PastNote()
     notes: list[str] = []
@@ -2767,8 +2808,8 @@ class FinishPastButton(
             entity is None
             or name_key(entity.name) != name_key(new)  # the name was changed again since
             or not kept
-            or entity.unseen_by_players
             or entity.type in DM_ONLY_TYPES
+            or entity.id not in await memory.entries_held(campaign.guild_id, campaign.id)
         ):
             await _tell(interaction, "That fix is out of date, so nothing was changed.")
             return
