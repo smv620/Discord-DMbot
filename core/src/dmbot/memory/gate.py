@@ -959,9 +959,9 @@ def name_entries(
             (ENTRY, str(anchor["id"])) in seen.sureness
             and (str(anchor["id"]) not in anchor_secret or str(anchor["id"]) in anchor_held)
         )
-        if known or _public_entry(anchor, str(anchor["id"]) in anchor_secret):
-            return str(anchor["name"])
-        return None
+        # (known, common knowledge included: never the flags alone, which would name an anchor the
+        # viewer doesn't know; Supervisor's ruling on #4821)
+        return str(anchor["name"]) if known else None
 
     def safe_text(entity_id: str, text: str) -> str:
         """An other name as this viewer may read it: a joined person's label is rebuilt."""
