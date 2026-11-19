@@ -44,7 +44,6 @@ FILES: dict[str, tuple[str, str, str]] = {
     "memory/gate.py": (READS, "GraphEngineer", "`_public_entry`: the entries a player may see"),
     "memory/knowers.py": (MIRRORS, "GraphEngineer", "follow_flags and the 'is it shown' checks"),
     "memory/lookup.py": (READS, "GraphEngineer", "the lookup's own secret-name rule"),
-    "memory/meaning.py": (READS, "GraphEngineer", "meaning search leaves out unseen entries"),
     "memory/models.py": (DEFINES, "GraphEngineer", "the Entity fields and `unseen_by_players`"),
     "memory/party.py": (DEFINES, "GraphEngineer", "the party faction's row"),
     "memory/public_guard.py": (
@@ -52,7 +51,6 @@ FILES: dict[str, tuple[str, str, str]] = {
         "GraphEngineer",
         "which flags take an item from the players, held unless the DM chose it (#4524)",
     ),
-    "memory/recall.py": (READS, "GraphEngineer", "recall leaves out unseen entries"),
     "memory/revealed_aloud.py": (READS, "GraphEngineer", "names said aloud that were hidden"),
     "memory/states.py": (WRITES, "GraphEngineer", "clears `audience_limited` on a change of kind"),
     "memory/store.py": (
@@ -117,4 +115,4 @@ class TheFlagReaders(unittest.TestCase):
     def test_the_readers_still_to_convert_are_counted_for_the_record(self) -> None:
         # (a number to watch go down, not a limit: the slice is done when it reaches zero)
         reading = sorted(path for path, (kind, _, _) in FILES.items() if kind == READS)
-        self.assertEqual(len(reading), 13, reading)
+        self.assertEqual(len(reading), 11, reading)

@@ -197,6 +197,11 @@ def said(ref: str, text: str, speaker: int, at: int = 1, **kw: Any) -> Line:
 class Recalling(MemoryTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
+        # (the players' audience is the party's view, slice 5a: a party of one, made first, so
+        # every entry shown to the table after it is written as known to it)
+        self.hero = await self.add(
+            "Pcwyn Testhand", type="character", role="player_character", played_by=900_001
+        )
         self.mira = await self.add("Mira", type="character", role="npc", description="Hides a vow")
         self.cult = await self.add("Ash Cult", type="faction")
         self.ulfgar = await self.add("Ulfgar", type="character", role="npc")
@@ -870,9 +875,30 @@ class Speed(MemoryTest):
                 " FROM generate_series(0, %s - 1) AS n",
                 (GUILD_A, self.c, self.ENTRIES),
             )
+            # (a party of one who knows every entry, as 0316's backfill leaves a campaign: the
+            # players' audience asks the gate, slice 5a, so its read is timed too)
+            await conn.execute(
+                "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name, description,"
+                " status, source, created_at, role, played_by) VALUES (%s, %s, md5('hero'),"
+                " 'character', 'Pcwyn Testhand', '', 'confirmed', 'dm', 1, 'player_character',"
+                " 900001)",
+                (GUILD_A, self.c),
+            )
+            await conn.execute(
+                "INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind, entity_id,"
+                " created_at) VALUES (%s, %s, md5('hero view'), 'pc', md5('hero'), 1)",
+                (GUILD_A, self.c),
+            )
+            await conn.execute(
+                "INSERT INTO memory_knowers (guild_id, campaign_id, id, perspective_id,"
+                " about_entity_id, created_at) SELECT %s, %s, md5('k' || n), md5('hero view'),"
+                " md5('e' || n), 1 FROM generate_series(0, %s - 1) AS n",
+                (GUILD_A, self.c, self.ENTRIES),
+            )
             for table in (
                 "memory_entities", "memory_aliases", "memory_relations", "memory_mentions",
                 "memory_claims", "memory_heard", "memory_beliefs", "memory_perspectives",
+                "memory_knowers",
             ):  # fmt: skip
                 await conn.execute(f"ANALYZE {table}")
 

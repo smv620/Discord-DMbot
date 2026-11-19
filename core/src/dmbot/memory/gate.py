@@ -85,6 +85,13 @@ class Viewer:
         return Viewer(mode="all", party=True)
 
     @staticmethod
+    def the_world() -> Viewer:
+        """Anyone in the world: common knowledge only (🌍, #4537). The players' audience with no
+        party at all fails closed to this, never to "everything shown" (Supervisor's ruling M on
+        slice 5)."""
+        return Viewer(mode="any", characters=frozenset({COMMON}))
+
+    @staticmethod
     def party_at(member_ids: Iterable[str]) -> Viewer:
         """What is read to the whole table about one session: what every member of the party AT
         that session knows (`party_record.members_at`, #4537 slice 3b, §8). With no member (no
@@ -600,6 +607,48 @@ async def party_entries(scope: Scope) -> frozenset[str] | None:
     )
     seen.update(str(r["about_entity_id"]) for r in await cur.fetchall())
     return frozenset(seen)
+
+
+async def table_viewer(scope: Scope) -> Viewer:
+    """Who an answer to the whole table is for (Supervisor's ruling M on slice 5): the party at
+    the running session (ruling F's `table_members`), else the current party; with no member at
+    all, anyone in the world (`the_world`: common knowledge only)."""
+    from dmbot.memory import party_record
+
+    start = await party_record.running_session_start(scope)
+    members = await party_record.table_members(scope, start) if start is not None else None
+    if members is None:
+        members = await party_record.current_members(scope)
+    return Viewer.the_table(members) if members else Viewer.the_world()
+
+
+async def entries_for(scope: Scope, viewer: Viewer) -> frozenset[str]:
+    """The entries `viewer` holds as entries in their own right (`(ENTRY, id)` in the viewer's
+    sureness), for the readers that only filter entries (recall, meaning search; party knowledge
+    slice 5a). The current party takes `party_entries`' one aggregate, anyone in the world one read
+    of the common rows, and anything else the full gate. Reads only: it never writes a row (§9
+    rule 6). Not for the DM, who needs no filter."""
+    if viewer.characters == frozenset({COMMON}):
+        cur = await scope.conn.execute(
+            "SELECT k.about_entity_id FROM memory_knowers k JOIN memory_perspectives p"
+            " ON p.guild_id = k.guild_id AND p.campaign_id = k.campaign_id"
+            " AND p.id = k.perspective_id AND p.kind = 'everyone'"
+            " WHERE k.guild_id = %s AND k.campaign_id = %s AND k.about_entity_id IS NOT NULL"
+            " AND cardinality(k.hidden_by) = 0",
+            scope.ids,
+        )
+        return frozenset(str(r["about_entity_id"]) for r in await cur.fetchall())
+    from dmbot.memory import party_record
+
+    if viewer.party or (
+        viewer.mode == "all"
+        and viewer.characters == frozenset(await party_record.current_members(scope))
+    ):
+        fast = await party_entries(scope)
+        if fast is not None:
+            return fast
+    seen = await visible_to(scope, viewer)
+    return frozenset(i for (k, i) in seen.sureness if k == ENTRY)
 
 
 async def visible_to(scope: Scope, viewer: Viewer) -> Visible:
