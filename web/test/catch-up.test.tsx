@@ -50,6 +50,25 @@ describe("catch up on a name's row", () => {
     expect(await screen.findByText("↩️ Undone. Wren no longer knows those 1 thing.")).toBeTruthy();
   });
 
+  it("the more line says how many were left out, and is gone when none", async () => {
+    await open("n26");
+    expect(await screen.findByText(w.moreMany(2))).toBeTruthy();
+    expect(screen.getByText("2 more are missing things on this card too. Catch these up first and they will show.")).toBeTruthy();
+  });
+
+  it("the more line has the one-member sentence for one left out", async () => {
+    const api = mockApi("table");
+    api.catchUpChoices = async () => ({ choices: [{ id: "p1".repeat(16), count: 1 }], more: 1 });
+    await open("n25", api);
+    expect(await screen.findByText("1 more is missing things on this card too. Catch these up first and it will show.")).toBeTruthy();
+  });
+
+  it("no more line when none were left out", async () => {
+    await open("n24");
+    await screen.findByText("Wren and Ash are missing things on this card that the rest of the party knows.");
+    expect(screen.queryByText(/more are missing things|more is missing things/)).toBeNull();
+  });
+
   it("a member who is not in the party says so and changes nothing", async () => {
     await open("n25");
     fireEvent.click(await screen.findByRole("button", { name: w.oneLabel("Ash") }));

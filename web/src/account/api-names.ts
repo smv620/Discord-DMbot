@@ -632,7 +632,7 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     // "Catch up" (#4793): who is behind on an entry, and catching one member up (queued, then waited for: `told` and `batch`).
     catchUpChoices: async (ref, entry) => {
       const got = await partyAnswer(ref, await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/catch-up/choices`, { entry }));
-      return got.choices ?? [];
+      return { choices: got.choices ?? [], more: got.more ?? 0 };
     },
     catchUp: async (ref, member, entry) => {
       const got = await partyAnswer(ref, await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/catch-up`, { member, entry }));

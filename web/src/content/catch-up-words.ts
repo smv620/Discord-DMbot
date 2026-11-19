@@ -19,6 +19,8 @@ export const catchUpWords = {
   many: (names: string[]): string => `${listOf(names)} are missing things on this card that the rest of the party knows.`,
   oneLabel: (name: string): string => `📖 Catch up: ${cut(name, 25)}`,
   manyLabel: "📖 Catch up…",
+  moreOne: "1 more is missing things on this card too. Catch these up first and it will show.",
+  moreMany: (n: number): string => `${n} more are missing things on this card too. Catch these up first and they will show.`,
   pickQuestion: "Catch up who? Each gets everything on this card the rest of the party knows.",
   pickLabel: (name: string, n: number): string => `${cut(name, 18)} (${n})`,
   back: "↩️ Back",

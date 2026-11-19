@@ -2581,9 +2581,10 @@ export interface WebAnswer {
   batch?: number | null;
   /** World notes (#4285): how many a ✅ Keep kept. */
   kept?: number | null;
-  /** "Catch up" (#4793): how many things were told, and who is still behind (a choices answer). */
+  /** "Catch up" (#4793): how many things were told; and who is behind (a choices answer: at most four, and `more` left out). */
   told?: number | null;
   choices?: CatchUpChoice[] | null;
+  more?: number | null;
   /** A return to the party (#4778 a2): what the bot asked, "back", "join" (what they know) or "none". */
   asked?: "back" | "join" | "none" | null;
   /** The join question's "What the party knows" (#4778): how many things the party gave, or null (`given`, Supervisor's ruling). */
@@ -3272,8 +3273,8 @@ export interface AccountApi {
   /** "Back in the party" (#4778 a2): `asked` says what DMbot asks next, and `batch` is for Undo when it asks "what they know". */
   partyBack?(ref: string, character: string): Promise<{ batch: number | null; asked: "back" | "join" | "none" | null }>;
   partyUndo?(ref: string, batch: number): Promise<void>;
-  /** Who is behind the rest of the party on one entry, party order (#4793): DM only. */
-  catchUpChoices?(ref: string, entry: string): Promise<CatchUpChoice[]>;
+  /** Who is behind the rest of the party on one entry, party order, at most four (#4793): `more` is how many were left out. DM only. */
+  catchUpChoices?(ref: string, entry: string): Promise<{ choices: CatchUpChoice[]; more: number }>;
   /** Catch one member up on an entry (#4793): `told` is how many things, `batch` is the change for Undo (use `partyUndo`). */
   catchUp?(ref: string, member: string, entry: string): Promise<{ batch: number | null; told: number | null }>;
   /** The join questions waiting for the DM (#4778 part b): DM only; the door answers anyone else with nothing. */

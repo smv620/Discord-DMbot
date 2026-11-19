@@ -23,6 +23,7 @@ function sayFailure(error: unknown, name: string, undoing: boolean): string {
 export default function CatchUp({ api, refId, entry }: { api: AccountApi; refId: string; entry: string }) {
   const [open, setOpen] = useState(false);
   const [choices, setChoices] = useState<CatchUpChoice[] | null>(null);
+  const [more, setMore] = useState(0);
   const [members, setMembers] = useState<Member[]>([]);
   const [picking, setPicking] = useState(false);
   const [said, setSaid] = useState<Said | null>(null);
@@ -34,10 +35,11 @@ export default function CatchUp({ api, refId, entry }: { api: AccountApi; refId:
   async function read(): Promise<void> {
     if (!api.catchUpChoices) return;
     try {
-      const [all, party] = await Promise.all([api.catchUpChoices(refId, entry), api.partyRecord ? api.partyRecord(refId) : Promise.resolve([])]);
+      const [got, party] = await Promise.all([api.catchUpChoices(refId, entry), api.partyRecord ? api.partyRecord(refId) : Promise.resolve([])]);
       const named = party.map((p) => ({ id: p.id, name: p.name }));
       setMembers(named);
-      setChoices(all.filter((c) => named.some((m) => m.id === c.id)));
+      setChoices(got.choices.filter((c) => named.some((m) => m.id === c.id)));
+      setMore(got.more);
     } catch {
       setChoices([]);
     }
@@ -134,6 +136,7 @@ export default function CatchUp({ api, refId, entry }: { api: AccountApi; refId:
           </p>
         </>
       )}
+      {more > 0 && <p class="small">{more === 1 ? w.moreOne : w.moreMany(more)}</p>}
       {undo && (
         <p>
           <button type="button" class="button secondary" disabled={busy} onClick={() => void takeBack(undo)}>

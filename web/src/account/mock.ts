@@ -1308,7 +1308,13 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
       { id: "p2".repeat(16), count: 3 },
     ],
     n25: [{ id: "p2".repeat(16), count: 2 }],
+    // Two shown and two more left out (the card's "more" line).
+    n26: [
+      { id: "p1".repeat(16), count: 1 },
+      { id: "p2".repeat(16), count: 2 },
+    ],
   };
+  const catchUpMore: Record<string, number> = { n26: 2 };
   const catchUpBatches = new Map<number, { entry: string; choice: { id: string; count: number } }>();
   const partyBatches = new Map<number, PartyRecordCharacter[]>();
   let lastPartyBatch = 70;
@@ -3649,7 +3655,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-allowed");
-      return structuredClone(catchUpState[entry] ?? []);
+      return { choices: structuredClone(catchUpState[entry] ?? []), more: catchUpMore[entry] ?? 0 };
     },
     async catchUp(ref, member, entry) {
       calls.push(`catchUp:${ref}:${member}:${entry}`);
