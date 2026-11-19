@@ -285,7 +285,7 @@ class Clues(ConfirmedMemoryTest):
 
         lookup = CampaignLookup.build(data)
         connections = await self.memory.relations(GUILD_A, self.c, entity_id=self.secret)
-        dm = name_card.card_text(lookup, self.secret, connections, secrets=True)
+        dm = name_card.card_text(lookup, self.secret, connections, secrets=True, table=frozenset())
         assert dm is not None
         self.assertIn("🔒 **Only some people know this:** Cerric, Kesh", dm)
         self.assertIsNone(name_card.card_text(lookup, self.secret, connections, secrets=False))
@@ -325,7 +325,9 @@ class Clues(ConfirmedMemoryTest):
         other = name_card.card_text(
             await self.view(False), self.cerric, connections, secrets=False, seen={self.cerric}
         )
-        dm = name_card.card_text(await self.view(True), self.cerric, connections, secrets=True)
+        dm = name_card.card_text(
+            await self.view(True), self.cerric, connections, secrets=True, table=frozenset()
+        )
         assert other is not None and dm is not None
         self.assertNotIn("baron", other)
         self.assertIn("baron", dm)

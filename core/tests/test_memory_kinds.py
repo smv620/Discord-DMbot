@@ -128,19 +128,23 @@ class Cards(unittest.TestCase):
             link("creature_type", "humanoid", n=2),
             link("stat_block", "Goblin Warrior", n=3),
         ]
-        text = card_text(self.lookup(entity(role="npc"), links), E1, [], secrets=False)
+        text = card_text(self.lookup(entity(role="npc"), links), E1, [], secrets=False, seen={E1})
         assert text is not None
         self.assertIn("**Snot** · character · NPC · goblin (humanoid) · Goblin Warrior", text)
 
     def test_a_player_character_card_says_who_plays_it(self) -> None:
         who = entity(role="player_character", name="Testa", played_by=7)
-        text = card_text(self.lookup(who, []), E1, [], secrets=False, player="Mia")
+        text = card_text(self.lookup(who, []), E1, [], secrets=False, player="Mia", seen={E1})
         assert text is not None
         self.assertIn("**Testa** · character · PC · played by **Mia**", text)
 
     def test_a_god_and_a_place(self) -> None:
-        auril = card_text(self.lookup(entity(role="npc", name="Auril"), []), E1, [], secrets=False)
-        place = card_text(self.lookup(entity("place", name="Tower"), []), E1, [], secrets=False)
+        auril = card_text(
+            self.lookup(entity(role="npc", name="Auril"), []), E1, [], secrets=False, seen={E1}
+        )
+        place = card_text(
+            self.lookup(entity("place", name="Tower"), []), E1, [], secrets=False, seen={E1}
+        )
         assert auril is not None and place is not None
         self.assertIn("**Auril** · character · NPC", auril)
         self.assertIn("**Tower** · place", place)

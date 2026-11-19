@@ -290,7 +290,9 @@ class Stored(ConfirmedMemoryTest):
             GUILD_A, self.c, entity_id=self.kesh, include_secret=True
         )
         mine = card_text(lookup.for_viewer(True), self.kesh, connections, secrets=True)
-        players = card_text(lookup.for_viewer(False), self.kesh, connections, secrets=False)
+        players = card_text(
+            lookup.for_viewer(False), self.kesh, connections, secrets=False, seen={self.kesh}
+        )
         self.assertIn("Saved the mill", mine or "")
         self.assertNotIn("Saved the mill", players or "")
 
