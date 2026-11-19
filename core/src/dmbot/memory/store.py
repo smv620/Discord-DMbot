@@ -181,6 +181,7 @@ from dmbot.memory.models import (
     SOURCES,
     SPECIES,
     STORY_LANGUAGE_MAX,
+    THREAD_TYPES,
     WHO_SOURCE,
     WORKED_OUT_SOURCE,
     Alias,
@@ -244,6 +245,23 @@ from dmbot.names import not_names
 from dmbot.timebot.stamp import group_at, group_of_speakers
 
 log = logging.getLogger(__name__)
+
+
+CHOICES_MAX = 25  # (a Discord menu's options)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class JoinChoices:
+    """The "Let me choose" page (#4537 slice 4c): the question's characters (in the party now), the
+    sessions (start, number, character → how many) and story threads (id, name, character → how
+    many) with something to give, and how many of each there are in all."""
+
+    members: list[str]
+    sessions: list[tuple[int, int, dict[str, int]]]
+    threads: list[tuple[str, str, dict[str, int]]]
+    sessions_in_all: int
+    threads_in_all: int
+    nobody_caught_up: bool  # (no one else in the party to catch up from yet)
 
 
 @dataclasses.dataclass(frozen=True, slots=True)
@@ -3282,7 +3300,8 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, DM) as w:
             cur = await w.conn.execute(
                 "SELECT id, entity_id FROM memory_join_questions WHERE guild_id = %s"
-                " AND campaign_id = %s AND group_id = %s AND status IN ('waiting', 'everyone')"
+                " AND campaign_id = %s AND group_id = %s"
+                " AND status IN ('waiting', 'everyone', 'chosen')"  # (after picks: the rest, 4c)
                 " ORDER BY created_at, id FOR UPDATE",
                 (*w.ids, group_id),
             )
@@ -3355,6 +3374,122 @@ class MemoryStore:
                 raise MemoryRuleError("That character isn't in the party now.")
             told = await knowers.tell_member(w, member_id, entity_id)
             return Written(told, w.batch if told else None)
+
+    # "Let me choose" (#4537 slice 4c, §5; Supervisor's ruling G on #4537): the question's
+    # characters are caught up one session or one story thread at a time, each pick its own change
+    # with its own Undo. The first pick answers the question ("chosen", 0558); later ones only add.
+
+    async def _choosing(self, w: Scope, group_id: str, *, lock: bool = False) -> list[str]:
+        """The characters of one sent question still to catch up (in the party now). `lock`: a
+        pick holds the question's rows, so an Undo of the join or another answer waits for it
+        (and then finds nothing to give)."""
+        cur = await w.conn.execute(
+            "SELECT entity_id FROM memory_join_questions WHERE guild_id = %s AND campaign_id = %s"
+            " AND group_id = %s AND status IN ('waiting', 'everyone', 'chosen')"
+            " ORDER BY created_at, id" + (" FOR UPDATE" if lock else ""),
+            (*w.ids, group_id),
+        )
+        party = set(await party_record.current_members(w))
+        return [str(r["entity_id"]) for r in await cur.fetchall() if str(r["entity_id"]) in party]
+
+    async def join_choices(self, guild_id: int, campaign_id: str, group_id: str) -> JoinChoices:
+        """The "Let me choose" page: the question's characters, and the sessions and story threads
+        with something to give them, each with how many things for each character. Sessions newest
+        first (the last `CHOICES_MAX`); story threads with the most to give first."""
+        async with self._read(guild_id, campaign_id) as scope:
+            members = await self._choosing(scope, group_id)
+            if not members:
+                return JoinChoices([], [], [], 0, 0, False)
+            cur = await scope.conn.execute(
+                "SELECT started_at, number FROM (SELECT started_at, id, line_count,"
+                " row_number() OVER (ORDER BY started_at, id) AS number FROM transcript_sessions"
+                " WHERE guild_id = %s AND campaign_id = %s"
+                " AND (line_count > 0 OR transcripts_deleted_at IS NOT NULL)) AS s"
+                " WHERE line_count > 0 ORDER BY started_at DESC, id DESC",
+                scope.ids,
+            )
+            numbers = {int(r["started_at"]): int(r["number"]) for r in await cur.fetchall()}
+            nobody = not await knowers.caught_up_others(scope, members)
+            groups: dict[str, Mapping[str, Collection[str]]] = {}
+            for at, only in (await knowers.sessions_statements(scope, list(numbers))).items():
+                groups[f"s{at}"] = only
+            threads = {
+                str(e["id"]): str(e["name"])
+                for e in await scope.select(
+                    ENTITIES, " AND type = ANY(%s) AND status = %s", [list(THREAD_TYPES), CONFIRMED]
+                )
+            }
+            for tid, only in (await knowers.cards_statements(scope, list(threads))).items():
+                groups[f"t{tid}"] = only
+            counts = await knowers.choose_counts(scope, members, groups)
+        sessions = [
+            (at, numbers[at], counts[f"s{at}"]) for at in numbers if f"s{at}" in counts
+        ]  # (newest first)
+        stories = sorted(
+            ((t, threads[t], counts[f"t{t}"]) for t in threads if f"t{t}" in counts),
+            key=lambda x: (-sum(x[2].values()), x[1].casefold()),
+        )
+        return JoinChoices(
+            members, sessions[:CHOICES_MAX], stories[:CHOICES_MAX], len(sessions), len(stories),
+            nobody,
+        )  # fmt: skip
+
+    async def session_number(self, guild_id: int, campaign_id: str, started_at: int) -> int | None:
+        """A session's number as the transcripts count them (a deleted one keeps its place)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT number FROM (SELECT started_at, row_number() OVER (ORDER BY started_at, id)"
+                " AS number FROM transcript_sessions WHERE guild_id = %s AND campaign_id = %s"
+                " AND (line_count > 0 OR transcripts_deleted_at IS NOT NULL)) AS s"
+                " WHERE started_at = %s LIMIT 1",
+                (guild_id, campaign_id, started_at),
+            )
+            row = await cur.fetchone()
+        return None if row is None else int(row["number"])
+
+    async def join_choose(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        group_id: str,
+        *,
+        session_at: int | None = None,
+        thread_id: str | None = None,
+    ) -> Written[tuple[dict[str, int], bool]]:
+        """One "Let me choose" pick (a session's start, or a story thread): each of the question's
+        characters is given what the rest of the party knows from it, one change with one Undo.
+        Returns how many things each was given, and whether this pick answered the question (its
+        Undo then makes it wait again). Nothing given: no change. `AlreadyAnswered` when the
+        question has been answered otherwise ("What the party knows") or has no one left."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            members = await self._choosing(w, group_id, lock=True)
+            if not members:
+                raise join_questions_mod.AlreadyAnswered("Another DM already answered this.")
+            if session_at is not None:
+                only = await knowers.session_statements(w, session_at)
+            elif thread_id is not None:
+                only = await knowers.card_statements(w, thread_id)
+            else:
+                raise MemoryRuleError("Pick a session or a story thread.")
+            told = await knowers.choose_write(w, members, only)
+            first = False
+            if told and w.batch is not None:
+                # (only a question still waiting is answered by a pick: after "Only what everyone
+                # knows" a pick only adds, so its Undo leaves that answer as it was)
+                cur = await w.conn.execute(
+                    "UPDATE memory_join_questions SET status = 'chosen', answered_at = %s,"
+                    " answered_batch = %s WHERE guild_id = %s AND campaign_id = %s"
+                    " AND group_id = %s AND status = 'waiting' RETURNING id",
+                    (w.now, w.batch, *w.ids, group_id),
+                )
+                first = bool(await cur.fetchall())
+                await w.conn.execute(
+                    "UPDATE memory_join_questions SET pick_batches = pick_batches || %s::bigint"
+                    " WHERE guild_id = %s AND campaign_id = %s AND group_id = %s"
+                    " AND status IN ('waiting', 'everyone', 'chosen')",
+                    (w.batch, *w.ids, group_id),
+                )
+            return Written((told, first), w.batch if told else None)
 
     async def join_from_session(
         self, guild_id: int, campaign_id: str, entity_id: str, started_at: int
