@@ -124,6 +124,8 @@ describe("the presses", () => {
 // The Roads group (#4784): a road whose length a kept map disagrees with, ✅ Keep only (no 🚫), behind ROADS_LIVE.
 describe("the Roads group", () => {
   const ROAD = "Targos to Bryn Shander";
+  const R1 = `road:${"c1".repeat(16)}`;
+  const R2 = `road:${"c2".repeat(16)}`;
   const NOTE = "The map puts it three hours' ride apart; the lore says two days.";
 
   it("shows no Roads group while ROADS_LIVE is off", async () => {
@@ -131,6 +133,17 @@ describe("the Roads group", () => {
     await screen.findByText(SALT);
     expect(screen.queryByRole("heading", { name: w.roads })).toBeNull();
     expect(screen.queryByText(ROAD)).toBeNull();
+  });
+
+  it("with the switch off, roads are not counted: a page with only roads says nothing to check", async () => {
+    const api = mockApi("table");
+    api.worldNotes = async (ref) => {
+      api.calls.push(`worldNotes:${ref}`);
+      return { places: [], languages: [], roads: [{ id: R1, name: ROAD, note: NOTE, fromSession: null }] };
+    };
+    render(<Names api={api} path={DM} />);
+    expect(await screen.findByText(w.none)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.keepAllRoads(1) })).toBeNull();
   });
 
   it("lists each road with its name and the API's note, and no Not-right button", async () => {
@@ -146,7 +159,7 @@ describe("the Roads group", () => {
     live.roads = true;
     const api = await open();
     fireEvent.click(await screen.findByRole("button", { name: w.keepLabel(ROAD) }));
-    await waitFor(() => expect(calls(api, "road:r1")).toHaveLength(1));
+    await waitFor(() => expect(calls(api, R1)).toHaveLength(1));
     await waitFor(() => expect(screen.queryByText(ROAD)).toBeNull());
     expect(await screen.findByText(w.kept(ROAD))).toBeTruthy();
   });
@@ -155,9 +168,7 @@ describe("the Roads group", () => {
     live.roads = true;
     const api = await open();
     fireEvent.click(await screen.findByRole("button", { name: w.keepAllRoads(2) }));
-    await waitFor(() => expect(calls(api, "road:r1")).toHaveLength(1));
-    expect(calls(api, "road:r2")).toHaveLength(1);
-    expect(calls(api, "road:r1")[0]).toContain('"ids":["road:r1","road:r2"]');
+    await waitFor(() => expect(calls(api, `"ids":["${R1}","${R2}"]`)).toHaveLength(1));
   });
 
   it("an API with no roads shows no group", async () => {
@@ -171,5 +182,20 @@ describe("the Roads group", () => {
     await screen.findByRole("heading", { name: w.heading });
     await waitFor(() => expect(api.calls.some((c) => c.startsWith("worldNotes:"))).toBe(true));
     expect(screen.queryByRole("heading", { name: w.roads })).toBeNull();
+  });
+
+  it("↩ Undo puts a kept road back", async () => {
+    live.roads = true;
+    await open();
+    fireEvent.click(await screen.findByRole("button", { name: w.keepLabel(ROAD) }));
+    await waitFor(() => expect(screen.queryByText(ROAD)).toBeNull());
+    fireEvent.click(await screen.findByRole("button", { name: w.undo }));
+    expect(await screen.findByText(ROAD)).toBeTruthy();
+  });
+
+  it("a road has no 🚫 Not right, and the door refuses one if it were sent", async () => {
+    live.roads = true;
+    const api = mockApi("table");
+    await expect(api.changeWorldNotes!("100.cmp1", { action: "not", id: R1 })).rejects.toMatchObject({ kind: "bad-action" });
   });
 });

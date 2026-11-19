@@ -1089,10 +1089,11 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // What each connection edit changed, for Undo (the numbers only go up).
   let lastBatch = 0;
   // DMbot's guesses for the DM to check (#4285): a few lines of each kind, ids shaped as the door's are.
-  // The Roads group (#4784, behind ROADS_LIVE): two roads whose length a kept map disagrees with; a Keep takes one by `road:<id>`.
+  // The Roads group (#4784, behind ROADS_LIVE): two roads whose length a kept map disagrees with. Their ids are the door's keep ids,
+  // `road:` and 32 hex, as core sends them; a road has no 🚫, so a "not" on one is refused.
   const worldRoads: WorldRoadNote[] = [
-    { id: "r1", name: "Targos to Bryn Shander", note: "The map puts it three hours' ride apart; the lore says two days.", fromSession: 1_700_000_000 },
-    { id: "r2", name: "Bryn Shander to Icewind Dale", note: "Forty miles on the map; the lore says it is a week's walk.", fromSession: null },
+    { id: `road:${"c1".repeat(16)}`, name: "Targos to Bryn Shander", note: "The map puts it three hours' ride apart; the lore says two days.", fromSession: 1_700_000_000 },
+    { id: `road:${"c2".repeat(16)}`, name: "Bryn Shander to Icewind Dale", note: "Forty miles on the map; the lore says it is a week's walk.", fromSession: null },
   ];
   const worldNotes: { places: WorldPlaceNote[]; languages: WorldLanguageNote[]; roads: WorldRoadNote[] } = {
     places: [
@@ -3035,9 +3036,10 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const ids = change.action === "keep" ? change.ids : [change.id];
       const places = worldNotes.places.filter((n) => ids.includes(n.id));
       const languages = worldNotes.languages.filter((n) => ids.includes(n.id));
-      const roads = worldNotes.roads.filter((n) => ids.includes(`road:${n.id}`));
+      if (change.action === "not" && change.id.startsWith("road:")) throw new ApiError("bad-action");
+      const roads = worldNotes.roads.filter((n) => ids.includes(n.id));
       if (places.length + languages.length + roads.length === 0) throw new ApiError("gone");
-      worldNotes.roads = worldNotes.roads.filter((n) => !ids.includes(`road:${n.id}`));
+      worldNotes.roads = worldNotes.roads.filter((n) => !ids.includes(n.id));
       worldNotes.places = worldNotes.places.filter((n) => !ids.includes(n.id));
       worldNotes.languages = worldNotes.languages.filter((n) => !ids.includes(n.id));
       const batch = ++lastBatch;

@@ -139,7 +139,7 @@ export default function WorldNotes({ api, refId, onSignedOut }: { api: AccountAp
 }
 
 /** The Roads group (#4784): one line per road, its name and the API's note, ✅ Keep (no 🚫 Not right) and Keep all for the shown lines.
- * A road's keep id is `road:<id>`, as the door reads it. Shown and kept the same way as a place or a language line. */
+ * A road's id is already its keep id, `road:<32 hex>`, as the door sends and reads it. */
 function RoadsGroup({
   roads,
   busy,
@@ -162,7 +162,7 @@ function RoadsGroup({
             <p>{n.note}</p>
             <p class="small muted">{n.fromSession !== null ? w.fromSession : w.fromLore}</p>
             <p class="row">
-              <button type="button" class="button secondary" disabled={busy} aria-label={w.keepLabel(n.name)} onClick={() => void keepOne(n.name, `road:${n.id}`)}>
+              <button type="button" class="button secondary" disabled={busy} aria-label={w.keepLabel(n.name)} onClick={() => void keepOne(n.name, n.id)}>
                 {w.keep}
               </button>
             </p>
@@ -170,7 +170,7 @@ function RoadsGroup({
         ))}
       </ul>
       {roads.length > shown.length && <p class="small muted">{w.showing(shown.length, roads.length)}</p>}
-      <button type="button" class="button secondary" disabled={busy} onClick={() => void keepAll(shown.map((n) => `road:${n.id}`))}>
+      <button type="button" class="button secondary" disabled={busy} onClick={() => void keepAll(shown.map((n) => n.id))}>
         {w.keepAllRoads(shown.length)}
       </button>
     </div>

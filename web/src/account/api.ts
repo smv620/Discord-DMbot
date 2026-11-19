@@ -2103,7 +2103,7 @@ export interface WorldLanguageNote {
   fromSession: number | null;
 }
 /** A road whose length DMbot read that a kept map disagrees with (#4677): for the DM to keep, with no "Not right" (the length or
- * the map may be the one that is off). `name` and `note` are the API's words. */
+ * the map may be the one that is off). `name` and `note` are the API's words. `id` is the keep id as the door sends it, `road:<32 hex>`. */
 export interface WorldRoadNote {
   id: string;
   name: string;
