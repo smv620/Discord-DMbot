@@ -4230,7 +4230,10 @@ class ConnectionOffer(_Menu):
         waiting = await store.waiting(campaign.guild_id, campaign.id, symmetric=symmetric)
         ready = [w for w in waiting if w.ready]
         self.changes = await keep.changes_among(memory, campaign.guild_id, campaign.id, ready)
-        if any(w.hand_over for w in ready):  # (what the players see decides a hand-over's line)
+        # What the players see decides a hand-over's line and whether a world connection "waits to
+        # be said" (#4827: it was read only for a hand-over, so every world connection said "waits"
+        # while ✅ saved it as the players' own)
+        if any(w.hand_over or w.world for w in ready):
             self.shown_ids = await keep.shown_entry_ids(memory, campaign.guild_id, campaign.id)
         return ready
 
