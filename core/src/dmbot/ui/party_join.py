@@ -303,6 +303,9 @@ class ChooseButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], t
     async def callback(self, interaction: discord.Interaction) -> Any:
         from dmbot.ui.party_choose import open_page
 
+        await _answer_first(interaction, in_place=True)
+        if await _dm_campaign(interaction, self.campaign_id) is None:  # (a DM only, every press)
+            return
         await open_page(interaction, self.campaign_id, self.group_id)
 
 
