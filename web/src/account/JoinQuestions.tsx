@@ -33,7 +33,7 @@ export default function JoinQuestions({
   const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   // The last "What the party knows" with its change number, and the names it was for (the card may show another message by then).
-  const [undo, setUndo] = useState<{ batch: number; names: string[] } | null>(null);
+  const [undo, setUndo] = useState<{ batch: number; names: string[]; back: boolean } | null>(null);
   const flight = useRef(false);
   const live = useRef(true);
   useEffect(() => {
@@ -74,7 +74,7 @@ export default function JoinQuestions({
   const everyone = (g: JoinGroup) =>
     press(async () => {
       await api.answerJoin!(campaignRef, { action: "everyone", group: g.group });
-      if (live.current) setSaid({ ok: true, text: w.everyoneDone(w.join(g.names), g.names.length === 1) });
+      if (live.current) setSaid({ ok: true, text: g.kind === "back" ? w.backEveryoneDone(g.names) : w.everyoneDone(w.join(g.names), g.names.length === 1) });
     });
   const party = (g: JoinGroup) =>
     press(async () => {
@@ -87,12 +87,13 @@ export default function JoinQuestions({
         return;
       }
       setSaid({ ok: true, text: got.given === null ? w.nothingToGive(names) : w.partyDone(names, got.given, one) });
-      setUndo({ batch: got.batch, names: g.names });
+      setUndo({ batch: got.batch, names: g.names, back: g.kind === "back" });
     });
-  const takeBack = (back: { batch: number; names: string[] }) =>
+  const takeBack = (back: { batch: number; names: string[]; back: boolean }) =>
     press(async () => {
       await api.answerJoin!(campaignRef, { action: "undo", batch: back.batch });
-      if (live.current) (setUndo(null), setSaid({ ok: true, text: w.undone(w.join(back.names), back.names.length === 1) }));
+      if (live.current)
+        (setUndo(null), setSaid({ ok: true, text: back.back ? w.backUndone(back.names) : w.undone(w.join(back.names), back.names.length === 1) }));
     }, true);
 
   if (failed && !groups) {
@@ -116,16 +117,16 @@ export default function JoinQuestions({
       {g ? (
         <>
           <p>
-            <strong>{w.heading(g.names)}</strong>
+            <strong>{g.kind === "back" ? w.backHeading(g.names) : w.heading(g.names)}</strong>
           </p>
-          <p>{w.question(g.names)}</p>
-          <p class="small">{w.explain(g.names)}</p>
+          <p>{g.kind === "back" ? w.backQuestion(g.names) : w.question(g.names)}</p>
+          <p class="small">{g.kind === "back" ? w.backExplain(g.names) : w.explain(g.names)}</p>
           <p class="small">{w.later(names)}</p>
           {g.answer === "everyone" && <p class="small">{w.everyoneChosen}</p>}
           <div class="row">
             {g.answer !== "everyone" && (
               <button type="button" class="button secondary" disabled={busy} onClick={() => void everyone(g)}>
-                {w.everyone}
+                {g.kind === "back" ? w.backEveryone : w.everyone}
               </button>
             )}
             <button type="button" class="button" disabled={busy} onClick={() => void party(g)}>
