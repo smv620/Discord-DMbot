@@ -1767,8 +1767,8 @@ async def _owners_learn(
         return 0
     try:
         written = await memory.learn_statements(
-            campaign.guild_id, campaign.id, "entry", pairs, source=DM
-        )
+            campaign.guild_id, campaign.id, "entry", pairs, source=DM, backstory=True
+        )  # (each name from its own character's backstory: never copied to another, #4795)
     except Exception as exc:  # the type only: a database error can quote a row
         log.warning("Backstory names couldn't be given to their character (%s)", type(exc).__name__)
         return 0
@@ -2909,6 +2909,7 @@ async def _secret_names_known_by(
                 [known_by],
                 source=DM,
                 dm_chose_secret=False,
+                backstory_of=known_by,  # (from that character's backstory, #4795)
             )
         except MemoryRuleError:
             log.info("A secret name's first knowers were refused")
@@ -4589,6 +4590,8 @@ class ConnectionOffer(_Menu):
                     # ✅ Keep: the uploader's character knows it from the start; 🤫 Keep as secret
                     # is the DM's alone (#2935); 👥 Some know: exactly the ticked characters
                     known_by=known_by,
+                    # (from the uploader's character's own backstory, never a 👥 pick, #4795)
+                    backstory_of=c.known_by if knowers is None and c.known_by else None,
                     from_session_at=start if old else None,  # (starts as the old one ends)
                     # a secret SPELLING in the text never hides what the players were shown (#3025);
                     # the DM's own 🤫 button is their word and does
