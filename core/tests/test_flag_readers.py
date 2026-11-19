@@ -42,12 +42,6 @@ FILES: dict[str, tuple[str, str, str]] = {
         "the sample run's split-party counts (#3545)",
     ),
     "memory/_changes.py": (WRITES, "GraphEngineer", "the change log's row writers and Undo"),
-    "memory/backstory_keep.py": (
-        READS,
-        "GraphEngineer",
-        "`shown_entry_ids` decides whether a kept connection is stored unrevealed or made common "
-        "knowledge (`kept_unrevealed`, `common_connection`): a player's view, to the gate",
-    ),
     "memory/backstory_links.py": (
         READS,
         "GraphEngineer",
@@ -157,4 +151,4 @@ class TheFlagReaders(unittest.TestCase):
     def test_the_readers_still_to_convert_are_counted_for_the_record(self) -> None:
         # (a number to watch go down, not a limit: the slice is done when it reaches zero)
         reading = sorted(path for path, (kind, _, _) in FILES.items() if kind == READS)
-        self.assertEqual(len(reading), 7, reading)
+        self.assertEqual(len(reading), 6, reading)

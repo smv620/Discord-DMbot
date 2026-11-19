@@ -169,23 +169,23 @@ async def player_character_keys(
 
 
 async def shown_entry_ids(memory: MemoryStore, guild_id: int, campaign_id: str) -> set[str]:
-    """The entries the players are shown: confirmed, not held back from them, not a limited clue
-    and not an unnamed person (the old readers' rule). Read once per batch."""
+    """The entries the players are shown: what the table holds now, by the gate (#4823; party
+    knowledge slice 5, never the flags), confirmed, not merged and not an unnamed person (a
+    person the story never named is not a name the table can be told of). Read once per batch."""
+    held = await memory.entries_shown_to_table(guild_id, campaign_id)
     data = await memory.lookup_data(guild_id, campaign_id)
     return {
         e.id
         for e in data.entities
-        if e.status == CONFIRMED
-        and not (e.hidden_from_players or e.audience_limited or e.unnamed or e.merged_into)
+        if e.id in held and e.status == CONFIRMED and not (e.unnamed or e.merged_into)
     }
 
 
 def kept_unrevealed(c: Waiting, secret: bool, shown: set[str]) -> bool:
     """Does a connection kept from this waiting row still wait to be said at the table? Yes,
     unless the upload said the players know it (#2959: World general knowledge, or a smart guess
-    the AI called common knowledge), it is not secret and both its ends are shown. The old flags
-    are what the players see until the readers go through the who-knows lists (#2995 slice 3), so
-    this is where an upload's choice reaches them; the list follows the flag by itself."""
+    the AI called common knowledge), it is not secret and the table holds both its ends
+    (`shown_entry_ids`, the gate's answer, #4823)."""
     if not c.world or secret or c.secret:
         return True
     return not {c.subject_id, c.object_id} <= shown
