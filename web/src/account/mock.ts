@@ -3627,12 +3627,12 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       const c = partyState.find((p) => p.id === character);
       if (!c) throw new ApiError("not-a-pc");
       if (c.inParty) throw new ApiError("already-back");
-      // Ash is asked what she knows (join, with an Undo); Wren's return asks nothing (none).
+      // Ash is asked what she knows (join); Wren's return asks nothing (none). Either way Undo is offered (core's card).
       const asked = c.name === "Ash" ? ("join" as const) : ("none" as const);
       partyBatches.set(++lastPartyBatch, structuredClone(partyState));
       c.inParty = true;
       c.spans.push({ from: 1711000000, to: null, ended: null, session: null });
-      return { batch: asked === "join" ? lastPartyBatch : null, asked };
+      return { batch: lastPartyBatch, asked };
     },
     async partyUndo(ref, batch) {
       calls.push(`partyUndo:${ref}:${batch}`);

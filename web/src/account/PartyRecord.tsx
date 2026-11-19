@@ -9,8 +9,8 @@ import { ApiError, type AccountApi, type PartyRecordCharacter } from "./api";
 import SavingWait from "./SavingWait";
 
 type Said = { ok: boolean; text: string };
-// What can be undone: a leave, or a return that DMbot asks about (`join`), by its change number and the name it was for.
-type Back = { kind: "leave" | "join"; batch: number; name: string };
+// What can be undone: a leave or a return, by its change number and the name it was for. Core offers Undo after every return.
+type Back = { kind: "leave" | "return"; batch: number; name: string };
 
 /** The plain line for an error word from the party record's doors (waitForAnswer maps them to these kinds). */
 function sayFailure(error: unknown, name: string, tooLate: string | null): string {
@@ -78,11 +78,11 @@ export default function PartyRecord({ api, refId, row }: { api: AccountApi; refI
     run(row.name, null, async () => {
       const got = await api.partyBack!(refId, row.id);
       setSaid({ ok: true, text: w.backDone(row.name, got.asked ?? "none") });
-      setBack(got.asked === "join" && got.batch !== null ? { kind: "join", batch: got.batch, name: row.name } : null);
+      setBack(got.batch === null ? null : { kind: "return", batch: got.batch, name: row.name });
     });
 
   const takeBack = (undo: Back) =>
-    run(undo.name, undo.kind === "join" ? w.tooLateBack(undo.name) : w.tooLateLeave, async () => {
+    run(undo.name, undo.kind === "return" ? w.tooLateBack(undo.name) : w.tooLateLeave, async () => {
       await api.partyUndo!(refId, undo.batch);
       setBack(null);
       setSaid({ ok: true, text: undo.kind === "leave" ? w.undoneLeave(undo.name) : w.undoneBack(undo.name) });

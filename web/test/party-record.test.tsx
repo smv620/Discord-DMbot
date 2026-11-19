@@ -77,21 +77,33 @@ describe("the party record on a player character", () => {
     expect(await screen.findByText(w.undoneBack("Ash"))).toBeTruthy();
   });
 
-  it("Back in the party with nothing asked says it and offers no Undo", async () => {
+  it("Back in the party with nothing asked says it, and Undo is still offered and sends partyUndo", async () => {
     const api = mockApi("table");
-    api.partyBack = async () => ({ batch: null, asked: "none" });
     await openCard(ASH, api);
+    api.partyBack = async () => ({ batch: 77, asked: "none" });
+    api.partyUndo = async (ref, batch) => {
+      api.calls.push(`partyUndo:${ref}:${batch}`);
+    };
     fireEvent.click(await screen.findByRole("button", { name: w.backButton }));
     expect(await screen.findByText(w.backDone("Ash", "none"))).toBeTruthy();
-    expect(screen.queryByRole("button", { name: w.undo })).toBeNull();
+    await waitFor(() => expect((screen.getByRole("button", { name: w.undo }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: w.undo }));
+    await waitFor(() => expect(api.calls).toContain(`partyUndo:${REF}:77`));
+    expect(await screen.findByText(w.undoneBack("Ash"))).toBeTruthy();
   });
 
-  it("Back in the party with the bot asking what they remember says the 'back' line", async () => {
+  it("Back in the party with the bot asking what they remember says the 'back' line, with Undo", async () => {
     const api = mockApi("table");
-    api.partyBack = async () => ({ batch: null, asked: "back" });
     await openCard(ASH, api);
+    api.partyBack = async () => ({ batch: 78, asked: "back" });
+    api.partyUndo = async (ref, batch) => {
+      api.calls.push(`partyUndo:${ref}:${batch}`);
+    };
     fireEvent.click(await screen.findByRole("button", { name: w.backButton }));
     expect(await screen.findByText(w.backDone("Ash", "back"))).toBeTruthy();
+    await waitFor(() => expect((screen.getByRole("button", { name: w.undo }) as HTMLButtonElement).disabled).toBe(false));
+    fireEvent.click(screen.getByRole("button", { name: w.undo }));
+    await waitFor(() => expect(api.calls).toContain(`partyUndo:${REF}:78`));
   });
 
   it("an undo too late for a return says to use Has left the party on the card", async () => {
