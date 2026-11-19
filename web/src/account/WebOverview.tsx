@@ -104,7 +104,7 @@ export default function WebOverview({
                       {n.name}
                       {!n.knowWord && n.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
                       {!n.knowWord && n.revealed === false && <span class="small muted"> ({words.notRevealed})</span>}
-                      {n.knowWord && words.knowWords[n.knowWord] && <span class="small muted"> ({words.knowWords[n.knowWord]})</span>}
+                      {n.knowWord && words.knowWords[n.knowWord] && <span class="small muted"> ({(n.knowLine ?? words.knowWords[n.knowWord])})</span>}
                     </button>
                     {n.page === true && npcPageHref(refId, n.id) && (
                       <>
