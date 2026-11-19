@@ -87,3 +87,24 @@ class AFactionsParty(Party):
         )  # fmt: skip
         tie = str(rel.value[0].id)
         self.assertIsNotNone(await self.sure(gate.Viewer.player([self.vell]), gate.CONNECTION, tie))
+
+    async def test_an_unnamed_person_the_faction_knows_doesnt_reach_them(self) -> None:
+        # (a person the story never named counts as a hide, 0264; Supervisor's ruling on #4808)
+        made = await self.memory.add_entity(
+            GUILD, self.c, name="a hooded figure", type="character", role="npc",
+            status=CONFIRMED, source=DM,
+        )  # fmt: skip
+        figure = str(made.value.id)
+        await self.memory.set_statement_knowers(
+            GUILD, self.c, "entry", figure, [self.hand], source=DM, dm_chose_secret=True
+        )
+        vell = gate.Viewer.player([self.vell])
+        self.assertIsNotNone(await self.sure(vell, gate.ENTRY, figure))
+        async with self.db.guild(GUILD) as conn:  # (as `make_unnamed` leaves it)
+            await conn.execute(
+                "UPDATE memory_entities SET unnamed = true, unnamed_what = 'hooded figure'"
+                " WHERE id = %s",
+                (figure,),
+            )
+        self.assertIsNone(await self.sure(vell, gate.ENTRY, figure))
+        self.assertIsNotNone(await self.sure(gate.Viewer.player([self.hand]), gate.ENTRY, figure))
