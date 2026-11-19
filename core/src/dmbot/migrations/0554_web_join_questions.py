@@ -18,8 +18,9 @@ from __future__ import annotations
 # names only; DM only (NULL for anyone else). The door and the actions do not check
 # `DMBOT_PARTY_JOIN`: with it off the bot makes no join questions, so there is nothing to list, and
 # the page's own switch keeps the card off until the bot step is deployed. Ids and names, never a
-# word of the story. The queue door's lists, shape check and the table's action list are read back as they are and each anchor
-# must be found exactly once, so a drift stops the migration. No row is changed.
+# word of the story. The queue door's lists, shape check and the table's action list are read
+# back as they are and each anchor must be found exactly once, so a drift stops the migration. No
+# row is changed.
 ACTIONS = ("join-everyone", "join-party", "join-undo")
 _ID = "[0-9a-f]{32}"
 _PREV = "'clue-undo', 'lore-pdf-estimate'"
