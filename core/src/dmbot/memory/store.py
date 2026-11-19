@@ -8859,6 +8859,25 @@ class MemoryStore:
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             return await gate.visible_to(scope, viewer)
 
+    async def entries_seen_by(
+        self, guild_id: int, campaign_id: str, user_id: int
+    ) -> frozenset[str]:
+        """The one answer to "what does this person (not a DM) hold" for the names lists, cards and
+        files built from the lookup (party knowledge slice 5b, #4537; Supervisor's rulings O and P):
+        what their own player characters know, each character's own entry included, and with no
+        character in this campaign, common knowledge only (failing closed, ruling M). Who plays a
+        character is read here, from the database, never from the request. Reads only (§9 rule 6).
+        Not for a DM, who sees everything."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            rows = await scope.select(
+                ENTITIES,
+                " AND type = 'character' AND role = %s AND status = %s AND played_by = %s",
+                [PLAYER_CHARACTER, CONFIRMED, user_id],
+            )
+            mine = frozenset(str(r["id"]) for r in rows)
+            viewer = gate.Viewer.player(mine) if mine else gate.Viewer.the_world()
+            return await gate.entries_for(scope, viewer) | mine
+
     async def connection_knowers(
         self, guild_id: int, campaign_id: str, relation_ids: Sequence[str]
     ) -> dict[str, list[str]]:

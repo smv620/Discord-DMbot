@@ -120,6 +120,11 @@ KIND_SHORT: dict[str, str] = {
     "concept": "other",
     "person": "player or DM",
 }
+# A non-DM with no character in this campaign sees only what everyone knows (Supervisor's ruling O
+# on #4537, slice 5b): one plain line says why the list is nearly empty. #4804/#4805 reuse it.
+NO_CHARACTER = (
+    "You see what your character knows. Ask your DM to link your character if you have one."
+)
 NOT_AVAILABLE = (
     "Remembering names isn't switched on for this DMbot yet. Ask whoever runs DMbot to turn it on."
 )
@@ -246,8 +251,23 @@ def review_line(reviews: Reviews) -> str | None:
     return f"⏳ **Waiting for you:** {', '.join(parts)}." if parts else None
 
 
+def plays_one(names: CampaignLookup, user_id: int) -> bool:
+    """Whether this person plays a confirmed player character of the campaign (the whole copy's
+    entries: a character's own entry is always in its player's view, so this only decides the
+    line below)."""
+    return any(
+        e.role == PLAYER_CHARACTER and e.played_by == user_id and e.status == CONFIRMED
+        for e in names.entities.values()
+    )
+
+
 def home_text(
-    names: CampaignLookup, campaign: Campaign, waiting: int, reviews: Reviews | None = None
+    names: CampaignLookup,
+    campaign: Campaign,
+    waiting: int,
+    reviews: Reviews | None = None,
+    *,
+    no_character: bool = False,
 ) -> tuple[str, list[tuple[str, str, str]]]:
     """The overview (about 15 lines, under Discord's limit): how many names of each
     kind, the waiting check, names heard last session and names added lately. Returns
@@ -255,7 +275,9 @@ def home_text(
     are on each name's card, for the campaign's DMs."""
     confirmed = [e for e in names.entities.values() if e.status == CONFIRMED]
     lines = [f"🧠 **Names DMbot knows for {_md(campaign.name)}**"]
-    if not confirmed:
+    if no_character:  # (why the list is nearly empty for someone with no character, ruling O)
+        lines.append(NO_CHARACTER)
+    if not confirmed and not no_character:
         lines.append(
             "None yet. Add the names your table says out loud (characters, NPCs, places). "
             "DMbot listens for them so the transcript spells them right: **Belleros**, not "
@@ -587,14 +609,21 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
         return
+    dm = sees_secrets(campaign, interaction.user.id)
     try:
-        names = (await cache.get(campaign.guild_id, campaign.id)).for_viewer(
-            sees_secrets(campaign, interaction.user.id)
+        whole = await cache.get(campaign.guild_id, campaign.id)
+        # (anyone else sees the names of what their own characters know, from the gate, #4537 5b)
+        seen = (
+            None
+            if dm
+            else await memory.entries_seen_by(campaign.guild_id, campaign.id, interaction.user.id)
         )
+        names = whole.for_viewer(dm, seen)
     except Exception:
         log.exception("Couldn't load the campaign's names")
         await _tell(interaction, "DMbot couldn't load the names just now. Try again in a moment.")
         return
+    no_character = not dm and not plays_one(whole, interaction.user.id)
     waiting = len(await memory.entities(campaign.guild_id, campaign.id, statuses=[PROPOSED]))
     reviews = (
         await waiting_reviews(interaction, campaign)
@@ -631,7 +660,7 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
         from dmbot.ui.look_alikes import count_groups
 
         look_alikes = await count_groups(interaction, campaign.id)
-    text, shown = home_text(names, campaign, waiting, reviews)
+    text, shown = home_text(names, campaign, waiting, reviews, no_character=no_character)
     known = sum(1 for e in names.entities.values() if e.status == CONFIRMED)
     await _send(
         interaction,
