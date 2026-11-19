@@ -69,6 +69,35 @@ class TheSet(unittest.TestCase):
         with self.assertRaises(GoldenError):
             parse("x", [])
 
+    def test_every_session_is_written_like_a_table_with_one_character_a_player(self) -> None:
+        # (owner, 2026-11-19: each player speaks only for their own character)
+        for s in SESSIONS:
+            self.assertTrue(s.characters, s.name)
+            players = {n for n, line in enumerate(s.lines) if line.user_id != 1}
+            self.assertTrue(players, s.name)
+            quoted = [line.text for line in s.lines if line.user_id != 1]
+            self.assertTrue(any('"' in text for text in quoted), s.name)  # (speech is quoted)
+
+    def test_a_player_line_that_opens_with_another_players_character_is_refused(self) -> None:
+        good: dict[str, Any] = {
+            "title": "t", "names": ["Ann", "Bo"], "secret": ["X"],
+            "characters": {"a": "Ann", "b": "Bo"},
+            "lines": [["dm", f"line {n}"] for n in range(8)] + [["a", "Ann waves."]],
+            "beats": [{"keys": ["a"]}] * 3,
+        }  # fmt: skip
+        parse("ok", good)
+        bad = {**good, "lines": [*good["lines"], ["b", "Ann draws her sword."]]}
+        with self.assertRaisesRegex(GoldenError, "line 10 opens with Ann"):
+            parse("bad.json", bad)
+        # (opening with their own name is fine, and so is naming the other later in the line)
+        fine = {**good, "lines": [*good["lines"], ["b", 'Bo says, "Ann, wait."']]}
+        parse("fine.json", fine)
+        unknown = {**good, "lines": [*good["lines"], ["c", "Cy waves."]]}
+        with self.assertRaises(GoldenError):
+            parse("unknown.json", unknown)
+        with self.assertRaises(GoldenError):
+            parse("odd.json", {**good, "characters": ["Ann"]})
+
     def test_a_secret_name_is_never_said_in_its_own_session(self) -> None:
         for s in SESSIONS:
             said = " ".join(line.text for line in s.lines)

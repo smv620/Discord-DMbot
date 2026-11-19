@@ -13,23 +13,27 @@
  "lines": [
   [
    "dm",
-   "The party leaves Ashford at first light and takes the north road toward Ember Gate."
+   "The party leaves Ashford at first light and takes the north road toward Ember Gate. The air is cold and smells of wet ash and dew."
   ],
   [
    "a",
-   "Wren checks the map and says the road should take two days."
+   "Wren checks the map and says, \"The road should take two days.\""
   ],
   [
    "b",
-   "Cael ties his pack to the mule and promises to buy more rope at the first village."
+   "Cael ties his pack to the mule and says, \"I will buy more rope at the first village.\""
   ],
   [
    "dm",
-   "By noon the road runs beside a river, and a ruined mill stands on the far bank."
+   "By noon the road runs beside a river. A ruined mill stands on the far bank, its wheel stuck and green with moss."
   ],
   [
    "a",
-   "Wren sees a thin line of smoke rising from the mill chimney."
+   "Wren shades her eyes and asks, \"Is that smoke from the mill chimney?\""
+  ],
+  [
+   "dm",
+   "Yes: a thin line of grey smoke rises from the chimney."
   ],
   [
    "b",
@@ -37,23 +41,23 @@
   ],
   [
    "dm",
-   "Inside, the mill is empty except for a fresh fire and a pot of stew still warm."
+   "The water is cold and numbs him to the knees. Inside, the mill is empty except for a fresh fire and a pot of stew still warm. The air smells of onions and woodsmoke."
   ],
   [
    "b",
-   "Cael tastes the stew and decides it is safe, and calls Wren over."
+   "Cael tastes the stew. \"It is safe,\" he calls. \"Wren, come and see this.\""
   ],
   [
    "a",
-   "Wren searches the mill and finds a loose floorboard with a brass key under it."
+   "Wren searches the mill and pries at the floorboards."
   ],
   [
    "dm",
-   "The key is stamped with a small gate and the letters EG."
+   "One board lifts. Under it lies a brass key, stamped with a small gate and the letters EG."
   ],
   [
    "a",
-   "Wren pockets the key and says the letters must mean Ember Gate."
+   "Wren pockets the key and says, \"EG must mean Ember Gate.\""
   ],
   [
    "dm",
@@ -65,31 +69,31 @@
   ],
   [
    "dm",
-   "The riders stop at the river and call out for whoever lit the fire."
+   "The riders stop at the river. A voice calls out, \"Whoever lit that fire, come out!\""
   ],
   [
    "a",
-   "Wren answers that the fire was theirs, and asks the riders their business."
+   "Wren calls back, \"The fire was ours. What is your business?\""
   ],
   [
    "dm",
-   "The lead rider says they ride for the gate and the gate is closed to strangers."
+   "The lead rider answers, \"We ride for the gate, and the gate is closed to strangers.\""
   ],
   [
    "b",
-   "Cael asks why the gate is closed."
+   "Cael asks, \"Why is the gate closed?\""
   ],
   [
    "dm",
-   "The rider says only that the watch has been doubled since the bells stopped ringing."
+   "\"The watch has been doubled since the bells stopped ringing,\" the rider says."
   ],
   [
    "a",
-   "Wren offers to share the stew if the riders will share their news of the road."
+   "Wren says, \"Share our stew, and share your news of the road.\""
   ],
   [
    "dm",
-   "The riders dismount, and the lead rider takes off her helmet to reveal a scar across her cheek."
+   "The riders dismount. The lead rider takes off her helmet: a woman with short iron-grey hair and a pale scar across her cheek. She smells of horse and rain."
   ],
   [
    "b",
@@ -97,15 +101,19 @@
   ],
   [
    "dm",
-   "In the night, the scarred rider asks to see the brass key, and Wren says she never mentioned it."
+   "In the night, the scarred rider asks to see the brass key."
   ],
   [
    "a",
-   "Wren holds the key tightly and says she is going to sleep with it under her pillow."
+   "Wren says, \"I never mentioned a key.\""
+  ],
+  [
+   "a",
+   "Wren holds the key tightly and says, \"I am going to sleep with it under my pillow.\""
   ],
   [
    "dm",
-   "The scarred rider smiles and says that is a fine plan, and the fire burns low."
+   "The scarred rider smiles. \"That is a fine plan,\" she says, and the fire burns low and red."
   ]
  ],
  "beats": [
@@ -157,5 +165,9 @@
     "key"
    ]
   }
- ]
+ ],
+ "characters": {
+  "a": "Wren",
+  "b": "Cael"
+ }
 }
