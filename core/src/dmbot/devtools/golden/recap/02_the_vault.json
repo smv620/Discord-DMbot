@@ -12,31 +12,35 @@
  "lines": [
   [
    "dm",
-   "The vault door under the Counting House on Marrow Street is covered in frost."
+   "Marrow Street is empty at night. Under the Counting House a stone stair ends at a vault door covered in frost. The air is cold enough to hurt your teeth, and the frost crackles where you step near it."
   ],
   [
    "a",
-   "Isolde presses her hand to the door and feels it hum."
-  ],
-  [
-   "b",
-   "Garrick reads the runes aloud and says they warn of a curse."
+   "Isolde presses her hand to the door and says, \"It is humming. I can feel it in my teeth.\""
   ],
   [
    "dm",
-   "The frost spreads across Isolde's glove and she loses feeling in two fingers."
+   "The hum is low and steady against her palm. Carved runes run in a ring around the lock."
+  ],
+  [
+   "b",
+   "Garrick reads the runes aloud, slowly. \"I think these warn of a curse,\" he says."
+  ],
+  [
+   "dm",
+   "As he finishes, frost races across Isolde's glove. The leather stiffens, and the cold bites hard: four points of cold damage. She loses all feeling in two fingers."
   ],
   [
    "a",
-   "Isolde pulls back and takes four points of cold damage."
+   "Isolde snatches her hand back and says, \"That hurt. Open it, Garrick.\""
   ],
   [
    "b",
-   "Garrick burns a scroll of warding against the door."
+   "Garrick burns a scroll of warding against the door and says, \"Stand back.\""
   ],
   [
    "dm",
-   "The hum fades and the door swings open on a room of stacked coins."
+   "The scroll flares with a smell of hot paper. The hum fades to silence, and the door swings open on a room of stacked coins that glitter in the lantern light."
   ],
   [
    "a",
@@ -44,15 +48,19 @@
   ],
   [
    "dm",
-   "Behind them the door begins to close, and something scrapes in the dark."
+   "The ring is cold and heavy. Behind you the door begins to swing shut, and something scrapes in the dark."
   ],
   [
    "b",
-   "Garrick drags Isolde out just as the door shuts with a boom."
+   "Garrick shouts, \"Isolde, take my hand!\" and reaches back for her."
   ],
   [
    "dm",
-   "The street is silent. The ring is cold, and it is whispering."
+   "Garrick catches Isolde's sleeve and drags her through the gap, and the door shuts with a boom that shakes dust from the ceiling."
+  ],
+  [
+   "dm",
+   "The street is silent. A thin whisper comes from the ring, though no one is speaking."
   ]
  ],
  "beats": [
@@ -98,5 +106,9 @@
     "isolde"
    ]
   }
- ]
+ ],
+ "characters": {
+  "a": "Isolde",
+  "b": "Garrick"
+ }
 }
