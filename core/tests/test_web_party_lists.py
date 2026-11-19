@@ -178,6 +178,12 @@ class PartyLists(Web):
         self.assertEqual((await self.lines())[plain], party_icons.EVERYONE)
         # a character made after the others, who comes first A to Z
         aaron = await self.add("Aaron", "character", role="player_character")
+        # (made in the same second as Rook, so the party order would fall to a random id: the
+        # order is "oldest first, then id" in Discord and on the website alike; the fixture sets
+        # the age it means instead of leaving it to chance, #4828)
+        await self.sql(
+            "UPDATE memory_entities SET created_at = created_at + 100 WHERE id = %s", aaron
+        )
         await self.memory.set_connection_knowers(
             self.g, self.one.id, self.secret_link, [aaron, self.rook],
             source=DM_SOURCE, dm_chose_secret=True,
