@@ -125,6 +125,21 @@ async def members_at(scope: Scope, at: int) -> list[str]:
     return [c for c in pcs if c not in held or any(s.covers(at) for s in held[c])]
 
 
+async def table_members(scope: Scope) -> list[str] | None:
+    """Who a player's answer at the table is for now (#4537 slice 3b, §8): the party at the
+    running session's start when it differs from today's party (someone joined or left during the
+    session, dated from its start); None when it is today's party (no session running, or the same
+    members), so the caller keeps its usual path. One read of the stretches."""
+    running = await running_session_start(scope)
+    if running is None:
+        return None
+    pcs = await player_characters(scope)
+    held = await _by_char(scope, pcs) if pcs else {}
+    then = [c for c in pcs if c not in held or any(s.covers(running) for s in held[c])]
+    now = [c for c in pcs if c not in held or any(s.open for s in held[c])]
+    return None if set(then) == set(now) else then
+
+
 async def running_session_start(scope: Scope) -> int | None:
     """The start of the campaign's session running now, if one is: a stretch that opens or closes
     during play counts from that session's start, so the session is the party's whole."""
@@ -228,4 +243,5 @@ __all__ = [
     "player_characters",
     "running_session_start",
     "spans",
+    "table_members",
 ]

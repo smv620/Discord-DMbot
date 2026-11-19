@@ -1728,13 +1728,20 @@ class MemoryStore:
         campaign_id: str,
         place_ids: Sequence[str],
         names: Mapping[str, str],
+        session_at: int | None = None,
     ) -> list[str]:
         """The background lines of `maps.recap_colour` for the places a session visited, read in
-        one snapshot (#4721): the party's view only, under the names the caller gives."""
+        one snapshot (#4721): the party's view only, under the names the caller gives, the party
+        as it was at that session when `session_at` is given (#4537 slice 3b)."""
         from dmbot.maps import recap_colour  # (here: `dmbot.maps` imports this module)
 
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
-            return await recap_colour.lines(scope, place_ids, names)
+            viewer = (
+                gate.Viewer.party_at(await party_record.members_at(scope, session_at))
+                if session_at is not None
+                else None
+            )
+            return await recap_colour.lines(scope, place_ids, names, viewer)
 
     async def recap_reveals(
         self,
@@ -3156,6 +3163,19 @@ class MemoryStore:
         }
         npcs = {i: names[i] for i in npc_ids if i in names and i not in inside and i not in left}
         return PartyAndOthers(party, left, npcs)
+
+    async def members_at(self, guild_id: int, campaign_id: str, at: int) -> list[str]:
+        """The party as it was at `at` (a session's start: `party_record.members_at`, #4537
+        slice 3b): what is read to the whole table about that session is for them (§8)."""
+        async with self._read(guild_id, campaign_id) as scope:
+            return await party_record.members_at(scope, at)
+
+    async def visible_to_party_at(self, guild_id: int, campaign_id: str, at: int) -> gate.Visible:
+        """What the party at `at` knows, the party and its knowledge read in one snapshot so a
+        join or a leave between the two can't mismatch them (#4537 slice 3b)."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            members = await party_record.members_at(scope, at)
+            return await gate.visible_to(scope, gate.Viewer.party_at(members))
 
     async def current_party(self, guild_id: int, campaign_id: str) -> list[str]:
         """THE current party (`party_record.current_members`, #4537): entry ids, oldest first."""

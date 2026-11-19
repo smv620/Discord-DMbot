@@ -85,6 +85,14 @@ class Viewer:
         return Viewer(mode="all", party=True)
 
     @staticmethod
+    def party_at(member_ids: Iterable[str]) -> Viewer:
+        """What is read to the whole table about one session: what every member of the party AT
+        that session knows (`party_record.members_at`, #4537 slice 3b, §8). With no member (no
+        player character yet) it is `the_party()`, as before."""
+        ids = frozenset(member_ids)
+        return Viewer.the_table(ids) if ids else Viewer.the_party()
+
+    @staticmethod
     def the_table(character_ids: Iterable[str]) -> Viewer:
         """Anything read to the whole table: what every one of these player characters (those at
         the session) knows."""

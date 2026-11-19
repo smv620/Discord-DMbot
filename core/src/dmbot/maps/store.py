@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from dmbot.maps.measure import MapInfo, Pin
     from dmbot.maps.measure_words import NotShown
     from dmbot.maps.said_phrases import Said
+    from dmbot.memory import gate as gate_mod
     from dmbot.memory._changes import Changes
 
 # Fixed lists in code, each with "other" (design rule 6).
@@ -165,6 +166,15 @@ def _seen(viewer: Viewer) -> str:
     if viewer.table:
         return f" AND ((audience = 'table' AND use_ok IS TRUE){own})"
     return f" AND (FALSE{own})"
+
+
+async def _table_viewer(scope: Any) -> gate_mod.Viewer:
+    """Who a player's answer at the table is for (`party_record.table_members`, #4537 slice 3b):
+    today's party, unless someone joined or left during the running session."""
+    from dmbot.memory import gate, party_record  # (here: the memory package imports this one)
+
+    members = await party_record.table_members(scope)
+    return gate.Viewer.the_party() if members is None else gate.Viewer.party_at(members)
 
 
 async def maps_and_pins(
@@ -997,12 +1007,16 @@ class MapStore:
             )
             names = positions.place_names(entities, aliases, lambda kind: onto.is_a(kind, "place"))
             shown: set[str] | None = None
+            table = await _table_viewer(scope) if not dm else gate.Viewer.the_party()
             if not dm:
-                seen = await gate.party_entries(scope)
-                if seen is None:  # (no player character, or a list held by a group)
+                # (the fast aggregate is today's party: used unless the running session's party
+                # differs from it, #4537 slice 3b)
+                seen = await gate.party_entries(scope) if not table.characters else None
+                # (no player character, a list held by a group, or the session's party differs)
+                if seen is None:
                     statements = await gate.load(scope)
                     if statements.player_characters:
-                        full = gate.visible(gate.Viewer.the_party(), statements)
+                        full = gate.visible(table, statements)
                         seen = frozenset(i for (k, i) in full.sureness if k == gate.ENTRY)
                 if seen is None:  # (no party yet: the names every player may read)
                     every_name = await scope.select(ALIASES, " AND status = 'confirmed'")
@@ -1056,10 +1070,10 @@ class MapStore:
                 if not dm:
                     statements = await gate.load(scope)
                     if statements.player_characters and shown is not None:
-                        full = gate.visible(gate.Viewer.the_party(), statements)
+                        full = gate.visible(table, statements)
                         known = shown | {i for (k, i) in full.sureness if k == gate.CONNECTION}
                 if dm or known is not None:
-                    viewer = gate.Viewer(dm=True) if dm else gate.Viewer.the_party()
+                    viewer = gate.Viewer(dm=True) if dm else table
                     route = await _road_route(scope, a, b, viewer, (asked.a, asked.b), known=known)
                     if route is not None and any(leg.road.length_words for leg in route[0].legs):
                         return legs_words.route(route[0], route[2], route[1])
