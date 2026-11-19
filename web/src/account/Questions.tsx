@@ -17,6 +17,7 @@ import { type AccountApi, ApiError, type QuestionCampaign, type QuestionCounts, 
 import { campaignHref } from "./campaignLinks";
 import { TRAIT_QUESTIONS_LIVE } from "../content/trait-questions-switch";
 import { SECRET_QUESTIONS_LIVE } from "../content/secret-questions-switch";
+import { PARTY_JOIN_LIVE } from "../content/party-join-switch";
 import QuestionsHere, { groupOf, type HereGroup } from "./QuestionsHere";
 
 /** The bot counts every minute or so: five minutes without a count and the numbers are said to be old. */
@@ -59,6 +60,8 @@ function howFor(kind: string, api: AccountApi): QuestionHow {
   if (kind === "traits") return TRAIT_QUESTIONS_LIVE && api.traitOffers !== undefined ? "here" : "discord";
   // The 🤫 Known or secret? question (#4598): answered here once its switch is on, else in Discord.
   if (kind === "secrets") return SECRET_QUESTIONS_LIVE && api.secretQuestions !== undefined ? "here" : "discord";
+  // The join question (#4778 part b): answered here once its switch is on, else in Discord.
+  if (kind === "party_joins") return PARTY_JOIN_LIVE && api.joinQuestions !== undefined ? "here" : "discord";
   const how = kindWords(kind).how;
   if (how !== "here") return how;
   const group = groupOf(kind);

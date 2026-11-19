@@ -1293,6 +1293,12 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // "Use what I say and type to improve DMbot" (#1610): on until the person turns it off.
   let improve = true;
   const calls: string[] = [];
+  // The join question's groups per campaign (#4778 part b): made when first read, then changed by the answers.
+  const joinState: Record<string, { group: string; answer: "waiting" | "everyone"; names: string[] }[]> = {};
+  const pretendJoinGroups = () => [
+    { group: "e1".repeat(16), answer: "waiting" as const, names: ["Mira"] },
+    { group: "e2".repeat(16), answer: "waiting" as const, names: ["Tavin", "Oskar"] },
+  ];
   // The kept pictures (#3275): five pretend pictures, each 100 MB; the permanent ones count toward the limit.
   const pictureRows = [
     { code: "pic-1", at: 1791004000, sessionNumber: 2, poster: "Mira", description: "A map of the Brass Ford", permanent: false, isPublic: true },
@@ -3557,6 +3563,31 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (at < 0) throw new ApiError("gone");
       list.splice(at, 1);
       return { batch: change.action === "make" ? 41 : null };
+    },
+    // The join question (#4778 part b): two messages, one name and two names. A "party" answer carries its change number (61) and
+    // what the party gave (3); the group with no things to give carries none. A second answer to a group is "gone".
+    async joinQuestions(ref): Promise<{ group: string; answer: "waiting" | "everyone"; names: string[] }[]> {
+      calls.push(`joinQuestions:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      return structuredClone(joinState[ref] ??= pretendJoinGroups());
+    },
+    async answerJoin(ref, change) {
+      calls.push(`answerJoin:${ref}:${change.action}:${change.action === "undo" ? change.batch : change.group}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      if (change.action === "undo") return { batch: null, given: null };
+      const list = (joinState[ref] ??= pretendJoinGroups());
+      const at = list.findIndex((g) => g.group === change.group);
+      if (at < 0 || (change.action === "everyone" && list[at]!.answer === "everyone")) throw new ApiError("gone");
+      if (change.action === "everyone") {
+        list[at] = { ...list[at]!, answer: "everyone" };
+        return { batch: null, given: null };
+      }
+      const [done] = list.splice(at, 1);
+      return done!.names.length === 2 ? { batch: null, given: null } : { batch: 61, given: 3 };
     },
     async nameSources(ref): Promise<NameSource[]> {
       calls.push(`nameSources:${ref}`);

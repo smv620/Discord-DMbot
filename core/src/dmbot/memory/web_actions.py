@@ -56,6 +56,7 @@ from dmbot.memory.models import (
     lookup_key,
     name_key,
 )
+from dmbot.memory.party_record import ENDED
 from dmbot.memory.store import INT64_MAX, PERSON, MemoryStore
 from dmbot.memory.store import NAMES_NOT_SHOWN as NAMES_NOT_SHOWN_WORDS
 
@@ -154,6 +155,7 @@ MAP_ACTIONS = ("map-terrain", "map-climate", "map-control", "map-show")
 # one line, or ↩ Undo of one of those (the text is its change number). Filed under no name.
 WORLD_ACTIONS = ("world-keep", "world-not", "world-undo")
 JOIN_ACTIONS = ("join-everyone", "join-party", "join-undo")  # the DM's join question (#4778)
+PARTY_ACTIONS = ("party-leave", "party-back", "party-undo")  # who is in the party (#4778)
 # The story threads DMbot found in an upload (#4457, quests slice 1): the same store calls as
 # Discord's 📜 card, so each keep is one change and one Undo.
 THREAD_ACTIONS = ("thread-keep", "thread-not", "thread-undo")
@@ -452,6 +454,21 @@ class ActionStore:
             )
             return await cur.fetchone() is not None
 
+    async def party_batch_made(
+        self, guild_id: int, campaign_id: str, user_id: int, batch: int
+    ) -> tuple[str, str] | None:
+        """The action and text of this DM's own done `party-leave` or `party-back` that made
+        `batch` (#4778), so the page's Undo can only take back what they did themselves."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT action, text FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
+                " AND user_id = %s AND action IN ('party-leave', 'party-back')"
+                " AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
+                (guild_id, campaign_id, user_id, batch),
+            )
+            row = await cur.fetchone()
+        return None if row is None else (str(row["action"]), str(row["text"]))
+
     async def join_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, batch: int
     ) -> bool:
@@ -736,6 +753,10 @@ async def apply(
         if actions is None and action.action == "world-undo":
             return _failed(FAILED)
         return await _world(memory, actions, guild_id, cid, action)
+    if action.action in PARTY_ACTIONS:
+        if actions is None:
+            return _failed(FAILED)
+        return await _party(memory, actions, guild_id, cid, action)
     if action.action in JOIN_ACTIONS:
         if actions is None:
             return _failed(FAILED)
@@ -1149,6 +1170,64 @@ async def _world(
     except MemoryRuleError:
         return _failed(GONE)
     return Outcome(batches=(done.batch,) if done.batch is not None else ())
+
+
+NOT_IN_PARTY = "not_in_party"  # a "Has left the party" for a character not in the party now
+ALREADY_BACK = "already_back"  # a "Back in the party" (or an Undo of a leave) for one who is in it
+NOT_A_PC = "not_a_pc"  # a "Back in the party" for a character who is no player character now
+
+
+async def _party(
+    memory: MemoryStore, actions: ActionStore, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """The DM's changes to who is in the party, from the character's page (#4778): the store's own
+    `leave_party` and `back_in_party`, as Discord's card does, each one change with one Undo; the
+    character keeps everything they knew (§6). ↩ Undo takes back only a change this DM's own done
+    `party-leave` or `party-back` made, read again here (a made-up number must never reach `undo`);
+    an Undo of a leave over a character who is back in the party since is refused as Discord's is.
+    Coming back also leaves the question about the time away to the bot's own rounds (never during
+    play), which send it as they send a join's."""
+    if a.action == "party-undo":
+        if not (a.text.isascii() and a.text.isdigit()) or len(a.text) > 15:
+            return _failed(GONE)
+        batch = int(a.text)
+        made = await actions.party_batch_made(guild_id, cid, a.user_id, batch)
+        if made is None:
+            return _failed(GONE)
+        kind, text = made
+        if kind == "party-leave":
+            # (a retried Undo finds them already back: told so, and nothing changes)
+            entity = text.split(" ", 1)[0]
+            if any(s.open for s in await memory.party_spans(guild_id, cid, entity)):
+                return _failed(ALREADY_BACK)
+        try:
+            await memory.undo(guild_id, cid, batch)
+        except TooLateToUndo:
+            return _failed(TOO_LATE)
+        except MemoryRuleError as exc:
+            if str(exc) == ALREADY_UNDONE:
+                return Outcome()  # (taken back already: a retried Undo)
+            return _failed(GONE if str(exc) == STORE_NOT_FOUND else CHANGED)
+        return Outcome()
+    if a.action == "party-leave":
+        entity, _, why = a.text.partition(" ")
+        if why not in ENDED:
+            return _failed(GONE)
+        try:
+            done = await memory.leave_party(guild_id, cid, entity, why)
+        except MemoryRuleError:
+            return _failed(NOT_IN_PARTY)
+        return Outcome(batches=(done.batch,) if done.batch is not None else ())
+    try:
+        back = await memory.back_in_party(guild_id, cid, a.text)
+    except MemoryRuleError:
+        if any(s.open for s in await memory.party_spans(guild_id, cid, a.text)):
+            return _failed(ALREADY_BACK)
+        return _failed(NOT_A_PC)
+    _span, waiting = back.value  # (which question waits for the character, if any)
+    return Outcome(
+        counts=f"asked:{waiting or 'none'}", batches=(back.batch,) if back.batch is not None else ()
+    )
 
 
 async def _join(
