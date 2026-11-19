@@ -3175,6 +3175,26 @@ class MemoryStore:
                 raise MemoryRuleError(str(exc)) from exc
             return Written(span, w.batch)
 
+    async def back_in_party(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> Written[party_record.Span]:
+        """ "Back in the party" (#4537 slice 4a, §6): the DM opens a new stretch for a character
+        who left, from the running session's start or now, as for a join. One change, one Undo.
+        Every row from before stays; what happened while away is the DM's to answer, asked as a
+        join is (`knowers.catch_up_returner`). Refused (`MemoryRuleError`) for a character in the
+        party now, or not a confirmed player character."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            if entity_id not in await party_record.player_characters(w):
+                raise MemoryRuleError("That character isn't a player character.")
+            try:
+                span = await party_record.open_span(w, entity_id)
+            except party_record.PartyError as exc:
+                raise MemoryRuleError(str(exc)) from exc
+            if span is None:
+                raise MemoryRuleError("That character is in the party now.")
+            await knowers.catch_up_returner(w, entity_id)
+            return Written(span, w.batch)
+
     # The join question (#4537 slice 2b, §5; `memory/join_questions.py`). The answers are the
     # DM's: "Only what everyone knows" writes nothing, "What the party knows" and "From the first
     # session" copy what the party knows in one change with its Undo. Answering again is refused
@@ -3234,8 +3254,7 @@ class MemoryStore:
             cur = await conn.execute(
                 "UPDATE memory_join_questions SET status = 'everyone', answered_at = %s"
                 " WHERE guild_id = %s AND campaign_id = %s AND group_id = %s"
-                " AND status = 'waiting' RETURNING id, entity_id, status, group_id, sent_at,"
-                " created_at",
+                f" AND status = 'waiting' RETURNING {join_questions_mod._COLUMNS}",
                 (int(self._clock()), guild_id, campaign_id, group_id),
             )
             done = [join_questions_mod._question(r) for r in await cur.fetchall()]

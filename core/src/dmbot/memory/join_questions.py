@@ -35,6 +35,8 @@ WAITING = "waiting"
 EVERYONE = "everyone"
 PARTY = "party"
 FIRST = "first"
+JOIN = "join"  # (the question's kind: new to the party)
+BACK = "back"  # (or back in it after leaving, #4537 slice 4a)
 
 
 class AlreadyAnswered(MemoryRuleError):
@@ -51,9 +53,10 @@ class Question:
     group_id: str | None
     sent_at: int | None
     created_at: int
+    kind: str = "join"  # (JOIN, or BACK: a character who left and came back, 0555)
 
 
-_COLUMNS = "id, entity_id, status, group_id, sent_at, created_at"
+_COLUMNS = "id, entity_id, status, group_id, sent_at, created_at, kind"
 # A question waits only while its character is still a confirmed player character in the party
 # (an open stretch): one who left or was made an NPC meanwhile is neither counted nor sent.
 _IN_PARTY = (
@@ -73,20 +76,22 @@ def _question(row: Any) -> Question:
         group_id=None if row["group_id"] is None else str(row["group_id"]),
         sent_at=None if row["sent_at"] is None else int(row["sent_at"]),
         created_at=int(row["created_at"]),
+        kind=str(row.get("kind") or JOIN),
     )
 
 
-async def ask(w: Changes, entity_ids: Sequence[str]) -> None:
-    """Ask about these characters, who joined in this change (one question each, one message for
-    all of them when sent). A character with a question already waiting is not asked twice."""
+async def ask(w: Changes, entity_ids: Sequence[str], kind: str = "join") -> None:
+    """Ask about these characters, who joined (or, `kind` BACK, came back) in this change: one
+    question each, one message for all of one kind when sent. A character with a question already
+    waiting is not asked twice (the one waiting stands)."""
     if not entity_ids:
         return
     rows = [(secrets.token_hex(16), e) for e in dict.fromkeys(entity_ids)]
     cur = await w.conn.execute(
-        "INSERT INTO memory_join_questions (guild_id, campaign_id, id, entity_id, created_at)"
-        " SELECT %s, %s, q.id, q.entity_id, %s FROM unnest(%s::text[], %s::text[])"
+        "INSERT INTO memory_join_questions (guild_id, campaign_id, id, entity_id, created_at, kind)"
+        " SELECT %s, %s, q.id, q.entity_id, %s, %s FROM unnest(%s::text[], %s::text[])"
         " AS q(id, entity_id) ON CONFLICT DO NOTHING RETURNING id",
-        (*w.ids, w.now, [r[0] for r in rows], [r[1] for r in rows]),
+        (*w.ids, w.now, kind, [r[0] for r in rows], [r[1] for r in rows]),
     )
     w.join_asked.extend(str(r["id"]) for r in await cur.fetchall())
 
@@ -120,17 +125,30 @@ async def undo(w: Changes, batch: int) -> None:
 
 async def claim(conn: Any, guild_id: int, campaign_id: str, now: int) -> list[Question]:
     """Take the questions not sent yet, to send them as one message: none while a session of the
-    campaign is running (never during play). The rows are marked in the statement that reads
-    them, so two callers never send the same one."""
-    cur = await conn.execute(
-        "UPDATE memory_join_questions q SET group_id = %s, sent_at = %s"
+    campaign is running (never during play). One message holds one kind (a join or a coming
+    back, worded differently), the kind of the oldest one waiting; call again for the other. The
+    rows are marked in the statement that reads them, so two callers never send the same one."""
+    unsent = (
         " WHERE q.guild_id = %s AND q.campaign_id = %s AND q.status = 'waiting'"
         " AND q.sent_at IS NULL"
         + _IN_PARTY
         + " AND NOT EXISTS (SELECT 1 FROM transcript_sessions s WHERE s.guild_id = %s"
         "  AND s.campaign_id = %s AND s.ended_at IS NULL)"
-        f" RETURNING {_COLUMNS}",
-        (secrets.token_hex(16), now, guild_id, campaign_id, guild_id, campaign_id),
+    )
+    ids = (guild_id, campaign_id, guild_id, campaign_id)
+    cur = await conn.execute(
+        "SELECT q.kind FROM memory_join_questions q" + unsent + " ORDER BY q.created_at, q.id"
+        " LIMIT 1",
+        ids,
+    )
+    oldest = await cur.fetchone()
+    if oldest is None:
+        return []
+    cur = await conn.execute(
+        "UPDATE memory_join_questions q SET group_id = %s, sent_at = %s"
+        + unsent
+        + f" AND q.kind = %s RETURNING {_COLUMNS}",
+        (secrets.token_hex(16), now, *ids, oldest["kind"]),
     )
     return sorted((_question(r) for r in await cur.fetchall()), key=lambda q: (q.created_at, q.id))
 
@@ -200,8 +218,10 @@ async def count_waiting(conn: Any, guild_id: int, campaign_id: str) -> tuple[int
 
 
 __all__ = [
+    "BACK",
     "EVERYONE",
     "FIRST",
+    "JOIN",
     "PARTY",
     "WAITING",
     "AlreadyAnswered",
