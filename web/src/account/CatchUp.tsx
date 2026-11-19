@@ -23,6 +23,7 @@ function sayFailure(error: unknown, name: string, undoing: boolean): string {
 export default function CatchUp({ api, refId, entry }: { api: AccountApi; refId: string; entry: string }) {
   const [open, setOpen] = useState(false);
   const [choices, setChoices] = useState<CatchUpChoice[] | null>(null);
+  const [failed, setFailed] = useState(false);
   const [more, setMore] = useState(0);
   const [members, setMembers] = useState<Member[]>([]);
   const [picking, setPicking] = useState(false);
@@ -40,8 +41,10 @@ export default function CatchUp({ api, refId, entry }: { api: AccountApi; refId:
       setMembers(named);
       setChoices(got.choices.filter((c) => named.some((m) => m.id === c.id)));
       setMore(got.more);
+      setFailed(false);
     } catch {
-      setChoices([]);
+      // (a read that failed is not "nobody is behind": say so)
+      setFailed(true);
     }
   }
 
@@ -86,21 +89,49 @@ export default function CatchUp({ api, refId, entry }: { api: AccountApi; refId:
       setSaid({ ok: true, text: w.undone(u.name, u.told) });
     });
 
-  if (!open) {
+  // When there is nothing to show the button stays, so it can be closed again, and a line says why (never a button that just vanishes).
+  const toggleButton = (
+    <button type="button" class="button secondary" aria-expanded={open} onClick={toggle}>
+      {w.manyLabel}
+    </button>
+  );
+  if (!open) return toggleButton;
+  if (failed && !choices) {
     return (
-      <button type="button" class="button secondary" aria-expanded={false} onClick={toggle}>
-        {w.manyLabel}
-      </button>
+      <div class="stack">
+        {toggleButton}
+        <p class="warn" role="alert">
+          {w.failed}
+        </p>
+      </div>
     );
   }
-  if (!choices || choices.length === 0) {
-    return choices === null ? <p class="muted" role="status">{w.saving}</p> : null;
+  if (choices === null) {
+    return (
+      <div class="stack">
+        {toggleButton}
+        <p class="muted" role="status">{w.saving}</p>
+      </div>
+    );
+  }
+  if (choices.length === 0) {
+    return (
+      <div class="stack">
+        {toggleButton}
+        <p class="muted" role="status">{w.nothing}</p>
+      </div>
+    );
   }
 
   const single = choices.length === 1 ? choices[0]! : null;
   const names = choices.map((c) => nameOf(c.id));
   return (
     <section class="stack" aria-label={w.manyLabel}>
+      {failed && (
+        <p class="warn" role="alert">
+          {w.failed}
+        </p>
+      )}
       <p class={said?.ok ? "ok" : "visually-hidden"} role="status">{said?.ok ? said.text : ""}</p>
       <p class={said && !said.ok ? "warn" : "visually-hidden"} role="alert">{said && !said.ok ? said.text : ""}</p>
       {single ? (
