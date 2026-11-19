@@ -1301,6 +1301,15 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     { id: "p2".repeat(16), name: "Ash", inParty: false, spans: [{ from: 1690000000, to: 1705000000, ended: "left", session: 1 }] },
   ];
   let partyState: PartyRecordCharacter[] = pretendParty();
+  // "Catch up" (#4793): who is behind the rest of the party on each entry. n24 has two members behind, n25 one.
+  let catchUpState: Record<string, { id: string; count: number }[]> = {
+    n24: [
+      { id: "p1".repeat(16), count: 1 },
+      { id: "p2".repeat(16), count: 3 },
+    ],
+    n25: [{ id: "p2".repeat(16), count: 2 }],
+  };
+  const catchUpBatches = new Map<number, { entry: string; choice: { id: string; count: number } }>();
   const partyBatches = new Map<number, PartyRecordCharacter[]>();
   let lastPartyBatch = 70;
   const pretendJoinGroups = () => [
@@ -3634,11 +3643,40 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       c.spans.push({ from: 1711000000, to: null, ended: null, session: null });
       return { batch: lastPartyBatch, asked };
     },
+    // "Catch up" (#4793): DM only. An entry with nothing behind gives no choices; a member who is no longer behind is `nothing-left`.
+    async catchUpChoices(ref, entry) {
+      calls.push(`catchUpChoices:${ref}:${entry}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      return structuredClone(catchUpState[entry] ?? []);
+    },
+    async catchUp(ref, member, entry) {
+      calls.push(`catchUp:${ref}:${member}:${entry}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const list = catchUpState[entry] ?? [];
+      const choice = list.find((c) => c.id === member);
+      if (!choice) throw new ApiError("nothing-left");
+      const p = partyState.find((x) => x.id === member);
+      if (p && !p.inParty) throw new ApiError("not-in-party");
+      catchUpState[entry] = list.filter((c) => c.id !== member);
+      const batch = ++lastPartyBatch;
+      catchUpBatches.set(batch, { entry, choice: { ...choice } });
+      return { batch, told: choice.count };
+    },
     async partyUndo(ref, batch) {
       calls.push(`partyUndo:${ref}:${batch}`);
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const caught = catchUpBatches.get(batch);
+      if (caught) {
+        catchUpBatches.delete(batch);
+        catchUpState[caught.entry] = [...(catchUpState[caught.entry] ?? []), caught.choice];
+        return;
+      }
       const before = partyBatches.get(batch);
       if (!before) throw new ApiError("undo-late");
       partyBatches.delete(batch);
