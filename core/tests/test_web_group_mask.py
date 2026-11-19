@@ -96,6 +96,19 @@ class AFactionsMembersOnTheWeb(Web):
             self.g, self.one.id, gate.CONNECTION, tie, [self.hand], source=DM_SOURCE,
             dm_chose_secret=True,
         )  # fmt: skip
+        await self.alias(self.vault, "The Sealed Door")  # (an other name of a hidden entry too)
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM memory_aliases WHERE entity_id = %s AND text = 'The Sealed Door'",
+                (self.vault,),
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        name = str(row["id"])
+        await self.memory.set_statement_knowers(
+            self.g, self.one.id, gate.ALIAS, name, [self.hand], source=DM_SOURCE,
+            dm_chose_secret=True,
+        )  # fmt: skip
         await self.hide(self.keep)  # (a connection to a hidden end goes dark too)
         await self.hide(self.vault)
         _src, known, _pages = await relationships.source_of(self.web, self.session, self.cref)
@@ -107,3 +120,4 @@ class AFactionsMembersOnTheWeb(Web):
         self.assertEqual(set(known["allPlayers"]), set(bot.players))
         self.assertIn((gate.ENTRY, self.vault), bot.dark)
         self.assertIn((gate.CONNECTION, tie), bot.dark)
+        self.assertIn((gate.ALIAS, name), bot.dark)
