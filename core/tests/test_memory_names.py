@@ -75,6 +75,16 @@ class NamesTest(DatabaseTest):
             SessionStore(self.db),
             memory=self.memory,
         )
+        entities = self.memory.entities
+
+        async def every_entry(
+            guild_id: int, campaign_id: str, viewer: Any = None, *, live_at: int | None = None
+        ) -> frozenset[str]:
+            # (what the gate answers is tested in test_name_card_gate.py: these cards are about
+            # what is on them, so everyone here holds every entry)
+            return frozenset(e.id for e in await entities(guild_id, campaign_id))
+
+        self.memory.entries_held = every_entry  # type: ignore[method-assign]
         self.campaign = await self.campaigns.create(GUILD, "Frostmaiden", DM)
         # The tests built on this one are of the Add all flow and the cards. A lore upload adds what
         # DMbot is sure of by itself unless the campaign asks first (#3878), so the campaign asks
@@ -211,16 +221,6 @@ class NameCards(NamesTest):
         from dmbot.memory.lookup import LookupCache
 
         self.bot.lookup = LookupCache(self.memory)
-        entities = self.memory.entities
-
-        async def every_entry(
-            guild_id: int, campaign_id: str, viewer: Any = None, *, live_at: int | None = None
-        ) -> frozenset[str]:
-            # (what the gate answers is tested in test_name_card_gate.py: these cards are about
-            # what is on them, so everyone here holds every entry)
-            return frozenset(e.id for e in await entities(guild_id, campaign_id))
-
-        self.memory.entries_held = every_entry  # type: ignore[method-assign]
         self.bell = await ui.save_name(
             self.memory, self.campaign, "Belleros", "npc", ["Bell"], ["the hooded stranger"]
         )
