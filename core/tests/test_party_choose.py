@@ -29,8 +29,8 @@ class TheWords(unittest.TestCase):
         )
         self.assertEqual(
             party_choose.done_text({"m": 1}, names, "session 3"),
-            "✅ Mira now knows the 1 thing the rest of the party knew from session 3. Nothing was"
-            " sent to Mira's player.",
+            "✅ Mira now knows 1 thing the rest of the party knew from session 3. Nothing was sent"
+            " to Mira's player.",
         )
 
     def test_the_page_says_nothing_changes_and_why_lore_isnt_under_a_session(self) -> None:
@@ -144,6 +144,47 @@ class LetMeChoose(Party):
         # log's own "changed again since")
         with self.assertRaises((TooLateToUndo, MemoryRuleError)):
             await self.memory.undo(GUILD, self.c, int(row["batch"]))
+
+    async def test_the_count_shown_is_what_is_given(self) -> None:
+        dan = await self.pc("Dan", 700_000_000_000_000_105)
+        await self.memory.unclaim_join_questions(GUILD, self.c, self.group)
+        [q, *_] = await self.memory.join_questions_to_send(GUILD, self.c)
+        assert q.group_id is not None
+        choices = await self.memory.join_choices(GUILD, self.c, q.group_id)
+        self.assertEqual(set(choices.members), {self.cara, dan})
+        [(_, _, shown)] = choices.sessions
+        done = await self.memory.join_choose(GUILD, self.c, q.group_id, session_at=5_000)
+        self.assertEqual(done.value[0], shown)
+
+    async def test_a_pick_after_only_what_everyone_knows_leaves_that_answer(self) -> None:
+        await self.memory.join_answer_everyone(GUILD, self.c, self.group)
+        done = await self.memory.join_choose(GUILD, self.c, self.group, session_at=5_000)
+        self.assertFalse(done.value[1])  # (not answered by the pick: it only adds)
+        assert done.batch is not None
+        await self.memory.undo(GUILD, self.c, done.batch)
+        self.assertEqual(await self.status(), "everyone")
+
+    async def test_the_first_pick_waits_for_the_later_ones_undo(self) -> None:
+        one = await self.memory.join_choose(GUILD, self.c, self.group, session_at=5_000)
+        two = await self.memory.join_choose(GUILD, self.c, self.group, thread_id=self.bell)
+        assert one.batch is not None and two.batch is not None
+        with self.assertRaises(TooLateToUndo):
+            await self.memory.undo(GUILD, self.c, one.batch)
+        await self.memory.undo(GUILD, self.c, two.batch)
+        await self.memory.undo(GUILD, self.c, one.batch)
+        self.assertEqual(await self.status(), join_questions.WAITING)
+
+    async def test_a_first_pick_with_nothing_to_give_changes_nothing(self) -> None:
+        # (a thread the party doesn't know yet: hidden, so there is nothing to give from it)
+        made = await self.memory.add_entity(
+            GUILD, self.c, name="A quiet hook", type="hook", status=CONFIRMED, source=DM,
+            hidden_from_players=True,
+        )  # fmt: skip
+        done = await self.memory.join_choose(
+            GUILD, self.c, self.group, thread_id=str(made.value.id)
+        )
+        self.assertEqual((done.value, done.batch), (({}, False), None))
+        self.assertEqual(await self.status(), join_questions.WAITING)
 
     async def test_nothing_left_writes_nothing(self) -> None:
         await self.memory.join_choose(GUILD, self.c, self.group, session_at=5_000)

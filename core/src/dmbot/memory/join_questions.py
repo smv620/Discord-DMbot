@@ -120,6 +120,20 @@ async def undo(w: Changes, batch: int) -> None:
     )
     if await cur.fetchone() is not None:
         raise TooLateToUndo("Its question was answered with a copy since.")
+    # ("Let me choose", 4c: the pick that answered can't go while a later pick stands)
+    cur = await w.conn.execute(
+        "SELECT 1 FROM memory_join_questions WHERE guild_id = %s AND campaign_id = %s"
+        " AND answered_batch = %s AND status = 'chosen' AND cardinality(pick_batches) > 1"
+        " LIMIT 1",
+        (*w.ids, batch),
+    )
+    if await cur.fetchone() is not None:
+        raise TooLateToUndo("A later pick stands.")
+    await w.conn.execute(
+        "UPDATE memory_join_questions SET pick_batches = array_remove(pick_batches, %s::bigint)"
+        " WHERE guild_id = %s AND campaign_id = %s AND %s = ANY(pick_batches)",
+        (batch, *w.ids, batch),
+    )
     await w.conn.execute(
         "DELETE FROM memory_join_questions WHERE guild_id = %s AND campaign_id = %s"
         " AND batch = %s AND status = 'waiting'",

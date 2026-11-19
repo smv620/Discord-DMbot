@@ -1598,6 +1598,83 @@ async def session_statements(r: Scope, started_at: int) -> dict[str, set[str]]:
     return out
 
 
+async def sessions_statements(r: Scope, starts: Collection[int]) -> dict[int, dict[str, set[str]]]:
+    """`session_statements` for many sessions at once (the "Let me choose" page): four reads in
+    all, never four per session. Names: only public ones, of an entry first named in that session
+    (a name's own session isn't kept, and a secret one is never credited to a session)."""
+    out: dict[int, dict[str, set[str]]] = {s: {c: set() for c in _ONLY_COLUMNS} for s in starts}
+    if not out:
+        return out
+    wanted = sorted(out)
+    cur = await r.conn.execute(
+        "SELECT DISTINCT session_started_at AS at, entity_id FROM memory_mentions"
+        " WHERE guild_id = %s AND campaign_id = %s AND session_started_at = ANY(%s)",
+        (*r.ids, wanted),
+    )
+    for x in await cur.fetchall():
+        out[int(x["at"])]["about_entity_id"].add(str(x["entity_id"]))
+    cur = await r.conn.execute(
+        "SELECT n.session_started_at AS at, a.id FROM memory_aliases a"
+        " JOIN memory_name_sessions n ON n.guild_id = a.guild_id"
+        " AND n.campaign_id = a.campaign_id AND n.entity_id = a.entity_id"
+        " WHERE a.guild_id = %s AND a.campaign_id = %s AND n.session_started_at = ANY(%s)"
+        " AND NOT a.secret",
+        (*r.ids, wanted),
+    )
+    for x in await cur.fetchall():
+        out[int(x["at"])]["alias_id"].add(str(x["id"]))
+    for table, column in ((RELATIONS, "relation_id"), (STATES, "state_id")):
+        for x in await r.select(table, " AND from_session_at = ANY(%s)", [wanted]):
+            out[int(x["from_session_at"])][column].add(str(x["id"]))
+    return out
+
+
+async def cards_statements(r: Scope, entity_ids: Collection[str]) -> dict[str, dict[str, set[str]]]:
+    """`card_statements` for many entries at once (the "Let me choose" page's story threads): four
+    reads in all."""
+    out: dict[str, dict[str, set[str]]] = {e: {c: set() for c in _ONLY_COLUMNS} for e in entity_ids}
+    if not out:
+        return out
+    wanted = sorted(out)
+    kinds = {
+        str(e["id"]): e["type"] for e in await r.select(ENTITIES, " AND id = ANY(%s)", [wanted])
+    }
+    for e in list(out):
+        if e not in kinds:
+            del out[e]
+        else:
+            out[e]["about_entity_id"].add(e)
+    for a in await r.select(ALIASES, " AND entity_id = ANY(%s)", [wanted]):
+        if str(a["entity_id"]) in out:
+            out[str(a["entity_id"])]["alias_id"].add(str(a["id"]))
+    for st in await r.select(STATES, " AND entity_id = ANY(%s)", [wanted]):
+        if str(st["entity_id"]) in out:
+            out[str(st["entity_id"])]["state_id"].add(str(st["id"]))
+    for rel in await r.select(
+        RELATIONS, " AND (subject_id = ANY(%s) OR object_id = ANY(%s))", [wanted, wanted]
+    ):
+        for end, other in (
+            (rel["subject_id"], rel["object_id"]),
+            (rel["object_id"], rel["subject_id"]),
+        ):
+            if str(end) in out:
+                out[str(end)]["relation_id"].add(str(rel["id"]))
+                if kinds[str(end)] in THREAD_TYPES:
+                    out[str(end)]["about_entity_id"].add(str(other))
+    return out
+
+
+async def caught_up_others(r: Scope, members: Collection[str]) -> list[str]:
+    """The current members a "Let me choose" pick copies from: not the question's own characters,
+    and not one whose own question still waits."""
+    from dmbot.memory import join_questions, party_record
+
+    waiting = await join_questions.waiting_entities(r.conn, *r.ids)
+    return [
+        m for m in await party_record.current_members(r) if m not in waiting and m not in members
+    ]
+
+
 async def choose_counts(
     r: Scope, members: Collection[str], groups: Mapping[str, Mapping[str, Collection[str]]]
 ) -> dict[str, dict[str, int]]:

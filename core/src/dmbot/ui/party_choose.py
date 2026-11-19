@@ -59,11 +59,15 @@ NOTHING_AT_ALL = (
     "There's nothing left to choose: {who} {know} everything the rest of the party knows from the "
     "sessions and story threads. To give something else, use 👁️ Who knows this? on it."
 )
+NOBODY_YET = (
+    "No one else in the party is caught up yet, so there's nothing to give {who} yet. Answer the "
+    "other characters' questions first."
+)
 BY_SESSION = "Catch up by session…"
 BY_THREAD = "Catch up by story thread…"
 DONE_ONE = (
-    "✅ {name} now knows the {things} the rest of the party knew from {source}. Nothing was sent "
-    "to {name}'s player."
+    "✅ {name} now knows {things} the rest of the party knew from {source}. Nothing was sent to "
+    "{name}'s player."
 )
 DONE_MANY = "✅ From {source}, {each}. Nothing was sent to the players."
 NOTHING_LEFT_ONE = (
@@ -82,9 +86,9 @@ LABEL_MAX = 80
 DESCRIPTION_MAX = 100
 
 _PICK = r"dmbot:pchoose:(?P<campaign>[0-9a-f]{32}):(?P<group>[0-9a-f]{32}):(?P<kind>[st])"
-# (at most 92 characters, under Discord's 100: two ids, a 12-digit change and the first-pick mark)
+# (at most 97 characters, under Discord's 100: two ids, an 18-digit change and the first-pick mark)
 _UNDO = (
-    r"dmbot:pchu:(?P<campaign>[0-9a-f]{32}):(?P<group>[0-9a-f]{32}):(?P<batch>[0-9]{1,12})"
+    r"dmbot:pchu:(?P<campaign>[0-9a-f]{32}):(?P<group>[0-9a-f]{32}):(?P<batch>[0-9]{1,18})"
     r":(?P<first>[01])"
 )
 
@@ -200,6 +204,9 @@ async def open_page(interaction: discord.Interaction, campaign_id: str, group_id
     listed = list(names.values())
     if not choices.sessions and not choices.threads:
         who = names_text(listed)
+        if choices.nobody_caught_up:
+            await _send(interaction, NOBODY_YET.format(who=who))
+            return
         await _send(interaction, NOTHING_AT_ALL.format(who=who, know=_know(len(listed))))
         return
     back = bool(questions) and questions[0].kind == BACK
@@ -291,12 +298,10 @@ async def pick(
         await _send(interaction, FAILED)
         return
     try:
-        choices = await bot.memory.join_choices(g, c, group_id)
-        members = choices.members
         if session is not None:
             at = int(session[1])
-            numbers = {s: n for s, n, _ in choices.sessions}
-            source = session_source(numbers[at]) if at in numbers else "that session"
+            number = await bot.memory.session_number(g, c, at)
+            source = session_source(number) if number else "that session"
             done = await bot.memory.join_choose(g, c, group_id, session_at=at)
         else:
             assert thread is not None
@@ -310,8 +315,9 @@ async def pick(
         log.warning("A Let me choose pick failed (%s)", type(exc).__name__)
         await _send(interaction, FAILED)
         return
-    names = await _who(bot, campaign, members)
     told, first = done.value
+    members = [q.entity_id for q in await bot.memory.join_question_group(g, c, group_id)]
+    names = await _who(bot, campaign, members)
     if not told or done.batch is None:
         await _send(interaction, nothing_left_text(list(names.values()), source))
         return
@@ -366,7 +372,9 @@ class ChooseUndoButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]
             await _edit(interaction, FAILED)
             return
         log.info("A DM undid a pick")
-        if self.first:
+        now = await bot.memory.join_question_group(g, c, self.group_id)
+        # (the question's own words only when it waits again: not if another answer came since)
+        if self.first and any(q.status == "waiting" for q in now):
             back = bool(questions) and questions[0].kind == BACK
             text = (
                 _before_words(listed, undone=True)
