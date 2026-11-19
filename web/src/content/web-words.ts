@@ -250,6 +250,7 @@ export const webPage = {
     known_to_an_npc: "Only one NPC knows this",
     partly_revealed: "Some of the party know this",
     known_to_the_party: "The whole party knows this",
+    left_the_party: "Known to a character who has left the party",
   } as Record<KnowWord, string>,
   knowHint: "Worked out from what happened in your sessions. Only you see these marks.",
   notRevealedFull: "Players don't know this yet",

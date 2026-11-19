@@ -1211,7 +1211,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     const edges = edgesOf(usable.filter((l) => near.has(l.a) && near.has(l.b)), all, all, view === "dm" && all);
     // Who knows (#3167): in the DM's full view the first five names and the first five connections carry one
     // state each, so every state is on the page; a player's and a peek's web carry none.
-    const knowStates = ["secret", "hidden_from_the_players", "known_to_an_npc", "partly_revealed", "known_to_the_party"] as const;
+    const knowStates = ["secret", "hidden_from_the_players", "known_to_an_npc", "partly_revealed", "known_to_the_party", "left_the_party"] as const;
     // The states go on the names and connections drawn here that the players already see, so every state is on the
     // page and the older words on the others stay.
     const openNames = nodes
@@ -2275,7 +2275,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       groups.sort((x, y) => y.size - x.size);
       const tray = seen.filter((n) => (degree.get(n.id) ?? 0) === 0).map(nodeOf);
       // Who knows each unconnected name (#3192): the DM's full view puts a state on each of the first five (the fixture's tray has four).
-      const trayStates = ["secret", "hidden_from_the_players", "known_to_an_npc", "partly_revealed", "known_to_the_party"] as const;
+      const trayStates = ["secret", "hidden_from_the_players", "known_to_an_npc", "partly_revealed", "known_to_the_party", "left_the_party"] as const;
       const knownTray = dm && all ? tray.map((n, i) => (i < trayStates.length ? { ...n, knowWord: trayStates[i]! } : n)) : tray;
       return {
         counts: { names: seen.length, connections: usable.length, connectedNames: seen.length - tray.length, notConnected: tray.length },
