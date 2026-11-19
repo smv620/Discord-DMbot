@@ -11,8 +11,9 @@ import SavingWait from "./SavingWait";
 /** The plain line for an answer that did not go through, by the bot's error word. */
 function sayFailure(error: unknown, undoing: boolean): string {
   if (!(error instanceof ApiError)) return w.couldNot;
-  if (error.kind === "gone" || error.note === "gone") return w.gone;
-  if (undoing && (error.kind === "undo-late" || error.note === "too_late" || error.note === "changed")) return w.tooLate;
+  if (error.kind === "gone") return w.gone;
+  // The bot's own words for an Undo that is too late or whose message changed since (waitForAnswer maps them to these kinds).
+  if (undoing && (error.kind === "undo-late" || error.kind === "changed")) return w.tooLate;
   return w.couldNot;
 }
 
@@ -59,7 +60,6 @@ export default function JoinQuestions({
     flight.current = true;
     setBusy(true);
     setSaid(null);
-    if (!undoing) setUndo(null); // an Undo is for the last "What the party knows" only
     try {
       await run();
     } catch (error) {
@@ -134,6 +134,7 @@ export default function JoinQuestions({
           </div>
           {undo && (
             <p>
+              <p class="small muted">{w.undoFor(undo.names)}</p>
               <button type="button" class="button secondary" disabled={busy} onClick={() => void takeBack(undo)}>
                 {w.undo}
               </button>

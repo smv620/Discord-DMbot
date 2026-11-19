@@ -6,6 +6,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/pr
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ApiError, type JoinGroup } from "../src/account/api";
+import namesArea from "../src/account/api-names";
 import JoinQuestions from "../src/account/JoinQuestions";
 import { mockApi } from "../src/account/mock";
 import { joinWords as w } from "../src/content/join-questions-words";
@@ -73,10 +74,55 @@ describe("the join question on the Questions page", () => {
     await waitFor(() => expect(api.calls.filter((c) => c === "joinQuestions:100.cmp1").length).toBeGreaterThan(1));
   });
 
-  it("a player's page shows nothing, since the door answers no names to anyone but a DM", async () => {
+  it("a player's page says it failed and offers no answer, since the door answers no names to anyone but a DM", async () => {
     const api = mockApi("table");
     render(<JoinQuestions api={api} campaignRef="100.cmp1.web-player" id="join" />);
-    expect(await screen.findByRole("alert")).toBeTruthy();
+    expect(await screen.findByText(w.failed)).toBeTruthy();
     expect(screen.queryByRole("button", { name: w.party })).toBeNull();
+  });
+
+  it("nothing to give shows its own line, and a single thing says '1 thing'", async () => {
+    const api = open();
+    api.answerJoin = async () => ({ batch: null, given: null });
+    fireEvent.click(await screen.findByRole("button", { name: w.party }));
+    expect(await screen.findByText(w.nothingToGive("Mira"))).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.undo })).toBeNull();
+  });
+
+  it("a party answer that gave one thing says '1 thing' and offers its Undo", async () => {
+    const api = open();
+    api.answerJoin = async () => ({ batch: 5, given: 1 });
+    fireEvent.click(await screen.findByRole("button", { name: w.party }));
+    expect(await screen.findByText(w.partyDone("Mira", 1, true))).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.undo })).toBeTruthy();
+  });
+
+  it("an Undo that is too late, or whose message changed since, says so in words", async () => {
+    const api = open();
+    fireEvent.click(await screen.findByRole("button", { name: w.party }));
+    expect(await screen.findByText(w.partyDone("Mira", 3, true))).toBeTruthy();
+    api.answerJoin = async () => {
+      throw new ApiError("changed");
+    };
+    fireEvent.click(await screen.findByRole("button", { name: w.undo }));
+    expect(await screen.findByText(w.tooLate)).toBeTruthy();
+  });
+
+  it("the answer and undo calls go to the door's routes with the right bodies", async () => {
+    const sent: unknown[][] = [];
+    const call = async (method: string, path: string, body?: unknown) => {
+      sent.push([method, path, body]);
+      return { answer: "A1" };
+    };
+    const waitForAnswer = async () => ({ state: "done" as const, batch: 61, given: 3 });
+    const api = namesArea({ call, waitForAnswer, root: "" } as never) as {
+      answerJoin: (ref: string, change: unknown) => Promise<{ batch: number | null; given: number | null }>;
+    };
+    expect(await api.answerJoin("100.cmp1", { action: "party", group: "e1".repeat(16) })).toEqual({ batch: 61, given: 3 });
+    await api.answerJoin("100.cmp1", { action: "undo", batch: 61 });
+    expect(sent).toEqual([
+      ["POST", "/me/campaigns/100.cmp1/join-questions/answer", { group: "e1".repeat(16), answer: "party" }],
+      ["POST", "/me/campaigns/100.cmp1/join-questions/61/undo", undefined],
+    ]);
   });
 });

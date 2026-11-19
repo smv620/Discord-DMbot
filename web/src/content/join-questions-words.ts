@@ -1,10 +1,17 @@
 // The words of the join question on the Questions page (#4778 part b): the same as Discord's card (ui/party_join.py), with no
 // markdown. Names are shown as given, never with a pronoun. DM only.
+/** Names joined the way Discord joins them; a name with a comma in it is still one name. */
+function joinOf(names: string[]): string {
+  if (names.length <= 1) return names[0] ?? "";
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
 export const joinWords = {
   title: "New in the party",
   everyone: "Only what everyone knows",
   party: "What the party knows",
   undo: "↩ Undo",
+  undoFor: (names: string[]): string => `Undo the last "What the party knows", for ${names.join(", ").replace(/, ([^,]*)$/, " and $1")}.`,
   undone: (names: string, one: boolean): string =>
     `↩️ Undone. ${names} ${one ? "knows" : "know"} only what everyone knows again, plus what was said at the table since.`,
   everyoneChosen: "Only what everyone knows is chosen for now.",
@@ -22,14 +29,12 @@ export const joinWords = {
   failed: "Couldn't load this.",
   tryAgain: "Try again",
   /** Names joined the way Discord joins them: "Mira", "Mira and Tavin", "Mira, Tavin and Oskar". */
-  join: (names: string[]): string =>
-    names.length <= 1 ? (names[0] ?? "") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`,
-  heading: (names: string[]): string =>
-    names.length === 1 ? `${names[0]} has joined the party.` : `${names.join(", ").replace(/, ([^,]*)$/, " and $1")} have joined the party.`,
+  join: (names: string[]): string => joinOf(names),
+  heading: (names: string[]): string => (names.length === 1 ? `${joinOf(names)} has joined the party.` : `${joinOf(names)} have joined the party.`),
   question: (names: string[]): string =>
-    names.length === 1 ? `What does ${names[0]} know about what came before?` : `What do ${names.join(", ").replace(/, ([^,]*)$/, " and $1")} know about what came before?`,
+    names.length === 1 ? `What does ${joinOf(names)} know about what came before?` : `What do ${joinOf(names)} know about what came before?`,
   explain: (names: string[]): string =>
     names.length === 1
-      ? `Until you choose, ${names[0]} knows only what anyone in the world would know, ${names[0]}'s own backstory, and what's said at the table from now on.`
-      : `Until you choose, ${names.join(", ").replace(/, ([^,]*)$/, " and $1")} know only what anyone in the world would know, each character's own backstory, and what's said at the table from now on.`,
+      ? `Until you choose, ${joinOf(names)} knows only what anyone in the world would know, ${names[0]}'s own backstory, and what's said at the table from now on.`
+      : `Until you choose, ${joinOf(names)} know only what anyone in the world would know, each character's own backstory, and what's said at the table from now on.`,
 };
