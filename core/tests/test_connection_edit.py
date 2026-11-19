@@ -411,7 +411,7 @@ class Cards(base.NamesTest):
             {link.id: [mara.id]},
         )
         text, again = await self.who_page()  # the page shows who knows it now
-        self.assertIn("Only Mara knows it (and the DM)", text)
+        self.assertIn("👤 Known to: Mara", text)
         self.assertEqual([o.default for o in again.pick.options if o.label == "Mara"], [True])
 
     async def test_some_with_nobody_picked_is_refused_and_changes_nothing(self) -> None:
@@ -448,9 +448,8 @@ class Cards(base.NamesTest):
         self.assertEqual(who_knows.called(["A", "B", "C"]), "A, B and C")
         names = {"1": "Mara", "2": "Tavin"}
         text = who_knows.who_text("Kesh", "some", ["1", "2"], names, has_characters=True)
-        self.assertTrue(text.startswith("**Hidden from the party. Only Mara and Tavin know it"))
-        lost = who_knows.who_text("Kesh", "some", ["9"], names, has_characters=True)
-        self.assertIn("Only some characters know it", lost)  # a knower the menu cannot name
+        # (who knows it is the §7 line above the status line since #4537 slice 3a)
+        self.assertTrue(text.startswith("**Hidden from the rest of the table."))
         bare = who_knows.who_text("Kesh", "dm", [], {}, has_characters=False)
         self.assertIn("no player characters yet", bare)
 

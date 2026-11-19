@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 import discord
@@ -63,7 +63,8 @@ from dmbot.ui.who_knows import (
     WhoKnowsMenu,
     called,
     common_done,
-    player_characters,
+    knows_line,
+    pick_choices,
     taken_back,
     who_text,
 )
@@ -560,8 +561,7 @@ class OneConnection(_Menu):
         if not found.secrets:  # checked on every press
             await _tell(interaction, SECRET_DENIED_PRESS)
             return
-        pcs = await player_characters(found.memory, found.campaign)
-        await _replace(interaction, *await _who_page(found, self.campaign_id, self.entity_id, pcs))
+        await _replace(interaction, *await _who_page(found, self.campaign_id, self.entity_id))
 
     async def _pin(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -797,7 +797,6 @@ async def _who_page(
     found: Found,
     campaign_id: str,
     entity_id: str,
-    pcs: Sequence[tuple[str, str]],
     *,
     note: str = "",
     undo: Sequence[int] = (),
@@ -811,12 +810,23 @@ async def _who_page(
         c.guild_id, c.id, "connection", [rel.id]
     ):
         who = link_edits.COMMON
+    party = await found.memory.party_and_others(c.guild_id, c.id)
+    pcs, notes = pick_choices(party)  # (the party first, then who left, then NPCs: #4537 §10)
     names = dict(pcs)
     view = WhoKnows(
         campaign_id, entity_id, rel.id, pcs,
-        chosen=[x for x in knowing if x in names], now=who, undo=undo,
+        chosen=[x for x in knowing if x in names], now=who, undo=undo, notes=notes,
     )  # fmt: skip
-    text = who_text(_said(found), who, knowing, names, has_characters=bool(names))
+    line = knows_line(
+        party, knowing, who=who, common=who == link_edits.COMMON
+    )  # (§7, worked out now)
+    text = (
+        line
+        + "\n"
+        + who_text(
+            _said(found), who, knowing, names, has_characters=bool(party.party or party.left)
+        )
+    )
     return (f"{note}\n\n{text}" if note else text), view
 
 
@@ -834,8 +844,9 @@ class WhoKnows(WhoKnowsMenu):
         chosen: Sequence[str] = (),
         now: str = "",
         undo: Sequence[int] = (),
+        notes: Mapping[str, str] | None = None,
     ) -> None:
-        super().__init__(pcs, chosen=chosen, now=now, undo=undo)
+        super().__init__(pcs, chosen=chosen, now=now, undo=undo, notes=notes)
         self.campaign_id, self.entity_id, self.relation_id = campaign_id, entity_id, relation_id
 
     async def _undo(self, interaction: discord.Interaction) -> None:
@@ -864,10 +875,9 @@ class WhoKnows(WhoKnowsMenu):
         found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
         if found is None:
             return
-        pcs = await player_characters(found.memory, found.campaign)
         await _replace(
             interaction,
-            *await _who_page(found, self.campaign_id, self.entity_id, pcs, note=note, undo=undo),
+            *await _who_page(found, self.campaign_id, self.entity_id, note=note, undo=undo),
         )
 
     async def _back(self, interaction: discord.Interaction) -> None:
