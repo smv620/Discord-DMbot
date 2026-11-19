@@ -63,7 +63,8 @@ class JoinOnTheWeb(Web):
         await self.ask(self.tavin)
         got = await join_questions.read(self.web, self.session, self.cref)
         self.assertEqual(
-            got, {"groups": [{"group": GROUP, "answer": "waiting", "names": ["Tavin"]}]}
+            got,
+            {"groups": [{"group": GROUP, "answer": "waiting", "names": ["Tavin"], "kind": "join"}]},
         )
 
     async def test_a_question_not_sent_yet_or_of_a_character_who_left_is_not_listed(self) -> None:
@@ -198,3 +199,9 @@ class JoinOnTheWeb(Web):
         )
         got = await join_questions.read(self.web, self.session, self.cref)
         self.assertEqual([g["names"] for g in got["groups"]], [["Tavin"]])
+
+    async def test_a_question_for_a_character_coming_back_says_so(self) -> None:
+        await self.ask(self.tavin)
+        await self.sql("UPDATE memory_join_questions SET kind = 'back'")
+        got = await join_questions.read(self.web, self.session, self.cref)
+        self.assertEqual([g["kind"] for g in got["groups"]], ["back"])

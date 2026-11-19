@@ -155,7 +155,13 @@ MAP_ACTIONS = ("map-terrain", "map-climate", "map-control", "map-show")
 # one line, or ↩ Undo of one of those (the text is its change number). Filed under no name.
 WORLD_ACTIONS = ("world-keep", "world-not", "world-undo")
 JOIN_ACTIONS = ("join-everyone", "join-party", "join-undo")  # the DM's join question (#4778)
-PARTY_ACTIONS = ("party-leave", "party-back", "party-undo")  # who is in the party (#4778)
+PARTY_ACTIONS = (
+    "party-leave",
+    "party-back",
+    "party-undo",
+    "party-catch-up-choices",
+    "party-catch-up",
+)  # who is in the party (#4778)
 # The story threads DMbot found in an upload (#4457, quests slice 1): the same store calls as
 # Discord's 📜 card, so each keep is one change and one Undo.
 THREAD_ACTIONS = ("thread-keep", "thread-not", "thread-undo")
@@ -457,12 +463,13 @@ class ActionStore:
     async def party_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, batch: int
     ) -> tuple[str, str] | None:
-        """The action and text of this DM's own done `party-leave` or `party-back` that made
-        `batch` (#4778), so the page's Undo can only take back what they did themselves."""
+        """The action and text of this DM's own done `party-leave`, `party-back` or `party-catch-up`
+        that made `batch` (#4778, #4793), so the page's Undo can only take back what they did
+        themselves."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT action, text FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
-                " AND user_id = %s AND action IN ('party-leave', 'party-back')"
+                " AND user_id = %s AND action IN ('party-leave', 'party-back', 'party-catch-up')"
                 " AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
                 (guild_id, campaign_id, user_id, batch),
             )
@@ -1173,6 +1180,8 @@ async def _world(
 
 
 NOT_IN_PARTY = "not_in_party"  # a "Has left the party" for a character not in the party now
+CATCH_CHOICES_MAX = 4  # members one "Catch up" answer lists (`result_counts` is 200 characters)
+NOTHING_LEFT = "nothing_left"  # a "Catch up" for a member who already knows all the rest know here
 ALREADY_BACK = "already_back"  # a "Back in the party" (or an Undo of a leave) for one who is in it
 NOT_A_PC = "not_a_pc"  # a "Back in the party" for a character who is no player character now
 
@@ -1209,6 +1218,28 @@ async def _party(
                 return Outcome()  # (taken back already: a retried Undo)
             return _failed(GONE if str(exc) == STORE_NOT_FOUND else CHANGED)
         return Outcome()
+    if a.action == "party-catch-up-choices":
+        # Who is missing what on this card, from the store's own rule (`knowers.tell_counts`): ids
+        # and counts only, `<member>=<how many>` in the party list's order; the page names them.
+        try:
+            choices = await memory.tell_choices(guild_id, cid, a.text)
+        except MemoryRuleError:
+            return _failed(GONE)
+        # (the answer's column holds 200 characters: four pairs of a 32-character id and a count
+        # always fit, with `;more=<k>` saying how many were left out, so the page can say so;
+        # whoever is left over shows once these are caught up and it is read again)
+        shown = choices[:CATCH_CHOICES_MAX]
+        pairs = ",".join(f"{m}={n}" for m, _name, n in shown)
+        return Outcome(counts=f"catch:{pairs};more={len(choices) - len(shown)}")
+    if a.action == "party-catch-up":
+        member, _, entry = a.text.partition(" ")
+        try:
+            told = await memory.tell_member(guild_id, cid, member, entry)
+        except MemoryRuleError:
+            return _failed(NOT_IN_PARTY)
+        if not told.value:
+            return _failed(NOTHING_LEFT)  # (another DM may have done it)
+        return Outcome(counts=f"told:{told.value}", batches=(told.batch,) if told.batch else ())
     if a.action == "party-leave":
         entity, _, why = a.text.partition(" ")
         if why not in ENDED:

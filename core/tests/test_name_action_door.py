@@ -53,6 +53,8 @@ EVERY_ACTION = (
     "party-leave",  # who is in the party, from the page (#4778)
     "party-back",
     "party-undo",
+    "party-catch-up-choices",  # who is missing what on a card (#4793)
+    "party-catch-up",
 )  # fmt: skip
 
 

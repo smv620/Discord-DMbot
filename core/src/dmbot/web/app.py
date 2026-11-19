@@ -76,6 +76,7 @@ from dmbot.web import (
     npc_pages,
     offers,
     optional_rules,
+    party_catch_up,
     party_characters,
     party_record,
     past_sessions,
@@ -2858,6 +2859,37 @@ def create_app(
             body = None
         try:
             return {"answer": await party_record.queue_back(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/catch-up/choices", status_code=202)
+    async def me_campaign_catch_up_choices(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"entry"}`: who is missing what on this entry's card (#4793); polled at
+        `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await party_catch_up.queue_choices(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/catch-up", status_code=202)
+    async def me_campaign_catch_up(ref: str, request: Request, signed: Signed) -> dict[str, str]:
+        """`{"member", "entry"}`: give the member what the rest of the party knows on this card."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await party_catch_up.queue_tell(db, session, ref, body)}
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

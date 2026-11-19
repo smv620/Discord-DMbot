@@ -1319,8 +1319,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const partyBatches = new Map<number, PartyRecordCharacter[]>();
   let lastPartyBatch = 70;
   const pretendJoinGroups = () => [
-    { group: "e1".repeat(16), answer: "waiting" as const, names: ["Mira"] },
-    { group: "e2".repeat(16), answer: "waiting" as const, names: ["Tavin", "Oskar"] },
+    { group: "e1".repeat(16), answer: "waiting" as const, names: ["Mira"], kind: "join" as const },
+    { group: "e2".repeat(16), answer: "waiting" as const, names: ["Tavin", "Oskar"], kind: "join" as const },
   ];
   // The kept pictures (#3275): five pretend pictures, each 100 MB; the permanent ones count toward the limit.
   const pictureRows = [
