@@ -125,9 +125,8 @@ class Statements:
     told: Mapping[str, frozenset[str]] = field(default_factory=dict)
     # The statements a group holds that are hidden from the players or not yet confirmed (on them or
     # an entry they name; `_not_shown`'s second set): a group's row on one never reaches a player
-    # character (Supervisor's ruling on
-    # #4806, slice 5a), as a common row is masked; an NPC member still gets it. `players`: every
-    # confirmed player character, in the party or not.
+    # character (Supervisor's ruling on #4806, #4807), as a common row is masked; an NPC member
+    # still gets it. `players`: every confirmed player character, in the party or not.
     dark: frozenset[tuple[str, str]] = frozenset()
     players: frozenset[str] = frozenset()
 

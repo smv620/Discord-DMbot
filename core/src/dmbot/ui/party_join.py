@@ -26,13 +26,14 @@ from typing import Any, ClassVar
 
 import discord
 
-from dmbot.memory.join_questions import AlreadyAnswered
+from dmbot.memory.join_questions import BACK, AlreadyAnswered
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.ui.dmbot_commands import _answer_first, _bot
 
 log = logging.getLogger(__name__)
 
 EVERYONE_BUTTON = "Only what everyone knows"
+BEFORE_BUTTON = "Only what was known before"  # (coming back, #4537 4a: the message names who)
 PARTY_BUTTON = "What the party knows"
 UNDO = "↩️ Undo"
 SINCE = "**Since when has {name} been in the party?**"
@@ -83,6 +84,21 @@ UNDONE = (
     "↩️ Undone. {names} {know} only what everyone knows again, plus what was said at the table "
     "since."
 )
+BEFORE_DONE_ONE = (
+    "✅ {names} knows only what was known before leaving, plus what's said at the table from "
+    "now on."
+)
+BEFORE_DONE_MANY = (
+    "✅ {names} know only what each knew before leaving, plus what's said at the table from now on."
+)
+BEFORE_UNDONE_ONE = (
+    "↩️ Undone. {names} knows only what {names} knew before leaving, plus what was said at the "
+    "table since."
+)
+BEFORE_UNDONE_MANY = (
+    "↩️ Undone. {names} know only what each knew before leaving, plus what was said at the table "
+    "since."
+)
 CANT_UNDO = "Can't undo this one: some of it changed since. Open {name}'s card to fix it."
 ANSWERED = "Already answered (by you or another DM). Nothing changed."
 FAILED = "Couldn't do that just now. Nothing changed. Try again in a moment."
@@ -107,19 +123,32 @@ def things(n: int) -> str:
     return "1 thing" if n == 1 else f"{n} things"
 
 
-def question_text(names: Sequence[str], count: int) -> str:
+def question_text(names: Sequence[str], count: int, *, back: bool = False) -> str:
     """The join question for these characters (the ux-critic's words in Supervisor's ruling;
-    the count line is dropped at 0). Pure."""
+    the count line is dropped at 0), or with `back` the question about the time away of
+    characters who came back (#4537 4a: they keep everything from before). Pure."""
     who = names_text(names)
     one = len(names) == 1
-    head = f"**{who} {'has' if one else 'have'} joined the party.**"
-    ask = f"What {'does' if one else 'do'} {who} know about what came before?"
     know = "knows" if one else "know"
+    if back:
+        head = f"**{who} {'is' if one else 'are'} back in the party.**"
+        ask = f"What {'does' if one else 'do'} {who} know about what happened while away?"
+        until = (
+            f"Until you choose, {who} {know} only "
+            + ("what was known before leaving" if one else "what each knew before leaving")
+            + ", plus what's said at the table from now on."
+        )
+    else:
+        head = f"**{who} {'has' if one else 'have'} joined the party.**"
+        ask = f"What {'does' if one else 'do'} {who} know about what came before?"
+        until = (
+            f"Until you choose, {who} {know} only what anyone in the world would know, "
+            + (f"{who}'s own backstory" if one else "each character's own backstory")
+            + ", and what's said at the table from now on."
+        )
     lines = [
         f"{head} {ask}",
-        f"Until you choose, {who} {know} only what anyone in the world would know, "
-        + (f"{who}'s own backstory" if one else "each character's own backstory")
-        + ", and what's said at the table from now on."
+        until
         + (
             f" Answers to the whole table and recaps leave out the {things(count)} {who} "
             f"{"doesn't" if one else "don't"} know yet."
@@ -173,10 +202,12 @@ async def _names(memory: Any, guild_id: int, campaign_id: str, ids: Sequence[str
     return out
 
 
-def _question_view(campaign_id: str, group_id: str, *, everyone: bool = True) -> discord.ui.View:
+def _question_view(
+    campaign_id: str, group_id: str, *, everyone: bool = True, back: bool = False
+) -> discord.ui.View:
     view = discord.ui.View(timeout=None)
     if everyone:
-        view.add_item(EveryoneButton(campaign_id, group_id))
+        view.add_item(EveryoneButton(campaign_id, group_id, back=back))
     view.add_item(PartyButton(campaign_id, group_id))
     return view
 
@@ -189,7 +220,23 @@ async def question_for(bot: Any, campaign: Any, group_id: str) -> tuple[str, dis
     ]
     names = await _names(bot.memory, campaign.guild_id, campaign.id, ids)
     count = await bot.memory.party_known_count(campaign.guild_id, campaign.id, ids)
-    return question_text(names, count), _question_view(campaign.id, group_id)
+    back = _is_back(questions)
+    return question_text(names, count, back=back), _question_view(campaign.id, group_id, back=back)
+
+
+def _is_back(questions: Sequence[Any]) -> bool:
+    """A message about characters who came back (one message holds one kind)."""
+    return bool(questions) and questions[0].kind == BACK
+
+
+def _before_words(names: Sequence[str], *, undone: bool = False) -> str:
+    """ "Only what was known before" said back, after the answer or an Undo of the copy."""
+    one = len(names) == 1
+    if undone:
+        text = BEFORE_UNDONE_ONE if one else BEFORE_UNDONE_MANY
+    else:
+        text = BEFORE_DONE_ONE if one else BEFORE_DONE_MANY
+    return text.format(names=names_text(names))
 
 
 async def send_join_questions(bot: Any, guild_id: int, campaign_id: str) -> int:
@@ -199,6 +246,17 @@ async def send_join_questions(bot: Any, guild_id: int, campaign_id: str) -> int:
     memory = getattr(bot, "memory", None)
     if memory is None or not getattr(bot.settings, "party_join_on", False):
         return 0
+    asked = 0
+    for _ in range(2):  # (one message per kind: joins, then those who came back, or the reverse)
+        sent = await _send_one(bot, memory, guild_id, campaign_id)
+        if not sent:
+            break
+        asked += sent
+    return asked
+
+
+async def _send_one(bot: Any, memory: Any, guild_id: int, campaign_id: str) -> int:
+    """One message of `send_join_questions`: 0 when nothing went."""
     group_id = None
     try:
         claimed = await memory.join_questions_to_send(guild_id, campaign_id)
@@ -223,12 +281,14 @@ async def send_join_questions(bot: Any, guild_id: int, campaign_id: str) -> int:
 
 
 class EveryoneButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_E):
-    """ "Only what everyone knows": nothing is written; "What the party knows" stays offered."""
+    """ "Only what everyone knows" (or, for those who came back, "Only what was known before"):
+    nothing is written; "What the party knows" stays offered."""
 
-    def __init__(self, campaign_id: str, group_id: str) -> None:
+    def __init__(self, campaign_id: str, group_id: str, *, back: bool = False) -> None:
         super().__init__(
             discord.ui.Button(
-                label=EVERYONE_BUTTON, style=discord.ButtonStyle.secondary,
+                label=BEFORE_BUTTON if back else EVERYONE_BUTTON,
+                style=discord.ButtonStyle.secondary,
                 custom_id=f"dmbot:pjoine:{campaign_id}:{group_id}",
             )
         )  # fmt: skip
@@ -261,9 +321,16 @@ class EveryoneButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
         names = await _names(
             bot.memory, campaign.guild_id, campaign.id, [q.entity_id for q in done]
         )
-        text = EVERYONE_DONE.format(names=names_text(names), know=_know(len(names)))
+        back = _is_back(done)
+        text = (
+            _before_words(names)
+            if back
+            else EVERYONE_DONE.format(names=names_text(names), know=_know(len(names)))
+        )
         await _edit(
-            interaction, text, _question_view(self.campaign_id, self.group_id, everyone=False)
+            interaction,
+            text,
+            _question_view(self.campaign_id, self.group_id, everyone=False, back=back),
         )
 
 
@@ -356,9 +423,16 @@ class JoinUndoButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]],
             await _edit(interaction, FAILED)
             return
         log.info("A DM undid a join answer")
-        text = UNDONE.format(names=names_text(names), know=_know(len(names)))
+        back = _is_back(questions)
+        text = (
+            _before_words(names, undone=True)
+            if back
+            else UNDONE.format(names=names_text(names), know=_know(len(names)))
+        )
         await _edit(
-            interaction, text, _question_view(self.campaign_id, self.group_id, everyone=False)
+            interaction,
+            text,
+            _question_view(self.campaign_id, self.group_id, everyone=False, back=back),
         )
 
 
