@@ -124,7 +124,7 @@ describe("catch up on a name's row", () => {
   it("a read that fails says so and is not taken for nobody behind", async () => {
     const api = mockApi("table");
     api.catchUpChoices = async () => {
-      throw new ApiError("failed");
+      throw new ApiError("network");
     };
     render(<CatchUp api={api} refId={REF} entry="n25" />);
     fireEvent.click(await screen.findByRole("button", { name: w.manyLabel }));
