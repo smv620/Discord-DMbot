@@ -1,15 +1,19 @@
 """Reads the invented golden set for the recap (#1382): dmbot/devtools/golden/recap/*.json.
 
 Each file is one invented session: its lines (`dm`, or a player letter), the confirmed names, a
-secret name that must never appear, and the beats a good sheet holds, each as a few key words.
-No real person, no live transcript, no sourcebook text. `load_golden` refuses anything
-malformed, and a test runs it over the files in CI, so a typo cannot quietly weaken the
-measurement.
+secret name that must never appear, the beats a good sheet holds, each as a few key words, and
+`characters` (each player letter's one character). Each is written like a real table (owner,
+2026-11-19; `docs/RECAP_STANDARD.md`): the DM describes what the senses meet and each new person
+when first met, each player speaks only for their own character, the DM decides outcomes, and
+speech is in quotation marks. No real person, no live transcript, no sourcebook text.
+`load_golden` refuses anything malformed, and a test runs it over the files in CI, so a typo
+cannot quietly weaken the measurement.
 """
 
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,6 +38,17 @@ class Session:
     secret: tuple[str, ...]
     reference: tuple[tuple[str, ...], ...]  # key words of each beat a good sheet holds
     window_chars: int = 40_000  # a small number makes a short session several windows
+    characters: tuple[tuple[str, str], ...] = ()  # (player letter, the character they play)
+
+
+def speaks_for_another(text: str, own: str, characters: dict[str, str]) -> str | None:
+    """The other player character a player's line opens with (a player declaring someone else's
+    action, which the owner's rule forbids), or None. The cheapest form of the rule: a guard on
+    how the line starts, not a grammar check."""
+    for character in characters.values():
+        if character != own and re.match(rf"\s*{re.escape(character)}(?!\w)", text, re.IGNORECASE):
+            return character
+    return None
 
 
 def parse(name: str, raw: object) -> Session:
@@ -49,6 +64,13 @@ def parse(name: str, raw: object) -> Session:
         raise GoldenError(f"{name}: missing or wrong field ({exc!r})") from None
     if not isinstance(rows, list) or not MIN_LINES <= len(rows) <= MAX_LINES:
         raise GoldenError(f"{name}: needs {MIN_LINES} to {MAX_LINES} lines")
+    characters = raw.get("characters", {})
+    if not isinstance(characters, dict) or not all(
+        isinstance(k, str) and isinstance(v, str) and v for k, v in characters.items()
+    ):
+        raise GoldenError(f"{name}: characters must map each player letter to a name")
+    if set(characters) - set(PLAYER_IDS) or len(set(characters.values())) != len(characters):
+        raise GoldenError(f"{name}: characters needs one different name for each player letter")
     lines: list[Line] = []
     for n, row in enumerate(rows, start=1):
         if not (isinstance(row, list) and len(row) == 2 and isinstance(row[1], str) and row[1]):
@@ -56,6 +78,18 @@ def parse(name: str, raw: object) -> Session:
         who = DM_ID if row[0] == "dm" else PLAYER_IDS.get(str(row[0]))
         if who is None:
             raise GoldenError(f"{name}: line {n} has an unknown speaker")
+        # (`characters` is optional on purpose: a file without it just isn't checked; the shipped
+        # four all have it, which `test_recap_measure` requires)
+        if characters and who != DM_ID:
+            own = characters.get(str(row[0]))
+            if own is None:
+                raise GoldenError(f"{name}: player {row[0]} has no character in `characters`")
+            other = speaks_for_another(row[1], own, characters)
+            if other is not None:
+                raise GoldenError(
+                    f"{name}: line {n} opens with {other}, another player's character: "
+                    "each player speaks only for their own"
+                )
         lines.append(Line(n * 1000, who, row[1], row[1]))
     if len(beats) < 3 or any(not b for b in beats):
         raise GoldenError(f"{name}: needs at least three beats with key words")
@@ -64,7 +98,9 @@ def parse(name: str, raw: object) -> Session:
     size = raw.get("window_chars", 40_000)
     if type(size) is not int or not 200 <= size <= 40_000:
         raise GoldenError(f"{name}: window_chars must be a whole number from 200 to 40000")
-    return Session(name, title, tuple(lines), names, secret, beats, size)
+    return Session(
+        name, title, tuple(lines), names, secret, beats, size, tuple(sorted(characters.items()))
+    )
 
 
 def missing(folder: Path) -> str:
