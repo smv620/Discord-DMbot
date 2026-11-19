@@ -118,3 +118,22 @@ class CatchingUpOnTheWeb(Web):
                 await party_catch_up.queue_tell(self.web, self.session, self.cref, body)
             self.assertEqual(err2.exception.code, "bad_action")
         self.assertIsNone(await self.actions.claim_next(self.g))
+
+    async def test_a_big_answer_keeps_every_listed_pair_whole(self) -> None:
+        # (the answer's column holds 200 characters: the bot lists at most five members, each a
+        # whole id and count, so the page never reads a cut pair; the rest show once these are
+        # caught up and it is read again)
+        class Stub:
+            async def tell_choices(self, *_: Any) -> list[tuple[str, str, int]]:
+                return [(f"{i:032x}", f"M{i}", 10 + i) for i in range(8)]
+
+        action = wa.Action(
+            id="a", campaign_id=self.one.id, entity_id="", user_id=ALICE.id,
+            action="party-catch-up-choices", text=self.mira,
+        )  # fmt: skip
+        out = await wa._party(Stub(), self.actions, self.g, self.one.id, action)  # type: ignore[arg-type]
+        self.assertLessEqual(len(out.counts), 200)
+        listed = relationships._catch_choices(out.counts)
+        assert listed is not None
+        self.assertEqual(len(listed), wa.CATCH_CHOICES_MAX)
+        self.assertEqual([c["count"] for c in listed], [10, 11, 12, 13, 14])

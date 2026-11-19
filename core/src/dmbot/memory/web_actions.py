@@ -1180,6 +1180,7 @@ async def _world(
 
 
 NOT_IN_PARTY = "not_in_party"  # a "Has left the party" for a character not in the party now
+CATCH_CHOICES_MAX = 5  # members one "Catch up" answer lists (`result_counts` is 200 characters)
 NOTHING_LEFT = "nothing_left"  # a "Catch up" for a member who already knows all the rest know here
 ALREADY_BACK = "already_back"  # a "Back in the party" (or an Undo of a leave) for one who is in it
 NOT_A_PC = "not_a_pc"  # a "Back in the party" for a character who is no player character now
@@ -1224,7 +1225,10 @@ async def _party(
             choices = await memory.tell_choices(guild_id, cid, a.text)
         except MemoryRuleError:
             return _failed(GONE)
-        return Outcome(counts="catch:" + ",".join(f"{m}={n}" for m, _name, n in choices))
+        # (the answer's column holds 200 characters: five pairs of a 32-character id and a count
+        # always fit, and whoever is left over shows once these are caught up and it is read again)
+        shown = choices[:CATCH_CHOICES_MAX]
+        return Outcome(counts="catch:" + ",".join(f"{m}={n}" for m, _name, n in shown))
     if a.action == "party-catch-up":
         member, _, entry = a.text.partition(" ")
         try:
