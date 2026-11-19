@@ -1243,6 +1243,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "progress-",
             "clue-",
             "join-",
+            "party-",
         )
     ):
         raise RecapError("not_found")
@@ -1280,7 +1281,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "kept": int(counts.removeprefix("kept:")) if counts.startswith("kept:") else None,
             "batch": int(made[0]) if got["state"] == "done" and made else None,
         }
-    if str(got["action"]).startswith("join-"):
+    if str(got["action"]).startswith(("join-", "party-")):
         # the DM's join answer (#4778): how it ended, how many things "What the party knows" gave
         # (Discord's "the N things the party knew"), and the change it made for the page's Undo
         made = got.get("resultBatches") or []
@@ -1289,6 +1290,8 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "state": got["state"],
             "error": got["error"],
             "given": int(counts.removeprefix("given:")) if counts.startswith("given:") else None,
+            # a return: which question now waits for the character ("back", "join" or "none")
+            "asked": counts.removeprefix("asked:") if counts.startswith("asked:") else None,
             "batch": int(made[0]) if got["state"] == "done" and made else None,
         }
     if str(got["action"]).startswith("reading-"):

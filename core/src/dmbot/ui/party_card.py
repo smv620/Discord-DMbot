@@ -7,8 +7,12 @@
   (Moved on, Retired, Died, Away for a while, or ↩️ Back), closes the character's stretch as one
   change (`MemoryStore.leave_party`) and offers ↩️ Undo. Nothing the character knew is taken
   away: every row they hold stays (§6).
-- **Coming back** is slice 4; until then a "Has left" pressed by mistake is put right with its
-  Undo (Supervisor's ruling D).
+- **🤝 Back in the party** (slice 4a, §6): a DM-only button on a character who left. It opens a
+  new stretch as one change (`MemoryStore.back_in_party`) with ↩️ Undo; the character keeps
+  everything from before, and DMbot asks the DM privately, never during play, what the character
+  knows of the time away (`party_join`, a question of kind "back"). A "Has left" pressed by
+  mistake is still put right with its own Undo (Supervisor's ruling D): that erases the leave,
+  while coming back keeps it on record.
 
 The buttons carry the campaign, the character and the word (or the change's number), never a
 name; who may press is read again on every press. The character is named, never with a pronoun
@@ -25,6 +29,7 @@ from typing import Any
 
 import discord
 
+from dmbot.memory import join_questions
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.memory.party_record import ENDED, Span
 from dmbot.ui.dmbot_commands import _answer_first, _bot
@@ -56,9 +61,28 @@ CANT_UNDO = "Too late to undo this one. Nothing changed."
 BACK_ALREADY = "{name} is already back in the party. Nothing changed."
 NOT_IN_PARTY = "{name} isn't in the party now, so nothing changed."
 FAILED = "Couldn't do that just now. Nothing changed. Try again in a moment."
+RETURN_BUTTON = "🤝 Back in the party"  # (not ↩️: that is an Undo here, the ux-critic)
+RETURNED = (
+    "✅ {name} is back in the party and still knows everything from before. DMbot will ask what "
+    "{name} knows of the time away, never during play."
+)
+RETURNED_ALONE = "✅ {name} is back in the party and still knows everything from before."
+RETURNED_STILL_NEW = (  # (left before the join question was answered: that question stands)
+    "✅ {name} is back in the party. DMbot will still ask what {name} knows about what came "
+    "before, never during play."
+)
+NOT_BACK = "{name} isn't a player character now, so nothing changed."
+RETURN_UNDONE = "↩️ Undone. {name} is out of the party again."
+RETURN_CANT_UNDO = (
+    "Too late to undo this one. Nothing changed. Use 🚪 Has left the party on {name}'s card "
+    "instead."
+)
 
 _WHY = r"dmbot:pleave:(?P<campaign>[0-9a-f]{32}):(?P<entity>[0-9a-f]{32}):(?P<why>[a-z]{4,7})"
 _BACK = r"dmbot:pleaveb:(?P<campaign>[0-9a-f]{32}):(?P<entity>[0-9a-f]{32})"
+_RET_UNDO = (
+    r"dmbot:pretu:(?P<campaign>[0-9a-f]{32}):(?P<entity>[0-9a-f]{32}):(?P<batch>[0-9]{1,18})"
+)
 _UNDO = r"dmbot:pleaveu:(?P<campaign>[0-9a-f]{32}):(?P<entity>[0-9a-f]{32}):(?P<batch>[0-9]{1,18})"
 
 
@@ -232,11 +256,91 @@ class LeaveUndoButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]]
         await _edit(interaction, UNDONE.format(name=name))
 
 
-DYNAMIC_ITEMS = (WhyButton, BackButton, LeaveUndoButton)
+async def come_back(interaction: discord.Interaction, campaign_id: str, entity_id: str) -> None:
+    """The card's 🤝 Back in the party (a DM only): the character is in the party again."""
+    await _answer_first(interaction, in_place=True)
+    bot = _bot(interaction)
+    campaign = await _dm_campaign(interaction, campaign_id)  # (on every press)
+    if campaign is None or bot.memory is None:
+        return
+    g, c = campaign.guild_id, campaign.id
+    name = await _name(bot, campaign, entity_id)
+    try:
+        done = await bot.memory.back_in_party(g, c, entity_id)
+    except MemoryRuleError:  # (in the party already: pressed twice or by another DM; or no PC)
+        with contextlib.suppress(Exception):
+            if any(s.open for s in await bot.memory.party_spans(g, c, entity_id)):
+                await _edit(interaction, BACK_ALREADY.format(name=name))
+                return
+        await _edit(interaction, NOT_BACK.format(name=name))
+        return
+    except Exception as exc:
+        log.warning("Coming back to the party failed (%s)", type(exc).__name__)
+        await _edit(interaction, FAILED)
+        return
+    log.info("A character came back to the party")
+    view = discord.ui.View(timeout=None)
+    if done.batch is not None:
+        view.add_item(ReturnUndoButton(campaign_id, entity_id, done.batch))
+    _, waiting = done.value  # (the store says which question waits, if any)
+    words = {join_questions.BACK: RETURNED, join_questions.JOIN: RETURNED_STILL_NEW}.get(
+        waiting or "", RETURNED_ALONE
+    )
+    await _edit(interaction, words.format(name=name), view)
+    if waiting is not None:  # (at once between sessions, as a join's; never during play)
+        from dmbot.ui.party_join import send_join_questions
+
+        await send_join_questions(bot, g, c)
+
+
+class ReturnUndoButton(
+    discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_RET_UNDO
+):
+    """↩️ Undo of a "Back in the party": the stretch goes, and a question about the time away
+    that still waits goes with it (`join_questions.undo`)."""
+
+    def __init__(self, campaign_id: str, entity_id: str, batch: int) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label=UNDO, style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:pretu:{campaign_id}:{entity_id}:{batch}",
+            )
+        )  # fmt: skip
+        self.campaign_id, self.entity_id, self.batch = campaign_id, entity_id, batch
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> ReturnUndoButton:
+        return cls(match["campaign"], match["entity"], int(match["batch"]))
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        await _answer_first(interaction, in_place=True)
+        bot = _bot(interaction)
+        campaign = await _dm_campaign(interaction, self.campaign_id)
+        if campaign is None or bot.memory is None:
+            return
+        name = await _name(bot, campaign, self.entity_id)
+        try:
+            await bot.memory.undo(campaign.guild_id, campaign.id, self.batch)
+        except (TooLateToUndo, MemoryRuleError):
+            await _edit(interaction, RETURN_CANT_UNDO.format(name=name))
+            return
+        except Exception as exc:
+            log.warning("Undoing a return failed (%s)", type(exc).__name__)
+            await _edit(interaction, FAILED)
+            return
+        log.info("A DM undid a character coming back to the party")
+        await _edit(interaction, RETURN_UNDONE.format(name=name))
+
+
+DYNAMIC_ITEMS = (WhyButton, BackButton, LeaveUndoButton, ReturnUndoButton)
 
 __all__ = [
     "DYNAMIC_ITEMS",
     "LEAVE_BUTTON",
+    "RETURN_BUTTON",
     "ask_why",
+    "come_back",
     "party_line",
 ]

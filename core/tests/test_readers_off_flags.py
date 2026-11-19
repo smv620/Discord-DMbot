@@ -191,3 +191,47 @@ class AFactionsParty(Party):
             GUILD, self.c, self.vault, False, source=DM, dm_chose_secret=True
         )
         self.assertIsNotNone(await self.sure(gate.Viewer.the_party()))  # (shown again)
+
+    async def hide_the_vault(self) -> None:
+        await self.memory.set_hidden_from_players(
+            GUILD, self.c, self.vault, True, source=DM, dm_chose_secret=True
+        )
+
+    async def test_an_npc_member_still_gets_it_and_a_pc_who_left_does_not(self) -> None:
+        made = await self.memory.add_entity(
+            GUILD, self.c, name="Ash", type="character", role="npc", status=CONFIRMED, source=DM
+        )
+        ash = str(made.value.id)
+        await self.memory.add_relation(
+            GUILD, self.c, ash, "member_of", self.hand, source=DM, confidence=1.0,
+            status=CONFIRMED,
+        )  # fmt: skip
+        await self.hide_the_vault()
+        self.assertIsNotNone(await self.sure(gate.Viewer.character(ash)))  # (the DM seeing as Ash)
+        await self.memory.leave_party(GUILD, self.c, self.tuck, "left")
+        self.assertIsNone(await self.sure(gate.Viewer.character(self.tuck)))
+
+    async def test_a_connection_to_a_hidden_entry_doesnt_reach_them(self) -> None:
+        rel = await self.memory.add_relation(
+            GUILD, self.c, self.hand, "located_in", self.vault, source=DM, confidence=1.0,
+            status=CONFIRMED, known_by=[self.hand],
+        )  # fmt: skip
+        tie = str(rel.value[0].id)
+        seen = await self.memory.visible_to(GUILD, self.c, gate.Viewer.player([self.vell]))
+        self.assertIsNotNone(seen.how_sure(gate.CONNECTION, tie))
+        await self.hide_the_vault()
+        seen = await self.memory.visible_to(GUILD, self.c, gate.Viewer.player([self.vell]))
+        self.assertIsNone(seen.how_sure(gate.CONNECTION, tie))
+
+    async def test_a_secret_the_dm_gave_the_faction_still_reaches_its_members(self) -> None:
+        # (a connection given to some, a group among them, is not a hide: "Only some people know
+        # this" is how the DM gives it to the faction)
+        made = await self.memory.add_entity(
+            GUILD, self.c, name="The old mine", type="place", status=CONFIRMED, source=DM
+        )
+        rel = await self.memory.add_relation(
+            GUILD, self.c, self.hand, "located_in", str(made.value.id), source=DM,
+            confidence=1.0, status=CONFIRMED, secret=True, known_by=[self.hand],
+        )  # fmt: skip
+        seen = await self.memory.visible_to(GUILD, self.c, gate.Viewer.player([self.vell]))
+        self.assertIsNotNone(seen.how_sure(gate.CONNECTION, str(rel.value[0].id)))

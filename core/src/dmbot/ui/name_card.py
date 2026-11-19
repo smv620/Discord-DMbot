@@ -93,6 +93,7 @@ from dmbot.ui import (
     languages_card,
     logic,
     party_card,
+    party_tell,
     place_links,
     place_size,
     place_world,
@@ -1039,7 +1040,7 @@ async def show_card(
         line = languages_card.languages_line(known.get(entity_id, []))
         if line and len(text) + len(line) <= CARD_MAX:
             text += line
-    leave = False
+    leave = come_back = False
     if secrets and entity.type == "character" and entity.is_player_character:
         # the party record (#4537 2a): since when, or when they left; the DM's alone
         try:
@@ -1054,6 +1055,18 @@ async def show_card(
         if line and len(text) + len(line) <= CARD_MAX:
             text += line
         leave = not stretches or stretches[-1].open  # (in the party now; `secrets`: a DM)
+        come_back = not leave  # (left: 🤝 Back in the party, #4537 4a)
+    catch_up: list[tuple[str, str, int]] = []
+    if secrets and entity.status == CONFIRMED:
+        # 📖 Catch up (#4537 4b): a member missing what the rest of the party knows on this card
+        try:
+            catch_up = await memory.tell_choices(campaign.guild_id, campaign.id, entity_id)
+        except Exception as exc:  # the type only; the card shows without it
+            log.warning("Name card: catching up not read (%s)", type(exc).__name__)
+            catch_up = []
+        line = party_tell.card_line([(_md(n), k) for _, n, k in catch_up])
+        if line and len(text) + len(line) <= CARD_MAX:
+            text += line
     if secrets and (entity.status == PROPOSED or entity.unnamed):
         # The scene (#3596): DMbot's summary of who, where and what, for a question still open;
         # read after the sweep and the consent check, DM-only, "Where was it said?" is the source.
@@ -1151,6 +1164,8 @@ async def show_card(
         undo_spelling=undo_spelling,
         finish_past=finish_past,
         leave=leave,
+        come_back=come_back,
+        catch_up=catch_up,
     )
     if replace:
         await _replace(interaction, text, view)
@@ -1303,6 +1318,8 @@ class NameCard(_Menu):
         undo_spelling: int | None = None,
         finish_past: int | None = None,
         leave: bool = False,
+        come_back: bool = False,
+        catch_up: Sequence[tuple[str, str, int]] = (),
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
@@ -1384,12 +1401,26 @@ class NameCard(_Menu):
                         )
                     )  # fmt: skip
                     break
-        if leave:  # the party record (#4537 2a): a DM says a character in the party has left it
+        if leave or come_back:  # the party record (#4537 2a, 4a): left it, or back in it
+            press, label = (
+                (self._leave, party_card.LEAVE_BUTTON)
+                if leave
+                else (self._come_back, party_card.RETURN_BUTTON)
+            )
             for row in (3, 2, 1, 4):  # (first row with room)
                 if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
-                    self.add_item(
-                        _Button(self._leave, label=party_card.LEAVE_BUTTON, style=grey, row=row)
-                    )
+                    self.add_item(_Button(press, label=label, style=grey, row=row))
+                    break
+        self.catch_up = list(catch_up)  # (#4537 4b: id, name, how many, for the press)
+        if catch_up:
+            label = (
+                party_tell.one_label(catch_up[0][1])
+                if len(catch_up) == 1
+                else party_tell.CATCH_UP_MANY
+            )
+            for row in (3, 2, 1, 4):  # (first row with room)
+                if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                    self.add_item(_Button(self._catch_up, label=label, style=grey, row=row))
                     break
         # a route place's stated length (#4255): its words, and ✅ for DMbot's read
         self.length_words = route_length[0] if route_length is not None else ""
@@ -1627,6 +1658,18 @@ class NameCard(_Menu):
     async def _leave(self, interaction: discord.Interaction) -> None:
         self.stop()
         await party_card.ask_why(interaction, self.campaign_id, self.entity_id)
+
+    async def _come_back(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await party_card.come_back(interaction, self.campaign_id, self.entity_id)
+
+    async def _catch_up(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        if len(self.catch_up) == 1:
+            member = self.catch_up[0][0]
+            await party_tell.catch_up(interaction, self.campaign_id, member, self.entity_id)
+        else:
+            await party_tell.choose(interaction, self.campaign_id, self.entity_id, self.catch_up)
 
     async def _deed(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.deeds import start
