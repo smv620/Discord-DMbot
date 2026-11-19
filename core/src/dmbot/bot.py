@@ -14381,8 +14381,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     self._map_pins_day[guild.id] = (today, count + 1)
                 elif outcome not in ("put off", "taken"):
                     turned_away.add(campaign_id)
-        if done:
-            log.info("Map close reads: %s", ", ".join(f"{k} {v}" for k, v in sorted(done.items())))
+        # One counts-only line on every sweep, even an empty one, so silence can't hide it again
+        # (#4743); the servers listed say whether the sample's server was in the sweep at all.
+        log.info(
+            "Map close reads: %s (%d servers)",
+            ", ".join(f"{k} {v}" for k, v in sorted(done.items())) or "none waiting",
+            len(self.guilds),
+        )
 
     async def _close_read_one(
         self, gid: int, cid: str, a_map: MapRow, *, again: bool = False

@@ -43,3 +43,16 @@ class TheOffLine(unittest.IsolatedAsyncioTestCase):
         await b.run_map_close_reads()
         b._track.assert_called_once()
         self.assertFalse(b._map_close_off_told)
+
+
+class TheEveryRunLine(unittest.IsolatedAsyncioTestCase):
+    async def test_an_empty_sweep_still_leaves_one_counts_only_line(self) -> None:
+        b = bot(object())
+        b._closing = False
+        # (no guilds, so nothing is listed)
+        with (
+            mock.patch.object(DMBot, "guilds", new=[]),
+            self.assertLogs("dmbot.bot", level="INFO") as logged,
+        ):
+            await b._map_close_reads()
+        self.assertTrue(logged.output[-1].endswith("Map close reads: none waiting (0 servers)"))
