@@ -171,7 +171,10 @@ async def player_character_keys(
 async def shown_entry_ids(memory: MemoryStore, guild_id: int, campaign_id: str) -> set[str]:
     """The entries the players are shown: what the table holds now, by the gate (#4823; party
     knowledge slice 5, never the flags), confirmed, not merged and not an unnamed person (a
-    person the story never named is not a name the table can be told of). Read once per batch."""
+    person the story never named is not a name the table can be told of). An entry the DM hid but
+    the whole table holds (rows written after the hide, a 👥 Some know naming every member) counts:
+    the gate masks it while hidden, and a connection kept to it reaches the players once the DM
+    shows it, as rule 2 says. Read once per batch."""
     held = await memory.entries_shown_to_table(guild_id, campaign_id)
     data = await memory.lookup_data(guild_id, campaign_id)
     return {
@@ -186,6 +189,8 @@ def kept_unrevealed(c: Waiting, secret: bool, shown: set[str]) -> bool:
     unless the upload said the players know it (#2959: World general knowledge, or a smart guess
     the AI called common knowledge), it is not secret and the table holds both its ends
     (`shown_entry_ids`, the gate's answer, #4823)."""
+    # (`c.secret`, a limited clue's end included: what only some know is never shown by a keep,
+    # failing closed, even when the whole table holds it; ruling (a) on #4823)
     if not c.world or secret or c.secret:
         return True
     return not {c.subject_id, c.object_id} <= shown
@@ -413,7 +418,10 @@ async def keep_all(
             held: list[str] = []
             on_top: list[int | None] = []
             start = change_start(old, now)
-            secret, unrevealed, flags = c.secret, kept_unrevealed(c, c.secret, shown), keep_flags
+            # (the kept row: its own secret, and the table's view by the gate; a limited clue's end
+            # is the card's alone, ruling (a) on #4823)
+            secret = c.own_secret
+            unrevealed, flags = kept_unrevealed(c, secret, shown), keep_flags
             pair = [r for r in old if {r.subject_id, r.object_id} == {c.subject_id, c.object_id}]
             if knowers:
                 # 👥 Some know (#4680): held back from the players, never secret, and exactly the
@@ -612,7 +620,7 @@ async def _undo_all(
                     c.predicate,
                     c.object_id,
                     c.quote,
-                    c.secret,
+                    c.own_secret,  # (requeued as it was: the limited end is read again)
                     c.detail,
                     c.truth,
                     known_by=c.known_by,
