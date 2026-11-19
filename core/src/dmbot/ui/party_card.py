@@ -29,6 +29,7 @@ from typing import Any
 
 import discord
 
+from dmbot.memory import join_questions
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.memory.party_record import ENDED, Span
 from dmbot.ui.dmbot_commands import _answer_first, _bot
@@ -66,6 +67,11 @@ RETURNED = (
     "{name} knows of the time away, never during play."
 )
 RETURNED_ALONE = "✅ {name} is back in the party and still knows everything from before."
+RETURNED_STILL_NEW = (  # (left before the join question was answered: that question stands)
+    "✅ {name} is back in the party. DMbot will still ask what {name} knows about what came "
+    "before, never during play."
+)
+NOT_BACK = "{name} isn't a player character now, so nothing changed."
 RETURN_UNDONE = "↩️ Undone. {name} is out of the party again."
 RETURN_CANT_UNDO = (
     "Too late to undo this one. Nothing changed. Use 🚪 Has left the party on {name}'s card "
@@ -261,9 +267,12 @@ async def come_back(interaction: discord.Interaction, campaign_id: str, entity_i
     name = await _name(bot, campaign, entity_id)
     try:
         done = await bot.memory.back_in_party(g, c, entity_id)
-        others = set(await bot.memory.current_party(g, c)) - {entity_id}
-    except MemoryRuleError:  # (in the party already: pressed twice, or by another DM)
-        await _edit(interaction, BACK_ALREADY.format(name=name))
+    except MemoryRuleError:  # (in the party already: pressed twice or by another DM; or no PC)
+        with contextlib.suppress(Exception):
+            if any(s.open for s in await bot.memory.party_spans(g, c, entity_id)):
+                await _edit(interaction, BACK_ALREADY.format(name=name))
+                return
+        await _edit(interaction, NOT_BACK.format(name=name))
         return
     except Exception as exc:
         log.warning("Coming back to the party failed (%s)", type(exc).__name__)
@@ -273,10 +282,15 @@ async def come_back(interaction: discord.Interaction, campaign_id: str, entity_i
     view = discord.ui.View(timeout=None)
     if done.batch is not None:
         view.add_item(ReturnUndoButton(campaign_id, entity_id, done.batch))
-    # (the question is asked only with someone else to catch up with, and only with the switch on)
-    asked = others and getattr(bot.settings, "party_join_on", False)
-    text = (RETURNED if asked else RETURNED_ALONE).format(name=name)
-    await _edit(interaction, text, view)
+    _, waiting = done.value  # (the store says which question waits, if any)
+    words = {join_questions.BACK: RETURNED, join_questions.JOIN: RETURNED_STILL_NEW}.get(
+        waiting or "", RETURNED_ALONE
+    )
+    await _edit(interaction, words.format(name=name), view)
+    if waiting is not None:  # (at once between sessions, as a join's; never during play)
+        from dmbot.ui.party_join import send_join_questions
+
+        await send_join_questions(bot, g, c)
 
 
 class ReturnUndoButton(

@@ -29,7 +29,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from dmbot.memory._changes import Changes
-from dmbot.memory.models import MemoryRuleError
+from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 
 WAITING = "waiting"
 EVERYONE = "everyone"
@@ -108,7 +108,17 @@ async def set_batch(w: Changes, question_ids: Sequence[str], batch: int) -> None
 async def undo(w: Changes, batch: int) -> None:
     """An Undo of `batch` (inside its write): a question it asked that still waits goes with it;
     a "What the party knows" it was reads as "Only what everyone knows" again (the ruling's
-    Undo words), and a "From the first session" it was waits again (its stretch moved back)."""
+    Undo words), and a "From the first session" it was waits again (its stretch moved back).
+    Refused (`TooLateToUndo`) for a join or a coming back whose own question was answered with a
+    copy since: undoing it would leave a character out of the party holding the party's catch-up.
+    That copy's own Undo comes first."""
+    cur = await w.conn.execute(
+        "SELECT 1 FROM memory_join_questions WHERE guild_id = %s AND campaign_id = %s"
+        " AND batch = %s AND status IN ('party', 'first') LIMIT 1",
+        (*w.ids, batch),
+    )
+    if await cur.fetchone() is not None:
+        raise TooLateToUndo("Its question was answered with a copy since.")
     await w.conn.execute(
         "DELETE FROM memory_join_questions WHERE guild_id = %s AND campaign_id = %s"
         " AND batch = %s AND status = 'waiting'",

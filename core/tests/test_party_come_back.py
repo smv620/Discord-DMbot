@@ -10,7 +10,7 @@ from typing import Any
 
 from dmbot.memory import join_questions
 from dmbot.memory.gate import ENTRY
-from dmbot.memory.models import CONFIRMED, DM, MemoryRuleError
+from dmbot.memory.models import CONFIRMED, DM, MemoryRuleError, TooLateToUndo
 from dmbot.ui import party_card, party_join
 from dmbot.web.recaps import _scoped
 from tests.test_party_join import CARA, GUILD, Party
@@ -42,7 +42,7 @@ class TheWords(unittest.TestCase):
         self.assertFalse(party_card.RETURN_BUTTON.startswith("↩️"))  # (↩️ is an Undo here)
 
 
-class ComingBack(Party):
+class Away(Party):
     """Vell and Tuck played session 1; Tuck left; the party learned the bell while Tuck was away."""
 
     async def asyncSetUp(self) -> None:
@@ -74,11 +74,14 @@ class ComingBack(Party):
             )
             return [join_questions._question(r) for r in await cur.fetchall()]
 
+
+class ComingBack(Away):
     async def test_back_keeps_everything_and_asks_about_the_time_away(self) -> None:
         self.assertFalse(await self.sees(self.tuck, ENTRY, self.bell))
         before = await self.rows()
         done = await self.memory.back_in_party(GUILD, self.c, self.tuck)
-        self.assertEqual((done.value.from_at, done.value.to_at), (13_000, None))
+        span, waiting = done.value
+        self.assertEqual((span.from_at, span.to_at, waiting), (13_000, None, join_questions.BACK))
         self.assertIn(self.tuck, await self.memory.current_party(GUILD, self.c))
         self.assertEqual(await self.rows(), before)  # (nothing written until the DM answers)
         self.assertTrue(await self.sees(self.tuck, ENTRY, self.npc))  # (kept from before)
@@ -152,6 +155,101 @@ class ComingBack(Party):
         await self.memory.back_in_party(GUILD, self.c, self.tuck)
         self.assertTrue(await self.sees(self.tuck, ENTRY, self.bell))
         self.assertEqual(await self.questions(), [])
+
+
+class ComingBackEdges(Away):
+    async def test_one_who_left_before_their_join_question_keeps_it(self) -> None:
+        cara = await self.pc("Cara", CARA)  # (a join question waits, unanswered)
+        self.now = 13_500
+        await self.memory.leave_party(GUILD, self.c, cara, "left")
+        self.now = 14_000
+        done = await self.memory.back_in_party(GUILD, self.c, cara)
+        self.assertEqual(done.value[1], join_questions.JOIN)  # (it already covers the time away)
+        self.assertEqual(
+            [(q.entity_id, q.kind) for q in await self.questions()], [(cara, join_questions.JOIN)]
+        )
+
+    async def test_a_return_answered_with_a_copy_is_undone_after_the_copy(self) -> None:
+        back = await self.memory.back_in_party(GUILD, self.c, self.tuck)
+        [q] = await self.memory.join_questions_to_send(GUILD, self.c)
+        assert q.group_id is not None and back.batch is not None
+        copy = await self.memory.join_answer_party(GUILD, self.c, q.group_id)
+        assert copy.batch is not None
+        with self.assertRaises(TooLateToUndo):  # (never out of the party holding the catch-up)
+            await self.memory.undo(GUILD, self.c, back.batch)
+        self.assertIn(self.tuck, await self.memory.current_party(GUILD, self.c))
+        await self.memory.undo(GUILD, self.c, copy.batch)
+        await self.memory.undo(GUILD, self.c, back.batch)  # (the copy's Undo first, then this)
+        self.assertNotIn(self.tuck, await self.memory.current_party(GUILD, self.c))
+
+    async def test_a_return_answered_only_what_was_known_before_undoes(self) -> None:
+        back = await self.memory.back_in_party(GUILD, self.c, self.tuck)
+        [q] = await self.memory.join_questions_to_send(GUILD, self.c)
+        assert q.group_id is not None and back.batch is not None
+        await self.memory.join_answer_everyone(GUILD, self.c, q.group_id)
+        await self.memory.undo(GUILD, self.c, back.batch)
+        self.assertNotIn(self.tuck, await self.memory.current_party(GUILD, self.c))
+
+
+class TheCardsButton(unittest.IsolatedAsyncioTestCase):
+    """🤝 Back in the party in Discord: the words follow what the store says waits, the question
+    goes at once (the sender itself never sends during play), and a refusal is worded by why."""
+
+    async def press(self, outcome: Any) -> tuple[list[str], list[str]]:
+        from types import SimpleNamespace
+        from unittest import mock
+
+        edits: list[str] = []
+        sent: list[str] = []
+
+        async def back_in_party(g: int, c: str, e: str) -> Any:
+            if isinstance(outcome, Exception):
+                raise outcome
+            return SimpleNamespace(value=(None, outcome), batch=7)
+
+        memory = SimpleNamespace(
+            back_in_party=back_in_party,
+            party_spans=mock.AsyncMock(return_value=[SimpleNamespace(open=True)]),
+        )
+        bot = SimpleNamespace(memory=memory)
+        campaign = SimpleNamespace(guild_id=1, id="c" * 32)
+
+        async def edit(_i: Any, text: str, view: Any = None) -> None:
+            edits.append(text)
+
+        async def send(_b: Any, g: int, c: str) -> int:
+            sent.append(c)
+            return 1
+
+        with (
+            mock.patch.object(party_card, "_answer_first", mock.AsyncMock()),
+            mock.patch.object(party_card, "_bot", return_value=bot),
+            mock.patch.object(party_card, "_dm_campaign", mock.AsyncMock(return_value=campaign)),
+            mock.patch.object(party_card, "_name", mock.AsyncMock(return_value="Tuck")),
+            mock.patch.object(party_card, "_edit", edit),
+            mock.patch.object(party_join, "send_join_questions", send),
+        ):
+            await party_card.come_back(mock.Mock(), "c" * 32, "e" * 32)
+        return edits, sent
+
+    async def test_a_question_about_the_time_away_is_promised_and_sent(self) -> None:
+        edits, sent = await self.press(join_questions.BACK)
+        self.assertEqual(edits, [party_card.RETURNED.format(name="Tuck")])
+        self.assertEqual(sent, ["c" * 32])
+
+    async def test_alone_nothing_is_promised_or_sent(self) -> None:
+        edits, sent = await self.press(None)
+        self.assertEqual(edits, [party_card.RETURNED_ALONE.format(name="Tuck")])
+        self.assertEqual(sent, [])
+
+    async def test_a_waiting_join_question_is_named_as_such(self) -> None:
+        edits, _ = await self.press(join_questions.JOIN)
+        self.assertEqual(edits, [party_card.RETURNED_STILL_NEW.format(name="Tuck")])
+
+    async def test_a_refusal_in_the_party_says_already_back(self) -> None:
+        edits, sent = await self.press(MemoryRuleError("That character is in the party now."))
+        self.assertEqual(edits, [party_card.BACK_ALREADY.format(name="Tuck")])
+        self.assertEqual(sent, [])
 
 
 class TheWebDoorSaysWhichQuestion(Web):
