@@ -8,7 +8,7 @@ import dataclasses
 import json
 import unittest
 from typing import Any, cast
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import tests.test_consent_refusals as cr
 from dmbot.ai import Reply
@@ -135,9 +135,17 @@ class TheQuestionBook(unittest.TestCase):
         self.assertIs(book.rank(asked.id, "Maren"), first)  # ranked once
 
 
+class EveryEntry:
+    """What the table holds in these tests: every entry, as for a table that knows them all."""
+
+    def __contains__(self, _: object) -> bool:
+        return True
+
+
 class TheBotsCall(cr.Refusals):
     async def question(self, *replies: Reply | Exception | float) -> tuple[Any, Any, FakeRanker]:
-        table, _, _, _ = await self.asked_about_marin()
+        table, _, _, memory = await self.asked_about_marin()
+        memory.entries_held = AsyncMock(return_value=EveryEntry())  # the table holds every entry
         asked = table.questions.open
         assert asked is not None
         ai = FakeRanker(*replies)
@@ -249,6 +257,27 @@ class TheBotsCall(cr.Refusals):
             for k, v in table.name_lookup.entities.items()
         }
         table.name_lookup = dataclasses.replace(table.name_lookup, entities=entities)
+        # The gate: the table doesn't hold a clue only some people know (Maren's).
+        held = frozenset(k for k, v in entities.items() if v.name != "Maren")
+        memory = self.bot.memory
+        assert memory is not None
+        memory.entries_held = AsyncMock(return_value=held)  # type: ignore[method-assign]
+        self.assertEqual(await self.bot._rank_question(table, asked), asked)
+        self.assertEqual(ai.sent, [])
+
+    async def test_an_unrevealed_clue_stays_secret_even_when_the_gate_holds_it(self) -> None:
+        # #2321: the flag is read on its own too, because the gate doesn't read the reveal flags.
+        table, asked, ai = await self.question(answer("Marron"))
+        entities = {
+            k: dataclasses.replace(v, hidden_from_players=True) if v.name == "Maren" else v
+            for k, v in table.name_lookup.entities.items()
+        }
+        table.name_lookup = dataclasses.replace(table.name_lookup, entities=entities)
+        memory = self.bot.memory
+        assert memory is not None
+        memory.entries_held = AsyncMock(  # type: ignore[method-assign]
+            return_value=frozenset(entities)
+        )
         self.assertEqual(await self.bot._rank_question(table, asked), asked)
         self.assertEqual(ai.sent, [])
 
@@ -330,6 +359,31 @@ def lookup_aliases(lookup: Any) -> tuple[Any, ...]:
         )
         for e in lookup.names
     )
+
+    async def test_an_entry_the_table_doesnt_hold_is_secret_for_the_ranking(self) -> None:
+        table, asked, ai = await self.question(answer("Marron"))
+        cast(Any, self.bot).memory.entries_held = AsyncMock(
+            return_value=frozenset({"not-the-options"})
+        )
+        self.assertEqual(await self.bot._rank_question(table, asked), asked)
+        self.assertEqual(ai.sent, [])  # the gate says the table doesn't hold them: no call
+
+    async def test_an_entry_the_table_holds_is_ranked_as_before(self) -> None:
+        table, asked, ai = await self.question(answer("Marron"))
+        cast(Any, self.bot).memory.entries_held = AsyncMock(
+            return_value=frozenset(table.name_lookup.entities)
+        )
+        ranked = await self.bot._rank_question(table, asked)
+        self.assertEqual(self.names(ranked)[0], "Marron")
+        self.assertEqual(len(ai.sent), 1)
+
+    async def test_an_unreadable_gate_sends_nothing(self) -> None:
+        table, asked, ai = await self.question(answer("Marron"))
+        cast(Any, self.bot).memory.entries_held = AsyncMock(side_effect=RuntimeError("down"))
+        with self.assertLogs("dmbot.bot", "WARNING") as logged:
+            self.assertEqual(await self.bot._rank_question(table, asked), asked)
+        self.assertEqual(ai.sent, [])
+        self.assertNotIn("down", logged.output[0])  # (the type only)
 
 
 if __name__ == "__main__":
