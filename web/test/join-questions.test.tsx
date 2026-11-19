@@ -58,6 +58,12 @@ describe("the join question on the Questions page", () => {
     expect(await screen.findByText(w.undone("Mira", true))).toBeTruthy();
   });
 
+  it("undoFor joins names as joinOf does", () => {
+    expect(w.undoFor(["Tavin"])).toBe('Undo the last "What the party knows", for Tavin.');
+    expect(w.undoFor(["Tavin", "Wren"])).toBe('Undo the last "What the party knows", for Tavin and Wren.');
+    expect(w.undoFor(["Tavin", "Wren", "Ash"])).toBe('Undo the last "What the party knows", for Tavin, Wren and Ash.');
+  });
+
   it("the outcome line uses the given count, with '1 thing' for one and 'N things' otherwise", () => {
     expect(w.partyDone("Mira", 3, true)).toBe("✅ Mira now knows the 3 things the party knew.");
     expect(w.partyDone("Mira", 1, true)).toBe("✅ Mira now knows the 1 thing the party knew.");
