@@ -99,6 +99,27 @@ class TheReaderNamesEachEndAsTheCharacterKnowsIt(JoinBase):
             ("Mira Voss", "Greywater Keep"), [(c.subject, c.object) for c in mine.connections]
         )
 
+    async def test_a_label_names_its_anchor_only_for_who_knows_the_anchor(self) -> None:
+        # (shown to the table is not known: the flags alone never name the anchor, Supervisor's
+        # ruling on #4821; one who knows the anchor reads its name)
+        await self.memory.set_hidden_from_players(
+            GUILD_A, self.c, self.ken, False, source="dm", dm_chose_secret=True
+        )
+        await self.know(ENTRY, self.ken, [self.sees_ken])  # (the flag may have added rows)
+        sister = await self.memory.add_unnamed(
+            GUILD_A, self.c, what="sister", role="sibling", anchor_id=self.ken
+        )
+        sister_id = sister.entity.id
+        await self.know(ENTRY, sister_id, [self.sees_guard, self.sees_ken])
+        for pc, label in (
+            (self.sees_guard, "unnamed - someone's sister"),
+            (self.sees_ken, "unnamed - Ken's sister"),
+        ):
+            shown = await self.memory.display_names(
+                GUILD_A, self.c, Viewer.player([pc]), [sister_id]
+            )
+            self.assertEqual(shown[sister_id], label, pc)
+
     async def test_an_unnamed_persons_label_never_carries_a_hidden_anchor(self) -> None:
         await self.memory.set_hidden_from_players(
             GUILD_A, self.c, self.ken, True, source="dm", dm_chose_secret=True
