@@ -74,15 +74,18 @@ class AJoinAtSessionThree(DatabaseTest):
         )  # fmt: skip
         return str(made.value.id)
 
-    async def lines(self, sid: str) -> None:
+    async def lines(self, sid: str, made: int | None = None) -> None:
+        """A session with lines; its row made at `made` (a live one: at its start)."""
         async with self.db.guild(GUILD) as conn:
-            await conn.execute(
-                "UPDATE transcript_sessions SET line_count = 3 WHERE id = %s", (sid,)
+            sql = (
+                "UPDATE transcript_sessions SET line_count = 3,"
+                " created_at = COALESCE(%s, started_at) WHERE id = %s"
             )
+            await conn.execute(sql, (made, sid))
 
-    async def played(self, start: int, end: int) -> None:
+    async def played(self, start: int, end: int, made: int | None = None) -> None:
         sid = await self.sessions.open_session(GUILD, self.c, start)
-        await self.lines(sid)
+        await self.lines(sid, made)
         await self.sessions.end_session(GUILD, sid, end)
 
     async def test_session_one_is_read_for_its_party_and_session_three_for_its_own(self) -> None:
@@ -108,11 +111,30 @@ class AJoinAtSessionThree(DatabaseTest):
         self.assertIn(self.tuck, await self.memory.members_at(GUILD, self.c, 1_000))
         self.assertNotIn(self.tuck, await self.memory.current_party(GUILD, self.c))
 
-    async def test_a_session_older_than_every_stretch_has_no_party_on_record(self) -> None:
-        # (an imported session dated before its characters were made: the recap then falls back
-        # to every player character, `load_inputs_or_why`, and the viewer to today's party)
-        self.assertEqual(await self.memory.members_at(GUILD, self.c, 100), [])
+    async def test_an_imported_session_older_than_every_stretch_counts_everyone(self) -> None:
+        # (Supervisor's ruling E: imported after the characters existed, so all of them count)
+        await self.played(100, 200, made=3_200)
+        got = set(await self.memory.members_at(GUILD, self.c, 100))
+        self.assertEqual(got, {self.vell, self.tuck, self.cara})
         self.assertEqual(gate.Viewer.party_at([]), gate.Viewer.the_party())
+
+    async def test_an_imported_session_counts_who_existed_not_who_joined_later(self) -> None:
+        # (ruling E's mixed case: imported at 2_800, before Cara joined live at 3_000)
+        await self.played(200, 300, made=2_800)
+        got = set(await self.memory.members_at(GUILD, self.c, 200))
+        self.assertEqual(got, {self.vell, self.tuck})
+
+    async def test_a_live_session_doesnt_count_one_who_joined_after_it(self) -> None:
+        self.assertNotIn(self.cara, await self.memory.members_at(GUILD, self.c, 2_000))
+
+    async def test_a_row_from_before_the_column_counts_every_stretch(self) -> None:
+        async with self.db.guild(GUILD) as conn:  # (made unknown: the careful side)
+            await conn.execute(
+                "UPDATE transcript_sessions SET created_at = NULL WHERE guild_id = %s"
+                " AND started_at = 1000",
+                (GUILD,),
+            )
+        self.assertIn(self.cara, await self.memory.members_at(GUILD, self.c, 1_000))
 
     async def test_one_who_left_at_a_sessions_start_is_not_in_its_party(self) -> None:
         self.now = 6_000
@@ -131,12 +153,13 @@ class AJoinAtSessionThree(DatabaseTest):
 
             scope = Scope(conn, GUILD, self.c, 0)
             # (session 3 is running and Cara joined from its start: the same party)
-            self.assertIsNone(await party_record.table_members(scope))
+            self.assertIsNone(await party_record.table_members(scope, 3_000))
+            self.assertIsNone(await party_record.table_members(scope, None))  # (no live table)
         async with self.memory._write(GUILD, self.c, DM) as w:  # (Cara dated later than the start)
             await party_record.move_start(w, self.cara, 3_050)
         async with self.db.guild(GUILD) as conn:
             scope = Scope(conn, GUILD, self.c, 0)
-            then = await party_record.table_members(scope)
+            then = await party_record.table_members(scope, 3_000)
             self.assertEqual(set(then or []), {self.vell, self.tuck})
 
 

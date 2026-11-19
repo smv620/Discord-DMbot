@@ -10095,7 +10095,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             str(getattr(campaign, "target_ruleset", "") or "2024"),
             str(getattr(campaign, "fallback_ruleset", "") or "none"),
         )  # (the travel answer's citation, in the campaign's own ruleset, #4260)
-        return await store.measure(campaign.guild_id, campaign.id, asked, dm=dm, rules=rules)
+        # (the live table's start, if the bot is at this campaign's table: who the answer is for,
+        # #4537 slice 3b, Supervisor's ruling F; a session row left open never counts)
+        table = self.tables.get(campaign.guild_id)
+        live_at = (
+            int(table.started_at)
+            if table is not None and table.campaign_id == campaign.id
+            else None
+        )
+        return await store.measure(
+            campaign.guild_id, campaign.id, asked, dm=dm, rules=rules, live_at=live_at
+        )
 
     async def _extract_session(
         self,

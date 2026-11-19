@@ -168,12 +168,12 @@ def _seen(viewer: Viewer) -> str:
     return f" AND (FALSE{own})"
 
 
-async def _table_viewer(scope: Any) -> gate_mod.Viewer:
+async def _table_viewer(scope: Any, live_at: int | None) -> gate_mod.Viewer:
     """Who a player's answer at the table is for (`party_record.table_members`, #4537 slice 3b):
-    today's party, unless someone joined or left during the running session."""
+    today's party, unless someone joined or left during the session the bot is live at."""
     from dmbot.memory import gate, party_record  # (here: the memory package imports this one)
 
-    members = await party_record.table_members(scope)
+    members = await party_record.table_members(scope, live_at)
     return gate.Viewer.the_party() if members is None else gate.Viewer.party_at(members)
 
 
@@ -976,6 +976,7 @@ class MapStore:
         *,
         dm: bool,
         rules: tuple[str, str] = ("2024", "none"),
+        live_at: int | None = None,
     ) -> str | NotShown | None:
         """The words of a "how far" or "which way" answer (#4670 4b, `measure.answer`), or None
         when the usual answer should go on instead: the two names are not both kept places the
@@ -1007,7 +1008,8 @@ class MapStore:
             )
             names = positions.place_names(entities, aliases, lambda kind: onto.is_a(kind, "place"))
             shown: set[str] | None = None
-            table = await _table_viewer(scope) if not dm else gate.Viewer.the_party()
+            # (`live_at`: the start of this campaign's live table, if the bot is at one: #4537 3b)
+            table = await _table_viewer(scope, live_at) if not dm else gate.Viewer.the_party()
             if not dm:
                 # (the fast aggregate is today's party: used unless the running session's party
                 # differs from it, #4537 slice 3b)

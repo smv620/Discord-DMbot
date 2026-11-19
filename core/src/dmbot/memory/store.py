@@ -1737,7 +1737,7 @@ class MemoryStore:
 
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             viewer = (
-                gate.Viewer.party_at(await party_record.members_at(scope, session_at))
+                gate.Viewer.party_at(await party_record.session_members(scope, session_at))
                 if session_at is not None
                 else None
             )
@@ -3168,13 +3168,13 @@ class MemoryStore:
         """The party as it was at `at` (a session's start: `party_record.members_at`, #4537
         slice 3b): what is read to the whole table about that session is for them (§8)."""
         async with self._read(guild_id, campaign_id) as scope:
-            return await party_record.members_at(scope, at)
+            return await party_record.session_members(scope, at)
 
     async def visible_to_party_at(self, guild_id: int, campaign_id: str, at: int) -> gate.Visible:
         """What the party at `at` knows, the party and its knowledge read in one snapshot so a
         join or a leave between the two can't mismatch them (#4537 slice 3b)."""
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
-            members = await party_record.members_at(scope, at)
+            members = await party_record.session_members(scope, at)
             return await gate.visible_to(scope, gate.Viewer.party_at(members))
 
     async def current_party(self, guild_id: int, campaign_id: str) -> list[str]:
