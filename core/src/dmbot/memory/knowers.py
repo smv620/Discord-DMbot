@@ -1525,6 +1525,21 @@ async def _ask_about(w: Changes, joined: Sequence[str]) -> None:
         await inherit_table_rows(w, new)
 
 
+async def catch_up_returner(w: Changes, entity_id: str) -> None:
+    """A character came back to the party in this change (#4537 slice 4a, §6). With
+    `DMBOT_PARTY_JOIN` on and someone else in the party, the DM is asked what the character knows
+    of what happened while away (a BACK question, answered as a join's); nothing is written until
+    then (rule 13.4). Alone in the party there is nobody to catch up with, so nothing is asked.
+    With the switch off it is given what the rest of the party knows now, as a join is."""
+    from dmbot.memory import join_questions, party_record
+
+    if not w.party_join:
+        await inherit_table_rows(w, [entity_id])
+        return
+    if set(await party_record.current_members(w)) - {entity_id}:
+        await join_questions.ask(w, [entity_id], join_questions.BACK)
+
+
 async def forget_moved(
     w: Changes,
     moved: Sequence[tuple[dict[str, Any], dict[str, Any]]],
