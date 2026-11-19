@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, LiteralString
 
 from dmbot.memory import beliefs, gate, unnamed
 from dmbot.memory._changes import (
@@ -40,6 +40,7 @@ from dmbot.memory.models import (
     PLAYER_CHARACTER,
     REVEALED_FACT,
     SECRET_PLOT,
+    THREAD_TYPES,
     MemoryRuleError,
     new_id,
 )
@@ -1346,16 +1347,27 @@ async def _caught_up(r: Scope, members: set[str]) -> set[str]:
 
 
 async def _inherit_plan(
-    r: Scope, new_views: Sequence[str], others: set[str]
+    r: Scope,
+    new_views: Sequence[str],
+    others: set[str],
+    only: Mapping[str, Collection[str]] | None = None,
 ) -> list[tuple[str, str, str, float]]:
-    """(column, statement, view, sureness) for each row `inherit_table_rows` would make."""
+    """(column, statement, view, sureness) for each row `inherit_table_rows` would make, or with
+    `only` (column → statement ids: one card's, "Tell Mira") just those statements, read in SQL
+    so a card's draw never reads the whole campaign; with `only` and no others, nothing (there is
+    no party to tell from)."""
+    if only is not None and not others:
+        return []
+    where, params = _only_where(only)
     held: dict[tuple[str, str], dict[str, float]] = {}
     asleep: set[tuple[str, str, str]] = set()  # (column, statement, view) put to sleep by a hide
-    for row in await r.select(KNOWERS, " AND cardinality(hidden_by) > 0", dormant=True):
+    for row in await r.select(
+        KNOWERS, " AND cardinality(hidden_by) > 0" + where, params, dormant=True
+    ):
         for column in ("about_entity_id", "state_id", "relation_id", "alias_id"):
             if row[column] is not None:
                 asleep.add((column, row[column], row["perspective_id"]))
-    for row in await r.select(KNOWERS):
+    for row in await r.select(KNOWERS, where, params):
         for column in ("about_entity_id", "state_id", "relation_id", "alias_id"):
             if row[column] is not None:
                 held.setdefault((column, row[column]), {})[row["perspective_id"]] = float(
@@ -1375,6 +1387,89 @@ async def _inherit_plan(
         if view not in held.get((column, statement), {})
         and (column, statement, view) not in asleep  # (a sleeping row wakes by itself)
     ]
+
+
+_ONLY_COLUMNS = ("about_entity_id", "state_id", "relation_id", "alias_id")
+
+
+def _only_where(only: Mapping[str, Collection[str]] | None) -> tuple[LiteralString, list[Any]]:
+    """The SQL that keeps `_inherit_plan` to one card's statements (none: everything)."""
+    if only is None:
+        return "", []
+    return (
+        " AND (about_entity_id = ANY(%s) OR state_id = ANY(%s) OR relation_id = ANY(%s)"
+        " OR alias_id = ANY(%s))",
+        [sorted(only.get(c, ())) for c in _ONLY_COLUMNS],
+    )
+
+
+async def card_statements(r: Scope, entity_id: str) -> dict[str, set[str]]:
+    """What one name card shows, for "Tell Mira" (#4537 slice 4b, §5): the entry, its other names,
+    its conditions and its connections, and for a story thread (a quest, a mystery…) the entries
+    its connections name too (who is involved, its clues and parts). Column → statement ids."""
+    out: dict[str, set[str]] = {c: set() for c in _ONLY_COLUMNS}
+    found = await r.select(ENTITIES, " AND id = %s", [entity_id])
+    if not found:
+        return out
+    out["about_entity_id"].add(entity_id)
+    out["alias_id"] |= {
+        str(a["id"]) for a in await r.select(ALIASES, " AND entity_id = %s", [entity_id])
+    }
+    out["state_id"] |= {
+        str(a["id"]) for a in await r.select(STATES, " AND entity_id = %s", [entity_id])
+    }
+    thread = found[0]["type"] in THREAD_TYPES
+    for rel in await r.select(
+        RELATIONS, " AND (subject_id = %s OR object_id = %s)", [entity_id, entity_id]
+    ):
+        out["relation_id"].add(str(rel["id"]))
+        if thread:  # (a quest's card names its people and places: they come with it)
+            other = rel["object_id"] if rel["subject_id"] == entity_id else rel["subject_id"]
+            out["about_entity_id"].add(str(other))
+    return out
+
+
+async def tell_plan(
+    r: Scope, member_id: str, only: Mapping[str, Collection[str]], view: str | None = None
+) -> list[tuple[str, str, str, float]]:
+    """The rows "Tell Mira" would write (#4537 slice 4b): every statement in `only` that all the
+    OTHER current members know (not one whose own join question still waits, as the join copy
+    does) and Mira doesn't, at the least sure of theirs; never what only some know, a backstory,
+    or a row a hide put to sleep (`_inherit_plan`). Nothing for one not in the party now, or with
+    nobody else in it. `view`: Mira's point of view (None: not made yet, so Mira holds nothing)."""
+    from dmbot.memory import party_record
+
+    ids = set(await party_record.current_members(r))
+    if member_id not in ids:
+        return []
+    caught_up = await _caught_up(r, ids - {member_id})
+    if not caught_up:
+        return []
+    views = {
+        str(p["entity_id"]): str(p["id"])
+        for p in await r.select(PERSPECTIVES, " AND entity_id = ANY(%s)", [sorted(caught_up)])
+    }
+    if any(i not in views for i in caught_up):
+        return []  # (a member with no point of view holds nothing: nothing is known by all)
+    if view is None:
+        mine = await r.select(PERSPECTIVES, " AND entity_id = %s", [member_id])
+        view = str(mine[0]["id"]) if mine else f"(none:{member_id})"
+    return await _inherit_plan(r, [view], set(views.values()), only)
+
+
+async def tell_member(w: Changes, member_id: str, entity_id: str) -> int:
+    """ "Tell Mira" on a card: the rows `tell_plan` names, written in the caller's change (one
+    Undo). Returns how many statements Mira was told."""
+    only = await card_statements(w, entity_id)
+    if not await tell_plan(w, member_id, only):
+        return 0
+    view = await _view_of(w, member_id)
+    w.player_views = None  # (a made view may have changed the list)
+    made = await tell_plan(w, member_id, only, view)
+    await w.insert_many(
+        KNOWERS, [_row(c, st, v, w.now) | {"confidence": sure} for c, st, v, sure in made]
+    )
+    return len({(c, st) for c, st, _, _ in made})
 
 
 async def _shown_by_flags(w: Scope) -> dict[tuple[str, str], float]:
