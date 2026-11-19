@@ -47,8 +47,8 @@ DONE = (
 UNDO = "↩️ Undo"
 UNDONE = "↩️ Undone. {name} no longer knows those {things}."
 CANT_UNDO = (
-    "Too late to undo this one: some of it changed since. Nothing changed. To take something back "
-    "from {name}, use 👁️ Who knows this? on it."
+    "Too late to undo this one: some of it has changed since. To take something back from {name}, "
+    "use 👁️ Who knows this? on it."
 )
 NOTHING_LEFT = (
     "{name} already knows everything the rest of the party knows here (another DM may have done "
@@ -57,6 +57,8 @@ NOTHING_LEFT = (
 NOT_IN_PARTY = "{name} isn't in the party now, so nothing changed."
 FAILED = "Couldn't do that just now. Nothing changed. Try again in a moment."
 
+# (the Undo's custom_id is at most 96 characters: two ids, a 12-digit change and a count, under
+# Discord's 100)
 _UNDO = (
     r"dmbot:ptellu:(?P<campaign>[0-9a-f]{32}):(?P<member>[0-9a-f]{32}):(?P<batch>[0-9]{1,12})"
     r":(?P<n>[0-9]{1,4})"
@@ -108,6 +110,14 @@ async def _edit(interaction: discord.Interaction, text: str, view: Any = None) -
         )
 
 
+async def _aside(interaction: discord.Interaction, text: str) -> None:
+    """A private note that leaves the pressed message as it is (its ↩️ Undo included)."""
+    with contextlib.suppress(discord.HTTPException):
+        await interaction.followup.send(
+            text, ephemeral=True, allowed_mentions=discord.AllowedMentions.none()
+        )
+
+
 async def _name(memory: Any, guild_id: int, campaign_id: str, entity_id: str) -> str:
     entity = await memory.entity(guild_id, campaign_id, entity_id)
     return _md(entity.name) if entity is not None else "That character"
@@ -127,14 +137,14 @@ async def catch_up(
     try:
         done = await bot.memory.tell_member(g, c, member_id, entity_id)
     except MemoryRuleError:
-        await _edit(interaction, NOT_IN_PARTY.format(name=name))
+        await _aside(interaction, NOT_IN_PARTY.format(name=name))
         return
     except Exception as exc:
         log.warning("Catching up a party member failed (%s)", type(exc).__name__)
         await _edit(interaction, FAILED)
         return
-    if not done.value or done.batch is None:
-        await _edit(interaction, NOTHING_LEFT.format(name=name))
+    if not done.value or done.batch is None:  # (a second press: the first one's Undo stays shown)
+        await _aside(interaction, NOTHING_LEFT.format(name=name))
         return
     log.info("A DM caught a party member up from a card (%d)", done.value)
     view = discord.ui.View(timeout=None)

@@ -1390,6 +1390,10 @@ async def _inherit_plan(
 
 
 _ONLY_COLUMNS = ("about_entity_id", "state_id", "relation_id", "alias_id")
+# "Catch up" copies only what at least this many other members know: a row held by one character
+# alone may be that character's own backstory (9b: known to its character only), and who-knows rows
+# don't say where they came from, so a party of two catches up with "Who knows this?" instead.
+TELL_FROM = 2
 
 
 def _only_where(only: Mapping[str, Collection[str]] | None) -> tuple[LiteralString, list[Any]]:
@@ -1437,13 +1441,13 @@ async def tell_plan(
     does) and Mira doesn't, at the least sure of theirs; never what only some know, a backstory,
     or a row a hide put to sleep (`_inherit_plan`). Nothing for one not in the party now, or with
     nobody else in it. `view`: Mira's point of view (None: not made yet, so Mira holds nothing)."""
-    from dmbot.memory import party_record
+    from dmbot.memory import join_questions, party_record
 
     ids = set(await party_record.current_members(r))
-    if member_id not in ids:
-        return []
+    if member_id not in ids or member_id in await join_questions.waiting_entities(r.conn, *r.ids):
+        return []  # (one whose own join question waits is caught up by answering it)
     caught_up = await _caught_up(r, ids - {member_id})
-    if not caught_up:
+    if len(caught_up) < TELL_FROM:
         return []
     views = {
         str(p["entity_id"]): str(p["id"])
@@ -1457,6 +1461,49 @@ async def tell_plan(
     return await _inherit_plan(r, [view], set(views.values()), only)
 
 
+async def tell_counts(r: Scope, only: Mapping[str, Collection[str]]) -> dict[str, int]:
+    """For a card's draw: how many things `tell_plan` would give each current member (only those
+    with any), with every row read once, never once per member. The same rule as `tell_plan`."""
+    from dmbot.memory import join_questions, party_record
+
+    members = await party_record.current_members(r)
+    waiting = await join_questions.waiting_entities(r.conn, *r.ids)
+    caught = [m for m in members if m not in waiting]
+    if len(caught) < TELL_FROM:
+        return {}
+    views = {
+        str(p["entity_id"]): str(p["id"])
+        for p in await r.select(PERSPECTIVES, " AND entity_id = ANY(%s)", [sorted(members)])
+    }
+    where, params = _only_where(only)
+    held: dict[tuple[str, str], set[str]] = {}
+    asleep: set[tuple[str, str, str]] = set()
+    for row in await r.select(
+        KNOWERS, " AND cardinality(hidden_by) > 0" + where, params, dormant=True
+    ):
+        for column in _ONLY_COLUMNS:
+            if row[column] is not None:
+                asleep.add((column, row[column], row["perspective_id"]))
+    for row in await r.select(KNOWERS, where, params):
+        for column in _ONLY_COLUMNS:
+            if row[column] is not None:
+                held.setdefault((column, row[column]), set()).add(row["perspective_id"])
+    out: dict[str, int] = {}
+    for member in caught:
+        others = [o for o in caught if o != member]
+        if len(others) < TELL_FROM or any(o not in views for o in others):
+            continue
+        mine, theirs = views.get(member), {views[o] for o in others}
+        n = sum(
+            1
+            for (column, statement), who in held.items()
+            if theirs <= who and mine not in who and (column, statement, mine or "") not in asleep
+        )
+        if n:
+            out[member] = n
+    return out
+
+
 async def tell_member(w: Changes, member_id: str, entity_id: str) -> int:
     """ "Tell Mira" on a card: the rows `tell_plan` names, written in the caller's change (one
     Undo). Returns how many statements Mira was told."""
@@ -1466,6 +1513,8 @@ async def tell_member(w: Changes, member_id: str, entity_id: str) -> int:
     view = await _view_of(w, member_id)
     w.player_views = None  # (a made view may have changed the list)
     made = await tell_plan(w, member_id, only, view)
+    if not made:  # (never a change with nothing in it: it would have no Undo to show)
+        return 0
     await w.insert_many(
         KNOWERS, [_row(c, st, v, w.now) | {"confidence": sure} for c, st, v, sure in made]
     )

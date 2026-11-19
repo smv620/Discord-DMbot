@@ -1020,12 +1020,7 @@ async def show_card(
     if secrets and entity.status == CONFIRMED:
         # 📖 Catch up (#4537 4b): a member missing what the rest of the party knows on this card
         try:
-            for member, count in await memory.tell_choices(
-                campaign.guild_id, campaign.id, entity_id
-            ):
-                who = await memory.entity(campaign.guild_id, campaign.id, member)
-                if who is not None:
-                    catch_up.append((member, who.name, count))
+            catch_up = await memory.tell_choices(campaign.guild_id, campaign.id, entity_id)
         except Exception as exc:  # the type only; the card shows without it
             log.warning("Name card: catching up not read (%s)", type(exc).__name__)
             catch_up = []

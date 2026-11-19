@@ -11,7 +11,7 @@ from typing import Any
 from dmbot.memory.gate import CONNECTION, ENTRY
 from dmbot.memory.models import CONFIRMED, DM, MemoryRuleError
 from dmbot.ui import party_tell
-from tests.test_party_join import CARA, GUILD, Party
+from tests.test_party_join import CARA, DAN, GUILD, Party
 
 
 class TheWords(unittest.TestCase):
@@ -33,9 +33,12 @@ class TheWords(unittest.TestCase):
         self.assertIn(
             "Mira and Tavin are missing things", party_tell.card_line([("Mira", 6), ("Tavin", 2)])
         )
-        for text in (party_tell.DONE, party_tell.UNDONE, party_tell.CANT_UNDO, party_tell.WHO):
-            for word in ("she", "he", "her", "him", "his", "they", "them", "their"):
-                self.assertNotIn(f" {word} ", f" {text} ")  # (ruling C: named, no pronoun)
+        import re
+
+        words = [v for k, v in vars(party_tell).items() if k.isupper() and isinstance(v, str)]
+        pronoun = re.compile(r"\b(she|he|her|hers|him|his|they|them|their)\b", re.IGNORECASE)
+        for text in words:
+            self.assertIsNone(pronoun.search(text), text)  # (ruling C: named, no pronoun)
 
 
 class CatchingUp(Party):
@@ -72,14 +75,14 @@ class CatchingUp(Party):
             return {tuple(r.values()) for r in await cur.fetchall()}
 
     async def test_the_card_offers_whoever_is_missing_what_the_rest_know(self) -> None:
-        [(who, count)] = await self.memory.tell_choices(GUILD, self.c, self.npc)
-        self.assertEqual(who, self.cara)
+        [(who, name, count)] = await self.memory.tell_choices(GUILD, self.c, self.npc)
+        self.assertEqual((who, name), (self.cara, "Cara"))
         self.assertGreater(count, 0)
         self.assertFalse(await self.sees(self.cara, ENTRY, self.npc))
 
     async def test_catching_up_is_one_change_and_its_undo_puts_the_rows_back(self) -> None:
         before = await self.rows()
-        [(_, count)] = await self.memory.tell_choices(GUILD, self.c, self.npc)
+        [(_, _, count)] = await self.memory.tell_choices(GUILD, self.c, self.npc)
         done = await self.memory.tell_member(GUILD, self.c, self.cara, self.npc)
         self.assertEqual(done.value, count)  # (the number shown is the number told)
         self.assertTrue(await self.sees(self.cara, ENTRY, self.npc))
@@ -114,6 +117,20 @@ class CatchingUp(Party):
         done = await self.memory.tell_member(GUILD, self.c, self.cara, secret)
         self.assertEqual((done.value, done.batch), (0, None))
         self.assertEqual(await self.rows(), before)
+
+    async def test_a_party_of_two_is_never_offered_one_characters_rows(self) -> None:
+        # (a row only one other character holds may be that character's own backstory)
+        await self.memory.leave_party(GUILD, self.c, self.tuck, "left")
+        self.assertEqual(await self.memory.tell_choices(GUILD, self.c, self.npc), [])
+        done = await self.memory.tell_member(GUILD, self.c, self.cara, self.npc)
+        self.assertEqual((done.value, done.batch), (0, None))
+
+    async def test_one_still_waiting_for_the_join_question_is_not_offered(self) -> None:
+        dan = await self.pc("Dan", DAN)  # (asked about, not answered yet)
+        offered = [m for m, _, _ in await self.memory.tell_choices(GUILD, self.c, self.npc)]
+        self.assertEqual(offered, [self.cara])
+        done = await self.memory.tell_member(GUILD, self.c, dan, self.npc)
+        self.assertEqual(done.value, 0)
 
     async def test_one_not_in_the_party_is_refused_and_nobody_is_offered_alone(self) -> None:
         await self.memory.leave_party(GUILD, self.c, self.cara, "left")

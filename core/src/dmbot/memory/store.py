@@ -3328,21 +3328,21 @@ class MemoryStore:
 
     async def tell_choices(
         self, guild_id: int, campaign_id: str, entity_id: str
-    ) -> list[tuple[str, int]]:
+    ) -> list[tuple[str, str, int]]:
         """ "Tell Mira" on this entry's card (#4537 slice 4b, §5): each current member who lacks
-        something on it that all the other members know, with how many things, in the party
-        list's order. Read in one snapshot; empty with fewer than two members."""
+        something on it that the other members know (`knowers.tell_counts`), as (id, name, how
+        many) in the party list's order. One snapshot, every row read once, for a card's draw."""
         async with self._read(guild_id, campaign_id) as scope:
-            members = await party_record.current_members(scope)
-            if len(members) < 2:
-                return []
             only = await knowers.card_statements(scope, entity_id)
-            out = []
-            for member in members:
-                plan = await knowers.tell_plan(scope, member, only)
-                if plan:
-                    out.append((member, len({(c, st) for c, st, _, _ in plan})))
-            return out
+            counts = await knowers.tell_counts(scope, only)
+            if not counts:
+                return []
+            names = {
+                str(e["id"]): str(e["name"])
+                for e in await scope.select(ENTITIES, " AND id = ANY(%s)", [sorted(counts)])
+            }
+            order = await party_record.current_members(scope)
+            return [(m, names[m], counts[m]) for m in order if m in counts and m in names]
 
     async def tell_member(
         self, guild_id: int, campaign_id: str, member_id: str, entity_id: str
