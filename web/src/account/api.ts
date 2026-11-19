@@ -2144,6 +2144,8 @@ export interface JoinGroup {
   group: string;
   answer: "waiting" | "everyone";
   names: string[];
+  /** "join" (a new character) or "back" (a character coming back to the party, #4791); a missing kind reads as "join". */
+  kind?: "join" | "back";
 }
 /** One press on World notes: ✅ Keep the shown lines (at most 25), 🚫 Not right on one, or ↩ Undo by its change number. */
 export type WorldNotesChange = { action: "keep"; ids: string[] } | { action: "not"; id: string } | { action: "undo"; batch: number };
