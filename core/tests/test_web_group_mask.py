@@ -121,3 +121,20 @@ class AFactionsMembersOnTheWeb(Web):
         self.assertIn((gate.ENTRY, self.vault), bot.dark)
         self.assertIn((gate.CONNECTION, tie), bot.dark)
         self.assertIn((gate.ALIAS, name), bot.dark)
+
+    async def test_a_person_the_story_never_named_is_masked_too(self) -> None:
+        # (0264: every guard on `hidden_from_players` keeps the unnamed out as well)
+        await self.memory.set_statement_knowers(
+            self.g, self.one.id, gate.ENTRY, self.vault, [self.hand], source=DM_SOURCE,
+            dm_chose_secret=True,
+        )  # fmt: skip
+        self.assertTrue(await self.can_open(self.player))
+        await self.sql(
+            "UPDATE memory_entities SET unnamed = true, unnamed_what = 'a stranger' WHERE id = %s",
+            self.vault,
+        )
+        # (the door counts a person the story never named as hidden, as every other guard on
+        # `hidden_from_players` does; `gate._not_shown` does not yet, so the drift test above
+        # stays on named entries)
+        _src, known, _pages = await relationships.source_of(self.web, self.session, self.cref)
+        self.assertIn((gate.ENTRY, self.vault), {(str(k), str(i)) for k, i in known["dark"]})

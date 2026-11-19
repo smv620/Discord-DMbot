@@ -26,11 +26,13 @@ _ANCHOR = "'liveEntries', COALESCE(("
 
 def _out(entry: str) -> str:
     """`entry` (a SQL id expression) is an entry the players are not shown as a hide: not
-    confirmed, or hidden from them (`entry_out`). Limited, unnamed and unrevealed are not hides."""
+    confirmed, or hidden from them (`entry_out`), or a person the story never named (0264: every
+    guard against `hidden_from_players` keeps the unnamed out too). Limited and unrevealed are not
+    hides."""
     return (
         "NOT EXISTS (SELECT 1 FROM memory_entities he WHERE he.guild_id = g "
         f"AND he.campaign_id = c AND he.id = {entry} AND he.status = 'confirmed' "
-        "AND NOT he.hidden_from_players)"
+        "AND NOT he.hidden_from_players AND NOT he.unnamed)"
     )
 
 
