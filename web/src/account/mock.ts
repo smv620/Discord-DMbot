@@ -75,7 +75,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, WorldRoadNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion } from "./api";
+import type { PartyRecordCharacter, ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, WorldRoadNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type LorePdf, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
@@ -1293,6 +1293,20 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // "Use what I say and type to improve DMbot" (#1610): on until the person turns it off.
   let improve = true;
   const calls: string[] = [];
+  // The join question's groups per campaign (#4778 part b): made when first read, then changed by the answers.
+  const joinState: Record<string, { group: string; answer: "waiting" | "everyone"; names: string[] }[]> = {};
+  // The party record (#4778 a2): Wren is in the party; Ash left and is out. A leave or a return is one change, with one Undo.
+  const pretendParty = (): PartyRecordCharacter[] => [
+    { id: "p1".repeat(16), name: "Wren", inParty: true, spans: [{ from: 1700000000, to: null, ended: null, session: 2 }] },
+    { id: "p2".repeat(16), name: "Ash", inParty: false, spans: [{ from: 1690000000, to: 1705000000, ended: "left", session: 1 }] },
+  ];
+  let partyState: PartyRecordCharacter[] = pretendParty();
+  const partyBatches = new Map<number, PartyRecordCharacter[]>();
+  let lastPartyBatch = 70;
+  const pretendJoinGroups = () => [
+    { group: "e1".repeat(16), answer: "waiting" as const, names: ["Mira"], kind: "join" as const },
+    { group: "e2".repeat(16), answer: "waiting" as const, names: ["Tavin", "Oskar"], kind: "join" as const },
+  ];
   // The kept pictures (#3275): five pretend pictures, each 100 MB; the permanent ones count toward the limit.
   const pictureRows = [
     { code: "pic-1", at: 1791004000, sessionNumber: 2, poster: "Mira", description: "A map of the Brass Ford", permanent: false, isPublic: true },
@@ -3557,6 +3571,78 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (at < 0) throw new ApiError("gone");
       list.splice(at, 1);
       return { batch: change.action === "make" ? 41 : null };
+    },
+    // The join question (#4778 part b): two messages, one name and two names. A "party" answer carries its change number (61) and
+    // what the party gave (3); the group with no things to give carries none. A second answer to a group is "gone".
+    async joinQuestions(ref): Promise<{ group: string; answer: "waiting" | "everyone"; names: string[] }[]> {
+      calls.push(`joinQuestions:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      return structuredClone(joinState[ref] ??= pretendJoinGroups());
+    },
+    async answerJoin(ref, change) {
+      calls.push(`answerJoin:${ref}:${change.action}:${change.action === "undo" ? change.batch : change.group}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      if (change.action === "undo") return { batch: null, given: null };
+      const list = (joinState[ref] ??= pretendJoinGroups());
+      const at = list.findIndex((g) => g.group === change.group);
+      if (at < 0 || (change.action === "everyone" && list[at]!.answer === "everyone")) throw new ApiError("gone");
+      if (change.action === "everyone") {
+        list[at] = { ...list[at]!, answer: "everyone" };
+        return { batch: null, given: null };
+      }
+      const [done] = list.splice(at, 1);
+      return done!.names.length === 2 ? { batch: null, given: null } : { batch: 61, given: 3 };
+    },
+    // The party record (#4778 a2): DM only. A leave of someone not in the party is `not-in-party`; a return of someone in it is `already-back`.
+    async partyRecord(ref) {
+      calls.push(`partyRecord:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      return structuredClone(partyState);
+    },
+    async partyLeave(ref, character, why) {
+      calls.push(`partyLeave:${ref}:${character}:${why}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const c = partyState.find((p) => p.id === character);
+      if (!c) throw new ApiError("not-a-pc");
+      if (!c.inParty) throw new ApiError("not-in-party");
+      partyBatches.set(++lastPartyBatch, structuredClone(partyState));
+      const open = c.spans[c.spans.length - 1];
+      if (open) Object.assign(open, { to: 1710000000, ended: why });
+      c.inParty = false;
+      return { batch: lastPartyBatch };
+    },
+    async partyBack(ref, character) {
+      calls.push(`partyBack:${ref}:${character}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const c = partyState.find((p) => p.id === character);
+      if (!c) throw new ApiError("not-a-pc");
+      if (c.inParty) throw new ApiError("already-back");
+      // Ash is asked what she knows (join); Wren's return asks nothing (none). Either way Undo is offered (core's card).
+      const asked = c.name === "Ash" ? ("join" as const) : ("none" as const);
+      partyBatches.set(++lastPartyBatch, structuredClone(partyState));
+      c.inParty = true;
+      c.spans.push({ from: 1711000000, to: null, ended: null, session: null });
+      return { batch: lastPartyBatch, asked };
+    },
+    async partyUndo(ref, batch) {
+      calls.push(`partyUndo:${ref}:${batch}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const before = partyBatches.get(batch);
+      if (!before) throw new ApiError("undo-late");
+      partyBatches.delete(batch);
+      partyState = before;
     },
     async nameSources(ref): Promise<NameSource[]> {
       calls.push(`nameSources:${ref}`);

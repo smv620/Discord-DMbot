@@ -375,8 +375,8 @@ async def load_inputs_or_why(
     allowed_now, secret_now = recap_name_sets(names, said, recanted)
     # The party at this session (`MemoryStore.members_at`, #4537 slice 3b), when the store is given.
     # None (every player character, as before) when it can't be read, and when no stretch covers
-    # the session: a session imported after its characters were made predates every stretch, and
-    # `Viewer.party_at` falls back to today's party the same way.
+    # the session: a session imported after its characters were made predates every stretch. (The
+    # gate's `Viewer.party_at` with no member is common knowledge only, #4806; this list is names.)
     members: list[str] | None = None
     if memory is not None:
         try:

@@ -196,6 +196,17 @@ class TheChecks(unittest.TestCase):
         self.assertIn("<play>", text)
 
 
+class _Party:
+    """The memory's one read before the players' recall: who was in the party at the session
+    (#4537 slice 5a); the recall itself is the test's stand-in."""
+
+    async def members_at(self, guild_id: int, campaign_id: str, at: int) -> list[str]:
+        return ["p" * 32]
+
+
+_JOB = SimpleNamespace(session_at=5_000)  # (the recap's own session)
+
+
 class TheKnownGate(unittest.IsolatedAsyncioTestCase):
     """An item may be explained only if the players' own view of the memory holds it."""
 
@@ -264,14 +275,3 @@ class TheKnownGate(unittest.IsolatedAsyncioTestCase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class _Party:
-    """The memory's one read before the players' recall: who was in the party at the session
-    (#4537 slice 5a); the recall itself is the test's stand-in."""
-
-    async def members_at(self, guild_id: int, campaign_id: str, at: int) -> list[str]:
-        return ["p" * 32]
-
-
-_JOB = SimpleNamespace(session_at=5_000)  # (the recap's own session)

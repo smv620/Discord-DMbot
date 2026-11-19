@@ -77,6 +77,7 @@ from dmbot.web import (
     offers,
     optional_rules,
     party_characters,
+    party_record,
     past_sessions,
     pc_icons,
     pictures,
@@ -2818,6 +2819,55 @@ def create_app(
         session, _token = signed
         try:
             return {"answer": await world_notes.queue_undo(db, session, ref, batch)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/party-record")
+    async def me_campaign_party_record(ref: str, signed: Signed) -> dict[str, Any]:
+        """Each player character's stretches in the party (#4778): DM only, nothing for anyone
+        else."""
+        session, _token = signed
+        try:
+            return await party_record.read(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/party-record/leave", status_code=202)
+    async def me_campaign_party_leave(ref: str, request: Request, signed: Signed) -> dict[str, str]:
+        """`{"character", "why"}`; polled at `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await party_record.queue_leave(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/party-record/back", status_code=202)
+    async def me_campaign_party_back(ref: str, request: Request, signed: Signed) -> dict[str, str]:
+        """`{"character"}`: the character is in the party again."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await party_record.queue_back(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/party-record/{batch}/undo", status_code=202)
+    async def me_campaign_party_undo(ref: str, batch: str, signed: Signed) -> dict[str, str]:
+        """↩ Undo of a leave or a return by the change number its answer carried."""
+        session, _token = signed
+        try:
+            return {"answer": await party_record.queue_undo(db, session, ref, batch)}
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

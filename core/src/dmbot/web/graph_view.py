@@ -56,6 +56,10 @@ def statements_of(data: dict[str, Any]) -> gate.Statements:
         aliases=aliases,
         player_characters=frozenset(data["playerCharacters"]),
         told=_told(data),
+        # the group mask (#4807, slice 5a): a group's row on these never reaches a player character
+        # in `players` (every confirmed one, in the party or not), as `gate.load` builds them
+        dark=frozenset((str(k), str(i)) for k, i in data.get("dark", ())),
+        players=frozenset(str(c) for c in data.get("allPlayers", ())),
     )
 
 
