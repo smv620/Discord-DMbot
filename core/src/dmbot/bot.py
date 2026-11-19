@@ -1618,6 +1618,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self._waiting_now_at = 0.0  # when the waiting cards' "now" was last refreshed (#4441)
         self._map_close_swept = 0.0  # when the map close-read sweep last ran (#4349)
         self._map_close_task: asyncio.Task[None] | None = None
+        self._map_close_off_told = False  # the "sweep is off" line is logged once (#4743)
         # campaign → when its close reads may be tried again after being put off (in memory: a
         # restart simply tries once more)
         self._map_close_after: dict[str, float] = {}
@@ -14300,6 +14301,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         map's note (counts only in the log)."""
         if None in (self.map_store, self.image_desk, self.map_notes, self.picture_store,
                     self.picture_bucket):  # fmt: skip
+            # (#4743: said once, so a kept map that is never read has a line in the log: the
+            # picture reader exists only with DMBOT_TABLE_IMAGES on and the AI key set)
+            if not self._map_close_off_told and self.map_store is not None:
+                self._map_close_off_told = True
+                log.info(
+                    "Map close reads: off (picture reader %s, kept pictures %s)",
+                    "on" if self.image_desk is not None else "off",
+                    "on" if self.picture_store is not None else "off",
+                )
             return
         task = self._map_close_task
         if (task is not None and not task.done()) or (
