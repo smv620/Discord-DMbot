@@ -10,7 +10,7 @@ from typing import Any
 from dmbot.memory import gate
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.ui import name_card
-from tests.test_party_join import CARA, GUILD, Party
+from tests.test_party_join import ANNA, CARA, DM_ID, GUILD, Party
 
 
 class ANewcomerAndTheCard(Party):
@@ -41,11 +41,25 @@ class ANewcomerAndTheCard(Party):
     async def test_a_newcomer_not_yet_told_is_not_shown_the_card(self) -> None:
         self.assertIsNone(await self.card(self.cara))  # (the flags still say "shown")
 
-    async def test_someone_who_knows_it_is_shown_it_with_the_audience_line(self) -> None:
+    async def test_someone_who_knows_it_is_shown_it_and_no_empty_audience_line(self) -> None:
         text = await self.card(self.vell)
         assert text is not None
         self.assertIn("Harbourmaster", text)
-        self.assertIn("Only some people know this", text)  # (the table, Cara too, doesn't)
+        self.assertNotIn("Only some people know this", text)  # (no one to name: no "—" line)
+
+    async def test_the_gate_sets_of_a_press(self) -> None:
+        from types import SimpleNamespace
+
+        view: Any = CampaignLookup.build(await self.memory.lookup_data(GUILD, self.c))
+        for user, holds in ((CARA, False), (ANNA, True), (999_999, False)):
+            it = SimpleNamespace(user=SimpleNamespace(id=user))
+            seen, table = await name_card._gate_sets(it, self.memory, self.campaign, view, False)  # type: ignore[arg-type]
+            assert seen is not None
+            self.assertEqual(self.npc in seen, holds, user)  # (a stranger holds nothing of it)
+            self.assertNotIn(self.npc, table)  # (Cara, told nothing yet, is at the table)
+        it = SimpleNamespace(user=SimpleNamespace(id=DM_ID))
+        seen, _ = await name_card._gate_sets(it, self.memory, self.campaign, view, True)  # type: ignore[arg-type]
+        self.assertIsNone(seen)  # (the DM needs no filter)
 
     async def test_told_it_the_card_is_for_everyone_and_has_no_audience_line(self) -> None:
         [q] = await self.memory.join_questions_to_send(GUILD, self.c)

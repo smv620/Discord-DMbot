@@ -684,8 +684,8 @@ def card_text(
             ),
             key=name_key,
         )
-        who = _more([_md(n) for n in knowers]) if knowers else "—"
-        lines.append(f"🔒 **Only some people know this:** {who}")
+        if knowers:  # (said only with a real audience to name, never an empty "—")
+            lines.append(f"🔒 **Only some people know this:** {_more([_md(n) for n in knowers])}")
     if sheet:
         lines.append(sheet)
     if others:
@@ -1999,6 +1999,8 @@ async def _respell_past(
         written.batch is None
         or not renamed_key(old, new)
         or entity.type in DM_ONLY_TYPES
+        # (fail closed: an entry the table doesn't hold, a newcomer not yet told included, never has
+        # its old spelling rewritten in what the whole server reads)
         or entity.id not in await memory.entries_held(campaign.guild_id, campaign.id)
     ):
         return PastNote()
