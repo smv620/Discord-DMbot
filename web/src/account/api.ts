@@ -2567,7 +2567,7 @@ export const NAME_POLL_MS = 1000;
 export const NAME_POLLS = 60;
 export const READING_POLLS = 150;
 /** What the web's answers say about one queued edit of a connection or a reveal (#2323, #2405). */
-interface WebAnswer {
+export interface WebAnswer {
   state: "waiting" | "working" | "done" | "failed";
   error?: string | null;
   edge?: WebEdge | null;

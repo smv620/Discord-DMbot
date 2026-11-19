@@ -42,7 +42,7 @@ import {
   SIGNED_OUT_EVENT,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
-import type { AccountApi, ApiHelpers, CharacterLanguages, JoinGroup, PartyRecordCharacter, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
+import type { AccountApi, ApiHelpers, CharacterLanguages, JoinGroup, PartyRecordCharacter, WebAnswer, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
 /** The revealed list of an upload notice (#4661): plain lines of at most 200 characters, at most ten; anything else is dropped. */
@@ -72,6 +72,12 @@ export function countOf(counts: unknown, key: string): number | undefined {
 }
 
 export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Partial<AccountApi> {
+  // The party record's door answers with {answer}; the answer is waited for like the other queued changes (#4778 a2).
+  const partyAnswer = async (ref: string, queued: unknown): Promise<WebAnswer> => {
+    const answer = (queued as { answer?: string } | null)?.answer;
+    if (!answer) throw new ApiError("server");
+    return waitForAnswer(`/me/campaigns/${encodeURIComponent(ref)}/web/answers/${encodeURIComponent(answer)}`);
+  };
   return {
     namesFixed: async (recapRef) =>
       (await call("GET", `/me/recaps/${encodeURIComponent(recapRef)}/names-fixed`)) as NamesFixed,
@@ -614,27 +620,17 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     // A player character's stretches in the party (#4778 a2): DM only; the door answers anyone else with nothing.
     partyRecord: async (ref) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/party-record`)) as { characters: PartyRecordCharacter[] }).characters,
-    // Queued for the bot (202 {answer}), then waited for: the batch of a leave or return, and what a return asks.
+    // A leave, a return or an Undo is queued for the bot (202 {answer}) and waited for: a leave gives its batch, a return its batch and what it asks.
     partyLeave: async (ref, character, why) => {
-      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
-      const queued = (await call("POST", `${base}/party-record/leave`, { character, why })) as { answer: string };
-      if (!queued?.answer) throw new ApiError("server");
-      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
-      return { batch: typeof got.batch === "number" ? got.batch : null };
+      const got = await partyAnswer(ref, await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/party-record/leave`, { character, why }));
+      return { batch: got.batch ?? null };
     },
     partyBack: async (ref, character) => {
-      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
-      const queued = (await call("POST", `${base}/party-record/back`, { character })) as { answer: string };
-      if (!queued?.answer) throw new ApiError("server");
-      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
-      const asked = got.asked === "back" || got.asked === "join" || got.asked === "none" ? got.asked : null;
-      return { batch: typeof got.batch === "number" ? got.batch : null, asked };
+      const got = await partyAnswer(ref, await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/party-record/back`, { character }));
+      return { batch: got.batch ?? null, asked: got.asked ?? null };
     },
     partyUndo: async (ref, batch) => {
-      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
-      const queued = (await call("POST", `${base}/party-record/${encodeURIComponent(String(batch))}/undo`)) as { answer: string };
-      if (!queued?.answer) throw new ApiError("server");
-      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      await partyAnswer(ref, await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/party-record/${encodeURIComponent(String(batch))}/undo`));
     },
     // The party's player characters for the "Some know" picker (#4680 part 1): DM only; the door answers anyone else with nothing.
     partyCharacters: async (ref) =>
