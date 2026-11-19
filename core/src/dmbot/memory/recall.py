@@ -283,6 +283,7 @@ class RecallService:
         hops: int = MAX_HOPS,
         confirmed_only: bool = False,
         viewer: gate.Viewer | None = None,
+        live_at: int | None = None,
     ) -> Recall:
         """What may be said about `seeds` (entry ids or names) to `audience` at `as_of`, cut to
         `budget` characters. `opted_in` are the people recorded now (or a function that says,
@@ -292,7 +293,8 @@ class RecallService:
         `viewer`: whom the players' audience is for (party knowledge slice 5a, Supervisor's ruling
         M): by default the table (`gate.table_viewer`: the party at the running session, else the
         current party, else common knowledge only). The gate says which entries it holds; the
-        flags are no longer asked (§9 rule 2)."""
+        flags are no longer asked (§9 rule 2). `live_at`: the start of the table the bot is live
+        at, for that table's party (never a stale open session row)."""
         if audience not in AUDIENCES:
             raise ValueError(f"unknown audience {audience!r}")
         as_of = as_of or AsOf()
@@ -302,7 +304,7 @@ class RecallService:
         agreed = await _agreed(opted_in)
         async with self._memory._read(guild_id, campaign_id, snapshot=True) as scope:
             allowed = (
-                await gate.entries_for(scope, viewer or await gate.table_viewer(scope))
+                await gate.entries_for(scope, viewer or await gate.table_viewer(scope, live_at))
                 if audience == PLAYERS
                 else None
             )

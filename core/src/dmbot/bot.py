@@ -4110,6 +4110,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     as_of=AsOf(session_at=table.started_at or None) if live and table else AsOf(),
                     budget=self.settings.sidebar_recall_budget,
                     hops=1,
+                    # (the live table's party, slice 5a: its start, never a stale open session)
+                    live_at=table.started_at if live and table else None,
                 )
 
         ai = self.ai_client.tier(FEATURE_TIERS[Feature.SIDEBAR], Feature.SIDEBAR)

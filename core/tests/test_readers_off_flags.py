@@ -62,6 +62,34 @@ class ANewcomer(Party):
         await self.memory.join_answer_party(GUILD, self.c, q.group_id)
         self.assertIn(self.npc, await self.recall_ids())
 
+    async def test_a_hide_through_the_store_hides_it_from_the_table(self) -> None:
+        [q] = await self.memory.join_questions_to_send(GUILD, self.c)
+        assert q.group_id is not None
+        await self.memory.join_answer_party(GUILD, self.c, q.group_id)
+        self.assertIn(self.npc, await self.recall_ids())
+        await self.memory.set_hidden_from_players(
+            GUILD, self.c, self.npc, True, source=DM, dm_chose_secret=True
+        )
+        self.assertNotIn(self.npc, await self.recall_ids())
+
+    async def test_a_live_table_is_that_sessions_party(self) -> None:
+        # (Cara joined after the live session began: its table is Vell and Tuck, who know it)
+        sid = await self.sessions.open_session(GUILD, self.c, 20_000)
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "UPDATE transcript_sessions SET line_count = 3, created_at = 20_000 WHERE id = %s",
+                (sid,),
+            )
+        from dmbot.memory import party_record
+
+        async with self.memory._write(GUILD, self.c, DM) as w:
+            await party_record.move_start(w, self.cara, 20_500)
+        got = await RecallService(self.memory).recall(
+            GUILD, self.c, seeds=["Harbourmaster"], audience=PLAYERS, live_at=20_000
+        )
+        self.assertIn(self.npc, got.ids)
+        self.assertNotIn(self.npc, await self.recall_ids())  # (no live table: today's party)
+
     async def test_no_reader_writes_a_row(self) -> None:
         before = await self.rows()
         await self.recall_ids()
@@ -96,3 +124,15 @@ class NoPartyYet(DatabaseTest):
         )
         self.assertIn(self.world, got.ids)
         self.assertNotIn(self.shown, got.ids)
+
+    async def test_a_common_entry_the_dm_hides_is_not_told(self) -> None:
+        # (a hide keeps the common row on purpose, #4524: it grants nothing while hidden)
+        await self.memory.set_hidden_from_players(
+            ALONE, self.c, self.world, True, source=DM, dm_chose_secret=True
+        )
+        got = await RecallService(self.memory).recall(
+            ALONE, self.c, seeds=["Saltmarsh"], audience=PLAYERS
+        )
+        self.assertNotIn(self.world, got.ids)
+        texts = await entry_texts(self.db, ALONE, self.c, [self.world], for_players=True)
+        self.assertEqual(texts, {})
