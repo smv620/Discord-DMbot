@@ -19,7 +19,10 @@ export const partyRecordWords = {
   reasons: { left: "Moved on", retired: "Retired", died: "Died", away: "Away for a while" },
   since: (day: string, session: number | null): string =>
     session === null ? `🧭 In the party since ${day}.` : `🧭 In the party since session ${session} (${day}).`,
-  leftOn: (day: string, ended: string | null): string => `🧭 Left the party on ${day} (${WHY[ended ?? ""] ?? "moved on"}).`,
+  leftOn: (day: string, ended: string | null): string => {
+    const why = WHY[ended ?? ""]; // (no reason on record: no brackets, as core's party_line)
+    return why ? `🧭 Left the party on ${day} (${why}).` : `🧭 Left the party on ${day}.`;
+  },
   leftDone: (name: string, ended: string): string =>
     `✅ ${name} has left the party (${WHY[ended] ?? "moved on"}). Nothing ${name} knew is forgotten. Answers to the table now count only who is still in the party.`,
   backDone: (name: string, asked: "back" | "join" | "none"): string =>

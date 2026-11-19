@@ -146,4 +146,9 @@ describe("the party record on a player character", () => {
     expect(screen.queryByRole("button", { name: w.open })).toBeNull();
     expect(api.calls.some((c) => c.startsWith("partyRecord:"))).toBe(false);
   });
+
+  it("says a stretch with no reason without brackets, as core does", () => {
+    expect(w.leftOn("1 January 2024", null)).toBe("🧭 Left the party on 1 January 2024.");
+    expect(w.leftOn("1 January 2024", "died")).toBe("🧭 Left the party on 1 January 2024 (died).");
+  });
 });
