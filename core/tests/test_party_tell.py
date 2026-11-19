@@ -118,12 +118,13 @@ class CatchingUp(Party):
         self.assertEqual((done.value, done.batch), (0, None))
         self.assertEqual(await self.rows(), before)
 
-    async def test_a_party_of_two_is_never_offered_one_characters_rows(self) -> None:
-        # (a row only one other character holds may be that character's own backstory)
+    async def test_a_party_of_two_catches_up_from_the_other_character(self) -> None:
+        # (one other is enough once a backstory's rows are marked, #4795: test_backstory_mark)
         await self.memory.leave_party(GUILD, self.c, self.tuck, "left")
-        self.assertEqual(await self.memory.tell_choices(GUILD, self.c, self.npc), [])
+        [(who, _, count)] = await self.memory.tell_choices(GUILD, self.c, self.npc)
+        self.assertEqual(who, self.cara)
         done = await self.memory.tell_member(GUILD, self.c, self.cara, self.npc)
-        self.assertEqual((done.value, done.batch), (0, None))
+        self.assertEqual(done.value, count)
 
     async def test_one_still_waiting_for_the_join_question_is_not_offered(self) -> None:
         dan = await self.pc("Dan", DAN)  # (asked about, not answered yet)
