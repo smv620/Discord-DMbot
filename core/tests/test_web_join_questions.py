@@ -10,7 +10,7 @@ from typing import Any
 
 from dmbot.memory import web_actions as wa
 from dmbot.memory.models import DM as DM_SOURCE
-from dmbot.web import join_questions, sessions
+from dmbot.web import join_questions, relationships, sessions
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, NOW
 from tests.test_web_api import ALICE, THURSDAY
@@ -124,11 +124,18 @@ class JoinOnTheWeb(Web):
             self.g, self.one.id, self.secret_link, [self.rook],
             source=DM_SOURCE, dm_chose_secret=True,
         )  # fmt: skip
-        await self.answer("party")
+        answer_id = await self.answer("party")
         (done,) = await self.bot_loop()
         self.assertEqual(done.error, "")
         self.assertEqual(len(done.batches), 1)
         self.assertTrue(done.counts.startswith("given:"))
+        # what the page reads: how it ended, how many things were given (Discord's "N things the
+        # party knew") and the change number for its Undo
+        read = await relationships.read_answer(self.web, self.session, self.cref, answer_id)
+        self.assertEqual(read["state"], "done")
+        self.assertEqual(read["given"], int(done.counts.removeprefix("given:")))
+        self.assertGreater(read["given"], 0)
+        self.assertEqual(read["batch"], done.batches[0])
         (batch,) = done.batches
         # a made-up change number, or one this DM did not make, never reaches `undo`
         await join_questions.queue_undo(self.web, self.session, self.cref, str(batch + 1000))
