@@ -458,6 +458,9 @@ async def keep_all(
                     dm_chose_secret=not keep_flags or players == "hide" or bool(knowers),
                     # whether they've met, from the quote's own words (#3881)
                     knows_how=kept_how(c, old),
+                    # (the uploader's character knows it from its own backstory, #4795; a
+                    # 👥 Some know pick is the DM's, not a backstory's)
+                    backstory_of=c.known_by if c.known_by and not knowers else None,
                 )  # fmt: skip
             except Exception as exc:
                 # the change is whole or not at all, whatever went wrong

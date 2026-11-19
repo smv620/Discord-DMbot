@@ -5614,7 +5614,10 @@ class MemoryStore:
                 try:
                     held = (await knowers.connection_knowers(w, [made.id])).get(made.id, [])
                     if known_by not in held:
+                        fresh = not await knowers.holds(w, "connection", made.id, known_by)
                         await knowers.set_connection_knowers(w, made.id, [*held, known_by])
+                        if fresh:  # (the backstory's own character: never copied, #4795)
+                            await knowers.mark_backstory(w, "connection", made.id, known_by)
                 except MemoryRuleError:
                     log.info("A kept tie's first knower was refused")
             if link["upload"]:  # (where it came from, for the DM's "Why?", #2946)
@@ -8090,6 +8093,7 @@ class MemoryStore:
         directional: bool = False,
         decided: str | None = None,
         known_by: Sequence[str] = (),
+        backstory_of: str | None = None,
         keep_flags: bool = False,
         dm_chose_secret: bool = False,
         by_hand: bool = False,
@@ -8123,9 +8127,14 @@ class MemoryStore:
                 try:
                     # (a connection that already existed keeps the characters the DM chose)
                     held = (await knowers.connection_knowers(w, [value[0].id])).get(value[0].id, [])
+                    fresh = backstory_of is not None and not await knowers.holds(
+                        w, "connection", value[0].id, backstory_of
+                    )  # (only a row this write makes is the backstory's, #4795)
                     await knowers.set_connection_knowers(
                         w, value[0].id, [*held, *(k for k in known_by if k not in held)]
                     )
+                    if fresh and backstory_of is not None and backstory_of in known_by:
+                        await knowers.mark_backstory(w, "connection", value[0].id, backstory_of)
                 except MemoryRuleError:
                     log.info("A connection's first knowers were refused")
             return Written(value, w.batch)
@@ -8662,13 +8671,21 @@ class MemoryStore:
         source: str,
         dm_chose_secret: bool,
         players_only: bool = False,
+        backstory_of: str | None = None,
     ) -> Written[list[str]]:
         """ "Who knows this?" for a secret other name (#2935). Only the DM. `players_only`: the
-        list holds player characters only, so an NPC who knows it keeps knowing (#3197)."""
+        list holds player characters only, so an NPC who knows it keeps knowing (#3197).
+        `backstory_of`: the name came from that character's backstory, so that character's row
+        is marked and never copied to another (#4795)."""
         async with self._write(guild_id, campaign_id, source, dm_chose_secret=dm_chose_secret) as w:
+            fresh = backstory_of is not None and not await knowers.holds(
+                w, "alias", alias_id, backstory_of
+            )
             chosen = await knowers.set_alias_knowers(
                 w, alias_id, character_ids, players_only=players_only
             )
+            if fresh and backstory_of is not None and backstory_of in chosen:
+                await knowers.mark_backstory(w, "alias", alias_id, backstory_of)
             return Written(chosen, w.batch)
 
     async def set_statement_knowers(
@@ -8722,17 +8739,24 @@ class MemoryStore:
         pairs: Sequence[tuple[str, str]],
         *,
         source: str,
+        backstory: bool = False,
     ) -> Written[int]:
         """Several (statement, character) pairs learned at once (#3963 b: a backstory section's
         names, by their own character), each as `learn_statement`, in ONE change, so one Undo
         takes them all back. A pair that is refused (a name gone meanwhile) is skipped and the
-        rest are kept. Only the DM. Returns how many changed."""
+        rest are kept. Only the DM. Returns how many changed. `backstory`: each character learns
+        it from its own backstory, so a row this makes is marked and never copied (#4795)."""
         async with self._write(guild_id, campaign_id, source) as w:
             changed = 0
             for statement_id, character_id in pairs:
                 try:  # (`learn` checks before it writes: a refused one leaves the others)
                     await _not_assumed(w, kind, statement_id)
+                    fresh = backstory and not await knowers.holds(
+                        w, kind, statement_id, character_id
+                    )
                     changed += int(await knowers.learn(w, kind, statement_id, character_id))
+                    if fresh:
+                        await knowers.mark_backstory(w, kind, statement_id, character_id)
                 except MemoryRuleError:
                     continue
             return Written(changed, w.batch if changed else None)

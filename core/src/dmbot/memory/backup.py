@@ -618,7 +618,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         elif table is KNOWERS:  # four statement columns, exactly one set (`_check_knowers`)
             if not all(
                 raw[c] is None or is_id(raw[c])
-                for c in ("about_entity_id", "state_id", "relation_id", "alias_id")
+                for c in ("about_entity_id", "state_id", "relation_id", "alias_id", "backstory_of")
             ) or not all(
                 _valid(c, raw[c])
                 for c in ("id", "perspective_id", "created_at", "confidence", "hidden_by")
@@ -768,6 +768,9 @@ def _check_knowers(
         # (a character's point of view, or common knowledge's, #4537: carried like the others)
         if view is None or view["kind"] not in ("pc", "npc", "everyone"):
             raise CampaignError(DAMAGED)
+        # (whose backstory it came from, #4795: a character in the file, or none)
+        if k.get("backstory_of") is not None and k["backstory_of"] not in held["about_entity_id"]:
+            raise CampaignError(DAMAGED)
 
 
 _OLD_PARENTS = {k: v[0] for k, v in MIGRATED_KINDS.items()}
@@ -835,7 +838,9 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 **raw,
             }
         elif isinstance(raw, dict) and raw.get("table") == "knower":
-            raw = {"hidden_by": [], **raw}  # from before a hide could put a row to sleep (#3082)
+            # from before a hide could put a row to sleep (#3082) and before a backstory's rows were
+            # marked (#4795: unmarked, as the migration leaves a row it can't trace)
+            raw = {"hidden_by": [], "backstory_of": None, **raw}
         elif isinstance(raw, dict) and raw.get("table") == "claim":
             raw = {
                 "reading": None,
