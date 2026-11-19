@@ -484,9 +484,10 @@ async def _not_shown(
     First, which the players are not shown now (the flags as the DM's switch, §9 rule 1): not yet
     confirmed, hidden, limited to some, unnamed, secret or not yet revealed; common knowledge
     holds none of those. Second, the narrower set a group's row stops at for player characters
-    (Supervisor's ruling on #4806): not yet confirmed or hidden from the players, on it or an entry
-    it names. A limited audience, a secret or not-yet-revealed connection or a secret other name is
-    how the DM gives something to some, a group among them, so it is not in the second set."""
+    (Supervisor's ruling on #4806): not yet confirmed, hidden from the players or unnamed (#4808),
+    on it or an entry it names. A limited audience, a secret or not-yet-revealed connection or a
+    secret other name is how the DM gives something to some, a group among them, so it is not in
+    the second set."""
     if not keys:
         return set(), set()
     from dmbot.memory import knowers as lists  # (knowers imports this module)
@@ -505,9 +506,17 @@ async def _not_shown(
     def entry_ok(entity_id: str) -> bool:
         return entity_id in entities and lists.entry_shown(entities[entity_id])
 
-    def entry_out(entity_id: str) -> bool:  # (not confirmed, or hidden from the players)
+    def entry_out(entity_id: str) -> bool:
+        # (not confirmed, hidden from the players, or a person the story never named: an unnamed
+        # entry counts as a hide, 0264; Supervisor's ruling on #4808, so Discord matches the
+        # website door, 0559)
         row = entities.get(entity_id)
-        return row is None or row["status"] != CONFIRMED or bool(row["hidden_from_players"])
+        return (
+            row is None
+            or row["status"] != CONFIRMED
+            or bool(row["hidden_from_players"])
+            or bool(row["unnamed"])
+        )
 
     def hidden(kind: str, statement_id: str) -> bool:
         if kind == ENTRY:
