@@ -29,9 +29,11 @@ import { checkBuild, table } from "./weight.mjs";
 // itself is in a lazy file.
 // Raised on 2026-11-17 (#4559) to 187 KB: the Story Graph page's 🌍 Common knowledge button, its state line and refusal words (about
 // 0.3 KB) are in the first download; the page was 185.9 KB. Nothing else on the page changed, so nothing was trimmed.
+// Raised on 2026-11-19 (#4798) to 188 KB: the party record's API methods must be named in `NAMES_METHODS` in the first download
+// (about 1 KB with their types); the page was 187.1 KB after trimming, and the card itself is in a lazy file.
 export const budgets = {
   htmlKB: 52,
-  totalKB: 187,
+  totalKB: 188,
   onDemandKB: 45, // the most one chunk loaded on demand may weigh (#2690)
   imageKB: 150, // no picture bigger than this: resize or recompress it, don't drop it
 };
