@@ -1322,7 +1322,7 @@ class RecapFeatures:
         then = await self.memory.members_at(gid, cid, job.session_at)
         players = await service.recall(
             gid, cid, seeds=seeds, audience=PLAYERS, budget=RECAP_RECALL_BUDGET,
-            viewer=gate.Viewer.party_at(then) if then else gate.Viewer.the_world(),
+            viewer=gate.Viewer.party_at(then),
         )  # fmt: skip
         # What the writer's side may be told about an item the players know is the players' own
         # text for it (no DM note, no condition); the DM-screen text is only for items they do

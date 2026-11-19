@@ -125,6 +125,15 @@ class NoPartyYet(DatabaseTest):
         self.assertIn(self.world, got.ids)
         self.assertNotIn(self.shown, got.ids)
 
+    async def test_a_session_with_no_party_is_common_knowledge_only(self) -> None:
+        # (`party_at` with no member fails closed, Supervisor's ruling on #4806)
+        self.assertEqual(gate.Viewer.party_at([]), gate.Viewer.the_world())
+        got = await RecallService(self.memory).recall(
+            ALONE, self.c, seeds=["Harbourmaster", "Saltmarsh"], audience=PLAYERS,
+            viewer=gate.Viewer.party_at([]),
+        )  # fmt: skip
+        self.assertEqual(got.ids & {self.world, self.shown}, {self.world})
+
     async def test_a_common_entry_the_dm_hides_is_not_told(self) -> None:
         # (a hide keeps the common row on purpose, #4524: it grants nothing while hidden)
         await self.memory.set_hidden_from_players(
@@ -136,3 +145,49 @@ class NoPartyYet(DatabaseTest):
         self.assertNotIn(self.world, got.ids)
         texts = await entry_texts(self.db, ALONE, self.c, [self.world], for_players=True)
         self.assertEqual(texts, {})
+
+
+class AFactionsParty(Party):
+    """Vell and Tuck are both of the Gray Hand; the Hand knows a secret the DM hid. A group's row
+    on a hidden statement never reaches a player character (Supervisor's ruling on #4806), as a
+    common row is masked; shown again, it does."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        made = await self.memory.add_entity(
+            GUILD, self.c, name="The Gray Hand", type="faction", status=CONFIRMED, source=DM
+        )
+        self.hand = str(made.value.id)
+        for pc in (self.vell, self.tuck):
+            await self.memory.add_relation(
+                GUILD, self.c, pc, "member_of", self.hand, source=DM, confidence=1.0,
+                status=CONFIRMED,
+            )  # fmt: skip
+        made = await self.memory.add_entity(
+            GUILD, self.c, name="The vault", type="place", status=CONFIRMED, source=DM
+        )
+        self.vault = str(made.value.id)
+        await self.memory.set_statement_knowers(
+            GUILD, self.c, "entry", self.vault, [self.hand], source=DM, dm_chose_secret=True
+        )
+
+    async def sure(self, viewer: gate.Viewer) -> float | None:
+        seen = await self.memory.visible_to(GUILD, self.c, viewer)
+        return seen.how_sure(gate.ENTRY, self.vault)
+
+    async def test_a_hidden_statement_doesnt_reach_the_factions_members(self) -> None:
+        self.assertIsNotNone(await self.sure(gate.Viewer.the_party()))  # (shown: the Hand's)
+        await self.memory.set_hidden_from_players(
+            GUILD, self.c, self.vault, True, source=DM, dm_chose_secret=True
+        )
+        self.assertIsNone(await self.sure(gate.Viewer.the_party()))
+        self.assertIsNone(await self.sure(gate.Viewer.player([self.vell])))
+        got = await RecallService(self.memory).recall(
+            GUILD, self.c, seeds=["The vault"], audience=PLAYERS
+        )
+        self.assertNotIn(self.vault, got.ids)
+        self.assertIsNotNone(await self.sure(gate.Viewer.player([self.hand])))  # (its own row)
+        await self.memory.set_hidden_from_players(
+            GUILD, self.c, self.vault, False, source=DM, dm_chose_secret=True
+        )
+        self.assertIsNotNone(await self.sure(gate.Viewer.the_party()))  # (shown again)

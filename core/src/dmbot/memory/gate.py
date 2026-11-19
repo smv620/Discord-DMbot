@@ -94,10 +94,11 @@ class Viewer:
     @staticmethod
     def party_at(member_ids: Iterable[str]) -> Viewer:
         """What is read to the whole table about one session: what every member of the party AT
-        that session knows (`party_record.members_at`, #4537 slice 3b, §8). With no member (no
-        player character yet) it is `the_party()`, as before."""
+        that session knows (`party_record.members_at`, #4537 slice 3b, §8). With no member it is
+        anyone in the world (`the_world`: common knowledge only), failing closed (Supervisor's
+        ruling on #4806), never "every player character"."""
         ids = frozenset(member_ids)
-        return Viewer.the_table(ids) if ids else Viewer.the_party()
+        return Viewer.the_table(ids) if ids else Viewer.the_world()
 
     @staticmethod
     def the_table(character_ids: Iterable[str]) -> Viewer:
@@ -122,6 +123,12 @@ class Statements:
     player_characters: frozenset[str] = frozenset()
     # other name id -> the characters the DM told that it is the entry it belongs to (#3089)
     told: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    # The statements a group holds that the players are not shown now (what the DM hid, or not yet
+    # confirmed): a group's row on one never reaches a player character (Supervisor's ruling on
+    # #4806, slice 5a), as a common row is masked; an NPC member still gets it. `players`: every
+    # confirmed player character, in the party or not.
+    dark: frozenset[tuple[str, str]] = frozenset()
+    players: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -306,7 +313,15 @@ def visible(viewer: Viewer, data: Statements) -> Visible:
     for key, listed in data.knowers.items():
         # (a character knows its own entry without a row, so in the party's view it counts for
         # itself, with one player character or many)
-        sure = [1.0 if key == (ENTRY, c) else reach(c, _sure(listed), data.groups) for c in who]
+        # (a player character never reaches a hidden statement through a group, ruling on #4806)
+        sure = [
+            1.0
+            if key == (ENTRY, c)
+            else reach(
+                c, _sure(listed), {} if key in data.dark and c in data.players else data.groups
+            )
+            for c in who
+        ]
         known = [x for x in sure if x is not None]
         if viewer.mode == "any":
             if known:
@@ -421,6 +436,10 @@ async def load(scope: Scope) -> Statements:
             if r["object_id"] not in party:
                 groups.setdefault(r["subject_id"], set()).add(r["object_id"])
     await common_while_shown(scope, knowers, relations, aliases)
+    group_ids = {g for gs in groups.values() for g in gs}
+    held_by_groups = [key for key, who in knowers.items() if group_ids & set(who)]
+    dark = await _not_shown(scope, held_by_groups, relations) if held_by_groups else set()
+    players = frozenset(await party_record.player_characters(scope)) if dark else frozenset()
     kept = {
         key: value
         for key, value in knowers.items()
@@ -441,6 +460,8 @@ async def load(scope: Scope) -> Statements:
         aliases=aliases,
         player_characters=pcs,
         told={a: frozenset(c) for a, c in told.items()},
+        dark=frozenset(dark),
+        players=players,
     )
 
 
@@ -453,12 +474,23 @@ async def common_while_shown(
     """Take the common-knowledge rows off the statements the players are not shown now (#4537): a
     suggestion not yet confirmed, or what the DM hid. The rows stay stored; only this read leaves
     them out. One read of the rows involved, and none when no statement holds a common row."""
-    from dmbot.memory import knowers as lists  # (knowers imports this module)
-
     common = [key for key, who in knowers.items() if COMMON in who]
     if not common:
         return
-    ids = {k: [i for kind, i in common if kind == k] for k in KINDS}
+    for key in await _not_shown(scope, common, relations):
+        del knowers[key][COMMON]
+        if not knowers[key]:
+            del knowers[key]
+
+
+async def _not_shown(
+    scope: Scope, keys: Sequence[tuple[str, str]], relations: Mapping[str, tuple[str, str]]
+) -> set[tuple[str, str]]:
+    """Which of these statements the players are not shown now (the flags as the DM's switch,
+    §9 rule 1): a suggestion not yet confirmed, or what the DM hid."""
+    from dmbot.memory import knowers as lists  # (knowers imports this module)
+
+    ids = {k: [i for kind, i in keys if kind == k] for k in KINDS}
     rel_rows = {r["id"]: r for r in await _by_id(scope, RELATIONS, ids[CONNECTION])}
     alias_rows = {r["id"]: r for r in await _by_id(scope, ALIASES, ids[ALIAS])}
     state_rows = {r["id"]: r for r in await _by_id(scope, STATES, ids[PROPERTY])}
@@ -496,11 +528,7 @@ async def common_while_shown(
             )
         )
 
-    for key in common:
-        if not shown(*key):
-            del knowers[key][COMMON]
-            if not knowers[key]:
-                del knowers[key]
+    return {key for key in keys if not shown(*key)}
 
 
 async def _by_id(

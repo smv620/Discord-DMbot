@@ -13,6 +13,11 @@ LABEL = "swore on Veil's grave to guard"
 class OnTheRecall(ConfirmedMemoryTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
+        # (the players' audience is the party's view, #4537 slice 5a: a party of one, made first,
+        # so every entry shown to the table after it is written as known to it)
+        await self.add(
+            "Pcwyn Testhand", type="character", role="player_character", played_by=900_001
+        )
         self.cerric = await self.add("Cerric", type="character", role="npc")
         self.far = await self.add("Far Keep", type="place")
         self.temple = await self.add("Old Temple", type="place")
