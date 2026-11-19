@@ -69,9 +69,8 @@ FILES: dict[str, tuple[str, str, str]] = {
         DEFINES,
         "GraphEngineer",
         "rule 1's switch inside the gate: the common rows while shown, the group mask, and "
-        "`_public_entry` (the main name `name_entries` gives a known entry, or an unnamed "
-        "person's anchor, when the viewer holds no name row); no caller outside the gate reads "
-        "it (ruling L, 5c)",
+        "`_public_entry` (the main name `name_entries` gives a known entry when the viewer "
+        "holds no name row); no caller outside the gate reads it (ruling L, 5c)",
     ),
     "memory/knowers.py": (MIRRORS, "GraphEngineer", "follow_flags and the 'is it shown' checks"),
     "memory/lookup.py": (
