@@ -2102,9 +2102,19 @@ export interface WorldLanguageNote {
   from: string;
   fromSession: number | null;
 }
+/** A road whose length DMbot read that a kept map disagrees with (#4677): for the DM to keep, with no "Not right" (the length or
+ * the map may be the one that is off). `name` and `note` are the API's words. `id` is the keep id as the door sends it, `road:<32 hex>`. */
+export interface WorldRoadNote {
+  id: string;
+  name: string;
+  note: string;
+  fromSession: number | null;
+}
 export interface WorldNotes {
   places: WorldPlaceNote[];
   languages: WorldLanguageNote[];
+  /** The Roads group (#4784, behind ROADS_LIVE); an empty list when there is none, absent from an older API. */
+  roads?: WorldRoadNote[];
 }
 /** One press on World notes: ✅ Keep the shown lines (at most 25), 🚫 Not right on one, or ↩ Undo by its change number. */
 export type WorldNotesChange = { action: "keep"; ids: string[] } | { action: "not"; id: string } | { action: "undo"; batch: number };

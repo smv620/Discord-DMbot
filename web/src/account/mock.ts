@@ -75,7 +75,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion } from "./api";
+import type { ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, WorldRoadNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type LorePdf, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
@@ -1089,15 +1089,22 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // What each connection edit changed, for Undo (the numbers only go up).
   let lastBatch = 0;
   // DMbot's guesses for the DM to check (#4285): a few lines of each kind, ids shaped as the door's are.
-  const worldNotes: { places: WorldPlaceNote[]; languages: WorldLanguageNote[] } = {
+  // The Roads group (#4784, behind ROADS_LIVE): two roads whose length a kept map disagrees with. Their ids are the door's keep ids,
+  // `road:` and 32 hex, as core sends them; a road has no 🚫, so a "not" on one is refused.
+  const worldRoads: WorldRoadNote[] = [
+    { id: `road:${"c1".repeat(16)}`, name: "Targos to Bryn Shander", note: "The map puts it three hours' ride apart; the lore says two days.", fromSession: 1_700_000_000 },
+    { id: `road:${"c2".repeat(16)}`, name: "Bryn Shander to Icewind Dale", note: "Forty miles on the map; the lore says it is a week's walk.", fromSession: null },
+  ];
+  const worldNotes: { places: WorldPlaceNote[]; languages: WorldLanguageNote[]; roads: WorldRoadNote[] } = {
     places: [
       { id: `place:${"a1".repeat(16)}`, entityId: "n24", name: "Saltmarsh", layer: "terrain", value: "swamp", words: "", how: null, rulerId: null, ruler: null, from: "session", fromSession: 1_700_000_000 },
       { id: `place:${"a2".repeat(16)}`, entityId: "n24", name: "Saltmarsh", layer: "climate", value: "temperate", words: "", how: "wet", rulerId: null, ruler: null, from: "session", fromSession: 1_700_000_000 },
       { id: `place:${"a3".repeat(16)}`, entityId: "n25", name: "Greywatch", layer: "control", value: "", words: "", how: "rules", rulerId: "g1", ruler: "The Greywatch Guard", from: "lore", fromSession: null },
     ],
     languages: [{ id: `language:${"b1".repeat(16)}`, entityId: "n3", name: "Brother Venn", language: "Giant", from: "lore", fromSession: null }],
+    roads: worldRoads,
   };
-  const worldBatches = new Map<number, { places: WorldPlaceNote[]; languages: WorldLanguageNote[] }>();
+  const worldBatches = new Map<number, { places: WorldPlaceNote[]; languages: WorldLanguageNote[]; roads: WorldRoadNote[] }>();
   // The story threads DMbot found in an upload (#4482), waiting for the DM; a keep or a 🚫 takes one out, and Undo puts it back.
   const storyThreadList: StoryThreadSuggestion[] = [
     {
@@ -3012,7 +3019,7 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     async worldNotes(ref) {
       calls.push(`worldNotes:${ref}`);
-      return { places: worldNotes.places.map((n) => ({ ...n })), languages: worldNotes.languages.map((n) => ({ ...n })) };
+      return { places: worldNotes.places.map((n) => ({ ...n })), languages: worldNotes.languages.map((n) => ({ ...n })), roads: worldNotes.roads.map((n) => ({ ...n })) };
     },
     // ✅, 🚫 and ↩ Undo on World notes (#4285): a line checked meanwhile is "gone", as the real bot says.
     async changeWorldNotes(ref, change) {
@@ -3023,17 +3030,21 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         worldBatches.delete(change.batch);
         worldNotes.places.push(...back.places);
         worldNotes.languages.push(...back.languages);
+        worldNotes.roads.push(...back.roads);
         return { kept: null, batch: null };
       }
       const ids = change.action === "keep" ? change.ids : [change.id];
       const places = worldNotes.places.filter((n) => ids.includes(n.id));
       const languages = worldNotes.languages.filter((n) => ids.includes(n.id));
-      if (places.length + languages.length === 0) throw new ApiError("gone");
+      if (change.action === "not" && change.id.startsWith("road:")) throw new ApiError("bad-action");
+      const roads = worldNotes.roads.filter((n) => ids.includes(n.id));
+      if (places.length + languages.length + roads.length === 0) throw new ApiError("gone");
+      worldNotes.roads = worldNotes.roads.filter((n) => !ids.includes(n.id));
       worldNotes.places = worldNotes.places.filter((n) => !ids.includes(n.id));
       worldNotes.languages = worldNotes.languages.filter((n) => !ids.includes(n.id));
       const batch = ++lastBatch;
-      worldBatches.set(batch, { places, languages });
-      return { kept: change.action === "keep" ? places.length + languages.length : null, batch };
+      worldBatches.set(batch, { places, languages, roads });
+      return { kept: change.action === "keep" ? places.length + languages.length + roads.length : null, batch };
     },
     // The Maps page (#4347). A ref ending `.player` is a player's campaign: the player rule applies, and `shown` and `state` are only on their own rows.
     // A map's pins, scale, grid and north (#4672): DM only. A ref ending `.pins-none` has none; `.pins-fail` cannot be read.
