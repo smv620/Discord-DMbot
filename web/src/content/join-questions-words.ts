@@ -11,7 +11,7 @@ export const joinWords = {
   everyone: "Only what everyone knows",
   party: "What the party knows",
   undo: "↩ Undo",
-  undoFor: (names: string[]): string => `Undo the last "What the party knows", for ${names.join(", ").replace(/, ([^,]*)$/, " and $1")}.`,
+  undoFor: (names: string[]): string => `Undo the last "What the party knows", for ${joinOf(names)}.`,
   undone: (names: string, one: boolean): string =>
     `↩️ Undone. ${names} ${one ? "knows" : "know"} only what everyone knows again, plus what was said at the table since.`,
   everyoneChosen: "Only what everyone knows is chosen for now.",
