@@ -50,6 +50,9 @@ EVERY_ACTION = (
     "join-everyone",  # the DM's join question, answered from the page (#4778)
     "join-party",
     "join-undo",
+    "party-leave",  # who is in the party, from the page (#4778)
+    "party-back",
+    "party-undo",
 )  # fmt: skip
 
 
