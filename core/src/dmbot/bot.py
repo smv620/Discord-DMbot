@@ -14308,7 +14308,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 log.info(
                     "Map close reads: off (picture reader %s, kept pictures %s)",
                     "on" if self.image_desk is not None else "off",
-                    "on" if self.picture_store is not None else "off",
+                    "on" if None not in (self.picture_store, self.picture_bucket) else "off",
                 )
             return
         task = self._map_close_task

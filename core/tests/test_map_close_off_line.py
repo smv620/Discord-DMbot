@@ -31,6 +31,12 @@ class TheOffLine(unittest.IsolatedAsyncioTestCase):
         self.assertIn("picture reader off", lines[0])
         self.assertIn("kept pictures on", lines[0])
 
+    async def test_a_server_without_maps_logs_nothing(self) -> None:
+        b = bot(None)
+        b.map_store = None
+        with self.assertNoLogs("dmbot.bot", level="INFO"):
+            await b.run_map_close_reads()
+
     async def test_with_everything_set_up_it_says_nothing_and_starts_the_sweep(self) -> None:
         b = bot(object())
         b._track = mock.Mock(side_effect=lambda coro, name: coro.close())

@@ -75,7 +75,7 @@ async def run(
     if not settings.pictures_ready:
         skipped(say, "kept pictures are off on this server")
         return {"skipped": 1}
-    if not getattr(settings, "table_images_on", False):
+    if not settings.table_images_on:
         # (#4743: the bot builds its picture reader only with DMBOT_TABLE_IMAGES on, and without
         # it the close-read sweep never runs, so waiting 25 minutes would only say "not in time")
         skipped(say, "reading pictures is off on this server (DMBOT_TABLE_IMAGES), so DMbot "
