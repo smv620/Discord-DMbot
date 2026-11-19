@@ -35,6 +35,7 @@ WAITING = "waiting"
 EVERYONE = "everyone"
 PARTY = "party"
 FIRST = "first"
+CHOSEN = "chosen"  # ("Let me choose": the first pick answered it, #4537 slice 4c, 0557)
 JOIN = "join"  # (the question's kind: new to the party)
 BACK = "back"  # (or back in it after leaving, #4537 slice 4a)
 
@@ -114,7 +115,7 @@ async def undo(w: Changes, batch: int) -> None:
     That copy's own Undo comes first."""
     cur = await w.conn.execute(
         "SELECT 1 FROM memory_join_questions WHERE guild_id = %s AND campaign_id = %s"
-        " AND batch = %s AND status IN ('party', 'first') LIMIT 1",
+        " AND batch = %s AND status IN ('party', 'first', 'chosen') LIMIT 1",
         (*w.ids, batch),
     )
     if await cur.fetchone() is not None:
@@ -128,7 +129,7 @@ async def undo(w: Changes, batch: int) -> None:
         "UPDATE memory_join_questions SET status = CASE status WHEN 'party' THEN 'everyone'"
         " ELSE 'waiting' END, answered_batch = NULL"
         " WHERE guild_id = %s AND campaign_id = %s AND answered_batch = %s"
-        " AND status IN ('party', 'first')",
+        " AND status IN ('party', 'first', 'chosen')",
         (*w.ids, batch),
     )
 
@@ -229,6 +230,7 @@ async def count_waiting(conn: Any, guild_id: int, campaign_id: str) -> tuple[int
 
 __all__ = [
     "BACK",
+    "CHOSEN",
     "EVERYONE",
     "FIRST",
     "JOIN",

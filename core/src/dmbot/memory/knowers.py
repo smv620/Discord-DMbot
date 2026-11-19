@@ -1484,7 +1484,12 @@ async def card_statements(r: Scope, entity_id: str) -> dict[str, set[str]]:
 
 
 async def tell_plan(
-    r: Scope, member_id: str, only: Mapping[str, Collection[str]], view: str | None = None
+    r: Scope,
+    member_id: str,
+    only: Mapping[str, Collection[str]],
+    view: str | None = None,
+    *,
+    choosing: Collection[str] = (),
 ) -> list[tuple[str, str, str, float]]:
     """The rows "Tell Mira" would write (#4537 slice 4b): every statement in `only` that all the
     OTHER current members know (not one whose own join question still waits, as the join copy
@@ -1494,9 +1499,15 @@ async def tell_plan(
     from dmbot.memory import join_questions, party_record
 
     ids = set(await party_record.current_members(r))
-    if member_id not in ids or member_id in await join_questions.waiting_entities(r.conn, *r.ids):
+    if member_id not in ids:
+        return []
+    if member_id not in choosing and member_id in await join_questions.waiting_entities(
+        r.conn, *r.ids
+    ):
         return []  # (one whose own join question waits is caught up by answering it)
-    caught_up = await _caught_up(r, ids - {member_id})
+    # (`choosing`: the characters of one join question, caught up together by "Let me choose":
+    # none of them is one of "the others")
+    caught_up = await _caught_up(r, ids - {member_id} - set(choosing))
     if len(caught_up) < TELL_FROM:
         return []
     views = {
@@ -1558,6 +1569,112 @@ async def tell_counts(r: Scope, only: Mapping[str, Collection[str]]) -> dict[str
         if n:
             out[member] = n
     return out
+
+
+async def session_statements(r: Scope, started_at: int) -> dict[str, set[str]]:
+    """What came up in one session ("Let me choose", by session; Supervisor's ruling G on #4537):
+    the entries mentioned in it, the names first heard in it, and the connections and conditions
+    dated from it. Lore and what the DM typed have no session, so they are never in one."""
+    out: dict[str, set[str]] = {c: set() for c in _ONLY_COLUMNS}
+    cur = await r.conn.execute(
+        "SELECT DISTINCT entity_id FROM memory_mentions WHERE guild_id = %s AND campaign_id = %s"
+        " AND session_started_at = %s",
+        (*r.ids, started_at),
+    )
+    out["about_entity_id"] |= {str(x["entity_id"]) for x in await cur.fetchall()}
+    cur = await r.conn.execute(
+        "SELECT a.id FROM memory_aliases a JOIN memory_name_sessions n ON n.guild_id = a.guild_id"
+        " AND n.campaign_id = a.campaign_id AND n.entity_id = a.entity_id"
+        " WHERE a.guild_id = %s AND a.campaign_id = %s AND n.session_started_at = %s",
+        (*r.ids, started_at),
+    )
+    out["alias_id"] |= {str(x["id"]) for x in await cur.fetchall()}
+    out["relation_id"] |= {
+        str(x["id"]) for x in await r.select(RELATIONS, " AND from_session_at = %s", [started_at])
+    }
+    out["state_id"] |= {
+        str(x["id"]) for x in await r.select(STATES, " AND from_session_at = %s", [started_at])
+    }
+    return out
+
+
+async def choose_counts(
+    r: Scope, members: Collection[str], groups: Mapping[str, Mapping[str, Collection[str]]]
+) -> dict[str, dict[str, int]]:
+    """ "Let me choose": for each group of statements (a session's, a story thread's), how many
+    things it would give the question's characters (`members`), read once for all groups: what
+    every other caught-up member knows, one of them not only from their own backstory (#4795), and
+    that character doesn't: group → character → how many, only groups and characters with any."""
+    from dmbot.memory import join_questions, party_record
+
+    ids = await party_record.current_members(r)
+    waiting = await join_questions.waiting_entities(r.conn, *r.ids)
+    mine = [m for m in ids if m in members]
+    caught = [m for m in ids if m not in waiting and m not in members]
+    if not mine or len(caught) < TELL_FROM:
+        return {}
+    views = {
+        str(p["entity_id"]): str(p["id"])
+        for p in await r.select(PERSPECTIVES, " AND entity_id = ANY(%s)", [sorted(ids)])
+    }
+    if any(o not in views for o in caught):
+        return {}
+    union: dict[str, set[str]] = {c: set() for c in _ONLY_COLUMNS}
+    for only in groups.values():
+        for column in _ONLY_COLUMNS:
+            union[column] |= set(only.get(column, ()))
+    where, params = _only_where(union)
+    held: dict[tuple[str, str], set[str]] = {}
+    plain: dict[tuple[str, str], set[str]] = {}
+    asleep: set[tuple[str, str, str]] = set()
+    for row in await r.select(
+        KNOWERS, " AND cardinality(hidden_by) > 0" + where, params, dormant=True
+    ):
+        for column in _ONLY_COLUMNS:
+            if row[column] is not None:
+                asleep.add((column, row[column], row["perspective_id"]))
+    for row in await r.select(KNOWERS, where, params):
+        for column in _ONLY_COLUMNS:
+            if row[column] is not None:
+                held.setdefault((column, row[column]), set()).add(row["perspective_id"])
+                if row["backstory_of"] is None:
+                    plain.setdefault((column, row[column]), set()).add(row["perspective_id"])
+    theirs = {views[o] for o in caught}
+    new_views = {m: views.get(m, f"(none:{m})") for m in mine}
+    out: dict[str, dict[str, int]] = {}
+    for key, only in groups.items():
+        each: dict[str, int] = {}
+        for column in _ONLY_COLUMNS:
+            for statement in only.get(column, ()):
+                who = held.get((column, statement), set())
+                if not (theirs <= who and theirs & plain.get((column, statement), set())):
+                    continue
+                for member, v in new_views.items():
+                    if v not in who and (column, statement, v) not in asleep:
+                        each[member] = each.get(member, 0) + 1
+        if each:
+            out[key] = each
+    return out
+
+
+async def choose_write(
+    w: Changes, members: Sequence[str], only: Mapping[str, Collection[str]]
+) -> dict[str, int]:
+    """One "Let me choose" pick: each of the question's characters is given what the rest of the
+    party knows of `only`, in the caller's change (one Undo). How many things each was given."""
+    told: dict[str, int] = {}
+    for member in members:
+        if not await tell_plan(w, member, only, choosing=members):
+            continue
+        view = await _view_of(w, member)
+        w.player_views = None
+        made = await tell_plan(w, member, only, view, choosing=members)
+        await w.insert_many(
+            KNOWERS, [_row(c, st, v, w.now) | {"confidence": sure} for c, st, v, sure in made]
+        )
+        if made:
+            told[member] = len({(c, st) for c, st, _, _ in made})
+    return told
 
 
 async def tell_member(w: Changes, member_id: str, entity_id: str) -> int:
