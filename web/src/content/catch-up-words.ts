@@ -40,4 +40,5 @@ export const catchUpWords = {
   couldNot: "Couldn't do that just now. Nothing changed. Try again in a moment.",
   saving: "Working on it…",
   failed: "Couldn't load the catch-up.",
+  nothing: "Nothing to catch up on this card.",
 };

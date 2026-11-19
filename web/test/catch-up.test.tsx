@@ -42,6 +42,7 @@ describe("catch up on a name's row", () => {
 
   it("Done says what was told, and Undo says what was taken back", async () => {
     await open("n24");
+    await screen.findByText("Wren and Ash are missing things on this card that the rest of the party knows."); // (loaded: the open button is the pick button now)
     fireEvent.click(await screen.findByRole("button", { name: w.manyLabel }));
     fireEvent.click(await screen.findByRole("button", { name: "Wren (1 thing)" }));
     expect(await screen.findByText("✅ Wren now knows the 1 thing on this card the rest of the party knew. Nothing was sent to Wren's player.")).toBeTruthy();
@@ -88,6 +89,7 @@ describe("catch up on a name's row", () => {
   it("an Undo that is too late says so, and names the card to use instead", async () => {
     const api = mockApi("table");
     await open("n24", api);
+    await screen.findByText("Wren and Ash are missing things on this card that the rest of the party knows."); // (loaded: the open button is the pick button now)
     fireEvent.click(await screen.findByRole("button", { name: w.manyLabel }));
     fireEvent.click(await screen.findByRole("button", { name: "Wren (1 thing)" }));
     await screen.findByText("✅ Wren now knows the 1 thing on this card the rest of the party knew. Nothing was sent to Wren's player.");
@@ -107,19 +109,34 @@ describe("catch up on a name's row", () => {
     await waitFor(() => expect(api.calls.filter((c) => c.startsWith("catchUp:"))).toHaveLength(1));
   });
 
-  it("nothing is drawn when nobody is behind", async () => {
+  it("says so when nobody is behind, and the button stays to close it", async () => {
     render(<CatchUp api={mockApi("table")} refId={REF} entry="none" />);
     fireEvent.click(await screen.findByRole("button", { name: w.manyLabel }));
-    await new Promise((r) => setTimeout(r, 0));
+    expect(await screen.findByText("Nothing to catch up on this card.")).toBeTruthy();
     expect(screen.queryByRole("button", { name: w.oneLabel("Ash") })).toBeNull();
-    expect(screen.queryByRole("button", { name: w.manyLabel })).toBeNull();
+    const close = screen.getByRole("button", { name: w.manyLabel });
+    expect(close.getAttribute("aria-expanded")).toBe("true");
+    fireEvent.click(close);
+    expect(screen.queryByText("Nothing to catch up on this card.")).toBeNull();
+    expect(screen.getByRole("button", { name: w.manyLabel }).getAttribute("aria-expanded")).toBe("false");
+  });
+
+  it("a read that fails says so and is not taken for nobody behind", async () => {
+    const api = mockApi("table");
+    api.catchUpChoices = async () => {
+      throw new ApiError("failed");
+    };
+    render(<CatchUp api={api} refId={REF} entry="n25" />);
+    fireEvent.click(await screen.findByRole("button", { name: w.manyLabel }));
+    expect((await screen.findByRole("alert")).textContent).toBe("Couldn't load the catch-up.");
+    expect(screen.queryByText("Nothing to catch up on this card.")).toBeNull();
   });
 
   it("a player's page draws nothing and makes no catch-up call", async () => {
     const api = mockApi("table");
     render(<CatchUp api={api} refId="100.cmp1.web-player" entry="n25" />);
     fireEvent.click(await screen.findByRole("button", { name: w.manyLabel }));
-    await new Promise((r) => setTimeout(r, 0));
+    expect((await screen.findByRole("alert")).textContent).toBe("Couldn't load the catch-up.");
     expect(screen.queryByRole("button", { name: w.oneLabel("Ash") })).toBeNull();
     expect(api.calls.some((c) => c.startsWith("catchUp:"))).toBe(false);
   });
