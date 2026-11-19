@@ -400,7 +400,7 @@ function Line({
       {isOpen && (
         <div class="stack" id={`web-link-${link.id}`}>
           {sourceWords && <p class="small muted">{sourceWords}</p>}
-          {link.knowWord && words.knowWords[link.knowWord] && <p class="small muted">{words.knowWords[link.knowWord]}</p>}
+          {link.knowWord && words.knowWords[link.knowWord] && <p class="small muted">{(link.knowLine ?? words.knowWords[link.knowWord])}</p>}
           {link.belief && (
             <p class="small">
               {link.belief.status} · {words.confidence(Math.round(link.belief.confidence * 100))}

@@ -1813,6 +1813,8 @@ export interface WebNode {
   name: string;
   /** Who knows it, in the DM's full view only (#3167). With it, the old secret and not-revealed words give way. */
   knowWord?: KnowWord;
+  /** Who knows it in one line, worded by core (🌍 ✅ 👥 👤 🤫, a leaver with why), in the DM's full view only (#4778). */
+  knowLine?: string;
   /** The kind's key ("npc", "place", ...). */
   kind: string;
   secret?: boolean;
@@ -1916,6 +1918,7 @@ export interface WebLink {
   secret: boolean;
   /** Who knows the connection, in the DM's full view only (#3167). */
   knowWord?: KnowWord;
+  knowLine?: string;
   /** Who may know a held connection, for the DM's full view (#2935 D4, #3214): only the DM, some characters, or
    * everyone at the table. Absent from an older API. */
   who?: "dm" | "some" | "all" | "common";
