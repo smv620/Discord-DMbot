@@ -5615,6 +5615,8 @@ class MemoryStore:
                     held = (await knowers.connection_knowers(w, [made.id])).get(made.id, [])
                     if known_by not in held:
                         await knowers.set_connection_knowers(w, made.id, [*held, known_by])
+                    # (the backstory's own character: never copied to another, #4795)
+                    await knowers.mark_backstory(w, "connection", made.id, known_by)
                 except MemoryRuleError:
                     log.info("A kept tie's first knower was refused")
             if link["upload"]:  # (where it came from, for the DM's "Why?", #2946)
@@ -8090,6 +8092,7 @@ class MemoryStore:
         directional: bool = False,
         decided: str | None = None,
         known_by: Sequence[str] = (),
+        backstory_of: str | None = None,
         keep_flags: bool = False,
         dm_chose_secret: bool = False,
         by_hand: bool = False,
@@ -8126,6 +8129,8 @@ class MemoryStore:
                     await knowers.set_connection_knowers(
                         w, value[0].id, [*held, *(k for k in known_by if k not in held)]
                     )
+                    if backstory_of is not None and backstory_of in known_by:  # (#4795)
+                        await knowers.mark_backstory(w, "connection", value[0].id, backstory_of)
                 except MemoryRuleError:
                     log.info("A connection's first knowers were refused")
             return Written(value, w.batch)
@@ -8662,13 +8667,18 @@ class MemoryStore:
         source: str,
         dm_chose_secret: bool,
         players_only: bool = False,
+        backstory_of: str | None = None,
     ) -> Written[list[str]]:
         """ "Who knows this?" for a secret other name (#2935). Only the DM. `players_only`: the
-        list holds player characters only, so an NPC who knows it keeps knowing (#3197)."""
+        list holds player characters only, so an NPC who knows it keeps knowing (#3197).
+        `backstory_of`: the name came from that character's backstory, so that character's row
+        is marked and never copied to another (#4795)."""
         async with self._write(guild_id, campaign_id, source, dm_chose_secret=dm_chose_secret) as w:
             chosen = await knowers.set_alias_knowers(
                 w, alias_id, character_ids, players_only=players_only
             )
+            if backstory_of is not None and backstory_of in chosen:
+                await knowers.mark_backstory(w, "alias", alias_id, backstory_of)
             return Written(chosen, w.batch)
 
     async def set_statement_knowers(

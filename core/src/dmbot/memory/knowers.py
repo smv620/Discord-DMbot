@@ -634,6 +634,27 @@ async def set_alias_knowers(
     return chosen
 
 
+_ROW_OF: dict[str, LiteralString] = {
+    "about_entity_id": " AND about_entity_id = %s AND perspective_id = %s",
+    "state_id": " AND state_id = %s AND perspective_id = %s",
+    "relation_id": " AND relation_id = %s AND perspective_id = %s",
+    "alias_id": " AND alias_id = %s AND perspective_id = %s",
+}
+
+
+async def mark_backstory(w: Changes, kind: str, statement_id: str, entity_id: str) -> None:
+    """The character's row for this statement came from the character's own backstory (#4795,
+    migration 0556): marked, in the caller's change (one Undo), so the party's copies never pass
+    it to another character (§5). Nothing when the character holds no row for it."""
+    column, _ = _COLUMNS[kind]
+    views = await w.select(PERSPECTIVES, " AND entity_id = %s", [entity_id])
+    if not views:
+        return
+    for row in await w.select(KNOWERS, _ROW_OF[column], [statement_id, views[0]["id"]]):
+        if row["backstory_of"] != entity_id:
+            await w.update(KNOWERS, row["id"], {"backstory_of": entity_id})
+
+
 async def _character_views(w: Scope, players_only: bool) -> set[str]:
     """The views a "who knows" save may replace: every character's, or only the player
     characters' (a list that never offered an NPC must not drop one, #3197). The table's own and
@@ -1367,16 +1388,21 @@ async def _inherit_plan(
         for column in ("about_entity_id", "state_id", "relation_id", "alias_id"):
             if row[column] is not None:
                 asleep.add((column, row[column], row["perspective_id"]))
+    plain: dict[tuple[str, str], set[str]] = {}  # (who holds it NOT from their own backstory)
     for row in await r.select(KNOWERS, where, params):
         for column in ("about_entity_id", "state_id", "relation_id", "alias_id"):
             if row[column] is not None:
                 held.setdefault((column, row[column]), {})[row["perspective_id"]] = float(
                     row["confidence"]
                 )
+                if row["backstory_of"] is None:
+                    plain.setdefault((column, row[column]), set()).add(row["perspective_id"])
     wanted: dict[tuple[str, str], float] = {}
     if others:
         for key, who in held.items():
-            if others <= set(who):
+            # (all the others know it, and one of them NOT only from their own backstory: §5,
+            # another character's backstory is never copied, #4795)
+            if others <= set(who) and others & plain.get(key, set()):
                 wanted[key] = min(who[o] for o in others)
     else:
         wanted = await _shown_by_flags(r)
@@ -1390,10 +1416,9 @@ async def _inherit_plan(
 
 
 _ONLY_COLUMNS = ("about_entity_id", "state_id", "relation_id", "alias_id")
-# "Catch up" copies only what at least this many other members know: a row held by one character
-# alone may be that character's own backstory (9b: known to its character only), and who-knows rows
-# don't say where they came from, so a party of two catches up with "Who knows this?" instead.
-TELL_FROM = 2
+# "Catch up" copies what every other member knows, so one other is enough: a row from that
+# character's own backstory is marked (`backstory_of`, #4795) and never counts (`_inherit_plan`).
+TELL_FROM = 1
 
 
 def _only_where(only: Mapping[str, Collection[str]] | None) -> tuple[LiteralString, list[Any]]:
@@ -1477,6 +1502,7 @@ async def tell_counts(r: Scope, only: Mapping[str, Collection[str]]) -> dict[str
     }
     where, params = _only_where(only)
     held: dict[tuple[str, str], set[str]] = {}
+    plain: dict[tuple[str, str], set[str]] = {}  # (not from the holder's own backstory, #4795)
     asleep: set[tuple[str, str, str]] = set()
     for row in await r.select(
         KNOWERS, " AND cardinality(hidden_by) > 0" + where, params, dormant=True
@@ -1488,6 +1514,8 @@ async def tell_counts(r: Scope, only: Mapping[str, Collection[str]]) -> dict[str
         for column in _ONLY_COLUMNS:
             if row[column] is not None:
                 held.setdefault((column, row[column]), set()).add(row["perspective_id"])
+                if row["backstory_of"] is None:
+                    plain.setdefault((column, row[column]), set()).add(row["perspective_id"])
     out: dict[str, int] = {}
     for member in caught:
         others = [o for o in caught if o != member]
@@ -1497,7 +1525,10 @@ async def tell_counts(r: Scope, only: Mapping[str, Collection[str]]) -> dict[str
         n = sum(
             1
             for (column, statement), who in held.items()
-            if theirs <= who and mine not in who and (column, statement, mine or "") not in asleep
+            if theirs <= who
+            and theirs & plain.get((column, statement), set())
+            and mine not in who
+            and (column, statement, mine or "") not in asleep
         )
         if n:
             out[member] = n
