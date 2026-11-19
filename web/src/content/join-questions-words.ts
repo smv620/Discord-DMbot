@@ -11,10 +11,27 @@ export const joinWords = {
   everyone: "Only what everyone knows",
   party: "What the party knows",
   undo: "↩ Undo",
-  undoFor: (names: string[]): string => `Undo the last "What the party knows", for ${names.join(", ").replace(/, ([^,]*)$/, " and $1")}.`,
+  undoFor: (names: string[]): string => `Undo the last "What the party knows", for ${joinOf(names)}.`,
   undone: (names: string, one: boolean): string =>
     `↩️ Undone. ${names} ${one ? "knows" : "know"} only what everyone knows again, plus what was said at the table since.`,
   everyoneChosen: "Only what everyone knows is chosen for now.",
+  // A character coming back to the party (#4791): core's ui/party_join.py question_text(back=True), with no markdown.
+  backEveryone: "Only what was known before",
+  backHeading: (names: string[]): string => (names.length === 1 ? `${joinOf(names)} is back in the party.` : `${joinOf(names)} are back in the party.`),
+  backQuestion: (names: string[]): string =>
+    names.length === 1 ? `What does ${joinOf(names)} know about what happened while away?` : `What do ${joinOf(names)} know about what happened while away?`,
+  backExplain: (names: string[]): string =>
+    names.length === 1
+      ? `Until you choose, ${joinOf(names)} knows only what was known before leaving, plus what's said at the table from now on.`
+      : `Until you choose, ${joinOf(names)} know only what each knew before leaving, plus what's said at the table from now on.`,
+  backEveryoneDone: (names: string[]): string =>
+    names.length === 1
+      ? `✅ ${joinOf(names)} knows only what was known before leaving, plus what's said at the table from now on.`
+      : `✅ ${joinOf(names)} know only what each knew before leaving, plus what's said at the table from now on.`,
+  backUndone: (names: string[]): string =>
+    names.length === 1
+      ? `↩️ Undone. ${joinOf(names)} knows only what ${joinOf(names)} knew before leaving, plus what was said at the table since.`
+      : `↩️ Undone. ${joinOf(names)} know only what each knew before leaving, plus what was said at the table since.`,
   later: (names: string): string => `You can tell ${names} more later from any card.`,
   saving: "Working on it…",
   nothingToGive: (names: string): string => `✅ The party doesn't know anything yet, so there was nothing to give ${names}.`,
