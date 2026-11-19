@@ -45,7 +45,15 @@
   ],
   [
    "b",
-   "Cael tastes the stew. \"It is safe,\" he calls. \"Wren, come and see this.\""
+   "Cael tastes the stew."
+  ],
+  [
+   "dm",
+   "It is salty and hot, and nothing tastes wrong."
+  ],
+  [
+   "b",
+   "Cael says, \"The stew is safe. Wren, come and see this.\""
   ],
   [
    "a",

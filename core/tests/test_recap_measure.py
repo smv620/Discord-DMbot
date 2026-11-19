@@ -8,7 +8,7 @@ import unittest
 from typing import Any
 
 from dmbot.devtools.recap_measure import __main__ as measure
-from dmbot.devtools.recap_measure.golden import GoldenError, load_golden, parse
+from dmbot.devtools.recap_measure.golden import DM_ID, GoldenError, load_golden, parse
 from dmbot.recaps import draft as rd
 from dmbot.recaps.text import names_a_secret
 
@@ -73,9 +73,8 @@ class TheSet(unittest.TestCase):
         # (owner, 2026-11-19: each player speaks only for their own character)
         for s in SESSIONS:
             self.assertTrue(s.characters, s.name)
-            players = {n for n, line in enumerate(s.lines) if line.user_id != 1}
-            self.assertTrue(players, s.name)
-            quoted = [line.text for line in s.lines if line.user_id != 1]
+            quoted = [line.text for line in s.lines if line.user_id != DM_ID]
+            self.assertTrue(quoted, s.name)
             self.assertTrue(any('"' in text for text in quoted), s.name)  # (speech is quoted)
 
     def test_a_player_line_that_opens_with_another_players_character_is_refused(self) -> None:
@@ -92,6 +91,15 @@ class TheSet(unittest.TestCase):
         # (opening with their own name is fine, and so is naming the other later in the line)
         fine = {**good, "lines": [*good["lines"], ["b", 'Bo says, "Ann, wait."']]}
         parse("fine.json", fine)
+        shouted = {**good, "lines": [*good["lines"], ["b", "ann draws her sword."]]}  # (any case)
+        with self.assertRaises(GoldenError):
+            parse("shouted.json", shouted)
+        odd = {**good, "names": ["D'Arc"], "characters": {"a": "D'Arc", "b": "Bo"}}
+        with self.assertRaises(GoldenError):  # (a name with a mark in it is still caught)
+            parse("odd2.json", {**odd, "lines": [*good["lines"][:-1], ["b", "D'Arc nods."]]})
+        for letters in ({"z": "Ann"}, {"a": "Ann", "b": "Ann"}):
+            with self.assertRaises(GoldenError):
+                parse("letters.json", {**good, "characters": letters})
         unknown = {**good, "lines": [*good["lines"], ["c", "Cy waves."]]}
         with self.assertRaises(GoldenError):
             parse("unknown.json", unknown)

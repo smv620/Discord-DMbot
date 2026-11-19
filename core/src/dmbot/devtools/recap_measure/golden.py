@@ -46,7 +46,7 @@ def speaks_for_another(text: str, own: str, characters: dict[str, str]) -> str |
     action, which the owner's rule forbids), or None. The cheapest form of the rule: a guard on
     how the line starts, not a grammar check."""
     for character in characters.values():
-        if character != own and re.match(rf"\s*{re.escape(character)}\b", text, re.IGNORECASE):
+        if character != own and re.match(rf"\s*{re.escape(character)}(?!\w)", text, re.IGNORECASE):
             return character
     return None
 
@@ -69,6 +69,8 @@ def parse(name: str, raw: object) -> Session:
         isinstance(k, str) and isinstance(v, str) and v for k, v in characters.items()
     ):
         raise GoldenError(f"{name}: characters must map each player letter to a name")
+    if set(characters) - set(PLAYER_IDS) or len(set(characters.values())) != len(characters):
+        raise GoldenError(f"{name}: characters needs one different name for each player letter")
     lines: list[Line] = []
     for n, row in enumerate(rows, start=1):
         if not (isinstance(row, list) and len(row) == 2 and isinstance(row[1], str) and row[1]):
@@ -76,6 +78,8 @@ def parse(name: str, raw: object) -> Session:
         who = DM_ID if row[0] == "dm" else PLAYER_IDS.get(str(row[0]))
         if who is None:
             raise GoldenError(f"{name}: line {n} has an unknown speaker")
+        # (`characters` is optional on purpose: a file without it just isn't checked; the shipped
+        # four all have it, which `test_recap_measure` requires)
         if characters and who != DM_ID:
             own = characters.get(str(row[0]))
             if own is None:
