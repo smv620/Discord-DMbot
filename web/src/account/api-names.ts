@@ -42,7 +42,7 @@ import {
   SIGNED_OUT_EVENT,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
-import type { AccountApi, ApiHelpers, CharacterLanguages, JoinGroup, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
+import type { AccountApi, ApiHelpers, CharacterLanguages, JoinGroup, PartyRecordCharacter, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
 /** The revealed list of an upload notice (#4661): plain lines of at most 200 characters, at most ten; anything else is dropped. */
@@ -610,6 +610,31 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
         batch: typeof got.batch === "number" ? got.batch : null,
         given: typeof got.given === "number" ? got.given : null,
       };
+    },
+    // A player character's stretches in the party (#4778 a2): DM only; the door answers anyone else with nothing.
+    partyRecord: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/party-record`)) as { characters: PartyRecordCharacter[] }).characters,
+    // Queued for the bot (202 {answer}), then waited for: the batch of a leave or return, and what a return asks.
+    partyLeave: async (ref, character, why) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/party-record/leave`, { character, why })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { batch: typeof got.batch === "number" ? got.batch : null };
+    },
+    partyBack: async (ref, character) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/party-record/back`, { character })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      const asked = got.asked === "back" || got.asked === "join" || got.asked === "none" ? got.asked : null;
+      return { batch: typeof got.batch === "number" ? got.batch : null, asked };
+    },
+    partyUndo: async (ref, batch) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/party-record/${encodeURIComponent(String(batch))}/undo`)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
     },
     // The party's player characters for the "Some know" picker (#4680 part 1): DM only; the door answers anyone else with nothing.
     partyCharacters: async (ref) =>
