@@ -19,6 +19,7 @@ from tests.test_web_relationships import Web
 
 class CatchingUpOnTheWeb(Web):
     bob_has_a_hero = True
+    more = -1
 
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
@@ -49,6 +50,7 @@ class CatchingUpOnTheWeb(Web):
         await self.bot_loop()
         read = await relationships.read_answer(self.web, self.session, self.cref, answer)
         assert read["choices"] is not None
+        self.more = read["more"]  # (how many were left out of the list)
         return list(read["choices"])
 
     async def tell(self, member: str) -> tuple[str, wa.Outcome]:
@@ -62,6 +64,7 @@ class CatchingUpOnTheWeb(Web):
         got = await self.choices()
         self.assertEqual([c["id"] for c in got], [self.cara])
         self.assertGreater(got[0]["count"], 0)
+        self.assertEqual(self.more, 0)
 
     async def test_giving_a_member_the_card_is_one_change_with_an_undo_of_their_own(self) -> None:
         [(_, count)] = [(c["id"], c["count"]) for c in await self.choices()]
@@ -133,7 +136,27 @@ class CatchingUpOnTheWeb(Web):
         )  # fmt: skip
         out = await wa._party(Stub(), self.actions, self.g, self.one.id, action)  # type: ignore[arg-type]
         self.assertLessEqual(len(out.counts), 200)
-        listed = relationships._catch_choices(out.counts)
-        assert listed is not None
+        found = relationships._catch_choices(out.counts)
+        assert found is not None
+        listed, more = found
         self.assertEqual(len(listed), wa.CATCH_CHOICES_MAX)
-        self.assertEqual([c["count"] for c in listed], [10, 11, 12, 13, 14])
+        self.assertEqual([c["count"] for c in listed], [10, 11, 12, 13])
+        self.assertEqual(more, 4)  # (eight asked, four listed, four left out)
+
+    async def test_six_members_list_four_and_say_two_more_and_three_say_none(self) -> None:
+        class Stub:
+            def __init__(self, n: int) -> None:
+                self.n = n
+
+            async def tell_choices(self, *_: Any) -> list[tuple[str, str, int]]:
+                return [(f"{i:032x}", f"M{i}", 1 + i) for i in range(self.n)]
+
+        action = wa.Action(
+            id="a", campaign_id=self.one.id, entity_id="", user_id=ALICE.id,
+            action="party-catch-up-choices", text=self.mira,
+        )  # fmt: skip
+        for n, listed, more in ((6, 4, 2), (3, 3, 0), (0, 0, 0)):
+            out = await wa._party(Stub(n), self.actions, self.g, self.one.id, action)  # type: ignore[arg-type]
+            found = relationships._catch_choices(out.counts)
+            assert found is not None
+            self.assertEqual((len(found[0]), found[1]), (listed, more))

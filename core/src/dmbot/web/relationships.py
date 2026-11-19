@@ -1209,16 +1209,18 @@ async def queue_reveal(db: Database, session: Session, ref: str, body: object) -
     )
 
 
-def _catch_choices(counts: str) -> list[dict[str, Any]] | None:
-    """The members "Catch up" has something for, from the bot's `catch:<id>=<n>,…` answer."""
+def _catch_choices(counts: str) -> tuple[list[dict[str, Any]], int] | None:
+    """The members "Catch up" has something for and how many more there are that were left out,
+    from the bot's `catch:<id>=<n>,…;more=<k>` answer."""
     if not counts.startswith("catch:"):
         return None
+    listed, _, more = counts.removeprefix("catch:").partition(";more=")
     out: list[dict[str, Any]] = []
-    for pair in counts.removeprefix("catch:").split(","):
+    for pair in listed.split(","):
         member, _, n = pair.partition("=")
         if len(member) == 32 and n.isdigit():
             out.append({"id": member, "count": int(n)})
-    return out
+    return out, int(more) if more.isdigit() else 0
 
 
 async def read_answer(db: Database, session: Session, ref: str, answer: str) -> dict[str, Any]:
@@ -1298,6 +1300,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         # (Discord's "the N things the party knew"), and the change it made for the page's Undo
         made = got.get("resultBatches") or []
         counts = str(got.get("counts") or "")
+        catch = _catch_choices(counts)
         return {
             "state": got["state"],
             "error": got["error"],
@@ -1307,7 +1310,8 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             # "Catch up" (#4793): how many things the member was told, and who is missing what
             # (`[{"id", "count"}]`, ids and counts only: the page names them)
             "told": int(counts.removeprefix("told:")) if counts.startswith("told:") else None,
-            "choices": _catch_choices(counts),
+            "choices": None if catch is None else catch[0],
+            "more": None if catch is None else catch[1],
             "batch": int(made[0]) if got["state"] == "done" and made else None,
         }
     if str(got["action"]).startswith("reading-"):
