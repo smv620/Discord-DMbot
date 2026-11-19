@@ -251,16 +251,6 @@ def review_line(reviews: Reviews) -> str | None:
     return f"⏳ **Waiting for you:** {', '.join(parts)}." if parts else None
 
 
-def plays_one(names: CampaignLookup, user_id: int) -> bool:
-    """Whether this person plays a confirmed player character of the campaign (the whole copy's
-    entries: a character's own entry is always in its player's view, so this only decides the
-    line below)."""
-    return any(
-        e.role == PLAYER_CHARACTER and e.played_by == user_id and e.status == CONFIRMED
-        for e in names.entities.values()
-    )
-
-
 def home_text(
     names: CampaignLookup,
     campaign: Campaign,
@@ -277,7 +267,9 @@ def home_text(
     lines = [f"🧠 **Names DMbot knows for {_md(campaign.name)}**"]
     if no_character:  # (why the list is nearly empty for someone with no character, ruling O)
         lines.append(NO_CHARACTER)
-    if not confirmed and not no_character:
+    if not confirmed and no_character:
+        pass  # (the line above says why the list is empty: no count, no "add some names")
+    elif not confirmed:
         lines.append(
             "None yet. Add the names your table says out loud (characters, NPCs, places). "
             "DMbot listens for them so the transcript spells them right: **Belleros**, not "
@@ -623,7 +615,10 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
         log.exception("Couldn't load the campaign's names")
         await _tell(interaction, "DMbot couldn't load the names just now. Try again in a moment.")
         return
-    no_character = not dm and not plays_one(whole, interaction.user.id)
+    # (from the database, as `seen` is: a character linked a moment ago counts at once)
+    no_character = not dm and not await memory.characters_of(
+        campaign.guild_id, campaign.id, interaction.user.id
+    )
     waiting = len(await memory.entities(campaign.guild_id, campaign.id, statuses=[PROPOSED]))
     reviews = (
         await waiting_reviews(interaction, campaign)
@@ -660,7 +655,11 @@ async def show_home(interaction: discord.Interaction, campaign_id: str) -> None:
         from dmbot.ui.look_alikes import count_groups
 
         look_alikes = await count_groups(interaction, campaign.id)
-    text, shown = home_text(names, campaign, waiting, reviews, no_character=no_character)
+    # (the new names to check are the DM's work: not counted under "You see what your character
+    # knows", where it would read as theirs; the button stays as before)
+    text, shown = home_text(
+        names, campaign, 0 if no_character else waiting, reviews, no_character=no_character
+    )
     known = sum(1 for e in names.entities.values() if e.status == CONFIRMED)
     await _send(
         interaction,

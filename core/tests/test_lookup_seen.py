@@ -32,6 +32,11 @@ class TheNames(Party):
             GUILD, self.c, name="The drowned bell", type="quest", status=CONFIRMED, source=DM
         )
         self.thread = str(made.value.id)  # (a story thread: the DM's plot note)
+        made = await self.memory.add_entity(
+            GUILD, self.c, name="Saltmarsh", type="place", status=CONFIRMED, source=DM
+        )
+        self.world = str(made.value.id)
+        await self.memory.add_common_knowledge(GUILD, self.c, "entry", [self.world], source=DM)
 
     async def lookup(self) -> CampaignLookup:
         return CampaignLookup.build(await self.memory.lookup_data(GUILD, self.c))
@@ -40,13 +45,18 @@ class TheNames(Party):
         seen = await self.memory.entries_seen_by(GUILD, self.c, user)
         return (await self.lookup()).for_viewer(False, seen)
 
-    async def rows(self) -> int:
+    async def rows(self) -> tuple[int, int]:
+        """Who-knows rows and change-log rows: a write anywhere shows in one of them."""
+        out = []
         async with self.db.guild(GUILD) as conn:
-            cur = await conn.execute(
-                "SELECT count(*) AS n FROM memory_knowers WHERE guild_id = %s", (GUILD,)
-            )
-            row = await cur.fetchone()
-        return int(row["n"]) if row else 0
+            for table in ("memory_knowers", "memory_changes"):
+                cur = await conn.execute(
+                    f"SELECT count(*) AS n FROM {table} WHERE guild_id = %s",
+                    (GUILD,),
+                )
+                row = await cur.fetchone()
+                out.append(int(row["n"]) if row else 0)
+        return out[0], out[1]
 
     async def test_a_newcomer_not_told_isnt_shown_it_while_the_flag_says_shown(self) -> None:
         from tests.test_party_join import ANNA
@@ -67,23 +77,32 @@ class TheNames(Party):
     async def test_someone_with_no_character_sees_common_knowledge_and_is_told_why(self) -> None:
         nobody = await self.view(NOBODY)
         self.assertNotIn(self.npc, nobody.entities)
-        whole = await self.lookup()
-        self.assertFalse(names_ui.plays_one(whole, NOBODY))
-        self.assertTrue(names_ui.plays_one(whole, CARA))
+        self.assertIn(self.world, nobody.entities)  # (what everyone knows: not an empty answer)
+        self.assertEqual(await self.memory.characters_of(GUILD, self.c, NOBODY), [])
         campaign = await CampaignStore(self.db).get(GUILD, self.c)
         assert campaign is not None
         text, _ = names_ui.home_text(nobody, campaign, 0, no_character=True)
         self.assertIn(names_ui.NO_CHARACTER, text)
         self.assertNotIn("None yet", text)  # (not "add some names": they aren't the DM)
+        empty = dataclasses.replace(nobody, entities={})  # (nobody knows any name yet)
+        bare, _ = names_ui.home_text(empty, campaign, 0, no_character=True)
+        self.assertIn(names_ui.NO_CHARACTER, bare)
+        for word in ("0 names", "these names", "None yet"):
+            self.assertNotIn(word, bare)
         mine, _ = names_ui.home_text(await self.view(CARA), campaign, 0)
         self.assertNotIn(names_ui.NO_CHARACTER, mine)
 
     async def test_the_people_at_the_table_stay(self) -> None:
         whole = await self.lookup()
         person: Any = next(iter(whole.names))
-        with_people = dataclasses.replace(whole, people_by_key={"anna": (person,)})
+        with_people = dataclasses.replace(
+            whole, people_by_key={"anna": (person,)}, people_by_sound={"AN": (person,)}
+        )
         self.assertEqual(
             with_people.for_viewer(False, frozenset()).people_by_key, {"anna": (person,)}
+        )
+        self.assertEqual(
+            with_people.for_viewer(False, frozenset()).people_by_sound, {"AN": (person,)}
         )
 
     async def test_no_read_writes_a_row(self) -> None:

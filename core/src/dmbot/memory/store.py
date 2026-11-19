@@ -8869,12 +8869,7 @@ class MemoryStore:
         character is read here, from the database, never from the request. Reads only (§9 rule 6).
         Not for a DM, who sees everything."""
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
-            rows = await scope.select(
-                ENTITIES,
-                " AND type = 'character' AND role = %s AND status = %s AND played_by = %s",
-                [PLAYER_CHARACTER, CONFIRMED, user_id],
-            )
-            mine = frozenset(str(r["id"]) for r in rows)
+            mine = frozenset(await knowers.characters_of(scope, user_id))
             viewer = gate.Viewer.player(mine) if mine else gate.Viewer.the_world()
             return await gate.entries_for(scope, viewer) | mine
 
