@@ -22,7 +22,7 @@ from typing import Any
 from dmbot import progress
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
-from dmbot.memory import gate, kin, reputation_words, web_actions
+from dmbot.memory import gate, kin, party_icons, reputation_words, web_actions
 from dmbot.memory.claims import Extracted, condition_of
 from dmbot.memory.link_kinds import link_kind
 from dmbot.memory.link_words import (
@@ -491,6 +491,41 @@ def know_words(
     return entries, links
 
 
+def know_lines(
+    known: dict[str, Any],
+    shared: tuple[gate.Statements, Callable[[str, str], set[str]]] | None = None,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """The one line of who knows each name and each connection, worded by core's own
+    `party_icons.line` (🌍 / ✅ / 👥 / 👤 / 🤫, "Known to: …", a leaver with why), so the website
+    and Discord cannot drift (Supervisor's ruling on #4537, §7). Worked out now against the current
+    party (`playerCharacters`, 0551) and never stored. Returns (names by entry id, connections by
+    connection id), only for ids in the data. A guess counts as knowing, as in Discord."""
+    data, who = shared or _knowers(known)
+    viewers = {str(v["id"]): (str(v["name"]), str(v.get("kind", "npc"))) for v in known["viewers"]}
+    members = sorted(
+        ((c, viewers[c][0]) for c in data.player_characters if c in viewers),
+        key=lambda m: (m[1].casefold(), m[0]),
+    )
+    why = {str(k): str(v) for k, v in dict(known.get("leftWhy", {})).items()}
+    left = {
+        str(c): (viewers[str(c)][0], why.get(str(c), "left"))
+        for c in known.get("leftParty", ())
+        if str(c) in viewers
+    }
+    npcs = {c: v[0] for c, v in viewers.items() if v[1] == "npc"}
+    outsiders = party_icons.ordered_outsiders(left, npcs)
+
+    def line(kind: str, item: str) -> str:
+        holders = who(kind, item)
+        return party_icons.line(
+            holders, members, common=gate.COMMON in holders, outsiders=outsiders
+        )
+
+    entries = {str(e): line(gate.ENTRY, str(e)) for e in known["liveEntries"]}
+    links = {str(c): line(gate.CONNECTION, str(c)) for c in data.connections}
+    return entries, links
+
+
 def link_holders(
     known: dict[str, Any],
     shared: tuple[gate.Statements, Callable[[str, str], set[str]]] | None = None,
@@ -537,6 +572,7 @@ async def with_know_words(
         return
     shared = _knowers(known)  # worked out once for both
     names, links = know_words(known, shared)
+    name_lines, link_lines = know_lines(known, shared)
     holders = link_holders(known, shared)
     # the connections the "everyone" point of view holds (the door lists them only while shown)
     common = {
@@ -549,10 +585,12 @@ async def with_know_words(
     for node in [*page.get("nodes", []), *page.get("tray", [])]:
         if str(node["id"]) in names:
             node["knowWord"] = names[str(node["id"])]
+            node["knowLine"] = name_lines[str(node["id"])]
     for edge in page.get("edges", []):
         for link in edge["links"]:
             if str(link["id"]) in links:
                 link["knowWord"] = links[str(link["id"])]
+                link["knowLine"] = link_lines[str(link["id"])]
                 # "Who knows this?": a connection the table may know is `all`; a held one is
                 # `some` when any character knows it, else `dm`. From the lists, not a flag (#2999).
                 held = bool(link.get("secret")) or link.get("revealed") is False

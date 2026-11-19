@@ -324,7 +324,7 @@ function LinkRow({
         {!link.knowWord && link.secret && <span class="visually-hidden"> ({words.secretWords})</span>}
       </p>
       {sourceWords && <p class="small muted">{sourceWords}</p>}
-      {link.knowWord && words.knowWords[link.knowWord] && <p class="small muted">{words.knowWords[link.knowWord]}</p>}
+      {link.knowWord && words.knowWords[link.knowWord] && <p class="small muted">{(link.knowLine ?? words.knowWords[link.knowWord])}</p>}
       {canEdit && link.pinned && <p class="small">{words.pinMark} {words.pinnedWords}</p>}
       {canEdit && link.check && <p class="small">{words.checkLine(link.check)}</p>}
       {link.belief && (

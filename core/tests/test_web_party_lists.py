@@ -10,6 +10,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
+from dmbot.memory import party_icons
 from dmbot.memory.models import DM as DM_SOURCE
 from dmbot.web import party_characters, relationships
 from dmbot.web.recaps import _scoped
@@ -126,3 +127,39 @@ class PartyLists(Web):
         # nobody who is in the party is listed as having left
         await self.forget_spans()
         self.assertEqual((await self.knowers_data())["leftParty"], [])
+
+    async def lines(self) -> dict[str, str]:
+        got = await self.graph(hops=2)
+        return {x["id"]: x["knowLine"] for e in got["edges"] for x in e["links"]}
+
+    async def test_the_website_says_who_knows_in_core_s_own_party_icons_line(self) -> None:
+        """Supervisor's ruling on #4537 (§7): the same words as Discord, worked out against the
+        current party, a leaver named with why, the line never stored."""
+        link = self.links["mira-heir"]
+        wren = await self.add("Wren", "character", role="player_character")
+        await self.memory.set_connection_knowers(
+            self.g, self.one.id, self.secret_link, [self.rook],
+            source=DM_SOURCE, dm_chose_secret=True,
+        )  # fmt: skip
+        self.assertEqual(
+            (await self.lines())[link],
+            party_icons.line(
+                [self.rook], [(self.rook, "Rook"), (wren, "Wren"), (self.tavin, "Tavin")]
+            ),
+        )
+        self.assertEqual((await self.lines())[link], "👤 Known to: Rook")
+        await self.memory.set_connection_knowers(
+            self.g, self.one.id, self.secret_link, [self.tavin],
+            source=DM_SOURCE, dm_chose_secret=True,
+        )  # fmt: skip
+        await self.leave(self.tavin)
+        self.assertEqual(
+            (await self.lines())[link],
+            "🤫 No one in the party knows. Known to: Tavin (retired)",
+        )
+        await self.leave(wren)
+        await self.memory.set_connection_knowers(
+            self.g, self.one.id, self.secret_link, [self.rook],
+            source=DM_SOURCE, dm_chose_secret=True,
+        )  # fmt: skip
+        self.assertEqual((await self.lines())[link], "✅ The whole party knows (Rook)")

@@ -44,4 +44,9 @@ describe("a state never leaves the DM's own full view", () => {
     expect(plain.edges.flatMap((e) => e.links).some((l) => "knowWord" in l)).toBe(false);
     expect(plain.nodes.map((n) => n.id)).toEqual(["n1", "n2"]);
   });
+
+  it("a player's or See as… read never keeps the DM's who-knows line (#4778)", () => {
+    expect(withoutKnow({ id: "a", knowWord: "secret" as const, knowLine: "🤫 No one in the party knows. Only the DM does." })).toEqual({ id: "a" });
+    expect(withoutKnow({ id: "b", knowLine: "👤 Known to: Rook" })).toEqual({ id: "b" });
+  });
 });
