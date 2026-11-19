@@ -748,23 +748,6 @@ def _public_entry(row: Mapping[str, Any], own_name_secret: bool) -> bool:
     )
 
 
-def public_entries(
-    rows: Iterable[Mapping[str, Any]], aliases: Iterable[Mapping[str, Any]]
-) -> frozenset[str]:
-    """The entries the players are shown by their main name when there is no party to ask (no
-    player character yet): `_public_entry`, the rule `name_entries` uses for such a viewer, so a
-    caller never reads the flags itself (#2995). `aliases`: the entries' names, secret ones too,
-    so an entry whose main name is a secret one stays hidden."""
-    rows = list(rows)
-    mains = {str(r["id"]): lookup_key(str(r["name"])) for r in rows}
-    secret_main = {
-        str(a["entity_id"])
-        for a in aliases
-        if a["secret"] and mains.get(str(a["entity_id"])) == a["key"]
-    }
-    return frozenset(str(r["id"]) for r in rows if _public_entry(r, str(r["id"]) in secret_main))
-
-
 def _unnamed_label(row: Mapping[str, Any], anchor_name: str | None) -> str:
     """An unnamed person's label as THIS viewer may read it: it hangs off an entry the viewer may
     name, else "unnamed - someone's sister". The stored name embeds the anchor's name as it

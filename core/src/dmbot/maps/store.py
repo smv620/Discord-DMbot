@@ -33,7 +33,6 @@ if TYPE_CHECKING:
     from dmbot.maps.measure import MapInfo, Pin
     from dmbot.maps.measure_words import NotShown
     from dmbot.maps.said_phrases import Said
-    from dmbot.memory import gate as gate_mod
     from dmbot.memory._changes import Changes
 
 # Fixed lists in code, each with "other" (design rule 6).
@@ -166,15 +165,6 @@ def _seen(viewer: Viewer) -> str:
     if viewer.table:
         return f" AND ((audience = 'table' AND use_ok IS TRUE){own})"
     return f" AND (FALSE{own})"
-
-
-async def _table_viewer(scope: Any, live_at: int | None) -> gate_mod.Viewer:
-    """Who a player's answer at the table is for (`party_record.table_members`, #4537 slice 3b):
-    today's party, unless someone joined or left during the session the bot is live at."""
-    from dmbot.memory import gate, party_record  # (here: the memory package imports this one)
-
-    members = await party_record.table_members(scope, live_at)
-    return gate.Viewer.the_party() if members is None else gate.Viewer.party_at(members)
 
 
 async def maps_and_pins(
@@ -983,7 +973,7 @@ class MapStore:
         asker may know, or (for "how far") the story or the DM has stated a length between them,
         which beats a measured one (§9). `dm`: every map DMbot may use; otherwise only the table's
         maps, and places the players have been shown, worked out as every list does (the knowledge
-        gate; with no party, `gate.public_entries`), so a DM-only map's pins, scale and distances
+        gate; with no party, common knowledge only), so a DM-only map's pins, scale and distances
         never reach a player (Supervisor's condition). `NOT_SHOWN` (#4692): not `dm`, and both
         names are kept places to the DM, but one is not shown to the players (hidden, limited,
         not yet known, or named by a secret other name): a DM's question then goes privately.
@@ -1009,21 +999,11 @@ class MapStore:
             names = positions.place_names(entities, aliases, lambda kind: onto.is_a(kind, "place"))
             shown: set[str] | None = None
             # (`live_at`: the start of this campaign's live table, if the bot is at one: #4537 3b)
-            table = await _table_viewer(scope, live_at) if not dm else gate.Viewer.the_party()
+            # (the table: the party at the live table's session, else today's party, else common
+            # knowledge only, failing closed: Supervisor's ruling M on #4537, slice 5c)
+            table = await gate.table_viewer(scope, live_at) if not dm else gate.Viewer.the_party()
             if not dm:
-                # (the fast aggregate is today's party: used unless the running session's party
-                # differs from it, #4537 slice 3b)
-                seen = await gate.party_entries(scope) if not table.characters else None
-                # (no player character, a list held by a group, or the session's party differs)
-                if seen is None:
-                    statements = await gate.load(scope)
-                    if statements.player_characters:
-                        full = gate.visible(table, statements)
-                        seen = frozenset(i for (k, i) in full.sureness if k == gate.ENTRY)
-                if seen is None:  # (no party yet: the names every player may read)
-                    every_name = await scope.select(ALIASES, " AND status = 'confirmed'")
-                    seen = gate.public_entries(entities, every_name)
-                shown = set(seen)
+                shown = set(await gate.entries_for(scope, table))
 
             def place(said: str) -> str | None:
                 for key in (name_key(said), name_key(measure_phrase.without_article(said))):
