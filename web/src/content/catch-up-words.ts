@@ -3,9 +3,13 @@
 
 const things = (n: number): string => (n === 1 ? "1 thing" : `${n} things`);
 
-/** A name cut to fit a button's label (at most 25 characters, with "…"). */
-export function cut(name: string, max: number): string {
-  return name.length <= max ? name : `${name.slice(0, max - 1)}…`;
+/** A button's label is cut at about this many characters (phones cut it there): core `party_tell.LABEL_MAX`. */
+const LABEL_MAX = 25;
+
+/** A name cut to `room` characters with "…", whole when it fits: core `party_tell._cut` (counted in characters, as Python does). */
+export function cut(name: string, room: number): string {
+  const chars = Array.from(name);
+  return chars.length <= room ? name : `${chars.slice(0, Math.max(1, room - 1)).join("").trimEnd()}…`;
 }
 
 /** "A", "A and B", "A, B and C". */
@@ -17,12 +21,13 @@ export function listOf(names: string[]): string {
 export const catchUpWords = {
   one: (name: string, n: number): string => `${name} is missing ${things(n)} on this card that the rest of the party knows.`,
   many: (names: string[]): string => `${listOf(names)} are missing things on this card that the rest of the party knows.`,
-  oneLabel: (name: string): string => `📖 Catch up: ${cut(name, 25)}`,
+  oneLabel: (name: string): string => `📖 Catch up: ${cut(name, LABEL_MAX - Array.from("📖 Catch up: ").length)}`,
   manyLabel: "📖 Catch up…",
   moreOne: "1 more is missing things on this card too. Catch these up first and it will show.",
   moreMany: (n: number): string => `${n} more are missing things on this card too. Catch these up first and they will show.`,
   pickQuestion: "Catch up who? Each gets everything on this card the rest of the party knows.",
-  pickLabel: (name: string, n: number): string => `${cut(name, 18)} (${n})`,
+  // "Mira (6 things)": the name is cut, never the count (core `party_tell.pick_label`)
+  pickLabel: (name: string, n: number): string => `${cut(name, Math.max(LABEL_MAX - ` (${things(n)})`.length, 8))} (${things(n)})`,
   back: "↩️ Back",
   done: (name: string, n: number): string =>
     `✅ ${name} now knows the ${things(n)} on this card the rest of the party knew. Nothing was sent to ${name}'s player.`,
