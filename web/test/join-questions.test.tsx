@@ -58,6 +58,46 @@ describe("the join question on the Questions page", () => {
     expect(await screen.findByText(w.undone("Mira", true))).toBeTruthy();
   });
 
+  it("shows the coming-back words for a back question", async () => {
+    open([{ group: "b1".repeat(16), answer: "waiting", names: ["Wren"], kind: "back" }]);
+    expect(await screen.findByText("Wren is back in the party.")).toBeTruthy();
+    expect(screen.getByText("What does Wren know about what happened while away?")).toBeTruthy();
+    expect(screen.getByText("Until you choose, Wren knows only what was known before leaving, plus what's said at the table from now on.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Only what was known before" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.everyone })).not.toBeTruthy();
+  });
+
+  it("shows the coming-back words for many names", async () => {
+    open([{ group: "b2".repeat(16), answer: "waiting", names: ["Tavin", "Oskar"], kind: "back" }]);
+    expect(await screen.findByText("Tavin and Oskar are back in the party.")).toBeTruthy();
+    expect(screen.getByText("What do Tavin and Oskar know about what happened while away?")).toBeTruthy();
+    expect(screen.getByText("Until you choose, Tavin and Oskar know only what each knew before leaving, plus what's said at the table from now on.")).toBeTruthy();
+  });
+
+  it("shows the join words for a join question", async () => {
+    open([{ group: "e1".repeat(16), answer: "waiting", names: ["Mira"], kind: "join" }]);
+    expect(await screen.findByText("Mira has joined the party.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.everyone })).toBeTruthy();
+  });
+
+  it("says the coming-back words after the first button and after an Undo", async () => {
+    const api = open([{ group: "b1".repeat(16), answer: "waiting", names: ["Wren"], kind: "back" }]);
+    api.answerJoin = async () => ({ batch: 61, given: 3 });
+    fireEvent.click(await screen.findByRole("button", { name: "Only what was known before" }));
+    expect(await screen.findByText("✅ Wren knows only what was known before leaving, plus what's said at the table from now on.")).toBeTruthy();
+    api.joinQuestions = async () => [{ group: "b1".repeat(16), answer: "waiting", names: ["Wren"], kind: "back" }];
+    fireEvent.click(await screen.findByRole("button", { name: w.party }));
+    expect(await screen.findByText(w.partyDone("Wren", 3, true))).toBeTruthy();
+    fireEvent.click(await screen.findByRole("button", { name: w.undo }));
+    expect(await screen.findByText("↩️ Undone. Wren knows only what Wren knew before leaving, plus what was said at the table since.")).toBeTruthy();
+  });
+
+  it("reads a missing kind as join", async () => {
+    open([{ group: "e1".repeat(16), answer: "waiting", names: ["Mira"] }]);
+    expect(await screen.findByText("Mira has joined the party.")).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.everyone })).toBeTruthy();
+  });
+
   it("undoFor joins names as joinOf does", () => {
     expect(w.undoFor(["Tavin"])).toBe('Undo the last "What the party knows", for Tavin.');
     expect(w.undoFor(["Tavin", "Wren"])).toBe('Undo the last "What the party knows", for Tavin and Wren.');
