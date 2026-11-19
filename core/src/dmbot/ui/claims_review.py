@@ -15,6 +15,7 @@ from typing import Any
 import discord
 
 from dmbot.discord_limits import shorten
+from dmbot.memory import party_icons
 from dmbot.memory.claims import (
     GONE,
     ODD_NOW,
@@ -29,7 +30,6 @@ from dmbot.memory.models import (
     CONFIRMED,
     DM,
     HOW_DM,
-    PLAYER_CHARACTER,
     Entity,
     MemoryRuleError,
     TooLateToUndo,
@@ -318,7 +318,9 @@ class ClaimsReview(_Menu):
         # around it (#3210).
         self.guild_id = guild_id
         self.page: list[Claim] = []
-        self.party: list[Entity] = []  # the confirmed player characters, for 👥 and its guess
+        self.party: list[Entity] = []  # the current party, for 👥, its guess and the line
+        # characters who left the party (and why), offered after the party in 👥 (#4537 §10)
+        self.left: list[tuple[Entity, str]] = []
         self.total = 0
         self.answered: dict[str, str] = {}
         self.undoable: dict[str, int] = {}  # claim → the batch its fact was written in
@@ -335,11 +337,15 @@ class ClaimsReview(_Menu):
         agreed = await _bot(interaction).consent.consenting(self.guild_id)
         waiting = await ClaimStore(memory).waiting(self.guild_id, self.campaign_id, opted_in=agreed)
         self.page, self.total, self.answered = waiting[:PAGE], len(waiting), {}
-        self.party = [
-            e
+        # (the current party, in the party list's order: #4537 rule 13.1)
+        group = await memory.party_and_others(self.guild_id, self.campaign_id)
+        members = [i for i, _ in group.party]
+        found = {
+            e.id: e
             for e in await memory.entities(self.guild_id, self.campaign_id, statuses=[CONFIRMED])
-            if e.type == "character" and e.role == PLAYER_CHARACTER
-        ]
+        }
+        self.party = [found[i] for i in members if i in found]
+        self.left = [(found[i], why) for i, (_, why) in group.left.items() if i in found]
         self.first_total = self.first_total or self.total
         self.undoable = {}
         if not self.page:
@@ -555,10 +561,11 @@ class ClaimsReview(_Menu):
                 if result.batch is not None:
                     self.undoable[claim_id] = result.batch
                 if knowers is not None:
-                    done = (
-                        f"{knower_icon(len(knowers))} Remembered: {saying}. "
-                        f"Known to: {party_names(self.party, knowers)}."
+                    # (who knows it, by §7's rule against the current party, #4537 slice 3a)
+                    who = party_icons.line(
+                        knowers, [(e.id, e.name) for e in self.party], escape=_md
                     )
+                    done = f"Remembered: {saying}.\n{who}"
                 elif secret:
                     done = f"{HIDE} Remembered, and kept secret from your players: {saying}."
                 else:
@@ -610,7 +617,8 @@ class KnowersPicker(_Menu):
     def __init__(self, review: ClaimsReview, claim: Claim) -> None:
         super().__init__()
         self.review, self.claim = review, claim
-        shown = {e.id for e in review.party[: self.MAX_OPTIONS]}  # (a menu holds 25)
+        self.picks = [*review.party, *(e for e, _ in review.left)][: self.MAX_OPTIONS]
+        shown = {e.id for e in self.picks}  # (a menu holds 25: the party first, #4537 §10)
         guessed = [i for i in guess_for(claim, review.party) if i in shown]
         self.chosen: list[str] = list(guessed)
         self.guess = guessed  # DMbot's own guess, kept apart from what the DM ticks
@@ -618,7 +626,7 @@ class KnowersPicker(_Menu):
         self.select: discord.ui.Select[Any] = discord.ui.Select(
             placeholder="Who knows it?",
             min_values=1,
-            max_values=min(len(review.party), self.MAX_OPTIONS),
+            max_values=len(self.picks),
             options=self._options(),
             row=0,
         )
@@ -628,10 +636,15 @@ class KnowersPicker(_Menu):
         self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary, row=1))
 
     def _options(self) -> list[discord.SelectOption]:
+        why = {e.id: w for e, w in self.review.left}
         return [
-            discord.SelectOption(label=e.name[:100], value=e.id, default=e.id in self.chosen)
-            for e in self.review.party[: self.MAX_OPTIONS]
-        ]
+            discord.SelectOption(
+                label=e.name[:100], value=e.id, default=e.id in self.chosen,
+                description=party_icons.left_note(why[e.id]) if e.id in why else None,
+                emoji="🚪" if e.id in why else None,
+            )
+            for e in self.picks
+        ]  # fmt: skip
 
     def text(self) -> str:
         # (DMbot's name only goes on DMbot's guess, never on what the DM ticked)

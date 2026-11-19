@@ -245,6 +245,16 @@ from dmbot.timebot.stamp import group_at, group_of_speakers
 
 log = logging.getLogger(__name__)
 
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class PartyAndOthers:
+    """`MemoryStore.party_and_others`: the current party in order, those who left, NPCs."""
+
+    party: list[tuple[str, str]]
+    left: dict[str, tuple[str, str]]
+    npcs: dict[str, str]
+
+
 PERSON = "person"
 PLAYS = "plays"
 TRAVELS_WITH = "travels_with"  # a companion goes along with a player character or the party
@@ -2452,14 +2462,9 @@ class MemoryStore:
                     [clean_text(change.words)],
                 )
                 clue_id = str(have[0]["id"])
-        if made_new:
-            party = await w.select(
-                ENTITIES,
-                " AND type = 'character' AND status = 'confirmed' AND role = %s AND NOT party",
-                [PLAYER_CHARACTER],
-            )
-            if {str(r["id"]) for r in party} - set(finders):  # (only some of the table)
-                await w.update(ENTITIES, clue_id, {"audience_limited": True})
+        # (only some of the current party found it: #4537 rule 13.1)
+        if made_new and set(await party_record.current_members(w)) - set(finders):
+            await w.update(ENTITIES, clue_id, {"audience_limited": True})
         learned = 0
         for character in finders:
             try:
@@ -3123,6 +3128,34 @@ class MemoryStore:
         """One character's stretches in the party, oldest first (#4537 slice 2a), for its card."""
         async with self._read(guild_id, campaign_id) as scope:
             return await party_record.spans(scope, [entity_id])
+
+    async def party_and_others(self, guild_id: int, campaign_id: str) -> PartyAndOthers:
+        """Who may be said to know something, for "Who knows this?" and its icons (#4537 slice
+        3a, §7 and §10): the current party (id, name) in the party list's order; characters who
+        left (id → (name, why)); and NPCs with a point of view (id → name). One read."""
+        async with self._read(guild_id, campaign_id) as scope:
+            members = await party_record.current_members(scope)
+            everyone = await party_record.player_characters(scope)
+            ended = {
+                s.entity_id: s.ended or "left"
+                for s in await party_record.spans(scope, everyone)
+                if not s.open
+            }
+            views = await scope.select(PERSPECTIVES, " AND kind = 'npc' AND entity_id IS NOT NULL")
+            npc_ids = [str(v["entity_id"]) for v in views]
+            ids = sorted({*members, *everyone, *npc_ids})
+            rows = await scope.select(
+                ENTITIES, " AND id = ANY(%s) AND status = 'confirmed' AND merged_into IS NULL",
+                [ids],
+            )  # fmt: skip
+            names = {str(r["id"]): str(r["name"]) for r in rows}
+        party = [(i, names[i]) for i in members if i in names]
+        inside = set(members)
+        left = {
+            i: (names[i], ended.get(i, "left")) for i in everyone if i not in inside and i in names
+        }
+        npcs = {i: names[i] for i in npc_ids if i in names and i not in inside and i not in left}
+        return PartyAndOthers(party, left, npcs)
 
     async def current_party(self, guild_id: int, campaign_id: str) -> list[str]:
         """THE current party (`party_record.current_members`, #4537): entry ids, oldest first."""

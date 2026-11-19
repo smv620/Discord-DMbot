@@ -94,7 +94,7 @@ class NameWho(base.NamesTest):
             await self.memory.alias_knowers(GUILD, self.campaign.id, [now.id]), {now.id: [mara.id]}
         )
         text, _ = await self.who_page(now)
-        self.assertIn("Only Mara knows it (and the DM)", text)
+        self.assertIn("👤 Known to: Mara", text)
 
     async def test_everyone_lets_go_of_who_knew_it(self) -> None:
         alias = await self.alias()

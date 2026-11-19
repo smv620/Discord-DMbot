@@ -40,6 +40,7 @@ from dmbot.memory import (
     lore_read,
     map_fact_store,
     map_facts,
+    party_icons,
     pdf_pictures,
     picture_read,
     picture_vision,
@@ -101,7 +102,7 @@ from dmbot.pictures.keeper import Context as PictureContext
 from dmbot.ui import logic, split_words
 from dmbot.ui import secret_questions as secret_questions_ui
 from dmbot.ui.check_everything import add_stop, next_part, progress
-from dmbot.ui.claims_review import knower_icon, names_joined
+from dmbot.ui.claims_review import knower_icon
 from dmbot.ui.dmbot_commands import VIEW_TIMEOUT_S, _bot, _Button, _Menu, _send, _tell
 from dmbot.ui.name_lists import (
     AI_AT_ONCE,
@@ -4649,10 +4650,10 @@ class ConnectionOffer(_Menu):
             changed(interaction, campaign)
             await store.remove(campaign.guild_id, campaign.id, c)
             saved = ""
-            if knowers is not None:
-                names = [self.characters[k] for k in knowers if k in self.characters]
-                if names:
-                    saved = f"{knower_icon(len(names))} Known to: {names_joined(names)}.\n"
+            if knowers is not None and any(k in self.characters for k in knowers):
+                # (who knows it, by §7's rule against the current party, #4537 slice 3a)
+                party = list(self.characters.items())
+                saved = party_icons.line(knowers, party, escape=_md) + "\n"
             self.kept += 1
             await self._show(interaction, await self._ready(interaction, campaign), saved)
 

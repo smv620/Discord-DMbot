@@ -9,15 +9,13 @@ writes and where Back goes; every press there checks the campaign, the DM and th
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Collection, Mapping, Sequence
 
 import discord
 
 from dmbot.campaigns import Campaign
-from dmbot.memory import knowers, link_edits
-from dmbot.memory.lookup import CampaignLookup
-from dmbot.memory.models import CONFIRMED, PLAYER_CHARACTER
-from dmbot.memory.store import MemoryStore
+from dmbot.memory import knowers, link_edits, party_icons
+from dmbot.memory.store import MemoryStore, PartyAndOthers
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import _Button, _Menu, _Select
 from dmbot.ui.names import _md
@@ -26,16 +24,38 @@ MAX_PICK = 25  # one Discord menu holds this many; a table's characters are far 
 
 
 async def player_characters(memory: MemoryStore, campaign: Campaign) -> list[tuple[str, str]]:
-    """The campaign's confirmed player characters (id, name), by name, at most one menu's worth:
-    the only ones the DM may say know something (#2935)."""
-    lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
-    found = {
-        e.id: e.name
-        for e in lookup.entities.values()
-        if e.role == PLAYER_CHARACTER and e.status == CONFIRMED and not e.merged_into
-    }
-    ordered = sorted(found.items(), key=lambda item: item[1].casefold())
-    return ordered[:MAX_PICK]
+    """Every player character (id, name): the current party first, in its order, then those who
+    left, at most one menu's worth (#2935; the party is `party_record.current_members`, #4537)."""
+    return pick_choices(await memory.party_and_others(campaign.guild_id, campaign.id))[0]
+
+
+def pick_choices(found: PartyAndOthers) -> tuple[list[tuple[str, str]], dict[str, str]]:
+    """Who the DM may pick as knowing something (Supervisor's ruling on #4537 slice 3): the current
+    party first, in its order, then characters who left (each with why, under the name), at most
+    one menu's worth, so the cut never drops the party. NPCs aren't offered here: "Who knows
+    this?" writes player characters' rows only, and an NPC's own list is kept as it is."""
+    left = [o for o in party_icons.ordered_outsiders(found.left, {}) if o.ended is not None]
+    picks = [*found.party, *((o.id, o.name) for o in left)][:MAX_PICK]
+    kept = {i for i, _ in picks}
+    notes = {o.id: party_icons.left_note(o.ended or "left") for o in left if o.id in kept}
+    return picks, notes
+
+
+def knows_line(
+    found: PartyAndOthers, holders: Collection[str], *, who: str = "", common: bool = False
+) -> str:
+    """The one line saying who knows it (`party_icons.line`, §7), names escaped for Discord. A
+    thing the whole table sees (`who` is 👁️ Everyone, which keeps no list) is known to every
+    member: "the whole table heard it" is ✅ (§7)."""
+    if who == link_edits.EVERYONE:
+        holders = [i for i, _ in found.party]
+    return party_icons.line(
+        holders,
+        found.party,
+        common=common,
+        outsiders=party_icons.ordered_outsiders(found.left, found.npcs),
+        escape=_md,
+    )
 
 
 def called(names: Sequence[str]) -> str:
@@ -64,12 +84,9 @@ def who_text(
     elif who == link_edits.EVERYONE:
         now = f"**Players can see this {thing}.**"
     elif who == link_edits.SOME_CHARACTERS:
-        mine = sorted(names[c] for c in knowing if c in names)
+        # (who knows it is the line above, by §7's rule in the party list's order: #4537 slice 3a)
         now = (
-            f"**Hidden from the party. Only {called(mine)} {'knows' if len(mine) == 1 else 'know'}"
-            " it (and the DM).**"
-            if mine
-            else "**Hidden from the party. Only some characters know it (and the DM).**"
+            "**Hidden from the rest of the table. Only the characters above know it, and the DM.**"
         )
     else:
         now = "**Hidden from players. Only the DM can see it.**"
@@ -135,6 +152,7 @@ class WhoKnowsMenu(_Menu):
         chosen: Sequence[str] = (),
         now: str = "",
         undo: Sequence[int] = (),
+        notes: Mapping[str, str] | None = None,
     ) -> None:
         super().__init__()
         self.now = now
@@ -155,6 +173,9 @@ class WhoKnowsMenu(_Menu):
                         label=logic.shorten(name, logic.OPTION_LABEL_MAX),
                         value=entity_id,
                         default=entity_id in self.picked,
+                        # (one who left or an NPC says so under the name, #4537 §10)
+                        description=(notes or {}).get(entity_id),
+                        emoji="🚪" if entity_id in (notes or {}) else None,
                     )
                     for entity_id, name in self.names.items()
                 ],

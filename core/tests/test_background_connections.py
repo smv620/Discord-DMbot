@@ -820,14 +820,14 @@ class ThePath(NamesTest):
         self.assertEqual(await self.backstory(), [])
 
     async def test_known_to_is_said_once_after_a_save_with_the_icon_for_how_many(self) -> None:
-        # (#4682) 👤 for one, 👥 for two or more; names only, never ids
+        # (#4682; §7 since #4537 slice 3a) 👤 for one of the party, ✅ for all; names, never ids
         cerric = await self.pc("Cerric")
         belleros = await self.pc("Belleros")
         await self.read()
         await self.confirm_all()
         for ticked, line in (
-            ([cerric], "👤 Known to: Cerric."),
-            ([cerric, belleros], "👥 Known to: Cerric and Belleros."),
+            ([cerric], "👤 Known to: Cerric"),
+            ([cerric, belleros], "✅ The whole party knows"),
         ):
             _, view = await self.offer()
             picker_it = self.it()

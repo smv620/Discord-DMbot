@@ -547,15 +547,11 @@ async def statement_knowers(
         who = views[row["perspective_id"]]
         if who is None and (kind, str(row[column])) not in common:
             continue
-        if who is None:  # (common knowledge, #4537: every player character knows it)
+        if who is None:  # (common knowledge, #4537: every member of the party knows it, rule 13.1)
             if pcs is None:
-                pcs = [
-                    str(e["id"])
-                    for e in await scope.select(
-                        ENTITIES, " AND type = 'character' AND role = %s AND status = %s",
-                        [PLAYER_CHARACTER, CONFIRMED],
-                    )
-                ]  # fmt: skip
+                from dmbot.memory import party_record
+
+                pcs = await party_record.current_members(scope)
             have = out.setdefault(row[column], [])
             have.extend(p for p in pcs if p not in have)
         elif who not in out.get(row[column], []):

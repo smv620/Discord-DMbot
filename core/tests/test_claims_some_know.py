@@ -129,8 +129,9 @@ class SomeKnow(ConfirmedMemoryTest):
         picker.chosen = [self.ash, self.wren]
         await picker._save(it)
         text = it.sent[-1][0]
+        # (§7, #4537 slice 3a: two of a party of two is the whole party)
         self.assertIn(
-            f"👥 Remembered: {claims_review.statement(claim)}. Known to: Ash and Wren.", text
+            f"Remembered: {claims_review.statement(claim)}.\n✅ The whole party knows", text
         )
         (rel,) = await self.facts()
         self.assertTrue(rel.unrevealed)
@@ -154,14 +155,13 @@ class SomeKnow(ConfirmedMemoryTest):
         self.assertNotIn("DMbot's guess", picker.text())
         picker.chosen = [self.wren]
         await picker._save(it)
-        self.assertIn("👤 Remembered:", it.sent[-1][0])
-        self.assertIn("Known to: Wren.", it.sent[-1][0])
+        self.assertIn("Remembered:", it.sent[-1][0])
+        self.assertIn("👤 Known to: Wren", it.sent[-1][0])
         await view._pick(it, second.id)
         picker = it.sent[-1][1]
         picker.chosen = [self.wren, self.ash]
         await picker._save(it)
-        self.assertIn("👥 Remembered:", it.sent[-1][0])
-        self.assertIn("Known to: Ash and Wren.", it.sent[-1][0])
+        self.assertIn("✅ The whole party knows", it.sent[-1][0])  # (§7: all of the party)
 
     def test_names_are_joined_with_and(self) -> None:
         party = [SimpleNamespace(id=str(n), name=name) for n, name in enumerate("ABC")]
@@ -184,7 +184,7 @@ class SomeKnow(ConfirmedMemoryTest):
         picker = it.sent[-1][1]
         picker.chosen = [self.wren]
         await picker._save(it)
-        self.assertIn("Known to: Wren.", it.sent[-1][0])
+        self.assertIn("👤 Known to: Wren", it.sent[-1][0])
         waiting = await self.claims.waiting(GUILD_A, self.c, opted_in={7, 8})
         self.assertNotIn(claim_id, [w.id for w in waiting])  # (answered: nothing left to ask)
 

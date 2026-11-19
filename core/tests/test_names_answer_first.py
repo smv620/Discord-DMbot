@@ -14,6 +14,7 @@ from dmbot.campaigns.models import Campaign
 from dmbot.memory.lookup import CampaignLookup, LookupData
 from dmbot.memory.models import CONFIRMED, Alias, Entity, MemoryRuleError, Relation, name_key
 from dmbot.memory.sounds import sound_codes
+from dmbot.memory.store import PartyAndOthers
 from dmbot.ui import connection_edit, dmbot_commands, logic, name_card, name_lists, names
 
 GUILD, DM = 1, 7
@@ -232,6 +233,8 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         memory.told_characters = self.slow([])  # (and who was told, #3542)
         memory.common_knowledge = self.slow(set())  # (and whether it is common knowledge, #4537)
         memory.lookup_data = self.slow(LookupData(0, (), (), (), ()))
+        # (and the party, those who left and NPCs, for its line and picker: #4537 slice 3a)
+        memory.party_and_others = self.slow(PartyAndOthers([], {}, {}))
         memory.update_relation = self.slow(SimpleNamespace(batch=7))  # the Undo needs the batch
         memory.add_entity = self.slow(SimpleNamespace(value=ENTITIES[BELL]))
         memory.confirmed_name_for = AsyncMock(return_value=None)  # a new spelling: no clash
