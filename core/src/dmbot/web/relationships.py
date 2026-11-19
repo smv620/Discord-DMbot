@@ -1209,6 +1209,18 @@ async def queue_reveal(db: Database, session: Session, ref: str, body: object) -
     )
 
 
+def _catch_choices(counts: str) -> list[dict[str, Any]] | None:
+    """The members "Catch up" has something for, from the bot's `catch:<id>=<n>,…` answer."""
+    if not counts.startswith("catch:"):
+        return None
+    out: list[dict[str, Any]] = []
+    for pair in counts.removeprefix("catch:").split(","):
+        member, _, n = pair.partition("=")
+        if len(member) == 32 and n.isdigit():
+            out.append({"id": member, "count": int(n)})
+    return out
+
+
 async def read_answer(db: Database, session: Session, ref: str, answer: str) -> dict[str, Any]:
     """Where one of the caller's own connection edits stands: `state` (waiting, working, done,
     failed), the `error` word when it failed, and, when it is done, the pair's `edge` as it now
@@ -1292,6 +1304,10 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "given": int(counts.removeprefix("given:")) if counts.startswith("given:") else None,
             # a return: which question now waits for the character ("back", "join" or "none")
             "asked": counts.removeprefix("asked:") if counts.startswith("asked:") else None,
+            # "Catch up" (#4793): how many things the member was told, and who is missing what
+            # (`[{"id", "count"}]`, ids and counts only: the page names them)
+            "told": int(counts.removeprefix("told:")) if counts.startswith("told:") else None,
+            "choices": _catch_choices(counts),
             "batch": int(made[0]) if got["state"] == "done" and made else None,
         }
     if str(got["action"]).startswith("reading-"):
