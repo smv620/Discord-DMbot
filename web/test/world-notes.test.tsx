@@ -11,16 +11,23 @@ import Names from "../src/account/Names";
 import { namesPage } from "../src/content/names-words";
 import { worldNotesWords as w } from "../src/content/world-notes-words";
 
-const live = vi.hoisted(() => ({ on: true }));
+const live = vi.hoisted(() => ({ on: true, roads: false }));
 vi.mock("../src/content/world-notes-switch", () => ({
   get WORLD_NOTES_LIVE() {
     return live.on;
+  },
+}));
+// The Roads group (#4784) is behind its own switch, off unless a test turns it on.
+vi.mock("../src/content/roads-switch", () => ({
+  get ROADS_LIVE() {
+    return live.roads;
   },
 }));
 
 afterEach(() => {
   cleanup();
   live.on = true;
+  live.roads = false;
 });
 
 const DM = "/account/names/100.cmp1";
@@ -111,5 +118,58 @@ describe("the presses", () => {
     fireEvent.click(await screen.findByRole("button", { name: w.notRightLabel("Greywatch: Ruled by The Greywatch Guard") }));
     expect(await screen.findByText(w.gone)).toBeTruthy();
     await waitFor(() => expect(api.calls.filter((c) => c.startsWith("worldNotes:")).length).toBeGreaterThan(before));
+  });
+});
+
+// The Roads group (#4784): a road whose length a kept map disagrees with, ✅ Keep only (no 🚫), behind ROADS_LIVE.
+describe("the Roads group", () => {
+  const ROAD = "Targos to Bryn Shander";
+  const NOTE = "The map puts it three hours' ride apart; the lore says two days.";
+
+  it("shows no Roads group while ROADS_LIVE is off", async () => {
+    await open();
+    await screen.findByText(SALT);
+    expect(screen.queryByRole("heading", { name: w.roads })).toBeNull();
+    expect(screen.queryByText(ROAD)).toBeNull();
+  });
+
+  it("lists each road with its name and the API's note, and no Not-right button", async () => {
+    live.roads = true;
+    await open();
+    expect(await screen.findByRole("heading", { name: w.roads })).toBeTruthy();
+    expect(screen.getByText(ROAD)).toBeTruthy();
+    expect(screen.getByText(NOTE)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: w.notRightLabel(ROAD) })).toBeNull();
+  });
+
+  it("Keep sends the road's id and the line goes", async () => {
+    live.roads = true;
+    const api = await open();
+    fireEvent.click(await screen.findByRole("button", { name: w.keepLabel(ROAD) }));
+    await waitFor(() => expect(calls(api, "road:r1")).toHaveLength(1));
+    await waitFor(() => expect(screen.queryByText(ROAD)).toBeNull());
+    expect(await screen.findByText(w.kept(ROAD))).toBeTruthy();
+  });
+
+  it("Keep all sends the shown ids, as one press", async () => {
+    live.roads = true;
+    const api = await open();
+    fireEvent.click(await screen.findByRole("button", { name: w.keepAllRoads(2) }));
+    await waitFor(() => expect(calls(api, "road:r1")).toHaveLength(1));
+    expect(calls(api, "road:r2")).toHaveLength(1);
+    expect(calls(api, "road:r1")[0]).toContain('"ids":["road:r1","road:r2"]');
+  });
+
+  it("an API with no roads shows no group", async () => {
+    live.roads = true;
+    const api = mockApi("table");
+    api.worldNotes = async (ref) => {
+      api.calls.push(`worldNotes:${ref}`);
+      return { places: [], languages: [] };
+    };
+    render(<Names api={api} path={DM} />);
+    await screen.findByRole("heading", { name: w.heading });
+    await waitFor(() => expect(api.calls.some((c) => c.startsWith("worldNotes:"))).toBe(true));
+    expect(screen.queryByRole("heading", { name: w.roads })).toBeNull();
   });
 });

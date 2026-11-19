@@ -13,6 +13,7 @@ export const worldNotesWords = {
   none: "Nothing to check right now. New guesses show up here after a session or a lore upload.",
   places: "Places",
   languages: "Languages",
+  roads: "Roads",
   keep: "✅ Keep",
   notRight: "🚫 Not right",
   undo: "↩ Undo",
@@ -20,6 +21,7 @@ export const worldNotesWords = {
   notRightLabel: (line: string): string => `Not right: "${line}"`,
   keepAllPlaces: (n: number): string => (n === 1 ? "✅ Keep the 1 place" : `✅ Keep all ${n} places`),
   keepAllLanguages: (n: number): string => (n === 1 ? "✅ Keep the 1 language" : `✅ Keep all ${n} languages`),
+  keepAllRoads: (n: number): string => (n === 1 ? "✅ Keep the 1 road" : `✅ Keep all ${n} roads`),
   showing: (shown: number, total: number): string => `Showing ${shown} of ${total}. Check some and the rest come up.`,
   /** What a line is and where it came from. */
   kindHint: { terrain: "Land", climate: "Climate", control: "Ruler", language: "Language" } as Record<string, string>,
