@@ -170,15 +170,11 @@ HEARD_ACTIONS = (
     "heard-keep",
     "heard-type",
 )  # "Did they mean…?" from the page (#4841 B)
-<<<<<<< HEAD
 RULE_UPDATE_ACTIONS = (
     "rules-update-pick",
     "rules-update-undo",
     "rules-update-undo-last",
 )  # a followed set's pick (#4841)
-=======
-RULE_UPDATE_ACTIONS = ("rules-update-pick", "rules-update-undo")  # a followed set's pick (#4841)
->>>>>>> origin/development
 # The story threads DMbot found in an upload (#4457, quests slice 1): the same store calls as
 # Discord's 📜 card, so each keep is one change and one Undo.
 THREAD_ACTIONS = ("thread-keep", "thread-not", "thread-undo")
