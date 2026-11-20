@@ -55,6 +55,8 @@ EVERY_ACTION = (
     "party-undo",
     "party-catch-up-choices",  # who is missing what on a card (#4793)
     "party-catch-up",
+    "rules-update-pick",  # a followed set's changes, picked from the page (#4841)
+    "rules-update-undo",
 )  # fmt: skip
 
 
