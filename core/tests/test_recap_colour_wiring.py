@@ -97,16 +97,28 @@ def entity(entity_id: str, kind: str = "place", merged: str | None = None) -> An
 
 class TheBotsReader(unittest.IsolatedAsyncioTestCase):
     def bot(self, entries: list[Any], entities: dict[str, Any]) -> Any:
-        by_text: dict[str, list[Any]] = {}
-        for e in entries:
-            by_text.setdefault(e.text, []).append(e)
-        players = SimpleNamespace(
-            entities=entities, names=tuple(entries), exact=lambda heard: by_text.get(heard, ())
+        # (what the party at the session knows: every entry but the "hidden" ones, #4877)
+        known = frozenset(e.entity_id for e in entries if not e.entry_hidden)
+
+        def for_viewer(secrets: bool, seen: Any = None) -> Any:
+            # (as `CampaignLookup.for_viewer`: the entries that party doesn't hold are gone)
+            kept = [e for e in entries if seen is None or e.entity_id in seen]
+            by_text: dict[str, list[Any]] = {}
+            for e in kept:
+                by_text.setdefault(e.text, []).append(e)
+            return SimpleNamespace(
+                entities={k: v for k, v in entities.items() if seen is None or k in seen},
+                names=tuple(kept),
+                exact=lambda heard: by_text.get(heard, ()),
+            )
+
+        lookup = SimpleNamespace(get=AsyncMock(return_value=SimpleNamespace(for_viewer=for_viewer)))
+        memory = SimpleNamespace(
+            recap_colour=AsyncMock(return_value=["a line"]),
+            party_at_session=AsyncMock(
+                return_value=SimpleNamespace(members=("pc",), entries=known)
+            ),
         )
-        lookup = SimpleNamespace(
-            get=AsyncMock(return_value=SimpleNamespace(for_viewer=lambda secrets: players))
-        )
-        memory = SimpleNamespace(recap_colour=AsyncMock(return_value=["a line"]))
         return SimpleNamespace(lookup=lookup, memory=memory)
 
     async def go(self, bot: Any, places: list[str]) -> list[str]:
@@ -144,6 +156,9 @@ class TheBotsReader(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(list(args[2]), ["p1"])  # the one place the players know by that name
         # a ruler is named only by a name the players may see: never a secret or unseen entry
         self.assertEqual(args[3], {"p1": "Bryn Shander", "f1": "Ten-Towns"})
+        # (the party at that session, read once and passed on, #4877)
+        bot.memory.party_at_session.assert_awaited_once_with(1, "c", 100)
+        self.assertEqual(bot.memory.recap_colour.await_args.kwargs["members"], ("pc",))
 
     async def test_a_place_matched_through_an_alias_is_named_the_way_the_beat_said_it(self) -> None:
         bot = self.bot(

@@ -1345,31 +1345,31 @@ class RecapFeatures:
         players' view doesn't know by that name is left out, never looked up another way."""
         if self.memory is None or self.lookup is None or not place_names:
             return []
-        players = (await self.lookup.get(gid, cid)).for_viewer(False)
+        # (the party at that session and what it knows, read once for this stage, #4877: the
+        # places are looked up in that party's view, and its lines are that party's rows)
+        at_session = await self.memory.party_at_session(gid, cid, job.session_at)
+        players = (await self.lookup.get(gid, cid)).for_viewer(False, seen=at_session.entries)
         # The names are the players' own, taken from the name entries they may see (a place or a
-        # ruler whose only entries are secret spellings or "players don't know this one yet" has
-        # no name here, and is left out), never the entity's canonical name.
+        # ruler whose only entries are secret spellings, or that this party doesn't know, has no
+        # name here, and is left out), never the entity's canonical name.
         live = {e.id for e in players.entities.values() if not e.merged_into}
         names: dict[str, str] = {}
         for name_entry in players.names:
-            if (
-                name_entry.secret
-                or name_entry.entry_hidden
-                or name_entry.person
-                or name_entry.entity_id not in live
-            ):
+            if name_entry.secret or name_entry.person or name_entry.entity_id not in live:
                 continue
             names.setdefault(name_entry.entity_id, name_entry.text)
         place_ids: list[str] = []
         for heard in place_names:
             for name_entry in players.exact(heard):
-                if name_entry.secret or name_entry.entry_hidden or name_entry.entity_id not in live:
+                if name_entry.secret or name_entry.entity_id not in live:
                     continue
                 if players.entities[name_entry.entity_id].type != "place":
                     continue
                 names[name_entry.entity_id] = name_entry.text  # (the spelling the beat used)
                 place_ids.append(name_entry.entity_id)
-        return await self.memory.recap_colour(gid, cid, place_ids, names, job.session_at)
+        return await self.memory.recap_colour(
+            gid, cid, place_ids, names, job.session_at, members=at_session.members
+        )
 
     async def recap_reveals(self, gid: int, cid: str, job: Job) -> list[str]:
         """This session's partial reveals as the sentences the writer cites (#4737,
@@ -1380,15 +1380,22 @@ class RecapFeatures:
         if self.memory is None:
             return []
         everyone = await self.memory.entities(gid, cid)
+        # (the party at that session and what it knew, read once for this stage, #4877)
+        party = await self.memory.party_at_session(gid, cid, job.session_at)
         at_session = {
             e.id
             for e in everyone
-            if e.is_player_character and e.played_by is not None and e.played_by in job.speakers
+            if e.is_player_character
+            and e.played_by is not None
+            and e.played_by in job.speakers
+            # (a speaker's character who wasn't in the party at that session, one who left
+            # before it or joined after it, isn't at its table: no party read, every one counts)
+            and (not party.members or e.id in party.members)
         }
         if not at_session:
             return []
         # (threads that matter: what the party at that session knew, #4537 slice 3b, §8)
-        seen = await self.memory.visible_to_party_at(gid, cid, job.session_at)
+        seen = party.seen
         mattering: set[str] = set()
         for t in await self.memory.threads(gid, cid):
             if (

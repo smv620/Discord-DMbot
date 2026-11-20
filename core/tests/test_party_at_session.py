@@ -12,7 +12,7 @@ from dmbot.campaigns import CampaignStore
 from dmbot.memory import gate
 from dmbot.memory.models import CONFIRMED, DM, PLAYER_CHARACTER
 from dmbot.memory.store import MemoryStore
-from dmbot.recaps.inputs import recap_people
+from dmbot.recaps.inputs import recap_name_sets, recap_people
 from dmbot.transcript.store import TranscriptStore
 from tests.pg import DatabaseTest
 
@@ -44,6 +44,32 @@ class ThePeopleOfARecap(unittest.TestCase):
         self.assertEqual(everyone, ["Cara", "Vell"])  # (no party record given: as before)
         self.assertEqual(then, ["Vell"])
         self.assertEqual(party, {ANNA: ("Vell",)})
+
+
+class TheNamesOfARecap(unittest.TestCase):
+    """#4877: the names a recap may use follow the party at its session, not today's."""
+
+    @staticmethod
+    def entry(entity_id: str, text: str, *, hidden: bool = False) -> SimpleNamespace:
+        return SimpleNamespace(
+            entity_id=entity_id, text=text, secret=False, clue=False, confirmed=True,
+            person=False, entry_hidden=hidden,
+        )  # fmt: skip
+
+    def test_a_name_that_party_knew_is_allowed_whatever_today_says(self) -> None:
+        names = SimpleNamespace(names=[self.entry("b", "The drowned bell", hidden=True)])
+        allowed, secret = recap_name_sets(names, "", shown={"b"})
+        self.assertEqual((allowed, secret), (["The drowned bell"], []))
+
+    def test_a_name_that_party_didnt_know_stays_out_whatever_today_says(self) -> None:
+        names = SimpleNamespace(names=[self.entry("b", "The drowned bell")])
+        allowed, secret = recap_name_sets(names, "", shown=set())
+        self.assertEqual((allowed, secret), ([], ["The drowned bell"]))
+        self.assertEqual(recap_name_sets(names, ""), (["The drowned bell"], []))  # (no party read)
+
+    def test_said_at_the_table_it_is_allowed_all_the_same(self) -> None:
+        names = SimpleNamespace(names=[self.entry("b", "Bell")])
+        self.assertEqual(recap_name_sets(names, " bell ", shown=set()), (["Bell"], []))
 
 
 class AJoinAtSessionThree(DatabaseTest):
@@ -96,6 +122,14 @@ class AJoinAtSessionThree(DatabaseTest):
             set(await self.memory.members_at(GUILD, self.c, 3_000)),
             {self.vell, self.tuck, self.cara},
         )
+
+    async def test_one_read_gives_the_sessions_party_and_what_it_knew(self) -> None:
+        old = await self.memory.party_at_session(GUILD, self.c, 1_000)
+        self.assertEqual(set(old.members), {self.vell, self.tuck})
+        self.assertIn(self.thread, old.entries)  # (Vell and Tuck knew it)
+        new = await self.memory.party_at_session(GUILD, self.c, 3_000)
+        self.assertEqual(set(new.members), {self.vell, self.tuck, self.cara})
+        self.assertNotIn(self.thread, new.entries)  # (Cara doesn't know it yet)
 
     async def test_an_old_recaps_threads_are_unchanged_by_the_join(self) -> None:
         then = await self.memory.members_at(GUILD, self.c, 1_000)

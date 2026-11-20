@@ -87,7 +87,10 @@ async def recap_said(
 
 
 def recap_name_sets(
-    names: Any, said: str | None, recanted: Collection[str] = ()
+    names: Any,
+    said: str | None,
+    recanted: Collection[str] = (),
+    shown: Collection[str] | None = None,
 ) -> tuple[list[str], list[str]]:
     """(the names the recap may use, the names it must not) for a session. A name the players
     haven't been shown yet (#2404) is allowed only when the table said it in this session (`said`,
@@ -97,7 +100,16 @@ def recap_name_sets(
     anything else marked secret about it stay out of the writer's input and are checked in the
     draft (`Inputs.identity_ties`). A name the DM took back (`recanted`, spelling keys, #2410) is
     secret again. With no `said` (the session's lines can't be read) nothing is revealed:
-    stricter, never looser."""
+    stricter, never looser.
+
+    `shown`: the entries the party AT THIS SESSION knows (`MemoryStore.party_at_session`, #4877).
+    A confirmed name's entry is "not known yet" when it isn't among them, so an old recap's names
+    don't change with a later join or leave (§14). None: the lookup's own flag (today's party)."""
+
+    def hidden(n: Any) -> bool:
+        if shown is not None and n.confirmed:
+            return n.entity_id not in shown
+        return bool(n.entry_hidden)
 
     def spoken(text: str) -> bool:
         return said is not None and f" {name_key(text)} " in f" {said} "
@@ -117,13 +129,12 @@ def recap_name_sets(
         for n in names.names
         if n.confirmed
         and not n.person
-        and (revealed(n) if n.secret else (not n.entry_hidden or spoken(n.text)))
+        and (revealed(n) if n.secret else (not hidden(n) or spoken(n.text)))
     }
     secret = {
         n.text
         for n in names.names
-        if (n.secret and not revealed(n))
-        or (n.entry_hidden and not n.secret and not spoken(n.text))
+        if (n.secret and not revealed(n)) or (hidden(n) and not n.secret and not spoken(n.text))
     }
     return sorted(allowed), sorted(secret)
 
@@ -372,19 +383,26 @@ async def load_inputs_or_why(
     # Each name's rank (#3172 slice 4): empty unless DMBOT_RECAP_BY_RANK is on. Same rule.
     ranks = await importance.ranks(guild_id, campaign_id) if importance is not None else {}
     said = said_in(lines)
-    allowed_now, secret_now = recap_name_sets(names, said, recanted)
-    # The party at this session (`MemoryStore.members_at`, which reads `session_members`, #4537
-    # slice 3b), when the store is given. None (every confirmed player character, as before) when
-    # it can't be read or is empty. Empty means no player character covers the session: with ruling
-    # E an imported session counts everyone made before its import, so that is a campaign with none
-    # at all, or a live session every character joined after. (The gate's `Viewer.party_at` with no
-    # member is common knowledge only, #4806; this list only names who the recap is about.)
+    # The party at this session and what it knows, read once (`MemoryStore.party_at_session`,
+    # #4537 slice 3b and #4877), when the store is given: the names the recap may use follow that
+    # party, and so does its list of player characters. `members` None (every confirmed player
+    # character, as before) when it can't be read or is empty. Empty means no player character
+    # covers the session: with ruling E an imported session counts everyone made before its
+    # import, so that is a campaign with none at all, or a live session every character joined
+    # after; the names then follow the lookup's own flags, as before. (The gate's
+    # `Viewer.party_at` with no member is common knowledge only, #4806; `members` only names who
+    # the recap is about.)
     members: list[str] | None = None
+    shown: frozenset[str] | None = None
     if memory is not None:
         try:
-            members = await memory.members_at(guild_id, campaign_id, session_at) or None
+            at_session = await memory.party_at_session(guild_id, campaign_id, session_at)
+            if at_session.members:
+                members = list(at_session.members)
+                shown = at_session.entries
         except Exception as exc:
             log.warning("Recap: couldn't read the party at the session (%s)", type(exc).__name__)
+    allowed_now, secret_now = recap_name_sets(names, said, recanted, shown)
     aliases, pcs, party = recap_people(names, allowed_now, members)
     previous = fixed_lines.without(strip_cues(bridge.summary)) if bridge is not None else ""
     familiar = familiar_for(names, allowed_now, lines, previous, aliases)
