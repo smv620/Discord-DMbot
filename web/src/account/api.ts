@@ -2622,7 +2622,9 @@ export const READING_POLLS = 150;
 export interface WebAnswer {
   state: "waiting" | "working" | "done" | "failed";
   error?: string | null;
-  /** A saved "Did they mean…?" answer (#4857): `kept`, `fixed` or `line-kept`. */
+  /** A refused typed name (#4865): the reason, for a `typed-problem`. */
+  reason?: string | null;
+  /** A saved "Did they mean…?" answer (#4857): `kept`, `fixed`, `fixed-new` or `line-kept`. */
   code?: string | null;
   /** The version an Undo of an update DMbot took went back to (#4867). */
   back?: number | null;
@@ -2911,6 +2913,8 @@ export type ApiErrorKind =
   | "expired" // the question is closed (#4857)
   | "cant-check" // DMbot cannot check the names right now (#4857)
   | "not-saved" // the answer was not saved; nothing changed (#4857)
+  | "typed-problem" // a typed name the bot cannot use; its reason says which (#4865)
+  | "typed-refused" // a typed name that is already in the campaign (#4865)
   | "nothing-left-out" // a pick of a newer version that leaves nothing out (#4855)
   | "no-room" // the house rules of the campaign and the set together are over the limit (#4855)
   | "no-clock" // a date was asked for, but the campaign has no game clock to count it on (#4503)
@@ -3138,6 +3142,8 @@ export const safeBackupName = (name: string, fallback: string): string => name.r
 export class ApiError extends Error {
   /** The words the server gave with a refusal, when it gave some (#3275): shown as they are. */
   note?: string;
+  /** The reason a typed name was refused: `empty`, `bar`, `unreadable`, `too long`, `too many words`, `link`, `secret`, `two` or `cant-check` (#4865). */
+  reason?: string;
   constructor(
     readonly kind: ApiErrorKind,
     readonly cueProblems: CueProblem[] = [],
@@ -3346,6 +3352,8 @@ export interface AccountApi {
   heardPick?(ref: string, question: string, index: number): Promise<{ code: string | null }>;
   /** Keep the word as heard; resolves with the code the bot saved (#4857). */
   heardKeep?(ref: string, question: string): Promise<{ code: string | null }>;
+  /** A name typed for a waiting question ("Type it…", #4865); resolves with the code the bot saved (`fixed-new`). */
+  heardType?(ref: string, question: string, name: string): Promise<{ code: string | null }>;
   /** "Only what everyone knows" or "What the party knows" for one message, or Undo of the latter by its change number. `given` is how
    * many things the party gave (null when nothing was copied). */
   answerJoin?(
@@ -3814,6 +3822,8 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   expired: "expired",
   cant_check: "cant-check",
   not_saved: "not-saved",
+  typed_problem: "typed-problem",
+  typed_refused: "typed-refused",
   ambiguous: "ambiguous",
   cannot_write: "cannot-write",
   queue_full: "queue-full",
@@ -4001,7 +4011,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo", "ruleUpdateUndoLast", "heardQuestions", "heardPick", "heardKeep", "packUpdateUndoLast"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo", "ruleUpdateUndoLast", "heardQuestions", "heardPick", "heardKeep", "heardType", "packUpdateUndoLast"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "lorePdf", "lorePdfSend", "lorePdfCount", "lorePdfGo", "lorePdfDrop", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions", "ruleUpdate", "ruleTaken", "packUpdates"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */

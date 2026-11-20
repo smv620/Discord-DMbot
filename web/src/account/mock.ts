@@ -3625,6 +3625,24 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       heardDone.add(question);
       return { code: "fixed" };
     },
+    async heardType(ref, question, name): Promise<{ code: string | null }> {
+      calls.push(`heardType:${ref}:${question}:${name}`);
+      await reachable();
+      signedIn();
+      // Refusals by the words of core's check; a name the campaign already has is refused as already there (#4865).
+      const refuse = (kind: "typed-problem" | "typed-refused", reason?: string): never => {
+        const err = new ApiError(kind);
+        if (reason !== undefined) err.reason = reason;
+        throw err;
+      };
+      if (name.trim() === "") refuse("typed-problem", "empty");
+      if (name.includes("|")) refuse("typed-problem", "bar");
+      if (name.length > 60) refuse("typed-problem", "too long");
+      if (name.trim().split(/\s+/).length > 8) refuse("typed-problem", "too many words");
+      if (name === "Wren") refuse("typed-refused");
+      heardDone.add(question);
+      return { code: "fixed-new" };
+    },
     async heardKeep(ref, question): Promise<{ code: string | null }> {
       calls.push(`heardKeep:${ref}:${question}`);
       await reachable();
