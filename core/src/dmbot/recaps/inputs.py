@@ -147,7 +147,7 @@ def identity_ties(names: Any) -> list[tuple[tuple[str, ...], tuple[str, ...]]]:
 
 
 def recap_people(
-    names: Any, allowed: Collection[str]
+    names: Any, allowed: Collection[str], members: Collection[str] | None = None
 ) -> tuple[dict[str, str], list[str], dict[int, tuple[str, ...]]]:
     """(another spelling -> the story-memory name, every player character, each player's player
     characters) for a recap (#2573). Only the names the recap may use (`allowed`, so never a secret
@@ -180,7 +180,14 @@ def recap_people(
     pcs: list[str] = []
     party: dict[int, list[str]] = {}
     for entity in sorted(entities.values(), key=lambda e: e.name):
-        if entity.played_by and entity.role == "player_character" and entity.name in ok:
+        if (
+            entity.played_by
+            and entity.role == "player_character"
+            and entity.name in ok
+            # (the party as it was at that session, #4537 slice 3b: a later joiner isn't in an old
+            # recap, and one who left after it still is; None: every player character, as before)
+            and (members is None or entity.id in members)
+        ):
             try:
                 player = int(entity.played_by)
             except (TypeError, ValueError):
@@ -241,6 +248,7 @@ async def load_inputs(
     importance: Any | None = None,
     recanted: Collection[str] = (),
     relation_ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]] = (),
+    memory: Any | None = None,
 ) -> Inputs | None:
     """The inputs of the recap of one session, or None when they cannot be loaded (the bot does not
     care why; the one-off tool does: `load_inputs_or_why`)."""
@@ -250,7 +258,7 @@ async def load_inputs(
             clocks=clocks, guild_id=guild_id, campaign_id=campaign_id, session_at=session_at,
             styles=styles, notes=notes, musts=musts, with_earlier=with_earlier,
             importance=importance,
-            recanted=recanted, relation_ties=relation_ties,
+            recanted=recanted, relation_ties=relation_ties, memory=memory,
         )  # fmt: skip
     except NotLoaded:
         return None
@@ -332,6 +340,7 @@ async def load_inputs_or_why(
     importance: Any | None = None,
     recanted: Collection[str] = (),
     relation_ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]] = (),
+    memory: Any | None = None,
 ) -> Inputs:
     campaign = await campaigns.get(guild_id, campaign_id)
     if campaign is None:
@@ -364,7 +373,19 @@ async def load_inputs_or_why(
     ranks = await importance.ranks(guild_id, campaign_id) if importance is not None else {}
     said = said_in(lines)
     allowed_now, secret_now = recap_name_sets(names, said, recanted)
-    aliases, pcs, party = recap_people(names, allowed_now)
+    # The party at this session (`MemoryStore.members_at`, which reads `session_members`, #4537
+    # slice 3b), when the store is given. None (every confirmed player character, as before) when
+    # it can't be read or is empty. Empty means no player character covers the session: with ruling
+    # E an imported session counts everyone made before its import, so that is a campaign with none
+    # at all, or a live session every character joined after. (`Viewer.party_at([])` is today's
+    # party instead: the gate's careful side, where this list only names who the recap is about.)
+    members: list[str] | None = None
+    if memory is not None:
+        try:
+            members = await memory.members_at(guild_id, campaign_id, session_at) or None
+        except Exception as exc:
+            log.warning("Recap: couldn't read the party at the session (%s)", type(exc).__name__)
+    aliases, pcs, party = recap_people(names, allowed_now, members)
     previous = fixed_lines.without(strip_cues(bridge.summary)) if bridge is not None else ""
     familiar = familiar_for(names, allowed_now, lines, previous, aliases)
     return Inputs(
