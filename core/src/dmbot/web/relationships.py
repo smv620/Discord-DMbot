@@ -1259,6 +1259,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "join-",
             "party-",
             "rules-update-",
+            "pack-update-",
             "heard-",
         )
     ):
@@ -1306,7 +1307,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "code": counts.removeprefix("heard:") if counts.startswith("heard:") else None,
             "reason": counts.removeprefix("reason:") if counts.startswith("reason:") else None,
         }
-    if str(got["action"]).startswith("rules-update-"):
+    if str(got["action"]).startswith(("rules-update-", "pack-update-")):
         # a pick of a followed set's changes (#4841 C2): how many were kept and left out, and the
         # id of the day-long undo handle
         counts = str(got.get("counts") or "")
