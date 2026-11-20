@@ -77,6 +77,7 @@ from dmbot.web import (
     npc_pages,
     offers,
     optional_rules,
+    pack_updates,
     party_catch_up,
     party_characters,
     party_record,
@@ -2938,6 +2939,17 @@ def create_app(
         session, _token = signed
         try:
             return {"answer": await rule_updates.queue_undo(db, session, ref, take)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/pack-updates")
+    async def me_campaign_pack_updates(ref: str, signed: Signed) -> dict[str, Any]:
+        """The homebrew packs the campaign follows that have a newer version waiting, and the
+        updates DMbot already took, as the lines of what changed (#4841): DM only."""
+        session, _token = signed
+        try:
+            return await pack_updates.read(db, session, ref)
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
