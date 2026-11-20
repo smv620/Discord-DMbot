@@ -57,6 +57,8 @@ EVERY_ACTION = (
     "party-catch-up",
     "rules-update-pick",  # a followed set's changes, picked from the page (#4841)
     "rules-update-undo",
+    "heard-pick",  # "Did they mean…?" from the page (#4841)
+    "heard-keep",
 )  # fmt: skip
 
 
