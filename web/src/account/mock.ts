@@ -72,10 +72,12 @@ import type {
   NpcPage,
   RuleDecision,
   RuleSharing,
+  HeardQuestions,
+  RuleUpdate,
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, WorldRoadNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion } from "./api";
+import type { PartyRecordCharacter, ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, WorldRoadNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type LorePdf, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
@@ -874,6 +876,21 @@ function mockSourcesOf(id: string): string[] {
   return MOCK_NAME_SOURCES.filter((_, i) => (n + i) % 3 !== 0).map((s) => s.id);
 }
 
+// "Did they mean…?" questions the mock holds (#4857): a pick or a keep takes its question out of the list.
+const HEARD_WAITING: HeardQuestions["questions"] = [
+  {
+    id: "h1",
+    heard: "Vorrun",
+    speaker: "Wren",
+    options: [
+      { index: 0, id: "n1", name: "Vorun" },
+      { index: 2, id: "n2", name: "Vorrin the Tall" },
+    ],
+  },
+  { id: "h2", heard: "Sterling", speaker: null, options: [{ index: 1, id: "n3", name: "Sterling Vale" }] },
+];
+const heardDone = new Set<string>();
+
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const removedClaims = new Map<string, WaitingClaim>(); // answered claims, kept for "Undo all" (#3645)
   const waitingState: Record<string, Waiting> = {}; // (fresh for each pretend API)
@@ -1293,6 +1310,35 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   // "Use what I say and type to improve DMbot" (#1610): on until the person turns it off.
   let improve = true;
   const calls: string[] = [];
+  // The join question's groups per campaign (#4778 part b): made when first read, then changed by the answers.
+  const joinState: Record<string, { group: string; answer: "waiting" | "everyone"; names: string[] }[]> = {};
+  // The party record (#4778 a2): Wren is in the party; Ash left and is out. A leave or a return is one change, with one Undo.
+  const pretendParty = (): PartyRecordCharacter[] => [
+    { id: "p1".repeat(16), name: "Wren", inParty: true, spans: [{ from: 1700000000, to: null, ended: null, session: 2 }] },
+    { id: "p2".repeat(16), name: "Ash", inParty: false, spans: [{ from: 1690000000, to: 1705000000, ended: "left", session: 1 }] },
+  ];
+  let partyState: PartyRecordCharacter[] = pretendParty();
+  // "Catch up" (#4793): who is behind the rest of the party on each entry. n24 has two members behind, n25 one.
+  let catchUpState: Record<string, { id: string; count: number }[]> = {
+    n24: [
+      { id: "p1".repeat(16), count: 1 },
+      { id: "p2".repeat(16), count: 3 },
+    ],
+    n25: [{ id: "p2".repeat(16), count: 2 }],
+    // Two shown and two more left out (the card's "more" line).
+    n26: [
+      { id: "p1".repeat(16), count: 1 },
+      { id: "p2".repeat(16), count: 2 },
+    ],
+  };
+  const catchUpMore: Record<string, number> = { n26: 2 };
+  const catchUpBatches = new Map<number, { entry: string; choice: { id: string; count: number } }>();
+  const partyBatches = new Map<number, PartyRecordCharacter[]>();
+  let lastPartyBatch = 70;
+  const pretendJoinGroups = () => [
+    { group: "e1".repeat(16), answer: "waiting" as const, names: ["Mira"], kind: "join" as const },
+    { group: "e2".repeat(16), answer: "waiting" as const, names: ["Tavin", "Oskar"], kind: "join" as const },
+  ];
   // The kept pictures (#3275): five pretend pictures, each 100 MB; the permanent ones count toward the limit.
   const pictureRows = [
     { code: "pic-1", at: 1791004000, sessionNumber: 2, poster: "Mira", description: "A map of the Brass Ford", permanent: false, isPublic: true },
@@ -1341,6 +1387,10 @@ const SHARING_HERE = [
   { setId: "c".repeat(32), name: "Quick Combat", publisher: "Harbor Nights", version: 1, rules: 2 },
 ];
 const SHARING_CODE = "ABCDEFGHJK";
+// Campaigns whose newer version was picked (#4855): the follow has ended, so no update waits for them any more.
+const pickedRules = new Set<string>();
+let ruleTakes = 0;
+
 function sharingOf(ref: string): RuleSharing {
   const known = sharingState.get(ref);
   if (known) return structuredClone(known);
@@ -3558,6 +3608,128 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       list.splice(at, 1);
       return { batch: change.action === "make" ? 41 : null };
     },
+    // The join question (#4778 part b): two messages, one name and two names. A "party" answer carries its change number (61) and
+    // what the party gave (3); the group with no things to give carries none. A second answer to a group is "gone".
+    async heardQuestions(ref): Promise<HeardQuestions> {
+      calls.push(`heardQuestions:${ref}`);
+      await reachable();
+      signedIn();
+      const questions = HEARD_WAITING.filter((q) => !heardDone.has(q.id)).map((q) => structuredClone(q));
+      return { total: questions.length, questions };
+    },
+    async heardPick(ref, question, index): Promise<{ code: string | null }> {
+      calls.push(`heardPick:${ref}:${question}:${index}`);
+      await reachable();
+      signedIn();
+      heardDone.add(question);
+      return { code: "fixed" };
+    },
+    async heardKeep(ref, question): Promise<{ code: string | null }> {
+      calls.push(`heardKeep:${ref}:${question}`);
+      await reachable();
+      signedIn();
+      heardDone.add(question);
+      return { code: "kept" };
+    },
+    async joinQuestions(ref): Promise<{ group: string; answer: "waiting" | "everyone"; names: string[] }[]> {
+      calls.push(`joinQuestions:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      return structuredClone(joinState[ref] ??= pretendJoinGroups());
+    },
+    async answerJoin(ref, change) {
+      calls.push(`answerJoin:${ref}:${change.action}:${change.action === "undo" ? change.batch : change.group}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      if (change.action === "undo") return { batch: null, given: null };
+      const list = (joinState[ref] ??= pretendJoinGroups());
+      const at = list.findIndex((g) => g.group === change.group);
+      if (at < 0 || (change.action === "everyone" && list[at]!.answer === "everyone")) throw new ApiError("gone");
+      if (change.action === "everyone") {
+        list[at] = { ...list[at]!, answer: "everyone" };
+        return { batch: null, given: null };
+      }
+      const [done] = list.splice(at, 1);
+      return done!.names.length === 2 ? { batch: null, given: null } : { batch: 61, given: 3 };
+    },
+    // The party record (#4778 a2): DM only. A leave of someone not in the party is `not-in-party`; a return of someone in it is `already-back`.
+    async partyRecord(ref) {
+      calls.push(`partyRecord:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      return structuredClone(partyState);
+    },
+    async partyLeave(ref, character, why) {
+      calls.push(`partyLeave:${ref}:${character}:${why}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const c = partyState.find((p) => p.id === character);
+      if (!c) throw new ApiError("not-a-pc");
+      if (!c.inParty) throw new ApiError("not-in-party");
+      partyBatches.set(++lastPartyBatch, structuredClone(partyState));
+      const open = c.spans[c.spans.length - 1];
+      if (open) Object.assign(open, { to: 1710000000, ended: why });
+      c.inParty = false;
+      return { batch: lastPartyBatch };
+    },
+    async partyBack(ref, character) {
+      calls.push(`partyBack:${ref}:${character}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const c = partyState.find((p) => p.id === character);
+      if (!c) throw new ApiError("not-a-pc");
+      if (c.inParty) throw new ApiError("already-back");
+      // Ash is asked what she knows (join); Wren's return asks nothing (none). Either way Undo is offered (core's card).
+      const asked = c.name === "Ash" ? ("join" as const) : ("none" as const);
+      partyBatches.set(++lastPartyBatch, structuredClone(partyState));
+      c.inParty = true;
+      c.spans.push({ from: 1711000000, to: null, ended: null, session: null });
+      return { batch: lastPartyBatch, asked };
+    },
+    // "Catch up" (#4793): DM only. An entry with nothing behind gives no choices; a member who is no longer behind is `nothing-left`.
+    async catchUpChoices(ref, entry) {
+      calls.push(`catchUpChoices:${ref}:${entry}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      return { choices: structuredClone(catchUpState[entry] ?? []), more: catchUpMore[entry] ?? 0 };
+    },
+    async catchUp(ref, member, entry) {
+      calls.push(`catchUp:${ref}:${member}:${entry}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const list = catchUpState[entry] ?? [];
+      const choice = list.find((c) => c.id === member);
+      if (!choice) throw new ApiError("nothing-left");
+      const p = partyState.find((x) => x.id === member);
+      if (p && !p.inParty) throw new ApiError("not-in-party");
+      catchUpState[entry] = list.filter((c) => c.id !== member);
+      const batch = ++lastPartyBatch;
+      catchUpBatches.set(batch, { entry, choice: { ...choice } });
+      return { batch, told: choice.count };
+    },
+    async partyUndo(ref, batch) {
+      calls.push(`partyUndo:${ref}:${batch}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const caught = catchUpBatches.get(batch);
+      if (caught) {
+        catchUpBatches.delete(batch);
+        catchUpState[caught.entry] = [...(catchUpState[caught.entry] ?? []), caught.choice];
+        return;
+      }
+      const before = partyBatches.get(batch);
+      if (!before) throw new ApiError("undo-late");
+      partyBatches.delete(batch);
+      partyState = before;
+    },
     async nameSources(ref): Promise<NameSource[]> {
       calls.push(`nameSources:${ref}`);
       await reachable();
@@ -4060,6 +4232,62 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     // The pretend rule sharing (#2783). Ref endings pick a case: `.rs-player` is a player (refused), `.rs-free` a
     // campaign whose plan does not allow sharing, `.rs-norules` one with no rules of its own, `.rs-offline` a bot
     // that never answers, `.rs-failed` one that refuses. The share code that finds a set is "ABCDEFGHJK".
+    async ruleUpdate(ref): Promise<{ update: RuleUpdate | null }> {
+      calls.push(`ruleUpdate:${ref}`);
+      await reachable();
+      signedIn();
+      // A campaign whose ref ends ".ru-update" (or ".ru-small", with nothing more to list) has a newer version of "Tavern rules"
+      // waiting; the rest have none, and a picked one has none any more (#4855).
+      if (!/\.ru-(update|small)$/.test(ref) || pickedRules.has(ref)) return { update: null };
+      return {
+        update: {
+          name: "Tavern rules",
+          publisher: "The Lantern table",
+          from: 2,
+          to: 3,
+          words: "3 rules and 1 relationship",
+          lines: ["Rule 2 now says a short rest is one hour.", "A new rule on torches.", "Rule 5 is gone."],
+          more: /\.ru-small$/.test(ref) ? 0 : 2,
+        },
+      };
+    },
+    async ruleTaken(ref): Promise<{ taken: RuleUpdate | null }> {
+      calls.push(`ruleTaken:${ref}`);
+      await reachable();
+      signedIn();
+      // A campaign whose ref ends ".ru-taken" has taken "Tavern rules" version 3, from version 2, and can undo it (#4867).
+      if (!/\.ru-taken$/.test(ref)) return { taken: null };
+      return {
+        taken: {
+          name: "Tavern rules",
+          publisher: "The Lantern table",
+          from: 2,
+          to: 3,
+          words: "3 rules and 1 relationship",
+          lines: ["Rule 2 now says a short rest is one hour.", "A new rule on torches.", "Rule 5 is gone."],
+          more: 0,
+        },
+      };
+    },
+    async ruleUpdateUndoLast(ref, version): Promise<{ back: number | null }> {
+      calls.push(`ruleUpdateUndoLast:${ref}:${version}`);
+      await reachable();
+      signedIn();
+      return { back: 2 };
+    },
+    async ruleUpdatePick(ref, version, kept): Promise<{ kept: number; left: number; take: number | null }> {
+      calls.push(`ruleUpdatePick:${ref}:${version}:${kept.join(",")}`);
+      await reachable();
+      signedIn();
+      pickedRules.add(ref);
+      ruleTakes += 1;
+      return { kept: kept.length, left: 3 - kept.length, take: ruleTakes };
+    },
+    async ruleUpdateUndo(ref, take): Promise<void> {
+      calls.push(`ruleUpdateUndo:${ref}:${take}`);
+      await reachable();
+      signedIn();
+    },
     async ruleSharing(ref): Promise<RuleSharing> {
       calls.push(`ruleSharing:${ref}`);
       await reachable();

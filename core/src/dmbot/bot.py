@@ -28,7 +28,7 @@ from collections.abc import (
     Iterable,
     Sequence,
 )
-from dataclasses import replace
+from dataclasses import dataclass, replace
 from difflib import SequenceMatcher
 from functools import partial
 from pathlib import Path
@@ -473,9 +473,11 @@ from dmbot.rules.house_file_link import HouseFileLinkStore
 from dmbot.rules.house_file_queue import HouseFileQueue
 from dmbot.rules.optional import OptionalRule
 from dmbot.rules.pack_suggestions import PackSuggestionStore
+from dmbot.rules.pack_updates import PackUpdateStore
 from dmbot.rules.rule_set_backup import RuleSetsSection
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
 from dmbot.rules.spotter import Mention
+from dmbot.rules.web_updates import RuleTools, TakeStore
 from dmbot.rules.wins import RuleRef, Win, WinsSection, WinsStore
 from dmbot.said_as.recogniser import WorkerRecogniser
 from dmbot.sessions import SavedSession, SessionStore
@@ -592,7 +594,9 @@ from dmbot.ui import (
     name_lists,
     name_pass_undo,
     party_card,
+    party_choose,
     party_join,
+    party_tell,
     player_id,
     recap_audio,
     reveal_card,
@@ -986,6 +990,20 @@ def _fixed(texts: list[str]) -> Callable[[], Awaitable[list[str]]]:
     return read
 
 
+@dataclass(frozen=True, slots=True)
+class HeardAnswer:
+    """What answering a waiting "Did they mean…?" did (`DMBot.answer_waiting_coded`, #4841): the
+    words Discord shows, whether the question is closed, and which case it was, for a page that
+    words its own answer. `code`: kept, fixed, fixed-new, line-kept, expired, gone, only-dm,
+    name-gone, typed-problem, typed-refused, not-saved or cant-check. `reason`: for typed-problem,
+    why (a `name_list` reason, or secret, two or cant-check). Never any of the DM's words."""
+
+    text: str
+    done: bool
+    code: str
+    reason: str = ""
+
+
 class DMBot(RecapFeatures, commands.AutoShardedBot):
     """One process serving the shards in `settings.shards` (one shard by default).
 
@@ -1171,6 +1189,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # The website's Recap style choices (#3060), applied with the stores above.
         self.web_recap_style = web_style.StyleQueue(recaps.db) if recaps is not None else None
         self._web_style_swept: dict[int, float] = {}  # server -> when its queue was last swept
+        self._rule_takes_swept: dict[int, float] = {}  # server -> when its pick handles were swept
         self._avatars_swept: dict[int, float] = {}  # server -> when its avatars were last read
         self._avatar_queue: dict[int, list[int]] = {}  # server -> players left in this sweep
         self.installs = installs  # which servers the bot is in, and when it left (#2163)
@@ -1933,7 +1952,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         )  # the DM's side, #4344
         self.add_dynamic_items(map_question.TakeBackButton, map_question.PosterUndoButton)  # #4344
         self.add_dynamic_items(*party_card.DYNAMIC_ITEMS)  # 🚪 Has left the party, #4537
+        self.add_dynamic_items(*party_tell.DYNAMIC_ITEMS)  # 📖 Catch up's Undo, #4537 4b
         self.add_dynamic_items(*party_join.DYNAMIC_ITEMS)  # the join question, #4537 slice 2b
+        self.add_dynamic_items(*party_choose.DYNAMIC_ITEMS)  # Let me choose, #4537 slice 4c
         self.add_dynamic_items(  # a DM shows or hides a map, #4414
             map_show.CampaignSelect, map_show.MapSelect, map_show.ActButton,
             map_show.BackButton, map_show.UndoButton,
@@ -9294,24 +9315,34 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
     async def answer_waiting_question(
         self, guild_id: int, question_id: int, pick: str, user_id: int, typed: str | None = None
     ) -> tuple[str, bool]:
+        """Discord's answer to a waiting "Did they mean…?": what to tell the DM, and whether the
+        question is now closed. The work is `answer_waiting_coded`, which says the same and also
+        which case it was (the website words its own answer from that code, #4841)."""
+        answered = await self.answer_waiting_coded(guild_id, question_id, pick, user_id, typed)
+        return answered.text, answered.done
+
+    async def answer_waiting_coded(
+        self, guild_id: int, question_id: int, pick: str, user_id: int, typed: str | None = None
+    ) -> HeardAnswer:
         """The DM answered a "Did they mean…?" that waited for the after-session check (#1572):
-        what to tell them, and whether the question is now closed. A name picked (or typed) is
+        what to tell them, whether the question is now closed, and a code for which case it was
+        (`HeardAnswer`; words are never in the code). A name picked (or typed) is
         saved as the campaign's correction, so later sessions write it that way, and is written
         into that one line of the cleaned transcript (never what was heard); **Keep as heard**
         saves the "don't change this" rule. DMs only, checked here on every press; the speaker
         must still be recorded, checked again after every wait."""
         store, memory = self.heard_questions, self.memory
         if store is None or memory is None or self.lookup is None:
-            return name_questions.TYPED_CANT_CHECK, False
+            return HeardAnswer(name_questions.TYPED_CANT_CHECK, False, "cant-check")
         waiting = await store.get(guild_id, question_id)
         if waiting is None:
-            return name_questions.EXPIRED, True
+            return HeardAnswer(name_questions.EXPIRED, True, "expired")
         campaign = await self.campaigns.get(guild_id, waiting.campaign_id)
         if campaign is None or user_id not in campaign.dm_user_ids:
-            return name_questions.ONLY_DM, False
+            return HeardAnswer(name_questions.ONLY_DM, False, "only-dm")
         if not self.consent.has_consent(guild_id, waiting.speaker_id):
             await store.forget_speaker(guild_id, waiting.speaker_id)
-            return name_questions.GONE, True
+            return HeardAnswer(name_questions.GONE, True, "gone")
         heard = waiting.heard
         keep = pick == name_questions.KEEP
         chosen: tuple[str | None, str] | None = None
@@ -9320,25 +9351,32 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if name_key(typed) == name_key(heard):
                 keep = True  # typed just as heard
             else:
-                why = name_questions.typed_problem(typed)
-                if why is not None:
-                    return why, False
+                reason = name_questions.typed_problem_reason(typed)
+                if reason is not None:
+                    return HeardAnswer(
+                        name_questions.TYPED_PROBLEMS[reason], False, "typed-problem", reason
+                    )
                 found = self._known_typed(await self.lookup.get(guild_id, campaign.id), typed)
-                if isinstance(found, str):
-                    return found, False
+                if isinstance(found, str):  # (a secret name, two of one spelling, no check)
+                    why = {
+                        name_questions.TYPED_SECRET: "secret",
+                        name_questions.TYPED_TWO: "two",
+                    }.get(found, "cant-check")
+                    return HeardAnswer(found, False, "typed-problem", why)
                 chosen = found
         elif not keep:
             if not (pick.isdigit() and int(pick) < len(waiting.option_ids)):
-                return name_questions.EXPIRED, False  # a stale button: the question stays
+                # (a stale button: the question stays)
+                return HeardAnswer(name_questions.EXPIRED, False, "expired")
             lookup = await self.lookup.get(guild_id, campaign.id)
             entity_id = waiting.option_ids[int(pick)]
             written = own_name(lookup, entity_id)
             if written is None:  # removed, or made secret, since
                 await store.decide(guild_id, question_id, KEPT, user_id)
-                return name_questions.NAME_GONE, True
+                return HeardAnswer(name_questions.NAME_GONE, True, "name-gone")
             chosen = (entity_id, written)
         if not await store.decide(guild_id, question_id, KEPT if keep else ANSWERED, user_id):
-            return name_questions.EXPIRED, True  # answered on another screen meanwhile
+            return HeardAnswer(name_questions.EXPIRED, True, "expired")  # (answered elsewhere)
         name = ""
         try:
             if chosen is None:
@@ -9354,25 +9392,25 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except MemoryRuleError:
             await store.reopen(guild_id, question_id)
             if chosen is None:  # Keep as heard: nothing about a name
-                return ANSWER_NOT_SAVED, False
+                return HeardAnswer(ANSWER_NOT_SAVED, False, "not-saved")
             if chosen[0] is None:
-                return name_questions.TYPED_REFUSED, False
-            return name_questions.NAME_GONE, True
+                return HeardAnswer(name_questions.TYPED_REFUSED, False, "typed-refused")
+            return HeardAnswer(name_questions.NAME_GONE, True, "name-gone")
         except Exception:
             await store.reopen(guild_id, question_id)
             raise
         self.lookup.mark_stale(guild_id, campaign.id)  # the next line uses the answer
         shown = discord.utils.escape_markdown(heard)
         if chosen is None:
-            return name_questions.kept_text(shown), True
+            return HeardAnswer(name_questions.kept_text(shown), True, "kept")
         fixed = await self._fix_waiting_line(guild_id, campaign.id, waiting, name)
         md = discord.utils.escape_markdown
-        return (
-            name_questions.fixed_text(
-                shown, md(name), line_fixed=fixed, line_kept=not fixed, new=chosen[0] is None
-            ),
-            True,
+        text = name_questions.fixed_text(
+            shown, md(name), line_fixed=fixed, line_kept=not fixed, new=chosen[0] is None
         )
+        if not fixed:  # (the name is saved, the line stays as heard)
+            return HeardAnswer(text, True, "line-kept")
+        return HeardAnswer(text, True, "fixed-new" if chosen[0] is None else "fixed")
 
     async def _fix_waiting_line(
         self, guild_id: int, campaign_id: str, waiting: WaitingQuestion, name: str
@@ -13824,6 +13862,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if store is None or self.memory is None:
             return
         for guild in list(self.guilds):
+            if self._closing:  # (shutting down: nothing is swept or claimed)
+                return
+            now_s = time.monotonic()
+            if (
+                now_s - self._rule_takes_swept.get(guild.id, -LORE_SWEEP_EVERY_S)
+                >= LORE_SWEEP_EVERY_S
+            ):
+                self._rule_takes_swept[guild.id] = now_s  # (the website's pick handles, #4841)
+                await self._sweep_rule_takes(guild.id)
             for _ in range(NAME_ANSWERS_PER_ROUND):
                 # Shutting down: the row is still waiting, so the next start takes it.
                 if self._closing:
@@ -13857,6 +13904,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 ),
                                 reads=self._reads_campaign(guild.id, campaign),
                                 lore_pdfs=self._lore_pdfs(),
+                                rules=self._rule_tools(),
+                                heard=self.answer_waiting_coded,
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -14518,6 +14567,35 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 gone += 1
         if gone:
             log.info("%s staged lore PDFs were cleared", gone)
+
+    def _rule_tools(self) -> RuleTools | None:
+        """What a followed set's pick and its Undo need (#4841): the followed-set store, the memory,
+        Discord's own `settle` and the day-long undo handles. None when a piece is missing: the
+        action then fails and is sent again."""
+        db, sets, memory = self._picture_db, self.rule_sets, self.memory
+        if db is None or sets is None or memory is None:
+            return None
+
+        async def settle(guild_id: int, campaign_id: str) -> None:
+            campaign = await self.campaigns.get(guild_id, campaign_id)
+            if campaign is not None:
+                await set_update.settle(self, campaign)
+
+        packs = sets if isinstance(sets, PackUpdateStore) else None
+        return RuleTools(sets, memory, TakeStore(db), settle, packs, self.homebrew_changed)
+
+    async def _sweep_rule_takes(self, guild_id: int) -> None:
+        """The website's pick undo handles older than a day (#4841); counts only in the log."""
+        db = self._picture_db
+        if db is None:
+            return
+        try:
+            gone = await TakeStore(db).sweep(guild_id)
+        except Exception as exc:
+            log.warning("The rule-pick handles could not be swept: %s", type(exc).__name__)
+            return
+        if gone:
+            log.info("%s website rule-pick undo handles were cleared", gone)
 
     def _lore_pdfs(self) -> LorePdfs:
         """What `lore-pdf-estimate` needs (#4762): the staging bucket, the staged-file table and the

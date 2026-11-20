@@ -1209,6 +1209,20 @@ async def queue_reveal(db: Database, session: Session, ref: str, body: object) -
     )
 
 
+def _catch_choices(counts: str) -> tuple[list[dict[str, Any]], int] | None:
+    """The members "Catch up" has something for and how many more there are that were left out,
+    from the bot's `catch:<id>=<n>,…;more=<k>` answer."""
+    if not counts.startswith("catch:"):
+        return None
+    listed, _, more = counts.removeprefix("catch:").partition(";more=")
+    out: list[dict[str, Any]] = []
+    for pair in listed.split(","):
+        member, _, n = pair.partition("=")
+        if len(member) == 32 and n.isdigit():
+            out.append({"id": member, "count": int(n)})
+    return out, int(more) if more.isdigit() else 0
+
+
 async def read_answer(db: Database, session: Session, ref: str, answer: str) -> dict[str, Any]:
     """Where one of the caller's own connection edits stands: `state` (waiting, working, done,
     failed), the `error` word when it failed, and, when it is done, the pair's `edge` as it now
@@ -1243,6 +1257,10 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "progress-",
             "clue-",
             "join-",
+            "party-",
+            "rules-update-",
+            "pack-update-",
+            "heard-",
         )
     ):
         raise RecapError("not_found")
@@ -1280,15 +1298,50 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "kept": int(counts.removeprefix("kept:")) if counts.startswith("kept:") else None,
             "batch": int(made[0]) if got["state"] == "done" and made else None,
         }
-    if str(got["action"]).startswith("join-"):
-        # the DM's join answer (#4778): how it ended, how many things "What the party knows" gave
-        # (Discord's "the N things the party knew"), and the change it made for the page's Undo
-        made = got.get("resultBatches") or []
+    if str(got["action"]).startswith("heard-"):
+        # a waiting "Did they mean…?" answered (#4841 B1): which case it was, never a word
         counts = str(got.get("counts") or "")
         return {
             "state": got["state"],
             "error": got["error"],
+            "code": counts.removeprefix("heard:") if counts.startswith("heard:") else None,
+            "reason": counts.removeprefix("reason:") if counts.startswith("reason:") else None,
+        }
+    if str(got["action"]).startswith(("rules-update-", "pack-update-")):
+        # a pick of a followed set's changes (#4841 C2): how many were kept and left out, and the
+        # id of the day-long undo handle
+        counts = str(got.get("counts") or "")
+        sized = re.fullmatch(r"picked:(\d+) left:(\d+)", counts)
+        undone = re.fullmatch(r"undone:(\d+)", counts)
+        back = re.fullmatch(r"back:(\d+)", counts)  # the version an update's Undo went back to
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "kept": int(sized[1]) if sized else None,
+            "left": int(sized[2]) if sized else None,
+            "take": int(got["resultId"])
+            if got["state"] == "done" and str(got.get("resultId") or "").isdigit()
+            else None,
+            "mergedKept": int(undone[1]) if undone else None,
+            "back": int(back[1]) if back else None,
+        }
+    if str(got["action"]).startswith(("join-", "party-")):
+        # the DM's join answer (#4778): how it ended, how many things "What the party knows" gave
+        # (Discord's "the N things the party knew"), and the change it made for the page's Undo
+        made = got.get("resultBatches") or []
+        counts = str(got.get("counts") or "")
+        catch = _catch_choices(counts)
+        return {
+            "state": got["state"],
+            "error": got["error"],
             "given": int(counts.removeprefix("given:")) if counts.startswith("given:") else None,
+            # a return: which question now waits for the character ("back", "join" or "none")
+            "asked": counts.removeprefix("asked:") if counts.startswith("asked:") else None,
+            # "Catch up" (#4793): how many things the member was told, and who is missing what
+            # (`[{"id", "count"}]`, ids and counts only: the page names them)
+            "told": int(counts.removeprefix("told:")) if counts.startswith("told:") else None,
+            "choices": None if catch is None else catch[0],
+            "more": None if catch is None else catch[1],
             "batch": int(made[0]) if got["state"] == "done" and made else None,
         }
     if str(got["action"]).startswith("reading-"):

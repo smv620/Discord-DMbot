@@ -12,7 +12,7 @@ export interface QuestionKindWords {
   label: string;
   how: QuestionHow;
   /** For `link`: where it is answered, as a path from the campaign's address, and the words of the link. */
-  to?: "recaps" | "graph" | "names";
+  to?: "recaps" | "graph" | "names" | "maps" | "houserules";
   link?: string;
 }
 
@@ -61,20 +61,24 @@ export const questionsPage = {
     // A lineage or class the lore gives a character the DM has (#3926): asked in Discord only until the website's card.
     traits: { label: "Character details", how: "discord" },
     // DMbot's guesses about places and languages (#4285): checked in Discord until the website's page (slice 1c).
-    world_notes: { label: "World notes", how: "discord" },
+    // With its switch on, the page links to the Names page (#4841 A); the switch decides, see `howFor` in Questions.tsx.
+    world_notes: { label: "World notes", how: "discord", to: "names", link: "Open the Names page" },
     // Story threads the lore holds, to keep or turn down (#4453): in Discord until the website's card.
-    threads: { label: "Story threads to check", how: "discord" },
+    // (#4841 A: a link to the Names page while its switch is on.)
+    threads: { label: "Story threads to check", how: "discord", to: "names", link: "Open the Names page" },
     // What the players know that sounded like a secret (#4524): answered in Discord until the website's card.
     secrets: { label: "Known or secret?", how: "discord" },
     // Characters who joined the party (#4537 slice 2b): answered in Discord for now; the website half is #4778.
     party_joins: { label: "New in the party", how: "discord" },
     // A map a player kept, waiting for a DM's yes (#4344): asked in Discord until the Maps page (#4347).
-    maps: { label: "Maps waiting for your yes", how: "discord" },
+    // (#4841 A: a link to the Maps page while its switch is on.)
+    maps: { label: "Maps waiting for your yes", how: "discord", to: "maps", link: "Open the Maps page" },
     claims: { label: "Facts to check", how: "here", to: "graph", link: "Open the Story Graph" },
     readings: { label: "What people believe", how: "here", to: "graph", link: "Open the Story Graph" },
     plot: { label: "Plot check", how: "link", to: "recaps", link: "Open the recaps" },
     recap_approve: { label: "Recaps to approve", how: "link", to: "recaps", link: "Open the recaps" },
-    rules: { label: "House rule updates", how: "discord" },
+    // A newer version of a followed house-rules set (#4845): a link to the House rules page while its switch is on.
+    rules: { label: "House rule updates", how: "discord", to: "houserules", link: "Open the House rules page" },
   } as Record<string, QuestionKindWords>,
   // A kind the bot counts and this page has no words for yet.
   otherKind: { label: "Other questions", how: "discord" } as QuestionKindWords,
