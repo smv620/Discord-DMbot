@@ -17,9 +17,9 @@ export const heardWords = {
   later: "⏳ Later",
   kept: (heard: string): string => `✅ Got it: DMbot won't change "${cutWords(heard, 60)}" in this campaign.`,
   fixed: (heard: string, name: string): string =>
-    `✅ Got it: "${cutWords(heard, 60)}" is now written ${name}, in that line and from now on in this campaign. Earlier lines stay as heard.`,
+    `✅ Got it: "${cutWords(heard, 60)}" is now written ${cutWords(name, 60)}, in that line and from now on in this campaign. Earlier lines stay as heard.`,
   lineKept: (heard: string, name: string): string =>
-    `✅ Got it: from now on, "${cutWords(heard, 60)}" is written ${name} in this campaign. Earlier lines stay as heard. That line stays as heard.`,
+    `✅ Got it: from now on, "${cutWords(heard, 60)}" is written ${cutWords(name, 60)} in this campaign. Earlier lines stay as heard. That line stays as heard.`,
   gotIt: "✅ Got it.",
   expired: "⌛ This question is closed, so the words stay as heard.",
   gone: "This question is closed: that person stopped being recorded.",

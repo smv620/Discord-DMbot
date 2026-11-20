@@ -8,6 +8,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { ApiError, type AccountApi, type HeardQuestion } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import HeardQuestionsCard from "../src/account/HeardQuestions";
+import { heardWords } from "../src/content/heard-words";
 
 afterEach(() => {
   cleanup();
@@ -169,5 +170,14 @@ describe("Did they mean…? on the Questions page (#4857)", () => {
     fireEvent.click(await screen.findByRole("button", { name: 'Keep "Sterling"' }));
     await waitFor(() => expect(api.calls).toContain(`heardKeep:${REF}:h2`));
     expect(await screen.findByText("✅ All checked. DMbot will ask after a session if it isn't sure of a name.")).toBeTruthy();
+  });
+});
+
+describe("a long name in a saved answer", () => {
+  it("is cut the way core cuts it", () => {
+    const long = "A".repeat(70);
+    const cut = `${"A".repeat(59)}…`;
+    expect(heardWords.fixed("Marin", long)).toContain(`is now written ${cut},`);
+    expect(heardWords.lineKept("Marin", long)).toContain(`is written ${cut} in this campaign`);
   });
 });
