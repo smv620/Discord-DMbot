@@ -338,8 +338,14 @@ def fixed_text(
 
 def typed_problem(typed: str) -> str | None:
     """Why a typed name can't be used, in plain words (the names list's rules), or None."""
-    why = name_list.check_name(typed, TYPED_MAX)
+    why = typed_problem_reason(typed)
     return TYPED_PROBLEMS[why] if why is not None else None
+
+
+def typed_problem_reason(typed: str) -> str | None:
+    """Which rule a typed name breaks (a key of `TYPED_PROBLEMS`), or None: the code a page words
+    its own answer from (#4841), while Discord shows the words of `typed_problem`."""
+    return name_list.check_name(typed, TYPED_MAX)
 
 
 def too_late_text(typed: str) -> str:

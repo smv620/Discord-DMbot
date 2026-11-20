@@ -373,10 +373,12 @@ async def load_inputs_or_why(
     ranks = await importance.ranks(guild_id, campaign_id) if importance is not None else {}
     said = said_in(lines)
     allowed_now, secret_now = recap_name_sets(names, said, recanted)
-    # The party at this session (`MemoryStore.members_at`, #4537 slice 3b), when the store is given.
-    # None (every player character, as before) when it can't be read, and when no stretch covers
-    # the session: a session imported after its characters were made predates every stretch. (The
-    # gate's `Viewer.party_at` with no member is common knowledge only, #4806; this list is names.)
+    # The party at this session (`MemoryStore.members_at`, which reads `session_members`, #4537
+    # slice 3b), when the store is given. None (every confirmed player character, as before) when
+    # it can't be read or is empty. Empty means no player character covers the session: with ruling
+    # E an imported session counts everyone made before its import, so that is a campaign with none
+    # at all, or a live session every character joined after. (The gate's `Viewer.party_at` with no
+    # member is common knowledge only, #4806; this list only names who the recap is about.)
     members: list[str] | None = None
     if memory is not None:
         try:

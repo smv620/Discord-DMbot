@@ -993,6 +993,26 @@ class ThePath(NamesTest):
         labels = [str(getattr(b, "label", "")) for b in view.children]
         self.assertFalse(any("connections" in label for label in labels))
 
+    async def test_a_world_connection_between_names_the_players_know_does_not_say_waits(
+        self,
+    ) -> None:
+        # (#4827: the card read what the players are shown only for a hand-over, so a world
+        # connection said "waits" while ✅ saved it as the players' own)
+        it = self.it()
+        await ui_bg.offer(it, self.campaign.id, Upload(TEXT, "your background"))
+        first = it.response.sent[0][1]["view"]
+        first.knows = "world"  # "Everyone knows it"
+        await first._read(self.it())
+        await self.confirm_all()
+        for entry_id in (await self.ids()).values():  # (the names are shown to the players)
+            await self.memory.set_hidden_from_players(
+                GUILD, self.campaign.id, entry_id, False, source="dm", dm_chose_secret=True
+            )
+        _, view = await self.offer()
+        self.assertTrue(view.current.world)
+        self.assertEqual(view._players(view.current).line, "👁️ Players will see it.")  # not "waits"
+        self.assertTrue(view.shown_ids)
+
     async def test_a_card_whose_name_is_hidden_before_the_press_is_kept_unrevealed(self) -> None:
         await self.read()
         await self.confirm_all()
