@@ -464,19 +464,6 @@ class ActionStore:
             )
             return await cur.fetchone() is not None
 
-    async def rule_pick_made(
-        self, guild_id: int, campaign_id: str, user_id: int, action_id: str
-    ) -> bool:
-        """Whether this DM sent the `rules-update-pick` that made an undo handle (#4841), read
-        again from the queue so the page's Undo is only for the DM who picked."""
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
-                "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s AND id = %s"
-                " AND user_id = %s AND action = 'rules-update-pick' LIMIT 1",
-                (guild_id, campaign_id, action_id, user_id),
-            )
-            return await cur.fetchone() is not None
-
     async def party_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, batch: int
     ) -> tuple[str, str] | None:
@@ -785,9 +772,7 @@ async def apply(
     if action.action in RULE_UPDATE_ACTIONS:
         if rules is None:
             return _failed(FAILED)
-        if actions is None:
-            return _failed(FAILED)
-        return await _rule_update(rules, actions, guild_id, cid, action)
+        return await _rule_update(rules, guild_id, cid, action)
     if action.action in JOIN_ACTIONS:
         if actions is None:
             return _failed(FAILED)
@@ -1286,12 +1271,12 @@ async def _party(
 
 
 NOTHING_LEFT_OUT = "nothing_left_out"  # a pick that keeps every change: the page never takes it
+TOO_MANY = "too_many"  # an update with more changes than the page can list to pick from
+NO_ROOM = "no_room"  # the pick would put the campaign over its house-rule limit (Discord says so)
 PICK_MAX = 50  # changes a pick can name (13 hex digits of the action's text)
 
 
-async def _rule_update(
-    tools: RuleTools, actions: ActionStore, guild_id: int, cid: str, a: Action
-) -> Outcome:
+async def _rule_update(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Outcome:
     """The DM's Pick changes on a followed house-rules set, and its Undo, from the website (#4841
     C2): the same store calls as Discord's `dm_screen/set_update.take` and `UndoView._undo`, so no
     rule is copied. The pick is checked against the version the DM was shown (`changed` if a newer
@@ -1300,7 +1285,7 @@ async def _rule_update(
     DMbot takes it at a session's start. The Undo handle is a row of `web_rule_takes`, for this DM
     only and only the newest, for a day."""
     if a.action == "rules-update-undo":
-        return await _rule_undo(tools, actions, guild_id, cid, a)
+        return await _rule_undo(tools, guild_id, cid, a)
     version_text, _, picks_text = a.text.partition(" ")
     if not (version_text.isdigit() and re.fullmatch(r"[0-9a-f]{1,13}", picks_text)):
         return _failed(GONE)
@@ -1311,7 +1296,9 @@ async def _rule_update(
     if update.offer.version != version:
         return _failed(CHANGED)  # a newer version came after the one the DM looked at
     items = len(update.changes) + len(update.def_changes)
-    if items > PICK_MAX or picks >> items:
+    if items > PICK_MAX:
+        return _failed(TOO_MANY)  # the page lists 50 and says so: pick the rest in Discord
+    if picks >> items:
         return _failed(GONE)
     rules_in = len(update.changes)
     numbers = {c.number for i, c in enumerate(update.changes) if picks >> i & 1}
@@ -1329,29 +1316,34 @@ async def _rule_update(
             return _failed(CHANGED)
         if text in (rule_sets.NOT_FOLLOWING, rule_sets.NOTHING_NEW, rule_sets.NO_SUCH_SET):
             return _failed(GONE)
+        if text == rule_sets.NO_ROOM:
+            return _failed(NO_ROOM)
         return _failed(FAILED)
     except HouseRuleError:
         return _failed(FAILED)
+    # (something is always left out, so the follow always ended: the kept relationships become
+    # the campaign's own, as in Discord's `take`)
     def_batch: int | None = None
-    if taken.merged:  # the follow ended: the kept relationships become the campaign's own
+    if taken.merged:
         done = await set_sync.safely(set_sync.keep_as_own(tools.memory, guild_id, cid, taken))
         def_batch = done.batch if done is not None else None
-    else:
-        await tools.settle(guild_id, cid)
-    saved = await tools.takes.save(guild_id, cid, a.id, taken, def_batch)
-    return Outcome(result_id=str(saved), counts=f"picked:{items - left} left:{left}")
+    counts = f"picked:{items - left} left:{left}"
+    try:
+        saved = await tools.takes.save(guild_id, cid, a.user_id, taken, def_batch)
+    except Exception:  # the pick is done: say so, without an Undo, rather than an error
+        log.exception("A website pick's undo handle could not be saved")
+        return Outcome(counts=counts)
+    return Outcome(result_id=str(saved), counts=counts)
 
 
-async def _rule_undo(
-    tools: RuleTools, actions: ActionStore, guild_id: int, cid: str, a: Action
-) -> Outcome:
+async def _rule_undo(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Outcome:
     """↩️ Undo of a pick: this DM's own, the newest, within the day; else Discord's too-late
     words on the page."""
     if not (a.text.isascii() and a.text.isdigit()) or len(a.text) > 15:
         return _failed(GONE)
     take_id = int(a.text)
     saved = await tools.takes.get(guild_id, cid, take_id)
-    if saved is None or not await actions.rule_pick_made(guild_id, cid, a.user_id, saved.action_id):
+    if saved is None or saved.user_id != a.user_id:
         return _failed(GONE)  # (none, or another DM's pick)
     if not tools.takes.fresh(saved) or await tools.takes.newest_id(guild_id, cid) != take_id:
         return _failed(TOO_LATE)

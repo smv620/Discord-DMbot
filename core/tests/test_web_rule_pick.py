@@ -122,6 +122,14 @@ class PickingChanges(SharingBase):
             await self.takes.newest_id(THURSDAY.id, self.one.id), None
         )  # (the handle goes)
 
+    async def test_the_undo_still_works_after_the_queue_row_was_swept_an_hour_later(self) -> None:
+        done = await self.pick([0])
+        await self.sql("DELETE FROM name_actions")  # (the queue keeps its rows an hour)
+        self.assertEqual((await self.undo(done.result_id)).error, "")
+        row = await self.follow_row()
+        assert row is not None
+        self.assertEqual(row["version"], 1)
+
     async def test_keeping_every_change_is_refused_because_the_page_never_takes_an_update(
         self,
     ) -> None:
@@ -146,7 +154,7 @@ class PickingChanges(SharingBase):
 
     async def test_another_dms_undo_is_refused_and_so_is_one_for_a_made_up_id(self) -> None:
         done = await self.pick([0])
-        await self.sql("UPDATE name_actions SET user_id = %s", BOB.id)  # (picked by someone else)
+        await self.sql("UPDATE web_rule_takes SET user_id = %s", BOB.id)  # (picked by someone else)
         self.assertEqual((await self.undo(done.result_id)).error, wa.GONE)
         self.assertEqual((await self.undo("999999")).error, wa.GONE)
 
@@ -154,7 +162,7 @@ class PickingChanges(SharingBase):
         done = await self.pick([0])
         saved = await self.takes.get(THURSDAY.id, self.one.id, int(done.result_id))
         assert saved is not None
-        newer = await self.takes.save(THURSDAY.id, self.one.id, saved.action_id, saved.taken, None)
+        newer = await self.takes.save(THURSDAY.id, self.one.id, saved.user_id, saved.taken, None)
         self.assertGreater(newer, int(done.result_id))
         self.assertEqual((await self.undo(done.result_id)).error, wa.TOO_LATE)  # (not the newest)
         await self.takes.delete(THURSDAY.id, self.one.id, newer)

@@ -3,9 +3,9 @@ part C, slice C2): the handle that lets its ↩️ Undo work later, and the bund
 passes to the action applier. Discord keeps the result of a take (`rule_sets.Taken`) in the open
 message's view; a website answer cannot hold it, so one row of `web_rule_takes` holds it for a
 day (migration 0562): the campaign's own followed set and the rules a merge added, ids and version
-numbers and rules, no person's data and no story. The row is the DM's own (only they may undo it),
-only the newest one for the campaign may be undone, and the bot's sweep removes any older than a
-day."""
+numbers and rules, no story. The row names the DM who picked (only they may undo it; the pick's
+own queue row is swept after an hour, so it cannot say), only the newest one for the campaign may
+be undone, and the bot's sweep removes any older than a day."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ TAKE_LIFE_S = 24 * 60 * 60  # an undo handle lasts a day; the page says so
 @dataclass(frozen=True, slots=True)
 class SavedTake:
     id: int
-    action_id: str
+    user_id: int
     taken: rule_sets.Taken
     def_batch: int | None
     created_at: int
@@ -43,15 +43,15 @@ class TakeStore:
         self._now = clock
 
     async def save(
-        self, guild_id: int, campaign_id: str, action_id: str, taken: rule_sets.Taken,
+        self, guild_id: int, campaign_id: str, user_id: int, taken: rule_sets.Taken,
         def_batch: int | None,
     ) -> int:  # fmt: skip
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "INSERT INTO web_rule_takes (guild_id, campaign_id, action_id, taken, def_batch,"
+                "INSERT INTO web_rule_takes (guild_id, campaign_id, user_id, taken, def_batch,"
                 " created_at) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
                 (
-                    guild_id, campaign_id, action_id, Jsonb(rule_sets.taken_to_json(taken)),
+                    guild_id, campaign_id, user_id, Jsonb(rule_sets.taken_to_json(taken)),
                     def_batch, int(self._now()),
                 ),
             )  # fmt: skip
@@ -62,7 +62,7 @@ class TakeStore:
     async def get(self, guild_id: int, campaign_id: str, take_id: int) -> SavedTake | None:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
-                "SELECT id, action_id, taken, def_batch, created_at FROM web_rule_takes"
+                "SELECT id, user_id, taken, def_batch, created_at FROM web_rule_takes"
                 " WHERE guild_id = %s AND campaign_id = %s AND id = %s",
                 (guild_id, campaign_id, take_id),
             )
@@ -70,7 +70,7 @@ class TakeStore:
         if row is None:
             return None
         return SavedTake(
-            int(row["id"]), str(row["action_id"]), rule_sets.taken_from_json(row["taken"]),
+            int(row["id"]), int(row["user_id"]), rule_sets.taken_from_json(row["taken"]),
             None if row["def_batch"] is None else int(row["def_batch"]), int(row["created_at"]),
         )  # fmt: skip
 

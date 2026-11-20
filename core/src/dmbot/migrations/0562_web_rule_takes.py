@@ -18,12 +18,13 @@ from dmbot.migrations._shared import _isolate
 # `web_rule_takes` is that handle: what Discord keeps in the open message's view (the `Taken` of
 # one take: the copy before, the rules added, the kept definitions) so ↩️ Undo can put it back. A
 # website answer cannot hold it (the answer's counts are 200 characters), so one row holds it for a
-# day: ids, version numbers and the campaign's own followed set, rules only. No column names a
-# person: `action_id` is the queue row of the pick, whose own `user_id` (cleared with the person's
-# queue, 0431) says who picked, so the Undo is for that DM only and for the newest take. Rows
-# older than a day are swept by the bot. Forced row-level security, the foreign key `ON UPDATE
-# CASCADE` on the campaign, deleted with it, not in a backup (a restored campaign has nothing to
-# undo). The table is written and read by the bot alone: no web door.
+# day: ids, version numbers and the campaign's own followed set, rules only. `user_id` is the DM
+# who picked, so the Undo is for that DM only (the queue row of the pick is swept after an hour, so
+# it cannot say), and only for the newest take. Rows older than a day are swept by the bot, which
+# is how the id goes ("delete my data" is covered by that day, #4148's catalog says so). Forced
+# row-level security, the foreign key `ON UPDATE CASCADE` on the campaign, deleted with it, not in
+# a backup (a restored campaign has nothing to undo). The table is written and read by the bot
+# alone: no web door.
 #
 # The queue door's lists, shape check and the table's action list are read back as they are and
 # each anchor must be found exactly once, so a drift stops the migration.
@@ -116,7 +117,7 @@ SQL = (
         FOREIGN KEY (campaign_id, guild_id)
             REFERENCES campaigns (id, guild_id) ON DELETE CASCADE ON UPDATE CASCADE,
         id          BIGINT GENERATED ALWAYS AS IDENTITY,
-        action_id   TEXT NOT NULL CHECK (action_id ~ '^[0-9a-f]{32}$'),
+        user_id     BIGINT NOT NULL CHECK (user_id > 0),
         taken       JSONB NOT NULL,
         def_batch   BIGINT,
         created_at  BIGINT NOT NULL CHECK (created_at > 0),
