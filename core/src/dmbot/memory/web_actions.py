@@ -165,6 +165,7 @@ PARTY_ACTIONS = (
     "party-catch-up-choices",
     "party-catch-up",
 )  # who is in the party (#4778)
+HEARD_ACTIONS = ("heard-pick", "heard-keep")  # "Did they mean…?" from the page (#4841 B)
 RULE_UPDATE_ACTIONS = ("rules-update-pick", "rules-update-undo")  # a followed set's pick (#4841)
 # The story threads DMbot found in an upload (#4457, quests slice 1): the same store calls as
 # Discord's 📜 card, so each keep is one change and one Undo.
@@ -731,6 +732,7 @@ async def apply(
     game_now: GameNowFn | None = None,
     lore_pdfs: lore_pdfs_mod.LorePdfs | None = None,
     rules: RuleTools | None = None,
+    heard: HeardFn | None = None,
 ) -> Outcome:
     """Do one action the way Discord's name card does. Nothing here logs the DM's words."""
     if action.action in MAPS_PAGE_ACTIONS:
@@ -769,6 +771,10 @@ async def apply(
         if actions is None:
             return _failed(FAILED)
         return await _party(memory, actions, guild_id, cid, action)
+    if action.action in HEARD_ACTIONS:
+        if heard is None:
+            return _failed(FAILED)
+        return await _heard(heard, guild_id, action)
     if action.action in RULE_UPDATE_ACTIONS:
         if rules is None:
             return _failed(FAILED)
@@ -1268,6 +1274,41 @@ async def _party(
     return Outcome(
         counts=f"asked:{waiting or 'none'}", batches=(back.batch,) if back.batch is not None else ()
     )
+
+
+# "Did they mean…?" answered from the page: the bot's own function (`DMBot.answer_waiting_coded`),
+# given the guild, the question's id, the pick ("keep" or an index) and the DM; what comes back has
+# `code`, `done` and `reason` (never a word of the DM's).
+HeardFn = Callable[[int, int, str, int], Awaitable[Any]]
+HEARD_OK = frozenset({"kept", "fixed", "fixed-new", "line-kept"})  # the answer was saved
+KEEP_PICK = "keep"  # `transcript.questions.KEEP`: the pick that keeps the words as heard
+
+
+async def _heard(heard: HeardFn, guild_id: int, a: Action) -> Outcome:
+    """The DM's answer to one waiting "Did they mean…?" from the page (#4841 B1): the same
+    function as Discord's buttons, which checks the DM, the speaker's consent and the names again.
+    A saved answer is its code in the counts ("heard:fixed"); anything else is the code as the
+    error word (`only_dm`, `name_gone`, `expired`…), with a typed problem's reason in the counts.
+    Nothing here logs a word."""
+    question, _, index = a.text.partition(" ")
+    if not (question.isdigit() and len(question) <= 15):
+        return _failed(GONE)
+    if a.action == "heard-keep":
+        pick = KEEP_PICK
+    elif index.isdigit() and len(index) == 1:
+        pick = index
+    else:
+        return _failed(GONE)
+    try:
+        got = await heard(guild_id, int(question), pick, a.user_id)
+    except Exception:
+        log.exception("A website answer to a waiting question failed")
+        return _failed(FAILED)
+    code = str(got.code)
+    if code in HEARD_OK:
+        return Outcome(counts=f"heard:{code}")
+    reason = str(got.reason) if code == "typed-problem" and got.reason else ""
+    return Outcome(error=code.replace("-", "_"), counts=f"reason:{reason}" if reason else "")
 
 
 NOTHING_LEFT_OUT = "nothing_left_out"  # a pick that keeps every change: the page never takes it

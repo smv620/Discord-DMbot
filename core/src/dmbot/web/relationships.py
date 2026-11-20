@@ -1259,6 +1259,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "join-",
             "party-",
             "rules-update-",
+            "heard-",
         )
     ):
         raise RecapError("not_found")
@@ -1295,6 +1296,15 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "error": got["error"],
             "kept": int(counts.removeprefix("kept:")) if counts.startswith("kept:") else None,
             "batch": int(made[0]) if got["state"] == "done" and made else None,
+        }
+    if str(got["action"]).startswith("heard-"):
+        # a waiting "Did they mean…?" answered (#4841 B1): which case it was, never a word
+        counts = str(got.get("counts") or "")
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "code": counts.removeprefix("heard:") if counts.startswith("heard:") else None,
+            "reason": counts.removeprefix("reason:") if counts.startswith("reason:") else None,
         }
     if str(got["action"]).startswith("rules-update-"):
         # a pick of a followed set's changes (#4841 C2): how many were kept and left out, and the
