@@ -1282,6 +1282,7 @@ class RecapFeatures:
             importance=self.importance,
             recanted=await self._recanted(gid, cid, job.session_at),
             relation_ties=await self._relation_ties(gid, cid),
+            memory=self.memory,  # (the party at that session, #4537 slice 3b)
             # The earlier session is read for the split stage only, at the start of a try.
             with_earlier=job.split is None and job.window_done == 0,
         )
@@ -1289,7 +1290,7 @@ class RecapFeatures:
         if found is None:
             return None
         # The open threads and the earlier accepted recaps are context for the writer (#2954).
-        threads = await self._open_threads(gid, cid)
+        threads = await self._open_threads(gid, cid, job.session_at)
         story = await story_so_far(
             AcceptedStore(self.recaps.db),
             gid,
@@ -1364,7 +1365,7 @@ class RecapFeatures:
                     continue
                 names[name_entry.entity_id] = name_entry.text  # (the spelling the beat used)
                 place_ids.append(name_entry.entity_id)
-        return await self.memory.recap_colour(gid, cid, place_ids, names)
+        return await self.memory.recap_colour(gid, cid, place_ids, names, job.session_at)
 
     async def recap_reveals(self, gid: int, cid: str, job: Job) -> list[str]:
         """This session's partial reveals as the sentences the writer cites (#4737,
@@ -1382,7 +1383,8 @@ class RecapFeatures:
         }
         if not at_session:
             return []
-        seen = await self.memory.visible_to(gid, cid, gate.Viewer.the_party())
+        # (threads that matter: what the party at that session knew, #4537 slice 3b, §8)
+        seen = await self.memory.visible_to_party_at(gid, cid, job.session_at)
         mattering: set[str] = set()
         for t in await self.memory.threads(gid, cid):
             if (
@@ -2660,7 +2662,9 @@ class RecapFeatures:
             return ()
         return tuple((c.subject, c.object) for c in found)
 
-    async def _open_threads(self, gid: int, cid: str) -> tuple[str, ...]:
+    async def _open_threads(
+        self, gid: int, cid: str, session_at: int | None = None
+    ) -> tuple[str, ...]:
         """The names of the story threads still open (not resolved or abandoned), for PlotBot's
         guide to a writer that reads the transcript (#2590). Names only; none if they can't be
         read (the guide is then shorter, nothing else changes)."""
@@ -2677,7 +2681,12 @@ class RecapFeatures:
         # to the table). Asked of the one gate, never of the old flags (#2995): the viewer is "what
         # every player character knows", so a limited or hidden thread is not among them.
         try:
-            seen = await self.memory.visible_to(gid, cid, gate.Viewer.the_party())
+            # (the party as it was at that session, #4537 slice 3b, §8; else today's)
+            seen = (
+                await self.memory.visible_to_party_at(gid, cid, session_at)
+                if session_at is not None
+                else await self.memory.visible_to(gid, cid, gate.Viewer.the_party())
+            )
         except Exception:
             log.exception("Recap: couldn't ask what the party knows of the story threads")
             return ()
