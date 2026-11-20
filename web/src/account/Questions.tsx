@@ -22,12 +22,13 @@ import { HEARD_LIVE } from "../content/heard-switch";
 import { WORLD_NOTES_LIVE } from "../content/world-notes-switch";
 import { THREADS_LIVE } from "../content/threads-switch";
 import { MAPS_LIVE } from "../content/maps-switch";
+import { RULE_UPDATES_LIVE } from "../content/rule-updates-switch";
 import QuestionsHere, { groupOf, type HereGroup } from "./QuestionsHere";
 
 /** The bot counts every minute or so: five minutes without a count and the numbers are said to be old. */
 export const CATCHING_UP_SECONDS = 300;
 
-function href(ref: string, to: "recaps" | "graph" | "names" | "maps"): string {
+function href(ref: string, to: "recaps" | "graph" | "names" | "maps" | "houserules"): string {
   const e = encodeURIComponent(ref);
   return to === "recaps"
     ? `/account/recaps?campaign=${e}`
@@ -35,7 +36,9 @@ function href(ref: string, to: "recaps" | "graph" | "names" | "maps"): string {
       ? `/account/web/${e}`
       : to === "maps"
         ? `/account/maps/${e}`
-        : `/account/names/${e}`;
+        : to === "houserules"
+          ? `/account/house-rules/${e}`
+          : `/account/names/${e}`;
 }
 
 /** Oldest question first; a kind with no time keeps its place after those that have one. */
@@ -78,6 +81,8 @@ function howFor(kind: string, api: AccountApi): QuestionHow {
   if (kind === "world_notes") return WORLD_NOTES_LIVE ? "link" : "discord";
   if (kind === "threads") return THREADS_LIVE ? "link" : "discord";
   if (kind === "maps") return MAPS_LIVE ? "link" : "discord";
+  // A newer version of a followed house-rules set (#4845): a link to the House rules page while its switch is on.
+  if (kind === "rules") return RULE_UPDATES_LIVE ? "link" : "discord";
   const how = kindWords(kind).how;
   if (how !== "here") return how;
   const group = groupOf(kind);

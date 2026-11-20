@@ -654,6 +654,22 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       const got = await partyAnswer(ref, await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/catch-up`, { member, entry }));
       return { batch: got.batch ?? null, told: got.told ?? null };
     },
+    // A pick of a newer version of a followed set (#4855): queued for the bot; waits for its answer, which has the counts and the id
+    // for Undo. A refusal comes back as the bot's word (`changed`, `gone`, `no_room`, `too_many`, ...).
+    ruleUpdatePick: async (ref, version, kept) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/rule-update/pick`, { version, kept })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { kept: got.kept ?? kept.length, left: got.left ?? 0, take: typeof got.take === "number" ? got.take : null };
+    },
+    // Undo of a pick (#4855): queued for the bot, and this waits for its answer (`too_late` past the day).
+    ruleUpdateUndo: async (ref, take) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/rule-update/${encodeURIComponent(String(take))}/undo`, {})) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
     partyUndo: async (ref, batch) => {
       await partyAnswer(ref, await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/party-record/${encodeURIComponent(String(batch))}/undo`));
     },

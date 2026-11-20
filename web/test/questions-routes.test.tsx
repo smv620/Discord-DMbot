@@ -10,7 +10,7 @@ import Questions from "../src/account/Questions";
 import { kindWords, questionsPage as w } from "../src/content/questions-words";
 import type { QuestionCounts } from "../src/account/api";
 
-const sw = vi.hoisted(() => ({ worldNotes: false, threads: false, maps: false, heard: false }));
+const sw = vi.hoisted(() => ({ worldNotes: false, threads: false, maps: false, heard: false, rules: false }));
 // The page itself is on here; the three kinds' own switches are set per test.
 vi.mock("../src/content/questions-switch", () => ({ QUESTIONS_LIVE: true }));
 vi.mock("../src/content/world-notes-switch", () => ({
@@ -28,6 +28,11 @@ vi.mock("../src/content/heard-switch", () => ({
     return sw.heard;
   },
 }));
+vi.mock("../src/content/rule-updates-switch", () => ({
+  get RULE_UPDATES_LIVE() {
+    return sw.rules;
+  },
+}));
 vi.mock("../src/content/maps-switch", () => ({
   get MAPS_LIVE() {
     return sw.maps;
@@ -40,6 +45,7 @@ afterEach(() => {
   sw.threads = false;
   sw.maps = false;
   sw.heard = false;
+  sw.rules = false;
 });
 
 const now = Math.floor(Date.now() / 1000);
@@ -113,6 +119,17 @@ describe("the Questions page links the kinds answered on another page (#4841 A)"
     sw.heard = false;
     const off = await lineFor("heard");
     expect(within(off).queryByRole("button", { name: /Answer them here/ })).toBeNull();
+    expect(within(off).getByText(w.discord)).toBeTruthy();
+  });
+
+  it("house rule updates link to the House rules page while the switch is on, else say how in Discord", async () => {
+    sw.rules = true;
+    const on = await lineFor("rules");
+    expect(within(on).getByRole("link", { name: "Open the House rules page" }).getAttribute("href")).toBe(`/account/house-rules/${encodeURIComponent(REF)}`);
+    cleanup();
+    sw.rules = false;
+    const off = await lineFor("rules");
+    expect(within(off).queryByRole("link")).toBeNull();
     expect(within(off).getByText(w.discord)).toBeTruthy();
   });
 });

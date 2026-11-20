@@ -476,6 +476,7 @@ from dmbot.rules.pack_suggestions import PackSuggestionStore
 from dmbot.rules.rule_set_backup import RuleSetsSection
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
 from dmbot.rules.spotter import Mention
+from dmbot.rules.web_updates import RuleTools, TakeStore
 from dmbot.rules.wins import RuleRef, Win, WinsSection, WinsStore
 from dmbot.said_as.recogniser import WorkerRecogniser
 from dmbot.sessions import SavedSession, SessionStore
@@ -1187,6 +1188,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # The website's Recap style choices (#3060), applied with the stores above.
         self.web_recap_style = web_style.StyleQueue(recaps.db) if recaps is not None else None
         self._web_style_swept: dict[int, float] = {}  # server -> when its queue was last swept
+        self._rule_takes_swept: dict[int, float] = {}  # server -> when its pick handles were swept
         self._avatars_swept: dict[int, float] = {}  # server -> when its avatars were last read
         self._avatar_queue: dict[int, list[int]] = {}  # server -> players left in this sweep
         self.installs = installs  # which servers the bot is in, and when it left (#2163)
@@ -13849,6 +13851,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if store is None or self.memory is None:
             return
         for guild in list(self.guilds):
+            if self._closing:  # (shutting down: nothing is swept or claimed)
+                return
+            now_s = time.monotonic()
+            if (
+                now_s - self._rule_takes_swept.get(guild.id, -LORE_SWEEP_EVERY_S)
+                >= LORE_SWEEP_EVERY_S
+            ):
+                self._rule_takes_swept[guild.id] = now_s  # (the website's pick handles, #4841)
+                await self._sweep_rule_takes(guild.id)
             for _ in range(NAME_ANSWERS_PER_ROUND):
                 # Shutting down: the row is still waiting, so the next start takes it.
                 if self._closing:
@@ -13882,6 +13893,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 ),
                                 reads=self._reads_campaign(guild.id, campaign),
                                 lore_pdfs=self._lore_pdfs(),
+                                rules=self._rule_tools(),
+                                heard=self.answer_waiting_coded,
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -14543,6 +14556,34 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 gone += 1
         if gone:
             log.info("%s staged lore PDFs were cleared", gone)
+
+    def _rule_tools(self) -> RuleTools | None:
+        """What a followed set's pick and its Undo need (#4841): the followed-set store, the memory,
+        Discord's own `settle` and the day-long undo handles. None when a piece is missing: the
+        action then fails and is sent again."""
+        db, sets, memory = self._picture_db, self.rule_sets, self.memory
+        if db is None or sets is None or memory is None:
+            return None
+
+        async def settle(guild_id: int, campaign_id: str) -> None:
+            campaign = await self.campaigns.get(guild_id, campaign_id)
+            if campaign is not None:
+                await set_update.settle(self, campaign)
+
+        return RuleTools(sets, memory, TakeStore(db), settle)
+
+    async def _sweep_rule_takes(self, guild_id: int) -> None:
+        """The website's pick undo handles older than a day (#4841); counts only in the log."""
+        db = self._picture_db
+        if db is None:
+            return
+        try:
+            gone = await TakeStore(db).sweep(guild_id)
+        except Exception as exc:
+            log.warning("The rule-pick handles could not be swept: %s", type(exc).__name__)
+            return
+        if gone:
+            log.info("%s website rule-pick undo handles were cleared", gone)
 
     def _lore_pdfs(self) -> LorePdfs:
         """What `lore-pdf-estimate` needs (#4762): the staging bucket, the staged-file table and the
