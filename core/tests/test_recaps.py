@@ -485,9 +485,22 @@ class TheProse(unittest.TestCase):
         )
         self.assertTrue(any("one music prompt" in p for p in prose_problems(music="1. Strings.")))
 
-    def test_a_music_prompt_never_names_a_game_a_composer_or_a_soundtrack(self) -> None:
-        music = "1. In the style of Hans Zimmer, strings.\n2. Soft drones."
-        self.assertTrue(any("names a game" in p for p in prose_problems(music=music)))
+    def test_a_music_prompt_is_never_refused_for_the_words_it_uses(self) -> None:
+        # (owner, 2026-11-20, #4851: those words are ordinary ones, so the writer is asked to
+        # avoid them but no draft is refused, retried or graded down for them)
+        for music in (
+            "1. In the style of Hans Zimmer, strings.\n2. Soft drones.",
+            "1. A quiet soundtrack of low strings.\n2. The composer's slow harp, under a voice.",
+            "1. Warm winds, like a Zelda forest.\n2. Soft drones.",
+        ):
+            self.assertEqual(prose_problems(music=music), [], music)
+
+    def test_the_writer_is_still_told_never_to_name_a_game_or_a_composer(self) -> None:
+        self.assertIn(
+            "Never name a game, a composer, a film or a soundtrack, and never say "
+            '"in the style of".',
+            " ".join(rd.PROSE_SYSTEM.split()),
+        )
 
     def test_a_long_music_prompt_is_shortened_at_a_word_end_in_code_never_refused(self) -> None:
         long = "Slow strings " * 40
