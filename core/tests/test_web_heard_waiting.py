@@ -38,7 +38,7 @@ class HeardOnTheWeb(Listing):
         )
         self.maren = await self.add("Maren", "character", role="npc")
         self.marron = await self.add("Marron", "character", role="npc")
-        self.asked: list[tuple[int, int, str, int]] = []
+        self.asked: list[tuple[int, int, str, int, str | None]] = []
         self.answers = [SimpleNamespace(code="fixed", done=True, reason="")]
 
     async def ask(self, options: list[str], at: int = 1000, heard: str = "Marin") -> None:
@@ -47,8 +47,10 @@ class HeardOnTheWeb(Listing):
             [Unanswered(PLAYER, MS + at, heard, tuple(options))],
         )  # fmt: skip
 
-    async def fake_heard(self, guild_id: int, question: int, pick: str, user_id: int) -> Any:
-        self.asked.append((guild_id, question, pick, user_id))
+    async def fake_heard(
+        self, guild_id: int, question: int, pick: str, user_id: int, typed: str | None
+    ) -> Any:
+        self.asked.append((guild_id, question, pick, user_id, typed))
         return self.answers.pop(0)
 
     async def read(self, who: Any = None) -> dict[str, Any]:
@@ -165,7 +167,10 @@ class HeardOnTheWeb(Listing):
         self.answers = [SimpleNamespace(code="kept", done=True, reason="")]
         (kept,) = await self.asking()
         self.assertEqual(kept.counts, "heard:kept")
-        self.assertEqual(self.asked, [(self.g, 7, "1", ALICE.id), (self.g, 7, "keep", ALICE.id)])
+        self.assertEqual(
+            self.asked,
+            [(self.g, 7, "1", ALICE.id, None), (self.g, 7, "keep", ALICE.id, None)],
+        )
 
     async def test_a_refused_answer_is_its_code_as_the_error_and_the_answer_read_says_so(
         self,
@@ -186,3 +191,58 @@ class HeardOnTheWeb(Listing):
                 await heard_waiting.queue_pick(self.web, self.session, self.cref, body)
             self.assertEqual(err.exception.code, "bad_action")
         self.assertEqual(await self.asking(), [])
+
+    async def test_a_typed_name_goes_to_the_bots_function_and_a_problem_is_its_reason(self) -> None:
+        answer = await heard_waiting.queue_type(
+            self.web, self.session, self.cref, {"question": "7", "name": "  Marin   Vale "}
+        )
+        self.answers = [SimpleNamespace(code="typed-problem", done=False, reason="bar")]
+        (done,) = await self.asking()
+        # The door trims and collapses the spaces; the words are never in the outcome.
+        self.assertEqual(self.asked, [(self.g, 7, "type", ALICE.id, "Marin Vale")])
+        self.assertEqual((done.error, done.counts), ("typed_problem", "reason:bar"))
+        read = await relationships.read_answer(self.web, self.session, self.cref, answer)
+        self.assertEqual(
+            (read["state"], read["error"], read["code"], read["reason"]),
+            ("failed", "typed_problem", None, "bar"),
+        )
+        self.assertNotIn("Marin", str(read))
+
+    async def test_a_typed_name_that_is_saved_is_its_code(self) -> None:
+        await heard_waiting.queue_type(
+            self.web, self.session, self.cref, {"question": "7", "name": "Marin"}
+        )
+        self.answers = [SimpleNamespace(code="fixed-new", done=True, reason="")]
+        (done,) = await self.asking()
+        self.assertEqual((done.error, done.counts), ("", "heard:fixed-new"))
+
+    async def test_an_empty_name_still_reaches_the_bot_and_a_bad_body_does_not(self) -> None:
+        await heard_waiting.queue_type(
+            self.web, self.session, self.cref, {"question": "7", "name": "   "}
+        )
+        self.answers = [SimpleNamespace(code="typed-problem", done=False, reason="empty")]
+        (done,) = await self.asking()
+        self.assertEqual((done.error, done.counts), ("typed_problem", "reason:empty"))
+        self.assertEqual(self.asked[-1][4], "")
+        long_name = "x" * 85
+        bodies: list[object] = [
+            {"question": "x", "name": "Marin"},
+            {"question": "7"},
+            {"question": "7", "name": 5},
+            {"question": "7", "name": long_name},
+            "Marin",
+        ]
+        for body in bodies:
+            with self.assertRaises(RecapError) as err:
+                await heard_waiting.queue_type(self.web, self.session, self.cref, body)
+            self.assertEqual(err.exception.code, "bad_action")
+        self.assertEqual(await self.asking(), [])
+
+    async def test_the_longest_shown_name_is_let_through_for_the_bot_to_judge(self) -> None:
+        await heard_waiting.queue_type(
+            self.web, self.session, self.cref, {"question": "7", "name": "y" * 84}
+        )
+        self.answers = [SimpleNamespace(code="typed-problem", done=False, reason="too-long")]
+        (done,) = await self.asking()
+        self.assertEqual(done.counts, "reason:too-long")
+        self.assertEqual(len(str(self.asked[-1][4])), 84)

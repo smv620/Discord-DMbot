@@ -59,6 +59,7 @@ EVERY_ACTION = (
     "rules-update-undo",
     "heard-pick",  # "Did they mean…?" from the page (#4841)
     "heard-keep",
+    "heard-type",  # "Type it…" from the page (#4841)
 )  # fmt: skip
 
 

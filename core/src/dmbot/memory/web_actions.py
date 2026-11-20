@@ -165,7 +165,11 @@ PARTY_ACTIONS = (
     "party-catch-up-choices",
     "party-catch-up",
 )  # who is in the party (#4778)
-HEARD_ACTIONS = ("heard-pick", "heard-keep")  # "Did they mean…?" from the page (#4841 B)
+HEARD_ACTIONS = (
+    "heard-pick",
+    "heard-keep",
+    "heard-type",
+)  # "Did they mean…?" from the page (#4841 B)
 RULE_UPDATE_ACTIONS = ("rules-update-pick", "rules-update-undo")  # a followed set's pick (#4841)
 # The story threads DMbot found in an upload (#4457, quests slice 1): the same store calls as
 # Discord's 📜 card, so each keep is one change and one Undo.
@@ -1279,9 +1283,10 @@ async def _party(
 # "Did they mean…?" answered from the page: the bot's own function (`DMBot.answer_waiting_coded`),
 # given the guild, the question's id, the pick ("keep" or an index) and the DM; what comes back has
 # `code`, `done` and `reason` (never a word of the DM's).
-HeardFn = Callable[[int, int, str, int], Awaitable[Any]]
+HeardFn = Callable[[int, int, str, int, str | None], Awaitable[Any]]
 HEARD_OK = frozenset({"kept", "fixed", "fixed-new", "line-kept"})  # the answer was saved
 KEEP_PICK = "keep"  # `transcript.questions.KEEP`: the pick that keeps the words as heard
+TYPE_PICK = "type"  # `transcript.questions.TYPE`: the pick that comes with a typed name
 
 
 async def _heard(heard: HeardFn, guild_id: int, a: Action) -> Outcome:
@@ -1293,15 +1298,19 @@ async def _heard(heard: HeardFn, guild_id: int, a: Action) -> Outcome:
     question, _, index = a.text.partition(" ")
     if not (question.isdigit() and len(question) <= 15):
         return _failed(GONE)
+    typed: str | None = None
     if a.action == "heard-keep":
         pick = KEEP_PICK
+    elif a.action == "heard-type":
+        pick, typed = TYPE_PICK, index  # the typed name is checked by the bot, never here
     elif index.isdigit() and len(index) == 1:
         pick = index
     else:
         return _failed(GONE)
     try:
-        got = await heard(guild_id, int(question), pick, a.user_id)
+        got = await heard(guild_id, int(question), pick, a.user_id, typed)
     except Exception:
+        # (`log.exception` writes the traceback, never the typed words: they are not in a message)
         log.exception("A website answer to a waiting question failed")
         return _failed(FAILED)
     code = str(got.code)

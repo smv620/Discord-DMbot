@@ -73,3 +73,23 @@ async def queue_keep(db: Database, session: Session, ref: str, body: object) -> 
     return await relationships._queue(
         db, session, ref, entity=None, action="heard-keep", target="", text=question, flag=False
     )
+
+
+TYPED_SHOWN_MAX = 84  # what the queue's text limit leaves after the id; the bot says "too long"
+
+
+async def queue_type(db: Database, session: Session, ref: str, body: object) -> str:
+    """ "Type it…": `{"question": <id>, "name": <what the DM typed>}`. Only the shape is checked
+    here (a text, at most what the queue can hold); whether it is a name DMbot can use is the
+    bot's own check, which answers with a reason the page words. The typed words go to the queue
+    and nowhere else: not a log, not an answer."""
+    question = body.get("question") if isinstance(body, dict) else None
+    typed = body.get("name") if isinstance(body, dict) else None
+    if not (isinstance(question, str) and _QUESTION.fullmatch(question)):
+        raise RecapError("bad_action")
+    if not (isinstance(typed, str) and len(typed) <= TYPED_SHOWN_MAX):
+        raise RecapError("bad_action")
+    return await relationships._queue(
+        db, session, ref, entity=None, action="heard-type", target="",
+        text=f"{question} {typed}", flag=False,
+    )  # fmt: skip
