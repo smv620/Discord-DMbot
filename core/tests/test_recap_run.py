@@ -374,6 +374,18 @@ class TheGoldenReasons(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(run.problem_code("something nobody wrote a check for"), "other")
 
+    def test_every_kind_has_its_own_code(self) -> None:
+        for start, code in run.PROBLEM_CODES:
+            self.assertEqual(run.problem_code(start + " and more"), code)
+        self.assertEqual(
+            len({c for _, c in run.PROBLEM_CODES}), len(set(c for _, c in run.PROBLEM_CODES))
+        )
+        self.assertEqual(
+            run.problem_code("a sentence says which names are the same person or place: x"),
+            "same-person-tie",
+        )
+        self.assertEqual(run.problem_code("a sentence names A as the ones there"), "present-too")
+
     async def test_a_failed_session_row_is_followed_by_a_why_line_with_no_words(self) -> None:
         rows, clean = await run.run_golden(fx.Canned(AIError("x")), fx.Canned(), ("a", "b"), {})
         self.assertFalse(clean)

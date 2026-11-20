@@ -470,9 +470,9 @@ PROBLEM_CODES = (
     ("every housekeeping bullet", "housekeeping"),
     ("give exactly one music prompt", "music-count"),
     ("was not there in one of the scenes", "absent-name"),
-    ("a sentence says", "sheet-line-overreach"),
-    ("a sentence names", "sheet-line-overreach"),
-    ("only one of the two names", "name-pair"),
+    ("a sentence says more than the sheet", "sheet-line-overreach"),
+    ("a sentence says which names are the same", "same-person-tie"),
+    ("a sentence names", "present-too"),
 )
 
 
@@ -480,7 +480,7 @@ def problem_code(problem: str) -> str:
     """A check's problem as a code, never its words ("other" when it is not a known kind)."""
     low = problem.casefold()
     for start, code in PROBLEM_CODES:
-        if start in low:
+        if low.startswith(start.casefold()) or f": {start.casefold()}" in low:
             return code
     return "other"
 
