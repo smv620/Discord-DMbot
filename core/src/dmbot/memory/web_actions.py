@@ -174,6 +174,7 @@ RULE_UPDATE_ACTIONS = (
     "rules-update-pick",
     "rules-update-undo",
     "rules-update-undo-last",
+    "pack-update-undo-last",  # the Undo of a followed pack's taken update (#4841 packs)
 )  # a followed set's pick (#4841)
 # The story threads DMbot found in an upload (#4457, quests slice 1): the same store calls as
 # Discord's 📜 card, so each keep is one change and one Undo.
@@ -1342,6 +1343,8 @@ async def _rule_update(tools: RuleTools, guild_id: int, cid: str, a: Action) -> 
         return await _rule_undo(tools, guild_id, cid, a)
     if a.action == "rules-update-undo-last":
         return await _rule_undo_last(tools, guild_id, cid, a)
+    if a.action == "pack-update-undo-last":
+        return await _pack_undo_last(tools, guild_id, cid, a)
     version_text, _, picks_text = a.text.partition(" ")
     if not (version_text.isdigit() and re.fullmatch(r"[0-9a-f]{1,13}", picks_text)):
         return _failed(GONE)
@@ -1404,6 +1407,28 @@ async def _rule_undo_last(tools: RuleTools, guild_id: int, cid: str, a: Action) 
     except HouseRuleError:
         return _failed(TOO_LATE)  # already undone, or a newer update was taken
     await tools.settle(guild_id, cid)
+    return Outcome(counts=f"back:{follow.previous_version}")
+
+
+_PACK_UNDO = re.compile(r"([0-9a-f]{32}) ([0-9]{1,9})")
+
+
+async def _pack_undo_last(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Outcome:
+    """↩️ Undo of the update DMbot already took on a followed pack (#4841 packs P2): Discord's note
+    Undo, the same store call (`undo_last_pack_take`), only while the campaign is still on the
+    version the page showed. A running session then reads the homebrew names again, as Discord's
+    does. The answer says which version it went back to."""
+    found = _PACK_UNDO.fullmatch(a.text)
+    if found is None or tools.packs is None:
+        return _failed(GONE if found is None else FAILED)
+    try:
+        follow = await tools.packs.undo_last_pack_take(
+            guild_id, cid, a.user_id, found[1], int(found[2])
+        )
+    except HouseRuleError:
+        return _failed(TOO_LATE)  # already undone, or a newer update was taken
+    if tools.packs_changed is not None:
+        tools.packs_changed(guild_id, cid)
     return Outcome(counts=f"back:{follow.previous_version}")
 
 
