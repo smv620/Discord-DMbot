@@ -518,7 +518,38 @@ def _expand_default_stamp(rows: list[Any]) -> list[Any]:
     return out
 
 
+def damaged_tags(rows: list[Any]) -> list[str]:
+    """Which table's rows a damaged memory section breaks on, found by leaving each table out in
+    turn: the tags whose absence makes the rest pass (a table whose rows are refused, or whose
+    absence the rest does not mind). The tags only, never a row or a value (#4858: "bad campaign
+    memory entry" alone says nothing about which of ~30 checks refused it)."""
+    out: list[str] = []
+    for tag in _TAGS:
+        rest = [r for r in rows if not (isinstance(r, dict) and r.get("table") == tag)]
+        if len(rest) == len(rows):
+            continue
+        try:
+            _check_rows(rest)
+        except CampaignError:
+            continue
+        out.append(tag)
+    return out
+
+
 def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
+    """`_check_rows`, and when it refuses the file, the log says which tables it breaks on (tags
+    only, #4858) before the refusal goes on."""
+    try:
+        return _check_rows(rows)
+    except CampaignError:
+        try:
+            log.warning("Backup memory check refused the file: %s", ", ".join(damaged_tags(rows)))
+        except Exception:  # (a diagnosis never changes the refusal)
+            log.warning("Backup memory check refused the file")
+        raise
+
+
+def _check_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     """A backup's memory rows, every value checked, grouped by table tag. Untrusted:
     raises CampaignError(DAMAGED) on anything out of shape.
 
