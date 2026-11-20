@@ -2954,6 +2954,23 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.post("/me/campaigns/{ref}/pack-updates/undo-last", status_code=202)
+    async def me_campaign_pack_undo_last(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"setId", "version"}`: ↩️ Undo of the update DMbot took on a pack (#4841); polled at
+        `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await pack_updates.queue_undo_last(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/rule-update/taken")
     async def me_campaign_rule_taken(ref: str, signed: Signed) -> dict[str, Any]:
         """The update DMbot already took on the followed set, as the lines of what changed

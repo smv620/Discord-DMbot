@@ -473,6 +473,7 @@ from dmbot.rules.house_file_link import HouseFileLinkStore
 from dmbot.rules.house_file_queue import HouseFileQueue
 from dmbot.rules.optional import OptionalRule
 from dmbot.rules.pack_suggestions import PackSuggestionStore
+from dmbot.rules.pack_updates import PackUpdateStore
 from dmbot.rules.rule_set_backup import RuleSetsSection
 from dmbot.rules.rule_sets import FollowedSetsSection, RuleSetStore
 from dmbot.rules.spotter import Mention
@@ -14570,7 +14571,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if campaign is not None:
                 await set_update.settle(self, campaign)
 
-        return RuleTools(sets, memory, TakeStore(db), settle)
+        packs = sets if isinstance(sets, PackUpdateStore) else None
+        return RuleTools(sets, memory, TakeStore(db), settle, packs, self.homebrew_changed)
 
     async def _sweep_rule_takes(self, guild_id: int) -> None:
         """The website's pick undo handles older than a day (#4841); counts only in the log."""
