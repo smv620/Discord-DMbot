@@ -170,7 +170,11 @@ HEARD_ACTIONS = (
     "heard-keep",
     "heard-type",
 )  # "Did they mean…?" from the page (#4841 B)
-RULE_UPDATE_ACTIONS = ("rules-update-pick", "rules-update-undo")  # a followed set's pick (#4841)
+RULE_UPDATE_ACTIONS = (
+    "rules-update-pick",
+    "rules-update-undo",
+    "rules-update-undo-last",
+)  # a followed set's pick (#4841)
 # The story threads DMbot found in an upload (#4457, quests slice 1): the same store calls as
 # Discord's 📜 card, so each keep is one change and one Undo.
 THREAD_ACTIONS = ("thread-keep", "thread-not", "thread-undo")
@@ -1336,6 +1340,8 @@ async def _rule_update(tools: RuleTools, guild_id: int, cid: str, a: Action) -> 
     only and only the newest, for a day."""
     if a.action == "rules-update-undo":
         return await _rule_undo(tools, guild_id, cid, a)
+    if a.action == "rules-update-undo-last":
+        return await _rule_undo_last(tools, guild_id, cid, a)
     version_text, _, picks_text = a.text.partition(" ")
     if not (version_text.isdigit() and re.fullmatch(r"[0-9a-f]{1,13}", picks_text)):
         return _failed(GONE)
@@ -1384,6 +1390,21 @@ async def _rule_update(tools: RuleTools, guild_id: int, cid: str, a: Action) -> 
         log.exception("A website pick's undo handle could not be saved")
         return Outcome(counts=counts)
     return Outcome(result_id=str(saved), counts=counts)
+
+
+async def _rule_undo_last(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Outcome:
+    """↩️ Undo of the update DMbot already took (#4841 C3): Discord's note Undo, the same store call
+    (`undo_last_take`), which keeps the copy before in the follow's own row and works only while
+    the campaign is still on the version the page showed. The version sent is checked there, the
+    DM too. The answer says which version the campaign is back on."""
+    if not (a.text.isascii() and a.text.isdigit()) or len(a.text) > 9:
+        return _failed(GONE)
+    try:
+        follow = await tools.sets.undo_last_take(guild_id, cid, a.user_id, int(a.text))
+    except HouseRuleError:
+        return _failed(TOO_LATE)  # already undone, or a newer update was taken
+    await tools.settle(guild_id, cid)
+    return Outcome(counts=f"back:{follow.previous_version}")
 
 
 async def _rule_undo(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Outcome:

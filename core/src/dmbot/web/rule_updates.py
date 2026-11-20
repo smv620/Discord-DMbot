@@ -55,6 +55,40 @@ async def read(db: Database, session: Session, ref: str) -> dict[str, Any]:
     }
 
 
+async def read_taken(db: Database, session: Session, ref: str) -> dict[str, Any]:
+    """`{taken: null | {name, publisher, from, to, words, lines, more}}`: the update DMbot already
+    took on the followed set (what Discord's note says, with its Undo), worked out like `read`
+    from the copy before and the copy now. `not_allowed` for anyone who is not a DM."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_rule_taken(%s, %s) AS r", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_allowed")
+    taken = got["taken"]
+    if taken is None:
+        return {"taken": None}
+    rules = set_diff.diff(taken["before"], taken["after"])
+    defs = set_diff.diff_definitions(taken["before"], taken["after"])
+    lines = [set_diff.describe(c) for c in rules] + [set_diff.describe_definition(d) for d in defs]
+    return {
+        "taken": {
+            "name": str(taken["name"]),
+            "publisher": str(taken["publisher"]),
+            "from": int(taken["from"]),
+            "to": int(taken["to"]),
+            "words": set_diff.count_words(rules, defs),
+            "lines": lines[:MAX_LINES],
+            "more": max(0, len(lines) - MAX_LINES),
+        }
+    }
+
+
 PICK_MAX = 50  # changes one pick can name; the bot's limit too (`web_actions.PICK_MAX`)
 _TAKE = re.compile(r"^[0-9]{1,15}$")
 
@@ -88,4 +122,15 @@ async def queue_undo(db: Database, session: Session, ref: str, take: str) -> str
     return await relationships._queue(
         db, session, ref, entity=None, action="rules-update-undo", target="", text=take,
         flag=False,
+    )  # fmt: skip
+
+
+async def queue_undo_last(db: Database, session: Session, ref: str, body: object) -> str:
+    """↩️ Undo of the update DMbot took: `{"version": <the version now, as shown>}`."""
+    version = body.get("version") if isinstance(body, dict) else None
+    if not (isinstance(version, int) and not isinstance(version, bool) and 0 <= version < 10**9):
+        raise RecapError("bad_action")
+    return await relationships._queue(
+        db, session, ref, entity=None, action="rules-update-undo-last", target="",
+        text=str(version), flag=False,
     )  # fmt: skip
