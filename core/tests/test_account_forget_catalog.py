@@ -32,6 +32,7 @@ ELSEWHERE: Rules = {
         "dm_players",  # (0450: its own forget function, dmbot_forget_dm_players, #4226)
         "campaign_maps",  # (0480: its own forget function, dmbot_forget_maps, #3274, #4344)
         "installs", "move_code_asks",  # (move_code_asks: ON DELETE CASCADE from web_users, 0069)
+        "web_rule_takes",  # (a day-long undo handle for a website pick, swept within a day, #4841)
     )
 }  # fmt: skip
 BY_DESIGN: Rules = {  # kept on purpose: protects the person, or stops a second free trial (#4145)

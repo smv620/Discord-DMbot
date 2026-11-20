@@ -316,12 +316,15 @@ KNOWERS = Table(
         "created_at",
         "confidence",
         "hidden_by",
+        "backstory_of",
     ),
+    # backstory_of (0556, #4795): the character whose backstory the row came from, else None;
+    # the party's copies never pass it to another character.
     # confidence: how sure that character is, 0.0 to 1.0 (0286). hidden_by (0298): the entries
     # whose being hidden from the players put this row to sleep; a row with any is DORMANT, and
     # every reader ignores it (`Scope.select` leaves it out unless asked) until each of them is
     # shown again and it wakes, so the lists a hide closed come back exactly as they were.
-    defaults={"confidence": 1.0, "hidden_by": []},
+    defaults={"confidence": 1.0, "hidden_by": [], "backstory_of": None},
 )
 BELIEFS = Table(
     "memory_beliefs",

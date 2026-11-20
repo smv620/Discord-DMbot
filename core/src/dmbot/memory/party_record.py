@@ -154,18 +154,25 @@ def _covers(span: Span, at: int, made: int | None) -> bool:
 
 
 async def table_members(scope: Scope, live_at: int | None) -> list[str] | None:
-    """Who a player's answer at the table is for now (#4537 slice 3b, §8): the party at the start
-    of the session the bot is live at (`live_at`, its table's start, Supervisor's ruling F) when it
-    differs from today's party (someone joined or left during it); None when it is today's party
-    (no live table, whatever a stale session row says, or the same members). One read."""
-    running = live_at
-    if running is None:
+    """Who a player's answer at the table is for now (#4537 slice 3b, §8; Supervisor's ruling F:
+    `live_at` is the start of this campaign's live table, from the bot): everyone in the party at
+    that start AND everyone in it now, when that differs from today's party; None when it is
+    today's party (no live table, whatever a stale session row says, or nobody joined or left).
+
+    The union is the careful side (ruling E's rule: never less careful than the real table). The
+    gate shows the table only what EVERY listed character knows, so a shorter list shows more.
+    One who joined during the session sits at the table, and so does one who left during it, so
+    neither is ever dropped. It also keeps the answer the same whether a join was dated to the
+    session's start (its row already made) or to the moment (before the first transcript save)."""
+    if live_at is None:
         return None
     pcs = await player_characters(scope)
     held = await _by_char(scope, pcs) if pcs else {}
-    then = [c for c in pcs if c not in held or any(s.covers(running) for s in held[c])]
-    now = [c for c in pcs if c not in held or any(s.open for s in held[c])]
-    return None if set(then) == set(now) else then
+    then = {c for c in pcs if c not in held or any(s.covers(live_at) for s in held[c])}
+    now = {c for c in pcs if c not in held or any(s.open for s in held[c])}
+    if then <= now:
+        return None  # (only joins: today's party already holds everyone at the table)
+    return [c for c in pcs if c in then or c in now]
 
 
 async def running_session_start(scope: Scope) -> int | None:

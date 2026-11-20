@@ -12,39 +12,39 @@
  "lines": [
   [
    "dm",
-   "Night falls on the Ash Road and the party makes camp in a ruined barn."
+   "Night falls on the Ash Road and the party makes camp in a ruined barn. The roof is half gone, the floor is damp straw, and the wind carries the smell of old smoke."
   ],
   [
    "a",
-   "Pip volunteers for the first watch and climbs into the loft."
+   "Pip says, \"First watch is mine,\" and climbs into the loft."
   ],
   [
    "b",
-   "Sorrel tends the fire and sharpens her knife."
+   "Sorrel crouches by the fire, feeds it a split plank, and sharpens her knife on a whetstone."
   ],
   [
    "c",
-   "Hadrian says he will sleep with his boots on."
+   "Hadrian says, \"I am sleeping with my boots on.\""
   ],
   [
    "dm",
-   "Pip hears hoofbeats on the road, far off and slow."
+   "The fire pops. From the loft, Pip hears hoofbeats on the road, far off and slow."
   ],
   [
    "a",
-   "Pip whistles softly to wake Sorrel and Hadrian."
+   "Pip wakes Sorrel and Hadrian with a soft whistle and whispers, \"Someone is coming.\""
   ],
   [
    "dm",
-   "A rider stops outside the barn and does not dismount."
+   "A rider stops outside the barn and does not dismount. The horse blows steam into the cold air. The rider wears a long wet cloak, and the face stays in shadow."
   ],
   [
    "b",
-   "Sorrel steps to the door and asks what the rider wants."
+   "Sorrel steps to the door and asks, \"What do you want?\""
   ],
   [
    "dm",
-   "The rider holds out a sealed letter without a word."
+   "The rider holds out a folded letter and says nothing. The wax on it is black and smells of pine."
   ],
   [
    "c",
@@ -52,11 +52,15 @@
   ],
   [
    "dm",
-   "The letter holds a single line: the bridge is already burning."
+   "The letter holds a single line: the bridge is already burning. The paper is damp and smells of smoke."
   ],
   [
    "a",
-   "Pip looks back along the road and sees an orange glow on the horizon."
+   "Pip looks along the road from the loft."
+  ],
+  [
+   "dm",
+   "On the horizon an orange glow flickers, and the smell of smoke is stronger now."
   ]
  ],
  "beats": [
@@ -99,5 +103,10 @@
     "burning"
    ]
   }
- ]
+ ],
+ "characters": {
+  "a": "Pip",
+  "b": "Sorrel",
+  "c": "Hadrian"
+ }
 }

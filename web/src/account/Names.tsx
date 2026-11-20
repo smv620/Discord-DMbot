@@ -6,6 +6,7 @@
 // Undo there still works). Who sees what is the API's rule, never the page's: a server manager who
 // isn't one of the DMs gets the list without secret names and no way to change anything, and anyone
 // else gets "not found". The page only shows what it is given.
+import { CATCH_UP_LIVE } from "../content/catch-up-switch";
 import { PARTY_RECORD_LIVE } from "../content/party-record-switch";
 import { useEffect, useRef, useState } from "preact/hooks";
 
@@ -1021,6 +1022,9 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
 
       {PLACE_WORLD_LIVE && row.kind === "place" && api.placeWorld && (
         <LazyPanel load={() => import("./PlaceWorld")} what="the place's land, climate and ruler" props={{ api, refId, row, act: (change: NameChange, ok: string) => act(row, change, ok) }} />
+      )}
+      {CATCH_UP_LIVE && api.catchUpChoices && (
+        <LazyPanel load={() => import("./CatchUp")} what="catch up" props={{ api, refId, entry: row.id }} />
       )}
       {PARTY_RECORD_LIVE && row.kind === "player_character" && api.partyRecord && (
         <LazyPanel load={() => import("./PartyRecord")} what="the party record" props={{ api, refId, row }} />

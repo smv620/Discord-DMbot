@@ -24,9 +24,11 @@ ANSWERS = {"everyone": "join-everyone", "party": "join-party"}
 
 
 async def read(db: Database, session: Session, ref: str) -> dict[str, Any]:
-    """`{groups: [{group, answer, names}]}`: each message's characters (A to Z) and whether it
-    still waits (`waiting`) or was answered "Only what everyone knows" (`everyone`, which "What the
-    party knows" may still follow). `not_allowed` for anyone who is not a DM of the campaign."""
+    """`{groups: [{group, answer, names, kind}]}`: each message's characters (A to Z), which
+    question it is (`join`: new to the party, `back`: a character coming back, whose words differ,
+    #4791) and whether it still waits (`waiting`) or was answered "Only what everyone knows"
+    (`everyone`, which "What the party knows" may still follow). `not_allowed` for anyone who is
+    not a DM of the campaign."""
     guild_id, campaign_id = _parse(ref)
     _guild_of(session, guild_id)
     async with db.user(session.user_id, session=session.id_hash) as conn:
@@ -43,6 +45,7 @@ async def read(db: Database, session: Session, ref: str) -> dict[str, Any]:
             {
                 "group": str(g["group"]),
                 "answer": str(g["answer"]),
+                "kind": str(g.get("kind", "join")),
                 "names": [str(n) for n in g["names"]],
             }
             for g in got
