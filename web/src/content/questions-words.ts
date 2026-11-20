@@ -12,7 +12,7 @@ export interface QuestionKindWords {
   label: string;
   how: QuestionHow;
   /** For `link`: where it is answered, as a path from the campaign's address, and the words of the link. */
-  to?: "recaps" | "graph" | "names" | "maps";
+  to?: "recaps" | "graph" | "names" | "maps" | "houserules";
   link?: string;
 }
 
@@ -77,7 +77,8 @@ export const questionsPage = {
     readings: { label: "What people believe", how: "here", to: "graph", link: "Open the Story Graph" },
     plot: { label: "Plot check", how: "link", to: "recaps", link: "Open the recaps" },
     recap_approve: { label: "Recaps to approve", how: "link", to: "recaps", link: "Open the recaps" },
-    rules: { label: "House rule updates", how: "discord" },
+    // A newer version of a followed house-rules set (#4845): a link to the House rules page while its switch is on.
+    rules: { label: "House rule updates", how: "discord", to: "houserules", link: "Open the House rules page" },
   } as Record<string, QuestionKindWords>,
   // A kind the bot counts and this page has no words for yet.
   otherKind: { label: "Other questions", how: "discord" } as QuestionKindWords,
