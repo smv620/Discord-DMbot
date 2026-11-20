@@ -170,7 +170,7 @@ def _seen(viewer: Viewer) -> str:
 
 async def _table_viewer(scope: Any, live_at: int | None) -> gate_mod.Viewer:
     """Who a player's answer at the table is for (`party_record.table_members`, #4537 slice 3b):
-    today's party, unless someone joined or left during the session the bot is live at."""
+    today's party, plus anyone who left during the session the bot is live at."""
     from dmbot.memory import gate, party_record  # (here: the memory package imports this one)
 
     members = await party_record.table_members(scope, live_at)
@@ -1017,7 +1017,9 @@ class MapStore:
                 # (no player character, a list held by a group, or the session's party differs)
                 if seen is None:
                     statements = await gate.load(scope)
-                    if statements.player_characters:
+                    # (`table.characters`: the party at the live table's start, which is never
+                    # empty when today's is because everyone left during the session)
+                    if statements.player_characters or table.characters:
                         full = gate.visible(table, statements)
                         seen = frozenset(i for (k, i) in full.sureness if k == gate.ENTRY)
                 if seen is None:  # (no party yet: the names every player may read)
@@ -1071,7 +1073,7 @@ class MapStore:
                 known: set[str] | None = None
                 if not dm:
                     statements = await gate.load(scope)
-                    if statements.player_characters and shown is not None:
+                    if (statements.player_characters or table.characters) and shown is not None:
                         full = gate.visible(table, statements)
                         known = shown | {i for (k, i) in full.sureness if k == gate.CONNECTION}
                 if dm or known is not None:
