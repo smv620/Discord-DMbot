@@ -1102,6 +1102,7 @@ async def inputs_for(db: Any, gid: int, cid: str, at: int, *, by_rank: bool = Fa
         styles=StyleStore(db),
         musts=MustStore(db),
         importance=ImportanceCache(memory, ranks_on=by_rank),
+        memory=memory,  # (the party at that session, #4537 slice 3b)
     )
 
 
