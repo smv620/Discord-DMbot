@@ -81,7 +81,6 @@ class ThePostCheck(unittest.IsolatedAsyncioTestCase):
     def features(party: Any) -> Any:
         from unittest.mock import AsyncMock
 
-
         # (today's flag says "not known yet"; the party at that session knew it, and the other)
         names = SimpleNamespace(
             names=[
