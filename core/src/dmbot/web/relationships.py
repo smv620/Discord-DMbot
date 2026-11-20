@@ -1209,6 +1209,14 @@ async def queue_reveal(db: Database, session: Session, ref: str, body: object) -
     )
 
 
+def _chose(counts: str) -> list[dict[str, Any]] | None:
+    """`chose:<id8>=<n>,… first:<0|1>` (a "Let me choose" pick) as `[{"id", "count"}]`."""
+    found = re.fullmatch(r"chose:((?:[0-9a-f]{8}=\d+,?)+) first:[01]", counts)
+    if found is None:
+        return None
+    return [{"id": part[:8], "count": int(part[9:])} for part in found[1].split(",") if part]
+
+
 def _catch_choices(counts: str) -> tuple[list[dict[str, Any]], int] | None:
     """The members "Catch up" has something for and how many more there are that were left out,
     from the bot's `catch:<id>=<n>,…;more=<k>` answer."""
@@ -1338,6 +1346,10 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "given": int(counts.removeprefix("given:")) if counts.startswith("given:") else None,
             # a return: which question now waits for the character ("back", "join" or "none")
             "asked": counts.removeprefix("asked:") if counts.startswith("asked:") else None,
+            # "Let me choose" (#4799): how many things each character was given (`[{"id" (first
+            # 8 characters), "count"}]`) and whether this pick answered the question
+            "chose": _chose(counts),
+            "first": ("first:1" in counts) if counts.startswith("chose:") else None,
             # "Catch up" (#4793): how many things the member was told, and who is missing what
             # (`[{"id", "count"}]`, ids and counts only: the page names them)
             "told": int(counts.removeprefix("told:")) if counts.startswith("told:") else None,

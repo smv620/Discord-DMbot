@@ -419,6 +419,7 @@ from dmbot.memory.story_plan import PlanStore, SpendSection
 from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.memory.vectors import VectorStore
+from dmbot.memory.web_join_choices import JoinChoicesStore
 from dmbot.memory.who_answers import WhoAnswers
 from dmbot.mentions import NO_PINGS
 from dmbot.off_the_record import NOT_TOLD, WAKE_MINUTES, OffTheRecord, Paused, paused_text
@@ -13908,6 +13909,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 lore_pdfs=self._lore_pdfs(),
                                 rules=self._rule_tools(),
                                 heard=self.answer_waiting_coded,
+                                join_choices=self._work_out_join_choices,
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -14586,6 +14588,21 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         packs = sets if isinstance(sets, PackUpdateStore) else None
         return RuleTools(sets, memory, TakeStore(db), settle, packs, self.homebrew_changed)
 
+    async def _work_out_join_choices(
+        self, guild_id: int, campaign_id: str, group_id: str, user_id: int
+    ) -> None:
+        """ "Let me choose" from the website (#4799): work out the sessions and story threads with
+        something to give, and keep them for this DM's page (`web_join_choices`). Only a DM of the
+        campaign (checked again here); a missing piece fails the action, which is sent again."""
+        db, memory = self._picture_db, self.memory
+        if db is None or memory is None:
+            raise RuntimeError("the choices cannot be kept yet")
+        campaign = await self.campaigns.get(guild_id, campaign_id)
+        if campaign is None or user_id not in campaign.dm_user_ids:
+            raise RuntimeError("only a DM of the campaign")
+        choices = await memory.join_choices(guild_id, campaign_id, group_id)
+        await JoinChoicesStore(db).save(guild_id, campaign_id, group_id, user_id, choices)
+
     async def _sweep_rule_takes(self, guild_id: int) -> None:
         """The website's pick undo handles older than a day (#4841); counts only in the log."""
         db = self._picture_db
@@ -14598,6 +14615,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         if gone:
             log.info("%s website rule-pick undo handles were cleared", gone)
+        try:
+            kept = await JoinChoicesStore(db).sweep(guild_id)  # ("Let me choose", #4799)
+        except Exception as exc:
+            log.warning("The kept join choices could not be swept: %s", type(exc).__name__)
+            return
+        if kept:
+            log.info("%s kept join choices were cleared", kept)
 
     def _lore_pdfs(self) -> LorePdfs:
         """What `lore-pdf-estimate` needs (#4762): the staging bucket, the staged-file table and the

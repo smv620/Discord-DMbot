@@ -64,6 +64,7 @@ from dmbot.web import (
     house_file,
     import_clock,
     imports,
+    join_choices,
     join_questions,
     languages,
     line_fixes,
@@ -3072,6 +3073,48 @@ def create_app(
             body = None
         try:
             return {"answer": await heard_waiting.queue_type(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/join-questions/{group}/choices")
+    async def me_campaign_join_choices(ref: str, group: str, signed: Signed) -> dict[str, Any]:
+        """The sessions and story threads that have something to give the characters of one join
+        question, as the bot last worked them out for this DM (#4799): DM only."""
+        session, _token = signed
+        try:
+            return await join_choices.read(db, session, ref, group)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/join-questions/choices", status_code=202)
+    async def me_campaign_join_choices_ask(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"group"}`: have the bot work the choices out; polled at `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await join_choices.queue_read(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/join-questions/choose", status_code=202)
+    async def me_campaign_join_choose(ref: str, request: Request, signed: Signed) -> dict[str, str]:
+        """`{"group", "session"}` or `{"group", "thread"}`: one pick (#4799); polled at
+        `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await join_choices.queue_pick(db, session, ref, body)}
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
