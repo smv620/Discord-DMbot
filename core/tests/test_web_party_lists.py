@@ -12,7 +12,7 @@ from typing import Any
 
 from dmbot.memory import party_icons
 from dmbot.memory.models import DM as DM_SOURCE
-from dmbot.web import party_characters, relationships
+from dmbot.web import party_characters, relationships, see_as
 from dmbot.web.recaps import _scoped
 from tests.test_web_relationships import Web
 
@@ -190,3 +190,38 @@ class PartyLists(Web):
         )  # fmt: skip
         got = (await self.lines())[self.links["mira-heir"]]
         self.assertIn(got, ("👥 Known to: Rook and Aaron",))
+
+
+class PickerOrder(PartyLists):
+    """ "Who knows this?" and See as… list the party first, then those who left, then the rest (the
+    order of Discord's pickers, #4778)."""
+
+    async def viewers(self) -> list[tuple[str, str, str | None]]:
+        got = await see_as.read_viewers(self.web, self.session, self.cref, "")
+        return [(v["name"], v["group"], v.get("note")) for v in got["viewers"]]
+
+    async def test_the_party_comes_first_then_those_who_left_with_why_then_the_rest(self) -> None:
+        await self.leave(self.tavin)
+        got = await self.viewers()
+        self.assertEqual(got[0], ("Rook", "party", None))
+        self.assertEqual(got[1], ("Tavin", "left", party_icons.left_note("retired")))
+        rest = got[2:]
+        self.assertTrue(rest)
+        self.assertEqual({g for _, g, _ in rest}, {"other"})
+        self.assertEqual([n for n, _, _ in rest], sorted((n for n, _, _ in rest), key=str.casefold))
+
+    async def test_with_nobody_gone_everyone_in_the_party_is_first_and_none_has_a_note(
+        self,
+    ) -> None:
+        got = await self.viewers()
+        groups = [g for _, g, _ in got]
+        rank = {"party": 0, "left": 1, "other": 2}
+        self.assertEqual(groups, sorted(groups, key=lambda g: rank[g]))
+        self.assertEqual({n for n, g, _ in got if g == "party"}, {"Rook", "Tavin"})
+        self.assertTrue(all(note is None for _, _, note in got))
+
+    async def test_a_search_keeps_the_order(self) -> None:
+        await self.leave(self.tavin)
+        got = await see_as.read_viewers(self.web, self.session, self.cref, "a")
+        names = [v["name"] for v in got["viewers"]]
+        self.assertLess(names.index("Tavin"), names.index("Mira Voss"))
