@@ -4285,6 +4285,17 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         ],
       };
     },
+    async packUpdatePick(ref, setId, version, kept): Promise<{ kept: number; left: number; skipped: number; take: number | null }> {
+      calls.push(`packUpdatePick:${ref}:${setId}:${version}:${kept.join(",")}`);
+      await reachable();
+      signedIn();
+      return { kept: kept.length, left: 2 - kept.length, skipped: 0, take: 7 };
+    },
+    async packUpdateUndo(ref, take): Promise<void> {
+      calls.push(`packUpdateUndo:${ref}:${take}`);
+      await reachable();
+      signedIn();
+    },
     async packUpdateUndoLast(ref, setId, version): Promise<{ back: number | null }> {
       calls.push(`packUpdateUndoLast:${ref}:${setId}:${version}`);
       await reachable();
