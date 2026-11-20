@@ -3126,7 +3126,7 @@ export const safeBackupName = (name: string, fallback: string): string => name.r
 export class ApiError extends Error {
   /** The words the server gave with a refusal, when it gave some (#3275): shown as they are. */
   note?: string;
-  /** The reason a typed name was refused: `empty`, `bar`, `unreadable`, `too long`, `too many words`, `link`, `secret` or `two` (#4865). */
+  /** The reason a typed name was refused: `empty`, `bar`, `unreadable`, `too long`, `too many words`, `link`, `secret`, `two` or `cant-check` (#4865). */
   reason?: string;
   constructor(
     readonly kind: ApiErrorKind,

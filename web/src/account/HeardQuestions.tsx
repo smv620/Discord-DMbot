@@ -57,6 +57,12 @@ export default function HeardQuestions({
   const [typed, setTyped] = useState("");
   const [typeProblem, setTypeProblem] = useState<string | null>(null);
   const flight = useRef(false);
+  // Focus follows the form (#4865): the box when it opens or a name is refused; the line that says what happened after a save or a close.
+  const box = useRef<HTMLInputElement>(null);
+  const typeButton = useRef<HTMLButtonElement>(null);
+  const okLine = useRef<HTMLParagraphElement>(null);
+  const alertLine = useRef<HTMLParagraphElement>(null);
+  const [focusBox, setFocusBox] = useState(0);
   const live = useRef(true);
   useEffect(() => {
     live.current = true;
@@ -80,6 +86,20 @@ export default function HeardQuestions({
     void read();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, campaignRef]);
+  useEffect(() => {
+    if (typing) box.current?.focus();
+  }, [typing, focusBox]);
+  useEffect(() => {
+    if (said) (said.ok ? okLine : alertLine).current?.focus();
+  }, [said]);
+  // A question that has gone from the list takes its form with it (#4865).
+  useEffect(() => {
+    if (typing && questions && !questions.some((x) => x.id === typing.question)) {
+      setTyping(null);
+      setTyped("");
+      setTypeProblem(null);
+    }
+  }, [questions, typing]);
 
   // One answer in flight at a time; the list is read again after each one, so what shows is always the API's own.
   async function press(run: () => Promise<void>): Promise<void> {
@@ -109,25 +129,37 @@ export default function HeardQuestions({
       if (live.current) setSaid({ ok: true, text: savedLine(got.code, q.heard, q.heard) });
     });
 
-  // A typed name: a problem keeps the question and the form open, with what was typed still in the box (#4865).
+  // A typed name (#4865): a problem keeps the question and the form open, with what was typed still in the box. A blank box is
+  // said on the page without a round trip; the name sent is trimmed.
   async function saveTyped(q: HeardQuestion): Promise<void> {
     if (flight.current || !api.heardType) return;
+    const name = typed.trim();
+    setTypeProblem(null);
+    if (name === "") {
+      setTypeProblem(w.typedProblem.empty ?? w.cantCheck);
+      setFocusBox((was) => was + 1);
+      return;
+    }
     flight.current = true;
     setBusy(true);
     setSaid(null);
-    setTypeProblem(null);
     try {
-      const got = await api.heardType(campaignRef, q.id, typed);
+      const got = await api.heardType(campaignRef, q.id, name);
       if (live.current) {
         setTyping(null);
-        setSaid({ ok: true, text: savedLine(got.code, q.heard, typed) });
+        setTyped("");
+        setSaid({ ok: true, text: savedLine(got.code, q.heard, name) });
       }
     } catch (error) {
       if (live.current && error instanceof ApiError && (error.kind === "typed-problem" || error.kind === "typed-refused")) {
         setTypeProblem(typedLine(error));
+        setFocusBox((was) => was + 1);
       } else {
-        // An expired or closed question closes its form as well; any other refusal says so and keeps the form.
-        if (live.current && error instanceof ApiError && (error.kind === "expired" || error.kind === "gone")) setTyping(null);
+        // An expired or closed question, or one that can't be answered by this person, closes its form.
+        if (live.current && error instanceof ApiError && (error.kind === "expired" || error.kind === "gone" || error.kind === "only-dm")) {
+          setTyping(null);
+          setTyped("");
+        }
         if (live.current) setSaid({ ok: false, text: sayFailure(error) });
       }
     } finally {
@@ -154,8 +186,8 @@ export default function HeardQuestions({
   return (
     <section id={id} class="stack" aria-labelledby={`${id}-heading`}>
       <h3 id={`${id}-heading`}>{w.title}</h3>
-      <p class={said?.ok ? "ok" : "visually-hidden"} role="status">{said?.ok ? said.text : ""}</p>
-      <p class={said && !said.ok ? "warn" : "visually-hidden"} role="alert">{said && !said.ok ? said.text : ""}</p>
+      <p class={said?.ok ? "ok" : "visually-hidden"} role="status" ref={okLine} tabIndex={-1}>{said?.ok ? said.text : ""}</p>
+      <p class={said && !said.ok ? "warn" : "visually-hidden"} role="alert" ref={alertLine} tabIndex={-1}>{said && !said.ok ? said.text : ""}</p>
       {q ? (
         <>
           <p>
@@ -177,6 +209,7 @@ export default function HeardQuestions({
             <button
               type="button"
               class="button secondary"
+              ref={typeButton}
               disabled={busy || !api.heardType}
               onClick={() => {
                 setTyping({ question: q.id });
@@ -203,10 +236,12 @@ export default function HeardQuestions({
               <label>
                 {w.typeLabel}
                 <input
+                  ref={box}
                   type="text"
                   maxLength={60}
                   value={typed}
-                  disabled={busy}
+                  readOnly={busy}
+                  aria-busy={busy}
                   aria-describedby={`${id}-hint`}
                   onInput={(e) => setTyped((e.target as HTMLInputElement).value)}
                 />
@@ -229,7 +264,9 @@ export default function HeardQuestions({
                   disabled={busy}
                   onClick={() => {
                     setTyping(null);
+                    setTyped("");
                     setTypeProblem(null);
+                    typeButton.current?.focus();
                   }}
                 >
                   {w.cancel}
