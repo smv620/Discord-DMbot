@@ -73,6 +73,7 @@ import type {
   RuleDecision,
   RuleSharing,
   RuleUpdate,
+  PackUpdates,
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
@@ -4212,6 +4213,21 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           lines: ["Rule 2 now says a short rest is one hour.", "A new rule on torches.", "Rule 5 is gone."],
           more: /\.ru-small$/.test(ref) ? 0 : 2,
         },
+      };
+    },
+    async packUpdates(ref): Promise<PackUpdates> {
+      calls.push(`packUpdates:${ref}`);
+      await reachable();
+      signedIn();
+      // A campaign whose ref ends ".pk-updates" follows one pack with a newer version waiting and one DMbot already took (#4872).
+      if (!/\.pk-updates$/.test(ref)) return { waiting: [], taken: [] };
+      return {
+        waiting: [
+          { setId: "s1", name: "Lantern Tavern pack", publisher: "The Lantern table", from: 1, to: 2, words: "2 rules", lines: ["Rule 1 now says a torch lasts an hour.", "A new rule on rope."], more: 0 },
+        ],
+        taken: [
+          { setId: "s2", name: "Moor Road pack", publisher: "The Moor table", from: 3, to: 4, words: "1 rule", lines: ["Rule 1 is new."], more: 0 },
+        ],
       };
     },
     async ruleTaken(ref): Promise<{ taken: RuleUpdate | null }> {
