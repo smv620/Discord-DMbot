@@ -104,6 +104,7 @@ ANSWERED = "Already answered (by you or another DM). Nothing changed."
 FAILED = "Couldn't do that just now. Nothing changed. Try again in a moment."
 
 _E = r"dmbot:pjoine:(?P<campaign>[0-9a-f]{32}):(?P<group>[0-9a-f]{32})"
+_C = r"dmbot:pjoinc:(?P<campaign>[0-9a-f]{32}):(?P<group>[0-9a-f]{32})"
 _P = r"dmbot:pjoinp:(?P<campaign>[0-9a-f]{32}):(?P<group>[0-9a-f]{32})"
 _U = r"dmbot:pjoinu:(?P<campaign>[0-9a-f]{32}):(?P<group>[0-9a-f]{32}):(?P<batch>[0-9]{1,18})"
 _SINCE = (
@@ -209,6 +210,7 @@ def _question_view(
     if everyone:
         view.add_item(EveryoneButton(campaign_id, group_id, back=back))
     view.add_item(PartyButton(campaign_id, group_id))
+    view.add_item(ChooseButton(campaign_id, group_id))  # ("Let me choose", #4537 4c)
     return view
 
 
@@ -278,6 +280,33 @@ async def _send_one(bot: Any, memory: Any, guild_id: int, campaign_id: str) -> i
             with contextlib.suppress(Exception):
                 await memory.unclaim_join_questions(guild_id, campaign_id, group_id)
         return 0
+
+
+class ChooseButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_C):
+    """ "Let me choose": the page of picks, as a new private message (`party_choose`)."""
+
+    def __init__(self, campaign_id: str, group_id: str) -> None:
+        super().__init__(
+            discord.ui.Button(
+                label="Let me choose", style=discord.ButtonStyle.secondary,
+                custom_id=f"dmbot:pjoinc:{campaign_id}:{group_id}",
+            )
+        )  # fmt: skip
+        self.campaign_id, self.group_id = campaign_id, group_id
+
+    @classmethod
+    async def from_custom_id(
+        cls, interaction: discord.Interaction, item: discord.ui.Item[Any], match: re.Match[str]
+    ) -> ChooseButton:
+        return cls(match["campaign"], match["group"])
+
+    async def callback(self, interaction: discord.Interaction) -> Any:
+        from dmbot.ui.party_choose import open_page
+
+        await _answer_first(interaction, in_place=True)
+        if await _dm_campaign(interaction, self.campaign_id) is None:  # (a DM only, every press)
+            return
+        await open_page(interaction, self.campaign_id, self.group_id)
 
 
 class EveryoneButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_E):
@@ -682,6 +711,7 @@ async def _followup(interaction: discord.Interaction, text: str, view: Any = Non
 
 
 DYNAMIC_ITEMS = (
+    ChooseButton,
     EveryoneButton,
     PartyButton,
     JoinUndoButton,

@@ -72,8 +72,9 @@ class ANewcomer(Party):
         )
         self.assertNotIn(self.npc, await self.recall_ids())
 
-    async def test_a_live_table_is_that_sessions_party(self) -> None:
-        # (Cara joined after the live session began: its table is Vell and Tuck, who know it)
+    async def test_one_who_joined_during_the_live_session_is_at_the_table(self) -> None:
+        # (Cara joined after the live session began. She sits at the table, so the table's answer
+        # is for her too, and she doesn't know it: the careful side, Supervisor's ruling on #4878)
         sid = await self.sessions.open_session(GUILD, self.c, 20_000)
         async with self.db.guild(GUILD) as conn:
             await conn.execute(
@@ -87,7 +88,7 @@ class ANewcomer(Party):
         got = await RecallService(self.memory).recall(
             GUILD, self.c, seeds=["Harbourmaster"], audience=PLAYERS, live_at=20_000
         )
-        self.assertIn(self.npc, got.ids)
+        self.assertNotIn(self.npc, got.ids)
         self.assertNotIn(self.npc, await self.recall_ids())  # (no live table: today's party)
 
     async def test_no_reader_writes_a_row(self) -> None:

@@ -1051,7 +1051,7 @@ class MapStore:
                 known: set[str] | None = None
                 if not dm:
                     statements = await gate.load(scope)
-                    if statements.player_characters and shown is not None:
+                    if (statements.player_characters or table.characters) and shown is not None:
                         full = gate.visible(table, statements)
                         known = shown | {i for (k, i) in full.sureness if k == gate.CONNECTION}
                 if dm or known is not None:

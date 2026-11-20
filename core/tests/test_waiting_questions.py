@@ -16,6 +16,7 @@ from dmbot.bot import DMBot
 from dmbot.campaigns import CampaignStore
 from dmbot.config import Settings
 from dmbot.consent import ConsentStore
+from dmbot.memory import name_list
 from dmbot.memory.store import MemoryStore
 from dmbot.sessions import SessionStore
 from dmbot.table import Table
@@ -333,6 +334,70 @@ class Flow(DatabaseTest):
         answer, done = await self.bot.answer_waiting_question(GUILD, qid, "7", DM)
         self.assertEqual((answer, done), (questions.EXPIRED, False))
         self.assertEqual(len(await self.store.waiting(GUILD, self.campaign.id)), 1)
+
+    # ---- the code beside the words (#4841: the website words its own answer from it) ----
+
+    async def coded(self, pick: str, user: int = DM, typed: str | None = None) -> Any:
+        qid = await self.kept()
+        return await self.bot.answer_waiting_coded(GUILD, qid, pick, user, typed)
+
+    async def test_a_picked_name_is_fixed_and_the_words_are_discords(self) -> None:
+        got = await self.coded("0")
+        self.assertEqual((got.code, got.done, got.reason), ("fixed", True, ""))
+        self.assertIn("is now written **Maren**", got.text)  # (the same words Discord shows)
+
+    async def test_keep_as_heard_is_kept(self) -> None:
+        got = await self.coded(questions.KEEP)
+        self.assertEqual((got.code, got.done), ("kept", True))
+
+    async def test_a_typed_new_name_is_fixed_new(self) -> None:
+        got = await self.coded(questions.TYPE, typed="Marek")
+        self.assertEqual((got.code, got.done), ("fixed-new", True))
+
+    async def test_a_line_that_changed_is_line_kept_and_the_rule_is_still_learned(self) -> None:
+        qid = await self.kept()
+        await self.transcripts.relabel_line(GUILD, self.session, PLAYER, MS + 1000, "I met Maren")
+        got = await self.bot.answer_waiting_coded(GUILD, qid, "0", DM)
+        self.assertEqual((got.code, got.done), ("line-kept", True))
+
+    async def test_only_a_dm_answers_is_only_dm(self) -> None:
+        self.assertEqual((await self.coded("0", MANAGER)).code, "only-dm")
+
+    async def test_a_stale_button_and_a_second_press_are_expired(self) -> None:
+        stale = await self.coded("7")
+        self.assertEqual((stale.code, stale.done), ("expired", False))  # (the question stays)
+        (waiting,) = await self.store.waiting(GUILD, self.campaign.id)
+        await self.bot.answer_waiting_coded(GUILD, waiting.id, "0", DM)
+        again = await self.bot.answer_waiting_coded(GUILD, waiting.id, "1", DM)
+        self.assertEqual((again.code, again.done), ("expired", True))
+
+    async def test_a_speaker_who_stopped_is_gone(self) -> None:
+        qid = await self.kept()
+        self.bot.stop_recording(GUILD, PLAYER)
+        got = await self.bot.answer_waiting_coded(GUILD, qid, "0", DM)
+        self.assertEqual((got.code, got.done), ("gone", True))
+
+    async def test_a_name_removed_since_is_name_gone(self) -> None:
+        qid = await self.kept()
+        await self.memory.set_entity_status(
+            GUILD, self.campaign.id, self.maren.id, "rejected", source="dm"
+        )
+        self.bot.lookup.mark_stale(GUILD, self.campaign.id)  # type: ignore[union-attr]
+        got = await self.bot.answer_waiting_coded(GUILD, qid, "0", DM)
+        self.assertEqual((got.code, got.done), ("name-gone", True))
+
+    async def test_a_typed_problem_carries_its_reason_never_the_typed_words(self) -> None:
+        await ui.save_name(self.memory, self.campaign, "Vane", "npc", [], ["Silas Vane"])
+        secret = await self.coded(questions.TYPE, typed="Silas Vane")
+        self.assertEqual(
+            (secret.code, secret.reason, secret.done), ("typed-problem", "secret", False)
+        )
+        bar = await self.coded(questions.TYPE, typed="a|b")
+        self.assertEqual((bar.code, bar.reason), ("typed-problem", name_list.BAR))
+        empty = await self.coded(questions.TYPE, typed="   ")
+        self.assertEqual((empty.code, empty.reason), ("typed-problem", name_list.EMPTY))
+        for got in (secret, bar, empty):
+            self.assertNotIn("Silas", got.code + got.reason)
 
     async def test_later_leaves_the_question_waiting_for_next_time(self) -> None:
         await self.kept()

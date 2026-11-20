@@ -184,7 +184,11 @@ def _schedule(work: Coroutine[Any, Any, None], entry: Entry) -> None:
 def _count_lost(entry: Entry) -> None:
     """Count a call that is not shown, on a write of its own (best effort)."""
     with contextlib.suppress(Exception):
-        asyncio.get_running_loop().create_task(_lost(entry.ctx))
+        task = asyncio.get_running_loop().create_task(_lost(entry.ctx))
+        # (kept with the other writes: it is not garbage collected, and a caller or a test that
+        # waits for the feed's writes waits for this count too, #4838)
+        _tasks.add(task)
+        task.add_done_callback(_tasks.discard)
 
 
 async def _run(work: Coroutine[Any, Any, None], entry: Entry) -> None:
