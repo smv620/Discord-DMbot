@@ -34,6 +34,7 @@ class PackBase(SharingBase):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         await self.publish(self.two.id, SET_A, "Frost Pack")  # (versions 1 and 2)
+        await self.sql("UPDATE rule_sets SET kind = 'homebrew' WHERE id = %s", SET_A)
         await self.sql(
             "UPDATE rule_set_versions SET content = %s::jsonb WHERE set_id = %s AND version = 2",
             json.dumps(NEW), SET_A,
@@ -130,8 +131,8 @@ class PackUpdates(PackBase):
         self.assertEqual((len(got["lines"]), got["more"]), (pack_updates.MAX_LINES, 8))
 
 
-class UndoingATake(PackBase):
-    """The Undo of a pack's taken update (#4841 packs P2, migration 0567)."""
+class ToolsBase(PackBase):
+    """The bot's pack tools for the actions (#4841 packs P2 and P3)."""
 
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
@@ -178,6 +179,10 @@ class UndoingATake(PackBase):
         (done,) = await self.drain()
         return done
 
+
+class UndoingATake(ToolsBase):
+    """The Undo of a pack's taken update (#4841 packs P2, migration 0567)."""
+
     async def test_the_undo_puts_the_copy_before_back_and_a_session_is_told(self) -> None:
         done = await self.undo(2)
         self.assertEqual((done.error, done.counts), ("", "back:1"))
@@ -221,3 +226,102 @@ class UndoingATake(PackBase):
             )  # fmt: skip
         self.assertEqual(err.exception.code, "not_allowed")
         self.assertEqual(len((await self.fetch())["taken"]), 1)  # (the take is still there)
+
+
+class PickingChanges(ToolsBase):
+    """Pick changes on a followed pack and its Undo (#4841 packs P3, migration 0568)."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        await self.follow_pack(OLD)  # (a newer version waits, nothing taken)
+
+    async def pick(self, kept: list[int], version: int = 2) -> Any:
+        await pack_updates.queue_pick(
+            self.web, self.session, self.cref(),
+            {"setId": SET_A, "version": version, "kept": kept},
+        )  # fmt: skip
+        (done,) = await self.drain()
+        return done
+
+    async def follow_row(self) -> Any:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT version, content, updating FROM rule_set_follows WHERE campaign_id = %s",
+                (self.one.id,),
+            )
+            return await cur.fetchone()
+
+    async def test_leaving_a_change_out_ends_the_follow_and_gives_an_undo(self) -> None:
+        # (OLD to NEW: Flute added, Rope changed; the page lists them in core's order)
+        shown = pack_updates_lines()
+        done = await self.pick([0])
+        self.assertEqual(done.error, "")
+        self.assertEqual(done.counts, f"picked:1 left:{len(shown) - 1} skipped:0")
+        self.assertIsNotNone(done.result_id)
+        self.assertEqual(self.changed, [(THURSDAY.id, self.one.id)])
+        row = await self.follow_row()
+        self.assertIsNone(row)  # (the follow ended: the pack is the campaign's own now)
+
+    async def test_the_undo_puts_the_follow_back_and_is_for_the_same_dm_and_the_newest(
+        self,
+    ) -> None:
+        done = await self.pick([0])
+        await pack_updates.queue_undo(self.web, self.session, self.cref(), str(done.result_id))
+        (undone,) = await self.drain()
+        self.assertEqual((undone.error, undone.counts), ("", "undone:0"))
+        row = await self.follow_row()
+        assert row is not None
+        self.assertEqual((row["version"], row["content"]), (1, OLD))
+        await pack_updates.queue_undo(self.web, self.session, self.cref(), str(done.result_id))
+        (again,) = await self.drain()
+        self.assertEqual(again.error, "gone")  # (the handle went with the undo)
+
+    async def test_keeping_everything_or_a_stale_version_is_refused(self) -> None:
+        total = len(pack_updates_lines())
+        self.assertEqual((await self.pick(list(range(total)))).error, "nothing_left_out")
+        self.assertEqual((await self.pick([0], version=7)).error, "changed")
+        row = await self.follow_row()
+        assert row is not None
+        self.assertEqual(row["version"], 1)
+
+    async def test_a_pick_past_the_list_is_refused(self) -> None:
+        self.assertEqual((await self.pick([40])).error, "gone")
+
+    async def test_a_sets_handle_is_not_a_packs(self) -> None:
+        done = await self.pick([0])
+        # the same id read as a house-rules set's Undo finds nothing of its kind
+        from dmbot.web import rule_updates
+
+        await rule_updates.queue_undo(self.web, self.session, self.cref(), str(done.result_id))
+        (wrong,) = await self.drain()
+        self.assertEqual(wrong.error, "gone")
+        await pack_updates.queue_undo(self.web, self.session, self.cref(), str(done.result_id))
+        (right,) = await self.drain()
+        self.assertEqual(right.error, "")
+
+    async def test_the_answer_says_how_many_were_kept_and_left_out(self) -> None:
+        from dmbot.web import relationships
+
+        answer = await pack_updates.queue_pick(
+            self.web, self.session, self.cref(), {"setId": SET_A, "version": 2, "kept": [0]}
+        )
+        await self.drain()
+        read = await relationships.read_answer(self.web, self.session, self.cref(), answer)
+        self.assertEqual((read["state"], read["kept"], read["skipped"]), ("done", 1, 0))
+        self.assertIsNotNone(read["take"])
+
+    async def test_a_bad_pick_body_is_refused_before_anything_is_queued(self) -> None:
+        bodies: list[object] = [
+            {}, {"setId": SET_A, "version": 2}, {"setId": "x", "version": 2, "kept": []},
+            {"setId": SET_A, "version": 2, "kept": [50]}, {"setId": SET_A, "version": 2,
+             "kept": [True]}, {"setId": SET_A, "version": 2, "kept": list(range(51))}, 5,
+        ]  # fmt: skip
+        for body in bodies:
+            with self.assertRaises(RecapError) as err:
+                await pack_updates.queue_pick(self.web, self.session, self.cref(), body)
+            self.assertEqual(err.exception.code, "bad_action")
+        self.assertEqual(await self.drain(), [])
+
+
+def pack_updates_lines() -> list[str]:
+    return [pack_diff.describe(c) for c in pack_diff.diff(OLD, NEW)]

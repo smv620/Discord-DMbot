@@ -60,6 +60,7 @@ from dmbot.memory.party_record import ENDED
 from dmbot.memory.store import INT64_MAX, PERSON, MemoryStore
 from dmbot.memory.store import NAMES_NOT_SHOWN as NAMES_NOT_SHOWN_WORDS
 from dmbot.rules import rule_sets, set_sync
+from dmbot.rules.homebrew_packs import TOO_MANY_PACKS
 from dmbot.rules.house import HouseRuleError
 from dmbot.rules.web_updates import RuleTools
 
@@ -175,6 +176,8 @@ RULE_UPDATE_ACTIONS = (
     "rules-update-undo",
     "rules-update-undo-last",
     "pack-update-undo-last",  # the Undo of a followed pack's taken update (#4841 packs)
+    "pack-update-pick",  # Pick changes on a followed pack, and its Undo (#4841 packs P3)
+    "pack-update-undo",
 )  # a followed set's pick (#4841)
 # The story threads DMbot found in an upload (#4457, quests slice 1): the same store calls as
 # Discord's 📜 card, so each keep is one change and one Undo.
@@ -1345,6 +1348,10 @@ async def _rule_update(tools: RuleTools, guild_id: int, cid: str, a: Action) -> 
         return await _rule_undo_last(tools, guild_id, cid, a)
     if a.action == "pack-update-undo-last":
         return await _pack_undo_last(tools, guild_id, cid, a)
+    if a.action == "pack-update-undo":
+        return await _pack_undo(tools, guild_id, cid, a)
+    if a.action == "pack-update-pick":
+        return await _pack_pick(tools, guild_id, cid, a)
     version_text, _, picks_text = a.text.partition(" ")
     if not (version_text.isdigit() and re.fullmatch(r"[0-9a-f]{1,13}", picks_text)):
         return _failed(GONE)
@@ -1430,6 +1437,88 @@ async def _pack_undo_last(tools: RuleTools, guild_id: int, cid: str, a: Action) 
     if tools.packs_changed is not None:
         tools.packs_changed(guild_id, cid)
     return Outcome(counts=f"back:{follow.previous_version}")
+
+
+_PACK_PICK = re.compile(r"([0-9a-f]{32}) ([0-9]{1,9}) ([0-9a-f]{1,13})")
+
+
+async def _pack_pick(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Outcome:
+    """The DM's Pick changes on a followed pack, from the website (#4841 packs P3): the same store
+    call as Discord's `dm_screen/pack_update.take`. The pick is checked against the version the DM
+    was shown (`changed` if a newer one came). Leaving anything out ends the follow and copies the
+    pack into the campaign's own homebrew (entries the campaign already has stay its own, counted
+    as `skipped`); keeping everything is refused, since the page never takes an update itself. The
+    undo handle is a row of `web_rule_takes` of kind 'pack', for this DM only, for a day."""
+    found = _PACK_PICK.fullmatch(a.text)
+    if found is None:
+        return _failed(GONE)
+    if tools.packs is None:
+        return _failed(FAILED)
+    set_id, version, picks = found[1], int(found[2]), int(found[3], 16)
+    update = await tools.packs.pending_pack_update(guild_id, cid, set_id)
+    if update is None:
+        return _failed(GONE)  # nothing newer waits, or the pack is no longer followed
+    if update.offer.version != version:
+        return _failed(CHANGED)  # a newer version came after the one the DM looked at
+    items = len(update.changes)
+    if items > PICK_MAX:
+        return _failed(TOO_MANY)  # the page lists 50 and says so: pick the rest in Discord
+    if picks >> items:
+        return _failed(GONE)
+    keys = {c.key for i, c in enumerate(update.changes) if picks >> i & 1}
+    left = items - len(keys)
+    if left == 0:
+        return _failed(NOTHING_LEFT_OUT)
+    try:
+        taken = await tools.packs.take_pack_update(
+            guild_id, cid, a.user_id, set_id, keys, expected_version=version
+        )
+    except rule_sets.RuleSetError as exc:
+        text = str(exc)
+        if text == rule_sets.CHANGED_AGAIN:
+            return _failed(CHANGED)
+        if text in (rule_sets.NOT_FOLLOWING, rule_sets.NOTHING_NEW, rule_sets.NO_SUCH_SET):
+            return _failed(GONE)
+        if text == TOO_MANY_PACKS or text == rule_sets.NO_ROOM:
+            return _failed(NO_ROOM)
+        return _failed(FAILED)
+    except HouseRuleError:
+        return _failed(FAILED)
+    if tools.packs_changed is not None:
+        tools.packs_changed(guild_id, cid)
+    counts = f"picked:{items - left} left:{left} skipped:{taken.skipped}"
+    try:
+        saved = await tools.takes.save_pack(guild_id, cid, a.user_id, taken)
+    except Exception:  # the pick is done: say so, without an Undo, rather than an error
+        log.exception("A website pack pick's undo handle could not be saved")
+        return Outcome(counts=counts)
+    return Outcome(result_id=str(saved), counts=counts)
+
+
+async def _pack_undo(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Outcome:
+    """↩️ Undo of a pack pick: this DM's own, the newest pack handle, within the day; else
+    Discord's too-late words on the page."""
+    if not (a.text.isascii() and a.text.isdigit()) or len(a.text) > 15:
+        return _failed(GONE)
+    if tools.packs is None:
+        return _failed(FAILED)
+    take_id = int(a.text)
+    saved = await tools.takes.get_pack(guild_id, cid, take_id)
+    if saved is None or saved.user_id != a.user_id:
+        return _failed(GONE)  # (none, or another DM's pick)
+    if (
+        not tools.takes.fresh_pack(saved)
+        or await tools.takes.newest_id(guild_id, cid, "pack") != take_id
+    ):
+        return _failed(TOO_LATE)
+    try:
+        kept = await tools.packs.undo_pack_take(guild_id, cid, a.user_id, saved.taken)
+    except HouseRuleError:
+        return _failed(TOO_LATE)  # the campaign follows something else now, or the pack is gone
+    if tools.packs_changed is not None:
+        tools.packs_changed(guild_id, cid)
+    await tools.takes.delete(guild_id, cid, take_id)
+    return Outcome(counts=f"undone:{kept}")
 
 
 async def _rule_undo(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Outcome:
