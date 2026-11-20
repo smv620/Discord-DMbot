@@ -73,3 +73,28 @@ async def queue_keep(db: Database, session: Session, ref: str, body: object) -> 
     return await relationships._queue(
         db, session, ref, entity=None, action="heard-keep", target="", text=question, flag=False
     )
+
+
+# What the queue's 100-character text limit leaves after a 15-digit id and a space (the door's
+# limit in `dmbot_web_name_action_add`); the bot says "too long" for anything over 60.
+TYPED_SHOWN_MAX = 84
+
+
+async def queue_type(db: Database, session: Session, ref: str, body: object) -> str:
+    """ "Type it…": `{"question": <id>, "name": <what the DM typed>}`. Only the shape is checked
+    here (a text, at most what the queue can hold); whether it is a name DMbot can use is the
+    bot's own check, which answers with a reason the page words. The typed words go to the queue
+    and nowhere else: not a log, not an answer."""
+    question = body.get("question") if isinstance(body, dict) else None
+    typed = body.get("name") if isinstance(body, dict) else None
+    if not (isinstance(question, str) and _QUESTION.fullmatch(question)):
+        raise RecapError("bad_action")
+    if not isinstance(typed, str):
+        raise RecapError("bad_action")
+    typed = " ".join(typed.split())  # as the door will: extra spaces don't count against the limit
+    if len(typed) > TYPED_SHOWN_MAX:
+        raise RecapError("bad_action")
+    return await relationships._queue(
+        db, session, ref, entity=None, action="heard-type", target="",
+        text=f"{question} {typed}", flag=False,
+    )  # fmt: skip

@@ -2942,6 +2942,34 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/rule-update/taken")
+    async def me_campaign_rule_taken(ref: str, signed: Signed) -> dict[str, Any]:
+        """The update DMbot already took on the followed set, as the lines of what changed
+        (#4841 C3): DM only."""
+        session, _token = signed
+        try:
+            return await rule_updates.read_taken(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/rule-update/undo-last", status_code=202)
+    async def me_campaign_rule_undo_last(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"version"}`: ↩️ Undo of the update DMbot took (#4841 C3); polled at
+        `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await rule_updates.queue_undo_last(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/heard-questions")
     async def me_campaign_heard_questions(ref: str, signed: Signed) -> dict[str, Any]:
         """The "Did they mean…?" questions waiting for the DM (#4841 B): DM only."""
@@ -2976,6 +3004,20 @@ def create_app(
             body = None
         try:
             return {"answer": await heard_waiting.queue_keep(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/heard-questions/type", status_code=202)
+    async def me_campaign_heard_type(ref: str, request: Request, signed: Signed) -> dict[str, str]:
+        """`{"question", "name"}`: "Type it…". The typed words are never logged."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await heard_waiting.queue_type(db, session, ref, body)}
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
