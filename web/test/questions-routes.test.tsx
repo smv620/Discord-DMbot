@@ -10,7 +10,7 @@ import Questions from "../src/account/Questions";
 import { kindWords, questionsPage as w } from "../src/content/questions-words";
 import type { QuestionCounts } from "../src/account/api";
 
-const sw = vi.hoisted(() => ({ worldNotes: false, threads: false, maps: false }));
+const sw = vi.hoisted(() => ({ worldNotes: false, threads: false, maps: false, rules: false }));
 // The page itself is on here; the three kinds' own switches are set per test.
 vi.mock("../src/content/questions-switch", () => ({ QUESTIONS_LIVE: true }));
 vi.mock("../src/content/world-notes-switch", () => ({
@@ -21,6 +21,11 @@ vi.mock("../src/content/world-notes-switch", () => ({
 vi.mock("../src/content/threads-switch", () => ({
   get THREADS_LIVE() {
     return sw.threads;
+  },
+}));
+vi.mock("../src/content/rule-updates-switch", () => ({
+  get RULE_UPDATES_LIVE() {
+    return sw.rules;
   },
 }));
 vi.mock("../src/content/maps-switch", () => ({
@@ -34,6 +39,7 @@ afterEach(() => {
   sw.worldNotes = false;
   sw.threads = false;
   sw.maps = false;
+  sw.rules = false;
 });
 
 const now = Math.floor(Date.now() / 1000);
@@ -97,5 +103,16 @@ describe("the Questions page links the kinds answered on another page (#4841 A)"
     const line = await lineFor("lookalikes");
     const link = within(line).getByRole("link", { name: kindWords("lookalikes").link ?? "" });
     expect(link.getAttribute("href")).toBe(`/account/names/${encodeURIComponent(REF)}`);
+  });
+
+  it("house rule updates link to the House rules page while the switch is on, else say how in Discord", async () => {
+    sw.rules = true;
+    const on = await lineFor("rules");
+    expect(within(on).getByRole("link", { name: "Open the House rules page" }).getAttribute("href")).toBe(`/account/house-rules/${encodeURIComponent(REF)}`);
+    cleanup();
+    sw.rules = false;
+    const off = await lineFor("rules");
+    expect(within(off).queryByRole("link")).toBeNull();
+    expect(within(off).getByText(w.discord)).toBeTruthy();
   });
 });

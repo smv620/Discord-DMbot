@@ -21,6 +21,11 @@ import {
 } from "./api";
 import { GIVE_UP_MS, LATE_POLL_MS, OFFLINE_AFTER_MS, POLL_MS } from "./settings-timing";
 import RuleDecisions from "./RuleDecisions";
+import LazyPanel from "./LazyPanel";
+import { RULE_UPDATES_LIVE } from "../content/rule-updates-switch";
+
+// Loaded once for every followed set that has a card; the card draws only when a newer version of that set waits (#4845).
+const loadRuleUpdate = () => import("./RuleUpdate");
 import WorkProgress from "./WorkProgress";
 
 type Report = { kind: "saved" | "error"; text: string } | null;
@@ -252,6 +257,9 @@ export default function RuleSharingSection({ api, campaignRef, rules = [], sets 
                 </span>
                 {confirming === "unfollow" && (
                   <Confirm text={w.confirmUnfollow(f.name)} yes={w.confirmUnfollowYes} busy={busy} onNo={() => setConfirming(null)} onYes={() => void choose({ action: "unfollow" })} />
+                )}
+                {RULE_UPDATES_LIVE && (
+                  <LazyPanel load={loadRuleUpdate} what="the changes a newer version would make" props={{ api, campaignRef, name: f.name }} />
                 )}
               </li>
             ))}
