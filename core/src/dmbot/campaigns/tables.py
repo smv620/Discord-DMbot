@@ -189,6 +189,8 @@ NOT_IN_BACKUP: dict[str, str] = {
     "lore_pdf_staged": "a lore PDF sent from the website while it waits to be counted and "
     "read (ids and numbers only, no file name or word; one for each campaign): a file in transit, "
     "gone within a day, never in a backup (#4762)",
+    "web_rule_takes": "a day-long undo handle for a website pick of a followed set's changes; "
+    "a restored campaign has nothing to undo (#4841)",
     "upload_notices": _RUNTIME,  # each lore upload's notice and the changes it made (#3878)
     "web_peeks": _RUNTIME,
     "plot_checks": "PlotBot's run state for a recap (running, failed, when): rebuilt by the next "

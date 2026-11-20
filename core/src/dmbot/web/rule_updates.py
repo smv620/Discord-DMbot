@@ -7,10 +7,12 @@ DMbot takes it at a session's start, as on Discord."""
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from dmbot.db import Database
 from dmbot.rules import set_diff
+from dmbot.web import relationships
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -51,3 +53,39 @@ async def read(db: Database, session: Session, ref: str) -> dict[str, Any]:
             "more": max(0, len(lines) - MAX_LINES),
         }
     }
+
+
+PICK_MAX = 50  # changes one pick can name; the bot's limit too (`web_actions.PICK_MAX`)
+_TAKE = re.compile(r"^[0-9]{1,15}$")
+
+
+async def queue_pick(db: Database, session: Session, ref: str, body: object) -> str:
+    """ "Save my picks": `{"version": <the version shown>, "kept": [<index>, …]}`: the indexes in
+    the shown list (rule changes first, then relationship definitions) the DM keeps; the rest are
+    left out, which ends the follow and keeps the campaign's own copy. The id of the answer the
+    page polls."""
+    version = body.get("version") if isinstance(body, dict) else None
+    kept = body.get("kept") if isinstance(body, dict) else None
+    if not (isinstance(version, int) and not isinstance(version, bool) and 0 <= version < 10**9):
+        raise RecapError("bad_action")
+    if not isinstance(kept, list) or len(kept) > PICK_MAX:
+        raise RecapError("bad_action")
+    mask = 0
+    for i in kept:
+        if not (isinstance(i, int) and not isinstance(i, bool) and 0 <= i < PICK_MAX):
+            raise RecapError("bad_action")
+        mask |= 1 << i
+    return await relationships._queue(
+        db, session, ref, entity=None, action="rules-update-pick", target="",
+        text=f"{version} {mask:x}", flag=False,
+    )  # fmt: skip
+
+
+async def queue_undo(db: Database, session: Session, ref: str, take: str) -> str:
+    """↩️ Undo of a pick, by the id its answer carried (this DM's own, the newest, for a day)."""
+    if not _TAKE.fullmatch(take):
+        raise RecapError("not_found")
+    return await relationships._queue(
+        db, session, ref, entity=None, action="rules-update-undo", target="", text=take,
+        flag=False,
+    )  # fmt: skip

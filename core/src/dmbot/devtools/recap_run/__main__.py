@@ -55,7 +55,7 @@ from pathlib import Path
 from typing import Any
 
 from dmbot import ai_structured
-from dmbot.ai import AIModels, AIModelTier, AnthropicClient, Reply
+from dmbot.ai import AIModels, AIModelTier, AIOutOfFunds, AnthropicClient, Reply
 from dmbot.config import ConfigError, parse_ai_models
 from dmbot.devtools.costs.prices import UnknownPrice, price_of
 from dmbot.devtools.recap_measure.__main__ import beat_hits
@@ -98,6 +98,37 @@ PLACEHOLDER_CAMPAIGN = "0" * 32
 MESSAGE_MAX = 100  # characters of a ValueError's message in the report
 
 
+class SpendCap(AIOutOfFunds):
+    """The `--max-usd` cap would be passed by the next call. An out-of-funds error, so the worker
+    fails the job at once and cleanly (no retry, no waiting) instead of trying again."""
+
+
+@dataclass(slots=True)
+class Budget:
+    """A dollar cap shared by every client of one run (`--max-usd`, #4859). Before each call the
+    worst it could cost (its text at about 3 characters a token in, `max_tokens` out, at that
+    model's price) is added to what was spent; a call that would pass the cap is not made."""
+
+    limit: float
+    prices: dict[str, tuple[float, float]]
+    spent: float = 0.0
+    stopped: bool = False
+
+    def before(self, model: str, system: str, text: str, max_tokens: int) -> None:
+        price = self.prices.get(model)
+        if price is None:  # (the run refuses to start without every price, but never guess)
+            raise SpendCap("no price on file for a model")
+        worst = ((len(system) + len(text)) / 3 * price[0] + max_tokens * price[1]) / 1_000_000
+        if self.spent + worst > self.limit:
+            self.stopped = True
+            raise SpendCap("the dollar cap would be passed")
+
+    def after(self, model: str, tokens_in: int, tokens_out: int) -> None:
+        price = self.prices.get(model)
+        if price is not None:
+            self.spent += (tokens_in * price[0] + tokens_out * price[1]) / 1_000_000
+
+
 @dataclass(slots=True)
 class Counting:
     """Wraps a client to count the calls and tokens it spends (the worker only counts calls)."""
@@ -107,6 +138,7 @@ class Counting:
     calls: int = 0
     input_tokens: int = 0
     output_tokens: int = 0
+    budget: Budget | None = None
 
     async def complete(
         self,
@@ -116,6 +148,8 @@ class Counting:
         max_tokens: int = 8000,
         schema: dict[str, Any] | None = None,
     ) -> Reply:
+        if self.budget is not None:
+            self.budget.before(self.model, system, text, max_tokens)  # (not made: not counted)
         self.calls += 1  # counted when made: a call that fails was still a call
         if schema is None:
             reply = await self.client.complete(system, text, max_tokens=max_tokens)
@@ -123,6 +157,8 @@ class Counting:
             reply = await self.client.complete(system, text, max_tokens=max_tokens, schema=schema)
         self.input_tokens += reply.input_tokens
         self.output_tokens += reply.output_tokens
+        if self.budget is not None:
+            self.budget.after(self.model, reply.input_tokens, reply.output_tokens)
         return reply
 
 
@@ -202,15 +238,23 @@ async def run_text(
     start: tuple[str, dict[str, Any]] | None = None,
     reads: str = "beats",
     structured: bool = False,
+    budget: Budget | None = None,
 ) -> Outcome:
     """The recap worker on one session, in memory. Returns the job as it ended. With `creative`
     and `formatting` the prose is written and shaped by two models, as live (#2074)."""
     store = EphemeralStore(session_at, DM_PLACEHOLDER)
     if start is not None:  # `--compare`: the second writer begins at the first one's beat sheet
         store.job = replace(store.job, state=start[0], **start[1])
-    fast_c, careful_c = Counting(fast, models[0]), Counting(careful, models[1])
-    creative_c = Counting(creative, creative_models[0]) if creative is not None else None
-    formatting_c = Counting(formatting, creative_models[1]) if formatting is not None else None
+    fast_c, careful_c = (
+        Counting(fast, models[0], budget=budget),
+        Counting(careful, models[1], budget=budget),
+    )
+    creative_c = (
+        Counting(creative, creative_models[0], budget=budget) if creative is not None else None
+    )
+    formatting_c = (
+        Counting(formatting, creative_models[1], budget=budget) if formatting is not None else None
+    )
     failures: list[tuple[str, int, list[str]]] = []
     calls: list[cl.CallEvent] = []
     counts: dict[str, int] = {}
@@ -613,6 +657,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         "'before' of a writer change, written by a build with no --score (#3328)",
     )  # fmt: skip
     parser.add_argument(
+        "--max-usd", type=float, metavar="N", default=None,
+        help="with --golden only: stop before a call that would pass N dollars, and say how far it "
+        "got (counts only). Needs a price for each model",
+    )  # fmt: skip
+    parser.add_argument(
         "--beats", metavar="FILE",
         help="with --score-recap: the beats.json an --out run of the SAME session saved, so the "
         "before and the after are held to the same facts",
@@ -702,6 +751,8 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
     args = parser.parse_args(argv)
     if args.golden and (args.audio or args.keep):
         parser.error("--golden takes neither --audio nor --keep")
+    if args.max_usd is not None and (not args.golden or args.max_usd <= 0):
+        parser.error("--max-usd is a number above 0, and goes with --golden")
     if args.transcript:
         if args.keep:
             parser.error(
@@ -822,19 +873,36 @@ async def run_golden(
     careful: Client,
     models: tuple[str, str],
     prices: dict[str, tuple[float, float]],
+    budget: Budget | None = None,
 ) -> tuple[list[str], bool]:
-    """The golden set through the same worker as a live session; the score table."""
+    """The golden set through the same worker as a live session; the score table. With a
+    `budget` (`--max-usd`), the run stops before a call that would pass it and says how far it
+    got (counts only), and it is not clean."""
     rows = ["session            state    calls  beats  quote  grade"]
     total_in = total_out = 0
     clean = True
-    for session in load_golden():
+    sessions = load_golden()
+    for done, session in enumerate(sessions):
+        if budget is not None and budget.stopped:
+            break
         inputs = pl.Inputs(
             lines=session.lines, dm_ids={1}, allowed_names=list(session.names),
             secret_names=list(session.secret), previous="", day=None,
             window_chars=session.window_chars,
         )  # fmt: skip
-        out = await run_text(inputs, fast, careful, models=models, **_WRITERS)
+        out = await run_text(inputs, fast, careful, models=models, budget=budget, **_WRITERS)
         job = out.job
+        total_in += out.fast.input_tokens + out.careful.input_tokens
+        total_out += out.fast.output_tokens + out.careful.output_tokens
+        if budget is not None and budget.stopped:  # (this session was cut short: no score)
+            rows.append(f"{session.name:<18} STOPPED: the dollar cap was reached")
+            clean = False
+            rows.append(
+                f"stopped before a call that would pass ${budget.limit:.2f}: {done} of "
+                f"{len(sessions)} sessions finished, {out.fast.calls + out.careful.calls} calls "
+                "in the last"
+            )
+            break
         if names_a_secret_anywhere(job, inputs):
             rows.append(f"{session.name:<18} REFUSED: it names a secret")
             clean = False
@@ -849,8 +917,6 @@ async def run_golden(
             f"{session.name:<18} {job.state:<8} {out.fast.calls + out.careful.calls:>5}"
             f"  {found}/{len(session.reference):<4} {leak:>5}  {grade}"
         )
-        total_in += out.fast.input_tokens + out.careful.input_tokens
-        total_out += out.fast.output_tokens + out.careful.output_tokens
         clean = clean and job.state == "ready" and not leak
     spend = dollars(prices.get(models[0]), total_in, total_out)
     rows.append(f"tokens in {total_in}, out {total_out}; spend about {spend} (fast-tier price)")
@@ -885,12 +951,29 @@ async def _main_async(args: argparse.Namespace) -> int:
         except (OSError, GoldenError) as exc:
             print(f"recap_run: {exc}", file=sys.stderr)
             return 2
-        worst = sum(estimate(_golden_inputs(s))[0] for s in sessions)
-        print(f"golden set: {len(sessions)} sessions; up to {worst} AI calls.")
+        worst, worst_in = 0, 0
+        for s in sessions:
+            calls, tokens = estimate(_golden_inputs(s))
+            worst += calls
+            worst_in += calls * tokens  # (every call at the first try's input, the most it needs)
+        print(
+            f"golden set: {len(sessions)} sessions; up to {worst} AI calls; worst case about "
+            f"{dollars(prices.get(models[1]), worst_in, worst * 4000, models[1])} "
+            "(every call at the careful tier's price)."
+        )
+        budget = None
+        if args.max_usd is not None:
+            if any(m not in prices for m in models):
+                print(
+                    "recap_run: --max-usd needs a price for each model (--price)", file=sys.stderr
+                )
+                return 2
+            budget = Budget(args.max_usd, prices)
+            print(f"It will stop before a call that would pass ${args.max_usd:.2f}.")
         if not args.yes:
             print("Nothing was run. Add --yes to spend the money.")
             return 0
-        rows, clean = await run_golden(fast, careful, models, prices)
+        rows, clean = await run_golden(fast, careful, models, prices, budget)
         print("\n".join(rows))
         if not clean:
             print("recap_run: the golden set had a failure: see the rows above", file=sys.stderr)
