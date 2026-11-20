@@ -3183,8 +3183,9 @@ class MemoryStore:
         return PartyAndOthers(party, left, npcs)
 
     async def members_at(self, guild_id: int, campaign_id: str, at: int) -> list[str]:
-        """The party as it was at `at` (a session's start: `party_record.members_at`, #4537
-        slice 3b): what is read to the whole table about that session is for them (§8)."""
+        """The party as it was at the session that started at `at` (`party_record.session_members`,
+        #4537 slice 3b, with ruling E's imported history): what is read to the whole table about
+        that session is for them (§8)."""
         async with self._read(guild_id, campaign_id) as scope:
             return await party_record.session_members(scope, at)
 
