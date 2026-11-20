@@ -152,6 +152,17 @@ class TakeStore:
             int(row["created_at"]),
         )  # fmt: skip
 
+    async def newest_pack_id(self, guild_id: int, campaign_id: str, set_id: str) -> int | None:
+        """The newest pack handle for that one pack (a pick of another pack does not block it)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT max(id) AS id FROM web_rule_takes WHERE guild_id = %s AND campaign_id = %s"
+                " AND kind = 'pack' AND taken -> 'before' ->> 'set_id' = %s",
+                (guild_id, campaign_id, set_id),
+            )
+            row = await cur.fetchone()
+        return None if row is None or row["id"] is None else int(row["id"])
+
     def fresh_pack(self, saved: SavedPackTake) -> bool:
         return int(self._now()) - saved.created_at <= TAKE_LIFE_S
 

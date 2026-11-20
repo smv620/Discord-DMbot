@@ -327,6 +327,32 @@ class PickingChanges(ToolsBase):
         (done,) = await self.drain()
         self.assertEqual(done.error, "gone")
 
+    async def test_picking_another_pack_does_not_block_this_packs_undo(self) -> None:
+        done = await self.pick([0])
+        await self.sql(
+            "INSERT INTO web_rule_takes (guild_id, campaign_id, user_id, taken, kind, created_at)"
+            " SELECT guild_id, campaign_id, user_id,"
+            " jsonb_set(taken, '{before,set_id}', to_jsonb(%s::text)), 'pack', created_at"
+            " FROM web_rule_takes WHERE id = %s",
+            "b" * 32,
+            int(done.result_id),
+        )  # fmt: skip  (a newer pick of another pack)
+        await pack_updates.queue_undo(self.web, self.session, self.cref(), str(done.result_id))
+        (undone,) = await self.drain()
+        self.assertEqual((undone.error, undone.counts), ("", "undone:0"))
+
+    async def test_a_newer_pick_of_the_same_pack_makes_the_older_undo_too_late(self) -> None:
+        done = await self.pick([0])
+        await self.sql(
+            "INSERT INTO web_rule_takes (guild_id, campaign_id, user_id, taken, kind, created_at)"
+            " SELECT guild_id, campaign_id, user_id, taken, 'pack', created_at"
+            " FROM web_rule_takes WHERE id = %s",
+            int(done.result_id),
+        )  # fmt: skip
+        await pack_updates.queue_undo(self.web, self.session, self.cref(), str(done.result_id))
+        (late,) = await self.drain()
+        self.assertEqual(late.error, "too_late")
+
     async def test_another_dms_pick_cannot_be_undone_and_the_handle_expires(self) -> None:
         done = await self.pick([0])
         await self.sql("UPDATE web_rule_takes SET user_id = %s", BOB.id)

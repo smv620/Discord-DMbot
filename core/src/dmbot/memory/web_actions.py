@@ -1495,7 +1495,7 @@ async def _pack_pick(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Ou
 
 
 async def _pack_undo(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Outcome:
-    """↩️ Undo of a pack pick: this DM's own, the newest pack handle, within the day; else
+    """↩️ Undo of a pack pick: this DM's own, the newest handle for that pack, within the day; else
     Discord's too-late words on the page."""
     if not (a.text.isascii() and a.text.isdigit()) or len(a.text) > 15:
         return _failed(GONE)
@@ -1507,7 +1507,7 @@ async def _pack_undo(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Ou
         return _failed(GONE)  # (none, or another DM's pick)
     if (
         not tools.takes.fresh_pack(saved)
-        or await tools.takes.newest_id(guild_id, cid, "pack") != take_id
+        or await tools.takes.newest_pack_id(guild_id, cid, saved.taken.before.set_id) != take_id
     ):
         return _failed(TOO_LATE)
     try:
