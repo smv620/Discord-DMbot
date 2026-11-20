@@ -192,9 +192,24 @@ class PartyLists(Web):
         self.assertIn(got, ("👥 Known to: Rook and Aaron",))
 
 
-class PickerOrder(PartyLists):
+class PickerOrder(Web):
     """ "Who knows this?" and See as… list the party first, then those who left, then the rest (the
     order of Discord's pickers, #4778)."""
+
+    bob_has_a_hero = False
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.tavin = await self.add("Tavin", "character", role="player_character")
+
+    async def leave(self, character: str) -> None:
+        now = int(time.time())
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE memory_party_spans SET to_at = GREATEST(from_at, %s), ended = 'retired'"
+                " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s AND to_at IS NULL",
+                (now, self.g, self.one.id, character),
+            )
 
     async def viewers(self) -> list[tuple[str, str, str | None]]:
         got = await see_as.read_viewers(self.web, self.session, self.cref, "")
@@ -225,3 +240,15 @@ class PickerOrder(PartyLists):
         got = await see_as.read_viewers(self.web, self.session, self.cref, "a")
         names = [v["name"] for v in got["viewers"]]
         self.assertLess(names.index("Tavin"), names.index("Mira Voss"))
+
+    async def test_a_leaver_whose_why_is_missing_says_left_the_party_and_the_cap_keeps_the_order(
+        self,
+    ) -> None:
+        await self.leave(self.tavin)
+        for n in range(30):
+            await self.add(f"Extra {n:02d}", "character", role="npc")
+        got = await see_as.read_viewers(self.web, self.session, self.cref, "")
+        self.assertEqual(len(got["viewers"]), see_as.VIEWERS_SHOWN)
+        self.assertEqual([v["group"] for v in got["viewers"][:2]], ["party", "left"])
+        self.assertEqual(got["viewers"][1]["note"], party_icons.left_note("retired"))
+        self.assertEqual(party_icons.left_note("unknown-why"), party_icons.left_note("left"))

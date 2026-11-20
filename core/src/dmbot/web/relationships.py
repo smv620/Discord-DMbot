@@ -491,6 +491,21 @@ def know_words(
     return entries, links
 
 
+def party_ids(known: dict[str, Any], current: set[str] | None = None) -> list[str]:
+    """The party now in Discord's order (`party_record.current_members`): the party list's order
+    (oldest character first), then any member the list has no place for by name, then id. The one
+    place this order is made, so the line of who knows it and the "Who knows this?" and See as…
+    pickers cannot disagree (#4778). Only characters the door lists (`viewers`) are named."""
+    now = {str(c) for c in known.get("playerCharacters", ())} if current is None else current
+    named = {str(v["id"]): str(v["name"]) for v in known["viewers"]}
+    order = [str(c) for c in known.get("partyOrder", ()) if str(c) in now and str(c) in named]
+    rest = sorted(
+        (c for c in now if c in named and c not in order),
+        key=lambda c: (named[c].casefold(), c),
+    )
+    return order + rest
+
+
 def know_lines(
     known: dict[str, Any],
     shared: tuple[gate.Statements, Callable[[str, str], set[str]]] | None = None,
@@ -505,14 +520,9 @@ def know_lines(
     Discord counts as known to every member (`who_knows.knows_line`, "everyone")."""
     data, who = shared or _knowers(known)
     viewers = {str(v["id"]): (str(v["name"]), str(v.get("kind", "npc"))) for v in known["viewers"]}
-    # (the party in Discord's order: oldest character first, as `party_record.current_members`)
-    order = [str(c) for c in known.get("partyOrder", ())]
-    current = set(data.player_characters)
-    members = [(c, viewers[c][0]) for c in order if c in current and c in viewers]
-    members += sorted(
-        ((c, viewers[c][0]) for c in current if c in viewers and c not in order),
-        key=lambda m: (m[1].casefold(), m[0]),
-    )
+    members = [
+        (c, viewers[c][0]) for c in party_ids(known, set(data.player_characters)) if c in viewers
+    ]
     everyone = [c for c, _ in members]
     common_rows = {(str(k), str(s)) for k, s, c, _ in known["knowers"] if c == gate.COMMON}
     shown_entries, shown_links = set(shown[0]), set(shown[1])

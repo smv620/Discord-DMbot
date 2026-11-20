@@ -285,6 +285,7 @@ class ThePicker(SeeAs):
         self.assertEqual(got["total"], 3)
         # (nothing about who plays; the group and a leaver's note are the party list's, #4778)
         self.assertEqual(set(got["viewers"][0]), {"id", "name", "kind", "group"})
+        self.assertEqual([v["group"] for v in got["viewers"]], ["party", "party", "other"])
 
     async def test_a_search_narrows_a_big_cast_in_any_case(self) -> None:
         got = await self.viewers(query="  MIRA ")

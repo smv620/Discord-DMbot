@@ -16,7 +16,7 @@ from dmbot.db import Database
 from dmbot.memory import gate, party_icons
 from dmbot.web import graph_view
 from dmbot.web.recaps import RecapError
-from dmbot.web.relationships import MAX_NODES, is_dm, page_of, refuse_bad, source_of
+from dmbot.web.relationships import MAX_NODES, is_dm, page_of, party_ids, refuse_bad, source_of
 from dmbot.web.sessions import Session
 
 PARTY = "party"  # the viewer that is every player character at once
@@ -75,20 +75,16 @@ def ordered_viewers(known: dict[str, Any]) -> list[dict[str, Any]]:
     (`party`, `left` or `other`) and, for a leaver, a `note`. From the door's own party list
     (`playerCharacters`, `partyOrder`, `leftParty`, `leftWhy`), never a stored flag."""
     viewers = {str(v["id"]): v for v in known["viewers"]}
-    current = {str(c) for c in known.get("playerCharacters", ())}
-    left_ids = {str(c) for c in known.get("leftParty", ()) if str(c) in viewers}
     why = {str(k): str(v) for k, v in dict(known.get("leftWhy", {})).items()}
-    order = [str(c) for c in known.get("partyOrder", ()) if str(c) in current]
-    party = [c for c in order if c in viewers]
-    party += sorted(
-        (c for c in current if c in viewers and c not in order),
-        key=lambda c: (str(viewers[c]["name"]).casefold(), c),
-    )
-    gone = sorted(left_ids - set(party), key=lambda c: (str(viewers[c]["name"]).casefold(), c))
+    party = party_ids(known)
+    # (a character in both lists counts as in the party, as in `know_lines`)
+    left_ids = {str(c) for c in known.get("leftParty", ()) if str(c) in viewers} - set(party)
+    gone = sorted(left_ids, key=lambda c: (str(viewers[c]["name"]).casefold(), c))
     placed = {*party, *gone}
+    # everyone else: player characters in no party record first (as before), then NPCs
     rest = sorted(
         (c for c in viewers if c not in placed),
-        key=lambda c: (str(viewers[c]["name"]).casefold(), c),
+        key=lambda c: (str(viewers[c]["kind"]) != "pc", str(viewers[c]["name"]).casefold(), c),
     )
     out: list[dict[str, Any]] = []
     for group, ids in (("party", party), ("left", gone), ("other", rest)):
