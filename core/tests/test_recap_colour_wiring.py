@@ -96,9 +96,17 @@ def entity(entity_id: str, kind: str = "place", merged: str | None = None) -> An
 
 
 class TheBotsReader(unittest.IsolatedAsyncioTestCase):
-    def bot(self, entries: list[Any], entities: dict[str, Any]) -> Any:
-        # (what the party at the session knows: every entry but the "hidden" ones, #4877)
-        known = frozenset(e.entity_id for e in entries if not e.entry_hidden)
+    def bot(
+        self,
+        entries: list[Any],
+        entities: dict[str, Any],
+        known: frozenset[str] | None = None,
+        members: tuple[str, ...] = ("pc",),
+    ) -> Any:
+        # (what the party at the session knows, #4877; by default every entry but the ones
+        # flagged "not known yet", and given apart where the two must disagree)
+        if known is None:
+            known = frozenset(e.entity_id for e in entries if not e.entry_hidden)
 
         def for_viewer(secrets: bool, seen: Any = None) -> Any:
             # (as `CampaignLookup.for_viewer`: the entries that party doesn't hold are gone)
@@ -116,7 +124,7 @@ class TheBotsReader(unittest.IsolatedAsyncioTestCase):
         memory = SimpleNamespace(
             recap_colour=AsyncMock(return_value=["a line"]),
             party_at_session=AsyncMock(
-                return_value=SimpleNamespace(members=("pc",), entries=known)
+                return_value=SimpleNamespace(members=members, entries=known)
             ),
         )
         return SimpleNamespace(lookup=lookup, memory=memory)
@@ -159,6 +167,21 @@ class TheBotsReader(unittest.IsolatedAsyncioTestCase):
         # (the party at that session, read once and passed on, #4877)
         bot.memory.party_at_session.assert_awaited_once_with(1, "c", 100)
         self.assertEqual(bot.memory.recap_colour.await_args.kwargs["members"], ("pc",))
+
+    async def test_the_sessions_party_decides_not_todays_flag(self) -> None:
+        # (unflagged but unknown to that party: left out; flagged but known to it: used)
+        bot = self.bot(
+            [entry("p1", "Bryn Shander"), entry("p2", "Targos", hidden=True)],
+            {"p1": entity("p1"), "p2": entity("p2")},
+            known=frozenset({"p2"}),
+        )
+        await self.go(bot, ["Bryn Shander", "Targos"])
+        self.assertEqual(list(bot.memory.recap_colour.await_args.args[2]), ["p2"])
+
+    async def test_no_party_at_the_session_passes_no_members(self) -> None:
+        bot = self.bot([entry("p1", "Bryn Shander")], {"p1": entity("p1")}, members=())
+        await self.go(bot, ["Bryn Shander"])
+        self.assertEqual(bot.memory.recap_colour.await_args.kwargs["members"], ())
 
     async def test_a_place_matched_through_an_alias_is_named_the_way_the_beat_said_it(self) -> None:
         bot = self.bot(

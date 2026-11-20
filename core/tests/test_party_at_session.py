@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import unittest
 from types import SimpleNamespace
+from typing import Any
 
 from dmbot.campaigns import CampaignStore
 from dmbot.memory import gate
@@ -72,6 +73,69 @@ class TheNamesOfARecap(unittest.TestCase):
         self.assertEqual(recap_name_sets(names, " bell ", shown=set()), (["Bell"], []))
 
 
+class ThePostCheck(unittest.IsolatedAsyncioTestCase):
+    """#4877: the check at Post and the audio filter read the session's party, as the draft did
+    (#2050: the locks agree), and refuse when they can't."""
+
+    @staticmethod
+    def features(party: Any) -> Any:
+        from unittest.mock import AsyncMock
+
+
+        # (today's flag says "not known yet"; the party at that session knew it, and the other)
+        names = SimpleNamespace(
+            names=[
+                TheNamesOfARecap.entry("b", "The drowned bell", hidden=True),
+                TheNamesOfARecap.entry("k", "Kestrel Hall"),
+            ]
+        )
+        bot: Any = SimpleNamespace(
+            lookup=SimpleNamespace(get=AsyncMock(return_value=names)),
+            memory=SimpleNamespace(party_at_session=party),
+            transcripts=None,
+            _recanted=AsyncMock(return_value=()),
+        )
+        return bot
+
+    async def test_post_reads_the_party_at_that_session(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from dmbot.recaps.discord import RecapFeatures
+
+        party = AsyncMock(return_value=SimpleNamespace(members=("v",), entries=frozenset({"b"})))
+        bot = self.features(party)
+        campaign: Any = SimpleNamespace(guild_id=GUILD, id="c")
+        secret = await RecapFeatures.recap_secret_names(bot, campaign, 100)
+        allowed = await RecapFeatures.recap_allowed_names(bot, campaign, 100)
+        self.assertEqual((allowed, secret), (["The drowned bell"], ["Kestrel Hall"]))
+        party.assert_awaited_with(GUILD, "c", 100)
+
+    async def test_post_refuses_when_the_party_cant_be_read(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from dmbot.recaps.discord import RecapFeatures
+
+        bot = self.features(AsyncMock(side_effect=RuntimeError("down")))
+        campaign: Any = SimpleNamespace(guild_id=GUILD, id="c")
+        with self.assertLogs("dmbot.bot", level="ERROR"):
+            self.assertIsNone(await RecapFeatures.recap_secret_names(bot, campaign, 100))
+        with self.assertLogs("dmbot.bot", level="ERROR"):
+            self.assertEqual(await RecapFeatures.recap_allowed_names(bot, campaign, 100), [])
+
+    async def test_no_party_at_it_keeps_the_flags(self) -> None:
+        from unittest.mock import AsyncMock
+
+        from dmbot.recaps.discord import RecapFeatures
+
+        bot = self.features(
+            AsyncMock(return_value=SimpleNamespace(members=(), entries=frozenset()))
+        )
+        campaign: Any = SimpleNamespace(guild_id=GUILD, id="c")
+        self.assertEqual(
+            await RecapFeatures.recap_secret_names(bot, campaign, 100), ["The drowned bell"]
+        )
+
+
 class AJoinAtSessionThree(DatabaseTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
@@ -130,6 +194,12 @@ class AJoinAtSessionThree(DatabaseTest):
         new = await self.memory.party_at_session(GUILD, self.c, 3_000)
         self.assertEqual(set(new.members), {self.vell, self.tuck, self.cara})
         self.assertNotIn(self.thread, new.entries)  # (Cara doesn't know it yet)
+
+    async def test_the_members_own_names_are_known_to_their_own_session(self) -> None:
+        # (the review's case: Cara joined and was asked, never copied, so she holds no row on
+        # Vell or Tuck; the recap still names the characters at its own table, #4877)
+        new = await self.memory.party_at_session(GUILD, self.c, 3_000)
+        self.assertTrue({self.vell, self.tuck, self.cara} <= new.entries)
 
     async def test_an_old_recaps_threads_are_unchanged_by_the_join(self) -> None:
         then = await self.memory.members_at(GUILD, self.c, 1_000)

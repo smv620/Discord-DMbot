@@ -157,6 +157,20 @@ if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
 # Logged under the bot's own name, so the lines and any filter on them stay as they were.
 log = logging.getLogger("dmbot.bot")
 
+
+async def session_shown(
+    memory: Any, gid: int, cid: str, session_at: int | None
+) -> frozenset[str] | None:
+    """What the party at that session knows, for the recap's name lists (#4877), so the draft's
+    check, the check at Post and the audio filter all read the same party (#2050: the locks
+    agree). None (the lookup's own flags, as before) with no session, no story memory or no party
+    at it. Raises when it can't be read: each caller then refuses, as for its names."""
+    if session_at is None or memory is None:
+        return None
+    party = await memory.party_at_session(gid, cid, session_at)
+    return party.entries if party.members else None
+
+
 RECAP_ATTACHMENT_MAX = 24 * 1024 * 1024  # Discord's own most for a message
 RECAP_DEFAULT_FILE_LIMIT = 10 * 1024 * 1024 - 65536  # a server's smallest limit, with some room
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
@@ -1203,6 +1217,9 @@ class RecapFeatures:
             return None
         try:
             lookup = await self.lookup.get(campaign.guild_id, campaign.id)
+            shown = await session_shown(
+                getattr(self, "memory", None), campaign.guild_id, campaign.id, session_at
+            )
         except Exception:
             log.exception("Recap: couldn't read the campaign's secret names")
             return None
@@ -1210,6 +1227,7 @@ class RecapFeatures:
             lookup,
             await recap_said(self.transcripts, campaign.guild_id, campaign.id, session_at),
             await self._recanted(campaign.guild_id, campaign.id, session_at),
+            shown,
         )[1]
 
     async def recap_allowed_names(
@@ -1223,6 +1241,9 @@ class RecapFeatures:
             return []
         try:
             lookup = await self.lookup.get(campaign.guild_id, campaign.id)
+            shown = await session_shown(
+                getattr(self, "memory", None), campaign.guild_id, campaign.id, session_at
+            )
         except Exception:
             log.exception("Recap: couldn't read the campaign's confirmed names")
             return []
@@ -1230,6 +1251,7 @@ class RecapFeatures:
             lookup,
             await recap_said(self.transcripts, campaign.guild_id, campaign.id, session_at),
             await self._recanted(campaign.guild_id, campaign.id, session_at),
+            shown,
         )[0]
 
     async def recap_stored_split(self, gid: int, cid: str, session_at: int) -> sp.Split | None:
@@ -1346,9 +1368,11 @@ class RecapFeatures:
         if self.memory is None or self.lookup is None or not place_names:
             return []
         # (the party at that session and what it knows, read once for this stage, #4877: the
-        # places are looked up in that party's view, and its lines are that party's rows)
-        at_session = await self.memory.party_at_session(gid, cid, job.session_at)
-        players = (await self.lookup.get(gid, cid)).for_viewer(False, seen=at_session.entries)
+        # places are looked up in that party's view, and its lines are that party's rows. With no
+        # party at it, that view is common knowledge only, failing closed as `Viewer.party_at`
+        # does (#4806): background is extra, so a campaign with no player character gets none)
+        party = await self.memory.party_at_session(gid, cid, job.session_at)
+        players = (await self.lookup.get(gid, cid)).for_viewer(False, seen=party.entries)
         # The names are the players' own, taken from the name entries they may see (a place or a
         # ruler whose only entries are secret spellings, or that this party doesn't know, has no
         # name here, and is left out), never the entity's canonical name.
@@ -1368,7 +1392,7 @@ class RecapFeatures:
                 names[name_entry.entity_id] = name_entry.text  # (the spelling the beat used)
                 place_ids.append(name_entry.entity_id)
         return await self.memory.recap_colour(
-            gid, cid, place_ids, names, job.session_at, members=at_session.members
+            gid, cid, place_ids, names, job.session_at, members=party.members
         )
 
     async def recap_reveals(self, gid: int, cid: str, job: Job) -> list[str]:
@@ -1382,7 +1406,7 @@ class RecapFeatures:
         everyone = await self.memory.entities(gid, cid)
         # (the party at that session and what it knew, read once for this stage, #4877)
         party = await self.memory.party_at_session(gid, cid, job.session_at)
-        at_session = {
+        speaking_pcs = {
             e.id
             for e in everyone
             if e.is_player_character
@@ -1392,7 +1416,7 @@ class RecapFeatures:
             # before it or joined after it, isn't at its table: no party read, every one counts)
             and (not party.members or e.id in party.members)
         }
-        if not at_session:
+        if not speaking_pcs:
             return []
         # (threads that matter: what the party at that session knew, #4537 slice 3b, §8)
         seen = party.seen
@@ -1407,7 +1431,7 @@ class RecapFeatures:
                 mattering.update(i.who.id for i in t.involved)
         opted_in = await self.consent.recorded_in(gid, cid)
         return await self.memory.recap_reveals(
-            gid, cid, job.session_at, at_session, mattering, opted_in
+            gid, cid, job.session_at, speaking_pcs, mattering, opted_in
         )
 
     async def recap_allowed(self, gid: int, cid: str, job: Job | None) -> bool:
@@ -1640,19 +1664,20 @@ class RecapFeatures:
         can't be read (then nothing is sent, since a secret name couldn't be kept out)."""
         if self.lookup is None:
             return None
+        session_at = getattr(job, "session_at", None)
         try:
             lookup = await self.lookup.get(gid, cid)
+            shown = await session_shown(getattr(self, "memory", None), gid, cid, session_at)
         except Exception:
             log.exception("Recap audio: couldn't load the campaign's names")
             return None
         # The same lists as the written recap's check (#2050), so the two locks agree: a name the
-        # players haven't been shown yet is secret unless the table said it in this session.
+        # party at that session hadn't been shown is secret unless the table said it then (#4877).
         _, secret = recap_name_sets(
             lookup,
-            await recap_said(
-                getattr(self, "transcripts", None), gid, cid, getattr(job, "session_at", None)
-            ),
-            await self._recanted(gid, cid, getattr(job, "session_at", None)),
+            await recap_said(getattr(self, "transcripts", None), gid, cid, session_at),
+            await self._recanted(gid, cid, session_at),
+            shown,
         )
         hidden = set(secret)
         return AudioInputs(

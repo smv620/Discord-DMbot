@@ -208,6 +208,10 @@ class TheBotsReader(unittest.IsolatedAsyncioTestCase):
 
     async def test_the_table_is_the_speakers_characters_and_only_the_recorded_count(self) -> None:
         bot = self.bot({11})
+        # (the normal path: the party at that session is read, and Mira is in it, #4877)
+        bot.memory.party_at_session.return_value = SimpleNamespace(
+            members=("e1",), seen=bot.memory.party_at_session.return_value.seen
+        )
         job: Any = SimpleNamespace(session_at=100, speakers=(11,))
         got = await RecapFeatures.recap_reveals(bot, 1, "c", job)
         self.assertEqual(got, [SAID])

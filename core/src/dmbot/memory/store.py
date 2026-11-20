@@ -282,8 +282,12 @@ class PartyAtSession:
 
     @property
     def entries(self) -> frozenset[str]:
-        """The entries that party knows in their own right (`(ENTRY, id)` in its view)."""
-        return frozenset(i for (k, i) in self.seen.sureness if k == gate.ENTRY)
+        """The entries that party knows in their own right (`(ENTRY, id)` in its view), and its
+        own members: the gate's "all" mode counts a member's own entry as known only when every
+        other member holds a row on it, and a joiner is asked, never copied (§5), so without this
+        a recap could not name the characters at its own table (#4877 review)."""
+        known = frozenset(i for (k, i) in self.seen.sureness if k == gate.ENTRY)
+        return known | frozenset(self.members)
 
 
 PERSON = "person"

@@ -107,6 +107,8 @@ def recap_name_sets(
     don't change with a later join or leave (§14). None: the lookup's own flag (today's party)."""
 
     def hidden(n: Any) -> bool:
+        # (only a confirmed name follows the party's view: an unconfirmed one is never allowed
+        # anyway, and its flag only decides whether it is listed as secret, as before)
         if shown is not None and n.confirmed:
             return n.entity_id not in shown
         return bool(n.entry_hidden)
@@ -209,7 +211,12 @@ def recap_people(
 
 
 def familiar_for(
-    names: Any, allowed: Collection[str], lines: Any, previous: str, aliases: dict[str, str]
+    names: Any,
+    allowed: Collection[str],
+    lines: Any,
+    previous: str,
+    aliases: dict[str, str],
+    shown: Collection[str] | None = None,
 ) -> dict[str, str]:
     """{full name: the name the table uses} for the characters the recap may name (#2627), from
     what the table said in the session (never the DM sidebar) and the earlier recap. A character
@@ -218,7 +225,7 @@ def familiar_for(
     ok = set(allowed)
     characters = sorted({e.name for e in entities.values() if e.type == "character"} & ok)
     spoken = [line.text for line in lines if not getattr(line, "sidebar", "")]
-    secret = recap_name_sets(names, said_in(lines))[1]
+    secret = recap_name_sets(names, said_in(lines), shown=shown)[1]  # (the same party, #4877)
     return fam.familiar_names(
         characters, [*spoken, previous], aliases=aliases, secret_names=secret, allowed_names=ok
     )
@@ -401,11 +408,15 @@ async def load_inputs_or_why(
                 members = list(at_session.members)
                 shown = at_session.entries
         except Exception as exc:
+            # (a decision, not an accident: the names then follow the lookup's flags, today's
+            # party, exactly as every recap did before #4877. That is never looser than what the
+            # players are shown today, and a recap isn't held back by a passing read failure;
+            # the Post check reads the session's party again, and refuses if it can't)
             log.warning("Recap: couldn't read the party at the session (%s)", type(exc).__name__)
     allowed_now, secret_now = recap_name_sets(names, said, recanted, shown)
     aliases, pcs, party = recap_people(names, allowed_now, members)
     previous = fixed_lines.without(strip_cues(bridge.summary)) if bridge is not None else ""
-    familiar = familiar_for(names, allowed_now, lines, previous, aliases)
+    familiar = familiar_for(names, allowed_now, lines, previous, aliases, shown)
     return Inputs(
         lines=lines,
         dm_ids=set(campaign.dm_user_ids),
