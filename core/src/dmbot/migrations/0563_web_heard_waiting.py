@@ -15,7 +15,9 @@ from __future__ import annotations
 # each with the index Discord's buttons carry. A candidate is listed only if it is confirmed, not
 # merged, not hidden from the players, not for some only, not an unnamed person and has no secret
 # other name at all: stricter than the bot's `own_name`, never looser, and the bot checks again
-# when the answer arrives (`name-gone`). DM only (NULL for anyone else). At most 50 questions, with
+# when the answer arrives (`name-gone`). It must also have a confirmed, not secret name entry
+# spelled as the entity's own name (what `own_name` looks for), or the page would offer a name
+# the bot then refuses. DM only (NULL for anyone else). At most 50 questions, with
 # the total. The queue door's lists, shape check and the table's action list are read back as they
 # are and each anchor must be found exactly once. `heard-pick` carries `<question id> <index>` and
 # `heard-keep` the question id; the bot answers with `DMBot.answer_waiting_coded` (the same
@@ -148,6 +150,10 @@ SQL = (
                                              WHERE a.guild_id = g AND a.campaign_id = c
                                                AND a.entity_id = e.id AND a.secret
                                                AND a.status <> 'rejected')
+                             AND EXISTS (SELECT 1 FROM memory_aliases m
+                                         WHERE m.guild_id = g AND m.campaign_id = c
+                                           AND m.entity_id = e.id AND m.text = e.name
+                                           AND m.status = 'confirmed' AND NOT m.secret)
                        ), '[]'::jsonb) AS options
                 FROM waiting_name_questions q
                 WHERE q.guild_id = g AND q.campaign_id = c AND q.state = 'open'

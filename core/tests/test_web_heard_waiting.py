@@ -122,6 +122,16 @@ class HeardOnTheWeb(Listing):
         options = (await self.read())["questions"][0]["options"]
         self.assertEqual([(o["index"], o["name"]) for o in options], [(1, "Marron")])
 
+    async def test_a_name_with_no_confirmed_name_entry_is_not_offered(self) -> None:
+        await self.sql(
+            "UPDATE memory_aliases SET status = 'proposed' WHERE entity_id = %s AND text = %s",
+            self.marron,
+            "Marron",
+        )
+        await self.ask([self.maren, self.marron])
+        options = (await self.read())["questions"][0]["options"]
+        self.assertEqual([o["name"] for o in options], ["Maren"])
+
     async def test_an_expired_question_and_one_whose_line_is_gone_are_not_listed(self) -> None:
         await self.ask([self.maren, self.marron])
         await self.ask([self.maren, self.marron], at=900_000)  # (a line that is not there)
