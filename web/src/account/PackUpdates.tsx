@@ -3,7 +3,7 @@
 // #4873): a newer version waiting, or an update DMbot already took. A waiting pack can be picked (keep some changes; the rest end the
 // follow and become the campaign's own homebrew), and a taken one or a pick can be undone for a day. One card per campaign, loaded only
 // while RULE_UPDATES_LIVE. The page never takes an update by itself: DMbot takes it at the next session start.
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
 import { packUpdateWords as w } from "../content/pack-updates-words";
 import { ApiError, type AccountApi, type PackUpdateItem, type PackUpdates } from "./api";
@@ -21,6 +21,7 @@ function pickProblem(error: unknown): string {
   if (error.kind === "gone") return w.pickGone;
   if (error.kind === "no-room") return w.pickNoRoom;
   if (error.kind === "too-many-masters") return w.pickTooMany;
+  if (error.kind === "still-waiting") return w.pickWaiting;
   return w.couldNot;
 }
 
@@ -33,6 +34,7 @@ function Pack({
   picking,
   onPick,
   onUndo,
+  onStart,
   onPicked,
   onCancel,
   onPickError,
@@ -45,11 +47,22 @@ function Pack({
   picking: boolean;
   onPick: (item: PackUpdateItem) => void;
   onUndo: (item: PackUpdateItem) => void;
+  onStart: () => void;
   onPicked: (item: PackUpdateItem, got: { kept: number; left: number; skipped: number; take: number | null }) => void;
   onCancel: () => void;
   onPickError: (error: unknown) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // A picker made for lines that have since changed (or a newer version) closes: its ticks belong to the old lines (#4873).
+  const shape = `${item.to}|${item.lines.join("\n")}`;
+  const shown = useRef(shape);
+  useEffect(() => {
+    if (shown.current === shape) return;
+    shown.current = shape;
+    if (picking) onCancel();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [shape]);
+  const pickId = `pack-pick-${encodeURIComponent(`${campaignRef}-${item.setId}`)}`;
   // The panel's id names the campaign and the pack, since two campaigns can follow one pack (#4872). It is named only while open.
   const id = `pack-update-${encodeURIComponent(`${campaignRef}-${item.setId}`)}`;
   // The picker is not offered past the list's own length (more than 50 changes) or for a taken update (#4873).
@@ -65,7 +78,7 @@ function Pack({
           {open ? w.hide : w.see}
         </button>
         {canPick && (
-          <button type="button" class="button secondary" aria-expanded={picking} disabled={busy || !api.packUpdatePick} onClick={() => onPick(item)}>
+          <button type="button" class="button secondary" aria-expanded={picking} aria-controls={picking ? pickId : undefined} disabled={busy || !api.packUpdatePick} onClick={() => onPick(item)}>
             {w.pick}
           </button>
         )}
@@ -91,12 +104,15 @@ function Pack({
         <LazyPanel
           load={loadPackPick}
           what="the changes you can keep"
-          props={{ api, campaignRef, item, onPicked: (got) => onPicked(item, got), onCancel, onError: onPickError }}
+          props={{ api, campaignRef, item, id: pickId, onStart, onPicked: (got) => onPicked(item, got), onCancel, onError: onPickError }}
         />
       )}
     </li>
   );
 }
+
+/** The key of one pack's picker: its pack and the version it is picked against (#4873). */
+const pickKey = (item: PackUpdateItem): string => `${item.setId}:${item.to}`;
 
 export default function PackUpdatesCard({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
   const [packs, setPacks] = useState<PackUpdates | null>(null);
@@ -105,7 +121,9 @@ export default function PackUpdatesCard({ api, campaignRef }: { api: AccountApi;
   const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
   // The pick in progress (by pack), the pick that is done with its Undo, and the words for a pick that did not go through (#4873).
+  // The picker is keyed by the pack and its version, so ticks made for an older version can't be sent with a newer one (#4873).
   const [pickingId, setPickingId] = useState<string | null>(null);
+  const doneLine = useRef<HTMLParagraphElement>(null);
   const [done, setDone] = useState<Done | null>(null);
   const [pickAlert, setPickAlert] = useState<string | null>(null);
 
@@ -122,12 +140,17 @@ export default function PackUpdatesCard({ api, campaignRef }: { api: AccountApi;
     void read();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, campaignRef]);
+  // After a pick the saved line takes focus (#4873).
+  useEffect(() => {
+    if (done) doneLine.current?.focus();
+  }, [done]);
 
   // Undo of one taken pack. Busy until the packs are read again, so a stale button can't be pressed twice (#4872).
   async function undo(item: PackUpdateItem) {
     if (busy || !api.packUpdateUndoLast) return;
     setBusy(true);
     setSaid(null);
+    setPickAlert(null);
     try {
       const got = await api.packUpdateUndoLast(campaignRef, item.setId, item.to);
       setSaid({ ok: true, text: w.undone(typeof got.back === "number" ? got.back : item.from) });
@@ -144,24 +167,30 @@ export default function PackUpdatesCard({ api, campaignRef }: { api: AccountApi;
     if (busy || d.take === null || !api.packUpdateUndo) return;
     setBusy(true);
     setSaid(null);
+    setPickAlert(null);
     try {
       await api.packUpdateUndo(campaignRef, d.take);
       setDone(null);
-      setSaid({ ok: true, text: w.undone(d.from) });
+      setSaid({ ok: true, text: w.pickUndone(d.from) });
     } catch (error) {
-      setSaid({ ok: false, text: error instanceof ApiError && error.kind === "undo-late" ? w.pickTooLate : w.couldNot });
+      const tooLate = error instanceof ApiError && error.kind === "undo-late";
+      if (tooLate) setDone(null); // past its day: the Undo can only fail again, so it goes
+      setSaid({ ok: false, text: tooLate ? w.pickTooLate : w.couldNot });
     } finally {
       await read();
       setBusy(false);
     }
   }
 
-  function picked(item: PackUpdateItem, got: { kept: number; left: number; skipped: number; take: number | null }) {
+  // The pack's lines go away after a pick; the done line stays above the list. Busy until the packs are read again (#4873).
+  async function picked(item: PackUpdateItem, got: { kept: number; left: number; skipped: number; take: number | null }) {
     setPickingId(null);
     setPickAlert(null);
     setSaid(null);
     setDone({ name: item.name, from: item.from, kept: got.kept, left: got.left, skipped: got.skipped, take: got.take });
-    void read(); // the pack's lines go away after a pick; the done line stays above the list
+    setBusy(true);
+    await read();
+    setBusy(false);
   }
 
   function pickFailed(error: unknown) {
@@ -197,14 +226,14 @@ export default function PackUpdatesCard({ api, campaignRef }: { api: AccountApi;
           {w.failed}
         </p>
       )}
-      {pickAlert && (
+      {pickAlert && !said && (
         <p class="warn" role="alert">
           {pickAlert}
         </p>
       )}
       {done && (
         <div class="stack">
-          <p class="ok" role="status">
+          <p class="ok" role="status" ref={doneLine} tabIndex={-1}>
             {w.done(done.name, done.kept, done.left)}
           </p>
           {done.skipped > 0 && <p class="small">{w.skipped(done.skipped)}</p>}
@@ -229,11 +258,18 @@ export default function PackUpdatesCard({ api, campaignRef }: { api: AccountApi;
             item={p}
             taken={false}
             busy={busy}
-            picking={pickingId === p.setId}
-            onPick={(item) => setPickingId((was) => (was === item.setId ? null : item.setId))}
+            picking={pickingId === pickKey(p)}
+            onPick={(item) => {
+              setPickAlert(null);
+              setPickingId((was) => (was === pickKey(item) ? null : pickKey(item)));
+            }}
             onUndo={undo}
+            onStart={() => setPickAlert(null)}
             onPicked={picked}
-            onCancel={() => setPickingId(null)}
+            onCancel={() => {
+              setPickingId(null);
+              setPickAlert(null);
+            }}
             onPickError={pickFailed}
           />
         ))}
@@ -248,6 +284,7 @@ export default function PackUpdatesCard({ api, campaignRef }: { api: AccountApi;
             picking={false}
             onPick={() => undefined}
             onUndo={undo}
+            onStart={() => undefined}
             onPicked={picked}
             onCancel={() => undefined}
             onPickError={pickFailed}

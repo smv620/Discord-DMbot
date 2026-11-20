@@ -301,7 +301,7 @@ describe("Pick changes on a pack (#4873)", () => {
     expect(await screen.findByText("✅ Done. Lantern Tavern pack is now your own homebrew: you kept 1 change and left out 1 change. It won't update any more.")).toBeTruthy();
     expect(screen.getByText("You can undo this for a day.")).toBeTruthy();
     fireEvent.click(screen.getByRole("button", { name: "↩️ Undo" }));
-    expect(await screen.findByText("↩️ Undone. Back on version 1. DMbot will take the next new version; use Pick changes to choose.")).toBeTruthy();
+    expect(await screen.findByText("↩️ Undone. Back on version 1 and following it again. DMbot will take the next new version; use Pick changes to choose.")).toBeTruthy();
     expect(undos).toEqual([7]);
   });
 
@@ -350,6 +350,7 @@ describe("Pick changes on a pack (#4873)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Save my picks" }));
     fireEvent.click(await screen.findByRole("button", { name: "↩️ Undo" }));
     expect(await screen.findByText("Too late to undo this one. Nothing changed.")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "↩️ Undo" })).toBeNull();
   });
 
   it("the picker is not offered past the list (more than 50 changes)", async () => {
@@ -358,6 +359,118 @@ describe("Pick changes on a pack (#4873)", () => {
     render(<PackUpdatesCard api={api} campaignRef={REF} />);
     await screen.findByRole("button", { name: "See changes" });
     expect(screen.queryByRole("button", { name: "Pick changes" })).toBeNull();
+  });
+
+  it("a re-read with changed lines closes the picker, so no old tick is sent with a newer version", async () => {
+    let reads = 0;
+    const api = mockApi("table");
+    api.packUpdates = async () => {
+      reads += 1;
+      const changed = { ...lantern, lines: ["Rule 1 now says a torch lasts an hour.", "A new rule on rope.", "A third rule."] };
+      return { waiting: [reads === 1 ? lantern : changed], taken: [moor] };
+    };
+    render(<PackUpdatesCard api={api} campaignRef={REF} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pick changes" }));
+    expect(await screen.findAllByRole("checkbox")).toHaveLength(2);
+    fireEvent.click(await screen.findByRole("button", { name: "↩️ Undo" }));
+    await waitFor(() => expect(reads).toBeGreaterThan(1));
+    await waitFor(() => expect(screen.queryAllByRole("checkbox")).toHaveLength(0));
+  });
+
+  it("a pick that is still waiting says so, and the alert clears when the Pick button is pressed again", async () => {
+    const { api } = pickApi({
+      pick: async () => {
+        throw new ApiError("still-waiting");
+      },
+    });
+    render(<PackUpdatesCard api={api} campaignRef={REF} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pick changes" }));
+    fireEvent.click((await screen.findAllByRole("checkbox"))[1] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: "Save my picks" }));
+    expect(await screen.findByText("DMbot is taking a while. Look again in a moment before trying again.")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Pick changes" }));
+    expect(screen.queryByText("DMbot is taking a while. Look again in a moment before trying again.")).toBeNull();
+  });
+
+  it("the picker is a group of changes with a legend, takes focus on open, and the Pick button names it", async () => {
+    const { api } = pickApi();
+    render(<PackUpdatesCard api={api} campaignRef={REF} />);
+    const pick = (await screen.findByRole("button", { name: "Pick changes" })) as HTMLButtonElement;
+    fireEvent.click(pick);
+    expect(await screen.findByRole("group", { name: "Changes to keep" })).toBeTruthy();
+    expect(document.activeElement).toBe((await screen.findAllByRole("checkbox"))[0]);
+    const controls = pick.getAttribute("aria-controls");
+    expect(controls).toBeTruthy();
+    expect(document.getElementById(controls as string)).toBeTruthy();
+  });
+
+  it("after a pick, focus goes to the saved line", async () => {
+    const { api } = pickApi();
+    render(<PackUpdatesCard api={api} campaignRef={REF} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pick changes" }));
+    fireEvent.click((await screen.findAllByRole("checkbox"))[1] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: "Save my picks" }));
+    const done = await screen.findByText("✅ Done. Lantern Tavern pack is now your own homebrew: you kept 1 change and left out 1 change. It won't update any more.");
+    expect(document.activeElement).toBe(done);
+  });
+
+  it("a pick with no Undo handle shows the done line without an Undo", async () => {
+    const { api } = pickApi({ pick: async () => ({ kept: 1, left: 1, skipped: 0, take: null }) });
+    render(<PackUpdatesCard api={api} campaignRef={REF} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pick changes" }));
+    fireEvent.click((await screen.findAllByRole("checkbox"))[1] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: "Save my picks" }));
+    expect(await screen.findByText(/✅ Done\. Lantern Tavern pack/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "↩️ Undo" })).toBeNull();
+  });
+
+  it("the picks and Undo go through the real error map: its words, its counts, and the Undo handle", async () => {
+    const through = (queued: unknown, look: Record<string, unknown> | null) => {
+      const helpers = {
+        call: async (method: string) => (method === "POST" ? queued : {}),
+        restoreCall: async () => ({}),
+        waitForAnswer: async (_path: string, onLook?: (got: unknown) => void) => {
+          if (look === null) throw new Error("no answer");
+          onLook?.(look);
+          if (look.state === "failed") throw new ApiError(errorKinds[(look.error as string) ?? ""] ?? "server");
+          return look;
+        },
+        root: "/api",
+        url: async (path: string) => path,
+      } as unknown as ApiHelpers;
+      return namesArea(helpers);
+    };
+    const refuse = async (error: string, kind: string) => {
+      await expect(through({ answer: "a1" }, { state: "failed", error })!.packUpdatePick!(REF, "s1", 2, [0])).rejects.toMatchObject({ kind });
+    };
+    await refuse("no_room", "no-room");
+    await refuse("too_many", "too-many-masters");
+    await refuse("changed", "changed");
+    await refuse("gone", "gone");
+    const counted = through({ answer: "a1" }, { state: "done", kept: 1, left: 1, skipped: 2, take: 7 });
+    await expect(counted.packUpdatePick!(REF, "s1", 2, [0])).resolves.toEqual({ kept: 1, left: 1, skipped: 2, take: 7 });
+    const noLeft = through({ answer: "a1" }, { state: "done", kept: 1 });
+    await expect(noLeft.packUpdatePick!(REF, "s1", 2, [0])).rejects.toMatchObject({ kind: "server" });
+    const late = through({ answer: "a1" }, { state: "failed", error: "too_late" });
+    await expect(late.packUpdateUndo!(REF, 7)).rejects.toMatchObject({ kind: "undo-late" });
+  });
+
+  it("a second press of Undo while one is in flight is ignored", async () => {
+    let release: () => void = () => undefined;
+    const { api, undos } = pickApi({});
+    api.packUpdateUndo = async (_ref, take) => {
+      undos.push(take);
+      await new Promise<void>((r) => (release = r));
+    };
+    render(<PackUpdatesCard api={api} campaignRef={REF} />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pick changes" }));
+    fireEvent.click((await screen.findAllByRole("checkbox"))[1] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: "Save my picks" }));
+    const undo = await screen.findByRole("button", { name: "↩️ Undo" });
+    fireEvent.click(undo);
+    fireEvent.click(undo);
+    expect(undos).toEqual([7]);
+    release();
   });
 });
 

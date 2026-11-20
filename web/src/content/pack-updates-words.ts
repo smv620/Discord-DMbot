@@ -32,4 +32,8 @@ export const packUpdateWords = {
   pickNoRoom: "Your own homebrew and this pack together are more than the limit. Remove some first.",
   pickTooMany: "This update has more changes than can be listed here. Use Pick changes in Discord.",
   pickTooLate: "Too late to undo this one. Nothing changed.",
+  pickUndone: (from: number): string =>
+    `↩️ Undone. Back on version ${from} and following it again. DMbot will take the next new version; use Pick changes to choose.`,
+  pickWaiting: "DMbot is taking a while. Look again in a moment before trying again.",
+  pickLegend: "Changes to keep",
 };
