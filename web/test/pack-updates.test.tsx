@@ -4,15 +4,47 @@
 // waiting, or an update DMbot already took, with what changed. The card is tested on its own; the Shared rules page only mounts it
 // while RULE_UPDATES_LIVE is on.
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, type AccountApi, type PackUpdateItem } from "../src/account/api";
+import namesArea from "../src/account/api-names";
+import { ApiError, type AccountApi, type ApiHelpers, errorKinds, type PackUpdateItem } from "../src/account/api";
+import SharingPage from "../src/account/Sharing";
 import { mockApi } from "../src/account/mock";
 import PackUpdatesCard from "../src/account/PackUpdates";
 
+// The Shared rules page mounts the card only while RULE_UPDATES_LIVE is on; the gate test turns it off (#4872).
+const gate = vi.hoisted(() => ({ on: true }));
+vi.mock("../src/content/rule-updates-switch", () => ({
+  get RULE_UPDATES_LIVE() {
+    return gate.on;
+  },
+}));
+
 afterEach(() => {
   cleanup();
+  gate.on = true;
 });
+
+const moor2: PackUpdateItem = { ...moor0(), setId: "s3", name: "Harbor pack", from: 5, to: 6, lines: ["Rule 2 is new."] };
+function moor0(): PackUpdateItem {
+  return { setId: "s2", name: "Moor Road pack", publisher: "The Moor table", from: 3, to: 4, words: "1 rule", lines: ["Rule 1 is new."], more: 0 };
+}
+
+/** The real mapping of a queued pack Undo's answer (api-names and waitForAnswer), with the answer the bot gave. */
+function undoPackThrough(queued: unknown, look: { state: string; error?: string; back?: unknown } | null) {
+  const helpers = {
+    call: async (method: string) => (method === "POST" ? queued : {}),
+    restoreCall: async () => ({}),
+    waitForAnswer: async () => {
+      if (look === null) throw new Error("no answer");
+      if (look.state === "failed") throw new ApiError(errorKinds[look.error ?? ""] ?? "server");
+      return look;
+    },
+    root: "/api",
+    url: async (path: string) => path,
+  } as unknown as ApiHelpers;
+  return namesArea(helpers).packUpdateUndoLast!;
+}
 
 const REF = "100.cmp1";
 const lantern: PackUpdateItem = {
@@ -131,5 +163,78 @@ describe("packs a campaign follows from other tables (#4872)", () => {
     fireEvent.click(await screen.findByRole("button", { name: "↩️ Undo" }));
     expect(await screen.findByText("↩️ Undone. Back on version 3. DMbot will take the next new version; use Pick changes to choose.")).toBeTruthy();
     expect(api.calls).toContain(`packUpdateUndoLast:${REF}.pk-updates:s2:4`);
+  });
+
+  it("a failed read keeps the packs and says so; the next read that works clears it", async () => {
+    let reads = 0;
+    const api = mockApi("table");
+    api.packUpdates = async () => {
+      reads += 1;
+      if (reads === 2) throw new Error("offline");
+      return reads === 1 ? { waiting: [], taken: [moor, moor2] } : { waiting: [], taken: [] };
+    };
+    render(<PackUpdatesCard api={api} campaignRef={REF} />);
+    await screen.findAllByRole("button", { name: "↩️ Undo" });
+    fireEvent.click(screen.getAllByRole("button", { name: "↩️ Undo" })[0] as HTMLElement);
+    expect(await screen.findByText("Couldn't load the changes.")).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "↩️ Undo" })).toHaveLength(2);
+    fireEvent.click(screen.getAllByRole("button", { name: "↩️ Undo" })[1] as HTMLElement);
+    await waitFor(() => expect(screen.queryByText("Couldn't load the changes.")).toBeNull());
+  });
+
+  it("a too-late Undo through the real mapping gives the too-late words", async () => {
+    const api = packsApi({ waiting: [], taken: [moor] });
+    api.packUpdateUndoLast = undoPackThrough({ answer: "a1" }, { state: "failed", error: "too_late" });
+    render(<PackUpdatesCard api={api} campaignRef={REF} />);
+    fireEvent.click(await screen.findByRole("button", { name: "↩️ Undo" }));
+    expect(await screen.findByText("Can't undo this one. It was already undone, or DMbot has since taken a newer version. Nothing changed.")).toBeTruthy();
+  });
+
+  it("a queued Undo with no answer gives the plain words, through the real mapping", async () => {
+    const api = packsApi({ waiting: [], taken: [moor] });
+    api.packUpdateUndoLast = undoPackThrough({}, null);
+    render(<PackUpdatesCard api={api} campaignRef={REF} />);
+    fireEvent.click(await screen.findByRole("button", { name: "↩️ Undo" }));
+    expect(await screen.findByText("Couldn't do that just now. Nothing changed. Try again in a moment.")).toBeTruthy();
+  });
+
+  it("a back that is not a number falls back to the version the pack was on", async () => {
+    const api = packsApi({ waiting: [], taken: [moor] });
+    api.packUpdateUndoLast = undoPackThrough({ answer: "a1" }, { state: "done", back: "x" });
+    render(<PackUpdatesCard api={api} campaignRef={REF} />);
+    fireEvent.click(await screen.findByRole("button", { name: "↩️ Undo" }));
+    expect(await screen.findByText("↩️ Undone. Back on version 3. DMbot will take the next new version; use Pick changes to choose.")).toBeTruthy();
+  });
+
+  it("any other failure gives the plain words", async () => {
+    const api = packsApi({ waiting: [], taken: [moor] });
+    api.packUpdateUndoLast = async () => {
+      throw new Error("something else");
+    };
+    render(<PackUpdatesCard api={api} campaignRef={REF} />);
+    fireEvent.click(await screen.findByRole("button", { name: "↩️ Undo" }));
+    expect(await screen.findByText("Couldn't do that just now. Nothing changed. Try again in a moment.")).toBeTruthy();
+  });
+
+  it("more than four lines says so, Hide changes closes it, and the panel is named only while open", async () => {
+    const many: PackUpdateItem = { ...lantern, more: 2 };
+    render(<PackUpdatesCard api={packsApi({ waiting: [many], taken: [] })} campaignRef={REF} />);
+    const see = (await screen.findByRole("button", { name: "See changes" })) as HTMLButtonElement;
+    expect(see.getAttribute("aria-controls")).toBeNull();
+    fireEvent.click(see);
+    expect(screen.getByText("…and 2 more.")).toBeTruthy();
+    const hide = screen.getByRole("button", { name: "Hide changes" }) as HTMLButtonElement;
+    expect(hide.getAttribute("aria-controls")).toBeTruthy();
+    fireEvent.click(hide);
+    expect(screen.queryByText("…and 2 more.")).toBeNull();
+    expect(screen.getByRole("button", { name: "See changes" }).getAttribute("aria-controls")).toBeNull();
+  });
+
+  it("nothing reaches the Shared rules page while RULE_UPDATES_LIVE is off", async () => {
+    gate.on = false;
+    const api = mockApi("table");
+    render(<SharingPage api={api} />);
+    await waitFor(() => expect(api.calls).toContain("sharedRules"));
+    expect(api.calls.some((c) => c.startsWith("packUpdates:"))).toBe(false);
   });
 });

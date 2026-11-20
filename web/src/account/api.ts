@@ -192,6 +192,18 @@ export interface RuleSharing {
   canShare: boolean;
 }
 /** A newer version of a set the campaign follows, waiting for the next session (#4845): core's own words, shown as given. */
+export interface RuleUpdate {
+  name: string;
+  publisher: string;
+  from: number;
+  to: number;
+  /** Core's count, such as "2 rules" or "3 rules and 1 relationship". */
+  words: string;
+  lines: string[];
+  /** How many more change lines there are beyond `lines`. */
+  more: number;
+}
+
 /** A pack from another table that a campaign follows, with a newer version waiting or already taken (#4872). */
 export interface PackUpdateItem {
   setId: string;
@@ -206,17 +218,6 @@ export interface PackUpdateItem {
 export interface PackUpdates {
   waiting: PackUpdateItem[];
   taken: PackUpdateItem[];
-}
-export interface RuleUpdate {
-  name: string;
-  publisher: string;
-  from: number;
-  to: number;
-  /** Core's count, such as "2 rules" or "3 rules and 1 relationship". */
-  words: string;
-  lines: string[];
-  /** How many more change lines there are beyond `lines`. */
-  more: number;
 }
 /** One side of a decided pair of house rules (#3697): `set` is "" for the campaign's own rule, else the followed set's name. */
 export interface RuleSide {

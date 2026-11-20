@@ -7,9 +7,22 @@ import { useEffect, useState } from "preact/hooks";
 import { packUpdateWords as w } from "../content/pack-updates-words";
 import { ApiError, type AccountApi, type PackUpdateItem, type PackUpdates } from "./api";
 
-function Pack({ item, taken, busy, onUndo }: { item: PackUpdateItem; taken: boolean; busy: boolean; onUndo: (item: PackUpdateItem) => void }) {
+function Pack({
+  campaignRef,
+  item,
+  taken,
+  busy,
+  onUndo,
+}: {
+  campaignRef: string;
+  item: PackUpdateItem;
+  taken: boolean;
+  busy: boolean;
+  onUndo: (item: PackUpdateItem) => void;
+}) {
   const [open, setOpen] = useState(false);
-  const id = `pack-update-${encodeURIComponent(item.setId)}`;
+  // The panel's id names the campaign and the pack, since two campaigns can follow one pack (#4872).
+  const id = `pack-update-${encodeURIComponent(`${campaignRef}-${item.setId}`)}`;
   return (
     <li class="stack">
       <p class="small">
@@ -17,7 +30,7 @@ function Pack({ item, taken, busy, onUndo }: { item: PackUpdateItem; taken: bool
       </p>
       {!taken && <p class="small muted">{w.takesWhen}</p>}
       <div class="row">
-        <button type="button" class="button secondary" aria-expanded={open} aria-controls={id} onClick={() => setOpen((was) => !was)}>
+        <button type="button" class="button secondary" aria-expanded={open} aria-controls={open ? id : undefined} onClick={() => setOpen((was) => !was)}>
           {open ? w.hide : w.see}
         </button>
         {taken && (
@@ -44,55 +57,53 @@ function Pack({ item, taken, busy, onUndo }: { item: PackUpdateItem; taken: bool
 
 export default function PackUpdatesCard({ api, campaignRef }: { api: AccountApi; campaignRef: string }) {
   const [packs, setPacks] = useState<PackUpdates | null>(null);
+  // A failed read keeps the last packs and says so under them; the next read that works clears it (#4872).
   const [failed, setFailed] = useState(false);
-  const [round, setRound] = useState(0);
   const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
-  useEffect(() => {
-    if (!api.packUpdates) return;
-    let live = true;
-    api.packUpdates(campaignRef).then(
-      (got) => {
-        if (live) setPacks(got);
-      },
-      () => {
-        if (live) setFailed(true);
-      },
-    );
-    return () => {
-      live = false;
-    };
-  }, [api, campaignRef, round]);
 
-  // Undo of one taken pack: the packs are read again after every try, so what shows is the API's own (#4872).
+  async function read(): Promise<void> {
+    if (!api.packUpdates) return;
+    setFailed(false);
+    try {
+      setPacks(await api.packUpdates(campaignRef));
+    } catch {
+      setFailed(true);
+    }
+  }
+  useEffect(() => {
+    void read();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, campaignRef]);
+
+  // Undo of one taken pack. Busy until the packs are read again, so a stale button can't be pressed twice (#4872).
   async function undo(item: PackUpdateItem) {
     if (busy || !api.packUpdateUndoLast) return;
     setBusy(true);
     setSaid(null);
     try {
       const got = await api.packUpdateUndoLast(campaignRef, item.setId, item.to);
-      setSaid({ ok: true, text: w.undone(got.back ?? item.from) });
+      setSaid({ ok: true, text: w.undone(typeof got.back === "number" ? got.back : item.from) });
     } catch (error) {
       setSaid({ ok: false, text: error instanceof ApiError && error.kind === "undo-late" ? w.tooLate : w.couldNot });
     } finally {
+      await read();
       setBusy(false);
-      setRound((was) => was + 1);
     }
   }
 
   if (!api.packUpdates) return null;
-  if (failed) {
-    return (
+  if (!packs) {
+    return failed ? (
       <p class="small" role="alert">
         {w.failed}
       </p>
-    );
+    ) : null;
   }
-  if (!packs) return null;
   // A pack with a newer version waiting shows that, not its taken update.
   const takenOnly = packs.taken.filter((t) => !packs.waiting.some((x) => x.setId === t.setId));
   const nothing = packs.waiting.length === 0 && takenOnly.length === 0;
-  if (nothing && !said) return null;
+  if (nothing && !said && !failed) return null;
   return (
     <section class="stack" aria-label={w.heading}>
       <h3>{w.heading}</h3>
@@ -101,12 +112,17 @@ export default function PackUpdatesCard({ api, campaignRef }: { api: AccountApi;
           {said.text}
         </p>
       )}
+      {failed && (
+        <p class="warn" role="alert">
+          {w.failed}
+        </p>
+      )}
       <ul class="stack">
         {packs.waiting.map((p) => (
-          <Pack key={`w-${p.setId}`} item={p} taken={false} busy={busy} onUndo={undo} />
+          <Pack key={`w-${p.setId}`} campaignRef={campaignRef} item={p} taken={false} busy={busy} onUndo={undo} />
         ))}
         {takenOnly.map((p) => (
-          <Pack key={`t-${p.setId}`} item={p} taken busy={busy} onUndo={undo} />
+          <Pack key={`t-${p.setId}`} campaignRef={campaignRef} item={p} taken busy={busy} onUndo={undo} />
         ))}
       </ul>
     </section>

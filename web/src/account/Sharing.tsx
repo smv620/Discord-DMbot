@@ -7,9 +7,6 @@ import { useEffect, useState } from "preact/hooks";
 import { problem, text } from "../content/sharing";
 import { RULE_UPDATES_LIVE } from "../content/rule-updates-switch";
 import LazyPanel from "./LazyPanel";
-
-// The packs a campaign follows from other tables (#4872): loaded only while RULE_UPDATES_LIVE.
-const loadPackUpdates = () => import("./PackUpdates");
 import {
   ApiError,
   type AccountApi,
@@ -17,6 +14,9 @@ import {
   type SharedRuleSet,
   type SharedRulesCampaign,
 } from "./api";
+
+// The packs a campaign follows from other tables (#4872): loaded only while RULE_UPDATES_LIVE.
+const loadPackUpdates = () => import("./PackUpdates");
 
 type Load =
   | { kind: "loading" }
