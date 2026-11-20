@@ -1258,6 +1258,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "clue-",
             "join-",
             "party-",
+            "rules-update-",
         )
     ):
         raise RecapError("not_found")
@@ -1294,6 +1295,22 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "error": got["error"],
             "kept": int(counts.removeprefix("kept:")) if counts.startswith("kept:") else None,
             "batch": int(made[0]) if got["state"] == "done" and made else None,
+        }
+    if str(got["action"]).startswith("rules-update-"):
+        # a pick of a followed set's changes (#4841 C2): how many were kept and left out, and the
+        # id of the day-long undo handle
+        counts = str(got.get("counts") or "")
+        sized = re.fullmatch(r"picked:(\d+) left:(\d+)", counts)
+        undone = re.fullmatch(r"undone:(\d+)", counts)
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "kept": int(sized[1]) if sized else None,
+            "left": int(sized[2]) if sized else None,
+            "take": int(got["resultId"])
+            if got["state"] == "done" and str(got.get("resultId") or "").isdigit()
+            else None,
+            "mergedKept": int(undone[1]) if undone else None,
         }
     if str(got["action"]).startswith(("join-", "party-")):
         # the DM's join answer (#4778): how it ended, how many things "What the party knows" gave

@@ -21,8 +21,8 @@ import json
 import secrets
 import time
 from collections import deque
-from collections.abc import Callable, Collection, Sequence
-from dataclasses import dataclass
+from collections.abc import Callable, Collection, Mapping, Sequence
+from dataclasses import dataclass, fields
 from typing import Any, Literal, cast
 
 from psycopg.types.json import Jsonb
@@ -158,6 +158,37 @@ class Taken:
     # On a merge, the relationship definitions the campaign keeps as its own (#1456), for the
     # caller to settle in memory; none otherwise.
     kept_definitions: tuple[dict[str, Any], ...] = ()
+
+
+def taken_to_json(taken: Taken) -> dict[str, Any]:
+    """A `Taken` as plain JSON, for the website's day-long undo handle (`web_rule_takes`, #4841):
+    the copy before, the rules a merge added and the definitions it kept. Rules only."""
+    return {
+        "merged": taken.merged,
+        "before": {f.name: getattr(taken.before, f.name) for f in fields(Follow)},
+        "after_version": taken.after_version,
+        "added": list(taken.added),
+        "marker": taken.marker,
+        "offered": taken.offered,
+        "link_written": taken.link_written,
+        "kept_definitions": list(taken.kept_definitions),
+    }
+
+
+def taken_from_json(data: Mapping[str, Any]) -> Taken:
+    """The `Taken` `taken_to_json` made (the keys are the dataclass's own, so a row from a day ago
+    reads back as it was written)."""
+    before = {f.name: data["before"][f.name] for f in fields(Follow) if f.name in data["before"]}
+    return Taken(
+        merged=bool(data["merged"]),
+        before=Follow(**before),
+        after_version=int(data["after_version"]),
+        added=tuple(int(n) for n in data["added"]),
+        marker=str(data["marker"]),
+        offered=int(data["offered"]),
+        link_written=data["link_written"],
+        kept_definitions=tuple(dict(d) for d in data["kept_definitions"]),
+    )
 
 
 @dataclass(frozen=True, slots=True)

@@ -2916,6 +2916,31 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.post("/me/campaigns/{ref}/rule-update/pick", status_code=202)
+    async def me_campaign_rule_pick(ref: str, request: Request, signed: Signed) -> dict[str, str]:
+        """`{"version", "kept"}`: Pick changes on a followed set (#4841 C2); polled at
+        `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await rule_updates.queue_pick(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/rule-update/{take}/undo", status_code=202)
+    async def me_campaign_rule_undo(ref: str, take: str, signed: Signed) -> dict[str, str]:
+        """↩️ Undo of a pick, by the id its answer carried."""
+        session, _token = signed
+        try:
+            return {"answer": await rule_updates.queue_undo(db, session, ref, take)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/join-questions")
     async def me_campaign_join_questions(ref: str, signed: Signed) -> dict[str, Any]:
         """The join questions waiting for the DM (#4778): "What does Mira know about what came

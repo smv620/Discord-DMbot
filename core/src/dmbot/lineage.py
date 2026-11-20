@@ -115,6 +115,8 @@ NOT_STAMPED: dict[str, str] = {
     # read finds is an entry, which carries the stamp)
     "lore_pdf_staged": "a file in transit, gone within a day; what its read finds is stamped",
     "secret_questions": "a question waiting for the DM; what an answer changes is stamped",
+    # (#4841: a day-long undo handle for a website pick of a followed set's rules; no story)
+    "web_rule_takes": "a day-long undo handle for a pick of a followed set's rules, not story",
     # (#4448: which time-limit messages were said; the limit itself is a stamped part)
     "time_limit_told": "a record of a private message said, not story; the limit is stamped",
     **dict.fromkeys(
