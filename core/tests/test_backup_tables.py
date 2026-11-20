@@ -23,6 +23,7 @@ from tests.pg import DatabaseTest
 GUILD, OTHER, DM, SPEAKER = 111, 222, 9, 31
 A, B = sorted((new_id(), new_id()))  # two names ("a" sorts first, as some tables require)
 PLACE = new_id()  # a place, for its land, climate or ruler (#4256)
+CLIMATE_ROW = new_id()  # its climate row, which a weather note is judged against (#4748)
 QUEST = new_id()  # a story thread, for its parts (#4471)
 # a sub-step whose id sorts before its objective's, so the restore must load the objective first
 STEP, OBJECTIVE = "0" * 32, "f" * 32
@@ -144,6 +145,12 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " perspective_id, created_at) SELECT %s, %s, %s, al.id, p.id, 1 FROM al, p",
                 (g, c, new_id(), A, g, c, new_id(), B, g, c, new_id()),
             ),
+            "memory_party_spans": (
+                # the player character's stretch in the party, closed (#4537)
+                "INSERT INTO memory_party_spans (guild_id, campaign_id, id, entity_id, from_at,"
+                " to_at, ended, source, created_at) VALUES (%s, %s, %s, %s, 1, 2, 'left', 'dm', 1)",
+                (g, c, new_id(), B),
+            ),
             "memory_told": (
                 # a secret name and the character the DM told it is an entry (#3089)
                 "WITH al AS (INSERT INTO memory_aliases (guild_id, campaign_id, id, entity_id,"
@@ -210,11 +217,22 @@ class EveryClaimedTableComesBack(DatabaseTest):
                 " 1)",
                 (g, c, OBJECTIVE, QUEST, OBJECTIVE, g, c, STEP, QUEST, STEP, OBJECTIVE),
             ),
+            "memory_thread_guesses": (  # a table's guess on the quest (#4655)
+                "INSERT INTO memory_thread_guesses (guild_id, campaign_id, id, thread_id,"
+                " belief_id, created_at) SELECT %s, %s, %s, %s, b.id, 1 FROM memory_beliefs b"
+                " WHERE b.guild_id = %s AND b.campaign_id = %s ORDER BY b.id LIMIT 1",
+                (g, c, new_id(), QUEST, g, c),
+            ),
             "memory_map_facts": (  # a place's climate (#4256)
                 "INSERT INTO memory_map_facts (guild_id, campaign_id, id, entity_id, layer, value,"
                 " status, source, created_at) VALUES (%s, %s, %s, %s, 'climate', 'cold',"
                 " 'confirmed', 'dm', 1)",
-                (g, c, new_id(), PLACE),
+                (g, c, CLIMATE_ROW, PLACE),
+            ),
+            "memory_weather_notes": (  # the weather already noted for that place (#4748)
+                "INSERT INTO memory_weather_notes (guild_id, campaign_id, id, place_id, kind,"
+                " climate_id, climate, created_at) VALUES (%s, %s, %s, %s, 'heat', %s, 'cold', 1)",
+                (g, c, new_id(), PLACE, CLIMATE_ROW),
             ),
             "character_sheets": (
                 "INSERT INTO character_sheets (guild_id, campaign_id, entity_id, url, sheet, source,"

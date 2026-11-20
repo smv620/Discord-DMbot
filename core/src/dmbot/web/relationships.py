@@ -22,7 +22,7 @@ from typing import Any
 from dmbot import progress
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
-from dmbot.memory import gate, kin, reputation_words, web_actions
+from dmbot.memory import gate, kin, party_icons, reputation_words, web_actions
 from dmbot.memory.claims import Extracted, condition_of
 from dmbot.memory.link_kinds import link_kind
 from dmbot.memory.link_words import (
@@ -459,6 +459,11 @@ def _knowers(
     return data, who
 
 
+# The word for a statement only a player character who has left the party knows (`gate.word_of`
+# knows the party, not its leavers); the page says "Known to a character who has left the party".
+LEFT_THE_PARTY = "left_the_party"
+
+
 def know_words(
     known: dict[str, Any],
     shared: tuple[gate.Statements, Callable[[str, str], set[str]]] | None = None,
@@ -471,8 +476,66 @@ def know_words(
     says "secret" of something this read does not know."""
     data, who = shared or _knowers(known)
     party = data.player_characters
-    entries = {str(e): gate.word_of(who(gate.ENTRY, str(e)), party) for e in known["liveEntries"]}
-    links = {str(c): gate.word_of(who(gate.CONNECTION, str(c)), party) for c in data.connections}
+    left = frozenset(str(c) for c in known.get("leftParty", ()))
+
+    def word(kind: str, item: str) -> str:
+        knowers = who(kind, item)
+        # What only characters who have left the party know is never worded as an NPC's
+        # (Supervisor's ruling on #4782): it is theirs, and nothing they knew is forgotten.
+        if knowers and knowers <= left:
+            return LEFT_THE_PARTY
+        return gate.word_of(knowers, party)
+
+    entries = {str(e): word(gate.ENTRY, str(e)) for e in known["liveEntries"]}
+    links = {str(c): word(gate.CONNECTION, str(c)) for c in data.connections}
+    return entries, links
+
+
+def know_lines(
+    known: dict[str, Any],
+    shared: tuple[gate.Statements, Callable[[str, str], set[str]]] | None = None,
+    shown: tuple[Collection[str], Collection[str]] = ((), ()),
+) -> tuple[dict[str, str], dict[str, str]]:
+    """The one line of who knows each name and each connection, worded by core's own
+    `party_icons.line` (🌍 / ✅ / 👥 / 👤 / 🤫, "Known to: …", a leaver with why), so the website
+    and Discord cannot drift (Supervisor's ruling on #4537, §7). Worked out now against the current
+    party (`playerCharacters`, 0551) and never stored. Returns (names by entry id, connections by
+    connection id), only for ids in the data. A guess counts as knowing, as in Discord. `shown`: the
+    entry ids and connection ids the table sees outright (nothing held back, no list kept), which
+    Discord counts as known to every member (`who_knows.knows_line`, "everyone")."""
+    data, who = shared or _knowers(known)
+    viewers = {str(v["id"]): (str(v["name"]), str(v.get("kind", "npc"))) for v in known["viewers"]}
+    # (the party in Discord's order: oldest character first, as `party_record.current_members`)
+    order = [str(c) for c in known.get("partyOrder", ())]
+    current = set(data.player_characters)
+    members = [(c, viewers[c][0]) for c in order if c in current and c in viewers]
+    members += sorted(
+        ((c, viewers[c][0]) for c in current if c in viewers and c not in order),
+        key=lambda m: (m[1].casefold(), m[0]),
+    )
+    everyone = [c for c, _ in members]
+    common_rows = {(str(k), str(s)) for k, s, c, _ in known["knowers"] if c == gate.COMMON}
+    shown_entries, shown_links = set(shown[0]), set(shown[1])
+    why = {str(k): str(v) for k, v in dict(known.get("leftWhy", {})).items()}
+    left = {
+        str(c): (viewers[str(c)][0], why.get(str(c), "left"))
+        for c in known.get("leftParty", ())
+        if str(c) in viewers
+    }
+    npcs = {c: v[0] for c, v in viewers.items() if v[1] == "npc"}
+    outsiders = party_icons.ordered_outsiders(left, npcs)
+
+    def line(kind: str, item: str, seen: bool) -> str:
+        # (the "everyone" row is read from the raw rows: `who` swaps it for every player character)
+        holders = everyone if seen else who(kind, item)
+        return party_icons.line(
+            holders, members, common=(kind, item) in common_rows, outsiders=outsiders
+        )
+
+    entries = {
+        str(e): line(gate.ENTRY, str(e), str(e) in shown_entries) for e in known["liveEntries"]
+    }
+    links = {str(c): line(gate.CONNECTION, str(c), str(c) in shown_links) for c in data.connections}
     return entries, links
 
 
@@ -522,6 +585,20 @@ async def with_know_words(
         return
     shared = _knowers(known)  # worked out once for both
     names, links = know_words(known, shared)
+    # what the table sees outright: nothing held back (a name not secret and revealed, a connection
+    # neither secret nor unrevealed), so no list is kept (Discord's "everyone")
+    seen_names = {
+        str(n["id"])
+        for n in [*page.get("nodes", []), *page.get("tray", [])]
+        if not n.get("secret") and n.get("revealed") is not False
+    }
+    seen_links = {
+        str(x["id"])
+        for e in page.get("edges", [])
+        for x in e["links"]
+        if not x.get("secret") and x.get("revealed") is not False
+    }
+    name_lines, link_lines = know_lines(known, shared, (seen_names, seen_links))
     holders = link_holders(known, shared)
     # the connections the "everyone" point of view holds (the door lists them only while shown)
     common = {
@@ -534,10 +611,12 @@ async def with_know_words(
     for node in [*page.get("nodes", []), *page.get("tray", [])]:
         if str(node["id"]) in names:
             node["knowWord"] = names[str(node["id"])]
+            node["knowLine"] = name_lines[str(node["id"])]
     for edge in page.get("edges", []):
         for link in edge["links"]:
             if str(link["id"]) in links:
                 link["knowWord"] = links[str(link["id"])]
+                link["knowLine"] = link_lines[str(link["id"])]
                 # "Who knows this?": a connection the table may know is `all`; a held one is
                 # `some` when any character knows it, else `dm`. From the lists, not a flag (#2999).
                 held = bool(link.get("secret")) or link.get("revealed") is False
@@ -1014,6 +1093,7 @@ async def queue_edit(db: Database, session: Session, ref: str, link_id: str, bod
 # and "None of these" is the ordinary `reject`.
 WAITING_QUEUE = {
     ("claim", "confirm"): "claim-confirm",
+    ("claim", "some"): "claim-some",
     ("claim", "reject"): "claim-reject",
     ("claim", "pick"): "claim-pick",
     ("claim", "unpick"): "claim-unpick",
@@ -1021,6 +1101,7 @@ WAITING_QUEUE = {
     ("backstory", "keep"): "backstory-keep",
     ("backstory", "skip"): "backstory-skip",
     ("backstory", "keep_all"): "backstory-keep-all",
+    ("backstory", "some"): "backstory-keep-some",
     ("which", "pick"): "backstory-which-pick",
     ("which", "neither"): "backstory-which-neither",
 }
@@ -1086,6 +1167,15 @@ async def queue_waiting(db: Database, session: Session, ref: str, body: object) 
         if isinstance(batch, bool) or not isinstance(batch, int) or not 0 < batch < 10**12:
             raise RecapError("not_found")
         text = str(batch)
+    if action in ("claim-some", "backstory-keep-some"):
+        # 👥 Some know (#4680): the characters who know it, 1 to 25 distinct ids; the door checks
+        # the shape and the bot checks that each is a character of the campaign
+        who = body.get("characters")
+        if not isinstance(who, list) or not 1 <= len(who) <= 25:
+            raise RecapError("bad_action")
+        if not all(isinstance(i, str) and ID_PATTERN.match(i) for i in who):
+            raise RecapError("not_found")
+        text = ",".join(dict.fromkeys(who))
     if action == "claim-pick":
         side, entry = body.get("side"), str(body.get("entity") or "")
         if side not in ("subject", "object") or not ID_PATTERN.match(entry):
@@ -1119,6 +1209,20 @@ async def queue_reveal(db: Database, session: Session, ref: str, body: object) -
     )
 
 
+def _catch_choices(counts: str) -> tuple[list[dict[str, Any]], int] | None:
+    """The members "Catch up" has something for and how many more there are that were left out,
+    from the bot's `catch:<id>=<n>,…;more=<k>` answer."""
+    if not counts.startswith("catch:"):
+        return None
+    listed, _, more = counts.removeprefix("catch:").partition(";more=")
+    out: list[dict[str, Any]] = []
+    for pair in listed.split(","):
+        member, _, n = pair.partition("=")
+        if len(member) == 32 and n.isdigit():
+            out.append({"id": member, "count": int(n)})
+    return out, int(more) if more.isdigit() else 0
+
+
 async def read_answer(db: Database, session: Session, ref: str, answer: str) -> dict[str, Any]:
     """Where one of the caller's own connection edits stands: `state` (waiting, working, done,
     failed), the `error` word when it failed, and, when it is done, the pair's `edge` as it now
@@ -1149,10 +1253,19 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "part-",
             "branch-",
             "lang-",
+            "secret-",
+            "progress-",
+            "clue-",
+            "join-",
+            "party-",
+            "rules-update-",
+            "heard-",
         )
     ):
         raise RecapError("not_found")
-    if str(got["action"]).startswith(("thread-", "part-", "branch-", "lang-")):
+    if str(got["action"]).startswith(
+        ("thread-", "part-", "branch-", "lang-", "secret-", "progress-", "clue-")
+    ):
         # a story thread's keep, or a change to its parts and branches (#4457, #4476): how it ended
         # and the change it made, for the page's Undo (none when it changed nothing)
         made = got.get("resultBatches") or []
@@ -1184,6 +1297,50 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "kept": int(counts.removeprefix("kept:")) if counts.startswith("kept:") else None,
             "batch": int(made[0]) if got["state"] == "done" and made else None,
         }
+    if str(got["action"]).startswith("heard-"):
+        # a waiting "Did they mean…?" answered (#4841 B1): which case it was, never a word
+        counts = str(got.get("counts") or "")
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "code": counts.removeprefix("heard:") if counts.startswith("heard:") else None,
+            "reason": counts.removeprefix("reason:") if counts.startswith("reason:") else None,
+        }
+    if str(got["action"]).startswith("rules-update-"):
+        # a pick of a followed set's changes (#4841 C2): how many were kept and left out, and the
+        # id of the day-long undo handle
+        counts = str(got.get("counts") or "")
+        sized = re.fullmatch(r"picked:(\d+) left:(\d+)", counts)
+        undone = re.fullmatch(r"undone:(\d+)", counts)
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "kept": int(sized[1]) if sized else None,
+            "left": int(sized[2]) if sized else None,
+            "take": int(got["resultId"])
+            if got["state"] == "done" and str(got.get("resultId") or "").isdigit()
+            else None,
+            "mergedKept": int(undone[1]) if undone else None,
+        }
+    if str(got["action"]).startswith(("join-", "party-")):
+        # the DM's join answer (#4778): how it ended, how many things "What the party knows" gave
+        # (Discord's "the N things the party knew"), and the change it made for the page's Undo
+        made = got.get("resultBatches") or []
+        counts = str(got.get("counts") or "")
+        catch = _catch_choices(counts)
+        return {
+            "state": got["state"],
+            "error": got["error"],
+            "given": int(counts.removeprefix("given:")) if counts.startswith("given:") else None,
+            # a return: which question now waits for the character ("back", "join" or "none")
+            "asked": counts.removeprefix("asked:") if counts.startswith("asked:") else None,
+            # "Catch up" (#4793): how many things the member was told, and who is missing what
+            # (`[{"id", "count"}]`, ids and counts only: the page names them)
+            "told": int(counts.removeprefix("told:")) if counts.startswith("told:") else None,
+            "choices": None if catch is None else catch[0],
+            "more": None if catch is None else catch[1],
+            "batch": int(made[0]) if got["state"] == "done" and made else None,
+        }
     if str(got["action"]).startswith("reading-"):
         return _reading_answer(got)
     if str(got["action"]).startswith("names-fixed-"):
@@ -1212,7 +1369,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "kept": int(got["resultId"]) if keeping and got["resultId"] else None,
             # the change a kept fact made, for the Undo of an All true press (#3645)
             "batch": int(got["resultOther"])
-            if got["action"] == "claim-confirm"
+            if got["action"] in ("claim-confirm", "claim-some")
             and got["state"] == "done"
             and str(got["resultOther"] or "").isdigit()
             else None,

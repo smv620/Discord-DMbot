@@ -1264,6 +1264,7 @@ class BotTests(DatabaseTest):
         table.questions.closed_why.update({"a": "answered", "b": name_questions.ENDED})
         edit = Fix(0, 13, "I saw Beleros", "x", "", "edit", sure=False)
         table.fix_notes.add(PLAYER, started, "I saw Beleros", (edit,))
+        self.bot.ask_privately = AsyncMock(return_value=False)  # type: ignore[method-assign]
         self.bot.post_message = AsyncMock(return_value=MagicMock())  # type: ignore[method-assign]
         await self.bot.post_session_summary(table, START + 60, True, 0)
         text = cast(Any, self.bot.post_message).await_args.args[1]
@@ -1279,8 +1280,25 @@ class BotTests(DatabaseTest):
         await self.bot.post_session_summary(table, START + 60, True, 0)
         self.assertNotIn("Names:", cast(Any, self.bot.post_message).await_args.args[1])
 
+    async def test_the_summary_goes_to_the_dms_privately_with_a_count_only_pointer(self) -> None:
+        # (#3874 E1: it names who spoke, and the DM Bot channel is read by the campaign's people)
+        table, _ = await self.fix_setup()
+        await self.bot.campaigns.set_dm_bot_channel(GUILD, table.campaign_id or "", 77)
+        self.bot.ask_privately = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        self.bot.post = AsyncMock(return_value=True)  # type: ignore[method-assign]
+        self.bot.post_message = AsyncMock(return_value=MagicMock())  # type: ignore[method-assign]
+        await self.bot.post_session_summary(table, START + 60, True, 0)
+        cast(Any, self.bot.ask_privately).assert_awaited_once()
+        cast(Any, self.bot.post_message).assert_not_awaited()
+        channel, pointer = cast(Any, self.bot.post).await_args.args
+        self.assertEqual(channel, 77)
+        self.assertIn("recorded", pointer)
+        who = self.bot.name_of(GUILD, PLAYER)
+        self.assertNotIn(who, pointer)  # (numbers only)
+
     async def test_the_dm_screens_summary_carries_the_fix_a_line_button(self) -> None:
         table, sid = await self.fix_setup()
+        self.bot.ask_privately = AsyncMock(return_value=False)  # type: ignore[method-assign]
         self.bot.post_message = AsyncMock(return_value=MagicMock())  # type: ignore[method-assign]
         await self.bot.post_session_summary(table, START + 60, True, 0)
         _, _, view = cast(Any, self.bot.post_message).await_args.args

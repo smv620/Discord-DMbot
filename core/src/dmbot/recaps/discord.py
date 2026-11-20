@@ -450,11 +450,15 @@ class RecapFeatures:
                 for session_at, title in await self.recaps.waiting_drafts(gid, cid):
                     if self.tables.get(gid) is not table:
                         return  # the session ended meanwhile
-                    shown = discord.utils.escape_markdown(title)
+                    channel = campaign.dm_bot_channel_id  # (else the table's screen, as before)
+                    counts_only = bool(channel)
+                    # (no recap title in the DM Bot channel: its readers are the campaign's people,
+                    # and a title can carry story words)
+                    what = "" if counts_only else f": **{discord.utils.escape_markdown(title)}**"
                     site = self.settings.site_url
                     await self.post(
-                        table.screen_channel_id,
-                        f"📜 Last session's recap is still waiting: **{shown}**. "
+                        channel or table.screen_channel_id,
+                        f"📜 Last session's recap is still waiting{what}. "
                         "Nothing has gone to the players." + (f"\n{AUDIO_WHY[why]}" if why else ""),
                         view=ready_view(
                             cid,
@@ -649,6 +653,9 @@ class RecapFeatures:
         question is not posted again. `group_id`: the import's id; its holds go together.
         `say` False: a recap queued here is not announced (an import round says it once)."""
         gid, cid = campaign.guild_id, campaign.id
+        # The name question, its reminder and its edits all go where the hold says (#3874 E2): the
+        # DM Bot channel when the campaign has one, else the caller's. Counts only, as before.
+        channel_id = campaign.dm_bot_channel_id or channel_id
         store = self.recap_holds
         if store is not None:
             held = False
@@ -1321,6 +1328,75 @@ class RecapFeatures:
             for i in everything.items
         ]
 
+    async def recap_colour(
+        self, gid: int, cid: str, job: Job, place_names: Sequence[str]
+    ) -> list[str]:
+        """Background for the writer about the places the beats visited (#4721,
+        `DMBOT_RECAP_COLOUR`): one line each of what the table knows of their land, climate,
+        ruler, culture and people.
+        Only what the players know: the places are looked up in the players' view of the names
+        (nothing the DM keeps to themselves, and no secret spelling), the line is the players' own
+        rows (`MemoryStore.recap_colour`), and the names are the ones the players use. A place the
+        players' view doesn't know by that name is left out, never looked up another way."""
+        if self.memory is None or self.lookup is None or not place_names:
+            return []
+        players = (await self.lookup.get(gid, cid)).for_viewer(False)
+        # The names are the players' own, taken from the name entries they may see (a place or a
+        # ruler whose only entries are secret spellings or "players don't know this one yet" has
+        # no name here, and is left out), never the entity's canonical name.
+        live = {e.id for e in players.entities.values() if not e.merged_into}
+        names: dict[str, str] = {}
+        for name_entry in players.names:
+            if (
+                name_entry.secret
+                or name_entry.entry_hidden
+                or name_entry.person
+                or name_entry.entity_id not in live
+            ):
+                continue
+            names.setdefault(name_entry.entity_id, name_entry.text)
+        place_ids: list[str] = []
+        for heard in place_names:
+            for name_entry in players.exact(heard):
+                if name_entry.secret or name_entry.entry_hidden or name_entry.entity_id not in live:
+                    continue
+                if players.entities[name_entry.entity_id].type != "place":
+                    continue
+                names[name_entry.entity_id] = name_entry.text  # (the spelling the beat used)
+                place_ids.append(name_entry.entity_id)
+        return await self.memory.recap_colour(gid, cid, place_ids, names)
+
+    async def recap_reveals(self, gid: int, cid: str, job: Job) -> list[str]:
+        """This session's partial reveals as the sentences the writer cites (#4737,
+        `DMBOT_RECAP_REVEALS`): who learned something, never what. The table is the player
+        characters whose players spoke in the session; `mattering` is the open story threads the
+        party knows (and who they involve), so a check's discovery is cited only when it touches
+        one; only people recorded now count. A failure costs the sentences, never the recap."""
+        if self.memory is None:
+            return []
+        everyone = await self.memory.entities(gid, cid)
+        at_session = {
+            e.id
+            for e in everyone
+            if e.is_player_character and e.played_by is not None and e.played_by in job.speakers
+        }
+        if not at_session:
+            return []
+        seen = await self.memory.visible_to(gid, cid, gate.Viewer.the_party())
+        mattering: set[str] = set()
+        for t in await self.memory.threads(gid, cid):
+            if (
+                t.state is not None
+                and t.state.condition in (OPEN, GOING, HINTED)
+                and seen.how_sure(gate.ENTRY, t.thread.id) is not None
+            ):
+                mattering.add(t.thread.id)
+                mattering.update(i.who.id for i in t.involved)
+        opted_in = await self.consent.recorded_in(gid, cid)
+        return await self.memory.recap_reveals(
+            gid, cid, job.session_at, at_session, mattering, opted_in
+        )
+
     async def recap_allowed(self, gid: int, cid: str, job: Job | None) -> bool:
         """The switch and the plan, checked at every stage and closed when they can't be."""
         if not self.settings.recaps_on:
@@ -1757,10 +1833,12 @@ class RecapFeatures:
                 for session_at, names in waiting:
                     if await self.recaps.set_names_state(gid, cid, session_at, 2, only_from=1):
                         left += sum(1 for n in names if name_key(n) in proposed)
-                if left and self.tables.get(gid) is table and table.screen_channel_id is not None:
-                    await self.post(
-                        table.screen_channel_id, recap_names_reminder(left), view=review_view(cid)
-                    )
+                campaign = await self.campaigns.get(gid, cid)
+                where = (
+                    campaign.dm_bot_channel_id if campaign is not None else None
+                ) or table.screen_channel_id  # (the DM Bot channel, else the screen: #3874 E2)
+                if left and self.tables.get(gid) is table and where is not None:
+                    await self.post(where, recap_names_reminder(left), view=review_view(cid))
             except Exception:
                 log.exception("The waiting-names reminder failed")
 

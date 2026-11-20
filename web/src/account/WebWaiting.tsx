@@ -10,7 +10,8 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { handBracket, handKeeps } from "../content/hand-over-words";
 import { differs, waitingWords as w } from "../content/web-waiting";
-import { ApiError, type AccountApi, type Waiting, type WaitingAnswer, type WaitingBackstory, type WaitingLook } from "./api";
+import { SOME_KNOW_LIVE } from "../content/some-know-switch";
+import { ApiError, type AccountApi, type PartyCharacter, type Waiting, type WaitingAnswer, type WaitingBackstory, type WaitingLook } from "./api";
 import { currentItem, itemDomId, openItem, pairFromItem } from "./itemLink";
 import WaitingBulk from "./WaitingBulk";
 import { itemWords } from "../content/item-words";
@@ -77,7 +78,7 @@ const KEEP_ALL_MAX = 50; // the API keeps at most this many named in one Keep al
 
 type Said = { ok: boolean; text: string; n: number; more?: string } | null;
 /** What an answer said back: how many it kept, and whether the bot showed or kept hidden the connection (#3974, #3986). */
-type Answered = { kept?: number; shown?: number; held?: number; scene?: number; split?: number };
+type Answered = { kept?: number; shown?: number; held?: number; scene?: number; split?: number; batch?: number };
 
 const errorWords = (error: unknown): string => {
   if (error instanceof ApiError) return w.errors[error.kind] ?? w.errors.other!;
@@ -88,11 +89,14 @@ export default function WebWaiting({
   api,
   campaignRef,
   onChanged,
+  onLeft,
 }: {
   api: AccountApi;
   campaignRef: string;
   /** Called after an answer was applied, so the page can read the graph again. */
   onChanged?: () => void;
+  /** The claims, backstory and "which" questions still waiting, after each read (#4740, the walk on the Questions page). */
+  onLeft?: (left: number) => void;
 }) {
   const [list, setList] = useState<Waiting | null>(null);
   const [failed, setFailed] = useState(false);
@@ -109,6 +113,10 @@ export default function WebWaiting({
   const [bulkOn, setBulkOn] = useState(false); // an "All true" / "All secret" press is on: every own button waits
   // The claim whose "Which one?" pick can still be taken back (#3463): only the latest pick offers Undo.
   const [undo, setUndo] = useState<string | null>(null);
+  // The "Some know" picker open on one claim (#4680 part 1): nobody is ticked when it opens.
+  const [picker, setPicker] = useState<{ kind: "claim" | "backstory"; id: string; party: PartyCharacter[] | null; chosen: string[] } | null>(null);
+  // The last "Some know" can be taken back by its batch, until the next answer.
+  const [someUndo, setSomeUndo] = useState<{ id: string; batch: number } | null>(null);
   const counter = useRef(0);
   const latest = useRef(0);
   // A second tap before the page redraws must not send a second answer.
@@ -124,6 +132,7 @@ export default function WebWaiting({
       if (mine === latest.current && shown.current === asked) {
         setList(got);
         setFailed(false);
+        onLeft?.(got.claims.length + got.backstory.length + got.which.length);
       }
     } catch (error) {
       // A player (or another DM) gets "not found": the part is simply not there.
@@ -154,6 +163,7 @@ export default function WebWaiting({
     answer: WaitingAnswer,
     ok: string | ((got: Answered) => string),
     stage: string = w.savingStage,
+    own?: Partial<Record<string, string>>,
   ): Promise<void> {
     if (!api.answerWaiting || inFlight.current) return;
     inFlight.current = true;
@@ -167,9 +177,11 @@ export default function WebWaiting({
         ? got.shown ? w.shownOne : got.held ? w.heldOne : got.scene ? w.sceneOne : got.split ? w.splitOne : undefined
         : undefined;
       setSaid({ ok: true, text: typeof ok === "function" ? ok(got) : ok, n: ++counter.current, ...(more ? { more } : {}) });
+      setSomeUndo(answer.kind === "claim" && answer.action === "some" && got.batch !== undefined ? { id: answer.id, batch: got.batch } : null);
       onChanged?.();
     } catch (error) {
-      setSaid({ ok: false, text: errorWords(error), n: ++counter.current });
+      setSaid({ ok: false, text: (error instanceof ApiError && own?.[error.kind]) || errorWords(error), n: ++counter.current });
+      setSomeUndo(null); // a press that failed takes back nothing
     } finally {
       // The buttons wait until the list has been read again, so nobody answers an item that is already gone.
       await read(); // (what shows is always the API's own, whatever happened)
@@ -177,6 +189,77 @@ export default function WebWaiting({
       setSending(null);
       headingRef.current?.focus(); // (the answered item has gone, and focus with it)
     }
+  }
+
+  // "Some know" (#4680 part 1): the picker lists the party's characters with nobody ticked; Save sends the ticked ids once.
+  async function openSome(kind: "claim" | "backstory", id: string): Promise<void> {
+    if (sending !== null || bulkOn || !api.partyCharacters) return;
+    setPicker({ kind, id, party: null, chosen: [] });
+    try {
+      const party = await api.partyCharacters(campaignRef);
+      setPicker((now) => (now && now.kind === kind && now.id === id ? { ...now, party } : now));
+    } catch (error) {
+      setPicker(null);
+      setSaid({ ok: false, text: errorWords(error), n: ++counter.current });
+    }
+  }
+  function toggleSome(characterId: string): void {
+    setPicker((now) =>
+      now ? { ...now, chosen: now.chosen.includes(characterId) ? now.chosen.filter((x) => x !== characterId) : [...now.chosen, characterId] } : now,
+    );
+  }
+  async function saveSome(kind: "claim" | "backstory", id: string): Promise<void> {
+    if (!picker || picker.kind !== kind || picker.id !== id || picker.party === null || picker.chosen.length === 0) return;
+    const names = picker.party.filter((p) => picker.chosen.includes(p.id)).map((p) => p.name);
+    const characters = [...picker.chosen];
+    setPicker(null);
+    if (kind === "backstory") {
+      await send(
+        { kind: "backstory", action: "some", id, characters },
+        () => (names.length === 1 ? w.someDoneBackstoryOne(names[0]!) : w.someDoneBackstoryMany(names.join(", "))),
+        w.savingStage,
+        { gone: w.someGone, "not-found": w.someNotFound, "bad-target": w.someBackstoryRefused },
+      );
+      return;
+    }
+    await send(
+      { kind: "claim", action: "some", id, characters },
+      () => (names.length === 1 ? w.someDoneOne(names[0]!) : w.someDoneMany(names.join(", "))),
+      w.savingStage,
+      { gone: w.someGone, "not-found": w.someNotFound },
+    );
+  }
+  // The picker's box, the same for a claim card and a backstory card (#4728): nobody is ticked when it opens; a backstory card
+  // also says that its players won't see it until it is said.
+  function pickerBox(kind: "claim" | "backstory", id: string, backstoryNote = false) {
+    if (!picker) return null;
+    return (
+      <fieldset class="stack">
+        <legend>{w.someLegend}</legend>
+        {backstoryNote && <p class="small">{w.someBackstoryNote}</p>}
+        <p class="small">{w.someHelp}</p>
+        {picker.party === null ? (
+          <p class="muted" role="status">{w.someLoading}</p>
+        ) : picker.party.length === 0 ? (
+          <p class="muted">{w.someEmpty}</p>
+        ) : (
+          picker.party.map((p) => (
+            <label class="choice" key={p.id}>
+              <input type="checkbox" checked={picker.chosen.includes(p.id)} onChange={() => toggleSome(p.id)} />
+              <span>{p.name}</span>
+            </label>
+          ))
+        )}
+        <div class="row">
+          <button type="button" class="button" disabled={busy || picker.party === null || picker.chosen.length === 0} onClick={() => void saveSome(kind, id)}>
+            {w.someSave}
+          </button>
+          <button type="button" class="button secondary" onClick={() => setPicker(null)}>
+            {w.someCancel}
+          </button>
+        </div>
+      </fieldset>
+    );
   }
 
   if (!api.webWaiting) return null;
@@ -239,6 +322,22 @@ export default function WebWaiting({
       <p class={said && !said.ok ? "warn" : "visually-hidden"} role="alert">
         {said && !said.ok ? <span key={said.n}>{said.text}</span> : ""}
       </p>
+      {someUndo && said?.ok && (
+        <p>
+          <button
+            type="button"
+            class="button secondary"
+            disabled={busy}
+            onClick={() => {
+              const u = someUndo;
+              setSomeUndo(null);
+              void send({ kind: "claim", action: "undo", id: u.id, batch: u.batch }, w.someUndone);
+            }}
+          >
+            {w.someUndo}
+          </button>
+        </p>
+      )}
       {undo && said?.ok && (
         <p>
           <button
@@ -488,7 +587,19 @@ export default function WebWaiting({
                 >
                   {w.reject}
                 </button>
+                {SOME_KNOW_LIVE && c.canSecret && api.partyCharacters !== undefined && (
+                  <button
+                    type="button"
+                    class="button secondary"
+                    disabled={busy}
+                    aria-describedby={`wc-${c.id}`}
+                    onClick={() => void openSome("claim", c.id)}
+                  >
+                    {w.someButton}
+                  </button>
+                )}
               </div>
+              {picker?.kind === "claim" && picker.id === c.id && pickerBox("claim", c.id)}
             </div>
           ))}
         </div>
@@ -552,6 +663,11 @@ export default function WebWaiting({
                             onClick={() => void send(answer("skip"), b.now ? w.done.leftAsIs : w.done.leftOut)}>
                             {b.now ? w.leaveAsIs : w.leaveOut}
                           </button>
+                          {SOME_KNOW_LIVE && !b.secret && !handOf(b) && api.partyCharacters !== undefined && (
+                            <button type="button" class="button secondary" disabled={busy} aria-describedby={`wb-${b.id}`} onClick={() => void openSome("backstory", b.id)}>
+                              {w.someButton}
+                            </button>
+                          )}
                         </div>
                         {!b.secret && (
                           <div class="row">
@@ -573,6 +689,7 @@ export default function WebWaiting({
                         </div>
                       </>
                     )}
+                    {picker?.kind === "backstory" && picker.id === b.id && pickerBox("backstory", b.id, true)}
                   </div>
                   );
                 })}

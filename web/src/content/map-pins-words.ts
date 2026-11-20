@@ -1,0 +1,25 @@
+// The words of the "Pins and scale" panel under a map (#4672). Plain words for a DM at a table: what DMbot found on the map, and what
+// it knows of its scale, grid and north. Nothing here is shown to the players. Names and labels are only ever text on the page.
+export const mapPinsWords = {
+  button: "Pins and scale",
+  heading: "Pins and scale",
+  privacy: "Only you see this. Nothing here is shown to your players.",
+  loading: "Loading…",
+  failed: "We couldn't load this. Reload the page to try again.",
+  notDm: "Only a DM of the campaign can see this.",
+  noScale: "No scale yet. DMbot doesn't guess one.",
+  scale: (unit: string, from: string): string => `Scale: known, in ${unit}, ${from}.`,
+  grid: (kind: string, from: string): string => `Grid: ${kind}, ${from}.`,
+  northAssumed: "North: up (assumed).",
+  north: (angle: number, from: string): string => `North: ${angle}° from straight up, ${from}.`,
+  from: { read: "read from the map", dm: "set by you", import: "from an import" } as const,
+  shape: { pin: "Pin", path: "Path", area: "Area" } as const,
+  place: (name: string): string => `Place: ${name}`,
+  road: (name: string): string => `Road: ${name}`,
+  areaName: (name: string): string => `Area: ${name}`,
+  unmatched: "Not matched to a name yet",
+  source: { read: "DMbot read it from the map", dm: "placed by you", import: "from an import" } as const,
+  none: "DMbot hasn't found anything to mark on this map yet.",
+  marks: "Marks on this map",
+  saving: "Loading the map's pins",
+} as const;

@@ -681,10 +681,16 @@ def prose_message(
     names = {*names, *(w for b in beats for w in b.who), *(w for b in stop for w in b.who)}
     if who_and_what:
         lines = "\n".join(f"- {quoted(x)}" for x in who_and_what[:SHEET_LINES])
+        cite = (
+            ' A line that starts "Cite this" is the only kind that may be told as an event: say '
+            "that line once, as narration, in its own words, and add nothing to it."
+            if any(x.startswith(REVEAL_MARK) for x in who_and_what[:SHEET_LINES])
+            else ""
+        )
         parts.append(
             "What the players know of the names in this recap. Context for saying what a "
-            f"person, place or thing is, never for adding an event.\n<who_and_what>\n{lines}\n"
-            "</who_and_what>"
+            f"person, place or thing is, never for adding an event.{cite}\n"
+            f"<who_and_what>\n{lines}\n</who_and_what>"
         )
     if threads:
         shown = "\n".join(f"- {quoted(t)}" for t in threads[:GUIDE_NAMES])
@@ -1229,6 +1235,88 @@ def tie_notes(text: str, ties: Sequence[tuple[tuple[str, ...], tuple[str, ...]]]
     return list(dict.fromkeys(notes))
 
 
+# A sheet line that is a partial reveal for the recap to cite (#4737, `DMBOT_RECAP_REVEALS`): who
+# learned something, never what. The ux-critic's wording: cited once, in these words, nothing added.
+REVEAL_MARK = (
+    "Cite this once, as narration, in these exact words, in the part of the recap where it "
+    "happened; do not say what was learned, how, or why: "
+)
+_LEARNS = re.compile(
+    r"\b(?:learn(?:ed|s|t)|discover(?:ed|s)|found out|realis(?:ed|es)|realiz(?:ed|es)"
+    r"|was told|were told|whisper(?:ed|s)|confided|reveal(?:ed|s)|admitted)\b",
+    re.IGNORECASE,
+)
+_DETAIL = re.compile(r"^\s+(?:that|how|who|where|why|what|about|of|if|whether)\b", re.IGNORECASE)
+_REVEAL_SENTENCE = re.compile(
+    r"^(?P<who>.+?) (?:learned something(?: about (?P<about>.+))?|had a private word)\.$"
+)
+
+
+def _reveal_cited(who_and_what: Sequence[str]) -> list[tuple[list[str], list[str]]]:
+    """Each cited reveal as (who, subjects): the sheet's marked lines, taken apart again."""
+    out: list[tuple[list[str], list[str]]] = []
+    for line in who_and_what:
+        if not line.startswith(REVEAL_MARK):
+            continue
+        found = _REVEAL_SENTENCE.match(line[len(REVEAL_MARK) :].strip())
+        if found is None:
+            continue
+        who = re.split(r", | and ", found.group("who"))
+        about = re.split(r", | and ", found.group("about")) if found.group("about") else []
+        out.append((who, about))
+    return out
+
+
+def reveal_problems(
+    narration: str, who_and_what: Sequence[str], advisory: list[str] | None = None
+) -> list[str]:
+    """What is wrong with how the recap cites the session's partial reveals (#4737): a sentence
+    that names someone who learned something and says what (a "that", a "how", a thing other
+    than the subjects the marker names) adds detail the table doesn't share. Never the words of
+    the detail in the message. A reveal not cited at all is only counted in `advisory`: the
+    writer was asked to cite it, but a recap is never held back for leaving one out."""
+    problems: list[str] = []
+    cited = _reveal_cited(who_and_what)
+    if not cited:
+        return problems
+    sentences = _sentences_of(narration)
+    for who, about in cited:
+        # (the subjects joined as the marker joins them; a possessive ("Vane's past") is detail)
+        names = "|".join(re.escape(a) for a in about)
+        subjects = (
+            rf"\s+about\s+(?:{names})(?:(?:,|\s+and)\s+(?:{names}))*(?![\w'’])|" if about else ""
+        )
+        # ("something" alone is fine; "something about" anything but the subjects is detail)
+        # ("something", then the subjects, then the end of the clause: anything else is detail)
+        end = r"(?=\s*(?:[.!?;]|$)|,?\s+(?:and|but|then|as|while|before|after)\b)"
+        allowed = re.compile(rf"^\s+something(?:{subjects}|){end}", re.IGNORECASE)
+        named = False
+        for sentence in sentences:
+            if not any(re.search(rf"\b{re.escape(w)}\b", sentence) for w in who):
+                continue
+            named = True
+            for hit in _LEARNS.finditer(sentence):
+                tail = sentence[hit.end() :]
+                # (a learn verb alone is fine, "learned to read the map": only "something" said
+                # wrongly, a clause or a "was told" says more than the line does)
+                if hit.group(0).lower().endswith("told") or (
+                    _DETAIL.match(tail)
+                    or (
+                        re.match(r"^\s+something\b", tail, re.IGNORECASE)
+                        and not allowed.match(tail)
+                    )
+                ):
+                    problems.append(
+                        "a sentence says more than the sheet's line allows about what someone "
+                        'learned: use the sheet\'s own line, like "<Name> learned something.", '
+                        "and add nothing after it"
+                    )
+                    return problems
+        if not named and advisory is not None:
+            advisory.append("reveal")
+    return problems
+
+
 def check_prose(
     prose: Prose,
     *,
@@ -1329,6 +1417,7 @@ def check_prose(
         problems.append("a name is too like one the DM keeps secret: leave it out")
     if not last:  # a recap that passes everything else is not ended by a doubtful scene check
         problems.extend(presence_problems(narration, beats, pcs))
+    problems.extend(reveal_problems(narration, who_and_what, advisory))
     copied = copied_run(narration, transcript)
     if copied:
         # The hint is the run's first words; a run that starts with a secret name gets none.

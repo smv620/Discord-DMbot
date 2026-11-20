@@ -6,6 +6,8 @@
 // Undo there still works). Who sees what is the API's rule, never the page's: a server manager who
 // isn't one of the DMs gets the list without secret names and no way to change anything, and anyone
 // else gets "not found". The page only shows what it is given.
+import { CATCH_UP_LIVE } from "../content/catch-up-switch";
+import { PARTY_RECORD_LIVE } from "../content/party-record-switch";
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import PageBar from "../admin/PageBar";
@@ -436,6 +438,9 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       )}
       {THREADS_LIVE && data.canEdit && api.storyThreads !== undefined && (
         <LazyPanel load={() => import("./StoryThreads")} what="the story threads DMbot found" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />
+      )}
+      {THREADS_LIVE && data.canEdit && api.threadProgress !== undefined && (
+        <LazyPanel load={() => import("./ThreadProgress")} what="the progress DMbot heard on your story threads" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />
       )}
       {MET_LIST_LIVE && data.canEdit && api.metList !== undefined && (
         <LazyPanel load={() => import("./MetList")} what="who your party met" props={{ api, campaignRef: ref, onChanged: () => void load(pageNow.current, true) }} />
@@ -1017,6 +1022,12 @@ function NameEditor({ id, row, kinds, act, api, refId, focusSaid }: EditorProps)
 
       {PLACE_WORLD_LIVE && row.kind === "place" && api.placeWorld && (
         <LazyPanel load={() => import("./PlaceWorld")} what="the place's land, climate and ruler" props={{ api, refId, row, act: (change: NameChange, ok: string) => act(row, change, ok) }} />
+      )}
+      {CATCH_UP_LIVE && api.catchUpChoices && (
+        <LazyPanel load={() => import("./CatchUp")} what="catch up" props={{ api, refId, entry: row.id }} />
+      )}
+      {PARTY_RECORD_LIVE && row.kind === "player_character" && api.partyRecord && (
+        <LazyPanel load={() => import("./PartyRecord")} what="the party record" props={{ api, refId, row }} />
       )}
       {LANGUAGES_LIVE && (row.kind === "npc" || row.kind === "player_character") && api.characterLanguages && api.changeCharacterLanguages && (
         <LazyPanel load={() => import("./CharacterLanguages")} what="the character's languages" props={{ api, refId, row }} />

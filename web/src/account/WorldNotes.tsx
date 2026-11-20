@@ -4,8 +4,9 @@
 // and is one change, so one Undo. Its own file, fetched only for a DM while WORLD_NOTES_LIVE. Words and counts only.
 import { useEffect, useRef, useState } from "preact/hooks";
 
+import { ROADS_LIVE } from "../content/roads-switch";
 import { SHOWN_AT_MOST, worldNotesWords as w } from "../content/world-notes-words";
-import { ApiError, type AccountApi, type WorldLanguageNote, type WorldNotes, type WorldPlaceNote } from "./api";
+import { ApiError, type AccountApi, type WorldLanguageNote, type WorldNotes, type WorldPlaceNote, type WorldRoadNote } from "./api";
 
 type Said = { ok: boolean; text: string; batch: number | null };
 
@@ -79,7 +80,9 @@ export default function WorldNotes({ api, refId, onSignedOut }: { api: AccountAp
       </section>
     );
   }
-  const total = notes.places.length + notes.languages.length;
+  // The Roads group (#4784) is drawn only behind ROADS_LIVE; with the switch off, nothing about roads shows or is counted.
+  const roads: WorldRoadNote[] = ROADS_LIVE ? (notes.roads ?? []) : [];
+  const total = notes.places.length + notes.languages.length + roads.length;
   const group = (title: string, kind: "place" | "language", lines: (WorldPlaceNote | WorldLanguageNote)[], keepAllWords: (n: number) => string) => {
     if (lines.length === 0) return null;
     const shown = lines.slice(0, SHOWN_AT_MOST);
@@ -120,6 +123,7 @@ export default function WorldNotes({ api, refId, onSignedOut }: { api: AccountAp
       {total === 0 && <p class="muted">{w.none}</p>}
       {group(w.places, "place", notes.places, w.keepAllPlaces)}
       {group(w.languages, "language", notes.languages, w.keepAllLanguages)}
+      {roads.length > 0 && <RoadsGroup roads={roads} busy={busy} keepOne={keepOne} keepAll={keepAll} />}
       {said && (
         <p class={said.ok ? "small" : "small warn"} role={said.ok ? "status" : "alert"}>
           {said.text}{" "}
@@ -131,5 +135,44 @@ export default function WorldNotes({ api, refId, onSignedOut }: { api: AccountAp
         </p>
       )}
     </section>
+  );
+}
+
+/** The Roads group (#4784): one line per road, its name and the API's note, ✅ Keep (no 🚫 Not right) and Keep all for the shown lines.
+ * A road's id is already its keep id, `road:<32 hex>`, as the door sends and reads it. */
+function RoadsGroup({
+  roads,
+  busy,
+  keepOne,
+  keepAll,
+}: {
+  roads: WorldRoadNote[];
+  busy: boolean;
+  keepOne: (line: string, id: string) => Promise<void>;
+  keepAll: (ids: string[]) => Promise<void>;
+}) {
+  const shown = roads.slice(0, SHOWN_AT_MOST);
+  return (
+    <div class="stack" key="road">
+      <h3 class="small">{w.roads}</h3>
+      <ul class="stack">
+        {shown.map((n) => (
+          <li key={n.id} class="stack">
+            <p>{n.name}</p>
+            <p>{n.note}</p>
+            <p class="small muted">{n.fromSession !== null ? w.fromSession : w.fromLore}</p>
+            <p class="row">
+              <button type="button" class="button secondary" disabled={busy} aria-label={w.keepLabel(n.name)} onClick={() => void keepOne(n.name, n.id)}>
+                {w.keep}
+              </button>
+            </p>
+          </li>
+        ))}
+      </ul>
+      {roads.length > shown.length && <p class="small muted">{w.showing(shown.length, roads.length)}</p>}
+      <button type="button" class="button secondary" disabled={busy} onClick={() => void keepAll(shown.map((n) => n.id))}>
+        {w.keepAllRoads(shown.length)}
+      </button>
+    </div>
   );
 }

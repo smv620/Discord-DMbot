@@ -1,5 +1,6 @@
 """The right-to-use question for a map (MapBot slice 3b-1, #4344; docs/design/mapbot_layers.md
-section 3.3): when a picture posted in the table's chat is found to be a map, its poster is asked,
+section 3.3): when a picture posted in the table's chat is found to be a map, its poster is asked
+(and the DM who uploaded a document, for each map read in it: #4259),
 once, in their private chat with DMbot, "Is this a map you're allowed to use and save in this
 campaign?". DMbot can't check, so it goes by the answer.
 
@@ -23,6 +24,7 @@ import discord
 
 from dmbot.maps import words
 from dmbot.maps.store import MapError
+from dmbot.memory._changes import MAP_PICTURE_GONE
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 from dmbot.ui.dmbot_commands import _answer_first, _bot
 
@@ -66,16 +68,21 @@ async def _answer(
             return
         # A map posted in the table's chat has a message; the question is only asked for those.
         from_chat = picture.message_id != 0
+        # A map in a DM's uploaded file (#4259): no table chat, no picture consent to check (that
+        # yes is about the table's chat), and its upload's Undo takes it back.
+        from_file = picture.dm_only
         if yes:
-            if not bot.consent.has_image_consent(guild_id, interaction.user.id):
+            if not from_file and not bot.consent.has_image_consent(guild_id, interaction.user.id):
                 # (they stopped, or withdrew their yes to pictures, since the question was sent)
                 await _finish(interaction, words.NO_CONSENT)
                 return
             is_dm = interaction.user.id in campaign.dm_user_ids
             await maps.add_map(
                 guild_id, campaign.id, picture_id=picture.id, uploader_id=interaction.user.id,
-                uploader_is_dm=is_dm, right_to_use=True, kind="other", came_from="discord",
+                uploader_is_dm=is_dm, right_to_use=True, kind="other",
+                came_from="document" if from_file else "discord",
                 audience="table" if from_chat else "dm", storage_mb=bot.settings.picture_storage_mb,
+                from_notice=picture.notice_id if from_file else None,
             )  # fmt: skip
             log.info("A map was kept (%s)", "dm" if is_dm else "player")
             back = discord.ui.View(timeout=None)  # (the poster can take it back, only the map)
@@ -87,7 +94,7 @@ async def _answer(
             await _finish(interaction, words.ANSWERED)
             return
         log.info("A map was not kept")
-        await _finish(interaction, words.said_no(from_chat))
+        await _finish(interaction, words.said_no(from_chat, from_file))
     except MapError as exc:  # (the store's own words: no room, already a map)
         await _finish(interaction, str(exc))
     except Exception as exc:
@@ -227,8 +234,11 @@ class PosterUndoButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]
         except TooLateToUndo as exc:
             await _finish(interaction, str(exc))
             return
-        except MemoryRuleError:
-            await _finish(interaction, words.TAKE_BACK_UNDO_FAILED)
+        except MemoryRuleError as exc:  # (the picture gone since: said plainly, #4697)
+            await _finish(
+                interaction,
+                str(exc) if str(exc) == MAP_PICTURE_GONE else words.TAKE_BACK_UNDO_FAILED,
+            )
             return
         except Exception as exc:
             log.warning("A poster's map undo failed (%s)", type(exc).__name__)
@@ -244,19 +254,24 @@ def view(guild_id: int, picture_id: int) -> discord.ui.View:
     return out
 
 
-async def ask(bot: Any, guild_id: int, campaign: Any, picture: Any) -> None:
-    """Send the question to the picture's poster, once, in private. When their private messages
-    are closed, the DMs are told so, and the map is simply not used. Never raises."""
+async def ask(bot: Any, guild_id: int, campaign: Any, picture: Any, about: str = "") -> bool:
+    """Send the question to the picture's poster, once, in private. `about` (a map in an uploaded
+    file, #4259): which one, by its file and page, since there is no picture above it in a chat.
+    True when it was sent. When their private messages are closed, the DMs are told so, and the
+    map is simply not used. Never raises."""
     user: Any = None
     try:
         user = await bot.fetch_user(picture.poster_id)
         text = f"❓ **DMbot has a question** · {discord.utils.escape_markdown(campaign.name)}\n"
+        if about:
+            text += f"{about}\n"
         text += words.question(from_chat=picture.message_id != 0)
         await user.send(
             text, view=view(guild_id, picture.id), allowed_mentions=discord.AllowedMentions.none()
         )
         if bot.picture_store is not None:  # (asked: the one reminder at the next start is for this)
             await bot.picture_store.mark_map_asked(guild_id, campaign.id, picture.id)
+        return True
     except (discord.Forbidden, discord.NotFound):
         from dmbot.dm_screen import private_note
 
@@ -267,6 +282,7 @@ async def ask(bot: Any, guild_id: int, campaign: Any, picture: Any) -> None:
             )
     except Exception as exc:
         log.warning("A map question could not be sent (%s)", type(exc).__name__)
+    return False
 
 
 async def remind(bot: Any, guild_id: int, campaign: Any) -> None:
@@ -282,10 +298,16 @@ async def remind(bot: Any, guild_id: int, campaign: Any) -> None:
         log.warning("The map reminders could not be listed (%s)", type(exc).__name__)
         return
     sent = 0
+    told: set[int] = set()  # (one reminder a person: a file's maps can ask several questions)
     for picture in waiting:
         try:
             await store.mark_map_reminded(guild_id, campaign.id, picture.id)  # (once, first)
-            if not bot.consent.has_image_consent(guild_id, picture.poster_id):
+            if picture.poster_id in told:
+                continue
+            # (a map in a DM's file needs no yes to the table's pictures, as its answer doesn't)
+            if not picture.dm_only and not bot.consent.has_image_consent(
+                guild_id, picture.poster_id
+            ):
                 continue
             user = await bot.fetch_user(picture.poster_id)
             name = discord.utils.escape_markdown(campaign.name)
@@ -294,6 +316,7 @@ async def remind(bot: Any, guild_id: int, campaign: Any) -> None:
                 allowed_mentions=discord.AllowedMentions.none(),
             )
             sent += 1
+            told.add(picture.poster_id)
         except Exception as exc:  # (closed messages, a gone person): the reminder is only a nudge
             log.info("A map reminder was not sent (%s)", type(exc).__name__)
     if waiting:

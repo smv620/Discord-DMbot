@@ -2,7 +2,9 @@
 and DMbot suggests the names in it for 📝 Check new names. Nothing is confirmed without the DM.
 
 The text is the DM's own, read once and never kept; only the names the DM says yes to, and each
-name's short quote until it is decided, are stored. A published book or adventure is a different
+name's short quote until it is decided, are stored. A PDF's maps, tables and handouts are the one
+exception, when kept pictures are set up: kept for the campaign's DMs alone, and the offer says so
+before the DM's yes (#4003 slice c). A published book or adventure is a different
 path (the Shared story switch, with its rights confirmation). Only the campaign's DMs; counted
 against the campaign's AI allowance like the other name features; the log has counts only.
 """
@@ -24,7 +26,7 @@ from typing import TYPE_CHECKING, Any, cast
 import discord
 
 from dmbot import credits
-from dmbot.ai import AIError
+from dmbot.ai import FEATURE_TIERS, AIError, Feature
 from dmbot.campaigns import Campaign
 from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
@@ -38,7 +40,10 @@ from dmbot.memory import (
     lore_read,
     map_fact_store,
     map_facts,
+    party_icons,
+    pdf_pictures,
     picture_read,
+    picture_vision,
     place_levels,
     pronouns,
     route_condition,
@@ -93,9 +98,11 @@ from dmbot.memory.pronouns import is_pronoun
 from dmbot.memory.store import MemoryStore, refusal_for_log
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
 from dmbot.mentions import NO_PINGS
+from dmbot.pictures.keeper import Context as PictureContext
 from dmbot.ui import logic, split_words
 from dmbot.ui import secret_questions as secret_questions_ui
 from dmbot.ui.check_everything import add_stop, next_part, progress
+from dmbot.ui.claims_review import knower_icon
 from dmbot.ui.dmbot_commands import VIEW_TIMEOUT_S, _bot, _Button, _Menu, _send, _tell
 from dmbot.ui.name_lists import (
     AI_AT_ONCE,
@@ -140,6 +147,10 @@ WHO_SUMMARY_MARGIN_S = 60.0
 # time, and is skipped with less than `PICTURES_MIN_S` left.
 PICTURES_UNTIL_S = lore_read.LORE_TIME_LIMIT_S - 240.0
 PICTURES_MIN_S = 60.0
+# Reading a PDF's pictures (#4003 slice b) runs beside the text read, from the same start, so it
+# never adds to the upload's one time limit; no call runs past this, and the names read from them
+# (`PICTURES_UNTIL_S`) come after.
+PICTURE_READ_UNTIL_S = 240.0
 
 
 NOT_A_BOOK = "your own notes or background, not a published book"
@@ -160,13 +171,22 @@ CONNECTIONS_NOTE = (
 )
 
 
-def rights_text() -> str:
+def rights_text(pictures: bool = False) -> str:
+    """What pressing 🤖 Find names agrees to. `pictures`: the file's maps, tables and handouts
+    will be kept for the DMs (#4003 slice c), so it must say so: the press is their yes."""
     return (
         f"Use this for {NOT_A_BOOK}. (For a book or adventure, use the **Shared story** "
         "switch.)\n**Pressing 🤖 Find names says this is your own writing, and you may use "
         "it.** The text is sent once to Anthropic (an AI company) to be read. DMbot does not "
         "keep it, only a short line beside each name until you answer it."
+        + (PICTURES_KEPT_NOTE if pictures else "")
     )
+
+
+PICTURES_KEPT_NOTE = (
+    " It does keep the file's maps, tables and handouts as pictures, for the DMs only (under"
+    " Pictures on the website)."
+)
 
 
 async def open_background(interaction: discord.Interaction, campaign_id: str) -> None:
@@ -284,24 +304,35 @@ class UploadBackground(discord.ui.Modal, title="Your background, from a file"):
             await _tell(interaction, "No file was added. Press 📎 Upload a file and pick one.")
             return
         await interaction.response.defer(ephemeral=True, thinking=True)
-        got, problem = await read_attachment(upload.values[0])
+        reading = _reading_pictures(_bot(interaction))  # (both switches: never paid for and unused)
+        got, problem = await read_attachment(upload.values[0], pictures=reading)
         if got is None:
             await _tell(interaction, problem or "DMbot couldn't read that.")
             return
-        await offer(interaction, self.campaign_id, got)
+        # (its kept pictures' poster, and whether the offer says they are kept)
+        bot = _bot(interaction)
+        keeps = reading and getattr(bot, "picture_keeper", None) is not None
+        got = replace(got, uploader_id=interaction.user.id, keeps_pictures=keeps)
+        offered = False
+        try:
+            offered = await offer(interaction, self.campaign_id, got)
+        finally:
+            if not offered:
+                got.close()  # (no offer carries its pictures: their folder goes now)
 
 
-async def offer(interaction: discord.Interaction, campaign_id: str, upload: Upload) -> None:
-    """Say what reading it will do and cost, and wait for the DM's press."""
+async def offer(interaction: discord.Interaction, campaign_id: str, upload: Upload) -> bool:
+    """Say what reading it will do and cost, and wait for the DM's press. True when the offer was
+    sent, so its view now owns the upload (and closes its pictures' folder, #4003)."""
     campaign = await _campaign_for(interaction, campaign_id)
     if campaign is None:
-        return
+        return False
     if interaction.user.id not in campaign.dm_user_ids:  # on every path in
         await _tell(interaction, ONLY_DMS)
-        return
+        return False
     if _bot(interaction).background_ai is None:
         await _tell(interaction, NO_AI_FOR_DOCUMENTS)
-        return
+        return False
     memory = _memory(interaction)
     choices = (
         await characters(memory, campaign)
@@ -314,6 +345,7 @@ async def offer(interaction: discord.Interaction, campaign_id: str, upload: Uplo
         offer_text(upload, False, ask=bool(choices)) + (NO_CHARACTERS if lone else ""),
         BackgroundOffer(campaign.id, upload, choices),
     )
+    return True
 
 
 KNOWS_LABELS = {
@@ -350,7 +382,15 @@ def offer_text(
     """The question before the AI reads a lore upload. Asked once per upload (#2447): lore that
     may change in play (the default), or 📌 100% truth, the DM's word, so DMbot tells the DM when
     a session goes against it."""
-    cost = credits.estimate_words("lore", credits.lore_estimate(len(upload.text)))
+    cost = (
+        credits.estimate_words(
+            "lore",
+            credits.lore_and_pictures(len(upload.text), upload.pictures_found),
+            what=credits.pictures_words(upload.pictures_found, more=upload.pictures_over > 0),
+        )
+        if upload.pictures_found
+        else credits.estimate_words("lore", credits.lore_estimate(len(upload.text)))
+    )
     how = (
         "📌 **100% truth.** Connections you keep are pinned, and DMbot tells you privately if a "
         "session goes against one."
@@ -370,8 +410,19 @@ def offer_text(
             "Tap the Players button to switch.\n\n"
         )
         + (whose_text(speaker) if ask else "")
-        + f"{rights_text()}"
+        + f"{rights_text(upload.keeps_pictures and upload.pictures_found > 0)}"
         + (f"\n\n{upload.note}" if upload.note else "")
+        + (f"\n\n{pictures_over_note(upload.pictures_over)}" if upload.pictures_over else "")
+    )
+
+
+def pictures_over_note(over: int) -> str:
+    """What the offer says about pictures past the limits (#4003: at most 30 an upload, 4 a page),
+    in counts only (the ux-critic's words: "skipped" is a limit, never a fault)."""
+    more = "1 more picture is" if over == 1 else f"{over:,} more pictures are"
+    return (
+        f"{more} skipped: DMbot reads up to {pdf_pictures.PER_UPLOAD} a file, and up to "
+        f"{pdf_pictures.PER_PAGE} a page."
     )
 
 
@@ -570,9 +621,12 @@ class BackgroundOffer(_Menu):
             f"🤖 Reading {_md(self.upload.label)}… this can take a few minutes for a long "
             "background."
         )
+        # (the campaign is named so a website read of the same campaign sees this one running;
+        # `at_once` stays 1, so Discord's button still takes the whole server)
         why_not = start_ai_read(
             guild,
             time.time(),
+            campaign.id,
             per_day=int(getattr(_bot(interaction).settings, "lore_reads_per_day", 20)),
         )
         if why_not == BUSY:
@@ -629,6 +683,10 @@ class BackgroundOffer(_Menu):
                             done,
                             total,
                         )
+                    elif stage == "seeing":  # (#4003 slice b: only once the text is read, counts)
+                        waiting.step("Finishing reading its pictures", done, total)
+                    elif stage == "keeping":  # (#4003 slice c)
+                        waiting.step("Keeping its pictures for the DMs", done, total)
                     elif stage == "pictures":  # (#4003)
                         waiting.step(
                             f"Step 2 of {steps}: reading the words in its pictures", done, total
@@ -678,7 +736,12 @@ class BackgroundOffer(_Menu):
                     + trait_questions_line(done.trait_questions)
                     + thread_suggestions_line(done.thread_suggestions, done.threads_short)
                     + secret_questions_ui.count_line(done.secret_questions)
-                    + picture_held_line(len(done.picture_held)),
+                    + picture_held_line(len(done.picture_held))
+                    + pictures_unread_line(done.pictures_unread, done.unread_pages)
+                    + pictures_kept_line(
+                        done.pictures_kept, done.pictures_not_kept, done.pictures_undo
+                    )
+                    + maps_asked_line(done.maps_asked, done.maps_over, done.maps_unsent),
                     held=done.picture_held,
                 )
             # What waits for the DM also comes once to their private chat, like a live session's
@@ -708,13 +771,21 @@ class BackgroundOffer(_Menu):
                     "keeps happening, tell your server owner."
                 )
         finally:
-            end_ai_read(guild)
+            end_ai_read(guild, campaign.id)
+            # (the view's timeout ended with `stop()` above, so its pictures' folder goes here,
+            # whether the read finished, failed or was cancelled, #4003)
+            self.upload.close()
 
     async def _cancel(self, interaction: discord.Interaction) -> None:
         self.stop()
+        self.upload.close()  # (its pictures' folder, if it has one: never read now)
         await interaction.response.edit_message(
             content="Cancelled. Nothing was sent or added.", view=None
         )
+
+    async def on_timeout(self) -> None:
+        self.upload.close()  # (the offer was dropped: its pictures are never read)
+        await super().on_timeout()
 
 
 @dataclass(slots=True)
@@ -749,6 +820,19 @@ class BackgroundRead:
     # waiting in the DM's Names to check with a note saying so, never added by themselves and
     # never in an "Add all".
     picture_held: frozenset[str] = frozenset()
+    # Pictures that weren't read in full (#4003 slice b: an answer cut short, a failed call, out
+    # of time or credits), counted on the DM's note, never dropped silently (Supervisor's ruling)
+    pictures_unread: int = 0
+    unread_pages: tuple[int, ...] = ()  # their pages, for the DM to look at (never their words)
+    # Its maps, tables and handouts newly kept for the campaign's DMs (#4003 slice c), those that
+    # couldn't be (no room, a storing problem), and whether its notice's Undo takes them back
+    pictures_kept: int = 0
+    pictures_not_kept: int = 0
+    pictures_undo: bool = False
+    # Its map pictures the DM was asked about, privately, and those over the limit (#4259)
+    maps_asked: int = 0
+    maps_over: int = 0
+    maps_unsent: bool = False  # (stopped: the DM's private messages are closed)
     # Story threads the lore holds (#4453): how many new suggestions wait in ❓ Questions for you
     thread_suggestions: int = 0
     threads_short: str = ""  # why the story threads weren't read in full, a `THREADS_SHORT` key
@@ -775,22 +859,38 @@ async def read_background(
     lore read is made because the DM added material, so it is the owner's to meter. Every way in
     (the 🤖 button, the website, the queue) comes through here, so none can forget the scope. A 🤫
     question the read asks (#4524) cites the upload as the DM sees it ("Tavin's backstory, 24
-    Oct")."""
+    Oct").
+
+    A PDF's pictures, when taken out (#4003, DMBOT_PICTURE_READING), are read first, each call
+    charged as the "picture" job the DM was shown the cost of; their words then reach the lore read
+    (`_read_pictures`, with DMBOT_PICTURE_NAMES on)."""
+    seeing: _Seeing | None = None
+    if upload.picture_files is not None and _reading_pictures(bot):
+        # (a task of its own, made inside the "picture" scope, so its calls are charged as the
+        # pictures the DM was shown the cost of while the text is read beside it as "lore")
+        seeing = _Seeing()
+        with credits.preparing(campaign.guild_id, campaign.id, "picture"):
+            seeing.task = asyncio.create_task(_see_pictures(bot, upload, seeing.tick, started))
     with (
         credits.preparing(campaign.guild_id, campaign.id, "lore"),
         secret_questions.evidence(upload_label(upload.label, time.time())) as asked,
     ):
-        done = await _read_background(
-            bot,
-            campaign,
-            upload,
-            truth=truth,
-            speaker=speaker,
-            known_by=known_by,
-            started=started,
-            progress=progress,
-            choice=choice,
-        )
+        try:
+            done = await _read_background(
+                bot,
+                campaign,
+                upload,
+                truth=truth,
+                speaker=speaker,
+                known_by=known_by,
+                started=started,
+                progress=progress,
+                choice=choice,
+                seeing=seeing,
+            )
+        finally:
+            if seeing is not None and seeing.task is not None:
+                seeing.task.cancel()  # (a no-op once it is done; else no call is left running)
     # (its 🤫 questions are counted on its note and open from its button: slice 2)
     memory = bot.memory
     if asked and memory is not None:
@@ -804,6 +904,70 @@ async def read_background(
     return done
 
 
+def _reading_pictures(bot: Any) -> bool:
+    """A PDF's pictures are read only when what they give is used: their names
+    (DMBOT_PICTURE_NAMES) as well as the reading itself (DMBOT_PICTURE_READING). Never paid for and
+    thrown away."""
+    settings = getattr(bot, "settings", None)
+    return bool(
+        getattr(settings, "picture_reading_on", False)
+        and getattr(settings, "picture_names_on", False)
+    )
+
+
+class _Seeing:
+    """The pictures' read, running beside the text read: its task, and its latest counts for the
+    wait's step once the text read is done and it is still going."""
+
+    def __init__(self) -> None:
+        self.task: asyncio.Task[picture_vision.Seen | None] | None = None
+        self.done = 0
+        self.total = 0
+        self.forward: Callable[[str, int, int], None] | None = None
+
+    def tick(self, done: int, total: int) -> None:
+        self.done, self.total = done, total
+        if self.forward is not None:
+            self.forward("seeing", done, total)
+
+    async def result(
+        self, progress: Callable[[str, int, int], None] | None
+    ) -> picture_vision.Seen | None:
+        """Its result, showing its step while it is still going (the wait rule: what it is at,
+        how far along)."""
+        if self.task is None:
+            return None
+        if not self.task.done() and progress is not None:
+            self.forward = progress
+            progress("seeing", self.done, self.total)
+        return await self.task
+
+
+async def _see_pictures(
+    bot: Any,
+    upload: Upload,
+    tick: Callable[[int, int], None] | None,
+    started: float,
+) -> picture_vision.Seen | None:
+    """The upload's pictures read with the fast model (`picture_vision.read_pictures`), or None
+    without an AI client or a picture. Never raises: the text is the upload's reason, and is read
+    either way. `tick(done, total)`: counts only."""
+    files = upload.picture_files.files() if upload.picture_files is not None else []
+    client = getattr(bot, "ai_client", None)
+    if not files or client is None:
+        return None
+    try:
+        vision = client.tier(FEATURE_TIERS[Feature.IMAGE], Feature.IMAGE)
+        if tick is not None:
+            tick(0, len(files))
+        return await picture_vision.read_pictures(
+            vision, files, until=started + PICTURE_READ_UNTIL_S, progress=tick
+        )
+    except Exception as exc:  # (a bug or a store failure: the pictures go, the text stays)
+        log.warning("An upload's pictures couldn't be read (%s)", type(exc).__name__)
+        return picture_vision.Seen(late=len(files))
+
+
 async def _read_background(
     bot: Any,
     campaign: Campaign,
@@ -815,6 +979,7 @@ async def _read_background(
     started: float,
     progress: Callable[[str, int, int], None] | None = None,
     choice: str = lore_knowledge.DEFAULT,
+    seeing: _Seeing | None = None,
 ) -> BackgroundRead:
     """The read itself, with no Discord interaction: both passes over the text, the names stored
     as proposals and the connections queued for the DM's answers. Discord's 🤖 Find names and the
@@ -888,6 +1053,16 @@ async def _read_background(
         known_keys=known,
         players=player_keys,
     )
+    # (the pictures' read, beside the text's until now: its words for the names step, #4003)
+    unread = 0
+    unread_pages: tuple[int, ...] = ()
+    to_keep: picture_vision.Seen | None = None  # (kept for the DMs once the read is done, below)
+    if seeing is not None:
+        seen = await seeing.result(progress)
+        if seen is not None:
+            to_keep = seen
+            upload = replace(upload, pictures=seen.pictures)
+            unread, unread_pages = seen.unread, seen.unread_pages
     pictures = await _read_pictures(
         bot, upload, read, (read_ai, ai), own, known, aliases, player_keys,
         _picture_progress(progress, counted), until=started + PICTURES_UNTIL_S,
@@ -1114,6 +1289,9 @@ async def _read_background(
         stored, queued, read.cut, read.stats.links_listed, ready, changes,
         read.stats.dropped, questions, suggested, note,
         picture_held=frozenset(held_ids),
+        # (pictures not read in full, and those read whose names step was skipped for time)
+        pictures_unread=unread + (len(upload.pictures) if pictures is None else 0),
+        unread_pages=(*unread_pages, *(p.page for p in upload.pictures if pictures is None)),
     )  # fmt: skip
     items: _WorldItems | None = None
     if revealable is not None:  # (a World read: what it states plainly, #4524 slice 1b)
@@ -1148,6 +1326,11 @@ async def _read_background(
             source=("lore", upload.source_id) if upload.source_id else None,
             earlier=shown.batches,
             revealed=shown.total,
+            revealed_ids={
+                "entries": shown.entry_ids,
+                "links": shown.link_ids,
+                "aliases": shown.alias_ids,
+            },
         )
         if added is None and shown.batches and items is not None:
             # no notice, so no Undo for the reveals: they are taken back now (ruling C on #4524),
@@ -1165,6 +1348,20 @@ async def _read_background(
                     )
                 except Exception as exc:  # (the count on the notice stands)
                     log.warning("Revealed names weren't read (%s)", type(exc).__name__)
+    if to_keep is not None and upload.keeps_pictures:
+        # Kept only now that the read is done, so a stop or a failure before here keeps none; then
+        # tied to its notice, whose Undo takes them back too (#4003 slice c).
+        kept_ids, done.pictures_not_kept, map_ids = await _keep_pictures(
+            bot, campaign, upload, to_keep, progress
+        )
+        done.pictures_kept = len(kept_ids)
+        if kept_ids and done.notice is not None:
+            done.pictures_undo = await _tie_pictures(bot, campaign, kept_ids, done.notice.id)
+        # (asked once tied, so a yes makes a map its upload's Undo takes back too, #4259; with
+        # no notice, or a tie that failed, a yes makes a map no Undo removes, as any other)
+        done.maps_asked, done.maps_over, done.maps_unsent = await _ask_about_maps(
+            bot, campaign, map_ids, upload.label
+        )
     if trait_offers:
         notice_id = done.notice.id if done.notice is not None else None
         done.trait_questions = await ask_traits(memory, campaign, trait_offers, label, notice_id)
@@ -1339,6 +1536,118 @@ def _picture_progress(
     return told
 
 
+async def _keep_pictures(
+    bot: Any,
+    campaign: Campaign,
+    upload: Upload,
+    seen: picture_vision.Seen,
+    progress: Callable[[str, int, int], None] | None = None,
+) -> tuple[tuple[int, ...], int, tuple[tuple[int, int], ...]]:
+    """Keep the upload's maps, tables and handouts for the campaign's DMs alone (#4003 slice c;
+    Supervisor's ruling on #4003), as the offer the DM said yes to told them: each read picture
+    through the picture keeper, as a DM-only picture whose poster is the DM who uploaded it, never
+    at the cost of the table's own pictures (one that doesn't fit is not kept). Returns the ids of
+    those newly kept, for the notice's Undo, how many couldn't be kept, and the new ones the read
+    called a map, each with its page (#4259, for its question); a file the campaign keeps already
+    is left as it is, never taken over. Without kept pictures set up, or no uploader, nothing is
+    kept. `progress("keeping", done, total)`: counts only. Never raises: the
+    read stands either way. Counts only in the log."""
+    keeper = getattr(bot, "picture_keeper", None)
+    pairs = list(zip(seen.pictures, seen.files, strict=False))
+    if keeper is None or not upload.uploader_id or not pairs:
+        return (), 0, ()
+    new: list[Any] = []  # (the kept pictures themselves, to take back on a stop)
+    maps: list[tuple[int, int]] = []  # (new ones the read called a map, and their pages)
+    missed = 0
+    try:
+        for n, (text, file) in enumerate(pairs, start=1):
+            if progress is not None:
+                progress("keeping", n - 1, len(pairs))
+            try:
+                data = await asyncio.to_thread(file.path.read_bytes)
+                result = await keeper.keep(
+                    PictureContext(
+                        guild_id=campaign.guild_id, campaign_id=campaign.id,
+                        poster_id=upload.uploader_id, session_id="", line_id=None, message_id=0,
+                        description=text.shows, dm_only=True,
+                    ),
+                    data,
+                )  # fmt: skip
+            except Exception as exc:  # (one picture not kept: the rest are tried)
+                log.warning("A file's picture wasn't kept (%s)", type(exc).__name__)
+                result = None
+            if result is None or result.picture is None:
+                missed += 1
+            elif result.new:
+                new.append(result.picture)
+                if text.where == "map":
+                    maps.append((result.picture.id, text.page))
+    except asyncio.CancelledError:  # (stopped midway: none is left kept with no note or Undo)
+        for picture in new:
+            with contextlib.suppress(Exception):
+                await keeper.discard(campaign.guild_id, campaign.id, picture)
+        raise
+    if progress is not None:
+        progress("keeping", len(pairs), len(pairs))
+    log.info(
+        "File pictures: %d kept for the DMs, %d already kept, %d not kept",
+        len(new), len(pairs) - missed - len(new), missed,
+    )  # fmt: skip
+    return tuple(p.id for p in new), missed, tuple(maps)
+
+
+MAPS_ASKED_AT_MOST = 10  # map questions from one file (Supervisor's ruling on #4259)
+
+
+async def _ask_about_maps(
+    bot: Any, campaign: Campaign, maps: Sequence[tuple[int, int]], label: str
+) -> tuple[int, int, bool]:
+    """The map question (#4259; `ui/map_question.py`, §3 of the design) for each of the file's new
+    map pictures (`maps`: id and page), to the DM who uploaded it, privately, at most
+    `MAPS_ASKED_AT_MOST`: a DM's own writing carries no right-to-use yes for a map, so each map asks
+    once, as one found in chat does, naming its file and page, and nothing is read from it as a map
+    before the yes. Only with the map layers on and maps kept. Returns (asked, over the limit, and
+    whether it stopped at one that couldn't be sent: closed private messages, the DMs told once).
+    Never raises."""
+    settings = getattr(bot, "settings", None)
+    store = getattr(bot, "picture_store", None)
+    if not maps or store is None or getattr(bot, "map_store", None) is None:
+        return 0, 0, False
+    if not getattr(settings, "map_layers_on", False):
+        return 0, 0, False
+    from dmbot.ui import map_question
+
+    asked = 0
+    for picture_id, page in maps[:MAPS_ASKED_AT_MOST]:
+        try:
+            picture = await store.get(campaign.guild_id, campaign.id, picture_id)
+            if picture is None or picture.gone:
+                continue
+            about = f"🗺️ From **{_md(label)}**, page {page}."
+            if not await map_question.ask(bot, campaign.guild_id, campaign, picture, about):
+                return asked, max(0, len(maps) - MAPS_ASKED_AT_MOST), True
+            asked += 1
+        except Exception as exc:  # (one question not sent: the picture stays a DM-only picture)
+            log.warning("A file's map question wasn't sent (%s)", type(exc).__name__)
+    return asked, max(0, len(maps) - MAPS_ASKED_AT_MOST), False
+
+
+async def _tie_pictures(
+    bot: Any, campaign: Campaign, picture_ids: Sequence[int], notice_id: str
+) -> bool:
+    """The upload's kept pictures tied to its notice, so its Undo takes them back; whether they
+    were. Never raises: untied, they stay with the DMs, who can delete them on the Pictures page."""
+    store = getattr(bot, "picture_store", None)
+    if store is None:
+        return False
+    try:
+        await store.tag_notice(campaign.guild_id, campaign.id, picture_ids, notice_id)
+    except Exception as exc:
+        log.warning("A file's pictures weren't tied to its notice (%s)", type(exc).__name__)
+        return False
+    return True
+
+
 async def _read_pictures(
     bot: Any,
     upload: Upload,
@@ -1458,8 +1767,8 @@ async def _owners_learn(
         return 0
     try:
         written = await memory.learn_statements(
-            campaign.guild_id, campaign.id, "entry", pairs, source=DM
-        )
+            campaign.guild_id, campaign.id, "entry", pairs, source=DM, backstory=True
+        )  # (each name from its own character's backstory: never copied to another, #4795)
     except Exception as exc:  # the type only: a database error can quote a row
         log.warning("Backstory names couldn't be given to their character (%s)", type(exc).__name__)
         return 0
@@ -1480,6 +1789,98 @@ async def _party_keys(memory: MemoryStore, campaign: Campaign) -> set[str]:
     except Exception as exc:  # the type only: a database error can quote a row
         log.warning("The party's names couldn't be read (%s)", type(exc).__name__)
         return set()
+
+
+PAGES_SHOWN = 5  # pages named in the note; more are counted ("and 3 more")
+
+
+def maps_asked_line(asked: int, over: int = 0, unsent: bool = False) -> str:
+    """The note's line for the file's maps (#4259; the ux-critic's words): the DM was asked about
+    each, privately, how many weren't (the limit a file), and when the questions couldn't be sent.
+    Counts only. Pure."""
+    if not asked and not over and not unsent:
+        return ""
+    parts = []
+    if asked == 1:
+        parts.append("DMbot asked you about 1 map in it, in your private chat with DMbot.")
+    elif asked:
+        parts.append(
+            f"DMbot asked you about {asked} maps in it, one question each, in your private chat"
+            " with DMbot."
+        )
+    if unsent:
+        parts.append(
+            "DMbot couldn't send you its map questions. Open your private messages to DMbot and"
+            " upload it again."
+        )
+    if over:
+        more = "more " if asked else ""
+        what = f"1 {more}map wasn't" if over == 1 else f"{over} {more}maps weren't"
+        stay = "It stays" if over == 1 else "They stay"
+        parts.append(
+            f"{what} asked about (DMbot asks about {MAPS_ASKED_AT_MOST} a file). {stay} under"
+            " Pictures, for the DMs only."
+        )
+    return "\n🗺️ " + " ".join(parts)
+
+
+def pictures_kept_line(n: int, missed: int = 0, undo: bool = False) -> str:
+    """The note's line for the file's maps, tables and handouts kept for the DMs (#4003 slice c):
+    where to find them, how they go, and how many couldn't be kept. Counts only. Pure."""
+    if not n and not missed:
+        return ""
+    line = "\n🖼️ "
+    if n:
+        what = "1 picture" if n == 1 else f"{n} pictures"
+        line += f"Kept {what} from this file for the DMs only. See Pictures on the website."
+        gone = "it" if n == 1 else "them"
+        line += (
+            f" ↩️ Undo this upload removes {gone} too."
+            if undo
+            else (" Delete any you don't want there.")
+        )
+    if missed:
+        more = "more " if n else ""
+        what = f"1 {more}picture" if missed == 1 else f"{missed} {more}pictures"
+        line += (" " if n else "") + (
+            f"{what} couldn't be kept: no room left for pictures, or a storage problem. Delete "
+            "some under Pictures on the website to make room."
+        )
+    return line
+
+
+def pictures_unread_line(n: int, pages: Sequence[int] = ()) -> str:
+    """The note's line for pictures that weren't read in full (#4003 slice b): how many, and on
+    which pages, so the DM can look at them (the ux-critic's words). Counts and page numbers
+    only. Pure."""
+    if not n:
+        return ""
+    shown = sorted(set(pages))
+    if not shown:  # (the whole read failed: every picture was missed)
+        what = "1 picture" if n == 1 else f"{n} pictures"
+        verb = "its" if n == 1 else "their"
+        return (
+            f"\n🖼️ {what} couldn't be read in full, so {verb} words may be missing. Check the "
+            "file's maps and handouts yourself."
+        )
+    named = [str(p) for p in shown[:PAGES_SHOWN]]
+    more = len(shown) - len(named)
+    if more:
+        where = f"pages {', '.join(named)} and {more} more"
+    elif len(named) == 1:
+        where = f"page {named[0]}"
+    else:
+        where = f"pages {', '.join(named[:-1])} and {named[-1]}"
+    if n == 1:
+        return (
+            f"\n🖼️ 1 picture ({where}) couldn't be read in full, so its words may be missing. "
+            "Check it yourself."
+        )
+    ending = "Check that page yourself." if len(shown) == 1 else "Check those pages yourself."
+    return (
+        f"\n🖼️ {n} pictures ({where}) couldn't be read in full, so their words may be missing. "
+        + ending
+    )
 
 
 def picture_held_line(n: int) -> str:
@@ -1516,6 +1917,29 @@ def trait_questions_line(n: int) -> str:
 
 
 SHEET_LANGUAGES_SHOWN = 5  # the note names a few; the rest are counted
+
+
+def heard_sheet_languages(campaign: str, session: str, found: Sequence[tuple[str, str]]) -> str:
+    """The DM's private message for languages a session heard a player character speak that their
+    sheet lacks (#4229 1d; the ux-critic's words): the campaign and the session first, what was
+    heard in the past tense (it can be misheard), and what to do. "" for none."""
+    if not found:
+        return ""
+    shown = found[:SHEET_LANGUAGES_SHOWN]
+    lines = [
+        f"• **{_md(who)}** spoke **{_md(lang)}**, which isn't on their sheet."
+        for who, lang in shown
+    ]
+    more = len(found) - len(shown)
+    if more > 0:
+        lines.append(f"…and {more} more.")
+    return "\n".join(
+        [
+            f"🗣️ **{_md(campaign)}**, {session}: DMbot heard",
+            *lines,
+            "If that's right, the player can add it to their sheet. Nothing was changed.",
+        ]
+    )
 
 
 def sheet_languages_line(found: Sequence[tuple[str, str]]) -> str:
@@ -1755,6 +2179,26 @@ async def thread_inputs(
     return have, entries, names, known
 
 
+async def open_mysteries(memory: Any, guild_id: int, campaign_id: str) -> list[tuple[str, str]]:
+    """The open mysteries a session's theories may answer (#4655, quests slice 7b), as (thread id,
+    name): kept mysteries that are live (a hint, not started or happening now), the ones touched
+    most recently first, at most `readings.MYSTERIES_SHOWN`. The DM's view, as the reading is."""
+    from dmbot.memory.models import CONFIRMED
+    from dmbot.memory.readings import MYSTERIES_SHOWN
+    from dmbot.memory.threads import LIVE_STATES
+
+    live = [
+        t
+        for t in await memory.threads(guild_id, campaign_id)
+        if t.thread.type == "mystery"
+        and t.thread.status == CONFIRMED
+        and t.state is not None
+        and t.state.condition in LIVE_STATES
+    ]
+    live.sort(key=lambda t: -t.last_touch)
+    return [(t.thread.id, t.thread.name) for t in live[:MYSTERIES_SHOWN]]
+
+
 async def progress_inputs(memory: Any, guild_id: int, campaign_id: str) -> list[Any]:
     """The open threads and their standing parts, for the session reader's progress lines (#4522
     5b; `session_progress.KnownThread`): the DM's view, as the reading is the DM's. Live threads
@@ -1898,13 +2342,15 @@ async def ask_languages(
     spoken: Sequence[traits_read.Spoken],
     upload: str,
     notice_id: str | None,
+    session_id: str | None = None,
 ) -> tuple[int, list[tuple[str, str]]]:
     """The languages the lore gives characters the campaign already had (#4229 slice 1c,
     Supervisor's ruling): one with no sheet that doesn't know it yet gets a question, as #3926 does
     for a lineage ("Does Brewner speak Giant?"); a player character whose sheet lacks it is named
     to the DM alone instead (a private line after the upload's note), with nothing stored. Only a
     confirmed character, and never a name two entries share. Returns the new questions and the
-    sheet lines. Never raises."""
+    sheet lines. Never raises. `session_id`: heard in that session (#4229 1d), so the question goes
+    with its transcript and its speakers' "delete my data" (#4745)."""
     offers: list[trait_offers_mod.Offer] = []
     on_sheets: list[tuple[str, str]] = []
     try:
@@ -1939,7 +2385,12 @@ async def ask_languages(
                 continue
             offers.append(
                 trait_offers_mod.Offer(
-                    entity_id, Trait(LANGUAGE, s.language, "", None, False), s.quote, upload
+                    entity_id,
+                    Trait(LANGUAGE, s.language, "", None, False),
+                    s.quote,
+                    upload,
+                    speaker_ids=s.speakers,
+                    session_id=session_id,
                 )
             )
     except Exception as exc:  # the type only: a database error can quote a row
@@ -2458,6 +2909,7 @@ async def _secret_names_known_by(
                 [known_by],
                 source=DM,
                 dm_chose_secret=False,
+                backstory_of=known_by,  # (from that character's backstory, #4795)
             )
         except MemoryRuleError:
             log.info("A secret name's first knowers were refused")
@@ -2711,6 +3163,10 @@ async def announce(
         view = notice_view(notice, site_url=bot.settings.site_url, asks=[m() for m in asks])
     if done.knowledge_note:
         card += done.knowledge_note
+    # (#4003 slice b: on the DM's own card)
+    card += pictures_unread_line(done.pictures_unread, done.unread_pages)
+    card += pictures_kept_line(done.pictures_kept, done.pictures_not_kept, done.pictures_undo)
+    card += maps_asked_line(done.maps_asked, done.maps_over, done.maps_unsent)
     if interaction.user.id in campaign.dm_user_ids:  # (a manager who isn't a DM: counts only)
         card += private
     with contextlib.suppress(discord.HTTPException):
@@ -3634,6 +4090,11 @@ HAND_OVER_KEEP = {
 HAND_OVER_SECRET = "**{a}** stays as they know them."
 SHOW_PLAYERS = "👁️ Let players see it"
 HIDE_PLAYERS = "🤫 Hide from players"
+SOME_KNOW = "👥 Some know"
+SOME_KNOW_REFUSED = (
+    "That one can't be limited to some characters: it uses a secret name, or it changes what "
+    "someone else holds. Keep it as secret, or keep it for everyone."
+)
 SECRET_NAME_LINE = "🤫 Hidden from players: it uses a secret name."
 
 
@@ -3746,6 +4207,10 @@ class ConnectionOffer(_Menu):
         self.add_item(self.no_button)
         self.toggle = _Button(self._toggle, label=HIDE_PLAYERS, style=grey, row=1)
         self.add_item(self.toggle)
+        # 👥 Some know (#4534): only the ticked player characters learn it; the rest of the table
+        # hears it when it is said. The picker's Save hands its ticks straight to `_answer`.
+        self.some = _Button(self._some, label=SOME_KNOW, style=grey, row=1)
+        self.add_item(self.some)
         self.add_item(_Button(self._skip, label="⏭️ Skip the rest", style=grey, row=2))
         self.all_button = _Button(self._keep_all, label="✅ Keep all", style=grey, row=2)
         self.add_item(self.all_button)
@@ -3766,7 +4231,10 @@ class ConnectionOffer(_Menu):
         waiting = await store.waiting(campaign.guild_id, campaign.id, symmetric=symmetric)
         ready = [w for w in waiting if w.ready]
         self.changes = await keep.changes_among(memory, campaign.guild_id, campaign.id, ready)
-        if any(w.hand_over for w in ready):  # (what the players see decides a hand-over's line)
+        # What the players see decides a hand-over's line and whether a world connection "waits to
+        # be said" (#4827: it was read only for a hand-over, so every world connection said "waits"
+        # while ✅ saved it as the players' own)
+        if any(w.hand_over or w.world for w in ready):
             self.shown_ids = await keep.shown_entry_ids(memory, campaign.guild_id, campaign.id)
         return ready
 
@@ -3812,6 +4280,8 @@ class ConnectionOffer(_Menu):
             view = self._players(c)
             self.toggle.label = view.label or HIDE_PLAYERS
             self.toggle.disabled = not view.label
+            # (a secret spelling can only be kept as secret; a hand-over ends what another holds)
+            self.some.disabled = not self.characters or view.secret or c.secret or bool(c.hand_over)
 
     async def load(self, interaction: discord.Interaction) -> bool:
         campaign = await _campaign_for(interaction, self.campaign_id)
@@ -3859,12 +4329,13 @@ class ConnectionOffer(_Menu):
             return plain
         return link_words(r.predicate, r.detail, r.directional, feeling=True, knows_how=r.knows_how)
 
-    def text(self) -> str:
-        """The card, with the walk's part line above it when this is inside "Check everything"."""
+    def text(self, note: str = "") -> str:
+        """The card, with the walk's part line above it when this is inside "Check everything",
+        and `note` (who the last 👥 Some know saved it for, #4682) above both."""
         if self.walk is None or self.current is None:
-            return self._card()
+            return note + self._card()
         done = self.kept + self.left_out + 1
-        return progress(self.walk, done, max(self.total, done)) + self._card()
+        return note + progress(self.walk, done, max(self.total, done)) + self._card()
 
     def _card(self) -> str:
         c = self.current
@@ -3883,8 +4354,10 @@ class ConnectionOffer(_Menu):
         mine = ""
         if who is not None:
             name = _md(who[:40])
+            # (DMbot's guess shown before the answer: the icon says how many, #4682; it writes
+            # nothing, 👥 Some know opens the picker with it ticked)
             mine = (
-                f"👥 **{name}**'s character will know it.\n"
+                f"{knower_icon(1)} DMbot thinks only {name} knows this.\n"
                 if not (view.secret or c.secret)
                 else f"👥 **{name}**'s character won't know it: it is hidden.\n"
             )
@@ -3971,13 +4444,16 @@ class ConnectionOffer(_Menu):
             f"{others}: {decide}.\n"
         )
 
-    async def _show(self, interaction: discord.Interaction, ready: list[Waiting]) -> None:
+    async def _show(
+        self, interaction: discord.Interaction, ready: list[Waiting], note: str = ""
+    ) -> None:
         self._set(ready)
         if self.current is None:
             self.stop()
+        text = self.text(note)  # (the note is said once, with the card that follows the save)
         with contextlib.suppress(discord.HTTPException):
             await interaction.edit_original_response(
-                content=self.text(),
+                content=text,
                 view=self if self.current else None,
                 allowed_mentions=NO_PINGS,
             )
@@ -4031,7 +4507,31 @@ class ConnectionOffer(_Menu):
                     content=self.text(), view=self, allowed_mentions=NO_PINGS
                 )
 
-    async def _answer(self, interaction: discord.Interaction) -> None:
+    async def _some(self, interaction: discord.Interaction) -> None:
+        """👥 Some know: swap the card for the picker of the party's characters (nothing is
+        written until the picker's Save)."""
+        await interaction.response.defer()
+        async with self.busy:
+            campaign = await self._dm(interaction)
+            if campaign is None or self.current is None:
+                return
+            c = await self._same(interaction, campaign)
+            if c is None:
+                return
+            if self._players(c).secret or c.secret or c.hand_over or not self.characters:
+                await _tell(interaction, SOME_KNOW_REFUSED)
+                return
+            picker = SomeKnowPicker(self, c)
+            with contextlib.suppress(discord.HTTPException):
+                await interaction.edit_original_response(
+                    content=picker.text(), view=picker, allowed_mentions=NO_PINGS
+                )
+
+    async def _answer(
+        self, interaction: discord.Interaction, knowers: list[str] | None = None
+    ) -> None:
+        """✅ Add it / Update it; with `knowers` (the picker's Save) held back with exactly
+        those characters knowing it. A press that finds the card changed writes nothing."""
         await interaction.response.defer()
         async with self.busy:
             campaign = await self._dm(interaction)
@@ -4048,6 +4548,15 @@ class ConnectionOffer(_Menu):
             old = self._old(c)
             view = self._players(c)
             secret = view.secret
+            if knowers is not None and (secret or c.secret or c.hand_over):
+                await _tell(interaction, SOME_KNOW_REFUSED)
+                return
+            if knowers is not None:
+                known_by: Sequence[str] = knowers
+            elif c.known_by and not (secret or c.secret):
+                known_by = [c.known_by]
+            else:
+                known_by = ()
             now = int(time.time())
             start = keep.change_start(old, now)
             ended: list[int | None] = []
@@ -4056,7 +4565,7 @@ class ConnectionOffer(_Menu):
                 shown = await keep.shown_entry_ids(memory, campaign.guild_id, campaign.id)
                 await keep.end_replaced(
                     memory, campaign.guild_id, campaign.id, old, start, ended, held=held, link=c,
-                    hidden=secret or c.secret
+                    hidden=secret or c.secret or knowers is not None
                     or ((
                         view.unrevealed
                         if view.unrevealed is not None
@@ -4065,7 +4574,7 @@ class ConnectionOffer(_Menu):
                     and not view.reveal),
                     # (only the DM's own Players toggle on this card is their choice to hide, #4524:
                     # a secret name in the text or the card's default is DMbot's, and asks)
-                    dm_chose_secret=self.choice is True,
+                    dm_chose_secret=self.choice is True or knowers is not None,
                 )  # fmt: skip
                 kept = await memory.add_relation(
                     campaign.guild_id, campaign.id, c.subject_id, c.predicate, c.object_id,
@@ -4075,18 +4584,23 @@ class ConnectionOffer(_Menu):
                     # a backstory connection waits to be said at the table (#2404), unless the
                     # upload said the players know it and both its ends are shown (#2959)
                     unrevealed=(
-                        view.unrevealed
+                        True
+                        if knowers is not None  # (held back: only the ticked ones know it)
+                        else view.unrevealed
                         if view.unrevealed is not None
                         else keep.kept_unrevealed(c, secret or c.secret, shown)
                     ),
                     # ✅ Keep: the uploader's character knows it from the start; 🤫 Keep as secret
-                    # is the DM's alone (#2935)
-                    known_by=[c.known_by] if c.known_by and not (secret or c.secret) else (),
+                    # is the DM's alone (#2935); 👥 Some know: exactly the ticked characters
+                    known_by=known_by,
+                    # (from the uploader's character's own backstory, never a 👥 pick, #4795)
+                    backstory_of=c.known_by if knowers is None and c.known_by else None,
                     from_session_at=start if old else None,  # (starts as the old one ends)
                     # a secret SPELLING in the text never hides what the players were shown (#3025);
                     # the DM's own 🤫 button is their word and does
-                    keep_flags=not secret and not view.reveal,
-                    dm_chose_secret=self.choice is True,  # (the DM's own toggle, #4524)
+                    keep_flags=not secret and not view.reveal and knowers is None,
+                    # (the DM's own toggle, #4524; and their own 👥 pick)
+                    dm_chose_secret=self.choice is True or knowers is not None,
                     # whether they've met, from the quote's own words (#3881)
                     knows_how=keep.kept_how(c, old),
                 )  # fmt: skip
@@ -4141,8 +4655,13 @@ class ConnectionOffer(_Menu):
                     log.info("A kept connection could not be pinned")
             changed(interaction, campaign)
             await store.remove(campaign.guild_id, campaign.id, c)
+            saved = ""
+            if knowers is not None and any(k in self.characters for k in knowers):
+                # (who knows it, by §7's rule against the current party, #4537 slice 3a)
+                party = list(self.characters.items())
+                saved = party_icons.line(knowers, party, escape=_md) + "\n"
             self.kept += 1
-            await self._show(interaction, await self._ready(interaction, campaign))
+            await self._show(interaction, await self._ready(interaction, campaign), saved)
 
     async def _no(self, interaction: discord.Interaction) -> None:
         await interaction.response.defer()
@@ -4253,6 +4772,71 @@ class ConnectionOffer(_Menu):
             await store.remove_all(campaign.guild_id, campaign.id, gone)
             self.left_out += len(gone)
             await self._show(interaction, [])
+
+
+class SomeKnowPicker(_Menu):
+    """👥 Some know, on a backstory connection's card (#4534): the party's characters to tick (the
+    uploader's character ticked already, DMbot's guess), Save and Back. Save keeps the connection
+    held back from the players with exactly these characters knowing it: one change, one Undo, the
+    DM's own choice. Back returns to the card; nothing is written until Save."""
+
+    MAX_OPTIONS = 25  # what a menu holds; a party is a handful
+
+    def __init__(self, card: ConnectionOffer, waiting: Waiting) -> None:
+        super().__init__()
+        self.card, self.waiting = card, waiting
+        self.party = list(card.characters.items())[: self.MAX_OPTIONS]  # (id, name)
+        ids = {i for i, _ in self.party}
+        self.chosen: list[str] = [waiting.known_by] if waiting.known_by in ids else []
+        self.select: discord.ui.Select[Any] = discord.ui.Select(
+            placeholder="Who knows it?",
+            min_values=1,
+            max_values=len(self.party),
+            options=self._options(),
+            row=0,
+        )
+        # (a Select's callback is set after it is made: discord.py has no argument for it)
+        self.select.callback = self._ticked  # type: ignore[method-assign]
+        self.add_item(self.select)
+        self.add_item(_Button(self._save, label="Save", style=discord.ButtonStyle.success, row=1))
+        self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary, row=1))
+
+    def _options(self) -> list[discord.SelectOption]:
+        return [
+            discord.SelectOption(label=name[:100], value=i, default=i in self.chosen)
+            for i, name in self.party
+        ]
+
+    def text(self) -> str:
+        return (
+            f"{SOME_KNOW} **Who knows this?**\n{self.card.text()}\n"
+            "Tick the characters who know it, then Save. Players won't see this until it is said; "
+            "the others find out then."
+        )
+
+    async def _ticked(self, interaction: discord.Interaction) -> None:
+        if await self.card._dm(interaction) is None:  # a DM, on every press
+            return
+        self.chosen = [str(v) for v in self.select.values]
+        self.select.options = self._options()
+        await interaction.response.edit_message(content=self.text(), view=self)
+
+    async def _save(self, interaction: discord.Interaction) -> None:
+        if await self.card._dm(interaction) is None:  # (`_answer` asks again, after its defer)
+            return
+        if not self.chosen:
+            await _tell(interaction, "Tick at least one character, or press Back.")
+            return
+        await self.card._answer(interaction, knowers=list(self.chosen))
+        self.stop()  # (after: a refused Save leaves the picker usable, with Back)
+
+    async def _back(self, interaction: discord.Interaction) -> None:
+        if await self.card._dm(interaction) is None:
+            return
+        self.stop()
+        await interaction.response.edit_message(
+            content=self.card.text(), view=self.card, allowed_mentions=NO_PINGS
+        )
 
 
 class BulkConfirm(_Menu):

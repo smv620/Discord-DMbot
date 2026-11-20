@@ -12,51 +12,67 @@
  "lines": [
   [
    "dm",
-   "The ferry at Dunmere is tied up and Old Pell is asleep on the dock."
+   "The ferry at Dunmere is tied to a plank dock. The river slaps the hull, and the air smells of wet rope and fish."
+  ],
+  [
+   "dm",
+   "A man lies on a coil of rope beside the ferry, asleep with his mouth open. He snores in long, wet breaths. He is broad and stooped, with a grey beard stained yellow at the corners, a patched oilskin coat and boots cracked at the toes. The description given by the townsfolk matches this man perfectly. This must certainly be the ferry captain, Old Pell."
   ],
   [
    "a",
-   "Tamsin shakes Old Pell awake and asks for a crossing."
+   "Tamsin wakes Old Pell with a shake of the shoulder and says, \"Wake up, captain. We need a crossing.\""
   ],
   [
    "dm",
-   "Old Pell grumbles that the river is too high tonight, but he names a price of ten silver."
+   "Old Pell sits up, coughs, and rubs his beard. \"The river is too high tonight,\" he says. He holds up ten fingers. \"Ten silver, and not a copper less.\""
   ],
   [
    "b",
-   "Brogan pays the ten silver and climbs aboard."
+   "Brogan pays the ten silver into Old Pell's palm and says, \"Let's go.\" He climbs aboard."
   ],
   [
    "dm",
-   "Halfway across, the ferry rope snaps with a crack."
+   "The ferry pushes off and the current pulls at it."
+  ],
+  [
+   "dm",
+   "Halfway across, the rope snaps with a crack like a whip, and the deck lurches under your feet. Cold spray hits your faces."
   ],
   [
    "a",
-   "Tamsin grabs the broken rope and ties it around the mast."
+   "Tamsin ties the loose end of the rope around the mast and says, \"Brogan, steer us in!\""
+  ],
+  [
+   "dm",
+   "The rope bites into Tamsin's palms, but the knot holds around the mast."
   ],
   [
    "b",
-   "Brogan throws his weight on the pole and steers for the far bank."
+   "Brogan throws his weight on the pole and steers for the far bank, saying, \"Steady.\""
   ],
   [
    "dm",
-   "The ferry grinds onto the gravel and Old Pell sits down, shaking."
+   "The ferry grinds onto the gravel with a long scrape. Old Pell sits down hard on the deck, his hands shaking."
   ],
   [
    "dm",
-   "On the far bank a hooded figure waits with a lantern and watches them land."
+   "On the far bank a hooded figure stands holding a lantern that gives off a yellow light and a smell of lamp oil. The hood hides the face."
   ],
   [
    "a",
-   "Tamsin asks the figure who they are."
+   "Tamsin steps forward and calls out, \"Who are you?\""
   ],
   [
    "dm",
-   "The figure says only that the party is late, and walks into the trees."
+   "The figure's voice is low and dry. \"You are late,\" it says, and walks into the trees. The lantern light shrinks between the trunks."
   ],
   [
    "b",
-   "Brogan wants to follow, but Tamsin holds him back until morning."
+   "Brogan wants to follow the figure into the trees."
+  ],
+  [
+   "a",
+   "Tamsin puts his hand on Brogan's shoulder and says, \"It's late and we don't know if this is fiend or foe. Let's camp here on the shore for the night. If he wants to talk to us, he already knows where to find us.\""
   ]
  ],
  "beats": [
@@ -100,5 +116,9 @@
     "lantern"
    ]
   }
- ]
+ ],
+ "characters": {
+  "a": "Tamsin",
+  "b": "Brogan"
+ }
 }

@@ -13,8 +13,9 @@ import logging
 import re
 import time
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from pathlib import PurePath
 from typing import Any, cast
 
 import discord
@@ -25,6 +26,7 @@ from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory.document_reader import READING, read_document
 from dmbot.memory.lookup import CampaignLookup, NameEntry
+from dmbot.memory.lore_pdfs import Counted
 from dmbot.memory.models import (
     CONFIRMED,
     DM,
@@ -58,6 +60,7 @@ from dmbot.memory.name_list import (
     render_files,
     template,
 )
+from dmbot.memory.pdf_pictures import PictureFiles
 from dmbot.memory.picture_read import PictureText
 from dmbot.memory.store import placeholder_name
 from dmbot.mentions import NO_PINGS
@@ -575,25 +578,110 @@ class Upload:
     source_id: str = ""  # the website's lore upload id (#3879); a Discord upload has none
     note: str = ""  # pages that held only pictures, in counts (#4000); "" when none
     # The words read from its pictures (#4003), one per picture in page order, given by the
-    # picture reading (CloudDev-lead's half); read only with DMBOT_PICTURE_NAMES on.
+    # picture reading; read only with DMBOT_PICTURE_NAMES on.
     pictures: tuple[PictureText, ...] = ()
+    # A PDF's pictures taken out for reading (#4003 slice a, DMBOT_PICTURE_READING): their private
+    # folder, which whoever ends the upload closes (the read, or the offer dropped), and the counts
+    # the cost estimate shows. None and 0 for anything else.
+    picture_files: PictureFiles | None = field(default=None, compare=False)
+    pictures_found: int = 0
+    pictures_over: int = 0
+    # The DM who uploaded it (#4003 slice c: its kept pictures are theirs as poster); 0 when not
+    # known, and then nothing is kept.
+    uploader_id: int = 0
+    # Whether its read pictures will be kept for the DMs (kept pictures are set up): the offer then
+    # says so before the DM's yes, and only then are they kept (#4003 slice c).
+    keeps_pictures: bool = False
+
+    def close(self) -> None:
+        """The upload is done with: its pictures' folder goes (a no-op without one)."""
+        if self.picture_files is not None:
+            self.picture_files.close()
 
 
 _PARSING = READING  # the one limit on documents read at once, shared (document_reader)
 
 
-async def _document(filename: str, raw: bytes, label: str) -> tuple[Upload | None, str | None]:
+async def _document(
+    filename: str, raw: bytes, label: str, *, pictures: bool = False
+) -> tuple[Upload | None, str | None]:
+    """A document's text; with `pictures` (DMBOT_PICTURE_READING, a lore upload), a PDF's pictures
+    are also taken out into a private folder the Upload owns (#4003)."""
+    taking = pictures and PurePath(filename).suffix.casefold() == ".pdf"
+    files = None
+    if taking:
+        try:
+            files = await asyncio.to_thread(PictureFiles.new)
+        except OSError as exc:  # (no room for them: the text is read without its pictures)
+            log.warning("No folder for a PDF's pictures (%s)", type(exc).__name__)
     async with _PARSING:
         try:
-            text = await read_document(filename, raw)
-            return Upload(text, label, True, note=picture_note(text)), None
+            text = await read_document(
+                filename, raw, pictures_to=str(files.path) if files is not None else None
+            )
         except DocumentError as exc:
+            if files is not None:
+                files.close()
             return None, str(exc)
+        except BaseException:
+            if files is not None:
+                files.close()
+            raise
+    found = getattr(text, "pictures_found", 0)
+    if files is not None and not found:
+        files.close()  # (nothing worth reading: no folder to carry)
+        files = None
+    # (none taken out, so none will be read: "N more won't be read" would say otherwise)
+    over = getattr(text, "pictures_over", 0) if found else 0
+    return (
+        Upload(
+            text, label, True, note=picture_note(text), picture_files=files,
+            pictures_found=found, pictures_over=over,
+        ),
+        None,
+    )  # fmt: skip
 
 
-async def read_attachment(file: discord.Attachment) -> tuple[Upload | None, str | None]:
+UNREADABLE_WORDS = "DMbot couldn't open that file. It may be damaged: save it again and try."
+
+
+async def open_pdf(raw: bytes, label: str, *, pictures: bool) -> Upload:
+    """A staged lore PDF opened for its read (#4762 step 3): the same reader as Discord's upload,
+    its pictures taken out into the Upload's private folder (the caller closes it). `DocumentError`
+    (plain words) for a file it cannot use."""
+    upload, problem = await _document("lore.pdf", raw, label, pictures=pictures)
+    if upload is None:
+        raise DocumentError(problem or UNREADABLE_WORDS)
+    return upload
+
+
+async def count_pdf(raw: bytes, *, pictures: bool) -> Counted:
+    """A staged lore PDF's counts for the website's estimate (#4762 step 2): the same reader as a
+    Discord upload, with the pictures taken out into its private folder, which is removed before
+    this returns. Nothing is sent to an AI. `DocumentError` (plain words) for a file it cannot
+    use. `pictures`: the same switches as Discord's upload (`name_background._reading_pictures`);
+    off, no picture is counted."""
+    upload, problem = await _document("lore.pdf", raw, "lore", pictures=pictures)
+    if upload is None:
+        raise DocumentError(problem or UNREADABLE_WORDS)
+    try:
+        return Counted(
+            len(upload.text),
+            int(getattr(upload.text, "pages", 0)),
+            upload.pictures_found,
+            upload.pictures_over,
+        )
+    finally:
+        if upload.picture_files is not None:
+            upload.picture_files.close()
+
+
+async def read_attachment(
+    file: discord.Attachment, *, pictures: bool = False
+) -> tuple[Upload | None, str | None]:
     """(upload, problem) for `/dmbot names file:`: a list, or a document's text. A text
-    file too big for a list is read as a document."""
+    file too big for a list is read as a document. `pictures`: a lore upload with
+    DMBOT_PICTURE_READING on also takes a PDF's pictures out (#4003)."""
     label = logic.shorten(file.filename, 60)
     kind = kind_of_file(file.filename)
     if kind == "unknown":
@@ -608,7 +696,7 @@ async def read_attachment(file: discord.Attachment) -> tuple[Upload | None, str 
         text, _ = read_upload(raw)
         if text is not None:
             return Upload(text, label), None
-    return await _document(file.filename, raw, label)
+    return await _document(file.filename, raw, label, pictures=pictures)
 
 
 async def read_link(link: str) -> tuple[Upload | None, str | None]:

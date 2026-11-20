@@ -91,6 +91,8 @@ from dmbot.ui import (
     all_names,
     languages_card,
     logic,
+    party_card,
+    party_tell,
     place_links,
     place_size,
     place_world,
@@ -132,6 +134,7 @@ from dmbot.ui.names import (
     sees_secrets,
     split_names,
 )
+from dmbot.ui.remembered_players import add_remembered
 from dmbot.ui.who_knows import (
     ALREADY,
     NO_LONGER_COMMON,
@@ -141,7 +144,8 @@ from dmbot.ui.who_knows import (
     WhoKnowsMenu,
     called,
     common_done,
-    player_characters,
+    knows_line,
+    pick_choices,
     taken_back,
     who_text,
 )
@@ -829,9 +833,15 @@ async def show_card(
             clues = await memory.thread_clues(
                 campaign.guild_id, campaign.id, entity_id, gate.Viewer.the_dm()
             )
+            # (#4655: the table's guesses at it, every one, as the card is the DM's)
+            from dmbot.memory.thread_guesses import summary_lines as guess_lines
+
+            guesses = await memory.thread_guesses(
+                campaign.guild_id, campaign.id, entity_id, gate.Viewer.the_dm()
+            )
             lines_of_thread += card_lines(
                 parts, part_names, bigger, branches, most=CARD_PARTS, clock=clock,
-                clues=found_text(clues),
+                clues=found_text(clues), guesses=guess_lines(guesses),
             )  # fmt: skip
     elif entity is not None and secrets and entity.type in ("clue", "event"):
         # A clue's or an event's "Led to" / "Came from" (#1679): the DM's word, so the DM's card.
@@ -990,6 +1000,33 @@ async def show_card(
         line = languages_card.languages_line(known.get(entity_id, []))
         if line and len(text) + len(line) <= CARD_MAX:
             text += line
+    leave = come_back = False
+    if secrets and entity.type == "character" and entity.is_player_character:
+        # the party record (#4537 2a): since when, or when they left; the DM's alone
+        try:
+            stretches = await memory.party_spans(campaign.guild_id, campaign.id, entity_id)
+            from dmbot.ui.recap_share import session_numbers
+
+            numbers = await session_numbers(interaction.client, campaign)
+        except Exception as exc:  # the type only; the card shows without the line
+            log.warning("Name card: the party record not read (%s)", type(exc).__name__)
+            stretches, numbers = [], {}
+        line = party_card.party_line(stretches, numbers)
+        if line and len(text) + len(line) <= CARD_MAX:
+            text += line
+        leave = not stretches or stretches[-1].open  # (in the party now; `secrets`: a DM)
+        come_back = not leave  # (left: 🤝 Back in the party, #4537 4a)
+    catch_up: list[tuple[str, str, int]] = []
+    if secrets and entity.status == CONFIRMED:
+        # 📖 Catch up (#4537 4b): a member missing what the rest of the party knows on this card
+        try:
+            catch_up = await memory.tell_choices(campaign.guild_id, campaign.id, entity_id)
+        except Exception as exc:  # the type only; the card shows without it
+            log.warning("Name card: catching up not read (%s)", type(exc).__name__)
+            catch_up = []
+        line = party_tell.card_line([(_md(n), k) for _, n, k in catch_up])
+        if line and len(text) + len(line) <= CARD_MAX:
+            text += line
     if secrets and (entity.status == PROPOSED or entity.unnamed):
         # The scene (#3596): DMbot's summary of who, where and what, for a question still open;
         # read after the sweep and the consent check, DM-only, "Where was it said?" is the source.
@@ -1086,6 +1123,9 @@ async def show_card(
         undo_connection=undo_connection,
         undo_spelling=undo_spelling,
         finish_past=finish_past,
+        leave=leave,
+        come_back=come_back,
+        catch_up=catch_up,
     )
     if replace:
         await _replace(interaction, text, view)
@@ -1237,6 +1277,9 @@ class NameCard(_Menu):
         undo_connection: int | None = None,
         undo_spelling: int | None = None,
         finish_past: int | None = None,
+        leave: bool = False,
+        come_back: bool = False,
+        catch_up: Sequence[tuple[str, str, int]] = (),
     ) -> None:
         super().__init__()
         self.campaign_id = campaign_id
@@ -1317,6 +1360,27 @@ class NameCard(_Menu):
                             row=row,
                         )
                     )  # fmt: skip
+                    break
+        if leave or come_back:  # the party record (#4537 2a, 4a): left it, or back in it
+            press, label = (
+                (self._leave, party_card.LEAVE_BUTTON)
+                if leave
+                else (self._come_back, party_card.RETURN_BUTTON)
+            )
+            for row in (3, 2, 1, 4):  # (first row with room)
+                if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                    self.add_item(_Button(press, label=label, style=grey, row=row))
+                    break
+        self.catch_up = list(catch_up)  # (#4537 4b: id, name, how many, for the press)
+        if catch_up:
+            label = (
+                party_tell.one_label(catch_up[0][1])
+                if len(catch_up) == 1
+                else party_tell.CATCH_UP_MANY
+            )
+            for row in (3, 2, 1, 4):  # (first row with room)
+                if sum(1 for c in self.children if getattr(c, "row", None) == row) < 5:
+                    self.add_item(_Button(self._catch_up, label=label, style=grey, row=row))
                     break
         # a route place's stated length (#4255): its words, and ✅ for DMbot's read
         self.length_words = route_length[0] if route_length is not None else ""
@@ -1550,6 +1614,22 @@ class NameCard(_Menu):
     async def _travels(self, interaction: discord.Interaction) -> None:
         if await companion_ui.start(interaction, self.campaign_id, self.entity_id):
             self.stop()  # (only when the menu replaced the card; a refusal leaves it working)
+
+    async def _leave(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await party_card.ask_why(interaction, self.campaign_id, self.entity_id)
+
+    async def _come_back(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await party_card.come_back(interaction, self.campaign_id, self.entity_id)
+
+    async def _catch_up(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        if len(self.catch_up) == 1:
+            member = self.catch_up[0][0]
+            await party_tell.catch_up(interaction, self.campaign_id, member, self.entity_id)
+        else:
+            await party_tell.choose(interaction, self.campaign_id, self.entity_id, self.catch_up)
 
     async def _deed(self, interaction: discord.Interaction) -> None:
         from dmbot.ui.deeds import start
@@ -2344,6 +2424,7 @@ class KindChange(_Menu):
                 player_id.type_id_button(campaign.guild_id, allowed, self._player_typed, self._back)
             )
             self.add_item(_Button(self._back, label="Back", style=discord.ButtonStyle.secondary))
+            await add_remembered(interaction, self, self._player_picked, campaign.guild_id)
             await _replace(interaction, f"**Who plays {_md(self.name)}?**", self)
             return
         try:
@@ -2387,6 +2468,9 @@ class KindChange(_Menu):
         changed(interaction, campaign)
         self.stop()
         await show_card(interaction, self.campaign_id, self.entity_id, replace=True)
+        from dmbot.ui import party_join  # ("Since when…?", #4537 slice 2b; lazy: it imports this)
+
+        await party_join.ask_since_when(interaction, campaign, self.entity_id)
 
     async def _back(self, interaction: discord.Interaction) -> None:
         self.stop()
@@ -2993,7 +3077,8 @@ async def show_who_page(
     if not sees_secrets(campaign, interaction.user.id):
         await _tell(interaction, "Only the campaign's DMs can change secret names.")
         return
-    pcs = await player_characters(memory, campaign)
+    party = await memory.party_and_others(campaign.guild_id, campaign.id)
+    pcs, notes = pick_choices(party)  # (the party first, then who left, then NPCs: #4537 §10)
     knowing = (await memory.alias_knowers(campaign.guild_id, campaign.id, [alias.id])).get(
         alias.id, []
     )
@@ -3006,12 +3091,21 @@ async def show_who_page(
     names = dict(pcs)
     view = WhoKnowsName(
         campaign_id, entity_id, alias.id, pcs,
-        chosen=[c for c in knowing if c in names], now=who, undo=undo,
+        chosen=[c for c in knowing if c in names], now=who, undo=undo, notes=notes,
         holders=[c for c in knowing if c in names and c not in told],
         told=[c for c in told if c in names], alias_text=alias.text, entry_name=entry,
     )  # fmt: skip
-    text = who_text(
-        f"**{_md(alias.text)}**", who, knowing, names, has_characters=bool(names), thing="name"
+    text = (
+        knows_line(party, knowing, who=who, common=who == link_edits.COMMON)
+        + "\n"
+        + who_text(
+            f"**{_md(alias.text)}**",
+            who,
+            knowing,
+            names,
+            has_characters=bool(party.party or party.left),
+            thing="name",
+        )
     )
     lines = told_name.told_lines(told, names, alias.text, entry)
     if lines:
@@ -3038,8 +3132,9 @@ class WhoKnowsName(WhoKnowsMenu):
         alias_text: str = "",
         entry_name: str = "",
         undo: Sequence[int] = (),
+        notes: Mapping[str, str] | None = None,
     ) -> None:
-        super().__init__(pcs, chosen=chosen, now=now, undo=undo)
+        super().__init__(pcs, chosen=chosen, now=now, undo=undo, notes=notes)
         self.campaign_id, self.entity_id, self.alias_id = campaign_id, entity_id, alias_id
         # Telling one character the name is the entry, and taking it back (#3542): a menu each,
         # on the two rows under the buttons, only when there is someone to offer.

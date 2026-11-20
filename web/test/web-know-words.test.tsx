@@ -40,7 +40,7 @@ describe("who knows each name and connection", () => {
     const api = await open();
     fireEvent.click(screen.getByRole("button", { name: w.expandAll }));
     const { nodes } = await statesOf(api);
-    expect(nodes.map((n) => n.knowWord).sort()).toEqual(["hidden_from_the_players", "known_to_an_npc", "known_to_the_party", "partly_revealed", "secret"]);
+    expect(nodes.map((n) => n.knowWord).sort()).toEqual(["hidden_from_the_players", "known_to_an_npc", "known_to_the_party", "left_the_party", "partly_revealed", "secret"]);
     for (const n of nodes) {
       const marked = row(n.name).textContent?.includes(w.secretMark) ?? false;
       expect(marked, n.name).toBe(n.knowWord === "secret");

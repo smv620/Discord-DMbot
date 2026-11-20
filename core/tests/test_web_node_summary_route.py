@@ -80,6 +80,29 @@ class NodeSummary(Web):
         # the same code as for an id that does not exist, so nothing hints at a hidden one
         self.assertEqual(await self.refusal_of("f" * 32, self.player), "not_found")
 
+    async def test_a_node_only_a_character_who_left_the_party_knows_is_not_a_players_to_read(
+        self,
+    ) -> None:
+        """#4778: a leaver is no longer in the party the players' view is built from, so what only
+        they knew is the DM's alone to read; the DM still reads it (nothing they knew is
+        forgotten)."""
+        assert self.hero is not None
+        leaver = await self.add("Tavin", "character", role="player_character")
+        idol = await self.add("Hidden Idol", "place")
+        await self.link("located_in", idol, self.keep, "idol-keep")
+        await self.from_nothing()
+        await self.tell(ENTRY, self.mira, [self.hero])  # (the player's own page is not empty)
+        await self.tell(ENTRY, idol, [leaver])
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "UPDATE memory_party_spans SET to_at = GREATEST(from_at, 1), ended = 'retired'"
+                " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s AND to_at IS NULL",
+                (self.g, self.one.id, leaver),
+            )
+            self.assertEqual(cur.rowcount, 1)
+        self.assertIn("Hidden Idol", (await self.read(idol))["text"])
+        self.assertEqual(await self.refusal_of(idol, self.player), "not_found")
+
     async def test_a_player_behind_the_spoiler_gate_gets_no_text_until_they_peek(self) -> None:
         assert self.hero is not None
         wen = await self.add("Wen", "character", role="player_character", played_by=777)

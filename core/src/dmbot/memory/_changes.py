@@ -15,7 +15,7 @@ from psycopg.types.json import Jsonb
 
 from dmbot.db import Conn
 from dmbot.memory import merge_restore
-from dmbot.memory.models import MemoryRuleError, TooLateToUndo
+from dmbot.memory.models import THREAD_TYPES, MemoryRuleError, TooLateToUndo, new_id
 from dmbot.memory.ontology import MIGRATED_KINDS, god_is_an_npc
 from dmbot.pictures.store import _lock as pictures_lock
 
@@ -29,7 +29,7 @@ _DM_ONLY_COLUMNS: dict[str, frozenset[str]] = {
 }
 ALREADY_UNDONE = "That was already undone."
 CHANGED_SINCE = "That was changed again since, so it can't be undone on its own."
-MAP_PICTURE_GONE = "That map's picture was deleted since, so this can't be undone."
+MAP_PICTURE_GONE = "Not undone: that map's picture was deleted since."
 
 
 @dataclass(frozen=True, slots=True)
@@ -183,9 +183,10 @@ MAP_FACTS = Table(
     "id",
     ("id", "entity_id", "layer", "value", "words", "faction_id", "how", "part",
      "from_session_at", "to_session_at", "from_game_time", "to_game_time", "status", "source",
-     "also_text", "table_knows", "created_at", "culture_id", "relation_id"),
-    # (a named culture, #4257 slice 3b; a road's condition on a known `route_to`, #4258)
-    defaults={"culture_id": None, "relation_id": None},
+     "also_text", "table_knows", "created_at", "culture_id", "relation_id", "map_id"),
+    # (a named culture, #4257 slice 3b; a road's condition on a known `route_to`, #4258; the map
+    # a row rests on, #4259 slice 8b, so a map's removal and its Undo carry it)
+    defaults={"culture_id": None, "relation_id": None, "map_id": None},
 )  # fmt: skip
 # One map: a kept picture DMbot knows is a map (#4344, MapBot layers slice 3a). It is in the log so
 # that each DM action on a map (keep, yes or no to using it, show to the table, remove) is one Undo
@@ -198,7 +199,16 @@ MAPS = Table(
     ("id", "picture_id", "title", "covers", "kind", "width", "height", "scale_value",
      "scale_unit", "scale_from", "grid_kind", "grid_cell_px", "grid_cell_distance", "north_angle",
      "north_from", "audience", "came_from", "import_tool", "right_by", "right_at", "use_ok",
-     "use_by", "use_at", "as_of", "replaces", "created_at"),
+     "use_by", "use_at", "as_of", "replaces", "created_at", "grid_from"),
+    defaults={"grid_from": None},  # (0530: a change logged before it had none)
+)  # fmt: skip
+# One thing marked on one map (#4670, MapBot slice 4a; 0530): a pin, path or area, at most one
+# target. Logged, so a DM's pin and a map's removal undo; housekeeping (`pins_read_at`) is not here.
+MAP_FEATURES = Table(
+    "map_features",
+    "id",
+    ("id", "map_id", "shape", "points", "place_id", "relation_id", "fact_id", "label", "status",
+     "source", "created_at"),
 )  # fmt: skip
 # The parts of a story thread (#4471, quests slice 2; design `docs/design/quests.md` §4):
 # objectives, complications, rewards promised and given, help and time limits, beside the thread.
@@ -306,12 +316,15 @@ KNOWERS = Table(
         "created_at",
         "confidence",
         "hidden_by",
+        "backstory_of",
     ),
+    # backstory_of (0556, #4795): the character whose backstory the row came from, else None;
+    # the party's copies never pass it to another character.
     # confidence: how sure that character is, 0.0 to 1.0 (0286). hidden_by (0298): the entries
     # whose being hidden from the players put this row to sleep; a row with any is DORMANT, and
     # every reader ignores it (`Scope.select` leaves it out unless asked) until each of them is
     # shown again and it wakes, so the lists a hide closed come back exactly as they were.
-    defaults={"confidence": 1.0, "hidden_by": []},
+    defaults={"confidence": 1.0, "hidden_by": [], "backstory_of": None},
 )
 BELIEFS = Table(
     "memory_beliefs",
@@ -358,10 +371,35 @@ SECRET_QUESTIONS = Table(
      "line_starts", "speaker_ids", "status", "created_at", "batch", "answered_batch"),
     logged=False,
 )  # fmt: skip
-ALL = (TYPES, PREDICATES, ENTITIES, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS, RULE_LINKS,
-       STORY_LANGUAGES, CULTURES, MAP_FACTS, MAPS, THREAD_PARTS,
+# Which story thread a table's guess is about (#4655, quests slice 7b; 0529): one row per belief.
+# Unlogged, like the evidence links: it is written in the same change as its belief, and an Undo
+# that takes the belief back takes the link with it by the database (as it does when the belief or
+# the thread goes for any other reason).
+GUESS_LINK = "thread_guess"  # its kind among a belief's links carried in the log (#4655)
+THREAD_GUESSES = Table(
+    "memory_thread_guesses", "id", ("id", "thread_id", "belief_id", "created_at"), logged=False
+)
+# Which weather the after-session check has already noted for a place (#4748, 0542): ids, a fixed
+# word and a time. Unlogged: it is no story fact, so an Undo never touches it; it goes with its
+# place or its climate row by the database.
+WEATHER_NOTES = Table(
+    "memory_weather_notes", "id", ("id", "place_id", "kind", "climate_id", "climate", "created_at"),
+    logged=False,
+)  # fmt: skip
+# One stretch of one player character in the party (#4537, party knowledge slice 2a; 0549): the
+# party record. Logged: each is the DM's action (a character made a player character, "Has left the
+# party"), so it is one ↩ Undo; it goes with its character by the database.
+PARTY_SPANS = Table(
+    "memory_party_spans", "id",
+    ("id", "entity_id", "from_at", "to_at", "from_minute", "to_minute", "ended", "source",
+     "created_at"),
+)  # fmt: skip
+ALL = (TYPES, PREDICATES, ENTITIES, PARTY_SPANS, ALIASES, MENTIONS, RELATIONS, CORRECTIONS, FLAGS,
+       RULE_LINKS,
+       STORY_LANGUAGES, CULTURES, MAP_FACTS, MAPS, MAP_FEATURES, THREAD_PARTS,
        STATES, CLAIMS, IMPRESSIONS, ATTITUDES, PLAN_SAME_AS, PLAN_POSITION, PERSPECTIVES,
-       BELIEFS, EVIDENCE, ALIAS_KNOWERS, KNOWERS, TOLD, SECRET_QUESTIONS)  # fmt: skip
+       BELIEFS, EVIDENCE, THREAD_GUESSES, ALIAS_KNOWERS, KNOWERS, TOLD,
+       SECRET_QUESTIONS, WEATHER_NOTES)  # fmt: skip
 BY_NAME = {t.name: t for t in ALL}
 
 # The columns whose change can change whether the players are shown a statement (#2995).
@@ -412,6 +450,7 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         ("memory_thread_parts", "thread_id", False),  # a thread's parts (#4471)
         ("memory_thread_parts", "who_id", False),  # who promised, gave or lent it (#4471)
         ("memory_thread_parts", "about_id", False),  # the item or event it names (#4471)
+        ("map_features", "place_id", False),  # a map's pin on the place (#4670)
         ("campaign_maps", "covers", False),  # the place a map covers (#4346)
         ("memory_states", "entity_id", False),
         ("memory_impressions", "viewer_id", False),
@@ -428,9 +467,11 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
     # (a logged delete of a culture is refused while a row points at it: the database's cascade
     # would delete those rows outside the log)
     "memory_cultures": (("memory_map_facts", "culture_id", False),),
+    "memory_map_facts": (("map_features", "fact_id", False),),  # an area on a map (#4670)
     # (the database would set these to NULL outside the log: #4346)
     "campaign_maps": (
         ("memory_map_facts", "map_id", False),
+        ("map_features", "map_id", False),  # its pins (#4670: `_remove` deletes them first)
         ("campaign_maps", "replaces", False),
     ),
     "memory_mentions": (("memory_relations", "mention_ids", True),),
@@ -443,6 +484,7 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
         # (a road's condition, #4258: outside an Undo the store deletes it first, logged; an Undo
         # that would delete the road is refused while it has one, so nothing goes unlogged)
         ("memory_map_facts", "relation_id", False),
+        ("map_features", "relation_id", False),  # a road traced on a map (#4670)
     ),
     "memory_perspectives": (
         ("memory_beliefs", "perspective_id", False),
@@ -544,6 +586,11 @@ class Changes(Scope):
         self.dm_chose_secret = dm_chose_secret
         self.held_back = 0
         self.asked: list[str] = []  # the 🤫 questions this write asked, for their batch
+        # (#4537 slice 2b) with `DMBOT_PARTY_JOIN` on, a character joining a party that has
+        # members is asked about (`join_questions.ask`) instead of copied what the party knows;
+        # `join_asked` holds the questions this write asked, for their batch
+        self.party_join = False
+        self.join_asked: list[str] = []
         # Rows this write brought back from turned down (#4524): the players saw none of them
         # before, so holding one back in the same write takes nothing from them (`public_guard`).
         self.revived: set[tuple[str, str]] = set()
@@ -580,6 +627,15 @@ class Changes(Scope):
         self.perspectives: dict[str, str] | None = (
             None  # The truth's and The party's ids, once known
         )
+
+    def new_batch(self) -> None:
+        """Start a batch of its own for this write's later changes, in the same transaction: their
+        Undo takes back only them (a map read's layer rows apart from its pins, Supervisor's
+        ruling on #4699). Not for a write that asks 🤫 questions: those join `batch` at the end, so
+        one asked before would move to the later batch's Undo."""
+        if self.asked:
+            raise RuntimeError("new_batch after a 🤫 question: it would join the later batch")
+        self.batch = None
 
     async def _dm_only_check(
         self, table: Table, row: Mapping[str, Any], before: Mapping[str, Any] | None = None
@@ -735,6 +791,10 @@ class Changes(Scope):
         if table is ENTITIES:  # and so does what a character was told, each logged (#3089)
             for told in await self.select(TOLD, " AND character_id = %s", [row_id]):
                 await self.delete(TOLD, told["id"])
+            # and its stretches in the party, each logged (#4537): the database would take them
+            # unlogged, and an Undo would bring back one who had left as in the party
+            for span in await self.select(PARTY_SPANS, " AND entity_id = %s", [row_id]):
+                await self.delete(PARTY_SPANS, span["id"])
         if table.name in _KNOWN_COLUMN:  # who knows a statement goes with it, each logged (#2995)
             column = _KNOWN_COLUMN[table.name]
             for knower in await self.select(KNOWERS, f" AND {column} = %s", [row_id], dormant=True):
@@ -1078,6 +1138,9 @@ class Changes(Scope):
 # Columns added after change-log rows were written, with the value an older snapshot reads as
 # (#1189): a fact written before definitions were versioned was written under version 1.
 _ADDED_LATER: dict[str, dict[str, Any]] = {
+    "campaign_maps": {"grid_from": None},  # (0530: nobody had set a grid before)
+    # (a row logged before #4259 rested on no map: nothing wrote `map_id` before slice 8)
+    "memory_map_facts": {"map_id": None},
     "memory_relations": {
         "definition_version": 1,
         "unrevealed": False,
@@ -1280,6 +1343,17 @@ async def _entry_links(
                 "added_at": r["added_at"],
             }
         )
+    # The mystery a guess is about (#4655) is an id-only link too, so it travels the same way: an
+    # Undo of the belief's removal, or a redo of its place, puts the guess back on its card.
+    cur = await conn.execute(
+        "SELECT belief_id, thread_id, created_at FROM memory_thread_guesses"
+        " WHERE guild_id = %s AND campaign_id = %s AND belief_id = ANY(%s)",
+        (*ids, list(belief_ids)),
+    )
+    for r in await cur.fetchall():
+        out.setdefault(str(r["belief_id"]), []).append(
+            {"kind": GUESS_LINK, "target_id": r["thread_id"], "added_at": r["created_at"]}
+        )
     return out
 
 
@@ -1306,6 +1380,17 @@ async def _kept_entry(conn: Conn, ids: tuple[int, str], entry_id: str) -> str:
 async def _give_back_links(conn: Conn, ids: tuple[int, str], belief_id: str, links: Any) -> None:
     for link in links or ():
         target = await _kept_entry(conn, ids, str(link["target_id"]))
+        if link["kind"] == GUESS_LINK:
+            # (onto the thread it was about, or the one that was merged into, while it is still a
+            # kept thread; otherwise the belief comes back a plain one, as placing would make it)
+            await conn.execute(
+                "INSERT INTO memory_thread_guesses (guild_id, campaign_id, id, thread_id,"
+                " belief_id, created_at) SELECT %s, %s, %s, e.id, %s, %s FROM memory_entities e"
+                " WHERE e.guild_id = %s AND e.campaign_id = %s AND e.id = %s"
+                " AND e.status = 'confirmed' AND e.type = ANY(%s) ON CONFLICT DO NOTHING",
+                (*ids, new_id(), belief_id, link["added_at"], *ids, target, list(THREAD_TYPES)),
+            )
+            continue
         await conn.execute(
             "INSERT INTO memory_evidence (guild_id, campaign_id, belief_id, kind, target_id,"
             " session_started_at, added_at) VALUES (%s, %s, %s, %s, %s, %s, %s)"
@@ -1360,10 +1445,11 @@ async def _map_pictures_kept(
     conn: Conn, ids: tuple[int, str], rows: Sequence[dict[str, Any]]
 ) -> list[int]:
     """The pictures of the maps a batch changed, each still kept: a map's Undo needs its picture
-    (#4346). Deleting a picture takes its map with it
-    outside the log (`PictureStore.delete`), and a deleted picture's row stays behind with
-    `deleted_at` set, so without this check an Undo could bring back a map of a picture that is
-    gone, or report a plain "changed since" for a map the picture took with it."""
+    (#4346), and a batch whose map went with its picture is refused (MAP_PICTURE_GONE, #4697).
+    Deleting a picture takes its map with it outside the log (`PictureStore.delete`), and a
+    deleted picture's row stays behind with `deleted_at` set, so without this check an Undo could
+    bring back a map of a picture that is gone, or report a plain "changed since" for a map the
+    picture took with it."""
     pictures = {
         int(side["picture_id"])
         for r in rows
@@ -1371,6 +1457,29 @@ async def _map_pictures_kept(
         for side in (r["before"], r["after"])
         if isinstance(side, dict) and side.get("picture_id") is not None
     }
+    # (#4697) A deleted picture takes its map and the map's own change-log rows with it, outside
+    # the log, but the same batch's pins and layer rows stay. A batch naming a map that is gone
+    # and has no logged row left at all was the picture's: nothing can come back, so it says so
+    # plainly. A map gone by a logged Remove has its rows: that is "changed since", as before.
+    named = {
+        str(side["map_id"])
+        for r in rows
+        if r["table_name"] in (MAP_FEATURES.name, MAP_FACTS.name)
+        for side in (r["before"], r["after"])
+        if isinstance(side, dict) and side.get("map_id")
+    }
+    if named:
+        # (the picture store's lock first, as below: a picture deleted meanwhile waits for this)
+        await pictures_lock(conn, *ids)
+        cur = await conn.execute(
+            "SELECT m FROM unnest(%s::text[]) AS m WHERE NOT EXISTS (SELECT 1 FROM campaign_maps"
+            " WHERE guild_id = %s AND campaign_id = %s AND id = m) AND NOT EXISTS (SELECT 1"
+            " FROM memory_changes WHERE guild_id = %s AND campaign_id = %s"
+            " AND table_name = 'campaign_maps' AND row_id = m)",
+            (sorted(named), *ids, *ids),
+        )
+        if await cur.fetchone() is not None:
+            raise MemoryRuleError(MAP_PICTURE_GONE)
     if not pictures:
         return []
     # (the picture store's lock first, as `MapStore` and `PictureStore.delete` take it before any

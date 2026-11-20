@@ -1,7 +1,9 @@
 """What one lore upload or import added, for the website's notice (#3879): the counts, the upload's
 label, until when Undo works. One database door (`dmbot_web_upload_notice`, 0404) answers it for a
-DM of the campaign; anyone else gets "not found". Counts and times only: never a name, never the
-change numbers. Built to the page's shape (`UploadNotice` in web/src/account/api.ts)."""
+DM of the campaign; anyone else gets "not found". Counts and times, never the change numbers; the
+one place words appear is a 🌍 upload's list of what it made known to everyone (#4661), for those
+DMs only (the door checks), resolved when read so a thing the DM hid again is never listed, never
+logged. Built to the page's shape (`UploadNotice` in web/src/account/api.ts)."""
 
 from __future__ import annotations
 
@@ -10,10 +12,14 @@ from typing import Any
 
 from dmbot import progress
 from dmbot.db import Database
+from dmbot.discord_limits import shorten
+from dmbot.memory.link_words import link_words
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
+REVEALED_SHOWN = 10  # lines the page lists; the rest are counted (as Discord's private list does)
+NAME_CUT = 40  # a name cut to this many characters, as Discord's list cuts it
 KINDS = ("lore", "import")
 _SOURCE = re.compile(r"^[A-Za-z0-9_.:-]{1,100}$")  # an id: letters, digits and a few joiners
 # Counts that are not a kind of name: they ride beside the kinds in the stored tally (an import's
@@ -49,7 +55,7 @@ async def read(
         return {
             "state": "none",
             "label": "",
-            "counts": {"names": 0, "byKind": {}, "connections": 0},
+            "counts": {"names": 0, "byKind": {}, "connections": 0, "revealed": 0},
             "undoUntil": None,
             "undone": None,
             "questionsLeft": 0,
@@ -64,6 +70,9 @@ async def read(
             "names": sum(by_kind.values()),
             "byKind": by_kind,
             "connections": stored.get("connections", 0),
+            # (a 🌍 Common knowledge read's hidden things now known to everyone, #4589: a count
+            # only, as the upload's notice in Discord says it)
+            "revealed": stored.get("revealed", 0),
         },
         "undoUntil": got.get("undoUntil"),
         # A past Undo says nothing here: how many it took back is not kept, and "took back 0 of 0"
@@ -72,24 +81,54 @@ async def read(
         "undone": None,
         "questionsLeft": 0,
         "serverNow": now,
+        **await _revealed(db, session, guild_id, campaign_id, kind, source_id, stored, got),
     }
-    stored = {str(k): int(v) for k, v in (got.get("counts") or {}).items() if isinstance(v, int)}
-    by_kind = {k: v for k, v in stored.items() if k not in _NOT_KINDS and v > 0}
+
+
+async def _revealed(
+    db: Database,
+    session: Session,
+    guild_id: int,
+    campaign_id: str,
+    kind: str,
+    source_id: str,
+    stored: dict[str, int],
+    got: dict[str, Any],
+) -> dict[str, Any]:
+    """`revealedLines` (at most ten) and `revealedMore` for a 🌍 upload, in the words of Discord's
+    private list (#4607) without its bold: each entry's name, each connection ("Ash works for
+    Orlen") and each other name with its person, names cut to 40 characters. Only what players can
+    see now (the door resolves the ids when asked, so a thing hidden again is left out) and only
+    while the upload has not been taken back. Nothing when none were revealed; never logged."""
+    if not stored.get("revealed") or got.get("undone"):
+        return {}
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_upload_revealed(%s, %s, %s, %s) AS r",
+            (guild_id, campaign_id, kind, source_id),
+        )
+        found = await cur.fetchone()
+    room = found["r"] if found else None
+    if not room or room.get("status") != "ok":
+        return {}
+    lines = [shorten(str(e["name"]), NAME_CUT) for e in room.get("entries") or []]
+    for link in room.get("links") or []:
+        said = link_words(str(link["predicate"]), str(link["detail"]), True,
+                          str(link["subjectKind"]), feeling=True)  # fmt: skip
+        lines.append(
+            f"{shorten(str(link['subject']), NAME_CUT)} {shorten(said, NAME_CUT)} "
+            f"{shorten(str(link['object']), NAME_CUT)}"
+        )
+    lines += [
+        f"{shorten(str(a['owner']), NAME_CUT)} is also called {shorten(str(a['text']), NAME_CUT)}"
+        for a in room.get("aliases") or []
+    ]
+    if not lines:
+        return {}
     return {
-        "state": "done",
-        "label": str(got.get("label") or ""),
-        "counts": {
-            "names": sum(by_kind.values()),
-            "byKind": by_kind,
-            "connections": stored.get("connections", 0),
-        },
-        "undoUntil": got.get("undoUntil"),
-        # An Undo already done: how many it took back is not kept, so no numbers (`took` 0 of 0 is
-        # the page's "taken back" without a count).
-        "undone": {"took": 0, "of": 0} if got.get("undone") else None,
-        # The questions an upload left are the bot's to count; not read here yet (#3879).
-        "questionsLeft": 0,
-        "serverNow": now,
+        "revealedLines": lines[:REVEALED_SHOWN],
+        "revealedMore": max(0, len(lines) - REVEALED_SHOWN),
     }
 
 

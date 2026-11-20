@@ -252,10 +252,46 @@ async def undo_upload_result(
     if broke and done == 0:
         await notices.give_back_undo(guild_id, notice_id)  # nothing changed: again
         return Undone(COULD_NOT)
+    # (only once the undo has really started, so COULD_NOT's "nothing was changed" stays true)
+    await _take_back_pictures(bot, campaign.guild_id, campaign.id, notice_id)
     if broke:
         return Undone(STOPPED.format(done=done, total=total), done, total, stopped=True)
     answer = NOTHING_LEFT if done == total else PARTLY.format(done=done, total=total)
     return Undone(answer, done, total)
+
+
+async def _take_back_pictures(bot: Any, guild_id: int, campaign_id: str, notice_id: str) -> None:
+    """The pictures the upload kept for the DMs go with its Undo (#4003 slice c), files and all,
+    as a picture taken back goes (`PictureKeeper.discard`: its link then says it was removed). The
+    maps the DM made from them go first, through `MapStore.remove_map` (#4259); a map made from
+    one in another way stays (#4344). Never stops the undo; counts only in the log."""
+    store, keeper = getattr(bot, "picture_store", None), getattr(bot, "picture_keeper", None)
+    if store is None or keeper is None:
+        return
+    maps = getattr(bot, "map_store", None)
+    removed = gone = 0
+    # Twice: a yes to a map question pressed while the first pass ran made a map the second finds
+    # (the store refuses a yes once the upload is undone, so a third is never needed).
+    for _ in range(2):
+        if maps is not None:  # (its maps first, through the deletion rule §7.5, #4259)
+            try:
+                ids = await maps.for_notice(guild_id, campaign_id, notice_id)
+            except Exception as exc:
+                log.warning("Undoing an upload's maps failed (%s)", type(exc).__name__)
+                ids = []
+            for map_id in ids:  # (each on its own: one failure leaves the others to go)
+                try:
+                    out = await maps.remove_map(guild_id, campaign_id, map_id)
+                    removed += int(out.value is not None)
+                except Exception as exc:
+                    log.warning("Undoing an upload's map failed (%s)", type(exc).__name__)
+        try:
+            for picture in await store.for_notice(guild_id, campaign_id, notice_id):
+                gone += int(await keeper.discard(guild_id, campaign_id, picture, unless_map=True))
+        except Exception as exc:
+            log.warning("Undoing an upload's pictures failed (%s)", type(exc).__name__)
+    if removed or gone:
+        log.info("Undoing an upload removed %d of its maps and %d of its pictures", removed, gone)
 
 
 @dataclass(frozen=True, slots=True)
@@ -303,6 +339,7 @@ async def add_sure(
     dm_claims: DmClaims | None = None,
     earlier: Sequence[int] = (),
     revealed: int = 0,
+    revealed_ids: Mapping[str, Sequence[str]] | None = None,
 ) -> tuple[Notice, int] | None:
     """Add what DMbot is sure of from this reading, as the DM's own calls (`memory.auto_accept`),
     and keep the upload's notice with the changes it made. Returns the notice and the number of
@@ -313,7 +350,8 @@ async def add_sure(
     DM's own lines state, once their names are in (#3897; an import's); who may be recorded is read
     again just before. `earlier`: changes this upload made before (a World read's reveals, #4524
     slice 1b), kept first so ↩️ Undo takes them back too; `revealed`: how many things they made
-    known to everyone, for the notice's count. Never raises."""
+    known to everyone, for the notice's count; `revealed_ids`: which, as ids only (never words), for
+    the website's list for the DMs (#4661). Never raises."""
     from dmbot.memory import auto_accept as auto
     from dmbot.memory import backstory_keep
     from dmbot.ui.names import background_kind
@@ -383,6 +421,7 @@ async def add_sure(
             [*earlier, *tally.batches],  # (in the order made: Undo goes newest first)
             source_kind=source[0] if source else None,
             source_id=source[1] if source else None,
+            revealed_ids=revealed_ids,
         )
         return notice, questions
     except Exception:

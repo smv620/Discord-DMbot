@@ -25,7 +25,9 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
         "memory_story_languages",  # an NPC's languages from the story (#4229)
         "memory_cultures",  # the campaign's named cultures (#4257 slice 3b)
         "memory_map_facts",  # a place's land, climate and who rules it (#4256)
+        "memory_weather_notes",  # the weather already noted for a place (#4748)
         "memory_thread_parts",  # a story thread's parts (#4471)
+        "memory_party_spans",  # who was in the party when (#4537)
         "memory_states",
         "memory_claims",
         "memory_aliases",
@@ -36,6 +38,7 @@ SECTION_TABLES: dict[str, tuple[str, ...]] = {
         "memory_told",
         "memory_beliefs",
         "memory_evidence",
+        "memory_thread_guesses",  # which mystery a table's guess is about (#4655)
         "memory_impressions",
         "memory_attitudes",
         "memory_corrections",
@@ -153,7 +156,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     "memory_trait_offers": "a lore upload's lineage or class for a character the campaign already "
     "has, waiting for the DM's Keep it or Not this (#3926): the trait, the reader's quote of the "
     "DM's own text (up to 240 characters, DM-only) and the upload's label; a question is made "
-    "again by the next read, and a kept one is the character's rules link, which a backup carries",
+    "again by the next read, and a kept one is the character's rules link, which a backup carries; "
+    "a language heard in a session (#4745) also holds who said it (ids) and the session's id, and "
+    "goes with their forget or the session's",
     "memory_npc_guesses": "DMbot's guesses of which NPCs and groups know a lore name, waiting for "
     "the DM to confirm it (#2959): entry ids and a certainty, never words; made again by the next "
     "read, and the ones already confirmed are knowers, which a backup carries",
@@ -181,6 +186,11 @@ NOT_IN_BACKUP: dict[str, str] = {
     "image_day_use": _RUNTIME,
     "hear_use": _RUNTIME,
     "campaign_channel_people": _MEMBER_IDS,  # members a DM let see the channels by hand (#3891)
+    "lore_pdf_staged": "a lore PDF sent from the website while it waits to be counted and "
+    "read (ids and numbers only, no file name or word; one for each campaign): a file in transit, "
+    "gone within a day, never in a backup (#4762)",
+    "web_rule_takes": "a day-long undo handle for a website pick of a followed set's changes; "
+    "a restored campaign has nothing to undo (#4841)",
     "upload_notices": _RUNTIME,  # each lore upload's notice and the changes it made (#3878)
     "web_peeks": _RUNTIME,
     "plot_checks": "PlotBot's run state for a recap (running, failed, when): rebuilt by the next "
@@ -218,6 +228,9 @@ NOT_IN_BACKUP: dict[str, str] = {
     # (the 🤫 questions waiting for the DM, #4524: point at items by id, and quote people whose
     # consent a backup doesn't carry; what the DM answered is in the items themselves)
     "secret_questions": _WAIT,
+    # (#4537: "What does Mira know about what came before?"; what the DM answered is in the
+    # who-knows rows themselves, and a restored campaign's DM tells a character more from any card)
+    "memory_join_questions": _WAIT,
     "thread_progress": _WAIT,  # (a re-read rebuilds it: #4522 5b, ruling A)
     "name_actions": _WAIT,
     "setting_actions": _WAIT,
@@ -279,6 +292,8 @@ OWED_TO_BACKUP: tuple[str, ...] = (
     "campaign_pictures",
     # a map is a kept picture with its two yeses (#4344): it goes into a backup with its picture
     "campaign_maps",
+    # a map's pins, paths and areas (#4670): they go into a backup with their map
+    "map_features",
 )
 
 
@@ -313,6 +328,8 @@ SERVER_BOUND_COLUMNS: dict[str, str] = {
     "upload_notices.message_id": "left: as its channel",
     "memory_thread_parts.thread_id": "not Discord's: a story thread entry of the campaign's memory "
     "(#4471), which moves with the campaign like every entry",
+    "memory_thread_guesses.thread_id": "not Discord's: a story thread entry of the campaign's "
+    "memory (#4655 7b), which moves with the campaign like every entry",
     "thread_progress.thread_id": "not Discord's: a story thread entry of the campaign's memory "
     "(#4522 5b), which moves with the campaign like every entry",
 }

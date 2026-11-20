@@ -352,12 +352,27 @@ class Read(NamedTuple):
     changed: bool = False  # said with words of change ("reopened", #4258)
 
 
-async def add_read(w: Changes, onto: Ontology, found: Iterable[Read]) -> Counter[str]:
+async def add_read(
+    w: Changes,
+    onto: Ontology,
+    found: Iterable[Read],
+    *,
+    source: str = mf.FROM_TEXT,
+    map_id: str | None = None,
+    shown_at: int | None = None,
+    layers_written: Counter[str] | None = None,
+) -> Counter[str]:
     """What a text reader found, written as `read` for the DM to check (§7.2; never confirmed).
     Each follows §7.3 against an open row of the same place, layer and part (`map_facts.meet`):
     the same value again only marks it as said in the text too; a different one corrects, closes
     or is only counted for World notes (#4285). Never an alert or a question. Counts only:
-    `written`, `same`, `corrected`, `closed`, `noted`, `not_allowed`."""
+    `written`, `same`, `corrected`, `closed`, `noted`, `not_allowed`.
+
+    `source` FROM_MAP (#4259, MapBot slice 8a): what a map shows outright, from `map_id`, ranked
+    above the text (§7.1). The same value DMbot read from the text becomes the map's, said by the
+    text too (one row, never two); a row starts at `shown_at`, the story time the map was shown
+    (§7.4); a map never ends anything by leaving it out (only what it shows is passed)."""
+    by_map = source == mf.FROM_MAP
     counts: Counter[str] = Counter()
     for f in found:
         try:
@@ -396,6 +411,16 @@ async def add_read(w: Changes, onto: Ontology, found: Iterable[Read]) -> Counter
             continue
         now = [_fact(r) for r in rows if r["status"] != mf.REJECTED and r["to_session_at"] is None]
         same = [x for x in now if x.value == f.value]
+        if same and by_map:
+            counts["same"] += 1
+            for x in same:  # (the text said it first: the map's now, the text's too, §7.1)
+                if x.source == mf.FROM_TEXT and x.status != mf.CONFIRMED:
+                    await w.update(
+                        MAP_FACTS,
+                        x.id,
+                        {"source": mf.FROM_MAP, "map_id": map_id, "also_text": True},
+                    )
+            continue
         if same:
             counts["same"] += 1
             for x in same:
@@ -421,13 +446,13 @@ async def add_read(w: Changes, onto: Ontology, found: Iterable[Read]) -> Counter
         outcome = mf.KEEP
         says_change = f.changed and f.layer in mf.HISTORY  # (only a history layer's words count)
         for x in others:
-            outcome = mf.meet(f.layer, x.source, x.status, mf.FROM_TEXT, changed=says_change)
+            outcome = mf.meet(f.layer, x.source, x.status, source, changed=says_change)
             if outcome == mf.NOTE:
                 break
         if outcome == mf.NOTE:
             counts["noted"] += 1
             continue
-        since = f.session_at
+        since = shown_at if by_map else f.session_at
         if outcome == mf.CLOSE:  # (the story changed it: the old row is history from now)
             ended = [r for r in rows if str(r["id"]) in {x.id for x in others}]
             when = f.session_at if f.session_at is not None else await story_now(w)
@@ -447,11 +472,13 @@ async def add_read(w: Changes, onto: Ontology, found: Iterable[Read]) -> Counter
                 "part": f.part[: mf.WORDS_MAX],
                 "from_session_at": since, "to_session_at": None,
                 "from_game_time": None, "to_game_time": None, "status": mf.READ,
-                "source": mf.FROM_TEXT, "also_text": True,
-                "table_knows": f.session_at is not None, "created_at": w.now,
+                "source": source, "also_text": not by_map, "map_id": map_id,
+                "table_knows": f.session_at is not None and not by_map, "created_at": w.now,
             },
         )  # fmt: skip
         counts["written"] += 1
+        if layers_written is not None:  # (new rows only, by layer: a map's note counts these)
+            layers_written[f.layer] += 1
     return counts
 
 

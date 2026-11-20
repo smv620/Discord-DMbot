@@ -41,7 +41,7 @@ from dmbot.memory._changes import (
     Scope,
     Table,
 )
-from dmbot.memory.models import CONFIRMED, PLAYER_CHARACTER, lookup_key, spelling_key
+from dmbot.memory.models import CONFIRMED, lookup_key, spelling_key
 
 ENTRY, PROPERTY, CONNECTION, ALIAS = "entry", "property", "connection", "alias"
 KINDS = (ENTRY, PROPERTY, CONNECTION, ALIAS)
@@ -107,6 +107,12 @@ class Statements:
     player_characters: frozenset[str] = frozenset()
     # other name id -> the characters the DM told that it is the entry it belongs to (#3089)
     told: Mapping[str, frozenset[str]] = field(default_factory=dict)
+    # The statements a group holds that are hidden from the players or not yet confirmed (on them or
+    # an entry they name; `_not_shown`'s second set): a group's row on one never reaches a player
+    # character (Supervisor's ruling on #4806, #4807), as a common row is masked; an NPC member
+    # still gets it. `players`: every confirmed player character, in the party or not.
+    dark: frozenset[tuple[str, str]] = frozenset()
+    players: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True, slots=True)
@@ -291,7 +297,15 @@ def visible(viewer: Viewer, data: Statements) -> Visible:
     for key, listed in data.knowers.items():
         # (a character knows its own entry without a row, so in the party's view it counts for
         # itself, with one player character or many)
-        sure = [1.0 if key == (ENTRY, c) else reach(c, _sure(listed), data.groups) for c in who]
+        # (a player character never reaches a hidden statement through a group, ruling on #4806)
+        sure = [
+            1.0
+            if key == (ENTRY, c)
+            else reach(
+                c, _sure(listed), {} if key in data.dark and c in data.players else data.groups
+            )
+            for c in who
+        ]
         known = [x for x in sure if x is not None]
         if viewer.mode == "any":
             if known:
@@ -359,13 +373,9 @@ async def load(scope: Scope) -> Statements:
         ):
             if row[column] is not None:
                 knowers.setdefault((kind, row[column]), {})[character] = float(row["confidence"])
-    pcs = frozenset(
-        r["id"]
-        for r in await scope.select(
-            ENTITIES, " AND type = 'character' AND role = %s AND status = %s",
-            [PLAYER_CHARACTER, CONFIRMED],
-        )
-    )  # fmt: skip
+    from dmbot.memory import party_record  # ("the party" is one function, #4537 rule 13.1)
+
+    pcs = frozenset(await party_record.current_members(scope))
     wanted_states = [i for k, i in knowers if k == PROPERTY]
     wanted_relations = [i for k, i in knowers if k == CONNECTION]
     wanted_aliases = [i for k, i in knowers if k == ALIAS]
@@ -409,7 +419,14 @@ async def load(scope: Scope) -> Statements:
         for r in members:
             if r["object_id"] not in party:
                 groups.setdefault(r["subject_id"], set()).add(r["object_id"])
-    await common_while_shown(scope, knowers, relations, aliases)
+    # (one read of the rows involved serves both masks: common rows and groups' rows)
+    group_ids = {g for gs in groups.values() for g in gs}
+    common = [key for key, who in knowers.items() if COMMON in who]
+    held_by_groups = [key for key, who in knowers.items() if group_ids & set(who)]
+    not_shown, hidden = await _not_shown(scope, [*common, *held_by_groups], relations)
+    _drop_common(knowers, [key for key in common if key in not_shown])
+    dark = {key for key in held_by_groups if key in hidden}
+    players = frozenset(await party_record.player_characters(scope)) if dark else frozenset()
     kept = {
         key: value
         for key, value in knowers.items()
@@ -430,6 +447,8 @@ async def load(scope: Scope) -> Statements:
         aliases=aliases,
         player_characters=pcs,
         told={a: frozenset(c) for a, c in told.items()},
+        dark=frozenset(dark),
+        players=players,
     )
 
 
@@ -442,12 +461,38 @@ async def common_while_shown(
     """Take the common-knowledge rows off the statements the players are not shown now (#4537): a
     suggestion not yet confirmed, or what the DM hid. The rows stay stored; only this read leaves
     them out. One read of the rows involved, and none when no statement holds a common row."""
-    from dmbot.memory import knowers as lists  # (knowers imports this module)
-
     common = [key for key, who in knowers.items() if COMMON in who]
     if not common:
         return
-    ids = {k: [i for kind, i in common if kind == k] for k in KINDS}
+    not_shown, _ = await _not_shown(scope, common, relations)
+    _drop_common(knowers, [key for key in common if key in not_shown])
+
+
+def _drop_common(
+    knowers: dict[tuple[str, str], dict[str, float]], keys: Iterable[tuple[str, str]]
+) -> None:
+    for key in keys:
+        del knowers[key][COMMON]
+        if not knowers[key]:
+            del knowers[key]
+
+
+async def _not_shown(
+    scope: Scope, keys: Sequence[tuple[str, str]], relations: Mapping[str, tuple[str, str]]
+) -> tuple[set[tuple[str, str]], set[tuple[str, str]]]:
+    """Two readings of these statements, from one read of the rows involved (none for no key).
+    First, which the players are not shown now (the flags as the DM's switch, §9 rule 1): not yet
+    confirmed, hidden, limited to some, unnamed, secret or not yet revealed; common knowledge
+    holds none of those. Second, the narrower set a group's row stops at for player characters
+    (Supervisor's ruling on #4806): not yet confirmed, hidden from the players or unnamed (#4808),
+    on it or an entry it names. A limited audience, a secret or not-yet-revealed connection or a
+    secret other name is how the DM gives something to some, a group among them, so it is not in
+    the second set."""
+    if not keys:
+        return set(), set()
+    from dmbot.memory import knowers as lists  # (knowers imports this module)
+
+    ids = {k: [i for kind, i in keys if kind == k] for k in KINDS}
     rel_rows = {r["id"]: r for r in await _by_id(scope, RELATIONS, ids[CONNECTION])}
     alias_rows = {r["id"]: r for r in await _by_id(scope, ALIASES, ids[ALIAS])}
     state_rows = {r["id"]: r for r in await _by_id(scope, STATES, ids[PROPERTY])}
@@ -460,6 +505,42 @@ async def common_while_shown(
 
     def entry_ok(entity_id: str) -> bool:
         return entity_id in entities and lists.entry_shown(entities[entity_id])
+
+    def entry_out(entity_id: str) -> bool:
+        # (not confirmed, hidden from the players, or a person the story never named: an unnamed
+        # entry counts as a hide, 0264; Supervisor's ruling on #4808, so Discord matches the
+        # website door, 0559)
+        row = entities.get(entity_id)
+        return (
+            row is None
+            or row["status"] != CONFIRMED
+            or bool(row["hidden_from_players"])
+            or bool(row["unnamed"])
+        )
+
+    def hidden(kind: str, statement_id: str) -> bool:
+        if kind == ENTRY:
+            return entry_out(statement_id)
+        if kind == PROPERTY:
+            row = state_rows.get(statement_id)
+            return row is None or entry_out(row["entity_id"])
+        if kind == ALIAS:
+            row = alias_rows.get(statement_id)
+            return (
+                row is None
+                or row["status"] == "rejected"
+                or entry_out(row["entity_id"])
+                or (row["used_by"] is not None and entry_out(row["used_by"]))
+            )
+        row = rel_rows.get(statement_id)
+        return (
+            row is None
+            or row["status"] != CONFIRMED
+            or any(
+                entry_out(e)
+                for e in relations.get(statement_id, (row["subject_id"], row["object_id"]))
+            )
+        )
 
     def shown(kind: str, statement_id: str) -> bool:
         if kind == ENTRY:
@@ -485,11 +566,7 @@ async def common_while_shown(
             )
         )
 
-    for key in common:
-        if not shown(*key):
-            del knowers[key][COMMON]
-            if not knowers[key]:
-                del knowers[key]
+    return {key for key in keys if not shown(*key)}, {key for key in keys if hidden(*key)}
 
 
 async def _by_id(
@@ -535,13 +612,9 @@ async def party_entries(scope: Scope) -> frozenset[str] | None:
     and for common knowledge (#4537);
     a list held by a group (a faction as a knower) is reach the aggregate does not follow, so then
     the full gate answers."""
-    pcs = {
-        str(r["id"]): str(r["id"])
-        for r in await scope.select(
-            ENTITIES, " AND type = 'character' AND role = %s AND status = %s",
-            [PLAYER_CHARACTER, CONFIRMED],
-        )
-    }  # fmt: skip
+    from dmbot.memory import party_record  # ("the party" is one function, #4537 rule 13.1)
+
+    pcs = {c: c for c in await party_record.current_members(scope)}
     if not pcs:
         return None
     views = {
@@ -623,6 +696,23 @@ def _public_entry(row: Mapping[str, Any], own_name_secret: bool) -> bool:
             or own_name_secret
         )
     )
+
+
+def public_entries(
+    rows: Iterable[Mapping[str, Any]], aliases: Iterable[Mapping[str, Any]]
+) -> frozenset[str]:
+    """The entries the players are shown by their main name when there is no party to ask (no
+    player character yet): `_public_entry`, the rule `name_entries` uses for such a viewer, so a
+    caller never reads the flags itself (#2995). `aliases`: the entries' names, secret ones too,
+    so an entry whose main name is a secret one stays hidden."""
+    rows = list(rows)
+    mains = {str(r["id"]): lookup_key(str(r["name"])) for r in rows}
+    secret_main = {
+        str(a["entity_id"])
+        for a in aliases
+        if a["secret"] and mains.get(str(a["entity_id"])) == a["key"]
+    }
+    return frozenset(str(r["id"]) for r in rows if _public_entry(r, str(r["id"]) in secret_main))
 
 
 def _unnamed_label(row: Mapping[str, Any], anchor_name: str | None) -> str:
@@ -869,9 +959,9 @@ def name_entries(
             (ENTRY, str(anchor["id"])) in seen.sureness
             and (str(anchor["id"]) not in anchor_secret or str(anchor["id"]) in anchor_held)
         )
-        if known or _public_entry(anchor, str(anchor["id"]) in anchor_secret):
-            return str(anchor["name"])
-        return None
+        # (known, common knowledge included: never the flags alone, which would name an anchor the
+        # viewer doesn't know; Supervisor's ruling on #4821)
+        return str(anchor["name"]) if known else None
 
     def safe_text(entity_id: str, text: str) -> str:
         """An other name as this viewer may read it: a joined person's label is rebuilt."""

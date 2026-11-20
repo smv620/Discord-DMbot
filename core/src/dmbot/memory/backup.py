@@ -21,6 +21,7 @@ from psycopg.types.json import Jsonb
 from dmbot import lineage
 from dmbot.campaigns.models import CampaignError
 from dmbot.db import Conn
+from dmbot.maps import weather_note
 from dmbot.memory import (
     beliefs,
     evidence,
@@ -50,6 +51,7 @@ from dmbot.memory._changes import (
     IMPRESSIONS,
     KNOWERS,
     MAP_FACTS,
+    PARTY_SPANS,
     PERSPECTIVES,
     PREDICATES,
     RELATIONS,
@@ -57,9 +59,11 @@ from dmbot.memory._changes import (
     SHEETS,
     STATES,
     STORY_LANGUAGES,
+    THREAD_GUESSES,
     THREAD_PARTS,
     TOLD,
     TYPES,
+    WEATHER_NOTES,
     Table,
     row_of,
     scoped_select,
@@ -96,6 +100,7 @@ from dmbot.memory.models import (
     SOURCES,
     STORY_LANGUAGE_MAX,
     THREAD_STATES,
+    THREAD_TYPES,
     is_id,
     lookup_key,
     name_key,
@@ -131,6 +136,7 @@ _TAGS: dict[str, Table] = {
     "story_language": STORY_LANGUAGES,  # a character's languages from the story (#4229)
     "culture": CULTURES,  # the campaign's named cultures (#4257 slice 3b), before their rows
     "thread_part": THREAD_PARTS,  # a story thread's parts (#4471), after its entries
+    "party_span": PARTY_SPANS,  # who was in the party when (#4537), after its characters
     "state": STATES,
     "claim": CLAIMS,
     "alias": ALIASES,
@@ -138,12 +144,14 @@ _TAGS: dict[str, Table] = {
     # a place's land, climate and who rules it (#4256), after the connections since a road's
     # condition names one (#4258)
     "map_fact": MAP_FACTS,
+    "weather_note": WEATHER_NOTES,  # the weather noted for a place (#4748), after its climate
     "perspective": PERSPECTIVES,  # who holds beliefs (#2409)
     "alias_knower": ALIAS_KNOWERS,  # which characters know an other name (#2935)
     "knower": KNOWERS,  # which characters know each statement (#2995)
     "told": TOLD,  # which character was told an other name is an entry (#3089)
     "belief": BELIEFS,
     "evidence": EVIDENCE,  # what a connection or belief stands on (#2662)
+    "thread_guess": THREAD_GUESSES,  # which mystery a table's guess is about (#4655), after both
     "impression": IMPRESSIONS,
     "attitude": ATTITUDES,
     "correction": CORRECTIONS,
@@ -510,7 +518,38 @@ def _expand_default_stamp(rows: list[Any]) -> list[Any]:
     return out
 
 
+def damaged_tags(rows: list[Any]) -> list[str]:
+    """Which table's rows a damaged memory section breaks on, found by leaving each table out in
+    turn: the tags whose absence makes the rest pass (a table whose rows are refused, or whose
+    absence the rest does not mind). The tags only, never a row or a value (#4858: "bad campaign
+    memory entry" alone says nothing about which of ~30 checks refused it)."""
+    out: list[str] = []
+    for tag in _TAGS:
+        rest = [r for r in rows if not (isinstance(r, dict) and r.get("table") == tag)]
+        if len(rest) == len(rows):
+            continue
+        try:
+            _check_rows(rest)
+        except CampaignError:
+            continue
+        out.append(tag)
+    return out
+
+
 def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
+    """`_check_rows`, and when it refuses the file, the log says which tables it breaks on (tags
+    only, #4858) before the refusal goes on."""
+    try:
+        return _check_rows(rows)
+    except CampaignError:
+        try:
+            log.warning("Backup memory check refused the file: %s", ", ".join(damaged_tags(rows)))
+        except Exception:  # (a diagnosis never changes the refusal)
+            log.warning("Backup memory check refused the file")
+        raise
+
+
+def _check_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
     """A backup's memory rows, every value checked, grouped by table tag. Untrusted:
     raises CampaignError(DAMAGED) on anything out of shape.
 
@@ -572,10 +611,45 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             _check_culture(raw)
         elif table is THREAD_PARTS:
             _check_thread_part(raw)  # (its own words for `kind`, `state`, `status` and `source`)
+        elif table is WEATHER_NOTES:  # (ids, two fixed words and a time, #4748)
+            if not (
+                all(is_id(raw[c]) for c in ("id", "place_id", "climate_id"))
+                and isinstance(raw["kind"], str)
+                and isinstance(raw["climate"], str)
+                and raw["kind"] in weather_note.KINDS
+                and raw["climate"] in weather_note.CLIMATE_SAID
+                and _valid("created_at", raw["created_at"])
+            ):
+                raise CampaignError(DAMAGED)
+        elif table is PARTY_SPANS:  # (ids, times and two fixed words, #4537)
+            if not (
+                all(is_id(raw[c]) for c in ("id", "entity_id"))
+                and all(
+                    raw[c] is None
+                    or (isinstance(raw[c], int) and not isinstance(raw[c], bool)
+                        and 0 <= raw[c] <= INT64_MAX)
+                    for c in ("to_at", "from_minute", "to_minute")
+                )
+                and isinstance(raw["from_at"], int) and not isinstance(raw["from_at"], bool)
+                and 0 <= raw["from_at"] <= INT64_MAX
+                and raw["ended"] in (None, "left", "retired", "died", "away")
+                and (raw["to_at"] is None) == (raw["ended"] is None)
+                and (raw["to_at"] is None or raw["to_at"] >= raw["from_at"])
+                and (raw["to_minute"] is None or raw["to_at"] is not None)
+                and raw["source"] in ("dm", "start")
+                and _valid("created_at", raw["created_at"])
+            ):  # fmt: skip
+                raise CampaignError(DAMAGED)
+        elif table is THREAD_GUESSES:  # (ids and a time only)
+            if not (
+                all(is_id(raw[c]) for c in ("id", "thread_id", "belief_id"))
+                and _valid("created_at", raw["created_at"])
+            ):
+                raise CampaignError(DAMAGED)
         elif table is KNOWERS:  # four statement columns, exactly one set (`_check_knowers`)
             if not all(
                 raw[c] is None or is_id(raw[c])
-                for c in ("about_entity_id", "state_id", "relation_id", "alias_id")
+                for c in ("about_entity_id", "state_id", "relation_id", "alias_id", "backstory_of")
             ) or not all(
                 _valid(c, raw[c])
                 for c in ("id", "perspective_id", "created_at", "confidence", "hidden_by")
@@ -606,6 +680,7 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         by_tag[raw["table"]].append(raw)
     _tidy_evidence(by_tag)
     _check_terms(by_tag)
+    _check_placed_readings(by_tag)
     # A sheet belongs to the player playing the character, as everywhere else (#723).
     # One left from another player, or on an entry with no player (an undone merge), is
     # shown nowhere: dropped, not a reason to refuse the backup. One for an entry not in
@@ -655,12 +730,28 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
                     "added_at": 0,
                 }
             )  # fmt: skip
+    _check_thread_guesses(by_tag)  # which mystery a guess is about (#4655)
+    # The weather already noted (#4748): one for a place or a climate row the file doesn't hold is
+    # dropped, never a reason to refuse it (the note may only come once more).
+    facts = {r["id"] for r in by_tag["map_fact"]}
+    entries = {r["id"] for r in by_tag["entity"]}
+    seen: set[tuple[str, str]] = set()
+    noted = []
+    for w in by_tag["weather_note"]:
+        key = (w["place_id"], w["kind"])
+        if w["place_id"] in entries and w["climate_id"] in facts and key not in seen:
+            seen.add(key)
+            noted.append(w)
+    by_tag["weather_note"] = noted
     # A row asleep waits for entries of this campaign: a name in the mark that is not an entry of
-    # the file is dropped from it (a row left with none is awake), never a reason to refuse.
+    # the file is dropped from it (a row left with none is awake), never a reason to refuse. A
+    # who-knows row may also be marked with its own statement (a character who had left the party
+    # when it was hidden, #4537 §6): that mark is kept.
     entry_ids = {r["id"] for r in by_tag["entity"]}
     for tag in ("knower", "belief"):
         for row in by_tag[tag]:
-            row["hidden_by"] = [h for h in row["hidden_by"] if h in entry_ids]
+            own = {row.get(c) for c in ("about_entity_id", "state_id", "relation_id", "alias_id")}
+            row["hidden_by"] = [h for h in row["hidden_by"] if h in entry_ids or h in own]
     entities = {r["id"]: r for r in by_tag["entity"]}
     if any(r["entity_id"] not in entities for r in by_tag["sheet"]):
         raise CampaignError(DAMAGED)
@@ -668,6 +759,24 @@ def _checked_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
         r for r in by_tag["sheet"] if entities[r["entity_id"]]["played_by"] == r["player_id"]
     ]
     return by_tag
+
+
+def _check_thread_guesses(by_tag: dict[str, list[dict[str, Any]]]) -> None:
+    """Which mystery a table's guess is about (#4655): a row names a story thread and a belief
+    the file holds, one row for each belief, or the file is damaged (the database would refuse it
+    mid-restore otherwise)."""
+    entries = {r["id"]: r for r in by_tag["entity"]}
+    held = {r["id"] for r in by_tag["belief"]}
+    beliefs = [g["belief_id"] for g in by_tag["thread_guess"]]
+    if len(beliefs) != len(set(beliefs)) or any(
+        g["thread_id"] not in entries or g["belief_id"] not in held for g in by_tag["thread_guess"]
+    ):
+        raise CampaignError(DAMAGED)
+    # (one on an entry the DM has since made something other than a story thread is history, and
+    # dropped: a backup must always be loadable)
+    by_tag["thread_guess"] = [
+        g for g in by_tag["thread_guess"] if entries[g["thread_id"]]["type"] in THREAD_TYPES
+    ]
 
 
 def _check_knowers(
@@ -689,6 +798,9 @@ def _check_knowers(
         view = views.get(k["perspective_id"])
         # (a character's point of view, or common knowledge's, #4537: carried like the others)
         if view is None or view["kind"] not in ("pc", "npc", "everyone"):
+            raise CampaignError(DAMAGED)
+        # (whose backstory it came from, #4795: a character in the file, or none)
+        if k.get("backstory_of") is not None and k["backstory_of"] not in held["about_entity_id"]:
             raise CampaignError(DAMAGED)
 
 
@@ -757,7 +869,9 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 **raw,
             }
         elif isinstance(raw, dict) and raw.get("table") == "knower":
-            raw = {"hidden_by": [], **raw}  # from before a hide could put a row to sleep (#3082)
+            # from before a hide could put a row to sleep (#3082) and before a backstory's rows were
+            # marked (#4795: unmarked, as the migration leaves a row it can't trace)
+            raw = {"hidden_by": [], "backstory_of": None, **raw}
         elif isinstance(raw, dict) and raw.get("table") == "claim":
             raw = {
                 "reading": None,
@@ -768,8 +882,10 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
         elif isinstance(raw, dict) and raw.get("table") == "alias":
             raw = {"said_as": None, **raw}  # from before the narrator's spelling (#1419)
         elif isinstance(raw, dict) and raw.get("table") == "map_fact":
-            # (from before named cultures, #4257 slice 3b, and road conditions, #4258)
-            raw = {"culture_id": None, "relation_id": None, **raw}
+            # (from before named cultures, #4257 slice 3b, and road conditions, #4258). The map a
+            # row rests on (#4259) is never restored: maps are not in a backup yet (OWED_TO_BACKUP),
+            # so the row comes back as the DM's or the text's, as when a map is dropped for room.
+            raw = {"culture_id": None, "relation_id": None, **raw, "map_id": None}
         elif isinstance(raw, dict) and raw.get("table") == "predicate":
             raw = {**_NEW_PREDICATE_FIELDS, **raw}
             if raw.get("key") in core_predicates:
@@ -1354,6 +1470,15 @@ def _check_story_languages(rows: Sequence[Mapping[str, Any]], characters: set[st
         seen.add(key)
 
 
+def _check_placed_readings(by_tag: dict[str, list[dict[str, Any]]]) -> None:
+    """A placed reading (#4663) names the connection it was placed on, and the file holds it: a
+    file can't pass a reading off as answered with nothing it became."""
+    held = {str(r["id"]) for r in by_tag["relation"]}
+    for c in by_tag["claim"]:
+        if c["reading"] is not None and c["status"] == "confirmed" and c["fact_id"] not in held:
+            raise CampaignError(DAMAGED)
+
+
 def _check_claim(row: Mapping[str, Any]) -> None:
     """A claim in a file: a status a claim can have, a fact only when it was confirmed, and
     never a plan that someone says is waiting for the DM (a plan is never asked)."""
@@ -1361,8 +1486,12 @@ def _check_claim(row: Mapping[str, Any]) -> None:
         raise CampaignError(DAMAGED)
     if not _reading_ok(row["reading"]):
         raise CampaignError(DAMAGED)
-    if row["reading"] is not None and row["status"] == "confirmed":
-        raise CampaignError(DAMAGED)  # a reading is placed as a belief, never kept as a fact
+    if row["reading"] is not None and row["status"] == "confirmed" and row["fact_id"] is None:
+        # A reading is placed as a belief, never kept as a fact: the DM's place answers it as
+        # "confirmed" with the connection it became (`fact_id`, which `_check_placed_readings`
+        # finds in the file). Before #4663 every placed reading was refused here, so a campaign
+        # whose DM had placed one could not be restored.
+        raise CampaignError(DAMAGED)
     if row["fact_id"] is not None and row["status"] != "confirmed":
         raise CampaignError(DAMAGED)
     if row["status"] == "proposed" and row["how"] == "plan":
@@ -1507,10 +1636,15 @@ def _reading_ok(reading: object) -> bool:
     character's, and short words. Untrusted."""
     if reading is None:
         return True
-    if not isinstance(reading, dict) or set(reading) - {"liar", "spoken_at"} != set(_READING_KEYS):
+    extra = {"liar", "spoken_at", "thread_id"}  # (each only on some readings)
+    if not isinstance(reading, dict) or set(reading) - extra != set(_READING_KEYS):
         return False
+    if "thread_id" in reading and not is_id(reading["thread_id"]):
+        return False  # the mystery a guess is about (#4655): an entry's id
     optional = tuple(
-        (key, kind) for key, kind in (("liar", str), ("spoken_at", int)) if key in reading
+        (key, kind)
+        for key, kind in (("liar", str), ("spoken_at", int), ("thread_id", str))
+        if key in reading
     )
     for key, kind in (*_READING_KEYS.items(), *optional):
         value = reading[key]

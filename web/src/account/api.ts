@@ -121,7 +121,7 @@ export type CampaignSettingName = "visibility" | "level" | "retention";
 
 /** A choice the queue carries: the three above, an optional rule switched on or off (#2753), or a game master
  * added or removed (#2768: `value` is the person's id, `on` true to add). */
-export type QueuedSetting = CampaignSettingName | "optional_rule" | "co_dm" | "pause" | "story_mode" | "dndbeyond_invite" | "rulesets" | "share_improve" | "ask_before_adding";
+export type QueuedSetting = CampaignSettingName | "optional_rule" | "co_dm" | "pause" | "story_mode" | "dndbeyond_invite" | "rulesets" | "share_improve" | "ask_before_adding" | "map_checks";
 
 /** One of a campaign's game masters (#2768; core web/game_masters.py). `plan` is the one whose plan runs the
  * campaign (cannot be removed); `you` is the person looking (may leave). */
@@ -191,6 +191,18 @@ export interface RuleSharing {
   /** Whether the owner's plan lets the campaign share. */
   canShare: boolean;
 }
+/** A newer version of a set the campaign follows, waiting for the next session (#4845): core's own words, shown as given. */
+export interface RuleUpdate {
+  name: string;
+  publisher: string;
+  from: number;
+  to: number;
+  /** Core's count, such as "2 rules" or "3 rules and 1 relationship". */
+  words: string;
+  lines: string[];
+  /** How many more change lines there are beyond `lines`. */
+  more: number;
+}
 /** One side of a decided pair of house rules (#3697): `set` is "" for the campaign's own rule, else the followed set's name. */
 export interface RuleSide {
   set: string;
@@ -241,6 +253,8 @@ export interface CampaignSettings {
   fallbackRules?: "2024" | "2014" | "none";
   /** "Share this campaign's story to improve DMbot" (#3741): on or off; missing from an API older than that. */
   shareImprove?: boolean;
+  /** "Map checks" (#4687; core #4730): on or off, the private note when a distance said at the table is far off a map. Missing from an API older than that. */
+  mapChecks?: boolean;
   /** "Ask me before adding" (#3879; core #3887): on, DMbot asks before it adds what an upload found; off (the default), it adds what it is sure of. Missing from an API older than that. */
   askBeforeAdding?: boolean;
   gameMasters: number;
@@ -644,6 +658,10 @@ export interface PictureItem {
   isPublic: boolean;
   /** The viewer posted it, so the viewer may make it private or delete it. */
   mine: boolean;
+  /** A picture DMbot read out of an uploaded document (#4761): only the campaign's DMs are ever sent it. Absent from an older API. */
+  dmOnly?: boolean;
+  /** The upload it came from, when the API says (#4761). */
+  uploadLabel?: string;
 }
 /** The storage a game master can see: the campaign's total and its permanent part, in megabytes (#3275). */
 export interface PictureUsage {
@@ -1316,6 +1334,26 @@ export interface LoreInput {
   speaker: string;
   rights: boolean;
 }
+/** The lore PDF a DM sent from the website (#4762; core web/lore_pdf.py): numbers and words only, never the file's words. `ref`
+ * names this file to the yes (so a replaced file is never read on the old yes); `pages`, `pictures` and `estimateUsd` come once
+ * DMbot has counted it (nothing is sent to an AI before the yes); `estimateUsd` is dollars. `none` when nothing is waiting. */
+export interface LorePdf {
+  state: "none" | "staged" | "estimating" | "estimated" | "reading" | "done" | "failed";
+  ref?: string;
+  sizeBytes?: number;
+  pages?: number | null;
+  pictures?: number | null;
+  estimateUsd?: number | null;
+  /** The cost in Discord's own sentence, in AI credits ("About 3 AI credits for the lore and its 5 pictures."), from core so the two cannot drift. Null until counted. */
+  estimateWords?: string | null;
+}
+/** What a DM says to read the counted PDF: the file's `ref`, how it is known, whose it is and the right-to-use box. */
+export interface LorePdfGo {
+  ref: string;
+  choice: "world" | "spoilers" | "smart";
+  speaker: string;
+  rights: boolean;
+}
 /** Where an upload stands: stages and counts only, never the words (#3022). Times are the server's seconds. */
 export interface LoreUpload {
   id: string;
@@ -1324,7 +1362,7 @@ export interface LoreUpload {
   state: "waiting" | "working" | "done" | "failed";
   stage: string;
   error: string;
-  source: "paste" | "file" | "link";
+  source: "paste" | "file" | "link" | "pdf";
   choice: "world" | "spoilers" | "smart";
   namesFound: number;
   linksFound: number;
@@ -1343,7 +1381,13 @@ export interface UploadNotice {
   /** While applying: the shared progress shape ("Adding what DMbot found: 40 of 110"). */
   progress?: JobProgress | null;
   label: string;
-  counts: { names: number; byKind: Record<string, number>; connections: number };
+  counts: { names: number; byKind: Record<string, number>; connections: number;
+    /** Hidden things a 🌍 Common knowledge read made known to everyone (#4589); absent from an older API. */
+    revealed?: number;
+  };
+  /** The hidden things the upload made known to everyone (#4661; core #4746): at most 10 plain lines, and how many more. Absent from an older API. */
+  revealedLines?: string[];
+  revealedMore?: number;
   /** Until when Undo works (Unix seconds); null when it no longer does or never did. */
   undoUntil: number | null;
   /** What an Undo took back, once pressed. */
@@ -1396,6 +1440,22 @@ export interface TraitOffer {
   classes: string[];
   upload: string;
   quote: string;
+}
+/** One 🤫 Known or secret? answer's words, as the API gives them (#4598): the button, what it does, and what the page says after. */
+export interface SecretAnswerWords {
+  label: string;
+  says: string;
+  done: string;
+}
+/** One 🤫 question as the page draws it (#4598; core web/secret_questions.py): the words come from the API, the same as Discord's card.
+ * `source` and an empty `says` or `done` are left out by the card. DM only. */
+export interface SecretQuestion {
+  id: string;
+  kind: "narrow" | "replace" | "reveal";
+  heading: string;
+  source: string;
+  keep: SecretAnswerWords;
+  make: SecretAnswerWords;
 }
 /** The bot's answer to "Add all" or its Undo (#3222): counts and progress only, never a name. */
 export interface ConfirmAnswer {
@@ -1757,7 +1817,7 @@ export type RecapAudioLinks = Partial<
 export type RecapAction = "post" | "again" | "drop";
 
 /** Who knows a name or a connection, for the DM's full view (#3167; core #3166). Five plain states. */
-export type KnowWord = "secret" | "hidden_from_the_players" | "known_to_an_npc" | "partly_revealed" | "known_to_the_party";
+export type KnowWord = "secret" | "hidden_from_the_players" | "known_to_an_npc" | "partly_revealed" | "known_to_the_party" | "left_the_party";
 
 /** One name on the Story Graph (#2324). `secret` is sent to the campaign's DMs only. */
 export interface WebNode {
@@ -1765,6 +1825,8 @@ export interface WebNode {
   name: string;
   /** Who knows it, in the DM's full view only (#3167). With it, the old secret and not-revealed words give way. */
   knowWord?: KnowWord;
+  /** Who knows it in one line, worded by core (🌍 ✅ 👥 👤 🤫, a leaver with why), in the DM's full view only (#4778). */
+  knowLine?: string;
   /** The kind's key ("npc", "place", ...). */
   kind: string;
   secret?: boolean;
@@ -1868,6 +1930,7 @@ export interface WebLink {
   secret: boolean;
   /** Who knows the connection, in the DM's full view only (#3167). */
   knowWord?: KnowWord;
+  knowLine?: string;
   /** Who may know a held connection, for the DM's full view (#2935 D4, #3214): only the DM, some characters, or
    * everyone at the table. Absent from an older API. */
   who?: "dm" | "some" | "all" | "common";
@@ -2054,9 +2117,47 @@ export interface WorldLanguageNote {
   from: string;
   fromSession: number | null;
 }
+/** A road whose length DMbot read that a kept map disagrees with (#4677): for the DM to keep, with no "Not right" (the length or
+ * the map may be the one that is off). `name` and `note` are the API's words. `id` is the keep id as the door sends it, `road:<32 hex>`. */
+export interface WorldRoadNote {
+  id: string;
+  name: string;
+  note: string;
+  fromSession: number | null;
+}
 export interface WorldNotes {
   places: WorldPlaceNote[];
   languages: WorldLanguageNote[];
+  /** The Roads group (#4784, behind ROADS_LIVE); an empty list when there is none, absent from an older API. */
+  roads?: WorldRoadNote[];
+}
+/** A character's stretch in the party (#4778 a2): `from` and `to` are unix seconds (`to` null while open); `ended` is why it ended
+ * ("left", "retired", "died", "away") and `session` the session it began at, each null when unknown. */
+export interface PartyRecordSpan {
+  from: number;
+  to: number | null;
+  ended: string | null;
+  session: number | null;
+}
+export interface PartyRecordCharacter {
+  id: string;
+  name: string;
+  inParty: boolean;
+  spans: PartyRecordSpan[];
+}
+/** A member who is behind the rest of the party on one entry (#4793): `count` is how many things they are missing. */
+export interface CatchUpChoice {
+  id: string;
+  count: number;
+}
+/** A message that a new character joined the party (#4778 part b): the DM's question about it, by character names. `answer` is
+ * "waiting", or "everyone" when "Only what everyone knows" was chosen (the DM may still choose "What the party knows"). */
+export interface JoinGroup {
+  group: string;
+  answer: "waiting" | "everyone";
+  names: string[];
+  /** "join" (a new character) or "back" (a character coming back to the party, #4791); a missing kind reads as "join". */
+  kind?: "join" | "back";
 }
 /** One press on World notes: ✅ Keep the shown lines (at most 25), 🚫 Not right on one, or ↩ Undo by its change number. */
 export type WorldNotesChange = { action: "keep"; ids: string[] } | { action: "not"; id: string } | { action: "undo"; batch: number };
@@ -2130,6 +2231,44 @@ export interface StoryThreadSuggestion {
   heard: string[];
 }
 /** One press on the story threads card: keep one (the people and lines ticked, a new name if renamed), turn one down, or Undo. */
+/** One thread with lines waiting for the DM (#4616): `more` lines wait behind the ones shown, `sessions` is how many sessions said them. */
+/** One clue tied to a story thread (#4625; core `thread_clues.py`): `found` once a character finds it, `falseLead` when the DM marked it. */
+export interface ThreadClue {
+  id: string;
+  name: string;
+  falseLead: boolean;
+  found: boolean;
+}
+/** A thread's clues with the count in Discord's words (empty when there is nothing to say). DM only. */
+export interface ThreadClues {
+  count: string;
+  clues: ThreadClue[];
+}
+/** The table's guesses about a story thread (#4665): the lines as the API gives them, in Discord's words. DM only. */
+export interface ThreadGuesses {
+  lines: string[];
+}
+/** One change to a thread's clues: add by name, mark or unmark a false lead, take one off, or Undo a change by its batch. */
+export type ThreadCluesChange =
+  | { action: "add"; name: string }
+  | { action: "word"; clue: string; falseLead: boolean }
+  | { action: "off"; clue: string }
+  | { action: "undo"; batch: number };
+export interface ThreadProgressThread {
+  id: string;
+  name: string;
+  kind: string;
+  lines: { id: string; text: string }[];
+  more: number;
+  sessions: number;
+  /** When the one session was heard, in seconds, or null when there is more than one or no date. */
+  sessionAt: number | null;
+}
+export type ThreadProgressChange =
+  | { action: "keep"; on: string[]; off: string[] }
+  | { action: "none"; lines: string[] }
+  | { action: "undo"; batch: number }
+  | { action: "undo"; lines: string[] };
 export type StoryThreadsChange =
   | { action: "keep"; id: string; on: number[]; name?: string; lines: number[] }
   | { action: "not"; id: string }
@@ -2162,6 +2301,30 @@ export interface MapItem {
   shown?: boolean;
   state?: "usable" | "waiting" | "declined";
   openUrl: string;
+}
+/** A player character of the campaign's party, to tick who knows a waiting claim (#4680 part 1). `id` is the character's entry id. */
+export interface PartyCharacter {
+  id: string;
+  name: string;
+}
+/** A map's pin, path or area (#4672; core `maps.py` `read_features`): `points` are fractions of the picture, across then down, in pairs. */
+export interface MapFeature {
+  id: string;
+  shape: "pin" | "path" | "area";
+  points: number[];
+  label: string;
+  status: "read" | "confirmed";
+  source: "read" | "dm" | "import";
+  targetKind: "place" | "road" | "area" | null;
+  target: string | null;
+}
+/** What DMbot knows of a map: its scale, grid and north, and the marks on it. DM only (#4672). */
+export interface MapFeatures {
+  audience: "dm" | "table";
+  scale: { value: number; unit: "feet" | "miles"; from: "read" | "dm" | "import" } | null;
+  grid: { kind: "none" | "square" | "hex"; cellPx: number | null; cellDistance: number | null; from: "read" | "dm" | "import" | null };
+  north: { angle: number; from: "read" | "dm" | "assumed" };
+  features: MapFeature[];
 }
 export interface MapsRead {
   canManage: boolean;
@@ -2423,15 +2586,26 @@ export const NAME_POLL_MS = 1000;
 export const NAME_POLLS = 60;
 export const READING_POLLS = 150;
 /** What the web's answers say about one queued edit of a connection or a reveal (#2323, #2405). */
-interface WebAnswer {
+export interface WebAnswer {
   state: "waiting" | "working" | "done" | "failed";
   error?: string | null;
+  /** A pick of house rules (#4855): how many changes were left out, and the id for Undo. */
+  left?: number | null;
+  take?: number | null;
   edge?: WebEdge | null;
   removed?: boolean;
   /** The change batch a connection edit made, for its Undo (core #4156). */
   batch?: number | null;
   /** World notes (#4285): how many a ✅ Keep kept. */
   kept?: number | null;
+  /** "Catch up" (#4793): how many things were told; and who is behind (a choices answer: at most four, and `more` left out). */
+  told?: number | null;
+  choices?: CatchUpChoice[] | null;
+  more?: number | null;
+  /** A return to the party (#4778 a2): what the bot asked, "back", "join" (what they know) or "none". */
+  asked?: "back" | "join" | "none" | null;
+  /** The join question's "What the party knows" (#4778): how many things the party gave, or null (`given`, Supervisor's ruling). */
+  given?: number | null;
   /** An Undo of a name fix: how many lines were put back (#2645). */
   putBack?: number | null;
   /** An answer about a reading (#2412): whether it can be undone, and where the wait stands. */
@@ -2674,8 +2848,12 @@ export type WaitingAnswer =
   | { kind: "claim"; action: "unpick"; id: string }
   // Takes back one answer of an "All true" / "All secret" press (#3645): `batch` is the change the answer made.
   | { kind: "claim"; action: "undo"; id: string; batch: number }
+  // "Some know" (#4680 part 1): the claim is held back from the players and known to exactly these party characters (1 to 25 ids).
+  | { kind: "claim"; action: "some"; id: string; characters: string[] }
   | { kind: "backstory"; action: "keep" | "skip"; id: string; secret?: boolean }
   | { kind: "backstory"; action: "keep_all"; ids: string[] }
+  // "Some know" on a backstory connection (#4680 part 2): kept held back from the players, known to exactly these characters.
+  | { kind: "backstory"; action: "some"; id: string; characters: string[] }
   | { kind: "which"; action: "pick"; id: string; entity: string }
   | { kind: "which"; action: "neither"; id: string };
 
@@ -2684,9 +2862,15 @@ export const SIGNED_OUT_EVENT = "dmbot:signed-out";
 
 /** Why a call failed, in a form the page can turn into plain words. */
 export type ApiErrorKind =
+  | "nothing-left" // "Catch up" has nothing left to give (#4793)
+  | "not-in-party" // a leave of someone not in the party now (#4778 a2)
+  | "already-back" // a return of someone already back (#4778 a2)
+  | "not-a-pc" // a character that is not a player character now (#4778 a2)
   | "bad-file" // a sent map is not a PNG, JPEG or WebP picture the page can use, or is too big (#4347)
   | "uploads-off" // sending a map is not set up on the server yet (#4347)
   | "undo-late" // an upload older than 7 days cannot be undone (#3879)
+  | "nothing-left-out" // a pick of a newer version that leaves nothing out (#4855)
+  | "no-room" // the house rules of the campaign and the set together are over the limit (#4855)
   | "no-clock" // a date was asked for, but the campaign has no game clock to count it on (#4503)
   | "undo-done" // an upload that was already undone (#3879)
   | "unavailable" // a player character's icon picture that is not there any more (#3621, #3622)
@@ -2740,6 +2924,7 @@ export type ApiErrorKind =
   | "script-already" // the script was already made (#3899)
   | "script-off" // scripts are switched off on the server (#3899)
   | "nothing" // the speaker has no lines left to remove (#3305)
+  | "not-counted" // a lore PDF's pages and pictures are not counted yet (#4762)
   | "permanent-full" // the permanent pictures are full (400 MB): unmark one to make room (#3275)
   | "refused" // the bot refused a picture action; the error's `note` says why (#3275)
   | "sign-in-again" // acting for a server or deleting needs a sign-in from the last day
@@ -3096,6 +3281,29 @@ export interface AccountApi {
   /** Yes (`keep`) or No (`never`) to one of them: queued for the bot, which applies it as the DM; resolves with the change's number
    * when there is one. Rejects `gone` when it was answered meanwhile. `onLook` hears the wait each time the page looks. */
   answerTrait?(ref: string, offer: Pick<TraitOffer, "entity" | "kind" | "key">, how: "keep" | "never", onLook?: (look: WaitingLook) => void): Promise<{ batch?: number }>;
+  /** The 🤫 Known or secret? questions (#4598): DM only, one at a time on the Questions page; the door answers anyone else with nothing. */
+  secretQuestions?(ref: string): Promise<SecretQuestion[]>;
+  /** Keep (changes nothing) or make (one change, one Undo) for a question; Undo takes back a make by its `batch` (#4598). */
+  answerSecret?(ref: string, change: { action: "keep" | "make"; question: string } | { action: "undo"; batch: number }): Promise<{ batch: number | null }>;
+  /** A player character's stretches in the party (#4778 a2): DM only; the door answers anyone else with nothing. */
+  partyRecord?(ref: string): Promise<PartyRecordCharacter[]>;
+  /** "Has left the party" with why (#4778 a2); Undo by its change number. */
+  partyLeave?(ref: string, character: string, why: "left" | "retired" | "died" | "away"): Promise<{ batch: number | null }>;
+  /** "Back in the party" (#4778 a2): `asked` says what DMbot asks next, and `batch` is for Undo when it asks "what they know". */
+  partyBack?(ref: string, character: string): Promise<{ batch: number | null; asked: "back" | "join" | "none" | null }>;
+  partyUndo?(ref: string, batch: number): Promise<void>;
+  /** Who is behind the rest of the party on one entry, party order, at most four (#4793): `more` is how many were left out. DM only. */
+  catchUpChoices?(ref: string, entry: string): Promise<{ choices: CatchUpChoice[]; more: number }>;
+  /** Catch one member up on an entry (#4793): `told` is how many things, `batch` is the change for Undo (use `partyUndo`). */
+  catchUp?(ref: string, member: string, entry: string): Promise<{ batch: number | null; told: number | null }>;
+  /** The join questions waiting for the DM (#4778 part b): DM only; the door answers anyone else with nothing. */
+  joinQuestions?(ref: string): Promise<JoinGroup[]>;
+  /** "Only what everyone knows" or "What the party knows" for one message, or Undo of the latter by its change number. `given` is how
+   * many things the party gave (null when nothing was copied). */
+  answerJoin?(
+    ref: string,
+    change: { action: "everyone" | "party"; group: string } | { action: "undo"; batch: number },
+  ): Promise<{ batch: number | null; given: number | null }>;
   /** The clean-up page's read (#3740): the groups not linked to a player character. A DM or game master only. */
   graphCleanup?(ref: string): Promise<CleanupView>;
   /** "Where was it said?" for one clean-up entry (#3767; core GET `.../web/cleanup/{id}/places`): the same places `NamePlaces` draws. A DM or game master only. */
@@ -3161,6 +3369,16 @@ export interface AccountApi {
    * waiting are always included), for a campaign's game masters only (#3710). Missing from an older API. */
   aiFeed?(ref: string, kind: "lore" | "import", job: string, after: number): Promise<AiFeedRead>;
   loreRead?(campaignRef: string, id?: string): Promise<LoreUpload | null>;
+  /** A lore PDF (#4762, behind LORE_PDF_LIVE): what is waiting (`none` when nothing is), sending one (the file itself; a new one
+   * replaces the old), asking DMbot to count its pages and pictures (no AI; `onLook` hears the wait), the DM's yes (the same
+   * upload as any lore, polled with `loreRead`) and "Never mind". Refusals: `bad-file`, `uploads-off`, `slow-down` (one is
+   * already being read, or a read is open), `not-counted`, `needs-confirm`, `not-found` (nothing waiting, or another file than
+   * the one shown), `too-soon`, `bad-speaker`, `not-allowed`. */
+  lorePdf?(campaignRef: string): Promise<LorePdf>;
+  lorePdfSend?(campaignRef: string, file: Blob): Promise<LorePdf>;
+  lorePdfCount?(campaignRef: string, onLook?: (progress: JobProgress | null) => void): Promise<LorePdf>;
+  lorePdfGo?(campaignRef: string, input: LorePdfGo): Promise<LoreUpload>;
+  lorePdfDrop?(campaignRef: string): Promise<void>;
   /** One NPC's page. `campaignRef` is `<server>.<campaign>`, `entry` the NPC's id (#2266). */
   npcPage?(campaignRef: string, entry: string): Promise<NpcPage>;
   /** Save my private note on an NPC; an empty note clears it. */
@@ -3249,6 +3467,18 @@ export interface AccountApi {
   /** The story threads DMbot found in an upload (#4482): DM only; the list is read again after every press. */
   storyThreads?(ref: string): Promise<StoryThreads>;
   changeStoryThreads?(ref: string, change: StoryThreadsChange): Promise<StoryThreadsResult>;
+  /** The 🧵 Progress to check lines a session's talk changed on the story threads (#4616): DM only; nothing for anyone else. */
+  threadProgress?(ref: string): Promise<ThreadProgressThread[]>;
+  /** Keep the ticked lines and turn the rest down, none happened, or take either back (#4616; core thread_progress.py). */
+  changeThreadProgress?(ref: string, change: ThreadProgressChange): Promise<{ batch: number | null }>;
+  /** The party's player characters, for the "Some know" picker on a waiting claim (#4680 part 1). DM only. */
+  partyCharacters?(ref: string): Promise<PartyCharacter[]>;
+  /** A story thread's clues (#4625): DM only; the door answers anyone else with nothing. */
+  threadClues?(ref: string, thread: string): Promise<ThreadClues>;
+  /** The table's guesses about a story thread (#4665), read only: DM only; the door answers anyone else with nothing. */
+  threadGuesses?(ref: string, thread: string): Promise<ThreadGuesses>;
+  /** Add, mark, take off or undo a clue on a thread (#4625). */
+  changeThreadClues?(ref: string, thread: string, change: ThreadCluesChange): Promise<{ batch: number | null }>;
   /** A character's languages (#4621): DM only; a place has none. */
   characterLanguages?(ref: string, entity: string): Promise<CharacterLanguages>;
   changeCharacterLanguages?(ref: string, entity: string, change: LanguagesChange): Promise<{ batch: number | null }>;
@@ -3256,6 +3486,8 @@ export interface AccountApi {
   maps?(ref: string): Promise<MapsRead>;
   /** A DM's yes or no, show or hide, remove, a poster's take-back, or Undo; waits for the bot and gives back the change for Undo. */
   changeMaps?(ref: string, change: MapsChange): Promise<MapsResult>;
+  /** A map's pins, scale, grid and north (#4672): DM only. Read only; nothing here is shown to the table. */
+  mapFeatures?(ref: string, map: string): Promise<MapFeatures>;
   /** A picture sent to be a map, with progress reported as it goes; gives back the new map and the batch for Undo. */
   addMap?(ref: string, upload: MapUpload, onLook?: (look: MapUploadLook) => void): Promise<{ mapId: string; batch: number | null }>;
   /** The campaigns with a transcript in the person's servers, for anyone in them (#1501). Missing
@@ -3345,6 +3577,12 @@ export interface AccountApi {
   chooseRuleSharing?(campaignRef: string, choice: RuleSharingChoice): Promise<string>;
   /** Where a choice sent with `chooseRuleSharing` stands. */
   ruleSharingAnswer?(campaignRef: string, answer: string): Promise<RuleSharingAnswer>;
+  /** The newer version of a followed set waiting for the campaign, if any (#4845); the page never takes it. */
+  ruleUpdate?(campaignRef: string): Promise<{ update: RuleUpdate | null }>;
+  /** Keep only the changes at these indexes of the newer version (0-based, #4855); leaving any out ends the follow. */
+  ruleUpdatePick?(campaignRef: string, version: number, kept: number[]): Promise<{ kept: number; left: number; take: number | null }>;
+  /** Undo a pick made within a day (#4855). */
+  ruleUpdateUndo?(campaignRef: string, take: number): Promise<void>;
   /** The pairs of house rules the DM has decided between (#3697). A game master only. */
   ruleDecisions?(campaignRef: string): Promise<RuleDecision[]>;
   /** Whether DMbot may use this person's words to improve itself (#1610); on by default. Missing
@@ -3564,12 +3802,15 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   bad_file: "bad-file",
   uploads_off: "uploads-off",
   nothing: "nothing",
+  not_counted: "not-counted",
   read_too_soon: "read-too-soon",
   hour_full: "hour-full",
   bad_answer: "bad-answer",
   plot_open: "plot-open",
   not_yet: "not-yet",
   changed: "changed",
+  nothing_left_out: "nothing-left-out",
+  no_room: "no-room",
   bad_hash: "bad-hash",
   ended: "ended",
   owner: "owner-offer",
@@ -3639,6 +3880,10 @@ export const errorKinds: Record<string, ApiErrorKind> = {
   undo_done: "undo-done",
   // core's words for Undo this upload (0417): the door's refusals and the bot's outcome words (#3879, #4078)
   too_late: "undo-late",
+  not_in_party: "not-in-party", // the party record's words (#4778 a2)
+  already_back: "already-back",
+  not_a_pc: "not-a-pc",
+  nothing_left: "nothing-left", // "Catch up" has nothing left to give (#4793)
   undone: "undo-done",
   already: "undo-done",
   voice_off: "voice-off",
@@ -3695,8 +3940,8 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer"] as const satisfies readonly (keyof AccountApi)[];
-export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo"] as const satisfies readonly (keyof AccountApi)[];
+export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "lorePdf", "lorePdfSend", "lorePdfCount", "lorePdfGo", "lorePdfDrop", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions", "ruleUpdate"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */
 function lazyArea<K extends keyof AccountApi>(names: readonly K[], load: () => Promise<{ default: (h: ApiHelpers) => Record<string, unknown> }>, h: ApiHelpers): Pick<AccountApi, K> {

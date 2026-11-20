@@ -630,6 +630,46 @@ class ThePath(NamesTest):
         self.assertEqual(await self.relations(), [])  # (nothing was kept)
         self.assertEqual(len(await self.waiting()), 3)  # (and it stays waiting)
 
+    async def test_keep_all_logs_why_each_refused_one_was_refused_and_never_the_names(self) -> None:
+        """#4161: Keep all counted a refusal and said nothing of why; the log now has the rule's
+        sentence (when it is one of the fixed ones) and the connection's kind, no names."""
+        from unittest.mock import patch
+
+        from dmbot.memory.models import MemoryRuleError
+        from dmbot.memory.store import COMPANION_TARGET
+
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
+        names = [view.current.subject, view.current.object]
+        with (
+            patch.object(
+                type(self.memory), "add_relation", side_effect=MemoryRuleError(COMPANION_TARGET)
+            ),
+            self.assertLogs("dmbot.memory.backstory_keep", level="INFO") as logged,
+        ):
+            await view.all_button.callback(self.it())
+        lines = [m for m in logged.output if "was refused (Keep all)" in m]
+        self.assertTrue(lines)
+        self.assertIn(COMPANION_TARGET, lines[0])
+        for line in lines:
+            for name in names:
+                self.assertNotIn(name, line)
+        self.assertEqual(await self.relations(), [])  # (nothing kept: they stay waiting)
+        # a sentence that is not on the fixed list is never logged, only its class: the guarantee
+        # that no campaign's words reach the log
+        words = f"{names[0]} is not welcome at {names[1]}'s table."
+        _, view = await self.offer()  # (the first press ended that card; they are still waiting)
+        with (
+            patch.object(type(self.memory), "add_relation", side_effect=MemoryRuleError(words)),
+            self.assertLogs("dmbot.memory.backstory_keep", level="INFO") as unlisted,
+        ):
+            await view.all_button.callback(self.it())
+        said = [m for m in unlisted.output if "was refused (Keep all)" in m]
+        self.assertTrue(said)
+        self.assertIn("unlisted rule (MemoryRuleError)", said[0])
+        self.assertTrue(all(words not in m and names[0] not in m for m in said))
+
     async def test_a_real_refusal_of_a_travels_with_between_two_non_players_is_loggable(
         self,
     ) -> None:
@@ -729,6 +769,100 @@ class ThePath(NamesTest):
         (rel,) = await self.relations()
         self.assertTrue(rel.secret)
         self.assertEqual(await self.memory.relations(GUILD, self.campaign.id), [])  # not public
+
+    async def pc(self, name: str) -> str:
+        made = await self.memory.add_entity(
+            GUILD, self.campaign.id, type="character", name=name, source="dm",
+            status="confirmed", role="player_character", played_by=9000 + len(name),
+        )  # fmt: skip
+        return made.value.id
+
+    async def backstory(self) -> list[Any]:
+        return [r for r in await self.relations() if r.predicate != "plays"]  # (who plays whom)
+
+    async def test_some_know_keeps_it_held_back_with_exactly_the_ticked_characters(self) -> None:
+        # (#4534) one change; the DM's own choice; the others hear it when it is said
+        cerric = await self.pc("Cerric")
+        await self.pc("Belleros")
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
+        some = self.button(view, "👥 Some know")
+        self.assertFalse(some.disabled)
+        picker_it = self.it()
+        await some.callback(picker_it)
+        picker = picker_it.edit_original_response.await_args.kwargs["view"]
+        self.assertIsInstance(picker, ui_bg.SomeKnowPicker)
+        self.assertEqual(await self.backstory(), [])  # (nothing is written before Save)
+        picker.select._values = [cerric]
+        await picker._ticked(self.it())
+        await picker._save(self.it())
+        rels = [r for r in await self.backstory() if r.unrevealed]
+        self.assertEqual(len(rels), 1)
+        (rel,) = rels
+        self.assertFalse(rel.secret)
+        knowing = await self.memory.connection_knowers(GUILD, self.campaign.id, [rel.id])
+        self.assertEqual(knowing.get(rel.id), [cerric])
+
+    async def test_back_writes_nothing_and_a_non_dm_is_refused_on_every_picker_button(self) -> None:
+        cerric = await self.pc("Cerric")
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
+        picker_it = self.it()
+        await self.button(view, "👥 Some know").callback(picker_it)
+        picker = picker_it.edit_original_response.await_args.kwargs["view"]
+        picker.chosen = [cerric]
+        for press in (picker._ticked, picker._save, picker._back):
+            await press(self.it(MANAGER))
+        self.assertEqual(await self.backstory(), [])
+        await picker._back(self.it())
+        self.assertEqual(await self.backstory(), [])
+
+    async def test_known_to_is_said_once_after_a_save_with_the_icon_for_how_many(self) -> None:
+        # (#4682; §7 since #4537 slice 3a) 👤 for one of the party, ✅ for all; names, never ids
+        cerric = await self.pc("Cerric")
+        belleros = await self.pc("Belleros")
+        await self.read()
+        await self.confirm_all()
+        for ticked, line in (
+            ([cerric], "👤 Known to: Cerric"),
+            ([cerric, belleros], "✅ The whole party knows"),
+        ):
+            _, view = await self.offer()
+            picker_it = self.it()
+            await self.button(view, "👥 Some know").callback(picker_it)
+            picker = picker_it.edit_original_response.await_args.kwargs["view"]
+            picker.chosen = ticked
+            save = self.it()
+            await picker._save(save)
+            said = save.edit_original_response.await_args.kwargs["content"]
+            self.assertTrue(said.startswith(line), said)
+            self.assertNotIn(cerric, said)  # (an id, never)
+            self.assertNotIn("Known to", view.text())  # (once: the next render is the card again)
+
+    async def test_an_empty_save_writes_nothing_and_a_plain_add_after_it_is_everyones(self) -> None:
+        await self.pc("Cerric")
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
+        picker_it = self.it()
+        await self.button(view, "👥 Some know").callback(picker_it)
+        picker = picker_it.edit_original_response.await_args.kwargs["view"]
+        picker.chosen = []
+        await picker._save(self.it())
+        self.assertEqual(await self.backstory(), [])
+        # (the ticks are an argument of the one answer, never state the next ✅ could inherit)
+        await self.button(view, "✅ Add it").callback(self.it())
+        (rel,) = await self.backstory()
+        knowing = await self.memory.connection_knowers(GUILD, self.campaign.id, [rel.id])
+        self.assertEqual(knowing.get(rel.id, []), [])
+
+    async def test_some_know_is_off_with_no_player_characters(self) -> None:
+        await self.read()
+        await self.confirm_all()
+        _, view = await self.offer()
+        self.assertTrue(self.button(view, "👥 Some know").disabled)
 
     async def test_they_survive_a_rebuilt_view_and_a_closed_message(self) -> None:
         await self.read()
@@ -858,6 +992,26 @@ class ThePath(NamesTest):
         view = shown.response.sent[0][1]["view"]
         labels = [str(getattr(b, "label", "")) for b in view.children]
         self.assertFalse(any("connections" in label for label in labels))
+
+    async def test_a_world_connection_between_names_the_players_know_does_not_say_waits(
+        self,
+    ) -> None:
+        # (#4827: the card read what the players are shown only for a hand-over, so a world
+        # connection said "waits" while ✅ saved it as the players' own)
+        it = self.it()
+        await ui_bg.offer(it, self.campaign.id, Upload(TEXT, "your background"))
+        first = it.response.sent[0][1]["view"]
+        first.knows = "world"  # "Everyone knows it"
+        await first._read(self.it())
+        await self.confirm_all()
+        for entry_id in (await self.ids()).values():  # (the names are shown to the players)
+            await self.memory.set_hidden_from_players(
+                GUILD, self.campaign.id, entry_id, False, source="dm", dm_chose_secret=True
+            )
+        _, view = await self.offer()
+        self.assertTrue(view.current.world)
+        self.assertEqual(view._players(view.current).line, "👁️ Players will see it.")  # not "waits"
+        self.assertTrue(view.shown_ids)
 
     async def test_a_card_whose_name_is_hidden_before_the_press_is_kept_unrevealed(self) -> None:
         await self.read()

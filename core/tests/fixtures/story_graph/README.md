@@ -118,6 +118,17 @@ Paste only its `Story threads` line on #3545 (the names and ties of the invented
 
 ### The table's guesses and the guess cases (#4655, quests slice 7)
 
+**Languages heard in a session** (#4229 slice 1d, behind `DMBOT_SESSION_LANGUAGES`) are scored on an invented text too, since the sample session has none (Supervisor's ruling A on #4229). [language_cases_lore.txt](language_cases_lore.txt) is its lore (a ferry landing, two people), [language_cases_session.txt](language_cases_session.txt) its session (four languages heard used, one of them misheard, and runes, a language a character can't speak, a question and two lines with none, which must make nothing), and [language_cases_key.json](language_cases_key.json) / [.md](language_cases_key.md) its key. Run it with the switch on, as a sample of its own, then check the "both" backup against its key:
+
+```
+DMBOT_SESSION_LANGUAGES=1 python -m dmbot.devtools.sample_run ... --lore core/tests/fixtures/story_graph/language_cases_lore.txt --session core/tests/fixtures/story_graph/language_cases_session.txt --yes
+python -m dmbot.devtools.graph_key_check BOTH_BACKUP --key core/tests/fixtures/story_graph/language_cases_key.json --counts-only
+```
+
+The `languages` line gives found, missed and extra; an extra is a must-not line kept. These counts gate the switch.
+
+**The weather a session describes** (#4260 slice 10c-2, behind `DMBOT_WEATHER_NOTES`) is scored on an invented text too (Supervisor's ruling A). [weather_cases_lore.txt](weather_cases_lore.txt) gives two places a climate, and [weather_cases_session.txt](weather_cases_session.txt) describes snow, frost and heat in them, along with a player's guess, weather that isn't there, a question, rain and a figure of speech, which must make nothing. [weather_cases_key.json](weather_cases_key.json) / [.md](weather_cases_key.md) is its key. Run it with the switch on, keep the two climate rows after the lore (the note judges only against kept rows), then read the bot's log lines for the session: `weather: N heard (lines …)` and `Weather notes: N heard, M noted`. A false note is a note on a line the key doesn't list; these counts gate the switch.
+
 The table's guesses on a mystery (theories and accusations: a theory goes to the speaker's character, and to the party only when the whole table agreed) are scored on an invented text, since the sample session has no mystery and no theory (Supervisor's ruling on #4655). Every name and line of it is made up; the four player characters are the sample's, by name only, so the run says who plays each as usual. [guess_cases_lore.txt](guess_cases_lore.txt) is its lore (one village, one mystery), [guess_cases_session.txt](guess_cases_session.txt) its session (six guesses, and a joke, a question, the DM's own hint and a plan that must make none), and [guess_cases_key.json](guess_cases_key.json) / [.md](guess_cases_key.md) its key. Run it as a sample of its own, then check the "both" backup against its key:
 
 ```bash
@@ -126,6 +137,17 @@ python -m dmbot.devtools.graph_key_check BOTH_BACKUP --key core/tests/fixtures/s
 ```
 
 Give the run a deploy number of its own (for example 900 plus the deploy's, `--deploy 935`) so its campaign never takes a kept sample's place or becomes the baseline `--compare` reads. Paste only its `Readings: found, missed, wrong holder, false` line on #3545. The direction of a statement is not scored, and a guess in the party's view where the key has a character's (or the other way round) is a wrong holder. A guess counts as found kept as a belief or waiting as a reading, in the key's point of view; the relationship's own word is not scored. Before slice 7b, the bot reads theories only with `DMBOT_STORY_READINGS` on, so the before figures on a deploy without it are every guess missed.
+
+### Pictures in an uploaded PDF: the picture cases (#4003 slice b)
+
+DMbot's reading of a PDF's pictures (`DMBOT_PICTURE_READING`) is scored on an invented PDF, which a devtool draws: a page of text, a map with five labelled places, a stat table, a handout letter, a portrait (which must be skipped as "other"), an ornament too small to read, and a map drawn as vector lines (nothing to take out). Every name and word in it is made up. [picture_cases_key.json](picture_cases_key.json) says what each picture is and the words it holds. Make the PDF, then score it; the score reads each picture with the fast model, as the bot does, and prints counts only:
+
+```bash
+python -m dmbot.devtools.picture_cases make /tmp/picture_cases.pdf
+python -m dmbot.devtools.picture_cases score /tmp/picture_cases.pdf
+```
+
+Paste its lines on #3545: `kind_right`/`kind_wrong` (map, table, handout or other), `words_found`/`words_missed` (each phrase of the key), `words_not_in_picture` (words read that the picture doesn't hold, the false reads), `other_skipped`, the `cut`, `failed` and `not_read` counts, and `estimate_credits` (5 a picture) beside the run's cost. The switch stays off until these counts are in (Supervisor's ruling on #4003).
 
 ## Changes to the keys
 

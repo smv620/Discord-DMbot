@@ -3,7 +3,8 @@
 // that has names waiting, oldest session first. Each list is the recap page's own (`RecapNameChecks`), so the card,
 // its "Where was it said?", the split and group buttons, Undo and the wait panel are the same and answer the same
 // way; this only finds which recaps to open. Each opens its code only when it is shown (the Questions page stays
-// light). Ids, session dates and counts only come from the campaign's read.
+// light). Ids, session dates and counts only come from the campaign's read. Its `onLeft` is the names still waiting
+// in all its recaps, told once every recap shown has reported (a recap that never reads keeps the part open, #4740).
 import { useEffect, useState } from "preact/hooks";
 
 import { questionsPage as words } from "../content/questions-words";
@@ -13,9 +14,21 @@ import LazyPanel from "./LazyPanel";
 
 const day = (at: number): string => formatDate(new Date(at * 1000).toISOString().slice(0, 10));
 
-export default function QuestionsNames({ api, campaignRef, id }: { api: AccountApi; campaignRef: string; id?: string }) {
+export default function QuestionsNames({
+  api,
+  campaignRef,
+  id,
+  onLeft,
+}: {
+  api: AccountApi;
+  campaignRef: string;
+  id?: string;
+  onLeft?: (left: number) => void;
+}) {
   const [list, setList] = useState<CampaignNameChecks | null>(null);
   const [failed, setFailed] = useState(false);
+  // Each recap's names still waiting, by the recap's ref, as each recap reports (#4740).
+  const [left, setLeft] = useState<Record<string, number>>({});
   useEffect(() => {
     if (!api.campaignNameChecks) return;
     let live = true;
@@ -27,6 +40,13 @@ export default function QuestionsNames({ api, campaignRef, id }: { api: AccountA
       live = false;
     };
   }, [api, campaignRef]);
+
+  useEffect(() => {
+    if (!list || !onLeft) return;
+    if (list.recaps.length === 0) return onLeft(0); // nothing to check: the part is empty at once
+    const refs = list.recaps.map((r) => r.ref);
+    if (refs.every((r) => r in left)) onLeft(refs.reduce((n, r) => n + (left[r] ?? 0), 0));
+  }, [list, left]);
 
   // One wrapper with the id the toggle points at (aria-controls), whatever the list is saying.
   return (
@@ -45,7 +65,11 @@ export default function QuestionsNames({ api, campaignRef, id }: { api: AccountA
         list.recaps.map((r) => (
           <section class="stack" key={r.ref} aria-labelledby={`qn-${r.ref}`}>
             <h3 id={`qn-${r.ref}`}>{words.sessionOf(day(r.at))}</h3>
-            <LazyPanel load={() => import("./RecapNameChecks")} what="the names to check" props={{ api, refId: r.ref }} />
+            <LazyPanel
+              load={() => import("./RecapNameChecks")}
+              what="the names to check"
+              props={{ api, refId: r.ref, onLeft: (n: number) => setLeft((was) => ({ ...was, [r.ref]: n })) }}
+            />
           </section>
         ))
       )}

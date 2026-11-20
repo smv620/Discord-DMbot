@@ -14,10 +14,17 @@ ALLOWED = {
     "migrations/0488_map_close_read.py",  # (the sweep's marks, #4349)
     "migrations/0472_campaign_maps.py",
     "migrations/0480_forget_maps.py",  # account deletion: the uploader's maps, the DM's id (#3274)
+    "migrations/0534_forget_map_reads.py",  # (the same function, with the deletion rule, #4693)
+    "migrations/0536_forget_map_version.py",  # (the same function: the version and re-point, #4711)
     "migrations/0457_map_facts.py",  # (its comment: where `map_id` was left for this table)
     "campaigns/tables.py",
     "lineage.py",
     "pictures/store.py",
+    "migrations/0546_document_maps.py",  # (`from_notice`: the upload a map came from, #4259)
+    "migrations/0530_map_features.py",  # (its pins' foreign key, and two columns, #4670)
+    "migrations/0531_map_pins_web.py",  # (a DM-only web door, read only, #4672)
+    "migrations/0543_world_roads_door.py",  # (a DM-only web door, read only, #4677)
+    "images.py",  # (names the scale's column in a comment only, #4670)
     "memory/_changes.py",  # (the change log and its Undo, #4346: existence checks, never content)
     # The Maps page's read door (#4347): a definer function that applies the player rule inside
     # the database (its shown-and-usable test is `may_use_map`'s, tested in test_web_maps.py),

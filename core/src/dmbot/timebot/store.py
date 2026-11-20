@@ -392,14 +392,19 @@ class ClockStore:
         return stored, token
 
     async def player_characters(self, guild_id: int, campaign_id: str) -> list[tuple[str, str]]:
-        """This campaign's confirmed player characters, (entry id, name) by name: who the DM can
-        place in a split-party group."""
+        """The current party (`party_record.current_members`, #4537: a character who left is not
+        placed), (entry id, name) by name: who the DM can place in a split-party group (§3)."""
+        from dmbot.memory import party_record
+        from dmbot.memory._changes import Scope
+
         async with self._db.guild(guild_id) as conn:
+            members = await party_record.current_members(Scope(conn, guild_id, campaign_id, 0))
+            if not members:
+                return []
             cur = await conn.execute(
                 "SELECT id, name FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
-                " AND type = 'character' AND role = 'player_character' AND status = 'confirmed'"
-                " ORDER BY lower(name), id",
-                (guild_id, campaign_id),
+                " AND id = ANY(%s) ORDER BY lower(name), id",
+                (guild_id, campaign_id, members),
             )
             return [(str(r["id"]), str(r["name"])) for r in await cur.fetchall()]
 
@@ -465,6 +470,13 @@ class ClockStore:
                 (guild_id, campaign_id, list(placements)),
             )
             if {str(r["id"]) for r in await cur.fetchall()} != set(placements):
+                raise CampaignError(NOT_A_PLAYER_CHARACTER)
+            # (only the current party is placed, §3: a stale menu can't place one who left, #4537)
+            from dmbot.memory import party_record
+            from dmbot.memory._changes import Scope
+
+            party = set(await party_record.current_members(Scope(conn, guild_id, campaign_id, 0)))
+            if not set(placements) <= party:
                 raise CampaignError(NOT_A_PLAYER_CHARACTER)
             before = await self._current_members(conn, guild_id, campaign_id)
             await self._write_members(

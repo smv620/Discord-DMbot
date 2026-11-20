@@ -36,6 +36,14 @@ class Feature:
 
 FEATURES: tuple[Feature, ...] = (
     Feature(
+        "party join question",
+        "Catching up a new party member",
+        "When a character joins the party, DMbot asks you what they know about what came before.",
+        lambda s: s.party_join_on,
+        ("party_join_on",),
+        for_dms=False,  # (a server trial until dev1's check, like the other story switches)
+    ),
+    Feature(
         "handover by email",
         "Hand over by email",
         "A campaign is handed over by a link sent to an email address.",
@@ -144,7 +152,9 @@ FEATURES: tuple[Feature, ...] = (
         "Quick questions",
         "Ask DMbot a question in the game and get a short private answer.",
         lambda s: s.sidebar_on,
-        ("sidebar_on",),
+        # (map answers, #4670 4b, need the sidebar; the same switch also turns on World notes'
+        # road lengths and the road page's map line, 4c-1, which don't)
+        ("sidebar_on", "map_measure_on"),
     ),
     Feature(
         "sidebar recall",
@@ -174,8 +184,10 @@ FEATURES: tuple[Feature, ...] = (
             "story_reveals_precheck",
             "story_threads_on",
             "met_unnamed_on",
+            "session_languages_on",
             "private_scenes_on",
             "picture_names_on",
+            "picture_reading_on",
             "story_who_on",
             "story_who_apply_on",
             "story_family_only",
@@ -268,6 +280,14 @@ FEATURES: tuple[Feature, ...] = (
         for_dms=False,  # not live until the consent wording is: for whoever runs DMbot
     ),
     Feature(
+        "map layers",
+        "What your maps show about places",
+        "",
+        lambda s: s.map_layers_on,
+        ("map_layers_on", "weather_notes_on"),  # (the weather check reads the kept climates)
+        for_dms=False,  # not live yet: on only after dev1's scored run on the sample map (#4259)
+    ),
+    Feature(
         "who is he",
         'Who "he" and "she" are in a document',
         "",
@@ -290,6 +310,30 @@ FEATURES: tuple[Feature, ...] = (
         lambda s: s.recap_by_rank_on,
         ("recap_by_rank_on",),
         for_dms=False,  # not live yet: on only after the before-and-after scores (#3172)
+    ),
+    Feature(
+        "remembered players",
+        "Pickers list the players you have played with first",
+        "",
+        lambda s: s.remembered_players_on,
+        ("remembered_players_on",),
+        for_dms=False,  # not live yet: on with the website's half (#4226)
+    ),
+    Feature(
+        "recap colour",
+        "Recaps use what the table knows of the places they visited",
+        "",
+        lambda s: s.recap_colour_on,
+        ("recap_colour_on",),
+        for_dms=False,  # not live yet: on only after the before-and-after scores (#4721)
+    ),
+    Feature(
+        "recap reveals",
+        "Recaps mention that someone learned something, without saying what",
+        "",
+        lambda s: s.recap_reveals_on,
+        ("recap_reveals_on",),
+        for_dms=False,  # not live yet: on only after the before-and-after scores (#4737)
     ),
     Feature(
         "test recordings",

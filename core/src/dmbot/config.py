@@ -124,6 +124,12 @@ class Settings:
     # suggested on the 📜 card. Off until dev1's scored sample run shows the other counts no worse
     # (Supervisor's ruling C on #4522; docs/GO_LIVE.md)
     story_threads_on: bool = False
+    # MapBot's "how far" and "which way" answers from kept maps (#4670 4b), and 4c's private note
+    map_measure_on: bool = False
+    # MapBot's layers from maps (#4259 slice 8a): what a map shows outright (a legend, a labelled
+    # border, a colour key, a terrain symbol) written as layer rows for the DM to check. Off until
+    # dev1's scored run on the sample map (rows found, wrong rows, false notes per layer).
+    map_layers_on: bool = False
     # Ask the reveal question only of batches that could hold one (#2996): off until dev1's run
     # shows the kept reveals don't drop with it on.
     story_reveals_precheck: bool = False
@@ -131,6 +137,17 @@ class Settings:
     # asked in the claims call itself. Off until the DM's list of them (#4045) has merged
     # (Supervisor, 2026-11-10).
     met_unnamed_on: bool = False
+    # #4229 1d: the session reader also asks which languages a character was heard speaking, each
+    # a question for the DM (DMBOT_SESSION_LANGUAGES, off until dev1's language_cases counts)
+    session_languages_on: bool = False
+    # a character who joins a party with members is asked about ("What does Mira know about what
+    # came before?") instead of copied what the party knows (DMBOT_PARTY_JOIN, #4537 slice 2b; off
+    # until dev1's check on the test server)
+    party_join_on: bool = False
+    # #4260 10c-2: the session reader also hears snow, frost or heat the DM described in a named
+    # place, and the DM gets a private note when it plainly can't fit the kept climate
+    # (DMBOT_WEATHER_NOTES, off until dev1's weather_cases counts)
+    weather_notes_on: bool = False
     # Private scenes between two player characters (#2996 rule 5), found by code after a session
     # from the game clock and who spoke: no AI call. Off until dev1 has checked it (Supervisor,
     # 2026-11-10).
@@ -144,6 +161,11 @@ class Settings:
     # in Names to check, its note saying so. Off until the picture reading (CloudDev-lead's half) is
     # built and dev1 has checked a sample.
     picture_names_on: bool = False
+    # Reading an uploaded PDF's pictures (#4003; Supervisor's ruling on #4003): its maps, tables
+    # and handouts are taken out (`memory.pdf_pictures`) and their cost shown before the DM's yes.
+    # Reading them (a vision call, slice b) and keeping them for the DMs alone (slice c) are still
+    # to come, so this stays off until they are and dev1's counts on the invented fixture are in.
+    picture_reading_on: bool = False
     # Who a waiting name is (#3602): after a session, the AI ranks the few entries each name to
     # check could be, kept for the DM's card and the website. It only ranks: nothing is applied.
     # Off until the extractor is; it only runs when the extractor does, inside the same call limits.
@@ -155,6 +177,17 @@ class Settings:
     # importance rank sorts first and the connection score breaks ties. Off until dev1's
     # before-and-after `recap_run --score` table and the owner's go.
     recap_by_rank_on: bool = False
+    # Discord's player pickers list the DM's remembered players first, marked (#4724, the Discord
+    # half of #4226). Off until the website's half goes live with it (`REMEMBERED_PLAYERS_LIVE`).
+    remembered_players_on: bool = False
+    # The recap writer is given the land, climate, ruler, culture and people of the places a session
+    # visited, as the players know them, as background (#4721, MapBot slice 10b). Off until dev1's
+    # before-and-after `recap_run --score` counts are in and the owner's go.
+    recap_colour_on: bool = False
+    # The recap cites each partial reveal of the session (who learned something, never what) as a
+    # non-specific sentence, and its checks refuse added detail (#4737, #2997). Off until dev1's
+    # before-and-after `recap_run --score` counts are in and the owner's go.
+    recap_reveals_on: bool = False
     # Mine family connections only (#2960; owner, 2026-10-29): a claim that is not a family role
     # is dropped in code, and no readings are asked. Off: every kind of claim, as before.
     story_family_only: bool = False
@@ -521,6 +554,19 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_RECAP_BY_RANK must be 1 (on) or 0 (off), got "' + by_rank_raw + '".'
         )
+    remembered_raw = (get("DMBOT_REMEMBERED_PLAYERS") or "0").lower()
+    if remembered_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_REMEMBERED_PLAYERS must be 1 (on) or 0 (off), got "' + remembered_raw + '".'
+        )
+    colour_raw = (get("DMBOT_RECAP_COLOUR") or "0").lower()
+    if colour_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_RECAP_COLOUR must be 1 (on) or 0 (off), got "' + colour_raw + '".')
+    recap_reveals_raw = (get("DMBOT_RECAP_REVEALS") or "0").lower()
+    if recap_reveals_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_RECAP_REVEALS must be 1 (on) or 0 (off), got "' + recap_reveals_raw + '".'
+        )
     precheck_raw = (get("DMBOT_STORY_REVEALS_PRECHECK") or "0").lower()
     if precheck_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -529,6 +575,16 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     met_raw = (get("DMBOT_MET_UNNAMED") or "0").lower()
     if met_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError('DMBOT_MET_UNNAMED must be 1 (on) or 0 (off), got "' + met_raw + '".')
+    languages_raw = (get("DMBOT_SESSION_LANGUAGES") or "0").lower()
+    if languages_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_SESSION_LANGUAGES must be 1 (on) or 0 (off), got "' + languages_raw + '".'
+        )
+    weather_raw = (get("DMBOT_WEATHER_NOTES") or "0").lower()
+    if weather_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_WEATHER_NOTES must be 1 (on) or 0 (off), got "' + weather_raw + '".'
+        )
     scene_filter_raw = (get("DMBOT_SCENE_FILTER") or "0").lower()
     if scene_filter_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -544,6 +600,17 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_PICTURE_NAMES must be 1 (on) or 0 (off), got "' + picture_raw + '".'
         )
+    reading_raw = (get("DMBOT_PICTURE_READING") or "0").lower()
+    if reading_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_PICTURE_READING must be 1 (on) or 0 (off), got "' + reading_raw + '".'
+        )
+    layers_raw = (get("DMBOT_MAP_LAYERS") or "0").lower()
+    if layers_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_MAP_LAYERS must be 1 (on) or 0 (off), got "' + layers_raw + '".')
+    measure_raw = (get("DMBOT_MAP_MEASURE") or "0").lower()
+    if measure_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_MAP_MEASURE must be 1 (on) or 0 (off), got "' + measure_raw + '".')
     threads_raw = (get("DMBOT_STORY_THREADS") or "0").lower()
     if threads_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -697,6 +764,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     sidebar_raw = (get("DMBOT_SIDEBAR") or "0").lower()
     if sidebar_raw not in ("0", "1", "true", "false", "on", "off"):
         raise ConfigError('DMBOT_SIDEBAR must be 1 (on) or 0 (off), got "' + sidebar_raw + '".')
+    party_join_raw = (get("DMBOT_PARTY_JOIN") or "0").lower()
+    if party_join_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_PARTY_JOIN must be 1 (on) or 0 (off), got "' + party_join_raw + '".'
+        )
 
     ai_models, ai_notice = parse_ai_models(get)
     ai_provider_creative, ai_models, gemini_notice = parse_creative_provider(get, ai_models)
@@ -759,16 +831,25 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_deeds_on=deeds_raw in ("1", "true", "on"),
         story_reveals_on=reveals_raw in ("1", "true", "on"),
         story_threads_on=threads_raw in ("1", "true", "on"),
+        map_measure_on=measure_raw in ("1", "true", "on"),
+        map_layers_on=layers_raw in ("1", "true", "on"),
         story_reveals_precheck=precheck_raw in ("1", "true", "on"),
         met_unnamed_on=met_raw in ("1", "true", "on"),
+        session_languages_on=languages_raw in ("1", "true", "on"),
+        party_join_on=party_join_raw in ("1", "true", "on"),
+        weather_notes_on=weather_raw in ("1", "true", "on"),
         private_scenes_on=private_raw in ("1", "true", "on"),
         scene_filter_on=scene_filter_raw in ("1", "true", "on"),
         picture_names_on=picture_raw in ("1", "true", "on"),
+        picture_reading_on=reading_raw in ("1", "true", "on"),
         story_who_on=who_raw in ("1", "true", "on"),
         # (applying needs the ranking: on alone does nothing)
         story_who_apply_on=who_apply_raw in ("1", "true", "on") and who_raw in ("1", "true", "on"),
         story_npc_guess_on=npc_guess_raw in ("1", "true", "on"),
         recap_by_rank_on=by_rank_raw in ("1", "true", "on"),
+        remembered_players_on=remembered_raw in ("1", "true", "on"),
+        recap_colour_on=colour_raw in ("1", "true", "on"),
+        recap_reveals_on=recap_reveals_raw in ("1", "true", "on"),
         story_family_only=family_raw in ("1", "true", "on"),
         theatre_on=theatre_raw in ("1", "true", "on"),
         recap_reads_script=reads_script_raw in ("1", "true", "on")

@@ -9,6 +9,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mockApi } from "../src/account/mock";
 import Questions, { CATCHING_UP_SECONDS, inFixedOrder, mergeUnknown, oldestFirst } from "../src/account/Questions";
 import QuestionsIsland from "../src/account/QuestionsIsland";
+import QuestionsNames from "../src/account/QuestionsNames";
 import QuestionsLink from "../src/account/QuestionsLink";
 import { kindWords, questionsPage as w } from "../src/content/questions-words";
 import type { QuestionCounts } from "../src/account/api";
@@ -17,6 +18,14 @@ const on = vi.hoisted(() => ({ live: true }));
 vi.mock("../src/content/questions-switch", () => ({
   get QUESTIONS_LIVE() {
     return on.live;
+  },
+}));
+
+// The 🤫 Known or secret? question is answered on the page only while its switch is on (#4598).
+const secrets = vi.hoisted(() => ({ on: false }));
+vi.mock("../src/content/secret-questions-switch", () => ({
+  get SECRET_QUESTIONS_LIVE() {
+    return secrets.on;
   },
 }));
 
@@ -96,6 +105,29 @@ describe("the Questions page", () => {
       `${kindWords("heard").label} · 2`,
       `${kindWords("connections").label} · 12`,
     ]); // (names, then what was said, then the connections: a connection is asked once its names are answered)
+  });
+
+  it("answers the known or secret kind on the page only while its switch is on, else says how in Discord", async () => {
+    const now = Math.floor(Date.now() / 1000);
+    const counts = async () => ({
+      serverNow: now,
+      campaigns: [{ ref: "100.cmp1", name: "The Ashen Road", total: 1, countedAt: now - 30, kinds: [{ kind: "secrets", count: 1, oldest: now - 60 }] }],
+    });
+    secrets.on = false;
+    const off = mockApi("table");
+    off.myQuestions = counts as never;
+    render(<Questions api={off} />);
+    const row = (await screen.findByText(`${kindWords("secrets").label} · 1`)).closest("li") as HTMLElement;
+    expect(within(row).queryByRole("link")).toBeNull();
+    expect(within(row).getByText(w.discord)).toBeTruthy();
+    cleanup();
+    secrets.on = true;
+    const on2 = mockApi("table");
+    on2.myQuestions = counts as never;
+    render(<Questions api={on2} />);
+    const row2 = (await screen.findByText(`${kindWords("secrets").label} · 1`)).closest("li") as HTMLElement;
+    expect(within(row2).queryByText(w.discord)).toBeNull();
+    secrets.on = false;
   });
 
   it("a kind that links goes to the page that answers it, and one that can't says how in Discord", async () => {
@@ -533,5 +565,105 @@ describe("Check everything, one walk through what can be answered here (#4193)",
     fireEvent.click(await screen.findByRole("button", { name: w.finishWalk }));
     expect(screen.getByText(w.walkEnded)).toBeTruthy();
     expect(screen.getByRole("button", { name: w.checkEverything(9) })).toBeTruthy();
+  });
+});
+
+describe("the walk moves on by itself and keeps focus (#4740)", () => {
+  const many = (): QuestionCounts => ({
+    serverNow: now,
+    campaigns: [
+      {
+        ref: "100.cmp1",
+        name: "The Ashen Road",
+        total: 9,
+        countedAt: now - 30,
+        kinds: [
+          { kind: "connections", count: 4, oldest: now - 400 },
+          { kind: "which", count: 2, oldest: now - 300 },
+          { kind: "readings", count: 3, oldest: now - 200 },
+          { kind: "heard", count: 1, oldest: now - 100 },
+        ],
+      },
+    ],
+  });
+  const connections = kindWords("connections").label;
+  const believe = kindWords("readings").label;
+  const start = async (apply: (api: ReturnType<typeof mockApi>) => void = () => {}) => {
+    const api = mockApi("table");
+    api.myQuestions = async () => many();
+    apply(api);
+    lists.waiting = true;
+    lists.readings = true;
+    render(<Questions api={api} />);
+    await screen.findByText(`${kindWords("connections").label} · 4`);
+    fireEvent.click(screen.getByRole("button", { name: w.checkEverything(9) }));
+    return api;
+  };
+
+  it("the count drops as answers go: the waiting part reports what is still waiting", async () => {
+    await start((api) => {
+      const real = api.webWaiting!.bind(api);
+      api.webWaiting = async (ref) => {
+        const got = await real(ref);
+        return { ...got, claims: got.claims.slice(0, 1), backstory: [], which: [] };
+      };
+    });
+    expect(await screen.findByText(w.partLine(connections, 1, 2, 1))).toBeTruthy();
+  });
+
+  it("a part that empties moves on by itself and says what is done and what is next", async () => {
+    await start((api) => {
+      const real = api.webWaiting!.bind(api);
+      api.webWaiting = async (ref) => ({ ...(await real(ref)), claims: [], backstory: [], which: [] });
+    });
+    expect(await screen.findByText(w.partLine(believe, 2, 2, 3))).toBeTruthy();
+    expect(screen.getByText(w.partDone(connections, believe, 3))).toBeTruthy();
+  });
+
+  it("the last part emptying ends the walk with the end line", async () => {
+    await start((api) => {
+      const real = api.webWaiting!.bind(api);
+      api.webWaiting = async (ref) => ({ ...(await real(ref)), claims: [], backstory: [], which: [] });
+      const readings = api.webReadings!.bind(api);
+      api.webReadings = async (ref) => ({ ...(await readings(ref)), readings: [], counts: { readings: 0 }, capped: false });
+    });
+    expect(await screen.findByText(w.walkEnded)).toBeTruthy();
+  });
+
+  it("a part whose list fails to read stays until Next is pressed", async () => {
+    await start((api) => {
+      api.webWaiting = async () => {
+        throw new Error("down");
+      };
+    });
+    expect(await screen.findByText(w.partLine(connections, 1, 2, 6))).toBeTruthy();
+    expect(screen.getByRole("button", { name: w.nextPart(believe, 3) })).toBeTruthy();
+  });
+
+  it("focus is on the progress line when a part starts, and on the start button after Stop", async () => {
+    await start();
+    const line = (await screen.findByText(w.partLine(connections, 1, 2, 6))).closest("p") as HTMLElement;
+    await waitFor(() => expect(document.activeElement).toBe(line));
+    fireEvent.click(screen.getByRole("button", { name: w.stopForNow }));
+    await waitFor(() => expect(document.activeElement?.textContent).toBe(w.carryOn(9)));
+  });
+});
+
+describe("the names part reports from every recap (#4740)", () => {
+  it("names report 0 only once every recap has reported", async () => {
+    names.on = true; // (the recap's own list is on only where a test turns it on, as above)
+    const api = mockApi("table");
+    api.campaignNameChecks = async () => ({
+      recaps: [
+        { ref: "100.cmp1.a", at: 1_799_000_000, count: 0 },
+        { ref: "100.cmp1.b", at: 1_799_100_000, count: 0 },
+      ],
+    });
+    api.nameChecks = async () => ({ names: [], known: [], kinds: [] });
+    const onLeft = vi.fn();
+    render(<QuestionsNames api={api} campaignRef="100.cmp1" onLeft={onLeft} />);
+    await waitFor(() => expect(onLeft).toHaveBeenCalledWith(0));
+    expect(onLeft.mock.calls.every(([n]) => n === 0)).toBe(true);
+    names.on = false;
   });
 });

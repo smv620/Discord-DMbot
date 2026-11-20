@@ -167,6 +167,20 @@ class PlanChecksSetting(unittest.TestCase):
         self.assertTrue(load_settings({**BASE, "DMBOT_RECAP_BY_RANK": "1"}).recap_by_rank_on)
         with self.assertRaisesRegex(ConfigError, "DMBOT_RECAP_BY_RANK must be 1"):
             load_settings({**BASE, "DMBOT_RECAP_BY_RANK": "maybe"})
+        self.assertFalse(load_settings(BASE).remembered_players_on)  # off unless asked (#4724)
+        self.assertTrue(
+            load_settings({**BASE, "DMBOT_REMEMBERED_PLAYERS": "1"}).remembered_players_on
+        )
+        with self.assertRaisesRegex(ConfigError, "DMBOT_REMEMBERED_PLAYERS must be 1"):
+            load_settings({**BASE, "DMBOT_REMEMBERED_PLAYERS": "maybe"})
+        self.assertFalse(load_settings(BASE).recap_colour_on)  # off unless asked (#4721)
+        self.assertTrue(load_settings({**BASE, "DMBOT_RECAP_COLOUR": "1"}).recap_colour_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_RECAP_COLOUR must be 1"):
+            load_settings({**BASE, "DMBOT_RECAP_COLOUR": "maybe"})
+        self.assertFalse(load_settings(BASE).recap_reveals_on)  # off unless asked (#4737)
+        self.assertTrue(load_settings({**BASE, "DMBOT_RECAP_REVEALS": "1"}).recap_reveals_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_RECAP_REVEALS must be 1"):
+            load_settings({**BASE, "DMBOT_RECAP_REVEALS": "maybe"})
         self.assertFalse(load_settings(BASE).story_family_only)
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_FAMILY_ONLY": "1"}).story_family_only)
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_FAMILY_ONLY must be 1"):
@@ -245,6 +259,18 @@ class PlanChecksSetting(unittest.TestCase):
         self.assertTrue(load_settings({**BASE, "DMBOT_STORY_THREADS": "1"}).story_threads_on)
         with self.assertRaisesRegex(ConfigError, "DMBOT_STORY_THREADS must be 1"):
             load_settings({**BASE, "DMBOT_STORY_THREADS": "maybe"})
+
+    def test_map_answers_are_off_by_default(self) -> None:  # (#4670 4b)
+        self.assertFalse(load_settings(BASE).map_measure_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_MAP_MEASURE": "1"}).map_measure_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_MAP_MEASURE must be 1"):
+            load_settings({**BASE, "DMBOT_MAP_MEASURE": "maybe"})
+
+    def test_map_layers_are_off_by_default(self) -> None:  # (#4259 8a)
+        self.assertFalse(load_settings(BASE).map_layers_on)
+        self.assertTrue(load_settings({**BASE, "DMBOT_MAP_LAYERS": "1"}).map_layers_on)
+        with self.assertRaisesRegex(ConfigError, "DMBOT_MAP_LAYERS must be 1"):
+            load_settings({**BASE, "DMBOT_MAP_LAYERS": "maybe"})
 
     def test_grading_contradictions_is_off_unless_asked(self) -> None:
         self.assertFalse(load_settings(BASE).story_contradictions_on)

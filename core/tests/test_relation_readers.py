@@ -19,6 +19,9 @@ SRC = Path(__file__).resolve().parents[1] / "src" / "dmbot"
 CONFIRMED_ONLY = "reads confirmed connections only (and, for players, only those the party holds)"
 DM_ONLY = "DM-side by design"
 READERS = {
+    "maps/store.py": CONFIRMED_ONLY
+    + ": a stated road length between two kept places beats a measured one (#4670 4b), and a "
+    "kept road's length is checked against the DM's maps (4c, DM only); shows no connection",
     "lineage.py": "only names the table, on the list that carries the build's stamp (#3739)",
     "memory/recall.py": CONFIRMED_ONLY + ": the walk behind NPC pages, table answers and recaps",
     "memory/importance.py": CONFIRMED_ONLY,
@@ -125,6 +128,9 @@ STORE = {
     "untie_clue": CONFIRMED_ONLY + ": the DM takes a live tie off (#4624)",
     "thread_clues": CONFIRMED_ONLY + ": a thread's live clue ties; a player gets only the clues "
     "their characters know, with no word (#4624)",
+    "thread_guesses": "reads a guess's own connection, proposed and secret as placing makes it, "
+    "only to word the guess on a thread's card; a player gets only their own characters' and the "
+    "party's guesses, never as fact (#4655)",
     "_recheck_led_to_after_undo": CONFIRMED_ONLY
     + ': re-checks a "led to" link an Undo made live again',
     "_relations_touching": DM_ONLY + ": the checks, which skip guess connections themselves",
@@ -241,6 +247,15 @@ CHECKS_ONLY = {
 }
 
 
+# DM-only doors that read an unproved connection on purpose: a table's guess sits on a connection
+# the DM has not confirmed (a theory or an accusation is not a fact, §7), and the DM's card shows
+# it to them in Discord. They answer NULL to anyone who is not a DM of the campaign.
+DM_ONLY_UNPROVED = {
+    "dmbot_web_thread_guesses": "0539: the guesses on a story thread's card (#4665), for a DM "
+    "only; a guess's connection is proposed, never confirmed, and a turned-down one is left out",
+}
+
+
 class TheDoors(DatabaseTest):
     async def test_every_door_that_reads_connections_filters_confirmed(self) -> None:
         """The doors as the database has them (the last definition of each, not a string in the
@@ -257,7 +272,7 @@ class TheDoors(DatabaseTest):
         keywords = {"where", "on", "join", "left", "inner", "set", "using", "as", "cross", "for"}
         loose: list[str] = []
         for name, src in doors.items():
-            if name in CHECKS_ONLY:
+            if name in CHECKS_ONLY or name in DM_ONLY_UNPROVED:
                 continue
             for found in re.finditer(r"memory_relations(?:\s+(?:AS\s+)?([A-Za-z_]\w*))?", src):
                 alias = found.group(1)

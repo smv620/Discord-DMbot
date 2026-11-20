@@ -32,6 +32,7 @@ ELSEWHERE: Rules = {
         "dm_players",  # (0450: its own forget function, dmbot_forget_dm_players, #4226)
         "campaign_maps",  # (0480: its own forget function, dmbot_forget_maps, #3274, #4344)
         "installs", "move_code_asks",  # (move_code_asks: ON DELETE CASCADE from web_users, 0069)
+        "web_rule_takes",  # (a day-long undo handle for a website pick, swept within a day, #4841)
     )
 }  # fmt: skip
 BY_DESIGN: Rules = {  # kept on purpose: protects the person, or stops a second free trial (#4145)
@@ -56,6 +57,7 @@ TRANSCRIPTS: Rules = {
         "secret_questions",  # (a 🤫 question's speakers: `secret_questions.forget`, #4524)
         "thread_suggestions",  # (a session's story threads: `thread_suggestions.forget`, #4522)
         "thread_progress",  # (a session's progress on threads: `thread_progress.forget`, #4522)
+        "memory_trait_offers",  # (who said a heard language: `trait_offers.forget_speaker`, #4745)
     )
 }  # fmt: skip
 TRANSCRIPTS.update(
@@ -118,6 +120,7 @@ NAME_NOT_A_PERSON: Rules = {  # a name of something else, with the reason
     "trait_answers": ("name_key",),  # the key of a trait name
     "secret_questions": ("label",),  # an upload's or a session's label, never a person's name
     "thread_suggestions": ("name", "name_key"),  # a story thread's name, built from its parts
+    "memory_trait_offers": ("name", "name_key"),  # the trait's name (a language, lineage or class)
     "web_delete_notices": ("campaign_name",),  # the deleted campaign's name
     "support_replies": ("who",),  # only 'customer', 'ai' or 'person': who wrote, never a name
 }

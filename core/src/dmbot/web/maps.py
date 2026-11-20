@@ -50,6 +50,32 @@ async def read(db: Database, session: Session, ref: str) -> dict[str, Any]:
     return {"canManage": bool(got["isDm"]), "maps": maps}
 
 
+async def read_features(db: Database, session: Session, ref: str, map_id: str) -> dict[str, Any]:
+    """A map's pins, scale, grid and north for the DM only (#4672, MapBot slice 4a; migration
+    0531): `{audience, scale, grid, north, features}` as the door gives them, with each feature's
+    points as fractions of the picture (0 to 1, across then down) and its target named in words
+    (`target`, null for a label DMbot read but could not match to a kept name). `not_allowed` for
+    anyone who is not a DM of the campaign, `not_found` for a map that is not in it. Nothing here
+    is shown to the table, whatever the map's audience (4b's answers are, behind
+    `DMBOT_MAP_MEASURE`)."""
+    guild_id, campaign_id = _parse(ref)
+    _guild_of(session, guild_id)
+    map_id = _map_id(map_id)
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_map_features(%s, %s, %s) AS r", (guild_id, campaign_id, map_id)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if got is None:
+        raise RecapError("not_allowed")
+    if got.get("status") != "ok":
+        raise RecapError("not_found")
+    out: dict[str, Any] = {k: got[k] for k in ("audience", "scale", "grid", "north", "features")}
+    return out
+
+
 def _map_id(value: object) -> str:
     if not isinstance(value, str) or not MAP_ID.fullmatch(value):
         raise RecapError("not_found")

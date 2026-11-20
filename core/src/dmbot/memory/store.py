@@ -53,6 +53,7 @@ from dmbot.memory import (
     map_fact_store,
     merge_restore,
     notify,
+    party_record,
     place_levels,
     place_words,
     report_fixed,
@@ -69,6 +70,7 @@ from dmbot.memory import (
 )
 from dmbot.memory import hand_over as hand_over_mod
 from dmbot.memory import isolated as isolated_mod
+from dmbot.memory import join_questions as join_questions_mod
 from dmbot.memory import lies as lies_mod
 from dmbot.memory import map_facts as mf
 from dmbot.memory import party as party_mod
@@ -77,6 +79,7 @@ from dmbot.memory import secret_questions as secret_questions_mod
 from dmbot.memory import short_names as short_names_mod
 from dmbot.memory import tags as tags_mod
 from dmbot.memory import thread_clues as clues_mod
+from dmbot.memory import thread_guesses as guesses_mod
 from dmbot.memory import thread_progress as tp_mod
 from dmbot.memory import threads as threads_mod
 from dmbot.memory import unnamed as unnamed_mod
@@ -104,6 +107,7 @@ from dmbot.memory._changes import (
     SHEETS,
     STATES,
     STORY_LANGUAGES,
+    THREAD_GUESSES,
     TYPES,
     Changes,
     Scope,
@@ -177,6 +181,7 @@ from dmbot.memory.models import (
     SOURCES,
     SPECIES,
     STORY_LANGUAGE_MAX,
+    THREAD_TYPES,
     WHO_SOURCE,
     WORKED_OUT_SOURCE,
     Alias,
@@ -240,6 +245,33 @@ from dmbot.names import not_names
 from dmbot.timebot.stamp import group_at, group_of_speakers
 
 log = logging.getLogger(__name__)
+
+
+CHOICES_MAX = 25  # (a Discord menu's options)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class JoinChoices:
+    """The "Let me choose" page (#4537 slice 4c): the question's characters (in the party now), the
+    sessions (start, number, character → how many) and story threads (id, name, character → how
+    many) with something to give, and how many of each there are in all."""
+
+    members: list[str]
+    sessions: list[tuple[int, int, dict[str, int]]]
+    threads: list[tuple[str, str, dict[str, int]]]
+    sessions_in_all: int
+    threads_in_all: int
+    nobody_caught_up: bool  # (no one else in the party to catch up from yet)
+
+
+@dataclasses.dataclass(frozen=True, slots=True)
+class PartyAndOthers:
+    """`MemoryStore.party_and_others`: the current party in order, those who left, NPCs."""
+
+    party: list[tuple[str, str]]
+    left: dict[str, tuple[str, str]]
+    npcs: dict[str, str]
+
 
 PERSON = "person"
 PLAYS = "plays"
@@ -790,6 +822,9 @@ class MemoryStore:
         self._db = db
         self._clock = clock
         self.keep_days = keep_days  # how long Undo works: older change-log rows are pruned
+        # `DMBOT_PARTY_JOIN` (#4537 slice 2b): a character joining a party with members is asked
+        # about, never silently copied what the party knows. Off: today's copy (#2995).
+        self.party_join = False
         # The memory version each campaign's flags were last checked at (#347): nothing
         # changed since, nothing to check. Only in this process; a restart checks again.
         # A deleted campaign's entry stays: a few bytes, and never matched again.
@@ -838,6 +873,7 @@ class MemoryStore:
                 conn, guild_id, campaign_id, start, source=source, now=int(self._clock()),
                 undoes=undoes, dm_chose_secret=dm_chose_secret,
             )  # fmt: skip
+            changes.party_join = self.party_join
             # The DM's own fix to a name no chain linked to the party is checked later, 15 minutes
             # after the last one, when the campaign shares its story to improve DMbot (#3741). Who
             # was isolated is read before the write, in its transaction; with the switch off this
@@ -863,6 +899,8 @@ class MemoryStore:
                     " AND campaign_id = %s AND id = ANY(%s)",
                     (changes.batch, guild_id, campaign_id, changes.asked),
                 )
+            if changes.join_asked and changes.batch is not None:
+                await join_questions_mod.set_batch(changes, changes.join_asked, changes.batch)
             if changes.relation_changes or changes.belief_additions or changes.deleted_items:
                 await self._report_fixed(conn, guild_id, campaign_id, changes)
             if changes.restored or changes.unbelieved:
@@ -1702,6 +1740,40 @@ class MemoryStore:
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             return await map_fact_store.facts_for(scope, place_ids, viewer, shown)
 
+    async def recap_colour(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        place_ids: Sequence[str],
+        names: Mapping[str, str],
+    ) -> list[str]:
+        """The background lines of `maps.recap_colour` for the places a session visited, read in
+        one snapshot (#4721): the party's view only, under the names the caller gives."""
+        from dmbot.maps import recap_colour  # (here: `dmbot.maps` imports this module)
+
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await recap_colour.lines(scope, place_ids, names)
+
+    async def recap_reveals(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        session_started_at: int,
+        at_session: Collection[str],
+        mattering: Collection[str],
+        opted_in: Collection[int],
+    ) -> list[str]:
+        """The sentences for this session's partial reveals (`memory.reveal_markers.words`), read
+        in one snapshot (#4737, `DMBOT_RECAP_REVEALS`): who learned something and at most about
+        whom, never what. Only people recorded now (`opted_in`)."""
+        from dmbot.memory import reveal_markers  # (here: it imports the gate, as this module does)
+
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            found = await reveal_markers.session_markers(
+                scope, session_started_at, at_session, mattering, opted_in
+            )
+        return [reveal_markers.words(m) for m in found]
+
     async def map_facts_up(
         self,
         guild_id: int,
@@ -2016,11 +2088,14 @@ class MemoryStore:
 
     # ---- World notes: DMbot's guesses about the world, for the DM to check (#4285) ----------
 
-    async def world_notes(self, guild_id: int, campaign_id: str) -> list[world_notes.Note]:
+    async def world_notes(
+        self, guild_id: int, campaign_id: str, *, with_roads: bool = False
+    ) -> list[world_notes.Note]:
         """Every open World note of the campaign: the DM's own list (the caller checks it is a DM
-        of the campaign asking), never a player's."""
+        of the campaign asking), never a player's. `with_roads`: the road lengths a map disagrees
+        with too (#4670 4c, only while DMBOT_MAP_MEASURE is on)."""
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
-            return await world_notes.read(scope)
+            return await world_notes.read(scope, with_roads=with_roads)
 
     async def keep_world_notes(
         self, guild_id: int, campaign_id: str, line_ids: Sequence[str], *, source: str
@@ -2405,14 +2480,9 @@ class MemoryStore:
                     [clean_text(change.words)],
                 )
                 clue_id = str(have[0]["id"])
-        if made_new:
-            party = await w.select(
-                ENTITIES,
-                " AND type = 'character' AND status = 'confirmed' AND role = %s AND NOT party",
-                [PLAYER_CHARACTER],
-            )
-            if {str(r["id"]) for r in party} - set(finders):  # (only some of the table)
-                await w.update(ENTITIES, clue_id, {"audience_limited": True})
+        # (only some of the current party found it: #4537 rule 13.1)
+        if made_new and set(await party_record.current_members(w)) - set(finders):
+            await w.update(ENTITIES, clue_id, {"audience_limited": True})
         learned = 0
         for character in finders:
             try:
@@ -2777,6 +2847,91 @@ class MemoryStore:
             out.append(clues_mod.ThreadClue(str(clue["id"]), tie_id, name, false_lead, known))
         return sorted(out, key=lambda c: (c.name.lower(), c.clue_id))
 
+    async def thread_guesses(
+        self, guild_id: int, campaign_id: str, thread_id: str, viewer: gate.Viewer
+    ) -> list[guesses_mod.Guess]:
+        """The table's guesses at a thread (#4655), the newest first (`thread_guesses.Guess`).
+        Only a guess still current: its belief is the newest of its character's (or the party's)
+        on its connection, more than 0.0 sure, and the connection was not turned down. The DM:
+        every one. A player: only those held by one of their own characters or by the party, about
+        entries they can see, on a thread they can see (Supervisor's condition on #4655), never
+        another character's."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            links = await scope.select(THREAD_GUESSES, " AND thread_id = %s", [thread_id])
+            if not links:  # (no other read: the card opens quickly)
+                return []
+            linked = await scope.select(
+                BELIEFS, " AND id = ANY(%s)", [[str(r["belief_id"]) for r in links]]
+            )
+            relation_ids = sorted({str(b["relation_id"]) for b in linked})
+            newest: dict[tuple[str, str], int] = {}
+            for b in await scope.select(BELIEFS, " AND relation_id = ANY(%s)", [relation_ids]):
+                key = (str(b["relation_id"]), str(b["perspective_id"]))
+                newest[key] = max(newest.get(key, -1), int(b["seq"]))
+            relations = {
+                str(r["id"]): r
+                for r in await scope.select(
+                    RELATIONS, " AND id = ANY(%s) AND status <> 'rejected'", [relation_ids]
+                )
+            }
+            views = {
+                str(v["id"]): v
+                for v in await scope.select(
+                    PERSPECTIVES,
+                    " AND id = ANY(%s)",
+                    [sorted({str(b["perspective_id"]) for b in linked})],
+                )
+            }
+            named = {str(r[c]) for r in relations.values() for c in ("subject_id", "object_id")}
+            named |= {str(v["entity_id"]) for v in views.values() if v["entity_id"]}
+            names = {
+                str(e["id"]): str(e["name"])
+                for e in await scope.select(ENTITIES, " AND id = ANY(%s)", [sorted(named)])
+            }
+            seen = None if viewer.dm else await gate.visible_to(scope, viewer)
+        if seen is not None and not seen.knows(gate.ENTRY, thread_id):
+            return []  # (a thread the player can't see has no guesses for them, §10.2)
+        out: list[guesses_mod.Guess] = []
+        for b in linked:
+            rel = relations.get(str(b["relation_id"]))
+            view = views.get(str(b["perspective_id"]))
+            if (
+                rel is None
+                or view is None
+                or float(b["confidence"]) <= 0.0
+                or newest.get((str(b["relation_id"]), str(b["perspective_id"]))) != int(b["seq"])
+            ):
+                continue
+            holder_id = str(view["entity_id"]) if view["entity_id"] else ""
+            if view["kind"] == "party":
+                holder = ""
+            elif view["kind"] in ("pc", "npc") and holder_id in names:
+                holder = names[holder_id]
+            else:
+                continue  # (the truth's or everyone's: no guess of the table's)
+            ends = (str(rel["subject_id"]), str(rel["object_id"]))
+            if seen is not None and (
+                (view["kind"] != "party" and holder_id not in viewer.characters)
+                or not all(seen.knows(gate.ENTRY, e) for e in ends)
+            ):
+                continue  # (another character's guess, or a name the player can't see)
+            said = str(rel["detail"] or "") or link_words.connection_words(str(rel["predicate"]))
+            if (
+                seen is not None
+                and rel["status"] != "proposed"
+                and (rel["secret"] or rel["unrevealed"])
+            ):
+                # (a guess placed on a connection the DM keeps hidden: its words are the DM's,
+                # so a player gets the plain kind of connection, never them)
+                said = link_words.connection_words(str(rel["predicate"]))
+            words = f"{names.get(ends[0], '?')} {said} {names.get(ends[1], '?')}"
+            guess = guesses_mod.Guess(
+                str(b["id"]), holder, words, float(b["confidence"]),
+                b["status"] == "accusation", int(b["seq"]),
+            )  # fmt: skip
+            out.append(guess)
+        return sorted(out, key=lambda g: -g.seq)
+
     async def thread_card(
         self, guild_id: int, campaign_id: str, thread_id: str
     ) -> tuple[list[thread_parts.Part], dict[str, str], str | None, list[str]]:
@@ -2984,6 +3139,369 @@ class MemoryStore:
             if row is None:
                 raise MemoryRuleError(NOT_FOUND)
             return _entity(row)
+
+    async def party_spans(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> list[party_record.Span]:
+        """One character's stretches in the party, oldest first (#4537 slice 2a), for its card."""
+        async with self._read(guild_id, campaign_id) as scope:
+            return await party_record.spans(scope, [entity_id])
+
+    async def party_and_others(self, guild_id: int, campaign_id: str) -> PartyAndOthers:
+        """Who may be said to know something, for "Who knows this?" and its icons (#4537 slice
+        3a, §7 and §10): the current party (id, name) in the party list's order; characters who
+        left (id → (name, why)); and NPCs with a point of view (id → name). One read."""
+        async with self._read(guild_id, campaign_id) as scope:
+            members = await party_record.current_members(scope)
+            everyone = await party_record.player_characters(scope)
+            ended = {
+                s.entity_id: s.ended or "left"
+                for s in await party_record.spans(scope, everyone)
+                if not s.open
+            }
+            views = await scope.select(PERSPECTIVES, " AND kind = 'npc' AND entity_id IS NOT NULL")
+            npc_ids = [str(v["entity_id"]) for v in views]
+            ids = sorted({*members, *everyone, *npc_ids})
+            rows = await scope.select(
+                ENTITIES, " AND id = ANY(%s) AND status = 'confirmed' AND merged_into IS NULL",
+                [ids],
+            )  # fmt: skip
+            names = {str(r["id"]): str(r["name"]) for r in rows}
+        party = [(i, names[i]) for i in members if i in names]
+        inside = set(members)
+        left = {
+            i: (names[i], ended.get(i, "left")) for i in everyone if i not in inside and i in names
+        }
+        npcs = {i: names[i] for i in npc_ids if i in names and i not in inside and i not in left}
+        return PartyAndOthers(party, left, npcs)
+
+    async def current_party(self, guild_id: int, campaign_id: str) -> list[str]:
+        """THE current party (`party_record.current_members`, #4537): entry ids, oldest first."""
+        async with self._read(guild_id, campaign_id) as scope:
+            return await party_record.current_members(scope)
+
+    async def leave_party(
+        self, guild_id: int, campaign_id: str, entity_id: str, ended: str
+    ) -> Written[party_record.Span]:
+        """ "Has left the party" (#4537 slice 2a, §6): the DM closes the character's stretch, why in
+        one word (`party_record.ENDED`). One change, one Undo; every row the character holds stays.
+        Refused (`MemoryRuleError`) for a character not in the party now, or a word not offered."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            try:
+                span = await party_record.close_span(w, entity_id, ended)
+            except party_record.PartyError as exc:
+                raise MemoryRuleError(str(exc)) from exc
+            return Written(span, w.batch)
+
+    async def back_in_party(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> Written[tuple[party_record.Span, str | None]]:
+        """ "Back in the party" (#4537 slice 4a, §6): the DM opens a new stretch for a character
+        who left, from the running session's start or now, as for a join. One change, one Undo.
+        Every row from before stays; what happened while away is the DM's to answer, asked as a
+        join is (`knowers.catch_up_returner`). With the stretch, the kind of the question that now
+        waits for the character: BACK, JOIN (one who left before their own join question was
+        answered keeps it: it already covers the time away), or None (nothing asked). Refused
+        (`MemoryRuleError`) for a character in the party now, or not a confirmed player
+        character."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            if entity_id not in await party_record.player_characters(w):
+                raise MemoryRuleError("That character isn't a player character.")
+            try:
+                span = await party_record.open_span(w, entity_id)
+            except party_record.PartyError as exc:
+                raise MemoryRuleError(str(exc)) from exc
+            if span is None:
+                raise MemoryRuleError("That character is in the party now.")
+            await knowers.catch_up_returner(w, entity_id)
+            cur = await w.conn.execute(
+                "SELECT kind FROM memory_join_questions WHERE guild_id = %s AND campaign_id = %s"
+                " AND entity_id = %s AND status = 'waiting'",
+                (*w.ids, entity_id),
+            )
+            row = await cur.fetchone()
+            return Written((span, None if row is None else str(row["kind"])), w.batch)
+
+    # The join question (#4537 slice 2b, §5; `memory/join_questions.py`). The answers are the
+    # DM's: "Only what everyone knows" writes nothing, "What the party knows" and "From the first
+    # session" copy what the party knows in one change with its Undo. Answering again is refused
+    # (`AlreadyAnswered`), except "What the party knows" after "Only what everyone knows".
+
+    async def join_questions_to_send(
+        self, guild_id: int, campaign_id: str
+    ) -> list[join_questions_mod.Question]:
+        """Claim the join questions not sent yet, to send as one message, with none taken while
+        one of the campaign's sessions is running. Give them back with `unclaim_join_questions`
+        when no DM could be reached."""
+        async with self._db.guild(guild_id) as conn:
+            return await join_questions_mod.claim(conn, guild_id, campaign_id, int(self._clock()))
+
+    async def unclaim_join_questions(self, guild_id: int, campaign_id: str, group_id: str) -> None:
+        async with self._db.guild(guild_id) as conn:
+            await join_questions_mod.unclaim(conn, guild_id, campaign_id, group_id)
+
+    async def join_question_group(
+        self, guild_id: int, campaign_id: str, group_id: str
+    ) -> list[join_questions_mod.Question]:
+        async with self._db.guild(guild_id) as conn:
+            return await join_questions_mod.group(conn, guild_id, campaign_id, group_id)
+
+    async def join_question_groups_waiting(self, guild_id: int, campaign_id: str) -> list[str]:
+        """The sent join questions still unanswered (❓ Questions for you), oldest first."""
+        async with self._db.guild(guild_id) as conn:
+            return await join_questions_mod.waiting_groups(conn, guild_id, campaign_id)
+
+    async def join_questions_waiting(
+        self, guild_id: int, campaign_id: str
+    ) -> tuple[int, int | None]:
+        """How many characters wait for the DM's join answer, and since when."""
+        async with self._db.guild(guild_id) as conn:
+            return await join_questions_mod.count_waiting(conn, guild_id, campaign_id)
+
+    async def party_known_count(
+        self, guild_id: int, campaign_id: str, entity_ids: Sequence[str]
+    ) -> int:
+        """How many things "What the party knows" would give these characters now."""
+        async with self._read(guild_id, campaign_id) as scope:
+            return await knowers.party_known_count(scope, entity_ids)
+
+    async def join_question_waiting_for(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> bool:
+        """Whether this character has a join question waiting (the since-when prompt's test)."""
+        async with self._db.guild(guild_id) as conn:
+            return await join_questions_mod.waiting_for(conn, guild_id, campaign_id, entity_id)
+
+    async def join_answer_everyone(
+        self, guild_id: int, campaign_id: str, group_id: str
+    ) -> list[join_questions_mod.Question]:
+        """ "Only what everyone knows": nothing is written. Returns the questions it answered;
+        `AlreadyAnswered` when none was still waiting."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE memory_join_questions SET status = 'everyone', answered_at = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND group_id = %s"
+                f" AND status = 'waiting' RETURNING {join_questions_mod._COLUMNS}",
+                (int(self._clock()), guild_id, campaign_id, group_id),
+            )
+            done = [join_questions_mod._question(r) for r in await cur.fetchall()]
+        if not done:
+            raise join_questions_mod.AlreadyAnswered("Another DM already answered this.")
+        return done
+
+    async def join_answer_party(
+        self, guild_id: int, campaign_id: str, group_id: str
+    ) -> Written[int]:
+        """ "What the party knows": the characters of this message who are still in the party are
+        given what every other current member knows (`knowers.inherit_table_rows`), one change,
+        one Undo. Allowed after "Only what everyone knows"; `AlreadyAnswered` once copied. When
+        there was nothing to copy the question is left as it was, so it can be answered again once
+        the party knows something."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            cur = await w.conn.execute(
+                "SELECT id, entity_id FROM memory_join_questions WHERE guild_id = %s"
+                " AND campaign_id = %s AND group_id = %s"
+                " AND status IN ('waiting', 'everyone', 'chosen')"  # (after picks: the rest, 4c)
+                " ORDER BY created_at, id FOR UPDATE",
+                (*w.ids, group_id),
+            )
+            rows = await cur.fetchall()
+            if not rows:
+                raise join_questions_mod.AlreadyAnswered("Another DM already answered this.")
+            given = await knowers.inherit_table_rows(w, [str(r["entity_id"]) for r in rows])
+            if given and w.batch is not None:
+                await w.conn.execute(
+                    "UPDATE memory_join_questions SET status = 'party', answered_at = %s,"
+                    " answered_batch = %s WHERE guild_id = %s AND campaign_id = %s"
+                    " AND id = ANY(%s)",
+                    (w.now, w.batch, *w.ids, [str(r["id"]) for r in rows]),
+                )
+            return Written(given, w.batch)
+
+    async def join_from_first_session(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> Written[int]:
+        """ "From the first session" (Supervisor's ruling B on #4537): the character was at the
+        table all along, so the stretch is dated from the campaign's first session and, in the
+        same change (one Undo), the character is given what the party knows; a join question
+        still waiting is answered by it. Refused (`MemoryRuleError`) with no session yet or for a
+        character not in the party."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            first = await party_record.first_session_start(w)
+            if first is None:
+                raise MemoryRuleError("This campaign has no sessions yet.")
+            try:
+                await party_record.move_start(w, entity_id, first)
+            except party_record.PartyError as exc:
+                raise MemoryRuleError(str(exc)) from exc
+            given = await knowers.inherit_table_rows(w, [entity_id])
+            # (the stretch moved, so the change has its number: its Undo makes this wait again,
+            # still unsent if it was, so it is sent as the DM is then told)
+            await w.conn.execute(
+                "UPDATE memory_join_questions SET status = 'first', answered_at = %s,"
+                " answered_batch = %s WHERE guild_id = %s AND campaign_id = %s"
+                " AND entity_id = %s AND status = 'waiting'",
+                (w.now, w.batch, *w.ids, entity_id),
+            )
+            return Written(given, w.batch)
+
+    async def tell_choices(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> list[tuple[str, str, int]]:
+        """ "Tell Mira" on this entry's card (#4537 slice 4b, §5): each current member who lacks
+        something on it that the other members know (`knowers.tell_counts`), as (id, name, how
+        many) in the party list's order. One snapshot, every row read once, for a card's draw."""
+        async with self._read(guild_id, campaign_id) as scope:
+            only = await knowers.card_statements(scope, entity_id)
+            counts = await knowers.tell_counts(scope, only)
+            if not counts:
+                return []
+            names = {
+                str(e["id"]): str(e["name"])
+                for e in await scope.select(ENTITIES, " AND id = ANY(%s)", [sorted(counts)])
+            }
+            order = await party_record.current_members(scope)
+            return [(m, names[m], counts[m]) for m in order if m in counts and m in names]
+
+    async def tell_member(
+        self, guild_id: int, campaign_id: str, member_id: str, entity_id: str
+    ) -> Written[int]:
+        """ "Tell Mira": the member is given everything on this entry's card that all the other
+        current members know (`knowers.tell_member`), one change with one Undo. 0 (and no change)
+        when nothing is left to tell; `MemoryRuleError` for one not in the party now."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            if member_id not in await party_record.current_members(w):
+                raise MemoryRuleError("That character isn't in the party now.")
+            told = await knowers.tell_member(w, member_id, entity_id)
+            return Written(told, w.batch if told else None)
+
+    # "Let me choose" (#4537 slice 4c, §5; Supervisor's ruling G on #4537): the question's
+    # characters are caught up one session or one story thread at a time, each pick its own change
+    # with its own Undo. The first pick answers the question ("chosen", 0558); later ones only add.
+
+    async def _choosing(self, w: Scope, group_id: str, *, lock: bool = False) -> list[str]:
+        """The characters of one sent question still to catch up (in the party now). `lock`: a
+        pick holds the question's rows, so an Undo of the join or another answer waits for it
+        (and then finds nothing to give)."""
+        cur = await w.conn.execute(
+            "SELECT entity_id FROM memory_join_questions WHERE guild_id = %s AND campaign_id = %s"
+            " AND group_id = %s AND status IN ('waiting', 'everyone', 'chosen')"
+            " ORDER BY created_at, id" + (" FOR UPDATE" if lock else ""),
+            (*w.ids, group_id),
+        )
+        party = set(await party_record.current_members(w))
+        return [str(r["entity_id"]) for r in await cur.fetchall() if str(r["entity_id"]) in party]
+
+    async def join_choices(self, guild_id: int, campaign_id: str, group_id: str) -> JoinChoices:
+        """The "Let me choose" page: the question's characters, and the sessions and story threads
+        with something to give them, each with how many things for each character. Sessions newest
+        first (the last `CHOICES_MAX`); story threads with the most to give first."""
+        async with self._read(guild_id, campaign_id) as scope:
+            members = await self._choosing(scope, group_id)
+            if not members:
+                return JoinChoices([], [], [], 0, 0, False)
+            cur = await scope.conn.execute(
+                "SELECT started_at, number FROM (SELECT started_at, id, line_count,"
+                " row_number() OVER (ORDER BY started_at, id) AS number FROM transcript_sessions"
+                " WHERE guild_id = %s AND campaign_id = %s"
+                " AND (line_count > 0 OR transcripts_deleted_at IS NOT NULL)) AS s"
+                " WHERE line_count > 0 ORDER BY started_at DESC, id DESC",
+                scope.ids,
+            )
+            numbers = {int(r["started_at"]): int(r["number"]) for r in await cur.fetchall()}
+            nobody = not await knowers.caught_up_others(scope, members)
+            groups: dict[str, Mapping[str, Collection[str]]] = {}
+            for at, only in (await knowers.sessions_statements(scope, list(numbers))).items():
+                groups[f"s{at}"] = only
+            threads = {
+                str(e["id"]): str(e["name"])
+                for e in await scope.select(
+                    ENTITIES, " AND type = ANY(%s) AND status = %s", [list(THREAD_TYPES), CONFIRMED]
+                )
+            }
+            for tid, only in (await knowers.cards_statements(scope, list(threads))).items():
+                groups[f"t{tid}"] = only
+            counts = await knowers.choose_counts(scope, members, groups)
+        sessions = [
+            (at, numbers[at], counts[f"s{at}"]) for at in numbers if f"s{at}" in counts
+        ]  # (newest first)
+        stories = sorted(
+            ((t, threads[t], counts[f"t{t}"]) for t in threads if f"t{t}" in counts),
+            key=lambda x: (-sum(x[2].values()), x[1].casefold()),
+        )
+        return JoinChoices(
+            members, sessions[:CHOICES_MAX], stories[:CHOICES_MAX], len(sessions), len(stories),
+            nobody,
+        )  # fmt: skip
+
+    async def session_number(self, guild_id: int, campaign_id: str, started_at: int) -> int | None:
+        """A session's number as the transcripts count them (a deleted one keeps its place)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT number FROM (SELECT started_at, row_number() OVER (ORDER BY started_at, id)"
+                " AS number FROM transcript_sessions WHERE guild_id = %s AND campaign_id = %s"
+                " AND (line_count > 0 OR transcripts_deleted_at IS NOT NULL)) AS s"
+                " WHERE started_at = %s LIMIT 1",
+                (guild_id, campaign_id, started_at),
+            )
+            row = await cur.fetchone()
+        return None if row is None else int(row["number"])
+
+    async def join_choose(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        group_id: str,
+        *,
+        session_at: int | None = None,
+        thread_id: str | None = None,
+    ) -> Written[tuple[dict[str, int], bool]]:
+        """One "Let me choose" pick (a session's start, or a story thread): each of the question's
+        characters is given what the rest of the party knows from it, one change with one Undo.
+        Returns how many things each was given, and whether this pick answered the question (its
+        Undo then makes it wait again). Nothing given: no change. `AlreadyAnswered` when the
+        question has been answered otherwise ("What the party knows") or has no one left."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            members = await self._choosing(w, group_id, lock=True)
+            if not members:
+                raise join_questions_mod.AlreadyAnswered("Another DM already answered this.")
+            if session_at is not None:
+                only = await knowers.session_statements(w, session_at)
+            elif thread_id is not None:
+                only = await knowers.card_statements(w, thread_id)
+            else:
+                raise MemoryRuleError("Pick a session or a story thread.")
+            told = await knowers.choose_write(w, members, only)
+            first = False
+            if told and w.batch is not None:
+                # (only a question still waiting is answered by a pick: after "Only what everyone
+                # knows" a pick only adds, so its Undo leaves that answer as it was)
+                cur = await w.conn.execute(
+                    "UPDATE memory_join_questions SET status = 'chosen', answered_at = %s,"
+                    " answered_batch = %s WHERE guild_id = %s AND campaign_id = %s"
+                    " AND group_id = %s AND status = 'waiting' RETURNING id",
+                    (w.now, w.batch, *w.ids, group_id),
+                )
+                first = bool(await cur.fetchall())
+                await w.conn.execute(
+                    "UPDATE memory_join_questions SET pick_batches = pick_batches || %s::bigint"
+                    " WHERE guild_id = %s AND campaign_id = %s AND group_id = %s"
+                    " AND status IN ('waiting', 'everyone', 'chosen')",
+                    (w.batch, *w.ids, group_id),
+                )
+            return Written((told, first), w.batch if told else None)
+
+    async def join_from_session(
+        self, guild_id: int, campaign_id: str, entity_id: str, started_at: int
+    ) -> Written[party_record.Span]:
+        """ "Or pick a session…" with a later session: the stretch is dated from that session's
+        start (one change, one Undo). Sessions were missed, so the join question stands."""
+        async with self._write(guild_id, campaign_id, DM) as w:
+            try:
+                span = await party_record.move_start(w, entity_id, started_at)
+            except party_record.PartyError as exc:
+                raise MemoryRuleError(str(exc)) from exc
+            return Written(span, w.batch)
 
     async def make_party(self, guild_id: int, campaign_id: str) -> party_mod.Filled:
         """The party of a campaign (#3954): made with every new campaign, and once for each
@@ -4187,6 +4705,8 @@ class MemoryStore:
                 await record_name_session(w, str(row["id"]), session_started_at)
             if role == PLAYER_CHARACTER and played_by is not None:
                 await _sync_plays(w, row["id"])
+            if status == CONFIRMED:  # (added already kept: a map's pin with its name, #4670)
+                await _rematch_pins(w, str(row["id"]))
             return Written(_entity(row), w.batch)
 
     async def name_met(
@@ -5180,6 +5700,7 @@ class MemoryStore:
             from dmbot.memory.claims import ClaimStore
 
             await ClaimStore(self).keep_dm_claims_in(w, [entity_id])
+            await _rematch_pins(w, entity_id)  # (a map's pin with its name, #4670)
             said = "" if scene is None else "group" if learned else "unknown"
             return Written(_entity(row), w.batch, split=said)
 
@@ -5228,7 +5749,10 @@ class MemoryStore:
                 try:
                     held = (await knowers.connection_knowers(w, [made.id])).get(made.id, [])
                     if known_by not in held:
+                        fresh = not await knowers.holds(w, "connection", made.id, known_by)
                         await knowers.set_connection_knowers(w, made.id, [*held, known_by])
+                        if fresh:  # (the backstory's own character: never copied, #4795)
+                            await knowers.mark_backstory(w, "connection", made.id, known_by)
                 except MemoryRuleError:
                     log.info("A kept tie's first knower was refused")
             if link["upload"]:  # (where it came from, for the DM's "Why?", #2946)
@@ -5583,6 +6107,8 @@ class MemoryStore:
             await self._confirm_group_memberships(w, entity_id)
             # (DMbot's guesses of who knows this name, waiting for this yes: #2959)
             await knowers.apply_waiting_guesses(w, entity_id)
+        if status == CONFIRMED:
+            await _rematch_pins(w, entity_id)
         await _forget_quotes(
             w, [entity_id] if status != PROPOSED and _note_cleared(current) else []
         )
@@ -5966,10 +6492,14 @@ class MemoryStore:
                 if old["kind"] == "old" and kind != "old":
                     upgrade = {**upgrade, "kind": kind}  # asked for by name: listened for again
                 row = await w.update(ALIASES, old["id"], upgrade) if upgrade else old
+                if row["status"] == CONFIRMED:  # (a kept other name: its map pin, #4670)
+                    await _rematch_pins(w, entity_id)
                 return Written(_alias(row), w.batch)
             row = await w.insert(
                 ALIASES, _new_alias(w, entity_id, text, kind, status, secret, used_by)
             )
+            if status == CONFIRMED:
+                await _rematch_pins(w, entity_id)
             return Written(_alias(row), w.batch)
 
     async def add_short_names(
@@ -6824,6 +7354,17 @@ class MemoryStore:
         await thread_parts.move_on_merge(  # a thread's parts (#4471)
             w, keep_id, gone_id, onto.is_a(str(kept["type"]), "thread")
         )
+        from dmbot.maps import positions as map_positions  # (maps builds on this module)
+
+        await map_positions.move_on_merge(w, keep_id, gone_id)  # its pins on maps (#4670)
+        if onto.is_a(str(kept["type"]), "thread"):
+            # The table's guesses at the thread merged away go on the kept one (#4655). Unlogged,
+            # like the link itself: an Undo of the merge leaves them on the kept thread.
+            await w.conn.execute(
+                "UPDATE memory_thread_guesses SET thread_id = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND thread_id = %s",
+                (keep_id, *w.ids, gone_id),
+            )
         await _move_plan_links(w, keep_id, gone_id)
         await states.move_states(w, onto, keep_id, kept["type"], gone_id)
         if confirm_keys and source != DM:
@@ -7687,6 +8228,7 @@ class MemoryStore:
         directional: bool = False,
         decided: str | None = None,
         known_by: Sequence[str] = (),
+        backstory_of: str | None = None,
         keep_flags: bool = False,
         dm_chose_secret: bool = False,
         by_hand: bool = False,
@@ -7720,9 +8262,14 @@ class MemoryStore:
                 try:
                     # (a connection that already existed keeps the characters the DM chose)
                     held = (await knowers.connection_knowers(w, [value[0].id])).get(value[0].id, [])
+                    fresh = backstory_of is not None and not await knowers.holds(
+                        w, "connection", value[0].id, backstory_of
+                    )  # (only a row this write makes is the backstory's, #4795)
                     await knowers.set_connection_knowers(
                         w, value[0].id, [*held, *(k for k in known_by if k not in held)]
                     )
+                    if fresh and backstory_of is not None and backstory_of in known_by:
+                        await knowers.mark_backstory(w, "connection", value[0].id, backstory_of)
                 except MemoryRuleError:
                     log.info("A connection's first knowers were refused")
             return Written(value, w.batch)
@@ -8259,13 +8806,21 @@ class MemoryStore:
         source: str,
         dm_chose_secret: bool,
         players_only: bool = False,
+        backstory_of: str | None = None,
     ) -> Written[list[str]]:
         """ "Who knows this?" for a secret other name (#2935). Only the DM. `players_only`: the
-        list holds player characters only, so an NPC who knows it keeps knowing (#3197)."""
+        list holds player characters only, so an NPC who knows it keeps knowing (#3197).
+        `backstory_of`: the name came from that character's backstory, so that character's row
+        is marked and never copied to another (#4795)."""
         async with self._write(guild_id, campaign_id, source, dm_chose_secret=dm_chose_secret) as w:
+            fresh = backstory_of is not None and not await knowers.holds(
+                w, "alias", alias_id, backstory_of
+            )
             chosen = await knowers.set_alias_knowers(
                 w, alias_id, character_ids, players_only=players_only
             )
+            if fresh and backstory_of is not None and backstory_of in chosen:
+                await knowers.mark_backstory(w, "alias", alias_id, backstory_of)
             return Written(chosen, w.batch)
 
     async def set_statement_knowers(
@@ -8319,17 +8874,24 @@ class MemoryStore:
         pairs: Sequence[tuple[str, str]],
         *,
         source: str,
+        backstory: bool = False,
     ) -> Written[int]:
         """Several (statement, character) pairs learned at once (#3963 b: a backstory section's
         names, by their own character), each as `learn_statement`, in ONE change, so one Undo
         takes them all back. A pair that is refused (a name gone meanwhile) is skipped and the
-        rest are kept. Only the DM. Returns how many changed."""
+        rest are kept. Only the DM. Returns how many changed. `backstory`: each character learns
+        it from its own backstory, so a row this makes is marked and never copied (#4795)."""
         async with self._write(guild_id, campaign_id, source) as w:
             changed = 0
             for statement_id, character_id in pairs:
                 try:  # (`learn` checks before it writes: a refused one leaves the others)
                     await _not_assumed(w, kind, statement_id)
+                    fresh = backstory and not await knowers.holds(
+                        w, kind, statement_id, character_id
+                    )
                     changed += int(await knowers.learn(w, kind, statement_id, character_id))
+                    if fresh:
+                        await knowers.mark_backstory(w, kind, statement_id, character_id)
                 except MemoryRuleError:
                     continue
             return Written(changed, w.batch if changed else None)
@@ -9165,6 +9727,7 @@ class MemoryStore:
             async with self._write(guild_id, campaign_id, source, undoes=batch) as w:
                 await undo_batch(w, batch)
                 await secret_questions_mod.undo(w, batch)
+                await join_questions_mod.undo(w, batch)
                 await _recheck_led_to_after_undo(w, batch)
                 await _settle_kinds_after_undo(w, batch)
                 await _reopen_claims_after_undo(w, batch)
@@ -10781,6 +11344,22 @@ async def _followed(w: Changes, entity_id: str) -> str | None:
             return entity_id if row["status"] == CONFIRMED else None
         entity_id = str(row["merged_into"])
     return None
+
+
+async def _rematch_pins(w: Changes, entity_id: str) -> None:
+    """A place kept now: a map's unmatched pin with its name is tied to it (#4670, Supervisor's
+    ruling 2: a waiting name is never a pin's target, so it is tied when kept)."""
+    from dmbot.maps import positions as map_positions  # (maps builds on this module)
+
+    cur = await w.conn.execute(  # (no unmatched pin in the campaign: nothing more is read)
+        "SELECT 1 FROM map_features WHERE guild_id = %s AND campaign_id = %s AND place_id IS NULL"
+        " AND relation_id IS NULL AND fact_id IS NULL LIMIT 1",
+        w.ids,
+    )
+    if await cur.fetchone() is None:
+        return
+    onto = await _load_ontology(w)
+    await map_positions.rematch_in(w, entity_id, lambda kind: onto.is_a(kind, "place"))
 
 
 async def _delete_relation(w: Changes, relation_id: str) -> None:

@@ -11,12 +11,15 @@ import re
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.maps import disagree, measure, measure_words
 from dmbot.web import relationships
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
 LINE_ID = re.compile(r"^(place|language):[0-9a-f]{32}$")
+# ✅ Keep also takes a road's line (#4677): its length becomes the DM's own. A road has no 🚫.
+KEEP_LINE_ID = re.compile(r"^(place|language|road):[0-9a-f]{32}$")
 KEEP_AT_MOST = 25  # Discord's menu limit: Keep all only keeps lines the DM was shown
 _BATCH = re.compile(r"^[0-9]{1,15}$")
 
@@ -60,7 +63,64 @@ async def read(db: Database, session: Session, ref: str) -> dict[str, Any]:
     return {
         "places": [_line("place", r) for r in by_kind.get("place", [])],
         "languages": [_line("language", r) for r in by_kind.get("language", [])],
+        "roads": await _roads(db, session, guild_id, campaign_id),
     }
+
+
+async def _roads(
+    db: Database, session: Session, guild_id: int, campaign_id: str
+) -> list[dict[str, Any]]:
+    """The road lengths DMbot read that a kept map's straight line disagrees with (#4677; Discord's
+    "Roads" group, `world_notes._roads`): worked out now by the same pure check on the door's rows,
+    and worded by the same function, so the two cannot drift. A road is `road:<id>`; ✅ Keep takes
+    it. Only the DM's maps count, and a travel time is never compared. Empty with no kept map."""
+    async with db.user(session.user_id, session=session.id_hash) as conn:
+        await _scoped(conn, guild_id)
+        cur = await conn.execute(
+            "SELECT dmbot_web_world_roads(%s, %s) AS r", (guild_id, campaign_id)
+        )
+        found = await cur.fetchone()
+    got = found["r"] if found else None
+    if not got or not got.get("roads") or not got.get("maps"):
+        return []
+    maps = [
+        measure.MapInfo(
+            str(m["id"]),
+            str(m["title"]),
+            str(m["kind"]),
+            m["width"],
+            m["height"],
+            m["scale"],
+            str(m["unit"] or ""),
+            float(m["north"]),
+            bool(m["northKnown"]),
+            int(m["createdAt"]),
+        )
+        for m in got["maps"]
+    ]
+    pins = [
+        measure.Pin(str(p["map"]), str(p["place"]), float(p["x"]), float(p["y"]))
+        for p in got.get("pins") or []
+    ]
+    out: list[dict[str, Any]] = []
+    for r in got["roads"]:
+        off = disagree.check_distance(maps, pins, str(r["a"]), str(r["b"]), float(r["amount"]))
+        if off is None:
+            continue
+        out.append(
+            {
+                "id": f"road:{r['id']}",
+                "name": f"{r['aName']} to {r['bName']}",
+                "note": measure_words.road_note(
+                    str(r["stated"]),
+                    r["fromSession"] is not None,
+                    disagree.amount(off),
+                    off.map.title,
+                ),
+                "fromSession": int(r["fromSession"]) if r.get("fromSession") else None,
+            }
+        )
+    return out
 
 
 async def queue_keep(db: Database, session: Session, ref: str, body: object) -> str:
@@ -69,7 +129,7 @@ async def queue_keep(db: Database, session: Session, ref: str, body: object) -> 
     if (
         not isinstance(ids, list)
         or not 1 <= len(ids) <= KEEP_AT_MOST
-        or not all(isinstance(i, str) and LINE_ID.fullmatch(i) for i in ids)
+        or not all(isinstance(i, str) and KEEP_LINE_ID.fullmatch(i) for i in ids)
         or len(set(ids)) != len(ids)
     ):
         raise RecapError("bad_action")

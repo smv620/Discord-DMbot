@@ -214,6 +214,9 @@ AUDIENCE: dict[str, str] = {
             "dm_screen.settings.LevelButton",
             "dm_screen.settings.RulesCardsButton",
             "dm_screen.settings.AskBeforeAddingButton",
+            "dm_screen.settings.MapChecksButton",  # (map checks on or off, #4670 4c-2)
+            "ui.map_checks.StopMapChecksButton",  # (the live note's one button, #4670 4c-2)
+            "ui.map_layers_note.UndoMapLayersButton",  # (a map read's private note, #4259 8a)
             "dm_screen.setting_field.KeepSettingButton",  # (the setting's guess, #4291)
             "dm_screen.setting_field.PickButton",
             "dm_screen.setting_field.WorldMenu",
@@ -299,6 +302,22 @@ AUDIENCE: dict[str, str] = {
             "ui.story_watch.WordsButton",
             "ui.threads.ThreadListButton",
             "ui.threads.ThreadsButton",
+            # 🚪 Has left the party: why, ↩️ Back and ↩️ Undo (#4537 slice 2a)
+            "ui.party_card.WhyButton",
+            "ui.party_card.BackButton",
+            "ui.party_card.LeaveUndoButton",
+            "ui.party_tell.TellUndoButton",
+            "ui.party_card.ReturnUndoButton",
+            # A character joining the party: the join question, since when, 🧭 (#4537 slice 2b)
+            "ui.party_join.EveryoneButton",
+            "ui.party_join.PartyButton",
+            "ui.party_join.JoinUndoButton",
+            "ui.party_join.ChooseButton",
+            "ui.party_choose.PickSelect",
+            "ui.party_choose.ChooseUndoButton",
+            "ui.party_join.SinceButton",
+            "ui.party_join.FirstUndoButton",
+            "ui.party_join.JoinsOpenButton",
         ],
         DM,
     ),

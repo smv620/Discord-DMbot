@@ -6,7 +6,7 @@
 // (`question_counts`); older than five minutes, the page says it is catching up.
 import { matchWords } from "../content/name-matches-words";
 import { NAME_MATCHES_LIVE } from "../content/name-matches-switch";
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
 import { RECAP_NAME_CHECKS_LIVE } from "../content/recap-words";
 import { WEB_READINGS_LIVE } from "../content/web-readings";
@@ -16,14 +16,28 @@ import { kindWords, type QuestionHow, questionsPage as words } from "../content/
 import { type AccountApi, ApiError, type QuestionCampaign, type QuestionCounts, type QuestionKind } from "./api";
 import { campaignHref } from "./campaignLinks";
 import { TRAIT_QUESTIONS_LIVE } from "../content/trait-questions-switch";
+import { SECRET_QUESTIONS_LIVE } from "../content/secret-questions-switch";
+import { PARTY_JOIN_LIVE } from "../content/party-join-switch";
+import { WORLD_NOTES_LIVE } from "../content/world-notes-switch";
+import { THREADS_LIVE } from "../content/threads-switch";
+import { MAPS_LIVE } from "../content/maps-switch";
+import { RULE_UPDATES_LIVE } from "../content/rule-updates-switch";
 import QuestionsHere, { groupOf, type HereGroup } from "./QuestionsHere";
 
 /** The bot counts every minute or so: five minutes without a count and the numbers are said to be old. */
 export const CATCHING_UP_SECONDS = 300;
 
-function href(ref: string, to: "recaps" | "graph" | "names"): string {
+function href(ref: string, to: "recaps" | "graph" | "names" | "maps" | "houserules"): string {
   const e = encodeURIComponent(ref);
-  return to === "recaps" ? `/account/recaps?campaign=${e}` : to === "graph" ? `/account/web/${e}` : `/account/names/${e}`;
+  return to === "recaps"
+    ? `/account/recaps?campaign=${e}`
+    : to === "graph"
+      ? `/account/web/${e}`
+      : to === "maps"
+        ? `/account/maps/${e}`
+        : to === "houserules"
+          ? `/account/house-rules/${e}`
+          : `/account/names/${e}`;
 }
 
 /** Oldest question first; a kind with no time keeps its place after those that have one. */
@@ -56,6 +70,16 @@ export function mergeUnknown(kinds: QuestionKind[]): QuestionKind[] {
 function howFor(kind: string, api: AccountApi): QuestionHow {
   // The lineage and class question (#3946): answered here once its switch is on, else in Discord, as its words say.
   if (kind === "traits") return TRAIT_QUESTIONS_LIVE && api.traitOffers !== undefined ? "here" : "discord";
+  // The 🤫 Known or secret? question (#4598): answered here once its switch is on, else in Discord.
+  if (kind === "secrets") return SECRET_QUESTIONS_LIVE && api.secretQuestions !== undefined ? "here" : "discord";
+  // The join question (#4778 part b): answered here once its switch is on, else in Discord.
+  if (kind === "party_joins") return PARTY_JOIN_LIVE && api.joinQuestions !== undefined ? "here" : "discord";
+  // The three kinds answered on another page (#4841 A): a link to it while that page's switch is on, else in Discord.
+  if (kind === "world_notes") return WORLD_NOTES_LIVE ? "link" : "discord";
+  if (kind === "threads") return THREADS_LIVE ? "link" : "discord";
+  if (kind === "maps") return MAPS_LIVE ? "link" : "discord";
+  // A newer version of a followed house-rules set (#4845): a link to the House rules page while its switch is on.
+  if (kind === "rules") return RULE_UPDATES_LIVE ? "link" : "discord";
   const how = kindWords(kind).how;
   if (how !== "here") return how;
   const group = groupOf(kind);
@@ -90,26 +114,52 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
   const [resume, setResume] = useState(0);
   const [stopped, setStopped] = useState(false); // (stopping on the first part must still read "Carry on")
   const [note, setNote] = useState<string | null>(null);
+  // How many items the walking part still has, as its panel reports them (#4740); null until the panel has reported.
+  const [left, setLeft] = useState<number | null>(null);
+  const movedFrom = useRef<number | null>(null); // the part whose empty list already moved the walk on: once per part
+  const statusRef = useRef<HTMLParagraphElement>(null);
+  const startRef = useRef<HTMLButtonElement>(null);
+  const focusStart = useRef(false); // Stop or the end sends focus back to the start button
   const goTo = (i: number): void => {
     // (an earlier "stopped" or "ended" line goes when a walk starts again)
     setNote(walk !== null ? words.partDone(parts[walk]?.label ?? "", parts[i]?.label ?? "", parts[i]?.count ?? 0) : null);
+    setLeft(null);
+    movedFrom.current = null;
+    focusStart.current = false;
     setWalk(i);
     setResume(i);
     setStopped(false);
   };
   const stop = (): void => {
+    focusStart.current = true;
     setResume(walk ?? 0);
     setStopped(true);
     setWalk(null);
     setNote(words.walkStopped);
   };
   const finish = (): void => {
+    focusStart.current = true;
     setResume(0);
     setStopped(false);
     setWalk(null);
     setNote(words.walkEnded);
   };
   const walking = walk !== null ? parts[walk] : undefined;
+  // An empty part moves the walk on by itself (#4740): once per part, and the last part's end finishes the walk.
+  useEffect(() => {
+    if (walk === null || left !== 0 || movedFrom.current === walk) return;
+    movedFrom.current = walk;
+    if (walk + 1 < parts.length) goTo(walk + 1);
+    else finish();
+  }, [left, walk]);
+  // Focus follows the walk: the progress line when a part starts or changes, the start button after Stop or the end (#4740).
+  useEffect(() => {
+    if (walk !== null) statusRef.current?.focus();
+    else if (focusStart.current) {
+      startRef.current?.focus();
+      focusStart.current = false;
+    }
+  }, [walk]);
   // The bot has never counted this campaign (null) or not lately: the numbers can't be vouched for, so there is no all-clear.
   // DMbot's own matches (#3701): shown with the Names page's panel, so both go live together.
   const guesses = NAME_MATCHES_LIVE && api.nameMatches !== undefined ? (campaign.guesses ?? 0) : 0;
@@ -134,17 +184,24 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
           {parts.length >= 2 && (
             <div class="stack">
               {walking === undefined ? (
-                <button type="button" class="button" onClick={() => goTo(resume)}>
+                <button ref={startRef} type="button" class="button" onClick={() => goTo(resume)}>
                   {!stopped
                     ? words.checkEverything(parts.reduce((n, p) => n + p.count, 0))
                     : words.carryOn(parts.slice(resume).reduce((n, p) => n + p.count, 0))}
                 </button>
               ) : (
                 <section class="stack" aria-label={walking.label}>
-                  <p role="status">
-                    <strong>{words.partLine(walking.label, (walk ?? 0) + 1, parts.length, walking.count)}</strong>
+                  <p ref={statusRef} tabIndex={-1} role="status">
+                    <strong>{words.partLine(walking.label, (walk ?? 0) + 1, parts.length, left ?? walking.count)}</strong>
                   </p>
-                  <QuestionsHere key={walking.group} api={api} campaignRef={campaign.ref} group={walking.group} id={`q-${campaign.ref}-walk`} />
+                  <QuestionsHere
+                    key={walking.group}
+                    api={api}
+                    campaignRef={campaign.ref}
+                    group={walking.group}
+                    id={`q-${campaign.ref}-walk`}
+                    onLeft={setLeft}
+                  />
                   <div class="row">
                     {(walk ?? 0) + 1 < parts.length ? (
                       <button type="button" class="button" onClick={() => goTo((walk ?? 0) + 1)}>
@@ -198,7 +255,7 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
                         <QuestionsHere api={api} campaignRef={campaign.ref} group={groupOf(k.kind) ?? "names"} id={`q-${campaign.ref}-${k.kind}`} />
                       )}
                     </>
-                  ) : w.how !== "discord" && w.to ? (
+                  ) : howFor(k.kind, api) === "link" && w.to ? (
                     <a class="button secondary" href={href(campaign.ref, w.to)}>
                       {w.link}
                     </a>

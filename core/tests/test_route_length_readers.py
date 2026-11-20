@@ -27,6 +27,21 @@ ALLOWED = {
     "ui/name_card.py": "a player's card drops a read (`_rows`, and the route place's line)",
     "ui/place_size.py": "the route place's card line; its buttons are the DM's, checked again",
     "ui/connection_edit.py": "the DM's edit page only (`found.secrets`)",
+    "maps/disagree.py": "only names `route_length` in its docstring: a pure check, shows nothing",
+    "maps/said_phrases.py": "parses words the DM just said with `route_length.parse`; reads no "
+    "stored length, shows nothing (#4670 4c-2)",
+    "maps/store.py": "a stated length beats a measured one (4b), and a kept road's length is "
+    "checked against the DM's maps for the DM alone (#4670 4c); a route's legs drop a read "
+    "length for players (`_road_route`, #4260 10d)",
+    "maps/legs.py": "adds up the lengths it is given; which lengths a player may have is the "
+    "caller's (`store._road_route` drops a read one for players, #4260 10d)",
+    "maps/legs_words.py": "says the lengths it is given; shows players only what `_road_route` "
+    "gave a player's answer (#4260 10d)",
+    "migrations/0543_world_roads_door.py": "a DM-only web door (NULL for anyone else): the roads "
+    "whose read length a kept map disagrees with, for World notes' Roads group (#4677); a read "
+    "length is shown to the DM alone and a length the DM kept is never listed",
+    "memory/world_notes.py": "World notes, the DM's list only: lists DMbot's read of a length a "
+    "map disagrees with, and ✅ makes it the DM's (#4670 4c)",
 }
 NAMES = re.compile(r"\blength_(?:words|from|amount|unit|approx)\b|\broute_length\b")
 

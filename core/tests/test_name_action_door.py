@@ -41,6 +41,25 @@ EVERY_ACTION = (
     "branch-move", "branch-not", "part-undo", "part-date",
     "lang-add", "lang-remove", "lang-check", "lang-undo",  # a character's languages (#4271)
     "thread-keep", "thread-not", "thread-undo",  # story threads DMbot found (#4457)
+    "secret-keep", "secret-make", "secret-undo",  # 🤫 Known or secret? questions (#4598)
+    "progress-keep", "progress-none", "progress-undo",  # Progress to check (#4616)
+    "clue-add", "clue-word", "clue-off", "clue-undo",  # a story thread's clues (#4625)
+    "claim-some",  # keeps a waiting claim for the ticked characters only (#4680)
+    "backstory-keep-some",  # keeps a waiting backstory connection for the ticked (#4680)
+    "lore-pdf-estimate",  # the bot counts a staged lore PDF before the yes (#4762)
+    "join-everyone",  # the DM's join question, answered from the page (#4778)
+    "join-party",
+    "join-undo",
+    "party-leave",  # who is in the party, from the page (#4778)
+    "party-back",
+    "party-undo",
+    "party-catch-up-choices",  # who is missing what on a card (#4793)
+    "party-catch-up",
+    "rules-update-pick",  # a followed set's changes, picked from the page (#4841)
+    "rules-update-undo",
+    "heard-pick",  # "Did they mean…?" from the page (#4841)
+    "heard-keep",
+    "heard-type",  # "Type it…" from the page (#4841)
 )  # fmt: skip
 
 

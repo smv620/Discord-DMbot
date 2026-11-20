@@ -4,6 +4,7 @@
 import type {
   PictureAction,
   PictureActionResult,
+  PictureItem,
   PictureList,
   SessionNotes,
   SessionNotesList,
@@ -14,6 +15,7 @@ import type {
   HouseFileState,
   AiFeedRead,
   LoreUpload,
+  LorePdf,
   CampaignPage,
   CampaignSettingAnswer,
   CharacterSheets,
@@ -28,6 +30,7 @@ import type {
   OptionalRules,
   RuleDecision,
   RuleSharing,
+  RuleUpdate,
   RuleSharingAnswer,
   SharedRulesCampaign,
   SheetAnswer,
@@ -80,7 +83,19 @@ const PICTURE_WIRE_ACTION: Record<PictureAction, string> = {
 /** What the must-haves routes refuse with (#3329, CloudDev-lead's #3340): `too_many` would otherwise read as the game masters' limit. */
 const MUSTS_REFUSALS: Record<string, ApiErrorKind> = { too_many: "musts-full", empty: "musts-empty", too_long: "musts-too-long", bad_arg: "bad-choice" };
 
-export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> {
+/** The DM-only mark and upload label of a picture (#4761): `dmOnly` only when true; `uploadLabel` only plain text of 1 to 200
+ * characters. Everything else on the picture is passed through as the API sent it. */
+export function keepDmOnlyMarks(p: PictureItem): PictureItem {
+  const { dmOnly: _dm, uploadLabel: _label, ...rest } = p;
+  const out: PictureItem = { ...rest };
+  if (p.dmOnly === true) out.dmOnly = true;
+  if (typeof p.uploadLabel === "string" && p.uploadLabel.length >= 1 && p.uploadLabel.length <= 200 && !/[<>]/.test(p.uploadLabel)) {
+    out.uploadLabel = p.uploadLabel;
+  }
+  return out;
+}
+
+export default function campaignArea({ call, waitForAnswer }: ApiHelpers): Partial<AccountApi> {
   return {
     transcriptCampaigns: async () =>
       (
@@ -106,10 +121,11 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
       if (filter.q) params.set("q", filter.q);
       if (filter.before) params.set("before", filter.before);
       const query = params.toString();
-      return (await call(
+      const got = (await call(
         "GET",
         `/me/campaigns/${encodeURIComponent(campaignRef)}/pictures${query ? `?${query}` : ""}`,
       )) as PictureList;
+      return { ...got, pictures: got.pictures.map(keepDmOnlyMarks) };
     },
     pictureAction: async (campaignRef, code, action) =>
       (await call(
@@ -278,6 +294,8 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
       )) as HouseRules,
     ruleDecisions: async (campaignRef) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-decisions`)) as { decisions: RuleDecision[] }).decisions,
+    ruleUpdate: async (campaignRef) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-update`)) as { update: RuleUpdate | null },
     ruleSharing: async (campaignRef) =>
       (await call(
         "GET",
@@ -351,6 +369,21 @@ export default function campaignArea({ call }: ApiHelpers): Partial<AccountApi> 
       (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/house-file`, input)) as HouseFileState,
     aiFeed: async (ref, kind, job, after) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/ai-feed/${kind}/${encodeURIComponent(job)}?after=${after}`)) as AiFeedRead,
+    lorePdf: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/lore-pdf`)) as LorePdf,
+    // The file goes as it is, not as JSON: the API reads it with a running cap.
+    lorePdfSend: async (ref, file) =>
+      (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/lore-pdf`, undefined, false, new Blob([file], { type: "application/octet-stream" }))) as LorePdf,
+    lorePdfCount: async (ref, onLook) => {
+      const queued = (await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/lore-pdf/estimate`, {})) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`/me/campaigns/${encodeURIComponent(ref)}/web/answers/${encodeURIComponent(queued.answer)}`, (look) => onLook?.(sharedOf(look.progress as never)));
+      return (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/lore-pdf`)) as LorePdf;
+    },
+    lorePdfGo: async (ref, input) =>
+      ((await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/lore-pdf/go`, input)) as { upload: LoreUpload }).upload,
+    lorePdfDrop: async (ref) => {
+      await call("DELETE", `/me/campaigns/${encodeURIComponent(ref)}/lore-pdf`);
+    },
     loreRead: async (ref, id) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/lore${id ? `/${encodeURIComponent(id)}` : ""}`)) as { upload: LoreUpload | null }).upload,
   };

@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import dataclasses
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
 
 import discord
@@ -63,7 +63,8 @@ from dmbot.ui.who_knows import (
     WhoKnowsMenu,
     called,
     common_done,
-    player_characters,
+    knows_line,
+    pick_choices,
     taken_back,
     who_text,
 )
@@ -560,8 +561,7 @@ class OneConnection(_Menu):
         if not found.secrets:  # checked on every press
             await _tell(interaction, SECRET_DENIED_PRESS)
             return
-        pcs = await player_characters(found.memory, found.campaign)
-        await _replace(interaction, *await _who_page(found, self.campaign_id, self.entity_id, pcs))
+        await _replace(interaction, *await _who_page(found, self.campaign_id, self.entity_id))
 
     async def _pin(self, interaction: discord.Interaction) -> None:
         await _answer_first(interaction, in_place=True)
@@ -621,7 +621,7 @@ class OneConnection(_Menu):
         if written.batch is None:
             await _tell(interaction, NOTHING_CHANGED)
             return
-        note = length_note(written.value, kept=False)
+        note = length_note(written.value, kept=False) + await map_line(interaction, found)
         await self._changed(interaction, found, note, undo=written.batch)
 
     async def _keep_length(self, interaction: discord.Interaction) -> None:
@@ -641,7 +641,7 @@ class OneConnection(_Menu):
         except MemoryRuleError as exc:
             await _tell(interaction, str(exc))  # (the length changed meanwhile: plain words)
             return
-        note = length_note(written.value, kept=True)
+        note = length_note(written.value, kept=True) + await map_line(interaction, found)
         await self._changed(interaction, found, note, undo=written.batch)
 
     async def _remove(self, interaction: discord.Interaction) -> None:
@@ -728,6 +728,32 @@ class RouteLengthForm(discord.ui.Modal, title="How far is it?"):
         await self._done(interaction, text)
 
 
+async def map_line(interaction: discord.Interaction, found: Found) -> str:
+    """After the DM sets or keeps a road's length (#4670 4c; Supervisor's ruling; design §9): when
+    a kept map's straight line is far longer, one more line on the DM's private card, "On the
+    Ten-Towns map it's about 35 miles in a straight line.", with the Maps page's link. Only while
+    DMBOT_MAP_MEASURE is on; nothing is changed, and nothing is said within the limit. Never fatal:
+    a failure here leaves the saved length's own line as it was."""
+    from dmbot.maps import disagree, measure_words
+
+    settings = getattr(interaction.client, "settings", None)
+    store = getattr(interaction.client, "map_store", None)
+    if store is None or not getattr(settings, "map_measure_on", False):
+        return ""
+    c = found.campaign
+    try:
+        road = await store.road_off(c.guild_id, c.id, found.relation.id)
+    except Exception as exc:  # (never fatal: the length is saved either way)
+        log.warning("Road map check failed (%s)", type(exc).__name__)
+        return ""
+    if road is None:
+        return ""
+    line = measure_words.map_measures(disagree.amount(road.off), road.off.map.title)
+    site = str(getattr(settings, "site_url", "") or "")
+    link = f"\n{measure_words.LINK}: <{site}/account/maps>" if site else ""
+    return f"\n{_md(line)}{link}"
+
+
 def length_note(length: route_length.Length | None, *, kept: bool, undo: bool = True) -> str:
     """What the DM is told after a length change (#4255; the ux-critic's words): "saved" for the
     DM's own words, "kept" for ✅ Length is right on DMbot's read."""
@@ -771,7 +797,6 @@ async def _who_page(
     found: Found,
     campaign_id: str,
     entity_id: str,
-    pcs: Sequence[tuple[str, str]],
     *,
     note: str = "",
     undo: Sequence[int] = (),
@@ -785,12 +810,23 @@ async def _who_page(
         c.guild_id, c.id, "connection", [rel.id]
     ):
         who = link_edits.COMMON
+    party = await found.memory.party_and_others(c.guild_id, c.id)
+    pcs, notes = pick_choices(party)  # (the party first, then who left, then NPCs: #4537 §10)
     names = dict(pcs)
     view = WhoKnows(
         campaign_id, entity_id, rel.id, pcs,
-        chosen=[x for x in knowing if x in names], now=who, undo=undo,
+        chosen=[x for x in knowing if x in names], now=who, undo=undo, notes=notes,
     )  # fmt: skip
-    text = who_text(_said(found), who, knowing, names, has_characters=bool(names))
+    line = knows_line(
+        party, knowing, who=who, common=who == link_edits.COMMON
+    )  # (§7, worked out now)
+    text = (
+        line
+        + "\n"
+        + who_text(
+            _said(found), who, knowing, names, has_characters=bool(party.party or party.left)
+        )
+    )
     return (f"{note}\n\n{text}" if note else text), view
 
 
@@ -808,8 +844,9 @@ class WhoKnows(WhoKnowsMenu):
         chosen: Sequence[str] = (),
         now: str = "",
         undo: Sequence[int] = (),
+        notes: Mapping[str, str] | None = None,
     ) -> None:
-        super().__init__(pcs, chosen=chosen, now=now, undo=undo)
+        super().__init__(pcs, chosen=chosen, now=now, undo=undo, notes=notes)
         self.campaign_id, self.entity_id, self.relation_id = campaign_id, entity_id, relation_id
 
     async def _undo(self, interaction: discord.Interaction) -> None:
@@ -838,10 +875,9 @@ class WhoKnows(WhoKnowsMenu):
         found = await _find(interaction, self.campaign_id, self.entity_id, self.relation_id)
         if found is None:
             return
-        pcs = await player_characters(found.memory, found.campaign)
         await _replace(
             interaction,
-            *await _who_page(found, self.campaign_id, self.entity_id, pcs, note=note, undo=undo),
+            *await _who_page(found, self.campaign_id, self.entity_id, note=note, undo=undo),
         )
 
     async def _back(self, interaction: discord.Interaction) -> None:

@@ -41,6 +41,7 @@ class Sources:
     memory: Any | None = None  # MemoryStore
     claims: Any | None = None  # ClaimStore, only when the claim reader is on
     maps: Any | None = None  # MapStore, with the kept pictures
+    map_roads: bool = False  # World notes' road lengths a map disagrees with (DMBOT_MAP_MEASURE)
     backstory: Any | None = None  # BackstoryLinks
     heard: Any | None = None  # WaitingQuestionStore
     rule_sets: Any | None = None  # RuleSetStore
@@ -192,10 +193,11 @@ async def _traits(src: Sources, g: int, c: str) -> Counted:
 
 async def _world(src: Sources, g: int, c: str) -> Counted:
     """DMbot's guesses about places and languages the DM hasn't checked (#4285): the lines the
-    🌍 World notes screen shows (`MemoryStore.world_notes`)."""
+    🌍 World notes screen shows (`MemoryStore.world_notes`), roads too while the map answers
+    are on (#4670 4c)."""
     if src.memory is None:
         return Counted(0)
-    notes = await src.memory.world_notes(g, c)
+    notes = await src.memory.world_notes(g, c, with_roads=src.map_roads)
     return Counted(len(notes), min((n.made_at for n in notes), default=None))
 
 
@@ -224,6 +226,14 @@ async def _secrets(src: Sources, g: int, c: str) -> Counted:
     return Counted(await src.memory.secret_questions_count(g, c))
 
 
+async def _joins(src: Sources, g: int, c: str) -> Counted:
+    """Characters who joined the party, waiting for the DM's "what do they know?" (#4537 2b)."""
+    if src.memory is None:
+        return Counted(0)
+    n, oldest = await src.memory.join_questions_waiting(g, c)
+    return Counted(n, oldest)
+
+
 async def _maps(src: Sources, g: int, c: str) -> Counted:
     """Maps a player kept that no DM has answered yet (`MapStore.waiting_for_a_dm`)."""
     if src.maps is None:
@@ -243,6 +253,7 @@ _COUNTERS: dict[str, Callable[[Sources, int, str], Awaitable[Counted]]] = {
     kinds.WORLD: _world,
     kinds.THREADS: _threads,
     kinds.SECRETS: _secrets,
+    kinds.JOINS: _joins,
     kinds.MAPS: _maps,
     kinds.CLAIMS: _claims,
     kinds.READINGS: _readings,

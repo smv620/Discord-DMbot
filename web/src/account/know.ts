@@ -4,7 +4,7 @@
 import type { KnowWord } from "./api";
 
 /** The states that are faded: only the DM (or the NPCs) know, so the players do not see them yet. */
-const FADED: KnowWord[] = ["secret", "hidden_from_the_players", "known_to_an_npc"];
+const FADED: KnowWord[] = ["secret", "hidden_from_the_players", "known_to_an_npc", "left_the_party"];
 
 /** The 🤫 mark shows for a secret only. */
 export function markSecret(x: { secret?: boolean; knowWord?: KnowWord }): boolean {
@@ -18,9 +18,9 @@ export function dimmedName(x: { revealed?: boolean; knowWord?: KnowWord }): bool
 
 /** A graph as a player or a See as… read sees it: no state, however it came (the page never shows one it was not
  * meant to have, even from an API that over-sends it). */
-export function withoutKnow<T extends { knowWord?: KnowWord }>(x: T): T {
-  if (x.knowWord === undefined) return x;
-  const { knowWord: _drop, ...rest } = x;
+export function withoutKnow<T extends { knowWord?: KnowWord; knowLine?: string }>(x: T): T {
+  if (x.knowWord === undefined && x.knowLine === undefined) return x;
+  const { knowWord: _drop, knowLine: _line, ...rest } = x;
   return rest as T;
 }
 export function plainGraph<G extends { nodes: { knowWord?: KnowWord }[]; edges: { links: { knowWord?: KnowWord }[] }[] }>(g: G): G {

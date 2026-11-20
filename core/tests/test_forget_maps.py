@@ -4,6 +4,10 @@ the DM who said so and DMbot's use of them unchanged; nobody else's map changes.
 
 from __future__ import annotations
 
+import time
+import uuid
+from typing import Any
+
 from dmbot import entitlements
 from dmbot.campaigns import CampaignStore
 from dmbot.maps.store import MapStore, Viewer
@@ -17,7 +21,7 @@ GUILD = 111
 NOW = 1_800_000_000
 
 
-class ForgetMaps(DatabaseTest):
+class MapsBase(DatabaseTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         self.addCleanup(entitlements.configure_free_users, ())
@@ -49,6 +53,8 @@ class ForgetMaps(DatabaseTest):
         )  # fmt: skip
         return made.value.id
 
+
+class ForgetMaps(MapsBase):
     async def rows(self) -> dict[str, tuple[object, object, object]]:
         async with self.db.guild(GUILD) as conn:
             cur = await conn.execute("SELECT id, right_by, use_ok, use_by FROM campaign_maps")
@@ -132,3 +138,250 @@ class ForgetMaps(DatabaseTest):
         self.assertEqual({r[0] for r in (await self.rows()).values()}, {BOB})
         self.assertIn(bobs, await self.rows())
         self.assertNotIn(mine, await self.rows())
+
+
+class ForgetMapReads(MapsBase):
+    """Migration 0534 (#4693): what DMbot read from a departing person's maps follows the deletion
+    rule of a removed map (design 7.5): its own read goes, a read the text also stated becomes the
+    text's, the DM's word and the DM's no stay without the pointer."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        memory = MemoryStore(self.db)
+        placed = await memory.add_entity(
+            GUILD, self.campaign, type="place", name="Targos", source="dm", status="confirmed"
+        )
+        self.place = placed.value.id
+
+    async def fact(self, map_id: str, value: str, *, status: str, source: str, text: bool) -> str:
+        fact_id = uuid.uuid4().hex
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO memory_map_facts (guild_id, campaign_id, id, entity_id, layer, value,"
+                " status, source, also_text, created_at, map_id)"
+                " VALUES (%s, %s, %s, %s, 'terrain', %s, %s, %s, %s, %s, %s)",
+                (GUILD, self.campaign, fact_id, self.place, value, status, source, text,
+                 int(time.time()), map_id),
+            )  # fmt: skip
+        return fact_id
+
+    async def row(self, fact_id: str) -> dict[str, Any] | None:
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT status, source, also_text, map_id FROM memory_map_facts WHERE id = %s",
+                (fact_id,),
+            )
+            got = await cur.fetchone()
+        return dict(got) if got is not None else None
+
+    async def test_each_kind_of_row_follows_the_rule(self) -> None:
+        mine = await self.a_map(ALICE, dm=False)
+        only_map = await self.fact(mine, "arctic", status="read", source="map", text=False)
+        text_too = await self.fact(mine, "mountain", status="read", source="map", text=True)
+        dms_word = await self.fact(mine, "forest", status="confirmed", source="map", text=False)
+        dms_no = await self.fact(mine, "swamp", status="rejected", source="map", text=False)
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        self.assertIsNone(await self.row(only_map))  # (rested only on the map: gone)
+        self.assertEqual(
+            await self.row(text_too),
+            {"status": "read", "source": "text", "also_text": False, "map_id": None},
+        )
+        self.assertEqual(
+            await self.row(dms_word),
+            {"status": "confirmed", "source": "map", "also_text": False, "map_id": None},
+        )
+        self.assertEqual(
+            await self.row(dms_no),
+            {"status": "rejected", "source": "map", "also_text": False, "map_id": None},
+        )
+
+    async def test_a_pin_on_a_deleted_read_loses_only_its_pointer(self) -> None:
+        mine = await self.a_map(ALICE, dm=False)
+        bobs = await self.a_map(BOB, dm=False)
+        gone = await self.fact(mine, "arctic", status="read", source="map", text=False)
+        feature = uuid.uuid4().hex
+        async with self.db.guild(GUILD) as conn:  # (a pin on Bob's map that pointed at the read)
+            await conn.execute(
+                "INSERT INTO map_features (guild_id, campaign_id, id, map_id, shape, points,"
+                " fact_id, status, source, created_at) VALUES (%s, %s, %s, %s, 'area',"
+                " ARRAY[0.1, 0.1, 0.2, 0.1, 0.2, 0.2], %s, 'read', 'read', %s)",
+                (GUILD, self.campaign, feature, bobs, gone, int(time.time())),
+            )
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        self.assertIsNone(await self.row(gone))
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute("SELECT fact_id FROM map_features WHERE id = %s", (feature,))
+            pin = await cur.fetchone()
+        assert pin is not None
+        self.assertIsNone(pin["fact_id"])
+
+    async def test_nobody_elses_reads_change(self) -> None:
+        mine = await self.a_map(ALICE, dm=False)
+        bobs = await self.a_map(BOB, dm=False)
+        await self.fact(mine, "arctic", status="read", source="map", text=False)
+        theirs = await self.fact(bobs, "glacier", status="read", source="map", text=False)
+        theirs_text = await self.fact(bobs, "plain", status="read", source="map", text=True)
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        self.assertEqual(
+            await self.row(theirs),
+            {"status": "read", "source": "map", "also_text": False, "map_id": bobs},
+        )
+        self.assertEqual(
+            await self.row(theirs_text),
+            {"status": "read", "source": "map", "also_text": True, "map_id": bobs},
+        )
+
+    async def test_the_dm_who_only_answered_keeps_the_map_and_its_reads(self) -> None:
+        mid = await self.a_map(BOB, dm=False)
+        await self.maps.answer_use(GUILD, self.campaign, mid, dm_id=ALICE, yes=True)
+        kept = await self.fact(mid, "arctic", status="read", source="map", text=False)
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        self.assertEqual(
+            await self.row(kept),
+            {"status": "read", "source": "map", "also_text": False, "map_id": mid},
+        )
+
+    # ---- the memory version moves once for each campaign whose facts changed (#4711, 0536) ----
+
+    async def version(self, campaign: str) -> int:
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT memory_version FROM campaigns WHERE id = %s", (campaign,)
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        return int(row["memory_version"])
+
+    async def test_it_moves_once_however_many_rows_changed(self) -> None:
+        mine = await self.a_map(ALICE, dm=False)
+        await self.fact(mine, "arctic", status="read", source="map", text=False)
+        await self.fact(mine, "mountain", status="read", source="map", text=True)
+        await self.fact(mine, "forest", status="confirmed", source="map", text=False)
+        before = await self.version(self.campaign)
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        self.assertEqual(await self.version(self.campaign), before + 1)
+
+    async def test_a_campaign_whose_facts_did_not_change_keeps_its_number(self) -> None:
+        await self.a_map(ALICE, dm=False)  # (no facts rest on it)
+        bobs = await self.a_map(BOB, dm=False)
+        await self.fact(bobs, "arctic", status="read", source="map", text=False)
+        before = await self.version(self.campaign)
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        self.assertEqual(await self.version(self.campaign), before)
+
+    async def test_every_campaign_with_changed_facts_moves_and_nobody_elses(self) -> None:
+        other = (await CampaignStore(self.db).create(GUILD, "Two", CAL)).id
+        untouched = (await CampaignStore(self.db).create(GUILD, "Three", CAL)).id
+        first = await self.a_map(ALICE, dm=False)
+        await self.fact(first, "arctic", status="read", source="map", text=False)
+        self.campaign = other
+        placed = await MemoryStore(self.db).add_entity(
+            GUILD, other, type="place", name="Neverwinter", source="dm", status="confirmed"
+        )
+        self.place = placed.value.id
+        second = await self.a_map(ALICE, dm=False)
+        await self.fact(second, "forest", status="read", source="map", text=False)
+        moved = {c: await self.version(c) for c in (other, untouched)}
+        first_before = await self.version(await self.first_campaign())
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        self.assertEqual(await self.version(other), moved[other] + 1)
+        self.assertEqual(await self.version(untouched), moved[untouched])
+        self.assertEqual(await self.version(await self.first_campaign()), first_before + 1)
+
+    async def first_campaign(self) -> str:
+        async with self.db.guild(GUILD) as conn:
+            cur = await conn.execute(
+                "SELECT id FROM campaigns WHERE name = 'One' AND guild_id = %s", (GUILD,)
+            )
+            row = await cur.fetchone()
+        assert row is not None
+        return str(row["id"])
+
+    # ---- a fact another usable map still shows is kept, on the oldest such map (#4696) ----
+
+    async def pin(self, map_id: str, fact_id: str, *, status: str = "read") -> None:
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO map_features (guild_id, campaign_id, id, map_id, shape, points,"
+                " fact_id, status, source, created_at) VALUES (%s, %s, %s, %s, 'area',"
+                " ARRAY[0.1, 0.1, 0.2, 0.1, 0.2, 0.2], %s, %s, 'read', %s)",
+                (GUILD, self.campaign, uuid.uuid4().hex, map_id, fact_id, status, int(time.time())),
+            )  # fmt: skip
+
+    async def test_a_fact_another_usable_map_shows_is_kept_on_that_map(self) -> None:
+        mine = await self.a_map(ALICE, dm=False)
+        bobs = await self.a_map(BOB, dm=True)  # (usable: its DM said yes)
+        fact = await self.fact(mine, "arctic", status="read", source="map", text=False)
+        await self.pin(bobs, fact)
+        before = await self.version(self.campaign)
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        self.assertEqual(
+            await self.row(fact),
+            {"status": "read", "source": "map", "also_text": False, "map_id": bobs},
+        )
+        self.assertEqual(await self.version(self.campaign), before + 1)  # (and it moved once)
+
+    async def oldest_keeps_it(self, *, older_has_larger_id: bool) -> None:
+        """Two usable maps both show the fact: the one made first keeps it, by time and never by
+        id (the maps get explicit times; the two cases give the earlier time to the larger id)."""
+        mine = await self.a_map(ALICE, dm=False)
+        first = await self.a_map(BOB, dm=True)
+        second = await self.a_map(CAL, dm=True)
+        older, newer = (max(first, second), min(first, second))
+        if not older_has_larger_id:
+            older, newer = newer, older
+        async with self.db.guild(GUILD) as conn:
+            for map_id, at in ((older, 100), (newer, 200)):
+                await conn.execute(
+                    "UPDATE campaign_maps SET created_at = %s WHERE id = %s", (at, map_id)
+                )
+        fact = await self.fact(mine, "arctic", status="read", source="map", text=False)
+        await self.pin(newer, fact)
+        await self.pin(older, fact)
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        kept = await self.row(fact)
+        assert kept is not None
+        self.assertEqual(kept["map_id"], older)
+
+    async def test_the_oldest_such_map_keeps_it_when_it_has_the_larger_id(self) -> None:
+        await self.oldest_keeps_it(older_has_larger_id=True)
+
+    async def test_the_oldest_such_map_keeps_it_when_it_has_the_smaller_id(self) -> None:
+        await self.oldest_keeps_it(older_has_larger_id=False)
+
+    async def test_a_dms_confirmed_fact_stays_confirmed_when_re_pointed(self) -> None:
+        mine = await self.a_map(ALICE, dm=False)
+        bobs = await self.a_map(BOB, dm=True)
+        fact = await self.fact(mine, "forest", status="confirmed", source="map", text=False)
+        await self.pin(bobs, fact)
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        self.assertEqual(
+            await self.row(fact),
+            {"status": "confirmed", "source": "map", "also_text": False, "map_id": bobs},
+        )
+
+    async def test_a_fact_shown_only_on_the_persons_other_map_goes_by_the_old_rule(self) -> None:
+        mine = await self.a_map(ALICE, dm=False)
+        also_mine = await self.a_map(ALICE, dm=True)  # (usable, but going too)
+        gone = await self.fact(mine, "arctic", status="read", source="map", text=False)
+        text_too = await self.fact(mine, "mountain", status="read", source="map", text=True)
+        await self.pin(also_mine, gone)
+        await self.pin(also_mine, text_too)
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        self.assertIsNone(await self.row(gone))
+        self.assertEqual(
+            await self.row(text_too),
+            {"status": "read", "source": "text", "also_text": False, "map_id": None},
+        )
+
+    async def test_an_unusable_map_or_a_turned_down_area_keeps_nothing(self) -> None:
+        mine = await self.a_map(ALICE, dm=False)
+        waiting = await self.a_map(BOB, dm=False)  # (no DM yes yet: not usable)
+        usable = await self.a_map(CAL, dm=True)
+        on_waiting = await self.fact(mine, "arctic", status="read", source="map", text=False)
+        turned_down = await self.fact(mine, "forest", status="read", source="map", text=False)
+        await self.pin(waiting, on_waiting)
+        await self.pin(usable, turned_down, status="rejected")
+        await accounts.delete_person(self.db, ALICE, now=NOW)
+        self.assertIsNone(await self.row(on_waiting))
+        self.assertIsNone(await self.row(turned_down))

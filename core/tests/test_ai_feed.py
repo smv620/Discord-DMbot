@@ -25,11 +25,17 @@ GUILD, DM, PLAYER = 91, 5, 6
 LONG = "The old lighthouse keeper says " + "x" * 600
 
 
+SETTLE_S = 15.0  # a deadline for a slow runner, never a pause: the loop ends the moment it can
+
+
 async def settle() -> None:
-    """Let the feed's scheduled writes finish (they run beside the call, never in it)."""
-    for _ in range(50):
-        if not ai_feed._tasks:
-            return
+    """Let the feed's scheduled writes finish (they run beside the call, never in it). Waits for
+    the writes themselves, with a generous deadline, so a slow runner cannot read the rows before
+    a write has landed (#4829); a write that never ends fails here, not as an empty read."""
+    deadline = asyncio.get_running_loop().time() + SETTLE_S
+    while ai_feed._tasks:
+        if asyncio.get_running_loop().time() > deadline:
+            raise AssertionError(f"{len(ai_feed._tasks)} feed writes never finished")
         await asyncio.sleep(0.01)
 
 
@@ -70,6 +76,19 @@ class WithFeed(DatabaseTest):
                 (GUILD, camp or self.camp.id),
             )
             return [dict(r) for r in await cur.fetchall()]
+
+    async def marker_row(self, lost: int = 1) -> dict[str, Any]:
+        """The one bookkeeping row that counts calls not shown, waited for until it counts `lost`
+        (never read after a fixed pause, and not the first count that lands when two are coming:
+        #4829, #4838)."""
+        deadline = asyncio.get_running_loop().time() + SETTLE_S
+        while True:
+            found = await self.rows()
+            if len(found) == 1 and found[0]["lost"] == lost:
+                return found[0]
+            if asyncio.get_running_loop().time() > deadline:
+                raise AssertionError(f"no count of {lost} calls not shown after {SETTLE_S} s")
+            await asyncio.sleep(0.02)
 
     def job(self, step: str = "reading part 1 of 3") -> Any:
         return ai_feed.job(GUILD, self.camp.id, "lore", "up1", step=step)
@@ -160,7 +179,7 @@ class TheFeed(WithFeed):
             self.assertIs(got, reply)  # the call finished long before the write timed out
             await settle()
         self.assertEqual((ai_feed._pending, len(ai_feed._tasks)), (0, 0))
-        [marker] = await self.rows()
+        marker = await self.marker_row()
         self.assertEqual(
             (marker["n"], marker["lost"]), (0, 1)
         )  # counted, "Some calls aren't shown"
@@ -230,8 +249,7 @@ class TheEdges(WithFeed):
             self.assertLessEqual(ai_feed._pending, 2)
             gate.set()
             await settle()
-        await asyncio.sleep(0.1)
-        [marker] = await self.rows()
+        marker = await self.marker_row(2)  # (each count is written on a task of its own)
         self.assertEqual(marker["lost"], 2)
 
     async def test_the_real_error_and_a_cancel_come_through_unchanged_and_are_noted(self) -> None:

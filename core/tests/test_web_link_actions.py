@@ -1866,6 +1866,183 @@ class TheEdits(Editing):
             assert row is not None
             self.assertEqual(row["r"]["status"], "bad_text")
 
+    async def party(self, *names: str) -> list[str]:
+        """Player characters of the campaign (the picker's people)."""
+        return [
+            (
+                await self.memory.add_entity(
+                    self.g,
+                    self.one.id,
+                    type="character",
+                    name=name,
+                    role="player_character",
+                    played_by=100 + i,
+                    source="dm",
+                    status="confirmed",
+                )
+            ).value.id
+            for i, name in enumerate(names)
+        ]
+
+    async def test_some_know_keeps_it_held_back_and_known_to_exactly_the_ticked(
+        self,
+    ) -> None:
+        """#4680: the website's 👥 Some know makes the call Discord's picker makes."""
+        wren, ash = await self.party("Wren", "Ash")
+        claim = await self.claim()
+        answer = await self.queue(kind="claim", action="some", id=claim, characters=[wren])
+        self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+        self.assertEqual((await self.poll(answer))["state"], "done")
+        done = await self.claims.get(self.g, self.one.id, claim)
+        assert done is not None and done.fact_id
+        rel = await self.memory.relation(self.g, self.one.id, done.fact_id)
+        assert rel is not None
+        self.assertTrue(rel.unrevealed)  # (held back from the players)
+        self.assertFalse(rel.secret)
+        knows = await self.memory.statement_knowers(self.g, self.one.id, "connection", [rel.id])
+        self.assertEqual(knows.get(rel.id), [wren])
+        self.assertNotIn(ash, knows.get(rel.id, []))
+
+    async def test_some_know_keeps_a_backstory_connection_held_back_for_the_ticked(self) -> None:
+        """#4680 part 2: the call Discord's picker on a backstory card makes."""
+        wren, ash = await self.party("Wren", "Ash")
+        link = await self.waiting_link(self.mira, self.hall)
+        answer = await self.queue(kind="backstory", action="some", id=link, characters=[wren])
+        self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+        self.assertEqual((await self.poll(answer))["state"], "done")
+        (rel,) = [
+            r
+            for r in await self.memory.relations(self.g, self.one.id, include_secret=True)
+            if r.predicate == "knows" and r.object_id == self.hall
+        ]
+        self.assertTrue(rel.unrevealed)  # (held back from the players)
+        self.assertFalse(rel.secret)
+        knows = await self.memory.statement_knowers(self.g, self.one.id, "connection", [rel.id])
+        self.assertEqual(knows.get(rel.id), [wren])
+        self.assertNotIn(ash, knows.get(rel.id, []))
+        self.assertEqual(await self.backstory.waiting(self.g, self.one.id), [])  # (no longer waits)
+
+    async def test_some_know_on_a_backstory_connection_is_refused_for_a_secret_or_a_stranger(
+        self,
+    ) -> None:
+        (wren,) = await self.party("Wren")
+        secret = await self.waiting_link(self.mira, self.hall, secret=True)
+        plain = await self.waiting_link(self.rook, self.hall)
+        await self.queue(kind="backstory", action="some", id=secret, characters=[wren])
+        await self.queue(kind="backstory", action="some", id=plain, characters=[self.hall])
+        outcomes = await self.apply_waiting()
+        self.assertTrue(all(o.error for o in outcomes) and len(outcomes) == 2)
+        waiting = {w.id for w in await self.backstory.waiting(self.g, self.one.id)}
+        self.assertEqual(waiting, {secret, plain})  # (nothing was written)
+
+    async def test_some_know_on_a_backstory_connection_refuses_a_non_player_character(
+        self,
+    ) -> None:
+        npc = await self.memory.add_entity(
+            self.g, self.one.id, type="character", name="An NPC", source="dm", status="confirmed"
+        )
+        link = await self.waiting_link(self.mira, self.hall)
+        await self.queue(kind="backstory", action="some", id=link, characters=[npc.value.id])
+        (outcome,) = await self.apply_waiting()
+        self.assertNotEqual(outcome.error, "")
+        self.assertEqual([w.id for w in await self.backstory.waiting(self.g, self.one.id)], [link])
+
+    async def test_some_know_on_a_backstory_connection_counts_a_repeated_id_once(self) -> None:
+        (wren,) = await self.party("Wren")
+        link = await self.waiting_link(self.mira, self.hall)
+        await self.queue(kind="backstory", action="some", id=link, characters=[wren, wren])
+        self.assertEqual([o.error for o in await self.apply_waiting()], [""])
+
+    async def test_some_know_on_a_backstory_connection_needs_a_dm_and_one_to_25_people(
+        self,
+    ) -> None:
+        (wren,) = await self.party("Wren")
+        link = await self.waiting_link(self.mira, self.hall)
+        body = {"kind": "backstory", "action": "some", "id": link}
+        self.assertEqual(
+            await self.refused_queue(self.player, **body, characters=[wren]), "not_allowed"
+        )
+        self.assertEqual(await self.refused_queue(**body, characters=[]), "bad_action")
+        self.assertEqual(await self.refused_queue(**body), "bad_action")
+        self.assertEqual(await self.refused_queue(**body, characters=["x"]), "not_found")
+        self.assertEqual(
+            await self.refused_queue(
+                kind="backstory", action="some", id="a" * 32, characters=[wren]
+            ),
+            "not_found",
+        )
+
+    async def test_the_undo_of_some_know_puts_the_question_back(self) -> None:
+        (wren,) = await self.party("Wren")
+        claim = await self.claim()
+        answer = await self.queue(kind="claim", action="some", id=claim, characters=[wren])
+        await self.apply_waiting()
+        batch = int((await self.poll(answer))["batch"])
+        await self.queue(kind="claim", action="undo", id=claim, batch=batch)
+        await self.apply_waiting()
+        again = await self.claims.get(self.g, self.one.id, claim)
+        assert again is not None
+        self.assertEqual(again.status, "proposed")
+        self.assertIsNone(again.fact_id)  # (the fact and who knew it went with the Undo)
+
+    async def test_some_know_for_a_claim_already_kept_is_refused(self) -> None:
+        (wren,) = await self.party("Wren")
+        claim = await self.claim()
+        await self.queue(kind="claim", action="confirm", id=claim)
+        await self.apply_waiting()
+        self.assertEqual(
+            await self.refused_queue(kind="claim", action="some", id=claim, characters=[wren]),
+            "not_found",
+        )
+
+    async def test_some_know_needs_a_waiting_claim_a_dm_and_one_to_25_people(self) -> None:
+        (wren,) = await self.party("Wren")
+        claim = await self.claim()
+        body = {"kind": "claim", "action": "some", "id": claim}
+        self.assertEqual(
+            await self.refused_queue(self.player, **body, characters=[wren]), "not_allowed"
+        )
+        self.assertEqual(await self.refused_queue(**body, characters=[]), "bad_action")
+        self.assertEqual(await self.refused_queue(**body), "bad_action")
+        self.assertEqual(await self.refused_queue(**body, characters=["x"]), "not_found")
+        self.assertEqual(
+            await self.refused_queue(**body, characters=[f"{n:032x}" for n in range(26)]),
+            "bad_action",
+        )
+        self.assertEqual(
+            await self.refused_queue(kind="claim", action="some", id="a" * 32, characters=[wren]),
+            "not_found",
+        )
+
+    async def test_a_character_that_is_not_one_is_refused_by_the_bot_and_nothing_is_kept(
+        self,
+    ) -> None:
+        claim = await self.claim()
+        await self.queue(kind="claim", action="some", id=claim, characters=["a" * 32])
+        (outcome,) = await self.apply_waiting()
+        self.assertNotEqual(outcome.error, "")
+        again = await self.claims.get(self.g, self.one.id, claim)
+        assert again is not None
+        self.assertEqual(again.status, "proposed")
+
+    async def test_the_party_list_is_the_confirmed_player_characters_for_a_dm_only(self) -> None:
+        from dmbot.web import party_characters
+
+        await self.party("Wren", "Ash")
+        await self.memory.add_entity(
+            self.g, self.one.id, type="character", name="An NPC", source="dm", status="confirmed"
+        )
+        got = await party_characters.read(self.web, self.session, self.cref)
+        names = [c["name"] for c in got["characters"]]
+        self.assertEqual(names, sorted(names, key=str.lower))  # (A to Z)
+        self.assertIn("Ash", names)
+        self.assertIn("Wren", names)
+        self.assertNotIn("An NPC", names)  # (a player character is one a player plays)
+        self.assertEqual(len(names), len(set(names)))
+        with self.assertRaises(RecapError) as refused:
+            await party_characters.read(self.web, self.player, self.cref)
+        self.assertEqual(refused.exception.code, "not_allowed")
+
 
 class Refusals(Editing):
     async def test_only_a_dm_may_edit_and_the_bot_checks_again(self) -> None:

@@ -103,6 +103,19 @@ export default function UploadNotice({ api, campaignRef, source, onChanged }: { 
   return (
     <div class="stack">
       <p role="status">{w.added(notice.counts.names, notice.counts.byKind, notice.counts.connections, notice.label)}</p>
+      {!result && (notice.counts.revealed ?? 0) > 0 && <p>{w.revealed(notice.counts.revealed ?? 0)}</p>}
+      {!result && (notice.revealedLines?.length ?? 0) > 0 && (
+        <div class="stack">
+          <p class="small muted">{w.revealedIntro}</p>
+          <ul class="plain-list">
+            {notice.revealedLines!.map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
+          </ul>
+          {(notice.revealedMore ?? 0) > 0 && <p class="small">{w.revealedMore(notice.revealedMore ?? 0)}</p>}
+          <p class="small muted">{w.revealedHow}</p>
+        </div>
+      )}
       <ul class="plain-list">
         <li>
           <a href={names}>{fromId ? w.seeNames : w.seeAllNames}</a>

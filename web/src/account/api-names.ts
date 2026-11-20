@@ -42,9 +42,24 @@ import {
   SIGNED_OUT_EVENT,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
-import type { AccountApi, ApiHelpers, HandOverQuestion, MapsRead, MapsResult, NodeSummary, CharacterLanguages, StoryThreads, ThreadCard, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
+import type { AccountApi, ApiHelpers, CharacterLanguages, JoinGroup, PartyRecordCharacter, WebAnswer, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
+/** The revealed list of an upload notice (#4661): plain lines of at most 200 characters, at most ten; anything else is dropped. */
+export function keepRevealed(raw: unknown): { revealedLines?: string[]; revealedMore?: number } {
+  const r = (raw ?? {}) as { revealedLines?: unknown; revealedMore?: unknown };
+  const out: { revealedLines?: string[]; revealedMore?: number } = {};
+  if (Array.isArray(r.revealedLines)) {
+    out.revealedLines = r.revealedLines
+      .filter((l): l is string => typeof l === "string" && l.length > 0 && l.length <= 200 && !/[<>\u0000-\u001f]/.test(l))
+      .slice(0, 10);
+  }
+  if (typeof r.revealedMore === "number" && Number.isInteger(r.revealedMore) && r.revealedMore >= 0 && r.revealedMore <= 9999) {
+    out.revealedMore = r.revealedMore;
+  }
+  return out;
+}
+
 export function countOf(counts: unknown, key: string): number | undefined {
   if (typeof counts !== "string") return undefined;
   for (const [, name, digits] of counts.matchAll(/(?<![a-z_])([a-z_]+):(\d+)/g)) {
@@ -57,6 +72,12 @@ export function countOf(counts: unknown, key: string): number | undefined {
 }
 
 export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Partial<AccountApi> {
+  // The party record's door answers with {answer}; the answer is waited for like the other queued changes (#4778 a2).
+  const partyAnswer = async (ref: string, queued: unknown): Promise<WebAnswer> => {
+    const answer = (queued as { answer?: string } | null)?.answer;
+    if (!answer) throw new ApiError("server");
+    return waitForAnswer(`/me/campaigns/${encodeURIComponent(ref)}/web/answers/${encodeURIComponent(answer)}`);
+  };
   return {
     namesFixed: async (recapRef) =>
       (await call("GET", `/me/recaps/${encodeURIComponent(recapRef)}/names-fixed`)) as NamesFixed,
@@ -381,7 +402,7 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     },
     // What DMbot added by itself after one upload (#3879, core #3887): counts and the label only.
     uploadNotice: async (ref, source) =>
-      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/upload-notice?kind=${source.kind}&id=${encodeURIComponent(source.id)}`)) as UploadNotice,
+      { const raw = (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/upload-notice?kind=${source.kind}&id=${encodeURIComponent(source.id)}`)) as UploadNotice; return { ...raw, ...keepRevealed(raw) }; },
     // Undo this upload is queued for the bot, then polled like any queued change: once, within 7 days, newest first.
     undoUpload: async (ref, source, onLook) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}/upload-notice/undo`;
@@ -565,6 +586,104 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       const got = await waitForAnswer(`/me/campaigns/${encodeURIComponent(ref)}/web/answers/${encodeURIComponent(queued.answer)}`);
       return { batch: typeof got.batch === "number" ? got.batch : null };
     },
+    // The 🧵 Progress to check lines (#4616): DM only; the door answers anyone else with nothing.
+    threadProgress: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/thread-progress`)) as { threads: ThreadProgressThread[] }).threads,
+    // Queued for the bot (202 {answer}); this waits for it and gives back the batch of a keep, for Undo (#4616).
+    changeThreadProgress: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const body = change.action === "undo" && "batch" in change ? { action: "undo", batch: String(change.batch) } : change;
+      const queued = (await call("POST", `${base}/thread-progress/change`, body)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { batch: typeof got.batch === "number" ? got.batch : null };
+    },
+    // The 🤫 Known or secret? questions, oldest first (#4598): the DM's own; the door answers anyone else with nothing.
+    secretQuestions: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/secret-questions`)) as { questions: SecretQuestion[] }).questions,
+    // The join questions waiting for the DM (#4778 part b): DM only; the door answers anyone else with nothing.
+    joinQuestions: async (ref) => ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/join-questions`)) as { groups: JoinGroup[] }).groups,
+    // Queued for the bot (202 {answer}), then waited for: the batch and `given` of an answer; the batch of an Undo is in its path.
+    answerJoin: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued =
+        change.action === "undo"
+          ? ((await call("POST", `${base}/join-questions/${encodeURIComponent(String(change.batch))}/undo`)) as { answer: string })
+          : ((await call("POST", `${base}/join-questions/answer`, { group: change.group, answer: change.action })) as { answer: string });
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return {
+        batch: typeof got.batch === "number" ? got.batch : null,
+        given: typeof got.given === "number" ? got.given : null,
+      };
+    },
+    // A player character's stretches in the party (#4778 a2): DM only; the door answers anyone else with nothing.
+    partyRecord: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/party-record`)) as { characters: PartyRecordCharacter[] }).characters,
+    // A leave, a return or an Undo is queued for the bot (202 {answer}) and waited for: a leave gives its batch, a return its batch and what it asks.
+    partyLeave: async (ref, character, why) => {
+      const got = await partyAnswer(ref, await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/party-record/leave`, { character, why }));
+      return { batch: got.batch ?? null };
+    },
+    partyBack: async (ref, character) => {
+      const got = await partyAnswer(ref, await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/party-record/back`, { character }));
+      return { batch: got.batch ?? null, asked: got.asked ?? null };
+    },
+    // "Catch up" (#4793): who is behind on an entry, and catching one member up (queued, then waited for: `told` and `batch`).
+    catchUpChoices: async (ref, entry) => {
+      const got = await partyAnswer(ref, await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/catch-up/choices`, { entry }));
+      return { choices: got.choices ?? [], more: got.more ?? 0 };
+    },
+    catchUp: async (ref, member, entry) => {
+      const got = await partyAnswer(ref, await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/catch-up`, { member, entry }));
+      return { batch: got.batch ?? null, told: got.told ?? null };
+    },
+    // A pick of a newer version of a followed set (#4855): queued for the bot; waits for its answer, which has the counts and the id
+    // for Undo. A refusal comes back as the bot's word (`changed`, `gone`, `no_room`, `too_many`, ...).
+    ruleUpdatePick: async (ref, version, kept) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/rule-update/pick`, { version, kept })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { kept: got.kept ?? kept.length, left: got.left ?? 0, take: typeof got.take === "number" ? got.take : null };
+    },
+    // Undo of a pick (#4855): queued for the bot, and this waits for its answer (`too_late` past the day).
+    ruleUpdateUndo: async (ref, take) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/rule-update/${encodeURIComponent(String(take))}/undo`, {})) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    partyUndo: async (ref, batch) => {
+      await partyAnswer(ref, await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/party-record/${encodeURIComponent(String(batch))}/undo`));
+    },
+    // The party's player characters for the "Some know" picker (#4680 part 1): DM only; the door answers anyone else with nothing.
+    partyCharacters: async (ref) =>
+      ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/party-characters`)) as { characters: PartyCharacter[] }).characters,
+    // Queued for the bot (202 {answer}); this waits for it and gives back the batch of a make, for Undo (#4598).
+    answerSecret: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const body = change.action === "undo" ? { action: "undo", batch: String(change.batch) } : change;
+      const queued = (await call("POST", `${base}/secret-questions/change`, body)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { batch: typeof got.batch === "number" ? got.batch : null };
+    },
+    // A story thread's clues (#4625): DM only; the door answers anyone else with nothing.
+    threadClues: async (ref, thread) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/threads/${encodeURIComponent(thread)}/clues`)) as ThreadClues,
+    // The table's guesses about a thread (#4665): DM only; the door answers anyone else with nothing.
+    threadGuesses: async (ref, thread) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/threads/${encodeURIComponent(thread)}/guesses`)) as ThreadGuesses,
+    // Queued for the bot (202 {answer}); this waits for it and gives back the batch of a change, for Undo (#4625).
+    changeThreadClues: async (ref, thread, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}/threads/${encodeURIComponent(thread)}`;
+      const body = change.action === "undo" ? { action: "undo", batch: String(change.batch) } : change;
+      const queued = (await call("POST", `${base}/clues/change`, body)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`/me/campaigns/${encodeURIComponent(ref)}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { batch: typeof got.batch === "number" ? got.batch : null };
+    },
     threadCard: async (ref, thread) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/threads/${encodeURIComponent(thread)}/card`)) as ThreadCard,
     // The story threads DMbot found (#4482): read only, DM only (the door answers anyone else with nothing).
@@ -603,6 +722,9 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     },
     // The Maps page (#4347): the list is read here; a press is queued for the bot, waited for, and gives back the change for Undo.
     maps: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/maps`)) as MapsRead,
+    // A map's pins, scale, grid and north (#4672): DM only; the door answers anyone else with nothing.
+    mapFeatures: async (ref, map) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/maps/${encodeURIComponent(map)}/features`)) as MapFeatures,
     changeMaps: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;
       const queued =

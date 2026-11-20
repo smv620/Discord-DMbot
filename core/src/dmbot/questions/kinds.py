@@ -23,6 +23,7 @@ TRAITS: Final = "traits"  # a lineage or class the lore gives a character the DM
 WORLD: Final = "world_notes"  # DMbot's guesses about places and languages, to check (#4285)
 THREADS: Final = "threads"  # story threads the lore holds, to keep or turn down (#4453)
 SECRETS: Final = "secrets"  # what the players know that sounded like a secret (#4524)
+JOINS: Final = "party_joins"  # characters who joined: what do they know of before? (#4537)
 
 # In the order the list shows them (the ones people answer most first).
 ORDER: Final[tuple[str, ...]] = (
@@ -36,6 +37,7 @@ ORDER: Final[tuple[str, ...]] = (
     WORLD,
     THREADS,
     SECRETS,
+    JOINS,
     MAPS,
     CLAIMS,
     READINGS,
@@ -55,6 +57,7 @@ LABELS: Final[dict[str, str]] = {
     WORLD: "World notes",
     THREADS: "Story threads to check",
     SECRETS: "Known or secret?",
+    JOINS: "New in the party",
     MAPS: "Maps waiting for your yes",
     CLAIMS: "Facts to check",
     READINGS: "What people believe",

@@ -48,12 +48,24 @@ from dmbot.memory.claims import (
 )
 from dmbot.memory.deed_proposals import DeedProposals
 from dmbot.memory.deed_reading import DEED_SYSTEM, DeedProposal, parse_deeds
+from dmbot.memory.language_reading import LANGUAGE_ADDENDUM, Heard, once_each, parse_languages
+from dmbot.memory.language_reading import PROMPT_SUFFIX as LANGUAGE_SUFFIX
 from dmbot.memory.met_reading import MET_ADDENDUM, Met, gathered, parse_met
 from dmbot.memory.met_reading import PROMPT_SUFFIX as MET_SUFFIX
 from dmbot.memory.met_store import speakers_of
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import Tally
-from dmbot.memory.readings import READING_SYSTEM, as_claim, parse_readings, proposals
+from dmbot.memory.readings import (
+    MYSTERIES_SHOWN,
+    READING_SYSTEM,
+    RULES,
+    THEORY_RULE,
+    as_claim,
+    mysteries_block,
+    parse_readings,
+    proposals,
+    reading_system,
+)
 from dmbot.memory.reveal_proposals import RevealProposals
 from dmbot.memory.reveal_reading import (
     REVEAL_SYSTEM,
@@ -61,6 +73,10 @@ from dmbot.memory.reveal_reading import (
     parse_reveals,
     reveal_reason,
 )
+from dmbot.memory.weather_reading import PROMPT_SUFFIX as WEATHER_SUFFIX
+from dmbot.memory.weather_reading import WEATHER_ADDENDUM, Weather, parse_weather
+from dmbot.memory.weather_reading import once_each as weather_once
+from dmbot.sidebar.ask import voiced_by_npc
 from dmbot.transcript.models import Line
 from dmbot.transcript.topics import OFF_TOPIC
 
@@ -198,6 +214,10 @@ class Said:
     user_id: int
     text: str
     started_ms: int = 0  # when the line began: what a restart resumes after (#1367)
+    # said as a named NPC the DM was voicing (#53, `voiced_by_npc`): in the story, it can be a lie
+    # or a mistake, so the weather check never takes it as the DM's word (#4748, as #4708 does).
+    # A line whose label never settled ("") counts as the DM's own words, as `voiced_by_npc` says.
+    voiced: bool = False
 
 
 def readable(lines: Sequence[Line]) -> list[Said]:
@@ -206,7 +226,7 @@ def readable(lines: Sequence[Line]) -> list[Said]:
     a person who agreed, so it has no other lines), and never a line the off-topic filter left
     out. Consent is a separate check, made when each batch is sent."""
     return [
-        Said(n, line.user_id, line.text, line.started_ms)
+        Said(n, line.user_id, line.text, line.started_ms, voiced_by_npc(line.entity))
         for n, line in enumerate(lines, start=1)
         if not line.sidebar and line.topic != OFF_TOPIC and line.text.strip()
     ]
@@ -336,6 +356,16 @@ class Report:
     met_again: int = 0  # already kept for this session
     met_named: int = 0  # the words are a name the campaign has
     met_proposals: list[Met] = field(default_factory=list, repr=False)  # (words: never logged)
+    # #4229 1d (DMBOT_SESSION_LANGUAGES): languages heard spoken, each a question for the DM later
+    languages: int = 0
+    languages_dropped: Counter[str] = field(default_factory=Counter)
+    languages_cut: int = 0  # claims answers cut short with the switch on: their languages are lost
+    heard_languages: list[Heard] = field(default_factory=list, repr=False)  # (words: never logged)
+    # #4260 10c-2 (DMBOT_WEATHER_NOTES): snow, frost or heat the DM described in a named place
+    weather: int = 0
+    weather_dropped: Counter[str] = field(default_factory=Counter)
+    weather_cut: int = 0
+    heard_weather: list[Weather] = field(default_factory=list, repr=False)  # (no words held)
 
     def line(self) -> str:
         why = ", ".join(f"{n} {r}" for r, n in sorted(self.dropped.items())) or "none"
@@ -388,6 +418,20 @@ class Report:
                 f" {self.met_again} again, {self.met_named} named, {self.met_gone} speaker gone,"
                 f" {self.met_cut} cut short"
                 if self.met or self.met_refused or self.met_cut
+                else ""
+            )
+            + (
+                f", languages: {self.languages} heard, {self.languages_cut} cut short"
+                + "".join(f", {n} {k}" for k, n in sorted(self.languages_dropped.items()) if n)
+                if self.languages or self.languages_dropped or self.languages_cut
+                else ""
+            )
+            + (
+                f", weather: {self.weather} heard (lines "
+                + ", ".join(n for w in self.heard_weather for n in w.lines)
+                + f"), {self.weather_cut} cut short"
+                + "".join(f", {n} {k}" for k, n in sorted(self.weather_dropped.items()) if n)
+                if self.weather or self.weather_dropped or self.weather_cut
                 else ""
             )
             + (f", stopped: {self.stopped}" if self.stopped else "")
@@ -552,6 +596,8 @@ async def run(
     after_ms: int = 0,
     count_call: Callable[[], Awaitable[None]] | None = None,
     readings: bool = False,
+    theories: bool = False,
+    mysteries: Sequence[tuple[str, str]] = (),
     deeds: bool = False,
     deed_store: DeedProposals | None = None,
     reveals: bool = False,
@@ -564,6 +610,8 @@ async def run(
     met: bool = False,
     met_store: MetStore | None = None,
     session_id: str | None = None,
+    languages: bool = False,
+    weather: bool = False,
 ) -> Report:
     """Read the session's lines and store what the AI found as proposals, all at once at the end
     (the linker picks the most-said new names across the whole session). `consenting` is asked
@@ -583,6 +631,12 @@ async def run(
     any other, counted before it is made and held to `max_calls`, so turning it on does not raise
     what a session may spend. Its answers wait as claims that carry a reading and are placed by
     the DM, never written.
+
+    `theories` (#4655, quests slice 7b; DMBOT_STORY_THREADS): the same second question, asking for
+    theories alone when `readings` is off (the other three kinds stay behind DMBOT_STORY_READINGS:
+    Supervisor's ruling 3). With it, `mysteries` (the open mysteries, as (thread id, name), the
+    most recently touched first) are shown after the transcript by label, and a theory that names
+    one carries that thread's id in its reading, for the DM's place to tie the guess to it.
 
     `deeds` (#3175 slice 4): after each batch's claims, ask a third question of the same lines,
     which deeds the party did (`deed_reading.py`), inside the same ceilings and counted like any
@@ -613,14 +667,51 @@ async def run(
     met that is never named (`met_reading.MET_ADDENDUM`), in the same call, so it costs no call.
     Only the DM's own lines count; the session's items are joined by their words, capped, and kept
     by `met_store` (`memory_met`, apart from the names, so quiet) under `session_id` after the
-    claims. Never in `family_only`."""
+    claims. Never in `family_only`.
+
+    `languages` (#4229 1d, DMBOT_SESSION_LANGUAGES): the claims call is also asked which languages
+    a character was heard speaking (`language_reading.LANGUAGE_ADDENDUM`), in the same call, so it
+    costs no call. What holds is only gathered (`Report.heard_languages`, from lines of speakers
+    recorded at the answer): the caller asks the DM about each, nothing is written here. Never in
+    `family_only`.
+
+    `weather` (#4260 10c-2, DMBOT_WEATHER_NOTES): the claims call is also asked for the snow, frost
+    or heat the DM described in a named place (`weather_reading.WEATHER_ADDENDUM`), in the same
+    call. What holds is only gathered (`Report.heard_weather`, place names and line numbers, no
+    words): the caller checks it against the kept climate and notes the DM. Never stored: weather
+    never is (design §6). Never in `family_only`."""
     report = Report()
-    readings = readings and not family_only
+    # (theories are the first kind of reading: asked when either switch is on, the rest only with
+    # the readings switch)
+    rules = RULES if readings else (THEORY_RULE,)
+    shown = list(mysteries[:MYSTERIES_SHOWN]) if theories else []
+    labels = {f"M{i}": thread_id for i, (thread_id, _name) in enumerate(shown, start=1)}
+    reading_prompt = (  # (the prompt it always was, unless one of the two changes it)
+        READING_SYSTEM
+        if readings and not shown
+        else reading_system(theories_only=not readings, mysteries=bool(shown))
+    )
+    reading_version = (
+        READING_PROMPT_VERSION + ("" if readings else "+theories") + ("+mysteries" if shown else "")
+    )
+    readings = (readings or theories) and not family_only
     deeds = deeds and not family_only
     reveals = reveals and not family_only
     met = met and not family_only
-    system = SYSTEM + MET_ADDENDUM if met else SYSTEM
-    prompt_version = PROMPT_VERSION + MET_SUFFIX if met else PROMPT_VERSION
+    languages = languages and not family_only
+    weather = weather and not family_only
+    system = (
+        SYSTEM
+        + (MET_ADDENDUM if met else "")
+        + (LANGUAGE_ADDENDUM if languages else "")
+        + (WEATHER_ADDENDUM if weather else "")
+    )
+    prompt_version = (
+        PROMPT_VERSION
+        + (MET_SUFFIX if met else "")
+        + (LANGUAGE_SUFFIX if languages else "")
+        + (WEATHER_SUFFIX if weather else "")
+    )
     deed_pairs: set[tuple[str, str]] = set()  # the pairs a deed was proposed for, so far
     answered: list[list[Said]] = []  # the batches whose claims were read
     collected: list[Extracted] = []
@@ -711,6 +802,23 @@ async def run(
             report.met_proposals.extend(got.met)
             report.met_cut += int(reply.cut)  # (never "none met": counted as cut short)
             when.update((str(s.number), s.started_ms) for s in batch)
+        if languages:
+            tongues = parse_languages(reply.text, {number: text for number, _who, text in rows})
+            report.languages += len(tongues.heard)
+            report.languages_dropped.update(tongues.dropped)
+            report.languages_cut += int(reply.cut)
+            report.heard_languages.extend(tongues.heard)
+        if weather:
+            told = parse_weather(
+                reply.text,
+                {number: text for number, _who, text in rows},
+                # (the DM's own words: never a line said as an NPC, #4748)
+                dm_lines=[str(s.number) for s in batch if s.user_id in dm_ids and not s.voiced],
+            )
+            report.weather += len(told.weather)
+            report.weather_dropped.update(told.dropped)
+            report.weather_cut += int(reply.cut)
+            report.heard_weather.extend(told.weather)
         answered_by = reply.model or answered_by
         everyone.update(speakers)
         heard.update((number, text) for number, _who, text in rows)
@@ -738,7 +846,12 @@ async def run(
                 log.warning("Story extractor: couldn't count a call (%s)", type(exc).__name__)
         try:
             second = await asyncio.wait_for(
-                client.complete(READING_SYSTEM, transcript_of(rows), max_tokens=MAX_TOKENS),
+                client.complete(
+                    reading_prompt,
+                    transcript_of(rows)
+                    + ("\n\n" + mysteries_block([n for _i, n in shown]) if shown else ""),
+                    max_tokens=MAX_TOKENS,
+                ),
                 CALL_TIMEOUT_S,
             )
         except AIOutOfFunds:
@@ -751,8 +864,9 @@ async def run(
             report.readings_failed += 1
             continue
         kept, refused = parse_readings(
-            second.text, speakers.keys(), dm_lines=dm_lines, cut=second.cut
-        )
+            second.text, speakers.keys(), dm_lines=dm_lines, cut=second.cut, rules=rules,
+            mysteries=labels.keys(),
+        )  # fmt: skip
         report.readings_refused += refused
         report.readings += len(kept)
         if second.cut:
@@ -768,6 +882,10 @@ async def run(
             # moments they were spoken at, so no clock log can say what time they had)
             if spoken > 0 and claim.reading is not None and not imported:
                 claim = replace(claim, reading={**claim.reading, "spoken_at": spoken // 1000})
+            if belief.mystery in labels and claim.reading is not None:  # (#4655: which mystery)
+                claim = replace(
+                    claim, reading={**claim.reading, "thread_id": labels[belief.mystery]}
+                )
             believed.append(claim)
         everyone.update(speakers)
         heard.update((number, text) for number, _who, text in rows)
@@ -889,7 +1007,7 @@ async def run(
                 everyone,
                 said=heard,
                 opted_in=agreed,
-                prompt_version=READING_PROMPT_VERSION,
+                prompt_version=reading_version,
                 model=answered_by or model(),
                 session_started_at=session_started_at,
                 malformed=0,
@@ -911,6 +1029,31 @@ async def run(
     if met and met_store is not None and session_id is not None and report.met_proposals:
         await _keep_met(report, met_store, guild_id, campaign_id, session_id, everyone, when,
                         consenting, session_started_at, skip)  # fmt: skip
+    if report.heard_languages:
+        # (#4229 1d: asked again at the end, as met is: a language cited from a speaker who
+        # stopped meanwhile is dropped; one heard twice is one; a name that is never a story name
+        # is no one's)
+        still = await consenting()
+        heard_kept = once_each(
+            replace(h, speakers=tuple(speakers_of(h.lines, everyone)))
+            for h in report.heard_languages
+            if all(everyone.get(n) in still for n in h.lines) and name_key(h.who) not in skip
+        )  # fmt: skip
+        report.languages_dropped["language_speaker_gone"] += len(report.heard_languages) - len(
+            [h for h in report.heard_languages if all(everyone.get(n) in still for n in h.lines)]
+        )
+        report.heard_languages = heard_kept
+        report.languages = len(heard_kept)
+    if report.heard_weather:
+        # (asked again at the end, as languages are: an item cited from a speaker who stopped
+        # meanwhile is dropped; one place's same kind twice is one)
+        still = await consenting()
+        recorded = [
+            w for w in report.heard_weather if all(everyone.get(n) in still for n in w.lines)
+        ]
+        report.weather_dropped["weather_speaker_gone"] += len(report.heard_weather) - len(recorded)
+        report.heard_weather = weather_once(recorded)
+        report.weather = len(report.heard_weather)
     report.through_ms = reached
     return report
 

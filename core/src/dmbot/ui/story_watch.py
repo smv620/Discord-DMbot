@@ -20,6 +20,7 @@ from dmbot.discord_limits import fit_message
 from dmbot.memory.story_watch import Clash, Found
 from dmbot.ui.dmbot_commands import _bot, _tell
 from dmbot.ui.names import _md, sees_secrets
+from dmbot.ui.private_server import guild_id_for
 
 log = logging.getLogger(__name__)
 
@@ -131,17 +132,17 @@ async def _dm_and_watch(
     interaction: discord.Interaction, campaign_id: str, *, needs_plan: bool = False
 ) -> Any:
     """The campaign and the watch, only for a DM of that campaign (asked again every press)."""
-    guild = interaction.guild
+    guild_id = await guild_id_for(interaction, campaign_id)  # (a private chat has no server)
     watch = getattr(_bot(interaction), "watch", None)
-    if guild is None or watch is None:
+    if guild_id is None or watch is None:
         await _tell(interaction, BROKEN)
         return None
-    campaign = await _bot(interaction).campaigns.get(guild.id, campaign_id)
+    campaign = await _bot(interaction).campaigns.get(guild_id, campaign_id)
     if campaign is None or not sees_secrets(campaign, interaction.user.id):
         await _tell(interaction, ONLY_DM)
         return None
     if needs_plan and not await _bot(interaction).plan_allows(
-        "adventure", guild.id, campaign, fail_open=False
+        "adventure", guild_id, campaign, fail_open=False
     ):
         await _tell(interaction, BROKEN)  # the owner's plan no longer covers the adventure
         return None
