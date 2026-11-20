@@ -59,8 +59,7 @@ from dmbot.memory.models import (
 from dmbot.memory.party_record import ENDED
 from dmbot.memory.store import INT64_MAX, PERSON, MemoryStore
 from dmbot.memory.store import NAMES_NOT_SHOWN as NAMES_NOT_SHOWN_WORDS
-from dmbot.rules import rule_sets, set_sync
-from dmbot.rules.homebrew_packs import TOO_MANY_PACKS
+from dmbot.rules import homebrew, rule_sets, set_sync
 from dmbot.rules.house import HouseRuleError
 from dmbot.rules.web_updates import RuleTools
 
@@ -1479,7 +1478,7 @@ async def _pack_pick(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Ou
             return _failed(CHANGED)
         if text in (rule_sets.NOT_FOLLOWING, rule_sets.NOTHING_NEW, rule_sets.NO_SUCH_SET):
             return _failed(GONE)
-        if text == TOO_MANY_PACKS or text == rule_sets.NO_ROOM:
+        if text == homebrew.FULL:  # the copy would pass the campaign's homebrew limit
             return _failed(NO_ROOM)
         return _failed(FAILED)
     except HouseRuleError:
@@ -1514,7 +1513,9 @@ async def _pack_undo(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Ou
     try:
         kept = await tools.packs.undo_pack_take(guild_id, cid, a.user_id, saved.taken)
     except HouseRuleError:
-        return _failed(TOO_LATE)  # the campaign follows something else now, or the pack is gone
+        # (deliberately one word for the page: the campaign follows the pack again, is at its pack
+        # limit, or the pack is gone; the card then reads again and shows what is true)
+        return _failed(TOO_LATE)
     if tools.packs_changed is not None:
         tools.packs_changed(guild_id, cid)
     await tools.takes.delete(guild_id, cid, take_id)

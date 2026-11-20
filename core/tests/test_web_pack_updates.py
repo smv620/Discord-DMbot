@@ -251,6 +251,13 @@ class PickingChanges(ToolsBase):
             )
             return await cur.fetchone()
 
+    async def homebrew_keys(self) -> set[str]:
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute(
+                "SELECT name_key FROM homebrew_entries WHERE campaign_id = %s", (self.one.id,)
+            )
+            return {str(r["name_key"]) for r in await cur.fetchall()}
+
     async def test_leaving_a_change_out_ends_the_follow_and_gives_an_undo(self) -> None:
         # (OLD to NEW: Flute added, Rope changed; the page lists them in core's order)
         shown = pack_updates_lines()
@@ -261,6 +268,11 @@ class PickingChanges(ToolsBase):
         self.assertEqual(self.changed, [(THURSDAY.id, self.one.id)])
         row = await self.follow_row()
         self.assertIsNone(row)  # (the follow ended: the pack is the campaign's own now)
+        first = pack_diff.diff(OLD, NEW)[0]  # the one kept: its entry is copied, the rest are not
+        have = await self.homebrew_keys()
+        self.assertIn(first.key, have)
+        others = {c.key for c in pack_diff.diff(OLD, NEW)[1:] if c.kind == "added"}
+        self.assertEqual(have & others, set())  # (a change left out is not copied)
 
     async def test_the_undo_puts_the_follow_back_and_is_for_the_same_dm_and_the_newest(
         self,
@@ -272,6 +284,7 @@ class PickingChanges(ToolsBase):
         row = await self.follow_row()
         assert row is not None
         self.assertEqual((row["version"], row["content"]), (1, OLD))
+        self.assertEqual(await self.homebrew_keys(), set())  # (what the pick copied is gone)
         await pack_updates.queue_undo(self.web, self.session, self.cref(), str(done.result_id))
         (again,) = await self.drain()
         self.assertEqual(again.error, "gone")  # (the handle went with the undo)
@@ -298,6 +311,32 @@ class PickingChanges(ToolsBase):
         await pack_updates.queue_undo(self.web, self.session, self.cref(), str(done.result_id))
         (right,) = await self.drain()
         self.assertEqual(right.error, "")
+
+    async def test_a_set_handle_given_to_a_packs_undo_finds_nothing(self) -> None:
+        await self.sql(
+            "INSERT INTO web_rule_takes (guild_id, campaign_id, user_id, taken, created_at)"
+            " VALUES (%s, %s, %s, '{}'::jsonb, extract(epoch FROM now())::bigint)",
+            THURSDAY.id, self.one.id, ALICE.id,
+        )  # fmt: skip
+        async with self.db.guild(THURSDAY.id) as conn:
+            cur = await conn.execute("SELECT max(id) AS id, max(kind) AS kind FROM web_rule_takes")
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual(row["kind"], "set")  # (a row made as before the column came is a set's)
+        await pack_updates.queue_undo(self.web, self.session, self.cref(), str(row["id"]))
+        (done,) = await self.drain()
+        self.assertEqual(done.error, "gone")
+
+    async def test_another_dms_pick_cannot_be_undone_and_the_handle_expires(self) -> None:
+        done = await self.pick([0])
+        await self.sql("UPDATE web_rule_takes SET user_id = %s", BOB.id)
+        await pack_updates.queue_undo(self.web, self.session, self.cref(), str(done.result_id))
+        (other,) = await self.drain()
+        self.assertEqual(other.error, "gone")
+        await self.sql("UPDATE web_rule_takes SET user_id = %s, created_at = 5", ALICE.id)
+        await pack_updates.queue_undo(self.web, self.session, self.cref(), str(done.result_id))
+        (late,) = await self.drain()
+        self.assertEqual(late.error, "too_late")
 
     async def test_the_answer_says_how_many_were_kept_and_left_out(self) -> None:
         from dmbot.web import relationships
