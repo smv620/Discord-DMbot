@@ -89,6 +89,7 @@ from dmbot.web import (
     report,
     restores,
     rule_sharing,
+    rule_updates,
     script_make,
     secret_questions,
     see_as,
@@ -2900,6 +2901,17 @@ def create_app(
         session, _token = signed
         try:
             return {"answer": await party_record.queue_undo(db, session, ref, batch)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/rule-update")
+    async def me_campaign_rule_update(ref: str, signed: Signed) -> dict[str, Any]:
+        """The newer version of the house-rules set the campaign follows, as the lines of what
+        changed (#4841): DM only."""
+        session, _token = signed
+        try:
+            return await rule_updates.read(db, session, ref)
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
