@@ -618,6 +618,22 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
       return { code: got.code ?? null };
     },
+    // "Type it…" (#4865): a name the DM typed for a waiting question. The bot checks it and answers; a refusal carries its reason.
+    heardType: async (ref, question, name) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/heard-questions/type`, { question, name })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      let reason = null as string | null;
+      try {
+        const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`, (look) => {
+          reason = look.reason ?? null;
+        });
+        return { code: got.code ?? null };
+      } catch (error) {
+        if (error instanceof ApiError && error.kind === "typed-problem" && reason !== null) error.reason = reason;
+        throw error;
+      }
+    },
     joinQuestions: async (ref) => ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/join-questions`)) as { groups: JoinGroup[] }).groups,
     // Queued for the bot (202 {answer}), then waited for: the batch and `given` of an answer; the batch of an Undo is in its path.
     answerJoin: async (ref, change) => {
