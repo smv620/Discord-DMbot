@@ -38,7 +38,7 @@ from collections.abc import Awaitable, Callable, Collection, Iterable, Mapping, 
 from dataclasses import dataclass, field
 from typing import Any
 
-from dmbot.memory import kin, link_words
+from dmbot.memory import gate, kin, link_words
 from dmbot.memory._changes import Scope
 from dmbot.memory.beliefs import party_id, party_knows_by
 from dmbot.memory.continuity import _predicate_words
@@ -282,12 +282,19 @@ class RecallService:
         opted_in: OptedIn = (),
         hops: int = MAX_HOPS,
         confirmed_only: bool = False,
+        viewer: gate.Viewer | None = None,
+        live_at: int | None = None,
     ) -> Recall:
         """What may be said about `seeds` (entry ids or names) to `audience` at `as_of`, cut to
         `budget` characters. `opted_in` are the people recorded now (or a function that says,
         asked again before any quote is attached): only they are quoted or counted.
         `confirmed_only`: for the DM screen, leave out the entries the DM has not confirmed yet
-        (a proposed one), as the players' view does; a recap rests on confirmed memory alone."""
+        (a proposed one), as the players' view does; a recap rests on confirmed memory alone.
+        `viewer`: whom the players' audience is for (party knowledge slice 5a, Supervisor's ruling
+        M): by default the table (`gate.table_viewer`: the party at the running session, else the
+        current party, else common knowledge only). The gate says which entries it holds; the
+        flags are no longer asked (§9 rule 2). `live_at`: the start of the table the bot is live
+        at, for that table's party (never a stale open session row)."""
         if audience not in AUDIENCES:
             raise ValueError(f"unknown audience {audience!r}")
         as_of = as_of or AsOf()
@@ -296,12 +303,17 @@ class RecallService:
         hops = max(0, min(hops, MAX_HOPS))
         agreed = await _agreed(opted_in)
         async with self._memory._read(guild_id, campaign_id, snapshot=True) as scope:
-            walk = await self._walk(scope, seeds, audience, as_of, hops, confirmed_only)
+            allowed = (
+                await gate.entries_for(scope, viewer or await gate.table_viewer(scope, live_at))
+                if audience == PLAYERS
+                else None
+            )
+            walk = await self._walk(scope, seeds, audience, as_of, hops, confirmed_only, allowed)
             reached = sorted(walk.cost)
             heard = await self._heard(scope, reached, agreed)
             notes = await self._conditions(scope, reached, as_of) if audience == DM_SCREEN else {}
             onto = await self._ontology(scope)
-            guard = await self._label_guard(scope, walk) if audience == PLAYERS else None
+            guard = await self._label_guard(scope, walk, allowed) if allowed is not None else None
             found = _Found(walk, heard, notes, onto, as_of, audience, guard)
             # Rank and cut first: the items come before their evidence, and evidence is looked
             # up only for the best few facts, so it can fill what is left but never crowd out
@@ -322,7 +334,9 @@ class RecallService:
             audience, as_of, items, first.seeds, first.cut, first.size + size, walk.truncated
         )
 
-    async def _label_guard(self, scope: Scope, walk: _Walk) -> NameGuard | None:
+    async def _label_guard(
+        self, scope: Scope, walk: _Walk, allowed: frozenset[str]
+    ) -> NameGuard | None:
         """The names the players may not be told, for blanking a catch-all fact's own words
         (#3153: "swore on Veil's grave to guard" names an entry the players cannot see). Read
         only when such a fact is in the walk, and only names: the entries the players may not
@@ -331,20 +345,29 @@ class RecallService:
             f.predicate == FALLBACK_PREDICATE and f.detail for f in walk.facts.values()
         ) and not any(e.get("players_text") for e in walk.entities.values()):
             return None
+        # (an entry may be named when it is confirmed, named, not the DM's own kind, and the gate
+        # says this audience holds it; slice 5a: the gate, not the flags)
         cur = await scope.conn.execute(
-            "SELECT e.name AS word FROM memory_entities e WHERE e.guild_id = %s"
-            " AND e.campaign_id = %s AND e.type <> 'person' AND NOT (e.status = 'confirmed'"
-            " AND NOT e.audience_limited AND NOT e.hidden_from_players AND NOT e.unnamed"
-            " AND NOT e.type = ANY(%s))"
-            " UNION ALL SELECT a.text FROM memory_aliases a JOIN memory_entities e"
-            " ON e.guild_id = a.guild_id AND e.campaign_id = a.campaign_id AND e.id = a.entity_id"
-            " WHERE a.guild_id = %s AND a.campaign_id = %s AND e.type <> 'person'"
-            " AND (a.secret OR a.status <> 'confirmed' OR NOT (e.status = 'confirmed'"
-            " AND NOT e.audience_limited AND NOT e.hidden_from_players AND NOT e.unnamed"
-            " AND NOT e.type = ANY(%s)))",
-            (*scope.ids, list(DM_ONLY_TYPES), *scope.ids, list(DM_ONLY_TYPES)),
+            "SELECT e.id, e.name AS word, (e.status = 'confirmed' AND NOT e.unnamed"
+            " AND NOT e.type = ANY(%s)) AS may FROM memory_entities e WHERE e.guild_id = %s"
+            " AND e.campaign_id = %s AND e.type <> 'person'",
+            (list(DM_ONLY_TYPES), *scope.ids),
         )
-        forbidden = [str(r["word"]) for r in await cur.fetchall()]
+        named = {str(r["id"]): (str(r["word"]), bool(r["may"])) for r in await cur.fetchall()}
+        open_ids = {i for i, (_, may) in named.items() if may and i in allowed}
+        forbidden = [word for i, (word, _) in named.items() if i not in open_ids]
+        cur = await scope.conn.execute(
+            "SELECT a.entity_id, a.text, (a.secret OR a.status <> 'confirmed') AS closed"
+            " FROM memory_aliases a JOIN memory_entities e ON e.guild_id = a.guild_id"
+            " AND e.campaign_id = a.campaign_id AND e.id = a.entity_id"
+            " WHERE a.guild_id = %s AND a.campaign_id = %s AND e.type <> 'person'",
+            scope.ids,
+        )
+        forbidden += [
+            str(r["text"])
+            for r in await cur.fetchall()
+            if r["closed"] or str(r["entity_id"]) not in open_ids
+        ]
         shown = [str(e["name"]) for e in walk.entities.values()]
         return NameGuard(forbidden, allowed=shown)
 
@@ -375,7 +398,8 @@ class RecallService:
                 (*scope.ids, kinds),
             )
             candidates = [str(r["id"]) for r in await cur.fetchall()]
-            shown = await self._entries(scope, candidates, PLAYERS)
+            allowed = await gate.entries_for(scope, await gate.table_viewer(scope))
+            shown = await self._entries(scope, candidates, PLAYERS, allowed=allowed)
             if len(shown) > ROSTER_MAX:  # (cut after the filter: hidden entries use no slot)
                 shown = {i: shown[i] for i in sorted(shown)[:ROSTER_MAX]}
             if not shown:
@@ -470,10 +494,11 @@ class RecallService:
         as_of: AsOf,
         hops: int,
         confirmed_only: bool = False,
+        allowed: frozenset[str] | None = None,
     ) -> _Walk:
         walk = _Walk()
         ids = await self._seed_ids(scope, seeds, audience, confirmed_only)
-        walk.entities.update(await self._entries(scope, ids, audience, confirmed_only))
+        walk.entities.update(await self._entries(scope, ids, audience, confirmed_only, allowed))
         walk.seeds = [i for i in ids if i in walk.entities]
         walk.cost = {i: 0 for i in walk.seeds}
         when, values = _true_at(as_of)
@@ -511,7 +536,7 @@ class RecallService:
                 if end not in walk.entities
             }
             walk.entities.update(
-                await self._entries(scope, sorted(unknown), audience, confirmed_only)
+                await self._entries(scope, sorted(unknown), audience, confirmed_only, allowed)
             )
             frontier = self._step(walk, rows, frontier, hops)
         else:
@@ -589,11 +614,17 @@ class RecallService:
         return list(ids)
 
     async def _entries(
-        self, scope: Scope, ids: Sequence[str], audience: str, confirmed_only: bool = False
+        self,
+        scope: Scope,
+        ids: Sequence[str],
+        audience: str,
+        confirmed_only: bool = False,
+        allowed: frozenset[str] | None = None,
     ) -> dict[str, dict[str, object]]:
-        """The live entries among `ids`. For the players: confirmed ones only, and never an
-        entry whose own name the DM has made secret (its identity is the secret), whether it
-        came by name or by id."""
+        """The live entries among `ids`. For the players: confirmed ones only, held by the
+        audience's viewer (`allowed`, the gate's answer: slice 5a), and never an entry whose own
+        name the DM has made secret (its identity is the secret), whether it came by name or by
+        id."""
         if not ids:
             return {}
         live = ["confirmed"] if audience == PLAYERS or confirmed_only else list(_LIVE)
@@ -601,16 +632,12 @@ class RecallService:
         note = "description" if audience == DM_SCREEN else "'' AS description"
         # The players' line (#2967) is theirs to be told; the DM's own note never stands in for it.
         line = "players_text" if audience == PLAYERS else "NULL AS players_text"
-        # A clue only some people know (#1649), or an entry the DM hasn't told the players of
-        # (#2321), is the DM's alone: the players' audience gets neither it nor, because a fact
-        # needs both ends, anyone's fact to it.
-        # Story threads (#1662) are the DM's plot notes, and so are deeds (#1732): the same.
-        hide_clue = (
-            " AND NOT audience_limited AND NOT hidden_from_players AND NOT unnamed"
-            " AND NOT type = ANY(%s)"
-            if audience == PLAYERS
-            else ""
-        )
+        # What the players' audience holds is the gate's answer (`allowed`, slice 5a): a clue only
+        # some know (#1649) or an entry the DM hasn't told the players of (#2321) is in it only for
+        # who knows it, so the audience gets neither it nor, because a fact needs both ends,
+        # anyone's fact to it. Story threads (#1662) and deeds (#1732) are the DM's plot notes, and
+        # an unnamed person is never named: those stay out by kind.
+        hide_clue = " AND NOT unnamed AND NOT type = ANY(%s)" if audience == PLAYERS else ""
         cur = await scope.conn.execute(
             f"SELECT id, type, name, {note}, {line}, role FROM memory_entities"
             " WHERE guild_id = %s AND campaign_id = %s AND id = ANY(%s)"
@@ -618,6 +645,9 @@ class RecallService:
             (*scope.ids, list(ids), live, *([list(DM_ONLY_TYPES)] if hide_clue else [])),
         )
         rows = {str(r["id"]): dict(r) for r in await cur.fetchall()}
+        if audience == PLAYERS:
+            held = allowed if allowed is not None else frozenset()  # (nothing unless the gate says)
+            rows = {i: r for i, r in rows.items() if i in held}
         if audience == PLAYERS and rows:
             cur = await scope.conn.execute(
                 "SELECT entity_id, key FROM memory_aliases WHERE guild_id = %s"

@@ -5,6 +5,7 @@ citation to anything that was not given is cut. Invented fixtures only."""
 from __future__ import annotations
 
 import unittest
+from types import SimpleNamespace
 from typing import Any, ClassVar
 from unittest.mock import patch
 
@@ -195,6 +196,17 @@ class TheChecks(unittest.TestCase):
         self.assertIn("<play>", text)
 
 
+class _Party:
+    """The memory's one read before the players' recall: who was in the party at the session
+    (#4537 slice 5a); the recall itself is the test's stand-in."""
+
+    async def members_at(self, guild_id: int, campaign_id: str, at: int) -> list[str]:
+        return ["p" * 32]
+
+
+_JOB = SimpleNamespace(session_at=5_000)  # (the recap's own session)
+
+
 class TheKnownGate(unittest.IsolatedAsyncioTestCase):
     """An item may be explained only if the players' own view of the memory holds it."""
 
@@ -218,9 +230,9 @@ class TheKnownGate(unittest.IsolatedAsyncioTestCase):
             async def get(self, guild_id: int, campaign_id: str) -> dict[str, float]:
                 return {name_key("Lucian"): 12.0}
 
-        bot = SimpleNamespace(memory=object(), importance=Scores())
+        bot = SimpleNamespace(memory=_Party(), importance=Scores())
         with patch("dmbot.recaps.discord.RecallService", Service):
-            await DMBot.recap_story(bot, 1, "c" * 32, None, ["Mira", "Lucian", "Mira"])  # type: ignore[arg-type]
+            await DMBot.recap_story(bot, 1, "c" * 32, _JOB, ["Mira", "Lucian", "Mira"])  # type: ignore[arg-type]
         self.assertEqual(seen[0], ["Lucian", "Mira"])  # the hub first, and no name twice
 
     async def test_known_is_what_both_views_hold(self) -> None:
@@ -249,9 +261,9 @@ class TheKnownGate(unittest.IsolatedAsyncioTestCase):
                 Service.last.append(k)
                 return everything if k["audience"] == "dm_screen" else players
 
-        bot = SimpleNamespace(memory=object(), importance=None)
+        bot = SimpleNamespace(memory=_Party(), importance=None)
         with patch("dmbot.recaps.discord.RecallService", Service):
-            got = await DMBot.recap_story(bot, 1, "c" * 32, None, ["Mira"])  # type: ignore[arg-type]
+            got = await DMBot.recap_story(bot, 1, "c" * 32, _JOB, ["Mira"])  # type: ignore[arg-type]
         self.assertEqual([(m.id[:1], m.known) for m in got], [("a", True), ("b", False)])
         self.assertEqual(got[0].text, "Mira")  # never the DM's note on a known entry
         self.assertNotIn("spy", " ".join(m.text for m in got if m.known))

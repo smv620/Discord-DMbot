@@ -268,7 +268,10 @@ class TheRealLookup(_StoreBase):
         bot: Any = SimpleNamespace(
             lookup=SimpleNamespace(get=AsyncMock(return_value=lookup)), memory=self.memory
         )
-        lines = await RecapFeatures.recap_colour(bot, 1, self.campaign, JOB, ["Bryn Shander"])
+        # (a session after Cerric joined: the party at a session nobody was in is common knowledge
+        # only, #4806)
+        job: Any = SimpleNamespace(session_at=4_000_000_000_000)
+        lines = await RecapFeatures.recap_colour(bot, 1, self.campaign, job, ["Bryn Shander"])
         self.assertEqual(len(lines), 1)
         self.assertIn("tundra", lines[0])
         self.assertNotIn("Veiled", lines[0])

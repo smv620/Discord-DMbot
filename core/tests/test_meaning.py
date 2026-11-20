@@ -101,11 +101,37 @@ class Finding(DatabaseTest):
                     " VALUES (%s, %s, %s, %s, %s, %s, 'full', true, 'confirmed', '{}', 'dm', 1)",
                     (GUILD, cid, f"{id_[:-1]}f", id_, name, name.lower()),
                 )
+        if not flags.get("hidden") and not flags.get("audience"):
+            # (shown to the table: known to the party, as the writers keep it; the players'
+            # filter is the gate's answer, slice 5a)
+            await self.party_knows(cid, id_)
         self.ids[name] = id_
         piece = pieces_of(vs.ASSERTION, id_, f"{name}: {desc}")[0]
         await self.store.save(
             GUILD, cid, MODEL, [vs.Item(vs.ASSERTION, id_, piece.hash, point(piece.text))]
         )
+
+    async def party_knows(self, cid: str, entity_id: str) -> None:
+        """A party of one in this campaign (made the first time), knowing this entry."""
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO memory_entities (guild_id, campaign_id, id, type, name, description,"
+                " status, source, created_at, role, played_by) VALUES (%s, %s, %s, 'character',"
+                " 'Pcwyn Testhand', '', 'confirmed', 'dm', 1, 'player_character', 900001)"
+                " ON CONFLICT DO NOTHING",
+                (GUILD, cid, "d0" * 16),
+            )
+            await conn.execute(
+                "INSERT INTO memory_perspectives (guild_id, campaign_id, id, kind, entity_id,"
+                " created_at) VALUES (%s, %s, %s, 'pc', %s, 1) ON CONFLICT DO NOTHING",
+                (GUILD, cid, "d1" * 16, "d0" * 16),
+            )
+            await conn.execute(
+                "INSERT INTO memory_knowers (guild_id, campaign_id, id,"
+                " perspective_id, about_entity_id, created_at)"
+                " VALUES (%s, %s, md5(%s), %s, %s, 1)",
+                (GUILD, cid, entity_id, "d1" * 16, entity_id),
+            )
 
     async def allowed(self) -> bool:
         return self.on
@@ -194,9 +220,10 @@ class Finding(DatabaseTest):
             GUILD, self.c, "hemlock cook", for_players=True
         )
         self.assertEqual(before, [bram])
-        async with self.db.guild(GUILD) as conn:
+        async with self.db.guild(GUILD) as conn:  # (the DM hides it: the party's row goes to sleep)
             await conn.execute(
-                "UPDATE memory_entities SET hidden_from_players = true WHERE id = %s", (bram,)
+                "UPDATE memory_knowers SET hidden_by = ARRAY[%s] WHERE about_entity_id = %s",
+                (bram, bram),
             )
         after = await self.seeds(FakeVoyage()).find(GUILD, self.c, "hemlock cook", for_players=True)
         self.assertEqual(after, [])  # no new numbers were made: the filter is the change

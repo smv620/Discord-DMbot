@@ -26,9 +26,9 @@ DM_ID, ANNA, BEN, CARA = (
 
 
 class TheViewer(unittest.TestCase):
-    def test_the_party_at_a_session_is_its_members_and_none_is_the_party(self) -> None:
+    def test_the_party_at_a_session_is_its_members_and_none_is_common_knowledge(self) -> None:
         self.assertEqual(gate.Viewer.party_at(["a", "b"]), gate.Viewer.the_table(["a", "b"]))
-        self.assertEqual(gate.Viewer.party_at([]), gate.Viewer.the_party())
+        self.assertEqual(gate.Viewer.party_at([]), gate.Viewer.the_world())  # (fail closed, #4806)
 
 
 class ThePeopleOfARecap(unittest.TestCase):
@@ -116,7 +116,7 @@ class AJoinAtSessionThree(DatabaseTest):
         await self.played(100, 200, made=3_200)
         got = set(await self.memory.members_at(GUILD, self.c, 100))
         self.assertEqual(got, {self.vell, self.tuck, self.cara})
-        self.assertEqual(gate.Viewer.party_at([]), gate.Viewer.the_party())
+        self.assertEqual(gate.Viewer.party_at([]), gate.Viewer.the_world())  # (fail closed, #4806)
 
     async def test_an_imported_session_counts_who_existed_not_who_joined_later(self) -> None:
         # (ruling E's mixed case: imported at 2_800, before Cara joined live at 3_000)

@@ -261,6 +261,10 @@ class WithTheRealRecall(MemoryTest):
 
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
+        # (the players' audience is the party's view, slice 5a: a party of one, made first)
+        self.hero = await self.add(
+            "Pcwyn Testhand", type="character", role="player_character", played_by=900_001
+        )
         self.mira = await self.add(
             "Mira", type="character", role="npc", description="A vow she hides"
         )
@@ -277,6 +281,10 @@ class WithTheRealRecall(MemoryTest):
         # The same names in another campaign, with their own facts.
         other = await self.campaigns.create(GUILD_A, "Elsewhere", 7)
         self.other_campaign = other.id
+        await self.add(  # (its own party of one, made first, slice 5a)
+            "Pcwyn Testhand", type="character", role="player_character", played_by=900_002,
+            campaign=other.id,
+        )  # fmt: skip
         o_mira = await self.add("Mira", type="character", role="npc", campaign=other.id)
         o_cult = await self.add("Moon Cult", type="faction", campaign=other.id)
         self.o_fact = (

@@ -1317,9 +1317,13 @@ class RecapFeatures:
             gid, cid, seeds=seeds, audience=DM_SCREEN, budget=RECAP_RECALL_BUDGET,
             confirmed_only=True,
         )  # fmt: skip
+        # (the players of THAT session: what the party at it knew, §8 and slice 5a, never today's
+        # table; no party then is common knowledge only, failing closed)
+        then = await self.memory.members_at(gid, cid, job.session_at)
         players = await service.recall(
-            gid, cid, seeds=seeds, audience=PLAYERS, budget=RECAP_RECALL_BUDGET
-        )
+            gid, cid, seeds=seeds, audience=PLAYERS, budget=RECAP_RECALL_BUDGET,
+            viewer=gate.Viewer.party_at(then),
+        )  # fmt: skip
         # What the writer's side may be told about an item the players know is the players' own
         # text for it (no DM note, no condition); the DM-screen text is only for items they do
         # not know, which are never explained.

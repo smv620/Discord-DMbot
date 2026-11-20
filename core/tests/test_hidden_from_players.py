@@ -21,6 +21,11 @@ from tests.test_memory_store import GUILD_A, GUILD_B, ConfirmedMemoryTest
 class Hidden(ConfirmedMemoryTest):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
+        # (the players' audience is the party's view, #4537 slice 5a: a party of one, made first,
+        # so every entry shown to the table after it is written as known to it)
+        await self.add(
+            "Pcwyn Testhand", type="character", role="player_character", played_by=900_001
+        )
         self.jack = await self.add("Jack", type="character", role="npc")
         self.guild = await self.add("The Thieves Guild", type="faction")
         self.shadow = await self.add("The Shadow", type="character", role="npc")

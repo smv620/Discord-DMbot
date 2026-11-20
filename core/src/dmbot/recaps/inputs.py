@@ -377,8 +377,8 @@ async def load_inputs_or_why(
     # slice 3b), when the store is given. None (every confirmed player character, as before) when
     # it can't be read or is empty. Empty means no player character covers the session: with ruling
     # E an imported session counts everyone made before its import, so that is a campaign with none
-    # at all, or a live session every character joined after. (`Viewer.party_at([])` is today's
-    # party instead: the gate's careful side, where this list only names who the recap is about.)
+    # at all, or a live session every character joined after. (The gate's `Viewer.party_at` with no
+    # member is common knowledge only, #4806; this list only names who the recap is about.)
     members: list[str] | None = None
     if memory is not None:
         try:

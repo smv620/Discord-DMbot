@@ -59,6 +59,11 @@ class Clues(ConfirmedMemoryTest):
         await super().asyncSetUp()
         self.claims = ClaimStore(self.memory)
         self.store = ContinuityStore(self.memory)
+        # (the players' audience is the party's view, #4537 slice 5a: a party of one, made first,
+        # so every entry shown to the table after it is written as known to it)
+        await self.add(
+            "Pcwyn Testhand", type="character", role="player_character", played_by=900_001
+        )
         self.secret = await self.add("The baron's secret", type="clue")
         self.cerric = await self.add("Cerric", type="character")
         self.kesh = await self.add("Kesh", type="character")

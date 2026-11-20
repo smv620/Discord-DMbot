@@ -50,6 +50,11 @@ class WithNpcs(Base):
         await super().asyncSetUp()
         self.memory = MemoryStore(self.db)
         self.store_npc = npg.NpcRosterStore(self.db)
+        # (the players' roster is the party's view, slice 5a: a party of one, made first)
+        await self.memory.add_entity(
+            GUILD, self.one.id, type="character", role="player_character", name="Pcwyn Testhand",
+            source="dm", status=CONFIRMED, played_by=900_003,
+        )  # fmt: skip
         self.alice = self.session  # DM of "One"
         self.bob = await self.person(BOB)  # DM of "Two", a player in "One"
         self.carol = await self.person(CAROL)

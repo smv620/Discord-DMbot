@@ -85,12 +85,20 @@ class Viewer:
         return Viewer(mode="all", party=True)
 
     @staticmethod
+    def the_world() -> Viewer:
+        """Anyone in the world: common knowledge only (🌍, #4537). The players' audience with no
+        party at all fails closed to this, never to "everything shown" (Supervisor's ruling M on
+        slice 5)."""
+        return Viewer(mode="any", characters=frozenset({COMMON}))
+
+    @staticmethod
     def party_at(member_ids: Iterable[str]) -> Viewer:
         """What is read to the whole table about one session: what every member of the party AT
-        that session knows (`party_record.members_at`, #4537 slice 3b, §8). With no member (no
-        player character yet) it is `the_party()`, as before."""
+        that session knows (`party_record.members_at`, #4537 slice 3b, §8). With no member it is
+        anyone in the world (`the_world`: common knowledge only), failing closed (Supervisor's
+        ruling on #4806), never "every player character"."""
         ids = frozenset(member_ids)
-        return Viewer.the_table(ids) if ids else Viewer.the_party()
+        return Viewer.the_table(ids) if ids else Viewer.the_world()
 
     @staticmethod
     def the_table(character_ids: Iterable[str]) -> Viewer:
@@ -611,7 +619,9 @@ def knowers_of(data: Statements) -> Callable[[str, str], set[str]]:
     return who
 
 
-async def party_entries(scope: Scope) -> frozenset[str] | None:
+async def party_entries(
+    scope: Scope, members: Collection[str] | None = None
+) -> frozenset[str] | None:
     """The entries the party's view holds as entries in their own right (`(ENTRY, id)` in
     `visible(Viewer.the_party()).sureness`), without reading every list row: the lookup asks this
     on each rebuild, and reading a campaign's whole `memory_knowers` costs hundreds of
@@ -622,13 +632,18 @@ async def party_entries(scope: Scope) -> frozenset[str] | None:
     the full gate answers."""
     from dmbot.memory import party_record  # ("the party" is one function, #4537 rule 13.1)
 
-    pcs = {c: c for c in await party_record.current_members(scope)}
+    # (`members`: any table of player characters, "all" mode, slice 5a; the aggregate is exact for
+    # any such set. None: the current party)
+    chosen = members if members is not None else await party_record.current_members(scope)
+    pcs = {c: c for c in chosen}
     if not pcs:
         return None
     views = {
         str(r["entity_id"]): str(r["id"])
         for r in await scope.select(PERSPECTIVES, " AND entity_id = ANY(%s)", [list(pcs)])
     }
+    if len(views) != len(pcs):
+        return None  # (a member with no point of view yet knows nothing: the full gate says so)
     cur = await scope.conn.execute(
         "SELECT p.id FROM memory_perspectives p JOIN memory_entities e"
         " ON e.guild_id = p.guild_id AND e.campaign_id = p.campaign_id AND e.id = p.entity_id"
@@ -668,6 +683,13 @@ async def party_entries(scope: Scope) -> frozenset[str] | None:
     # Common knowledge (#4537): an entry "everyone" holds is in the party's view while it is shown
     # (as `common_while_shown` reads it), whatever the characters' own rows say: even a 0.0 row of
     # their own is knowing of it. One more aggregate, the usual case handled here, not by the gate.
+    seen.update(await _common_entries(scope))
+    return frozenset(seen)
+
+
+async def _common_entries(scope: Scope) -> frozenset[str]:
+    """The entries common knowledge holds while they are shown (`common_while_shown`'s mask: a
+    row the DM's hide keeps on purpose, #4524, grants nothing while the entry is hidden)."""
     cur = await scope.conn.execute(
         "SELECT k.about_entity_id FROM memory_knowers k"
         " JOIN memory_perspectives p ON p.guild_id = k.guild_id AND p.campaign_id = k.campaign_id"
@@ -679,8 +701,37 @@ async def party_entries(scope: Scope) -> frozenset[str] | None:
         " AND NOT (e.hidden_from_players OR e.audience_limited OR e.unnamed)",
         scope.ids,
     )
-    seen.update(str(r["about_entity_id"]) for r in await cur.fetchall())
-    return frozenset(seen)
+    return frozenset(str(r["about_entity_id"]) for r in await cur.fetchall())
+
+
+async def table_viewer(scope: Scope, live_at: int | None = None) -> Viewer:
+    """Who an answer to the whole table is for (Supervisor's ruling M on slice 5): the party at
+    the live table's session (`live_at`: its start, as the bot's own table says, never a stale open
+    session row: ruling F's `table_members`), else the current party; with no member at all (or
+    every member joined during the session), anyone in the world (`the_world`: common knowledge
+    only, failing closed)."""
+    from dmbot.memory import party_record
+
+    members = await party_record.table_members(scope, live_at) if live_at is not None else None
+    if members is None:
+        members = await party_record.current_members(scope)
+    return Viewer.the_table(members) if members else Viewer.the_world()
+
+
+async def entries_for(scope: Scope, viewer: Viewer) -> frozenset[str]:
+    """The entries `viewer` holds as entries in their own right (`(ENTRY, id)` in the viewer's
+    sureness), for the readers that only filter entries (recall, meaning search; party knowledge
+    slice 5a). The current party takes `party_entries`' one aggregate, anyone in the world one read
+    of the common rows, and anything else the full gate. Reads only: it never writes a row (§9
+    rule 6). Not for the DM, who needs no filter."""
+    if viewer.characters == frozenset({COMMON}):
+        return await _common_entries(scope)
+    if viewer.party or viewer.mode == "all":
+        fast = await party_entries(scope, None if viewer.party else viewer.characters)
+        if fast is not None:
+            return fast
+    seen = await visible_to(scope, viewer)
+    return frozenset(i for (k, i) in seen.sureness if k == ENTRY)
 
 
 async def visible_to(scope: Scope, viewer: Viewer) -> Visible:
