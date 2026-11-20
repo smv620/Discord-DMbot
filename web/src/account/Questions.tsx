@@ -18,15 +18,17 @@ import { campaignHref } from "./campaignLinks";
 import { TRAIT_QUESTIONS_LIVE } from "../content/trait-questions-switch";
 import { SECRET_QUESTIONS_LIVE } from "../content/secret-questions-switch";
 import { PARTY_JOIN_LIVE } from "../content/party-join-switch";
+import { HEARD_LIVE } from "../content/heard-switch";
 import { WORLD_NOTES_LIVE } from "../content/world-notes-switch";
 import { THREADS_LIVE } from "../content/threads-switch";
 import { MAPS_LIVE } from "../content/maps-switch";
+import { RULE_UPDATES_LIVE } from "../content/rule-updates-switch";
 import QuestionsHere, { groupOf, type HereGroup } from "./QuestionsHere";
 
 /** The bot counts every minute or so: five minutes without a count and the numbers are said to be old. */
 export const CATCHING_UP_SECONDS = 300;
 
-function href(ref: string, to: "recaps" | "graph" | "names" | "maps"): string {
+function href(ref: string, to: "recaps" | "graph" | "names" | "maps" | "houserules"): string {
   const e = encodeURIComponent(ref);
   return to === "recaps"
     ? `/account/recaps?campaign=${e}`
@@ -34,7 +36,9 @@ function href(ref: string, to: "recaps" | "graph" | "names" | "maps"): string {
       ? `/account/web/${e}`
       : to === "maps"
         ? `/account/maps/${e}`
-        : `/account/names/${e}`;
+        : to === "houserules"
+          ? `/account/house-rules/${e}`
+          : `/account/names/${e}`;
 }
 
 /** Oldest question first; a kind with no time keeps its place after those that have one. */
@@ -71,10 +75,14 @@ function howFor(kind: string, api: AccountApi): QuestionHow {
   if (kind === "secrets") return SECRET_QUESTIONS_LIVE && api.secretQuestions !== undefined ? "here" : "discord";
   // The join question (#4778 part b): answered here once its switch is on, else in Discord.
   if (kind === "party_joins") return PARTY_JOIN_LIVE && api.joinQuestions !== undefined ? "here" : "discord";
+  // The "Did they mean…?" question (#4841 B1): answered here once its switch is on, else in Discord.
+  if (kind === "heard") return HEARD_LIVE && api.heardQuestions !== undefined ? "here" : "discord";
   // The three kinds answered on another page (#4841 A): a link to it while that page's switch is on, else in Discord.
   if (kind === "world_notes") return WORLD_NOTES_LIVE ? "link" : "discord";
   if (kind === "threads") return THREADS_LIVE ? "link" : "discord";
   if (kind === "maps") return MAPS_LIVE ? "link" : "discord";
+  // A newer version of a followed house-rules set (#4845): a link to the House rules page while its switch is on.
+  if (kind === "rules") return RULE_UPDATES_LIVE ? "link" : "discord";
   const how = kindWords(kind).how;
   if (how !== "here") return how;
   const group = groupOf(kind);
