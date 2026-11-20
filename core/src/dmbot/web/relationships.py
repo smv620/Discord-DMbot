@@ -1312,6 +1312,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         counts = str(got.get("counts") or "")
         sized = re.fullmatch(r"picked:(\d+) left:(\d+)", counts)
         undone = re.fullmatch(r"undone:(\d+)", counts)
+        back = re.fullmatch(r"back:(\d+)", counts)  # the version an update's Undo went back to
         return {
             "state": got["state"],
             "error": got["error"],
@@ -1321,6 +1322,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             if got["state"] == "done" and str(got.get("resultId") or "").isdigit()
             else None,
             "mergedKept": int(undone[1]) if undone else None,
+            "back": int(back[1]) if back else None,
         }
     if str(got["action"]).startswith(("join-", "party-")):
         # the DM's join answer (#4778): how it ended, how many things "What the party knows" gave
