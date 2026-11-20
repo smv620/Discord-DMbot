@@ -14,7 +14,7 @@ from dmbot.web import pack_updates
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB
 from tests.test_web_api import ALICE, THURSDAY
-from tests.test_web_rule_sharing import SET_A, SharingBase
+from tests.test_web_rule_sharing import SECRET_CODE, SET_A, SharingBase
 
 
 def pack(*entries: tuple[str, str]) -> dict[str, Any]:
@@ -70,7 +70,10 @@ class PackUpdates(SharingBase):
             }],
         )  # fmt: skip
         self.assertEqual((got["waiting"][0]["words"], got["taken"]), ("2 entries", []))
-        self.assertNotIn("code", json.dumps(got).lower().replace("code of", ""))
+        self.assertEqual(
+            set(got["waiting"][0]),
+            {"setId", "name", "publisher", "from", "to", "words", "lines", "more"},
+        )
 
     async def test_nothing_waits_when_on_the_latest_or_no_longer_updating(self) -> None:
         await self.follow_pack(NEW, version=2)
@@ -103,3 +106,23 @@ class PackUpdates(SharingBase):
         with self.assertRaises(RecapError) as err:
             await self.fetch(await self.signed(BOB))
         self.assertEqual(err.exception.code, "not_allowed")
+
+    async def test_a_follow_by_share_code_reads_through_the_guarded_function(self) -> None:
+        await self.code(self.two.id, SET_A)
+        await self.sql("UPDATE rule_set_follows SET code = %s", SECRET_CODE)
+        got = await self.fetch()
+        self.assertEqual([(w["from"], w["to"]) for w in got["waiting"]], [(1, 2)])
+        self.assertNotIn(SECRET_CODE, json.dumps(got))
+
+    async def test_a_declined_version_is_still_shown_to_the_dm(self) -> None:
+        await self.sql("UPDATE rule_set_follows SET declined_version = 2")
+        self.assertEqual(len((await self.fetch())["waiting"]), 1)
+
+    async def test_a_long_list_of_changes_is_cut_and_counted(self) -> None:
+        many = pack(*[(f"Item {n}", "Plain.") for n in range(pack_updates.MAX_LINES + 6)])
+        await self.sql(
+            "UPDATE rule_set_versions SET content = %s::jsonb WHERE set_id = %s AND version = 2",
+            json.dumps(many), SET_A,
+        )  # fmt: skip
+        got = (await self.fetch())["waiting"][0]
+        self.assertEqual((len(got["lines"]), got["more"]), (pack_updates.MAX_LINES, 8))

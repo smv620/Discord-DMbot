@@ -16,14 +16,15 @@ from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
+# The door returns whole copies (at most five packs, two copies each): the lines are worked out here
+# from all of an entry's words, so nothing is cut before the diff.
 MAX_LINES = 50  # how many changes one pack lists; the rest are counted ("and 12 more")
 
 
 def _lines(old: Any, new: Any) -> dict[str, Any] | None:
     """`{words, lines, more}` for what differs between two copies, or None for a damaged one."""
     try:
-        valid_content(old)
-        valid_content(new)
+        valid_content(old)  # (only the copy the campaign has, as `pending_pack_updates` does)
     except BadPack:
         return None
     changes = pack_diff.diff(old, new)
