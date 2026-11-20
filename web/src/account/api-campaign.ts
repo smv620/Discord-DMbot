@@ -31,6 +31,7 @@ import type {
   RuleDecision,
   RuleSharing,
   RuleUpdate,
+  PackUpdates,
   RuleSharingAnswer,
   SharedRulesCampaign,
   SheetAnswer,
@@ -294,6 +295,8 @@ export default function campaignArea({ call, waitForAnswer }: ApiHelpers): Parti
       )) as HouseRules,
     ruleDecisions: async (campaignRef) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-decisions`)) as { decisions: RuleDecision[] }).decisions,
+    packUpdates: async (campaignRef) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/pack-updates`)) as PackUpdates,
     ruleTaken: async (campaignRef) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-update/taken`)) as { taken: RuleUpdate | null },
     ruleUpdate: async (campaignRef) =>

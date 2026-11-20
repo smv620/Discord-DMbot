@@ -1311,7 +1311,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         # a pick of a followed set's changes (#4841 C2): how many were kept and left out, and the
         # id of the day-long undo handle
         counts = str(got.get("counts") or "")
-        sized = re.fullmatch(r"picked:(\d+) left:(\d+)", counts)
+        sized = re.fullmatch(r"picked:(\d+) left:(\d+)(?: skipped:(\d+))?", counts)
         undone = re.fullmatch(r"undone:(\d+)", counts)
         back = re.fullmatch(r"back:(\d+)", counts)  # the version an update's Undo went back to
         return {
@@ -1319,6 +1319,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "error": got["error"],
             "kept": int(sized[1]) if sized else None,
             "left": int(sized[2]) if sized else None,
+            "skipped": int(sized[3]) if sized and sized[3] else None,  # a pack's already-yours
             "take": int(got["resultId"])
             if got["state"] == "done" and str(got.get("resultId") or "").isdigit()
             else None,

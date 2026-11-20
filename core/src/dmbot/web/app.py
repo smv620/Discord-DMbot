@@ -2971,6 +2971,31 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.post("/me/campaigns/{ref}/pack-updates/pick", status_code=202)
+    async def me_campaign_pack_pick(ref: str, request: Request, signed: Signed) -> dict[str, str]:
+        """`{"setId", "version", "kept"}`: Pick changes on a followed pack (#4841 packs P3);
+        polled at `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await pack_updates.queue_pick(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/pack-updates/{take}/undo", status_code=202)
+    async def me_campaign_pack_undo(ref: str, take: str, signed: Signed) -> dict[str, str]:
+        """↩️ Undo of a pack pick, by the id its answer carried."""
+        session, _token = signed
+        try:
+            return {"answer": await pack_updates.queue_undo(db, session, ref, take)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/rule-update/taken")
     async def me_campaign_rule_taken(ref: str, signed: Signed) -> dict[str, Any]:
         """The update DMbot already took on the followed set, as the lines of what changed
