@@ -72,6 +72,7 @@ import type {
   NpcPage,
   RuleDecision,
   RuleSharing,
+  HeardQuestions,
   RuleUpdate,
   PackUpdates,
   RuleSharingAnswer,
@@ -875,6 +876,21 @@ function mockSourcesOf(id: string): string[] {
   const n = [...id].reduce((sum, c) => sum + c.charCodeAt(0), 0);
   return MOCK_NAME_SOURCES.filter((_, i) => (n + i) % 3 !== 0).map((s) => s.id);
 }
+
+// "Did they mean…?" questions the mock holds (#4857): a pick or a keep takes its question out of the list.
+const HEARD_WAITING: HeardQuestions["questions"] = [
+  {
+    id: "h1",
+    heard: "Vorrun",
+    speaker: "Wren",
+    options: [
+      { index: 0, id: "n1", name: "Vorun" },
+      { index: 2, id: "n2", name: "Vorrin the Tall" },
+    ],
+  },
+  { id: "h2", heard: "Sterling", speaker: null, options: [{ index: 1, id: "n3", name: "Sterling Vale" }] },
+];
+const heardDone = new Set<string>();
 
 export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const removedClaims = new Map<string, WaitingClaim>(); // answered claims, kept for "Undo all" (#3645)
@@ -3595,6 +3611,27 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     // The join question (#4778 part b): two messages, one name and two names. A "party" answer carries its change number (61) and
     // what the party gave (3); the group with no things to give carries none. A second answer to a group is "gone".
+    async heardQuestions(ref): Promise<HeardQuestions> {
+      calls.push(`heardQuestions:${ref}`);
+      await reachable();
+      signedIn();
+      const questions = HEARD_WAITING.filter((q) => !heardDone.has(q.id)).map((q) => structuredClone(q));
+      return { total: questions.length, questions };
+    },
+    async heardPick(ref, question, index): Promise<{ code: string | null }> {
+      calls.push(`heardPick:${ref}:${question}:${index}`);
+      await reachable();
+      signedIn();
+      heardDone.add(question);
+      return { code: "fixed" };
+    },
+    async heardKeep(ref, question): Promise<{ code: string | null }> {
+      calls.push(`heardKeep:${ref}:${question}`);
+      await reachable();
+      signedIn();
+      heardDone.add(question);
+      return { code: "kept" };
+    },
     async joinQuestions(ref): Promise<{ group: string; answer: "waiting" | "everyone"; names: string[] }[]> {
       calls.push(`joinQuestions:${ref}`);
       await reachable();
