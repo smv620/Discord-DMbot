@@ -1371,6 +1371,10 @@ const SHARING_HERE = [
   { setId: "c".repeat(32), name: "Quick Combat", publisher: "Harbor Nights", version: 1, rules: 2 },
 ];
 const SHARING_CODE = "ABCDEFGHJK";
+// Campaigns whose newer version was picked (#4855): the follow has ended, so no update waits for them any more.
+const pickedRules = new Set<string>();
+let ruleTakes = 0;
+
 function sharingOf(ref: string): RuleSharing {
   const known = sharingState.get(ref);
   if (known) return structuredClone(known);
@@ -4195,8 +4199,9 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       calls.push(`ruleUpdate:${ref}`);
       await reachable();
       signedIn();
-      // A campaign whose ref ends ".ru-update" has a newer version of "Tavern rules" waiting; the rest have none.
-      if (!/\.ru-update$/.test(ref)) return { update: null };
+      // A campaign whose ref ends ".ru-update" (or ".ru-small", with nothing more to list) has a newer version of "Tavern rules"
+      // waiting; the rest have none, and a picked one has none any more (#4855).
+      if (!/\.ru-(update|small)$/.test(ref) || pickedRules.has(ref)) return { update: null };
       return {
         update: {
           name: "Tavern rules",
@@ -4205,9 +4210,22 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
           to: 3,
           words: "3 rules and 1 relationship",
           lines: ["Rule 2 now says a short rest is one hour.", "A new rule on torches.", "Rule 5 is gone."],
-          more: 2,
+          more: /\.ru-small$/.test(ref) ? 0 : 2,
         },
       };
+    },
+    async ruleUpdatePick(ref, version, kept): Promise<{ kept: number; left: number; take: number | null }> {
+      calls.push(`ruleUpdatePick:${ref}:${version}:${kept.join(",")}`);
+      await reachable();
+      signedIn();
+      pickedRules.add(ref);
+      ruleTakes += 1;
+      return { kept: kept.length, left: 3 - kept.length, take: ruleTakes };
+    },
+    async ruleUpdateUndo(ref, take): Promise<void> {
+      calls.push(`ruleUpdateUndo:${ref}:${take}`);
+      await reachable();
+      signedIn();
     },
     async ruleSharing(ref): Promise<RuleSharing> {
       calls.push(`ruleSharing:${ref}`);
