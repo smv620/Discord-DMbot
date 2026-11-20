@@ -13894,6 +13894,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 reads=self._reads_campaign(guild.id, campaign),
                                 lore_pdfs=self._lore_pdfs(),
                                 rules=self._rule_tools(),
+                                heard=self.answer_waiting_coded,
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
