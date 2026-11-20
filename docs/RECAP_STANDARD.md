@@ -92,6 +92,32 @@ own, or the four built-in ones) **decide only how it sounds**: tone, rhythm and 
 example can't show whether a recap caught a session's key points, so examples are never used to judge
 coverage, and the page labels them "How your recaps should sound".
 
+## How an invented test session is written (owner, 2026-11-19)
+
+Invented sessions (the golden set in `core/src/dmbot/devtools/golden/recap/`, and any other made-up
+transcript a test or a score runs on) read like a real table, because a recap writer tuned on bare
+event lists learns to write bare event lists.
+
+- **The DM describes what the characters' senses meet:** what they see, hear, smell, taste and
+  physically feel (heat, cold, damp air, uneven boards underfoot), never what they feel emotionally.
+  A new person is described when first met: how they look, what they wear, what they are doing
+  (asleep and snoring on the dock, say). The DM may tie the person to what the party already knows
+  ("The description the townsfolk gave matches this man exactly. This must be the ferry captain,
+  Old Pell.").
+- **Each player speaks only for their own character:** what that character does and says, in their
+  own line. A player never declares another character's action or words, and the DM never does
+  either. When two characters act in one moment, that is two lines, one from each player. For
+  example, `b: Brogan wants to follow.` then `a: Tamsin puts his hand on Brogan's shoulder and says,
+  "It's late and we don't know if this is fiend or foe. Let's camp here on the shore for the night.
+  If he wants to talk to us, he already knows where to find us."`
+- **The DM decides outcomes:** damage, what a roll finds, what a non-player character says and does.
+  A player says what they try, and the DM says what happens.
+- **Speech is quoted where the table would speak it:** a character's words in quotation marks, not
+  reported ("Tamsin asks who they are" becomes `a: Tamsin calls out, "Who are you?"`).
+
+A change to the golden set starts a new score series: the before and after scores of a recap-writer
+change are both taken on the same version of the set.
+
 ## How the standard is used
 
 - **Writing.** The campaign's current list goes to the recap writer with its instructions. Each line

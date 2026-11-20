@@ -9,7 +9,7 @@ import tempfile
 import unittest
 from dataclasses import replace
 from pathlib import Path
-from typing import Any
+from typing import Any, ClassVar
 from unittest.mock import patch
 
 from dmbot.ai import AIError
@@ -359,6 +359,61 @@ class TheGoldenSet(unittest.IsolatedAsyncioTestCase):
         self.assertFalse(clean)
         self.assertEqual(rows[0].split()[0], "session")
         self.assertGreaterEqual(len(rows), 4)  # the header and at least three invented sessions
+
+
+class TheGoldenCost(unittest.IsolatedAsyncioTestCase):
+    """`--golden` says its worst case in dollars and `--max-usd` stops it before a call that would
+    pass the cap (#4859): stand-in clients, no AI."""
+
+    PRICES: ClassVar[dict[str, tuple[float, float]]] = {"a": (1.0, 5.0), "b": (3.0, 15.0)}
+
+    async def test_the_estimate_line_has_a_dollar_figure_and_nothing_runs(self) -> None:
+        from contextlib import redirect_stdout
+        from io import StringIO
+
+        out = StringIO()
+        with (
+            patch.object(run, "clients_from_env", return_value=(happy(), fx.Canned(), ("a", "b"))),
+            patch.object(run, "prices_of", return_value=self.PRICES),
+            redirect_stdout(out),
+        ):
+            self.assertEqual(await run.main_async(run.parse_args(["--golden"])), 0)
+        first = out.getvalue().splitlines()[0]
+        self.assertRegex(first, r"up to \d+ AI calls; worst case about \$\d+\.\d{3}")
+        self.assertIn("Nothing was run", out.getvalue())
+
+    async def test_max_usd_goes_with_golden_and_is_above_zero(self) -> None:
+        for argv in (["--golden", "--max-usd", "0"], ["--golden", "--max-usd", "-1"]):
+            with self.assertRaises(SystemExit):
+                run.parse_args(argv)
+        with self.assertRaises(SystemExit):
+            run.parse_args(["--session", "1", "c", "2", "--max-usd", "1"])
+        self.assertEqual(run.parse_args(["--golden", "--max-usd", "1.5"]).max_usd, 1.5)
+
+    async def test_a_cap_too_small_for_the_first_call_stops_before_any_call(self) -> None:
+        budget = run.Budget(0.0001, self.PRICES)
+        fast, careful = happy(), fx.Canned()
+        rows, clean = await run.run_golden(fast, careful, ("a", "b"), self.PRICES, budget)
+        self.assertFalse(clean)
+        self.assertTrue(budget.stopped)
+        self.assertEqual(budget.spent, 0.0)  # (no call was made)
+        self.assertTrue(any("stopped before a call that would pass $0.00" in r for r in rows))
+        self.assertTrue(any("0 of" in r for r in rows))
+        self.assertEqual(len([r for r in rows if "STOPPED" in r]), 1)
+
+    async def test_a_cap_that_is_not_reached_changes_nothing(self) -> None:
+        budget = run.Budget(1_000_000.0, self.PRICES)
+        rows, _clean = await run.run_golden(happy(), fx.Canned(), ("a", "b"), self.PRICES, budget)
+        self.assertFalse(budget.stopped)
+        self.assertFalse(any("STOPPED" in r for r in rows))
+
+    async def test_a_run_refuses_a_cap_without_prices(self) -> None:
+        with (
+            patch.object(run, "clients_from_env", return_value=(happy(), fx.Canned(), ("a", "b"))),
+            patch.object(run, "prices_of", return_value={}),
+        ):
+            code = await run.main_async(run.parse_args(["--golden", "--max-usd", "1", "--yes"]))
+        self.assertEqual(code, 2)
 
 
 class TheSettingsStayWithTheRun(unittest.IsolatedAsyncioTestCase):

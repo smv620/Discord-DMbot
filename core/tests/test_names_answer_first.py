@@ -119,6 +119,7 @@ class AnswerFirst(unittest.IsolatedAsyncioTestCase):
         memory.entities = AsyncMock(return_value=[])
         # (the gate's answer: every entry here is held; the gate has its own tests)
         memory.entries_held = AsyncMock(return_value=frozenset(ENTITIES))
+        memory.entries_seen_by = AsyncMock(return_value=frozenset(ENTITIES))
         memory.entity = AsyncMock(side_effect=lambda g, c, eid: ENTITIES.get(eid))
         memory.confirm_kinds = AsyncMock(side_effect=slow_kinds)
         self.lookup = SlowLookup(self.clock)

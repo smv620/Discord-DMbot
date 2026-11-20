@@ -85,6 +85,11 @@ class NamesTest(DatabaseTest):
             return frozenset(e.id for e in await entities(guild_id, campaign_id))
 
         self.memory.entries_held = every_entry  # type: ignore[method-assign]
+
+        async def every_entry_seen(guild_id: int, campaign_id: str, user_id: int) -> frozenset[str]:
+            return await every_entry(guild_id, campaign_id)
+
+        self.memory.entries_seen_by = every_entry_seen  # type: ignore[method-assign]
         self.campaign = await self.campaigns.create(GUILD, "Frostmaiden", DM)
         # The tests built on this one are of the Add all flow and the cards. A lore upload adds what
         # DMbot is sure of by itself unless the campaign asks first (#3878), so the campaign asks

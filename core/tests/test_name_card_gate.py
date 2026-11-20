@@ -50,15 +50,14 @@ class ANewcomerAndTheCard(Party):
     async def test_the_gate_sets_of_a_press(self) -> None:
         from types import SimpleNamespace
 
-        view: Any = CampaignLookup.build(await self.memory.lookup_data(GUILD, self.c))
         for user, holds in ((CARA, False), (ANNA, True), (999_999, False)):
             it = SimpleNamespace(user=SimpleNamespace(id=user))
-            seen, table = await name_card._gate_sets(it, self.memory, self.campaign, view, False)  # type: ignore[arg-type]
+            seen, table = await name_card._gate_sets(it, self.memory, self.campaign, False)  # type: ignore[arg-type]
             assert seen is not None
             self.assertEqual(self.npc in seen, holds, user)  # (a stranger holds nothing of it)
             self.assertNotIn(self.npc, table)  # (Cara, told nothing yet, is at the table)
         it = SimpleNamespace(user=SimpleNamespace(id=DM_ID))
-        seen, _ = await name_card._gate_sets(it, self.memory, self.campaign, view, True)  # type: ignore[arg-type]
+        seen, _ = await name_card._gate_sets(it, self.memory, self.campaign, True)  # type: ignore[arg-type]
         self.assertIsNone(seen)  # (the DM needs no filter)
 
     async def test_told_it_the_card_is_for_everyone_and_has_no_audience_line(self) -> None:
