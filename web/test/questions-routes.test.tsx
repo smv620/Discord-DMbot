@@ -132,4 +132,16 @@ describe("the Questions page links the kinds answered on another page (#4841 A)"
     expect(within(off).queryByRole("link")).toBeNull();
     expect(within(off).getByText(w.discord)).toBeTruthy();
   });
+
+  it("the House rule updates line has both links while RULE_UPDATES_LIVE is on, and says to answer in Discord while it is off (#4875)", async () => {
+    sw.rules = true;
+    const on = await lineFor("rules");
+    expect(within(on).getByRole("link", { name: "Open the House rules page" }).getAttribute("href")).toBe(`/account/house-rules/${encodeURIComponent(REF)}`);
+    expect(within(on).getByRole("link", { name: "Open the Shared rules page" }).getAttribute("href")).toBe("/account/sharing");
+    cleanup();
+    sw.rules = false;
+    const off = await lineFor("rules");
+    expect(within(off).queryByRole("link")).toBeNull();
+    expect(within(off).getByText(w.discord)).toBeTruthy();
+  });
 });
