@@ -36,6 +36,8 @@ export const heardWords = {
   saving: "Saving…",
   // "Type it…" (#4865): the words are core's, with the markdown taken out.
   typeIt: "Type it…",
+  // A typed name that waits for a check, said after its saved line (#4876).
+  newName: (name: string): string => `${cutWords(name, 60)} is new: it waits in New names to check.`,
   typeTheName: "Type the name",
   typeLabel: "The name, as it should be written",
   typeHint: "For example: Hrothgar",

@@ -215,7 +215,30 @@ describe("a long name in a saved answer", () => {
     fireEvent.click(await screen.findByRole("button", { name: "Type it…" }));
     fireEvent.input(screen.getByRole("textbox"), { target: { value: "Hrothgar" } });
     fireEvent.submit(screen.getByRole("form", { name: "Type the name" }));
-    expect(await screen.findByText('✅ Got it: "Vorrun" is now written Hrothgar, in that line and from now on in this campaign. Earlier lines stay as heard.')).toBeTruthy();
+    expect(
+      await screen.findByText(
+        '✅ Got it: "Vorrun" is now written Hrothgar, in that line and from now on in this campaign. Earlier lines stay as heard. Hrothgar is new: it waits in New names to check.',
+      ),
+    ).toBeTruthy();
+  });
+
+  it("a typed name saved as new shows its saved line and the new-name sentence; a plain fixed name shows only the saved line", async () => {
+    const { api } = typeApi([wren], async () => ({ code: "fixed-new" }));
+    render(<HeardQuestionsCard api={api} campaignRef={REF} id="hq" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Type it…" }));
+    fireEvent.input(screen.getByRole("textbox"), { target: { value: "Hrothgar" } });
+    fireEvent.submit(screen.getByRole("form", { name: "Type the name" }));
+    expect(
+      await screen.findByText(
+        '✅ Got it: "Vorrun" is now written Hrothgar, in that line and from now on in this campaign. Earlier lines stay as heard. Hrothgar is new: it waits in New names to check.',
+      ),
+    ).toBeTruthy();
+    cleanup();
+    const plain = fakeApi([wren]);
+    render(<HeardQuestionsCard api={plain.api} campaignRef={REF} id="hq" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Vorrin the Tall" }));
+    expect(await screen.findByText('✅ Got it: "Vorrun" is now written Vorrin the Tall, in that line and from now on in this campaign. Earlier lines stay as heard.')).toBeTruthy();
+    expect(screen.queryByText(/is new: it waits in New names to check/)).toBeNull();
   });
 
   it("each refusal of a typed name says its words, and the typed text stays in the box", async () => {
@@ -317,7 +340,9 @@ describe("a long name in a saved answer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Type it…" }));
     fireEvent.input(screen.getByRole("textbox"), { target: { value: "Hrothgar" } });
     fireEvent.submit(screen.getByRole("form", { name: "Type the name" }));
-    const saved = await screen.findByText('✅ Got it: "Vorrun" is now written Hrothgar, in that line and from now on in this campaign. Earlier lines stay as heard.');
+    const saved = await screen.findByText(
+      '✅ Got it: "Vorrun" is now written Hrothgar, in that line and from now on in this campaign. Earlier lines stay as heard. Hrothgar is new: it waits in New names to check.',
+    );
     expect(document.activeElement).toBe(saved);
   });
 

@@ -30,7 +30,8 @@ function typedLine(error: ApiError): string {
 /** The line for a saved answer, by the code the bot saved (`kept`, `fixed`, `fixed-new` or `line-kept`). */
 function savedLine(code: string | null, heard: string, name: string): string {
   if (code === "kept") return w.kept(heard);
-  if (code === "fixed" || code === "fixed-new") return w.fixed(heard, name);
+  if (code === "fixed") return w.fixed(heard, name);
+  if (code === "fixed-new") return `${w.fixed(heard, name)} ${w.newName(name)}`;
   if (code === "line-kept") return w.lineKept(heard, name);
   return w.gotIt;
 }
