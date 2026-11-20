@@ -294,6 +294,8 @@ export default function campaignArea({ call, waitForAnswer }: ApiHelpers): Parti
       )) as HouseRules,
     ruleDecisions: async (campaignRef) =>
       ((await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-decisions`)) as { decisions: RuleDecision[] }).decisions,
+    ruleTaken: async (campaignRef) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-update/taken`)) as { taken: RuleUpdate | null },
     ruleUpdate: async (campaignRef) =>
       (await call("GET", `/me/campaigns/${encodeURIComponent(campaignRef)}/rule-update`)) as { update: RuleUpdate | null },
     ruleSharing: async (campaignRef) =>

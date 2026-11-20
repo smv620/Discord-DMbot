@@ -663,6 +663,14 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
       return { kept: got.kept ?? kept.length, left: got.left ?? 0, take: typeof got.take === "number" ? got.take : null };
     },
+    // Undo of the update DMbot took (#4867): queued for the bot; waits for its answer, which has the version it went back to.
+    ruleUpdateUndoLast: async (ref, version) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/rule-update/undo-last`, { version })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { back: typeof got.back === "number" ? got.back : null };
+    },
     // Undo of a pick (#4855): queued for the bot, and this waits for its answer (`too_late` past the day).
     ruleUpdateUndo: async (ref, take) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;

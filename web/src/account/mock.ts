@@ -4251,6 +4251,30 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         },
       };
     },
+    async ruleTaken(ref): Promise<{ taken: RuleUpdate | null }> {
+      calls.push(`ruleTaken:${ref}`);
+      await reachable();
+      signedIn();
+      // A campaign whose ref ends ".ru-taken" has taken "Tavern rules" version 3, from version 2, and can undo it (#4867).
+      if (!/\.ru-taken$/.test(ref)) return { taken: null };
+      return {
+        taken: {
+          name: "Tavern rules",
+          publisher: "The Lantern table",
+          from: 2,
+          to: 3,
+          words: "3 rules and 1 relationship",
+          lines: ["Rule 2 now says a short rest is one hour.", "A new rule on torches.", "Rule 5 is gone."],
+          more: 0,
+        },
+      };
+    },
+    async ruleUpdateUndoLast(ref, version): Promise<{ back: number | null }> {
+      calls.push(`ruleUpdateUndoLast:${ref}:${version}`);
+      await reachable();
+      signedIn();
+      return { back: 2 };
+    },
     async ruleUpdatePick(ref, version, kept): Promise<{ kept: number; left: number; take: number | null }> {
       calls.push(`ruleUpdatePick:${ref}:${version}:${kept.join(",")}`);
       await reachable();
