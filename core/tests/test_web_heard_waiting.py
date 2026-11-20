@@ -246,3 +246,11 @@ class HeardOnTheWeb(Listing):
         (done,) = await self.asking()
         self.assertEqual(done.counts, "reason:too-long")
         self.assertEqual(len(str(self.asked[-1][4])), 84)
+
+    async def test_padding_spaces_do_not_count_against_the_limit(self) -> None:
+        await heard_waiting.queue_type(
+            self.web, self.session, self.cref, {"question": "7", "name": "  Marin" + " " * 90}
+        )
+        self.answers = [SimpleNamespace(code="fixed", done=True, reason="")]
+        await self.asking()
+        self.assertEqual(self.asked[-1][4], "Marin")

@@ -75,7 +75,9 @@ async def queue_keep(db: Database, session: Session, ref: str, body: object) -> 
     )
 
 
-TYPED_SHOWN_MAX = 84  # what the queue's text limit leaves after the id; the bot says "too long"
+# What the queue's 100-character text limit leaves after a 15-digit id and a space (the door's
+# limit in `dmbot_web_name_action_add`); the bot says "too long" for anything over 60.
+TYPED_SHOWN_MAX = 84
 
 
 async def queue_type(db: Database, session: Session, ref: str, body: object) -> str:
@@ -87,7 +89,10 @@ async def queue_type(db: Database, session: Session, ref: str, body: object) -> 
     typed = body.get("name") if isinstance(body, dict) else None
     if not (isinstance(question, str) and _QUESTION.fullmatch(question)):
         raise RecapError("bad_action")
-    if not (isinstance(typed, str) and len(typed) <= TYPED_SHOWN_MAX):
+    if not isinstance(typed, str):
+        raise RecapError("bad_action")
+    typed = " ".join(typed.split())  # as the door will: extra spaces don't count against the limit
+    if len(typed) > TYPED_SHOWN_MAX:
         raise RecapError("bad_action")
     return await relationships._queue(
         db, session, ref, entity=None, action="heard-type", target="",
