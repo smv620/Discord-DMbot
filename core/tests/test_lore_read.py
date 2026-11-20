@@ -1337,6 +1337,7 @@ class TheKeptDirection(unittest.IsolatedAsyncioTestCase):
             ontology=AsyncMock(return_value=SimpleNamespace(predicates={})),
             relations=AsyncMock(return_value=[]),
             lookup_data=AsyncMock(return_value=SimpleNamespace(entities=())),
+            entries_shown_to_table=AsyncMock(return_value=frozenset()),  # (the gate's, #4823)
         )
         store = SimpleNamespace(remove=AsyncMock())
 
@@ -1345,6 +1346,7 @@ class TheKeptDirection(unittest.IsolatedAsyncioTestCase):
                 subject_id="s", predicate="kin_of", object_id="o", secret=False, detail=detail,
                 truth=False, decided="", known_by="", world=0, upload="", inferred="",
                 npc_guesses={}, hand_over="", hand_over_from="",  # (no hand-over, #4115)
+                clue_end=False, own_secret=False,  # (the kept row's own secret, #4823)
             )  # fmt: skip
 
         await keep_all(memory, store, 1, "c", [waiting("parent"), waiting("")])  # type: ignore[arg-type]
