@@ -629,6 +629,15 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       const got = await partyAnswer(ref, await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/party-record/back`, { character }));
       return { batch: got.batch ?? null, asked: got.asked ?? null };
     },
+    // "Catch up" (#4793): who is behind on an entry, and catching one member up (queued, then waited for: `told` and `batch`).
+    catchUpChoices: async (ref, entry) => {
+      const got = await partyAnswer(ref, await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/catch-up/choices`, { entry }));
+      return { choices: got.choices ?? [], more: got.more ?? 0 };
+    },
+    catchUp: async (ref, member, entry) => {
+      const got = await partyAnswer(ref, await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/catch-up`, { member, entry }));
+      return { batch: got.batch ?? null, told: got.told ?? null };
+    },
     partyUndo: async (ref, batch) => {
       await partyAnswer(ref, await call("POST", `/me/campaigns/${encodeURIComponent(ref)}/party-record/${encodeURIComponent(String(batch))}/undo`));
     },
