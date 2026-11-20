@@ -180,4 +180,103 @@ describe("a long name in a saved answer", () => {
     expect(heardWords.fixed("Marin", long)).toContain(`is now written ${cut},`);
     expect(heardWords.lineKept("Marin", long)).toContain(`is written ${cut} in this campaign`);
   });
+
+  it("Type it… opens the form with its title, label and hint, and Cancel closes it (#4865)", async () => {
+    const { api } = typeApi([wren], async () => ({ code: "fixed-new" }));
+    render(<HeardQuestionsCard api={api} campaignRef={REF} id="hq" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Type it…" }));
+    expect(screen.getByRole("form", { name: "Type the name" })).toBeTruthy();
+    expect(screen.getByText("The name, as it should be written")).toBeTruthy();
+    expect(screen.getByText("For example: Hrothgar")).toBeTruthy();
+    fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(screen.queryByRole("form", { name: "Type the name" })).toBeNull();
+  });
+
+  it("the box takes at most 60 characters", async () => {
+    const { api } = typeApi([wren], async () => ({ code: "fixed-new" }));
+    render(<HeardQuestionsCard api={api} campaignRef={REF} id="hq" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Type it…" }));
+    expect(screen.getByRole("textbox").getAttribute("maxlength")).toBe("60");
+  });
+
+  it("save sends the question id and the typed name to the route", async () => {
+    const { api, names } = typeApi([wren], async () => ({ code: "fixed-new" }));
+    render(<HeardQuestionsCard api={api} campaignRef={REF} id="hq" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Type it…" }));
+    fireEvent.input(screen.getByRole("textbox"), { target: { value: "Hrothgar" } });
+    fireEvent.submit(screen.getByRole("form", { name: "Type the name" }));
+    await waitFor(() => expect(names).toEqual([["h1", "Hrothgar"]]));
+  });
+
+  it("a saved typed name shows the same words as a picked name", async () => {
+    const { api } = typeApi([wren], async () => ({ code: "fixed-new" }));
+    render(<HeardQuestionsCard api={api} campaignRef={REF} id="hq" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Type it…" }));
+    fireEvent.input(screen.getByRole("textbox"), { target: { value: "Hrothgar" } });
+    fireEvent.submit(screen.getByRole("form", { name: "Type the name" }));
+    expect(await screen.findByText('✅ Got it: "Vorrun" is now written Hrothgar, in that line and from now on in this campaign. Earlier lines stay as heard.')).toBeTruthy();
+  });
+
+  it("each refusal of a typed name says its words, and the typed text stays in the box", async () => {
+    const cases: [string, string][] = [
+      ["empty", "No name was typed. Press Type it… again, or ignore the question."],
+      ["bar", "That has a | sign, which a name can't have. Press Type it… again and type just the name."],
+      ["unreadable", "That has characters DMbot can't read. Press Type it… again and type it in by hand."],
+      ["too long", "That's longer than 60 characters. Press Type it… again and type just the name."],
+      ["too many words", "That's more than 8 words. Press Type it… again and type just the name."],
+      ["link", "That's a link, not a name. Press Type it… again and type just the name."],
+      ["secret", "That would put a secret name in the transcript, which everyone in the server can read, so DMbot won't write it. Pick another answer, or ignore the question."],
+      ["two", "Two names in this campaign are spelled exactly like that, so DMbot can't tell which you mean. Pick a button, or give one of them a different spelling on the Names page."],
+      ["a reason the page has no words for", "DMbot can't check the names right now. Try again in a moment."],
+    ];
+    for (const [reason, line] of cases) {
+      cleanup();
+      const { api } = typeApi([wren], async () => {
+        const err = new ApiError("typed-problem");
+        err.reason = reason;
+        throw err;
+      });
+      render(<HeardQuestionsCard api={api} campaignRef={REF} id="hq" />);
+      fireEvent.click(await screen.findByRole("button", { name: "Type it…" }));
+      fireEvent.input(screen.getByRole("textbox"), { target: { value: "Hroth" } });
+      fireEvent.submit(screen.getByRole("form", { name: "Type the name" }));
+      expect(await screen.findByText(line)).toBeTruthy();
+      expect((screen.getByRole("textbox") as HTMLInputElement).value).toBe("Hroth");
+    }
+  });
+
+  it("a name already in the campaign says so", async () => {
+    const { api } = typeApi([wren], async () => {
+      throw new ApiError("typed-refused");
+    });
+    render(<HeardQuestionsCard api={api} campaignRef={REF} id="hq" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Type it…" }));
+    fireEvent.input(screen.getByRole("textbox"), { target: { value: "Wren" } });
+    fireEvent.submit(screen.getByRole("form", { name: "Type the name" }));
+    expect(await screen.findByText("That name is already in this campaign (maybe as a secret one), so DMbot can't add it again. Pick a button, or look it up on the Names page.")).toBeTruthy();
+  });
+
+  it("a closed question closes its form as before", async () => {
+    const { api } = typeApi([wren], async () => {
+      throw new ApiError("expired");
+    });
+    render(<HeardQuestionsCard api={api} campaignRef={REF} id="hq" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Type it…" }));
+    fireEvent.input(screen.getByRole("textbox"), { target: { value: "Hrothgar" } });
+    fireEvent.submit(screen.getByRole("form", { name: "Type the name" }));
+    expect(await screen.findByText("⌛ This question is closed, so the words stay as heard.")).toBeTruthy();
+    expect(screen.queryByRole("form", { name: "Type the name" })).toBeNull();
+  });
 });
+
+/** An API that holds `list` and answers a typed name by `type`; it records each name sent with its question (#4865). */
+function typeApi(list: HeardQuestion[], type: (name: string) => Promise<{ code: string | null }>) {
+  const names: [string, string][] = [];
+  const api = mockApi("table");
+  api.heardQuestions = async () => ({ total: list.length, questions: structuredClone(list) });
+  api.heardType = async (_ref, question, name) => {
+    names.push([question, name]);
+    return type(name);
+  };
+  return { api, names };
+}

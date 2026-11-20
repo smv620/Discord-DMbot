@@ -34,4 +34,22 @@ export const heardWords = {
   failed: "Couldn't load this.",
   loading: "Loading…",
   saving: "Saving…",
+  // "Type it…" (#4865): the words are core's, with the markdown taken out.
+  typeIt: "Type it…",
+  typeTheName: "Type the name",
+  typeLabel: "The name, as it should be written",
+  typeHint: "For example: Hrothgar",
+  save: "Save",
+  cancel: "Cancel",
+  typedProblem: {
+    empty: "No name was typed. Press Type it… again, or ignore the question.",
+    bar: "That has a | sign, which a name can't have. Press Type it… again and type just the name.",
+    unreadable: "That has characters DMbot can't read. Press Type it… again and type it in by hand.",
+    "too long": "That's longer than 60 characters. Press Type it… again and type just the name.",
+    "too many words": "That's more than 8 words. Press Type it… again and type just the name.",
+    link: "That's a link, not a name. Press Type it… again and type just the name.",
+    secret: "That would put a secret name in the transcript, which everyone in the server can read, so DMbot won't write it. Pick another answer, or ignore the question.",
+    two: "Two names in this campaign are spelled exactly like that, so DMbot can't tell which you mean. Pick a button, or give one of them a different spelling on the Names page.",
+  } as Record<string, string>,
+  typedRefused: "That name is already in this campaign (maybe as a secret one), so DMbot can't add it again. Pick a button, or look it up on the Names page.",
 };

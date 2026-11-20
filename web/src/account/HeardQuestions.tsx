@@ -1,7 +1,7 @@
 /** @jsxImportSource preact */
 // The "Did they mean…?" questions on the Questions page (#4841 B1, the page half of #4857): the DM names the word as heard, keeps
 // it as heard, or puts it off with ⏳ Later, one question at a time, in Discord's words. Its own file, loaded only from the
-// Questions page while HEARD_LIVE. DM only: the door answers anyone else with nothing. "Type it…" is a later slice.
+// Questions page while HEARD_LIVE. DM only: the door answers anyone else with nothing. "Type it…" (#4865) names a word the DM types.
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { heardWords as w } from "../content/heard-words";
@@ -20,10 +20,17 @@ function sayFailure(error: unknown): string {
   return w.couldNot;
 }
 
-/** The line for a saved answer, by the code the bot saved (`kept`, `fixed` or `line-kept`). */
+/** The line for a typed name the bot refused: its reason's words, or the check-again words for a reason it has none for. */
+function typedLine(error: ApiError): string {
+  if (error.kind === "typed-refused") return w.typedRefused;
+  const reason = error.reason;
+  return reason !== undefined && Object.hasOwn(w.typedProblem, reason) ? (w.typedProblem[reason] ?? w.cantCheck) : w.cantCheck;
+}
+
+/** The line for a saved answer, by the code the bot saved (`kept`, `fixed`, `fixed-new` or `line-kept`). */
 function savedLine(code: string | null, heard: string, name: string): string {
   if (code === "kept") return w.kept(heard);
-  if (code === "fixed") return w.fixed(heard, name);
+  if (code === "fixed" || code === "fixed-new") return w.fixed(heard, name);
   if (code === "line-kept") return w.lineKept(heard, name);
   return w.gotIt;
 }
@@ -45,6 +52,10 @@ export default function HeardQuestions({
   const [later, setLater] = useState<Set<string>>(() => new Set());
   const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  // "Type it…" (#4865): the question whose form is open, the name in its box, and the words for a name the bot refused.
+  const [typing, setTyping] = useState<{ question: string } | null>(null);
+  const [typed, setTyped] = useState("");
+  const [typeProblem, setTypeProblem] = useState<string | null>(null);
   const flight = useRef(false);
   const live = useRef(true);
   useEffect(() => {
@@ -98,6 +109,34 @@ export default function HeardQuestions({
       if (live.current) setSaid({ ok: true, text: savedLine(got.code, q.heard, q.heard) });
     });
 
+  // A typed name: a problem keeps the question and the form open, with what was typed still in the box (#4865).
+  async function saveTyped(q: HeardQuestion): Promise<void> {
+    if (flight.current || !api.heardType) return;
+    flight.current = true;
+    setBusy(true);
+    setSaid(null);
+    setTypeProblem(null);
+    try {
+      const got = await api.heardType(campaignRef, q.id, typed);
+      if (live.current) {
+        setTyping(null);
+        setSaid({ ok: true, text: savedLine(got.code, q.heard, typed) });
+      }
+    } catch (error) {
+      if (live.current && error instanceof ApiError && (error.kind === "typed-problem" || error.kind === "typed-refused")) {
+        setTypeProblem(typedLine(error));
+      } else {
+        // An expired or closed question closes its form as well; any other refusal says so and keeps the form.
+        if (live.current && error instanceof ApiError && (error.kind === "expired" || error.kind === "gone")) setTyping(null);
+        if (live.current) setSaid({ ok: false, text: sayFailure(error) });
+      }
+    } finally {
+      await read();
+      flight.current = false;
+      if (live.current) setBusy(false);
+    }
+  }
+
   if (!api.heardQuestions) return null;
   if (failed && !questions) {
     return (
@@ -135,10 +174,69 @@ export default function HeardQuestions({
             <button type="button" class="button secondary" disabled={busy} onClick={() => void keep(q)}>
               {w.keep(q.heard)}
             </button>
+            <button
+              type="button"
+              class="button secondary"
+              disabled={busy || !api.heardType}
+              onClick={() => {
+                setTyping({ question: q.id });
+                setTyped("");
+                setTypeProblem(null);
+              }}
+            >
+              {w.typeIt}
+            </button>
             <button type="button" class="button secondary" disabled={busy} onClick={() => setLater((was) => new Set(was).add(q.id))}>
               {w.later}
             </button>
           </div>
+          {typing?.question === q.id && (
+            <form
+              class="stack"
+              aria-label={w.typeTheName}
+              onSubmit={(e) => {
+                e.preventDefault();
+                void saveTyped(q);
+              }}
+            >
+              <h4>{w.typeTheName}</h4>
+              <label>
+                {w.typeLabel}
+                <input
+                  type="text"
+                  maxLength={60}
+                  value={typed}
+                  disabled={busy}
+                  aria-describedby={`${id}-hint`}
+                  onInput={(e) => setTyped((e.target as HTMLInputElement).value)}
+                />
+              </label>
+              <p class="small muted" id={`${id}-hint`}>
+                {w.typeHint}
+              </p>
+              {typeProblem && (
+                <p class="warn" role="alert">
+                  {typeProblem}
+                </p>
+              )}
+              <div class="row">
+                <button type="submit" class="button" disabled={busy}>
+                  {w.save}
+                </button>
+                <button
+                  type="button"
+                  class="button secondary"
+                  disabled={busy}
+                  onClick={() => {
+                    setTyping(null);
+                    setTypeProblem(null);
+                  }}
+                >
+                  {w.cancel}
+                </button>
+              </div>
+            </form>
+          )}
           <SavingWait active={busy} stage={w.saving} />
         </>
       ) : (
