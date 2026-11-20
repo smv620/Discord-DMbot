@@ -72,6 +72,7 @@ import type {
   NpcPage,
   RuleDecision,
   RuleSharing,
+  RuleUpdate,
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
@@ -4190,6 +4191,24 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     // The pretend rule sharing (#2783). Ref endings pick a case: `.rs-player` is a player (refused), `.rs-free` a
     // campaign whose plan does not allow sharing, `.rs-norules` one with no rules of its own, `.rs-offline` a bot
     // that never answers, `.rs-failed` one that refuses. The share code that finds a set is "ABCDEFGHJK".
+    async ruleUpdate(ref): Promise<{ update: RuleUpdate | null }> {
+      calls.push(`ruleUpdate:${ref}`);
+      await reachable();
+      signedIn();
+      // A campaign whose ref ends ".ru-update" has a newer version of "Tavern rules" waiting; the rest have none.
+      if (!/\.ru-update$/.test(ref)) return { update: null };
+      return {
+        update: {
+          name: "Tavern rules",
+          publisher: "The Lantern table",
+          from: 2,
+          to: 3,
+          words: "3 rules and 1 relationship",
+          lines: ["Rule 2 now says a short rest is one hour.", "A new rule on torches.", "Rule 5 is gone."],
+          more: 2,
+        },
+      };
+    },
     async ruleSharing(ref): Promise<RuleSharing> {
       calls.push(`ruleSharing:${ref}`);
       await reachable();
