@@ -13820,6 +13820,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if store is None or self.memory is None:
             return
         for guild in list(self.guilds):
+            if self._closing:  # (shutting down: nothing is swept or claimed)
+                return
             now_s = time.monotonic()
             if (
                 now_s - self._rule_takes_swept.get(guild.id, -LORE_SWEEP_EVERY_S)
