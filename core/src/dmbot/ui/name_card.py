@@ -27,7 +27,6 @@ from discord import app_commands
 from dmbot.campaigns import Campaign
 from dmbot.discord_limits import MESSAGE_MAX
 from dmbot.memory import (
-    gate,
     hand_over,
     kin,
     link_edits,
@@ -704,7 +703,6 @@ async def _gate_sets(
     interaction: discord.Interaction,
     memory: MemoryStore,
     campaign: Campaign,
-    names: CampaignLookup,
     secrets: bool,
 ) -> tuple[frozenset[str] | None, frozenset[str]]:
     """(the entries this reader holds, the entries the whole table holds), both from the gate and
@@ -714,13 +712,9 @@ async def _gate_sets(
     table = await memory.entries_held(campaign.guild_id, campaign.id)
     if secrets:
         return None, table
-    mine = [
-        e.id
-        for e in names.entities.values()
-        if e.is_player_character and e.played_by == interaction.user.id
-    ]
-    viewer = gate.Viewer.player(mine) if mine else gate.Viewer.the_world()
-    return await memory.entries_held(campaign.guild_id, campaign.id, viewer), table
+    # (who plays a character is read from the database there, never from the request, #4537 5b)
+    seen = await memory.entries_seen_by(campaign.guild_id, campaign.id, interaction.user.id)
+    return seen, table
 
 
 async def _dm_standing(
@@ -817,7 +811,7 @@ async def show_card(
     )
     dm_standing = await _dm_standing(memory, campaign, entity_id, secrets)
     entity = names.entities.get(entity_id)
-    seen, table = await _gate_sets(interaction, memory, campaign, names, secrets)
+    seen, table = await _gate_sets(interaction, memory, campaign, secrets)
     player = sheet = None
     has_sheet = False
     if entity is not None and entity.played_by is not None:

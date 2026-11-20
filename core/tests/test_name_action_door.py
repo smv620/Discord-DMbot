@@ -53,6 +53,17 @@ EVERY_ACTION = (
     "party-leave",  # who is in the party, from the page (#4778)
     "party-back",
     "party-undo",
+    "party-catch-up-choices",  # who is missing what on a card (#4793)
+    "party-catch-up",
+    "rules-update-pick",  # a followed set's changes, picked from the page (#4841)
+    "rules-update-undo",
+    "heard-pick",  # "Did they mean…?" from the page (#4841)
+    "heard-keep",
+    "heard-type",  # "Type it…" from the page (#4841)
+    "rules-update-undo-last",  # the Undo of an update DMbot took (#4841)
+    "pack-update-undo-last",  # the same for a followed pack (#4841)
+    "pack-update-pick",  # Pick changes on a followed pack, and its Undo (#4841)
+    "pack-update-undo",
 )  # fmt: skip
 
 

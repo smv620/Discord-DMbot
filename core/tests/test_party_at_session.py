@@ -143,24 +143,80 @@ class AJoinAtSessionThree(DatabaseTest):
         await self.memory.leave_party(GUILD, self.c, self.tuck, "away")  # (dated 5_000)
         self.assertNotIn(self.tuck, await self.memory.members_at(GUILD, self.c, 5_000))
 
-    async def test_a_table_answer_is_for_todays_party_unless_it_changed_mid_session(
-        self,
-    ) -> None:
+    async def table(self, live_at: int | None) -> list[str] | None:
+        from dmbot.memory import party_record
+        from dmbot.memory._changes import Scope
+
+        async with self.db.guild(GUILD) as conn:
+            return await party_record.table_members(Scope(conn, GUILD, self.c, 0), live_at)
+
+    async def test_a_table_answer_is_for_todays_party_when_nobody_left(self) -> None:
         from dmbot.memory import party_record
 
-        async with self.db.guild(GUILD) as conn:
-            from dmbot.memory._changes import Scope
-
-            scope = Scope(conn, GUILD, self.c, 0)
-            # (session 3 is running and Cara joined from its start: the same party)
-            self.assertIsNone(await party_record.table_members(scope, 3_000))
-            self.assertIsNone(await party_record.table_members(scope, None))  # (no live table)
-        async with self.memory._write(GUILD, self.c, DM) as w:  # (Cara dated later than the start)
+        # (session 3 is running and Cara joined from its start: the same party)
+        self.assertIsNone(await self.table(3_000))
+        self.assertIsNone(await self.table(None))  # (no live table: today's party, ruling F)
+        async with self.memory._write(GUILD, self.c, DM) as w:  # (Cara dated after the start)
             await party_record.move_start(w, self.cara, 3_050)
+        # (a join during the session: today's party already holds her, the careful side)
+        self.assertIsNone(await self.table(3_000))
+
+    async def end_session_three(self) -> None:
+        """Session 3 ends at 3_900: a later live table has no session row until its first save,
+        so a join or leave then is dated to the moment, not to the table's start."""
         async with self.db.guild(GUILD) as conn:
-            scope = Scope(conn, GUILD, self.c, 0)
-            then = await party_record.table_members(scope, 3_000)
-            self.assertEqual(set(then or []), {self.vell, self.tuck})
+            await conn.execute(
+                "UPDATE transcript_sessions SET ended_at = 3900 WHERE guild_id = %s"
+                " AND started_at = 3000",
+                (GUILD,),
+            )
+
+    async def test_a_join_before_the_first_save_is_still_at_the_table(self) -> None:
+        # (the reviewer's case: a live table at 7_000 with no session row yet, so the join is dated
+        # to the moment, after the start; she sits at the table and is never left out)
+        await self.end_session_three()
+        self.now = 7_060
+        dara = await self.pc("Dara", 4_444)
+        got = await self.table(7_000)
+        self.assertIsNone(got)
+        self.assertIn(dara, await self.memory.current_party(GUILD, self.c))
+
+    async def test_one_who_left_mid_session_still_counts_at_the_table(self) -> None:
+        await self.end_session_three()
+        self.now = 7_100  # (a live table from 7_000, before its first save; Tuck leaves)
+        await self.memory.leave_party(GUILD, self.c, self.tuck, "away")
+        got = await self.table(7_000)
+        self.assertEqual(set(got or []), {self.vell, self.tuck, self.cara})
+
+    async def test_everyone_leaving_mid_session_keeps_the_tables_party(self) -> None:
+        await self.end_session_three()
+        self.now = 7_100
+        for who in (self.vell, self.tuck, self.cara):
+            await self.memory.leave_party(GUILD, self.c, who, "away")
+        self.assertEqual(await self.memory.current_party(GUILD, self.c), [])
+        got = await self.table(7_000)
+        self.assertEqual(set(got or []), {self.vell, self.tuck, self.cara})
+
+    async def test_a_session_with_no_row_reads_the_stretches_alone(self) -> None:
+        # (no session started at 2_200: `session_members` falls back to `members_at`)
+        self.assertEqual(
+            set(await self.memory.members_at(GUILD, self.c, 2_200)), {self.vell, self.tuck}
+        )
+
+    async def test_what_the_party_at_a_session_knows_is_read_in_one_call(self) -> None:
+        old = await self.memory.visible_to_party_at(GUILD, self.c, 1_000)
+        self.assertIsNotNone(old.how_sure(gate.ENTRY, self.thread))  # (Vell and Tuck knew it)
+        new = await self.memory.visible_to_party_at(GUILD, self.c, 3_000)
+        self.assertIsNone(new.how_sure(gate.ENTRY, self.thread))  # (Cara doesn't know it yet)
+
+    async def test_a_live_rows_first_save_counts_who_was_made_before_it(self) -> None:
+        # (0552's comment: a live row is made at the first transcript save, after the start)
+        await self.end_session_three()
+        self.now = 8_030
+        eve = await self.pc("Eve", 5_555)  # (made between the start and the first save)
+        sid = await self.sessions.open_session(GUILD, self.c, 8_000)
+        await self.lines(sid, made=8_060)
+        self.assertIn(eve, await self.memory.members_at(GUILD, self.c, 8_000))
 
 
 if __name__ == "__main__":

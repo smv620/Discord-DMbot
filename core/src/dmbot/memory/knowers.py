@@ -307,7 +307,7 @@ async def set_statement_knowers(
         raise MemoryRuleError(BAD_CERTAINTY)
     chosen = await _known_characters(w, list(sure))
     views = {i: await _view_for(w, i, player) for i, player in chosen.items()}
-    await _drop_asleep(w, column, statement_id)
+    marks = await _drop_asleep(w, column, statement_id)
     have = {
         r["perspective_id"]: r
         for r in await w.select(KNOWERS, f" AND {column} = %s", [statement_id])
@@ -318,7 +318,8 @@ async def set_statement_knowers(
                 KNOWERS,
                 {"id": new_id(), "perspective_id": view_id, "about_entity_id": None,
                  "state_id": None, "relation_id": None, "alias_id": None,
-                 column: statement_id, "created_at": w.now, "confidence": sure[entity_id]},
+                 column: statement_id, "created_at": w.now, "confidence": sure[entity_id],
+                 "backstory_of": marks.get(view_id)},
             )  # fmt: skip
         elif have[view_id]["confidence"] != sure[entity_id]:
             await w.update(KNOWERS, have[view_id]["id"], {"confidence": sure[entity_id]})
@@ -432,13 +433,15 @@ async def learn(w: Changes, kind: str, statement_id: str, character_id: str) -> 
         raise MemoryRuleError(NOT_ONE_CHARACTER)
     player = found[0]["role"] == PLAYER_CHARACTER
     view = await _view_for(w, character_id, player)
-    await _drop_asleep(w, column, statement_id, [view])
+    marks = await _drop_asleep(w, column, statement_id, [view])
     changed = False
     have = await w.select(
         KNOWERS, f" AND {column} = %s AND perspective_id = %s", [statement_id, view]
     )
     if not have:
-        await w.insert(KNOWERS, _row(column, statement_id, view, w.now))
+        await w.insert(
+            KNOWERS, _row(column, statement_id, view, w.now) | {"backstory_of": marks.get(view)}
+        )
         changed = True
     elif have[0]["confidence"] < KNOWN:
         await w.update(KNOWERS, have[0]["id"], {"confidence": 1.0})  # (never down: up to sure)
@@ -634,6 +637,39 @@ async def set_alias_knowers(
     return chosen
 
 
+_ROW_OF: dict[str, LiteralString] = {
+    "about_entity_id": " AND about_entity_id = %s AND perspective_id = %s",
+    "state_id": " AND state_id = %s AND perspective_id = %s",
+    "relation_id": " AND relation_id = %s AND perspective_id = %s",
+    "alias_id": " AND alias_id = %s AND perspective_id = %s",
+}
+
+
+async def holds(w: Scope, kind: str, statement_id: str, entity_id: str) -> bool:
+    """Whether the character holds a row for this statement now (asleep or awake): a backstory's
+    write marks only a row it made, never one learned before (#4795)."""
+    column, _ = _COLUMNS[kind]
+    views = await w.select(PERSPECTIVES, " AND entity_id = %s", [entity_id])
+    if not views:
+        return False
+    return bool(
+        await w.select(KNOWERS, _ROW_OF[column], [statement_id, views[0]["id"]], dormant=True)
+    )
+
+
+async def mark_backstory(w: Changes, kind: str, statement_id: str, entity_id: str) -> None:
+    """The character's row for this statement came from the character's own backstory (#4795,
+    migration 0556): marked, in the caller's change (one Undo), so the party's copies never pass
+    it to another character (§5). Nothing when the character holds no row for it."""
+    column, _ = _COLUMNS[kind]
+    views = await w.select(PERSPECTIVES, " AND entity_id = %s", [entity_id])
+    if not views:
+        return
+    for row in await w.select(KNOWERS, _ROW_OF[column], [statement_id, views[0]["id"]]):
+        if row["backstory_of"] != entity_id:
+            await w.update(KNOWERS, row["id"], {"backstory_of": entity_id})
+
+
 async def _character_views(w: Scope, players_only: bool) -> set[str]:
     """The views a "who knows" save may replace: every character's, or only the player
     characters' (a list that never offered an NPC must not drop one, #3197). The table's own and
@@ -655,7 +691,7 @@ async def _follow_player_list(
     (#2995, slice 2b)."""
     column, _ = _COLUMNS[kind]
     views = {i: await _view_for(w, i, player) for i, player in chosen.items()}
-    await _drop_asleep(w, column, statement_id)
+    marks = await _drop_asleep(w, column, statement_id)
     pcs = await _character_views(w, players_only)
     have = {
         r["perspective_id"]: r
@@ -663,7 +699,10 @@ async def _follow_player_list(
     }
     for view_id in views.values():
         if view_id not in have:
-            await w.insert(KNOWERS, _row(column, statement_id, view_id, w.now))
+            await w.insert(
+                KNOWERS,
+                _row(column, statement_id, view_id, w.now) | {"backstory_of": marks.get(view_id)},
+            )
     for view_id, row in have.items():
         if view_id in pcs and view_id not in views.values():
             await w.delete(KNOWERS, row["id"])
@@ -1185,12 +1224,15 @@ def _row(column: str, statement_id: str, view_id: str, now: int) -> dict[str, An
 
 async def _drop_asleep(
     w: Changes, column: str, statement_id: str, views: Collection[str] | None = None
-) -> None:
+) -> dict[str, str]:
     """The DM names who knows a statement: the rows a hide put to sleep for it are final now, the
     DM's list replaces them (they go, Undo brings them back), and a hide's 0.0 belief in a
     connection becomes the DM's own, so nothing the hide marked comes back over what the DM said
     (#3082). A (statement, point of view) is one thing: the row and the belief change together.
-    `views`: only these points of view (one character learning it, `learn`), else all."""
+    `views`: only these points of view (one character learning it, `learn`), else all. Returns the
+    marks of the rows it dropped (point of view → whose backstory, #4795), so a row written again
+    for the same point of view keeps it: a list saved over a hidden backstory row never unmarks
+    it."""
     asleep = await w.select(
         KNOWERS,
         f" AND {column} = %s AND cardinality(hidden_by) > 0"
@@ -1199,10 +1241,13 @@ async def _drop_asleep(
         dormant=True,
     )
     if not asleep:
-        return
+        return {}
+    kept_marks = {
+        str(r["perspective_id"]): str(r["backstory_of"]) for r in asleep if r["backstory_of"]
+    }
     await w.delete_where_in(KNOWERS, "id", [r["id"] for r in asleep])
     if column != "relation_id":
-        return
+        return kept_marks
     marked: dict[str, dict[str, Any]] = {}
     for row in await w.select(
         BELIEFS,
@@ -1214,6 +1259,7 @@ async def _drop_asleep(
         else:
             marked.pop(row["perspective_id"], None)  # (a newer belief is the DM's already)
     await w.update_rows(BELIEFS, {r["id"]: {"hidden_by": []} for r in marked.values()})
+    return kept_marks
 
 
 async def rehome_hidden_by(
@@ -1367,16 +1413,21 @@ async def _inherit_plan(
         for column in ("about_entity_id", "state_id", "relation_id", "alias_id"):
             if row[column] is not None:
                 asleep.add((column, row[column], row["perspective_id"]))
+    plain: dict[tuple[str, str], set[str]] = {}  # (who holds it NOT from their own backstory)
     for row in await r.select(KNOWERS, where, params):
         for column in ("about_entity_id", "state_id", "relation_id", "alias_id"):
             if row[column] is not None:
                 held.setdefault((column, row[column]), {})[row["perspective_id"]] = float(
                     row["confidence"]
                 )
+                if row["backstory_of"] is None:
+                    plain.setdefault((column, row[column]), set()).add(row["perspective_id"])
     wanted: dict[tuple[str, str], float] = {}
     if others:
         for key, who in held.items():
-            if others <= set(who):
+            # (all the others know it, and one of them NOT only from their own backstory: §5,
+            # another character's backstory is never copied, #4795)
+            if others <= set(who) and others & plain.get(key, set()):
                 wanted[key] = min(who[o] for o in others)
     else:
         wanted = await _shown_by_flags(r)
@@ -1390,10 +1441,9 @@ async def _inherit_plan(
 
 
 _ONLY_COLUMNS = ("about_entity_id", "state_id", "relation_id", "alias_id")
-# "Catch up" copies only what at least this many other members know: a row held by one character
-# alone may be that character's own backstory (9b: known to its character only), and who-knows rows
-# don't say where they came from, so a party of two catches up with "Who knows this?" instead.
-TELL_FROM = 2
+# "Catch up" copies what every other member knows, so one other is enough: a row from that
+# character's own backstory is marked (`backstory_of`, #4795) and never counts (`_inherit_plan`).
+TELL_FROM = 1
 
 
 def _only_where(only: Mapping[str, Collection[str]] | None) -> tuple[LiteralString, list[Any]]:
@@ -1434,7 +1484,12 @@ async def card_statements(r: Scope, entity_id: str) -> dict[str, set[str]]:
 
 
 async def tell_plan(
-    r: Scope, member_id: str, only: Mapping[str, Collection[str]], view: str | None = None
+    r: Scope,
+    member_id: str,
+    only: Mapping[str, Collection[str]],
+    view: str | None = None,
+    *,
+    choosing: Collection[str] = (),
 ) -> list[tuple[str, str, str, float]]:
     """The rows "Tell Mira" would write (#4537 slice 4b): every statement in `only` that all the
     OTHER current members know (not one whose own join question still waits, as the join copy
@@ -1444,9 +1499,15 @@ async def tell_plan(
     from dmbot.memory import join_questions, party_record
 
     ids = set(await party_record.current_members(r))
-    if member_id not in ids or member_id in await join_questions.waiting_entities(r.conn, *r.ids):
+    if member_id not in ids:
+        return []
+    if member_id not in choosing and member_id in await join_questions.waiting_entities(
+        r.conn, *r.ids
+    ):
         return []  # (one whose own join question waits is caught up by answering it)
-    caught_up = await _caught_up(r, ids - {member_id})
+    # (`choosing`: the characters of one join question, caught up together by "Let me choose":
+    # none of them is one of "the others")
+    caught_up = await _caught_up(r, ids - {member_id} - set(choosing))
     if len(caught_up) < TELL_FROM:
         return []
     views = {
@@ -1477,6 +1538,7 @@ async def tell_counts(r: Scope, only: Mapping[str, Collection[str]]) -> dict[str
     }
     where, params = _only_where(only)
     held: dict[tuple[str, str], set[str]] = {}
+    plain: dict[tuple[str, str], set[str]] = {}  # (not from the holder's own backstory, #4795)
     asleep: set[tuple[str, str, str]] = set()
     for row in await r.select(
         KNOWERS, " AND cardinality(hidden_by) > 0" + where, params, dormant=True
@@ -1488,6 +1550,8 @@ async def tell_counts(r: Scope, only: Mapping[str, Collection[str]]) -> dict[str
         for column in _ONLY_COLUMNS:
             if row[column] is not None:
                 held.setdefault((column, row[column]), set()).add(row["perspective_id"])
+                if row["backstory_of"] is None:
+                    plain.setdefault((column, row[column]), set()).add(row["perspective_id"])
     out: dict[str, int] = {}
     for member in caught:
         others = [o for o in caught if o != member]
@@ -1497,11 +1561,197 @@ async def tell_counts(r: Scope, only: Mapping[str, Collection[str]]) -> dict[str
         n = sum(
             1
             for (column, statement), who in held.items()
-            if theirs <= who and mine not in who and (column, statement, mine or "") not in asleep
+            if theirs <= who
+            and theirs & plain.get((column, statement), set())
+            and mine not in who
+            and (column, statement, mine or "") not in asleep
         )
         if n:
             out[member] = n
     return out
+
+
+async def session_statements(r: Scope, started_at: int) -> dict[str, set[str]]:
+    """What came up in one session ("Let me choose", by session; Supervisor's ruling G on #4537):
+    the entries mentioned in it, the names first heard in it, and the connections and conditions
+    dated from it. Lore and what the DM typed have no session, so they are never in one."""
+    out: dict[str, set[str]] = {c: set() for c in _ONLY_COLUMNS}
+    cur = await r.conn.execute(
+        "SELECT DISTINCT entity_id FROM memory_mentions WHERE guild_id = %s AND campaign_id = %s"
+        " AND session_started_at = %s",
+        (*r.ids, started_at),
+    )
+    out["about_entity_id"] |= {str(x["entity_id"]) for x in await cur.fetchall()}
+    cur = await r.conn.execute(
+        "SELECT a.id FROM memory_aliases a JOIN memory_name_sessions n ON n.guild_id = a.guild_id"
+        " AND n.campaign_id = a.campaign_id AND n.entity_id = a.entity_id"
+        " WHERE a.guild_id = %s AND a.campaign_id = %s AND n.session_started_at = %s",
+        (*r.ids, started_at),
+    )
+    out["alias_id"] |= {str(x["id"]) for x in await cur.fetchall()}
+    out["relation_id"] |= {
+        str(x["id"]) for x in await r.select(RELATIONS, " AND from_session_at = %s", [started_at])
+    }
+    out["state_id"] |= {
+        str(x["id"]) for x in await r.select(STATES, " AND from_session_at = %s", [started_at])
+    }
+    return out
+
+
+async def sessions_statements(r: Scope, starts: Collection[int]) -> dict[int, dict[str, set[str]]]:
+    """`session_statements` for many sessions at once (the "Let me choose" page): four reads in
+    all, never four per session. Names: only public ones, of an entry first named in that session
+    (a name's own session isn't kept, and a secret one is never credited to a session)."""
+    out: dict[int, dict[str, set[str]]] = {s: {c: set() for c in _ONLY_COLUMNS} for s in starts}
+    if not out:
+        return out
+    wanted = sorted(out)
+    cur = await r.conn.execute(
+        "SELECT DISTINCT session_started_at AS at, entity_id FROM memory_mentions"
+        " WHERE guild_id = %s AND campaign_id = %s AND session_started_at = ANY(%s)",
+        (*r.ids, wanted),
+    )
+    for x in await cur.fetchall():
+        out[int(x["at"])]["about_entity_id"].add(str(x["entity_id"]))
+    cur = await r.conn.execute(
+        "SELECT n.session_started_at AS at, a.id FROM memory_aliases a"
+        " JOIN memory_name_sessions n ON n.guild_id = a.guild_id"
+        " AND n.campaign_id = a.campaign_id AND n.entity_id = a.entity_id"
+        " WHERE a.guild_id = %s AND a.campaign_id = %s AND n.session_started_at = ANY(%s)"
+        " AND NOT a.secret",
+        (*r.ids, wanted),
+    )
+    for x in await cur.fetchall():
+        out[int(x["at"])]["alias_id"].add(str(x["id"]))
+    for table, column in ((RELATIONS, "relation_id"), (STATES, "state_id")):
+        for x in await r.select(table, " AND from_session_at = ANY(%s)", [wanted]):
+            out[int(x["from_session_at"])][column].add(str(x["id"]))
+    return out
+
+
+async def cards_statements(r: Scope, entity_ids: Collection[str]) -> dict[str, dict[str, set[str]]]:
+    """`card_statements` for many entries at once (the "Let me choose" page's story threads): four
+    reads in all."""
+    out: dict[str, dict[str, set[str]]] = {e: {c: set() for c in _ONLY_COLUMNS} for e in entity_ids}
+    if not out:
+        return out
+    wanted = sorted(out)
+    kinds = {
+        str(e["id"]): e["type"] for e in await r.select(ENTITIES, " AND id = ANY(%s)", [wanted])
+    }
+    for e in list(out):
+        if e not in kinds:
+            del out[e]
+        else:
+            out[e]["about_entity_id"].add(e)
+    for a in await r.select(ALIASES, " AND entity_id = ANY(%s)", [wanted]):
+        if str(a["entity_id"]) in out:
+            out[str(a["entity_id"])]["alias_id"].add(str(a["id"]))
+    for st in await r.select(STATES, " AND entity_id = ANY(%s)", [wanted]):
+        if str(st["entity_id"]) in out:
+            out[str(st["entity_id"])]["state_id"].add(str(st["id"]))
+    for rel in await r.select(
+        RELATIONS, " AND (subject_id = ANY(%s) OR object_id = ANY(%s))", [wanted, wanted]
+    ):
+        for end, other in (
+            (rel["subject_id"], rel["object_id"]),
+            (rel["object_id"], rel["subject_id"]),
+        ):
+            if str(end) in out:
+                out[str(end)]["relation_id"].add(str(rel["id"]))
+                if kinds[str(end)] in THREAD_TYPES:
+                    out[str(end)]["about_entity_id"].add(str(other))
+    return out
+
+
+async def caught_up_others(r: Scope, members: Collection[str]) -> list[str]:
+    """The current members a "Let me choose" pick copies from: not the question's own characters,
+    and not one whose own question still waits."""
+    from dmbot.memory import join_questions, party_record
+
+    waiting = await join_questions.waiting_entities(r.conn, *r.ids)
+    return [
+        m for m in await party_record.current_members(r) if m not in waiting and m not in members
+    ]
+
+
+async def choose_counts(
+    r: Scope, members: Collection[str], groups: Mapping[str, Mapping[str, Collection[str]]]
+) -> dict[str, dict[str, int]]:
+    """ "Let me choose": for each group of statements (a session's, a story thread's), how many
+    things it would give the question's characters (`members`), read once for all groups: what
+    every other caught-up member knows, one of them not only from their own backstory (#4795), and
+    that character doesn't: group → character → how many, only groups and characters with any."""
+    from dmbot.memory import join_questions, party_record
+
+    ids = await party_record.current_members(r)
+    waiting = await join_questions.waiting_entities(r.conn, *r.ids)
+    mine = [m for m in ids if m in members]
+    caught = [m for m in ids if m not in waiting and m not in members]
+    if not mine or len(caught) < TELL_FROM:
+        return {}
+    views = {
+        str(p["entity_id"]): str(p["id"])
+        for p in await r.select(PERSPECTIVES, " AND entity_id = ANY(%s)", [sorted(ids)])
+    }
+    if any(o not in views for o in caught):
+        return {}
+    union: dict[str, set[str]] = {c: set() for c in _ONLY_COLUMNS}
+    for only in groups.values():
+        for column in _ONLY_COLUMNS:
+            union[column] |= set(only.get(column, ()))
+    where, params = _only_where(union)
+    held: dict[tuple[str, str], set[str]] = {}
+    plain: dict[tuple[str, str], set[str]] = {}
+    asleep: set[tuple[str, str, str]] = set()
+    for row in await r.select(
+        KNOWERS, " AND cardinality(hidden_by) > 0" + where, params, dormant=True
+    ):
+        for column in _ONLY_COLUMNS:
+            if row[column] is not None:
+                asleep.add((column, row[column], row["perspective_id"]))
+    for row in await r.select(KNOWERS, where, params):
+        for column in _ONLY_COLUMNS:
+            if row[column] is not None:
+                held.setdefault((column, row[column]), set()).add(row["perspective_id"])
+                if row["backstory_of"] is None:
+                    plain.setdefault((column, row[column]), set()).add(row["perspective_id"])
+    theirs = {views[o] for o in caught}
+    new_views = {m: views.get(m, f"(none:{m})") for m in mine}
+    out: dict[str, dict[str, int]] = {}
+    for key, only in groups.items():
+        each: dict[str, int] = {}
+        for column in _ONLY_COLUMNS:
+            for statement in only.get(column, ()):
+                who = held.get((column, statement), set())
+                if not (theirs <= who and theirs & plain.get((column, statement), set())):
+                    continue
+                for member, v in new_views.items():
+                    if v not in who and (column, statement, v) not in asleep:
+                        each[member] = each.get(member, 0) + 1
+        if each:
+            out[key] = each
+    return out
+
+
+async def choose_write(
+    w: Changes, members: Sequence[str], only: Mapping[str, Collection[str]]
+) -> dict[str, int]:
+    """One "Let me choose" pick: each of the question's characters is given what the rest of the
+    party knows of `only`, in the caller's change (one Undo). How many things each was given."""
+    told: dict[str, int] = {}
+    for member in members:
+        if not await tell_plan(w, member, only, choosing=members):
+            continue
+        view = await _view_of(w, member)
+        w.player_views = None
+        made = await tell_plan(w, member, only, view, choosing=members)
+        await w.insert_many(
+            KNOWERS, [_row(c, st, v, w.now) | {"confidence": sure} for c, st, v, sure in made]
+        )
+        if made:
+            told[member] = len({(c, st) for c, st, _, _ in made})
+    return told
 
 
 async def tell_member(w: Changes, member_id: str, entity_id: str) -> int:

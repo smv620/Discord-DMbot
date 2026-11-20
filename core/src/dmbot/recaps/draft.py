@@ -12,8 +12,11 @@ goes to players):
 - every proper noun is in the beat sheet, the confirmed names, the previous recap (the bridge) or
   the setting's name;
 - no secret name at all, in any part;
-- one music cue for each `《…》` section, none naming a game, a composer or a soundtrack (an IP
-  risk, and a provider may refuse it).
+- one music cue for each `《…》` section. The writer is told never to name a game, a composer, a
+  film or a soundtrack (an IP risk, and a provider may refuse it), but that is an instruction
+  only, never a check: a word like "soundtrack" or "composer" is also an ordinary one, and the
+  names of scores, albums, games and composers share ordinary words, so a draft is never refused,
+  retried or graded down for it (owner, 2026-11-20, #4851).
 
 Nothing here touches Discord or the database. The beat sheet is made from untrusted words, so it
 too goes to the AI as quoted data.
@@ -90,14 +93,6 @@ FACT_KINDS = ("place", "person", "invented", "contradiction", "direction")
 
 _QUOTED = re.compile(r"[\"“”]([^\"“”]{1,400})[\"“”]")
 _POSSESSIVE = re.compile(r"['’]s$", re.IGNORECASE)
-# Music prompts describe a sound. These name where it came from, which is not ours to imitate.
-_MUSIC_BANNED = re.compile(
-    r"\b(world of warcraft|warcraft|wow|blizzard|soundtrack|ost|composer|zimmer|williams|"
-    r"howard shore|skyrim|elder scrolls|witcher|zelda|final fantasy|game of thrones|"
-    r"lord of the rings|star wars|disney|ghibli|in the style of)\b",
-    re.IGNORECASE,
-)
-
 # What the writer reads (#2590, RECAP_WRITER_READS). Since #2954 the writer has one shape: the beat
 # sheet as the foundation, with the transcript, the who-and-what sheet, the open threads and the
 # story so far for context. The two words stay only so the setting and the tools that still pass
@@ -1357,10 +1352,6 @@ def check_prose(
         problems.append(
             f"give exactly one music prompt for each 《…》 section: {len(cues)} sections, "
             f"{len(prose.music)} prompts"
-        )
-    if any(_MUSIC_BANNED.search(m) for m in prose.music):
-        problems.append(
-            "a music prompt names a game, a composer or a soundtrack: describe the sound"
         )
     if _QUOTED.search(narration):
         problems.append("no quotation marks: tell it as narration")

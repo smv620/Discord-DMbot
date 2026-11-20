@@ -59,6 +59,9 @@ from dmbot.memory.models import (
 from dmbot.memory.party_record import ENDED
 from dmbot.memory.store import INT64_MAX, PERSON, MemoryStore
 from dmbot.memory.store import NAMES_NOT_SHOWN as NAMES_NOT_SHOWN_WORDS
+from dmbot.rules import homebrew, rule_sets, set_sync
+from dmbot.rules.house import HouseRuleError
+from dmbot.rules.web_updates import RuleTools
 
 if TYPE_CHECKING:
     from dmbot.maps.store import MapStore
@@ -155,7 +158,26 @@ MAP_ACTIONS = ("map-terrain", "map-climate", "map-control", "map-show")
 # one line, or ↩ Undo of one of those (the text is its change number). Filed under no name.
 WORLD_ACTIONS = ("world-keep", "world-not", "world-undo")
 JOIN_ACTIONS = ("join-everyone", "join-party", "join-undo")  # the DM's join question (#4778)
-PARTY_ACTIONS = ("party-leave", "party-back", "party-undo")  # who is in the party (#4778)
+PARTY_ACTIONS = (
+    "party-leave",
+    "party-back",
+    "party-undo",
+    "party-catch-up-choices",
+    "party-catch-up",
+)  # who is in the party (#4778)
+HEARD_ACTIONS = (
+    "heard-pick",
+    "heard-keep",
+    "heard-type",
+)  # "Did they mean…?" from the page (#4841 B)
+RULE_UPDATE_ACTIONS = (
+    "rules-update-pick",
+    "rules-update-undo",
+    "rules-update-undo-last",
+    "pack-update-undo-last",  # the Undo of a followed pack's taken update (#4841 packs)
+    "pack-update-pick",  # Pick changes on a followed pack, and its Undo (#4841 packs P3)
+    "pack-update-undo",
+)  # a followed set's pick (#4841)
 # The story threads DMbot found in an upload (#4457, quests slice 1): the same store calls as
 # Discord's 📜 card, so each keep is one change and one Undo.
 THREAD_ACTIONS = ("thread-keep", "thread-not", "thread-undo")
@@ -457,12 +479,13 @@ class ActionStore:
     async def party_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, batch: int
     ) -> tuple[str, str] | None:
-        """The action and text of this DM's own done `party-leave` or `party-back` that made
-        `batch` (#4778), so the page's Undo can only take back what they did themselves."""
+        """The action and text of this DM's own done `party-leave`, `party-back` or `party-catch-up`
+        that made `batch` (#4778, #4793), so the page's Undo can only take back what they did
+        themselves."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT action, text FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
-                " AND user_id = %s AND action IN ('party-leave', 'party-back')"
+                " AND user_id = %s AND action IN ('party-leave', 'party-back', 'party-catch-up')"
                 " AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
                 (guild_id, campaign_id, user_id, batch),
             )
@@ -719,6 +742,8 @@ async def apply(
     reads: Callable[[int], Awaitable[bool]] | None = None,
     game_now: GameNowFn | None = None,
     lore_pdfs: lore_pdfs_mod.LorePdfs | None = None,
+    rules: RuleTools | None = None,
+    heard: HeardFn | None = None,
 ) -> Outcome:
     """Do one action the way Discord's name card does. Nothing here logs the DM's words."""
     if action.action in MAPS_PAGE_ACTIONS:
@@ -757,6 +782,14 @@ async def apply(
         if actions is None:
             return _failed(FAILED)
         return await _party(memory, actions, guild_id, cid, action)
+    if action.action in HEARD_ACTIONS:
+        if heard is None:
+            return _failed(FAILED)
+        return await _heard(heard, guild_id, action)
+    if action.action in RULE_UPDATE_ACTIONS:
+        if rules is None:
+            return _failed(FAILED)
+        return await _rule_update(rules, guild_id, cid, action)
     if action.action in JOIN_ACTIONS:
         if actions is None:
             return _failed(FAILED)
@@ -1173,6 +1206,8 @@ async def _world(
 
 
 NOT_IN_PARTY = "not_in_party"  # a "Has left the party" for a character not in the party now
+CATCH_CHOICES_MAX = 4  # members one "Catch up" answer lists (`result_counts` is 200 characters)
+NOTHING_LEFT = "nothing_left"  # a "Catch up" for a member who already knows all the rest know here
 ALREADY_BACK = "already_back"  # a "Back in the party" (or an Undo of a leave) for one who is in it
 NOT_A_PC = "not_a_pc"  # a "Back in the party" for a character who is no player character now
 
@@ -1209,6 +1244,28 @@ async def _party(
                 return Outcome()  # (taken back already: a retried Undo)
             return _failed(GONE if str(exc) == STORE_NOT_FOUND else CHANGED)
         return Outcome()
+    if a.action == "party-catch-up-choices":
+        # Who is missing what on this card, from the store's own rule (`knowers.tell_counts`): ids
+        # and counts only, `<member>=<how many>` in the party list's order; the page names them.
+        try:
+            choices = await memory.tell_choices(guild_id, cid, a.text)
+        except MemoryRuleError:
+            return _failed(GONE)
+        # (the answer's column holds 200 characters: four pairs of a 32-character id and a count
+        # always fit, with `;more=<k>` saying how many were left out, so the page can say so;
+        # whoever is left over shows once these are caught up and it is read again)
+        shown = choices[:CATCH_CHOICES_MAX]
+        pairs = ",".join(f"{m}={n}" for m, _name, n in shown)
+        return Outcome(counts=f"catch:{pairs};more={len(choices) - len(shown)}")
+    if a.action == "party-catch-up":
+        member, _, entry = a.text.partition(" ")
+        try:
+            told = await memory.tell_member(guild_id, cid, member, entry)
+        except MemoryRuleError:
+            return _failed(NOT_IN_PARTY)
+        if not told.value:
+            return _failed(NOTHING_LEFT)  # (another DM may have done it)
+        return Outcome(counts=f"told:{told.value}", batches=(told.batch,) if told.batch else ())
     if a.action == "party-leave":
         entity, _, why = a.text.partition(" ")
         if why not in ENDED:
@@ -1228,6 +1285,264 @@ async def _party(
     return Outcome(
         counts=f"asked:{waiting or 'none'}", batches=(back.batch,) if back.batch is not None else ()
     )
+
+
+# "Did they mean…?" answered from the page: the bot's own function (`DMBot.answer_waiting_coded`),
+# given the guild, the question's id, the pick ("keep" or an index) and the DM; what comes back has
+# `code`, `done` and `reason` (never a word of the DM's).
+HeardFn = Callable[[int, int, str, int, str | None], Awaitable[Any]]
+HEARD_OK = frozenset({"kept", "fixed", "fixed-new", "line-kept"})  # the answer was saved
+KEEP_PICK = "keep"  # `transcript.questions.KEEP`: the pick that keeps the words as heard
+TYPE_PICK = "type"  # `transcript.questions.TYPE`: the pick that comes with a typed name
+
+
+async def _heard(heard: HeardFn, guild_id: int, a: Action) -> Outcome:
+    """The DM's answer to one waiting "Did they mean…?" from the page (#4841 B1): the same
+    function as Discord's buttons, which checks the DM, the speaker's consent and the names again.
+    A saved answer is its code in the counts ("heard:fixed"); anything else is the code as the
+    error word (`only_dm`, `name_gone`, `expired`…), with a typed problem's reason in the counts.
+    Nothing here logs a word."""
+    question, _, index = a.text.partition(" ")
+    if not (question.isdigit() and len(question) <= 15):
+        return _failed(GONE)
+    typed: str | None = None
+    if a.action == "heard-keep":
+        pick = KEEP_PICK
+    elif a.action == "heard-type":
+        pick, typed = TYPE_PICK, index  # the typed name is checked by the bot, never here
+    elif index.isdigit() and len(index) == 1:
+        pick = index
+    else:
+        return _failed(GONE)
+    try:
+        got = await heard(guild_id, int(question), pick, a.user_id, typed)
+    except Exception:
+        # (`log.exception` writes the traceback, never the typed words: they are not in a message)
+        log.exception("A website answer to a waiting question failed")
+        return _failed(FAILED)
+    code = str(got.code)
+    if code in HEARD_OK:
+        return Outcome(counts=f"heard:{code}")
+    reason = str(got.reason) if code == "typed-problem" and got.reason else ""
+    return Outcome(error=code.replace("-", "_"), counts=f"reason:{reason}" if reason else "")
+
+
+NOTHING_LEFT_OUT = "nothing_left_out"  # a pick that keeps every change: the page never takes it
+TOO_MANY = "too_many"  # an update with more changes than the page can list to pick from
+NO_ROOM = "no_room"  # the pick would put the campaign over its house-rule limit (Discord says so)
+PICK_MAX = 50  # changes a pick can name (13 hex digits of the action's text)
+
+
+async def _rule_update(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Outcome:
+    """The DM's Pick changes on a followed house-rules set, and its Undo, from the website (#4841
+    C2): the same store calls as Discord's `dm_screen/set_update.take` and `UndoView._undo`, so no
+    rule is copied. The pick is checked against the version the DM was shown (`changed` if a newer
+    one came). Leaving anything out ends the follow and the campaign keeps its own copy; keeping
+    everything is refused (`nothing_left_out`), since the page never takes an update itself:
+    DMbot takes it at a session's start. The Undo handle is a row of `web_rule_takes`, for this DM
+    only and only the newest, for a day."""
+    if a.action == "rules-update-undo":
+        return await _rule_undo(tools, guild_id, cid, a)
+    if a.action == "rules-update-undo-last":
+        return await _rule_undo_last(tools, guild_id, cid, a)
+    if a.action == "pack-update-undo-last":
+        return await _pack_undo_last(tools, guild_id, cid, a)
+    if a.action == "pack-update-undo":
+        return await _pack_undo(tools, guild_id, cid, a)
+    if a.action == "pack-update-pick":
+        return await _pack_pick(tools, guild_id, cid, a)
+    version_text, _, picks_text = a.text.partition(" ")
+    if not (version_text.isdigit() and re.fullmatch(r"[0-9a-f]{1,13}", picks_text)):
+        return _failed(GONE)
+    version, picks = int(version_text), int(picks_text, 16)
+    update = await tools.sets.pending_update(guild_id, cid)
+    if update is None:
+        return _failed(GONE)  # nothing newer waits, or the set is no longer followed
+    if update.offer.version != version:
+        return _failed(CHANGED)  # a newer version came after the one the DM looked at
+    items = len(update.changes) + len(update.def_changes)
+    if items > PICK_MAX:
+        return _failed(TOO_MANY)  # the page lists 50 and says so: pick the rest in Discord
+    if picks >> items:
+        return _failed(GONE)
+    rules_in = len(update.changes)
+    numbers = {c.number for i, c in enumerate(update.changes) if picks >> i & 1}
+    keys = {d.key for i, d in enumerate(update.def_changes) if picks >> (rules_in + i) & 1}
+    left = items - bin(picks).count("1")
+    if left == 0:
+        return _failed(NOTHING_LEFT_OUT)
+    try:
+        taken = await tools.sets.take_update(
+            guild_id, cid, a.user_id, numbers, expected_version=version, accepted_defs=keys
+        )
+    except rule_sets.RuleSetError as exc:
+        text = str(exc)
+        if text == rule_sets.CHANGED_AGAIN:
+            return _failed(CHANGED)
+        if text in (rule_sets.NOT_FOLLOWING, rule_sets.NOTHING_NEW, rule_sets.NO_SUCH_SET):
+            return _failed(GONE)
+        if text == rule_sets.NO_ROOM:
+            return _failed(NO_ROOM)
+        return _failed(FAILED)
+    except HouseRuleError:
+        return _failed(FAILED)
+    # (something is always left out, so the follow always ended: the kept relationships become
+    # the campaign's own, as in Discord's `take`)
+    def_batch: int | None = None
+    if taken.merged:
+        done = await set_sync.safely(set_sync.keep_as_own(tools.memory, guild_id, cid, taken))
+        def_batch = done.batch if done is not None else None
+    counts = f"picked:{items - left} left:{left}"
+    try:
+        saved = await tools.takes.save(guild_id, cid, a.user_id, taken, def_batch)
+    except Exception:  # the pick is done: say so, without an Undo, rather than an error
+        log.exception("A website pick's undo handle could not be saved")
+        return Outcome(counts=counts)
+    return Outcome(result_id=str(saved), counts=counts)
+
+
+async def _rule_undo_last(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Outcome:
+    """↩️ Undo of the update DMbot already took (#4841 C3): Discord's note Undo, the same store call
+    (`undo_last_take`), which keeps the copy before in the follow's own row and works only while
+    the campaign is still on the version the page showed. The version sent is checked there, the
+    DM too. The answer says which version the campaign is back on."""
+    if not (a.text.isascii() and a.text.isdigit()) or len(a.text) > 9:
+        return _failed(GONE)
+    try:
+        follow = await tools.sets.undo_last_take(guild_id, cid, a.user_id, int(a.text))
+    except HouseRuleError:
+        return _failed(TOO_LATE)  # already undone, or a newer update was taken
+    await tools.settle(guild_id, cid)
+    return Outcome(counts=f"back:{follow.previous_version}")
+
+
+_PACK_UNDO = re.compile(r"([0-9a-f]{32}) ([0-9]{1,9})")
+
+
+async def _pack_undo_last(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Outcome:
+    """↩️ Undo of the update DMbot already took on a followed pack (#4841 packs P2): Discord's note
+    Undo, the same store call (`undo_last_pack_take`), only while the campaign is still on the
+    version the page showed. A running session then reads the homebrew names again, as Discord's
+    does. The answer says which version it went back to."""
+    found = _PACK_UNDO.fullmatch(a.text)
+    if found is None or tools.packs is None:
+        return _failed(GONE if found is None else FAILED)
+    try:
+        follow = await tools.packs.undo_last_pack_take(
+            guild_id, cid, a.user_id, found[1], int(found[2])
+        )
+    except HouseRuleError:
+        return _failed(TOO_LATE)  # already undone, or a newer update was taken
+    if tools.packs_changed is not None:
+        tools.packs_changed(guild_id, cid)
+    return Outcome(counts=f"back:{follow.previous_version}")
+
+
+_PACK_PICK = re.compile(r"([0-9a-f]{32}) ([0-9]{1,9}) ([0-9a-f]{1,13})")
+
+
+async def _pack_pick(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Outcome:
+    """The DM's Pick changes on a followed pack, from the website (#4841 packs P3): the same store
+    call as Discord's `dm_screen/pack_update.take`. The pick is checked against the version the DM
+    was shown (`changed` if a newer one came). Leaving anything out ends the follow and copies the
+    pack into the campaign's own homebrew (entries the campaign already has stay its own, counted
+    as `skipped`); keeping everything is refused, since the page never takes an update itself. The
+    undo handle is a row of `web_rule_takes` of kind 'pack', for this DM only, for a day."""
+    found = _PACK_PICK.fullmatch(a.text)
+    if found is None:
+        return _failed(GONE)
+    if tools.packs is None:
+        return _failed(FAILED)
+    set_id, version, picks = found[1], int(found[2]), int(found[3], 16)
+    update = await tools.packs.pending_pack_update(guild_id, cid, set_id)
+    if update is None:
+        return _failed(GONE)  # nothing newer waits, or the pack is no longer followed
+    if update.offer.version != version:
+        return _failed(CHANGED)  # a newer version came after the one the DM looked at
+    items = len(update.changes)
+    if items > PICK_MAX:
+        return _failed(TOO_MANY)  # the page lists 50 and says so: pick the rest in Discord
+    if picks >> items:
+        return _failed(GONE)
+    keys = {c.key for i, c in enumerate(update.changes) if picks >> i & 1}
+    left = items - len(keys)
+    if left == 0:
+        return _failed(NOTHING_LEFT_OUT)
+    try:
+        taken = await tools.packs.take_pack_update(
+            guild_id, cid, a.user_id, set_id, keys, expected_version=version
+        )
+    except rule_sets.RuleSetError as exc:
+        text = str(exc)
+        if text == rule_sets.CHANGED_AGAIN:
+            return _failed(CHANGED)
+        if text in (rule_sets.NOT_FOLLOWING, rule_sets.NOTHING_NEW, rule_sets.NO_SUCH_SET):
+            return _failed(GONE)
+        if text == homebrew.FULL:  # the copy would pass the campaign's homebrew limit
+            return _failed(NO_ROOM)
+        return _failed(FAILED)
+    except HouseRuleError:
+        return _failed(FAILED)
+    if tools.packs_changed is not None:
+        tools.packs_changed(guild_id, cid)
+    counts = f"picked:{items - left} left:{left} skipped:{taken.skipped}"
+    try:
+        saved = await tools.takes.save_pack(guild_id, cid, a.user_id, taken)
+    except Exception:  # the pick is done: say so, without an Undo, rather than an error
+        log.exception("A website pack pick's undo handle could not be saved")
+        return Outcome(counts=counts)
+    return Outcome(result_id=str(saved), counts=counts)
+
+
+async def _pack_undo(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Outcome:
+    """↩️ Undo of a pack pick: this DM's own, the newest handle for that pack, within the day; else
+    Discord's too-late words on the page."""
+    if not (a.text.isascii() and a.text.isdigit()) or len(a.text) > 15:
+        return _failed(GONE)
+    if tools.packs is None:
+        return _failed(FAILED)
+    take_id = int(a.text)
+    saved = await tools.takes.get_pack(guild_id, cid, take_id)
+    if saved is None or saved.user_id != a.user_id:
+        return _failed(GONE)  # (none, or another DM's pick)
+    if (
+        not tools.takes.fresh_pack(saved)
+        or await tools.takes.newest_pack_id(guild_id, cid, saved.taken.before.set_id) != take_id
+    ):
+        return _failed(TOO_LATE)
+    try:
+        kept = await tools.packs.undo_pack_take(guild_id, cid, a.user_id, saved.taken)
+    except HouseRuleError:
+        # (deliberately one word for the page: the campaign follows the pack again, is at its pack
+        # limit, or the pack is gone; the card then reads again and shows what is true)
+        return _failed(TOO_LATE)
+    if tools.packs_changed is not None:
+        tools.packs_changed(guild_id, cid)
+    await tools.takes.delete(guild_id, cid, take_id)
+    return Outcome(counts=f"undone:{kept}")
+
+
+async def _rule_undo(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Outcome:
+    """↩️ Undo of a pick: this DM's own, the newest, within the day; else Discord's too-late
+    words on the page."""
+    if not (a.text.isascii() and a.text.isdigit()) or len(a.text) > 15:
+        return _failed(GONE)
+    take_id = int(a.text)
+    saved = await tools.takes.get(guild_id, cid, take_id)
+    if saved is None or saved.user_id != a.user_id:
+        return _failed(GONE)  # (none, or another DM's pick)
+    if not tools.takes.fresh(saved) or await tools.takes.newest_id(guild_id, cid) != take_id:
+        return _failed(TOO_LATE)
+    try:
+        kept = await tools.sets.undo_take(guild_id, cid, a.user_id, saved.taken)
+    except HouseRuleError:
+        return _failed(TOO_LATE)  # the campaign follows something else now, or the set is gone
+    if saved.taken.merged and saved.def_batch is not None:
+        # the relationships go back as the set's before the follow is reconciled (as Discord's)
+        await set_sync.safely(tools.memory.undo(guild_id, cid, saved.def_batch))
+    await tools.settle(guild_id, cid)
+    await tools.takes.delete(guild_id, cid, take_id)
+    return Outcome(counts=f"undone:{kept}")
 
 
 async def _join(
