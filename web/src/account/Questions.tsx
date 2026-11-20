@@ -28,8 +28,9 @@ import QuestionsHere, { groupOf, type HereGroup } from "./QuestionsHere";
 /** The bot counts every minute or so: five minutes without a count and the numbers are said to be old. */
 export const CATCHING_UP_SECONDS = 300;
 
-function href(ref: string, to: "recaps" | "graph" | "names" | "maps" | "houserules"): string {
+function href(ref: string, to: "recaps" | "graph" | "names" | "maps" | "houserules" | "sharing"): string {
   const e = encodeURIComponent(ref);
+  if (to === "sharing") return "/account/sharing"; // lists every campaign the person runs, so it takes no ref (#4875)
   return to === "recaps"
     ? `/account/recaps?campaign=${e}`
     : to === "graph"
@@ -259,9 +260,16 @@ function Campaign({ campaign, serverNow, api }: { campaign: QuestionCampaign; se
                       )}
                     </>
                   ) : howFor(k.kind, api) === "link" && w.to ? (
-                    <a class="button secondary" href={href(campaign.ref, w.to)}>
-                      {w.link}
-                    </a>
+                    <>
+                      <a class="button secondary" href={href(campaign.ref, w.to)}>
+                        {w.link}
+                      </a>
+                      {w.also && (
+                        <a class="button secondary" href={href(campaign.ref, w.also.to)}>
+                          {w.also.link}
+                        </a>
+                      )}
+                    </>
                   ) : (
                     <span class="small muted">{words.discord}</span>
                   )}

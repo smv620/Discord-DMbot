@@ -14,6 +14,8 @@ export interface QuestionKindWords {
   /** For `link`: where it is answered, as a path from the campaign's address, and the words of the link. */
   to?: "recaps" | "graph" | "names" | "maps" | "houserules";
   link?: string;
+  /** A second link for a kind answered on two pages (#4875): the Shared rules page lists every campaign, so it takes no ref. */
+  also?: { to: "sharing"; link: string };
 }
 
 export const questionsPage = {
@@ -78,7 +80,13 @@ export const questionsPage = {
     plot: { label: "Plot check", how: "link", to: "recaps", link: "Open the recaps" },
     recap_approve: { label: "Recaps to approve", how: "link", to: "recaps", link: "Open the recaps" },
     // A newer version of a followed house-rules set (#4845): a link to the House rules page while its switch is on.
-    rules: { label: "House rule updates", how: "discord", to: "houserules", link: "Open the House rules page" },
+    rules: {
+      label: "House rule updates",
+      how: "discord",
+      to: "houserules",
+      link: "Open the House rules page",
+      also: { to: "sharing", link: "Open the Shared rules page" },
+    },
   } as Record<string, QuestionKindWords>,
   // A kind the bot counts and this page has no words for yet.
   otherKind: { label: "Other questions", how: "discord" } as QuestionKindWords,
