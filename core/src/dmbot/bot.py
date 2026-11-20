@@ -14590,7 +14590,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
     async def _work_out_join_choices(
         self, guild_id: int, campaign_id: str, group_id: str, user_id: int
-    ) -> None:
+    ) -> bool:
         """ "Let me choose" from the website (#4799): work out the sessions and story threads with
         something to give, and keep them for this DM's page (`web_join_choices`). Only a DM of the
         campaign (checked again here); a missing piece fails the action, which is sent again."""
@@ -14601,7 +14601,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         if campaign is None or user_id not in campaign.dm_user_ids:
             raise RuntimeError("only a DM of the campaign")
         choices = await memory.join_choices(guild_id, campaign_id, group_id)
+        if not choices.members:
+            return False  # (the question is gone, answered, or has no one left: nothing is kept)
         await JoinChoicesStore(db).save(guild_id, campaign_id, group_id, user_id, choices)
+        return True
 
     async def _sweep_rule_takes(self, guild_id: int) -> None:
         """The website's pick undo handles older than a day (#4841); counts only in the log."""
@@ -14610,18 +14613,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         try:
             gone = await TakeStore(db).sweep(guild_id)
+            if gone:
+                log.info("%s website rule-pick undo handles were cleared", gone)
         except Exception as exc:
             log.warning("The rule-pick handles could not be swept: %s", type(exc).__name__)
-            return
-        if gone:
-            log.info("%s website rule-pick undo handles were cleared", gone)
         try:
             kept = await JoinChoicesStore(db).sweep(guild_id)  # ("Let me choose", #4799)
+            if kept:
+                log.info("%s kept join choices were cleared", kept)
         except Exception as exc:
             log.warning("The kept join choices could not be swept: %s", type(exc).__name__)
-            return
-        if kept:
-            log.info("%s kept join choices were cleared", kept)
 
     def _lore_pdfs(self) -> LorePdfs:
         """What `lore-pdf-estimate` needs (#4762): the staging bucket, the staged-file table and the

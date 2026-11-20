@@ -1209,12 +1209,19 @@ async def queue_reveal(db: Database, session: Session, ref: str, body: object) -
     )
 
 
-def _chose(counts: str) -> list[dict[str, Any]] | None:
-    """`chose:<id8>=<n>,… first:<0|1>` (a "Let me choose" pick) as `[{"id", "count"}]`."""
-    found = re.fullmatch(r"chose:((?:[0-9a-f]{8}=\d+,?)+) first:[01]", counts)
+def _chose(counts: str) -> dict[str, Any] | None:
+    """`first:<0|1> chose:<id8>=<n>,…[;more=<k>]` (a "Let me choose" pick) as `{first, chose:
+    [{id, count}], more}`: `first` is whether the pick answered the question, `chose` who was given
+    how many things (the first 8 characters of the id; the page matches them to its list), `more`
+    how many further characters were given things and are not named."""
+    found = re.fullmatch(r"first:([01]) chose:((?:[0-9a-f]{8}=\d+,?)+)(?:;more=(\d+))?", counts)
     if found is None:
         return None
-    return [{"id": part[:8], "count": int(part[9:])} for part in found[1].split(",") if part]
+    return {
+        "first": found[1] == "1",
+        "chose": [{"id": part[:8], "count": int(part[9:])} for part in found[2].split(",") if part],
+        "more": int(found[3] or 0),
+    }
 
 
 def _catch_choices(counts: str) -> tuple[list[dict[str, Any]], int] | None:
@@ -1348,8 +1355,9 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "asked": counts.removeprefix("asked:") if counts.startswith("asked:") else None,
             # "Let me choose" (#4799): how many things each character was given (`[{"id" (first
             # 8 characters), "count"}]`) and whether this pick answered the question
-            "chose": _chose(counts),
-            "first": ("first:1" in counts) if counts.startswith("chose:") else None,
+            "chose": None if (c := _chose(counts)) is None else c["chose"],
+            "first": None if c is None else c["first"],
+            "choseMore": None if c is None else c["more"],
             # "Catch up" (#4793): how many things the member was told, and who is missing what
             # (`[{"id", "count"}]`, ids and counts only: the page names them)
             "told": int(counts.removeprefix("told:")) if counts.startswith("told:") else None,

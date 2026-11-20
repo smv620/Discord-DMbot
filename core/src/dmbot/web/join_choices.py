@@ -48,7 +48,10 @@ async def read(db: Database, session: Session, ref: str, group: str) -> dict[str
     return {
         "madeAt": int(got["madeAt"]),
         "choices": {
-            "members": [{"id": str(m), "name": str(names.get(m, ""))} for m in choices["members"]],
+            # (a character deleted since is dropped: there is nothing to name or give to)
+            "members": [
+                {"id": str(m), "name": str(names[m])} for m in choices["members"] if m in names
+            ],
             "sessions": [
                 {"at": int(s["at"]), "number": int(s["number"]), "counts": s["counts"]}
                 for s in choices["sessions"]

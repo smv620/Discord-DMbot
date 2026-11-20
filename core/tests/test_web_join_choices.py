@@ -60,9 +60,10 @@ class ChoosingOnTheWeb(Web):
         return await join_choices.read(self.web, who or self.session, self.cref, GROUP)
 
     async def loop(self, memory: Any = None) -> list[wa.Outcome]:
-        async def work_out(guild: int, cid: str, group: str, user: int) -> None:
+        async def work_out(guild: int, cid: str, group: str, user: int) -> bool:
             self.calls.append((guild, cid, group, user))
             await self.save_row(user)
+            return True
 
         done = []
         while (action := await self.actions.claim_next(self.g)) is not None:
@@ -150,7 +151,7 @@ class ChoosingOnTheWeb(Web):
         self.assertEqual((done.error, done.batches), ("", (77,)))
         read = await relationships.read_answer(self.web, self.session, self.cref, answer)
         self.assertEqual(read["chose"], [{"id": self.tavin[:8], "count": 14}])
-        self.assertTrue(read["first"])
+        self.assertEqual((read["first"], read["choseMore"]), (True, 0))
         self.assertEqual(read["batch"], 77)
         # (the page's Undo is the existing one, which accepts this DM's own done pick)
         self.assertTrue(await self.actions.join_batch_made(self.g, self.one.id, ALICE.id, 77))
@@ -200,3 +201,35 @@ class ChoosingOnTheWeb(Web):
             rows = await cur.fetchall()
         self.assertEqual([r["user_id"] for r in rows], [BOB.id])
         self.assertLess(time.time() - 3600, time.time())
+
+    async def test_a_big_pick_keeps_first_and_stays_within_the_answer_limit(self) -> None:
+        told = {f"{n:08x}" + "0" * 24: 123 + n for n in range(25)}
+        stub = self.stub_memory(told, batch=9, first=True)
+        answer = await join_choices.queue_pick(
+            self.web, self.session, self.cref, {"group": GROUP, "session": 5_000}
+        )
+        (done,) = await self.loop(stub)
+        self.assertLessEqual(len(done.counts), 200)
+        read = await relationships.read_answer(self.web, self.session, self.cref, answer)
+        self.assertTrue(read["first"])
+        self.assertEqual((len(read["chose"]), read["choseMore"]), (wa.CHOSE_MAX, 15))
+
+    async def test_an_empty_question_keeps_nothing_and_says_gone(self) -> None:
+        async def nothing(guild: int, cid: str, group: str, user: int) -> bool:
+            return False
+
+        await join_choices.queue_read(self.web, self.session, self.cref, {"group": GROUP})
+        (action,) = [await self.actions.claim_next(self.g)]
+        assert action is not None
+        done = await wa.apply(
+            self.memory, self.g, {ALICE.id}, action, actions=self.actions, join_choices=nothing
+        )
+        self.assertEqual(done.error, wa.GONE)
+
+    async def test_a_deleted_character_is_dropped_from_the_page(self) -> None:
+        await self.kept_store.save(
+            self.g, self.one.id, GROUP, ALICE.id,
+            JoinChoices([self.tavin, "f" * 32], [], [], 0, 0, False),
+        )  # fmt: skip
+        got = await self.read()
+        self.assertEqual([m["id"] for m in got["choices"]["members"]], [self.tavin])

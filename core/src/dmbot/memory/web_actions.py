@@ -1550,7 +1550,9 @@ async def _rule_undo(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Ou
 
 # "Let me choose" (#4799): the bot's own function, which works the choices out and keeps them for
 # the DM's page (given the guild, the campaign, the question's group and the DM).
-JoinChoicesFn = Callable[[int, str, str, int], Awaitable[None]]
+# It answers whether there was anything to choose (False: the question is gone or has no one left).
+JoinChoicesFn = Callable[[int, str, str, int], Awaitable[bool]]
+CHOSE_MAX = 10  # characters named in one pick's answer (the answer is 200 characters at most)
 
 
 async def _join_choose(
@@ -1560,19 +1562,19 @@ async def _join_choose(
     DM (the page reads them from its own door); `join-choose` gives one pick with
     `MemoryStore.join_choose`, which checks the question and what is left to give again, so a stale
     page can never give more than the bot would now. The answer is who was given how many things
-    (`chose:<id first 8>=<n>,…`, ids and counts only) and whether this pick answered the question
-    (`first:1`), and the change for the page's Undo (`join-undo`, which takes back only a change
+    (`first:<0|1> chose:<id first 8>=<n>,…`, ids and counts only, whether this pick answered the
+    question first), and the change for the page's Undo (`join-undo`, which takes back only a change
     this DM's own done pick made)."""
     group, _, pick = a.text.partition(" ")
     if a.action == "join-choices":
         if join_choices is None:
             return _failed(FAILED)
         try:
-            await join_choices(guild_id, cid, group, a.user_id)
+            anything = await join_choices(guild_id, cid, group, a.user_id)
         except Exception:
             log.exception("The choices for a join question could not be worked out")
             return _failed(FAILED)
-        return Outcome()
+        return Outcome() if anything else _failed(GONE)
     try:
         if pick[:1] == "s" and pick[1:].isdigit():
             done = await memory.join_choose(guild_id, cid, group, session_at=int(pick[1:]))
@@ -1585,8 +1587,11 @@ async def _join_choose(
     told, first = done.value
     if done.batch is None or not told:
         return _failed(NOTHING_LEFT)  # nothing was left to give from this pick
-    given = ",".join(f"{c[:8]}={n}" for c, n in told.items())
-    return Outcome(counts=f"chose:{given} first:{int(first)}", batches=(done.batch,))
+    # (`first` leads, so a long answer never cuts it off; at most `CHOSE_MAX` are named)
+    shown = list(told.items())[:CHOSE_MAX]
+    given = ",".join(f"{c[:8]}={n}" for c, n in shown)
+    more = f";more={len(told) - len(shown)}" if len(told) > len(shown) else ""
+    return Outcome(counts=f"first:{int(first)} chose:{given}{more}", batches=(done.batch,))
 
 
 async def _join(
