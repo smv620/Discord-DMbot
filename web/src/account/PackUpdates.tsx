@@ -1,28 +1,59 @@
 /** @jsxImportSource preact */
-// The packs a campaign follows from other tables, on the Shared rules page (#4841 packs P1 and P2, the page half of #4872): a newer
-// version waiting, or an update DMbot already took, with what changed and an Undo for the taken one. One card per campaign, loaded
-// only while RULE_UPDATES_LIVE. The page never takes an update: DMbot takes it at the next session start.
+// The packs a campaign follows from other tables, on the Shared rules page (#4841 packs P1, P2 and P3, the page half of #4872 and
+// #4873): a newer version waiting, or an update DMbot already took. A waiting pack can be picked (keep some changes; the rest end the
+// follow and become the campaign's own homebrew), and a taken one or a pick can be undone for a day. One card per campaign, loaded only
+// while RULE_UPDATES_LIVE. The page never takes an update by itself: DMbot takes it at the next session start.
 import { useEffect, useState } from "preact/hooks";
 
 import { packUpdateWords as w } from "../content/pack-updates-words";
 import { ApiError, type AccountApi, type PackUpdateItem, type PackUpdates } from "./api";
+import LazyPanel from "./LazyPanel";
+
+// Loaded only once the DM opens the picker (#4873).
+const loadPackPick = () => import("./PackPick");
+
+type Done = { name: string; from: number; kept: number; left: number; skipped: number; take: number | null };
+
+/** The plain line for a pick that did not go through, by the bot's word for it (`too_many` arrives as its masters kind here). */
+function pickProblem(error: unknown): string {
+  if (!(error instanceof ApiError)) return w.couldNot;
+  if (error.kind === "changed") return w.pickChanged;
+  if (error.kind === "gone") return w.pickGone;
+  if (error.kind === "no-room") return w.pickNoRoom;
+  if (error.kind === "too-many-masters") return w.pickTooMany;
+  return w.couldNot;
+}
 
 function Pack({
+  api,
   campaignRef,
   item,
   taken,
   busy,
+  picking,
+  onPick,
   onUndo,
+  onPicked,
+  onCancel,
+  onPickError,
 }: {
+  api: AccountApi;
   campaignRef: string;
   item: PackUpdateItem;
   taken: boolean;
   busy: boolean;
+  picking: boolean;
+  onPick: (item: PackUpdateItem) => void;
   onUndo: (item: PackUpdateItem) => void;
+  onPicked: (item: PackUpdateItem, got: { kept: number; left: number; skipped: number; take: number | null }) => void;
+  onCancel: () => void;
+  onPickError: (error: unknown) => void;
 }) {
   const [open, setOpen] = useState(false);
-  // The panel's id names the campaign and the pack, since two campaigns can follow one pack (#4872).
+  // The panel's id names the campaign and the pack, since two campaigns can follow one pack (#4872). It is named only while open.
   const id = `pack-update-${encodeURIComponent(`${campaignRef}-${item.setId}`)}`;
+  // The picker is not offered past the list's own length (more than 50 changes) or for a taken update (#4873).
+  const canPick = !taken && item.more === 0;
   return (
     <li class="stack">
       <p class="small">
@@ -33,6 +64,11 @@ function Pack({
         <button type="button" class="button secondary" aria-expanded={open} aria-controls={open ? id : undefined} onClick={() => setOpen((was) => !was)}>
           {open ? w.hide : w.see}
         </button>
+        {canPick && (
+          <button type="button" class="button secondary" aria-expanded={picking} disabled={busy || !api.packUpdatePick} onClick={() => onPick(item)}>
+            {w.pick}
+          </button>
+        )}
         {taken && (
           <button type="button" class="button secondary" disabled={busy} onClick={() => onUndo(item)}>
             {w.undo}
@@ -51,6 +87,13 @@ function Pack({
           {item.more > 0 && <p class="small muted">{w.more(item.more)}</p>}
         </div>
       )}
+      {picking && (
+        <LazyPanel
+          load={loadPackPick}
+          what="the changes you can keep"
+          props={{ api, campaignRef, item, onPicked: (got) => onPicked(item, got), onCancel, onError: onPickError }}
+        />
+      )}
     </li>
   );
 }
@@ -61,6 +104,10 @@ export default function PackUpdatesCard({ api, campaignRef }: { api: AccountApi;
   const [failed, setFailed] = useState(false);
   const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
   const [busy, setBusy] = useState(false);
+  // The pick in progress (by pack), the pick that is done with its Undo, and the words for a pick that did not go through (#4873).
+  const [pickingId, setPickingId] = useState<string | null>(null);
+  const [done, setDone] = useState<Done | null>(null);
+  const [pickAlert, setPickAlert] = useState<string | null>(null);
 
   async function read(): Promise<void> {
     if (!api.packUpdates) return;
@@ -92,6 +139,39 @@ export default function PackUpdatesCard({ api, campaignRef }: { api: AccountApi;
     }
   }
 
+  // Undo of a pick: the pack is the campaign's own again, back on the version it followed (#4873).
+  async function undoPick(d: Done) {
+    if (busy || d.take === null || !api.packUpdateUndo) return;
+    setBusy(true);
+    setSaid(null);
+    try {
+      await api.packUpdateUndo(campaignRef, d.take);
+      setDone(null);
+      setSaid({ ok: true, text: w.undone(d.from) });
+    } catch (error) {
+      setSaid({ ok: false, text: error instanceof ApiError && error.kind === "undo-late" ? w.pickTooLate : w.couldNot });
+    } finally {
+      await read();
+      setBusy(false);
+    }
+  }
+
+  function picked(item: PackUpdateItem, got: { kept: number; left: number; skipped: number; take: number | null }) {
+    setPickingId(null);
+    setPickAlert(null);
+    setSaid(null);
+    setDone({ name: item.name, from: item.from, kept: got.kept, left: got.left, skipped: got.skipped, take: got.take });
+    void read(); // the pack's lines go away after a pick; the done line stays above the list
+  }
+
+  function pickFailed(error: unknown) {
+    setPickAlert(pickProblem(error));
+    if (error instanceof ApiError && error.kind === "changed") {
+      setPickingId(null); // the pack changed: look at the new changes first
+      void read();
+    }
+  }
+
   if (!api.packUpdates) return null;
   if (!packs) {
     return failed ? (
@@ -103,7 +183,7 @@ export default function PackUpdatesCard({ api, campaignRef }: { api: AccountApi;
   // A pack with a newer version waiting shows that, not its taken update.
   const takenOnly = packs.taken.filter((t) => !packs.waiting.some((x) => x.setId === t.setId));
   const nothing = packs.waiting.length === 0 && takenOnly.length === 0;
-  if (nothing && !said && !failed) return null;
+  if (nothing && !said && !failed && !done) return null;
   return (
     <section class="stack" aria-label={w.heading}>
       <h3>{w.heading}</h3>
@@ -117,12 +197,61 @@ export default function PackUpdatesCard({ api, campaignRef }: { api: AccountApi;
           {w.failed}
         </p>
       )}
+      {pickAlert && (
+        <p class="warn" role="alert">
+          {pickAlert}
+        </p>
+      )}
+      {done && (
+        <div class="stack">
+          <p class="ok" role="status">
+            {w.done(done.name, done.kept, done.left)}
+          </p>
+          {done.skipped > 0 && <p class="small">{w.skipped(done.skipped)}</p>}
+          {done.take !== null && (
+            <>
+              <div class="row">
+                <button type="button" class="button secondary" disabled={busy} onClick={() => void undoPick(done)}>
+                  {w.undo}
+                </button>
+              </div>
+              <p class="small muted">{w.pickUndoLine}</p>
+            </>
+          )}
+        </div>
+      )}
       <ul class="stack">
         {packs.waiting.map((p) => (
-          <Pack key={`w-${p.setId}`} campaignRef={campaignRef} item={p} taken={false} busy={busy} onUndo={undo} />
+          <Pack
+            key={`w-${p.setId}`}
+            api={api}
+            campaignRef={campaignRef}
+            item={p}
+            taken={false}
+            busy={busy}
+            picking={pickingId === p.setId}
+            onPick={(item) => setPickingId((was) => (was === item.setId ? null : item.setId))}
+            onUndo={undo}
+            onPicked={picked}
+            onCancel={() => setPickingId(null)}
+            onPickError={pickFailed}
+          />
         ))}
         {takenOnly.map((p) => (
-          <Pack key={`t-${p.setId}`} campaignRef={campaignRef} item={p} taken busy={busy} onUndo={undo} />
+          <Pack
+            key={`t-${p.setId}`}
+            api={api}
+            campaignRef={campaignRef}
+            item={p}
+            taken
+            busy={busy}
+            picking={false}
+            onPick={() => undefined}
+            onUndo={undo}
+            onPicked={picked}
+            onCancel={() => undefined}
+            onPickError={pickFailed}
+          />
         ))}
       </ul>
     </section>

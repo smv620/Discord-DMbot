@@ -17,4 +17,19 @@ export const packUpdateWords = {
   undone: (back: number): string => `↩️ Undone. Back on version ${back}. DMbot will take the next new version; use Pick changes to choose.`,
   tooLate: "Can't undo this one. It was already undone, or DMbot has since taken a newer version. Nothing changed.",
   couldNot: "Couldn't do that just now. Nothing changed. Try again in a moment.",
+  // Pick changes on a pack (#4873).
+  pick: "Pick changes",
+  pickIntro: (name: string): string =>
+    `Pick the changes to keep. Leaving anything out ends your follow of ${name}: your table keeps its own copy of the entries, with the changes you kept, as its own homebrew, and stops getting this pack's updates. You can undo it for a day.`,
+  save: "Save my picks",
+  neverMind: "Never mind",
+  done: (name: string, kept: number, left: number): string =>
+    `✅ Done. ${name} is now your own homebrew: you kept ${kept} ${kept === 1 ? "change" : "changes"} and left out ${left} ${left === 1 ? "change" : "changes"}. It won't update any more.`,
+  skipped: (n: number): string => `${n} ${n === 1 ? "entry was" : "entries were"} already yours, so ${n === 1 ? "it stayed" : "they stayed"} as ${n === 1 ? "it was" : "they were"}.`,
+  pickUndoLine: "You can undo this for a day.",
+  pickChanged: "The pack changed again while you were looking. Look at the new changes first.",
+  pickGone: "This campaign isn't following that pack, or there is nothing new to take.",
+  pickNoRoom: "Your own homebrew and this pack together are more than the limit. Remove some first.",
+  pickTooMany: "This update has more changes than can be listed here. Use Pick changes in Discord.",
+  pickTooLate: "Too late to undo this one. Nothing changed.",
 };

@@ -688,6 +688,26 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       return { back: typeof got.back === "number" ? got.back : null };
     },
     // Undo of the pack update DMbot took (#4872): queued for the bot; waits for its answer, which has the version it went back to.
+    // Pick of a pack's newer version (#4873): queued for the bot; waits for its answer, which has the counts and the id for Undo.
+    packUpdatePick: async (ref, setId, version, kept) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/pack-updates/pick`, { setId, version, kept })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return {
+        kept: got.kept ?? kept.length,
+        left: got.left ?? 0,
+        skipped: typeof got.skipped === "number" ? got.skipped : 0,
+        take: typeof got.take === "number" ? got.take : null,
+      };
+    },
+    // Undo of a pack pick (#4873): queued for the bot, and this waits for its answer (`too_late` past the day).
+    packUpdateUndo: async (ref, take) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/pack-updates/${encodeURIComponent(String(take))}/undo`, {})) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
     packUpdateUndoLast: async (ref, setId, version) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;
       const queued = (await call("POST", `${base}/pack-updates/undo-last`, { setId, version })) as { answer: string };
