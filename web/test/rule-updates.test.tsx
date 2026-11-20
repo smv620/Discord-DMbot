@@ -5,7 +5,8 @@
 import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/preact";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ApiError, type AccountApi, type RuleUpdate } from "../src/account/api";
+import namesArea from "../src/account/api-names";
+import { ApiError, type AccountApi, type ApiHelpers, errorKinds, type RuleUpdate } from "../src/account/api";
 import { mockApi } from "../src/account/mock";
 import RuleUpdateCard from "../src/account/RuleUpdate";
 
@@ -272,9 +273,11 @@ describe("Undo for an update DMbot already took (#4867)", () => {
   /** An API that answers the taken read as given, and records the undo's version. */
   function takenApi(answer: { taken: RuleUpdate | null } | "fail", update: RuleUpdate | null = null, undo?: () => Promise<{ back: number | null }>) {
     const undos: number[] = [];
+    let reads = 0;
     const api = mockApi("table");
     api.ruleUpdate = async () => ({ update });
     api.ruleTaken = async () => {
+      reads += 1;
       if (answer === "fail") throw new Error("offline");
       return answer;
     };
@@ -282,7 +285,23 @@ describe("Undo for an update DMbot already took (#4867)", () => {
       undos.push(version);
       return undo ? undo() : { back: 2 };
     };
-    return { api, undos };
+    return { api, undos, reads: () => reads };
+  }
+
+  /** The real mapping of a queued Undo's answer (api-names and waitForAnswer), with the answer the bot gave. */
+  function undoLastThrough(queued: unknown, look: { state: string; error?: string } | null) {
+    const helpers = {
+      call: async (method: string) => (method === "POST" ? queued : {}),
+      restoreCall: async () => ({}),
+      waitForAnswer: async () => {
+        if (look === null) throw new Error("no answer");
+        if (look.state === "failed") throw new ApiError(errorKinds[look.error ?? ""] ?? "server");
+        return look;
+      },
+      root: "/api",
+      url: async (path: string) => path,
+    } as unknown as ApiHelpers;
+    return namesArea(helpers).ruleUpdateUndoLast!;
   }
 
   it("shows the update DMbot took, with its line; nothing when none was taken", async () => {
@@ -293,7 +312,7 @@ describe("Undo for an update DMbot already took (#4867)", () => {
     cleanup();
     const none = takenApi({ taken: null });
     const { container } = render(<RuleUpdateCard api={none.api} campaignRef={REF} name="Tavern rules" />);
-    await new Promise((r) => setTimeout(r, 0));
+    await waitFor(() => expect(none.reads()).toBeGreaterThan(0));
     expect(container.textContent).toBe("");
   });
 
@@ -320,13 +339,30 @@ describe("Undo for an update DMbot already took (#4867)", () => {
     expect(undos).toEqual([3]);
   });
 
-  it("too late says so and changes nothing", async () => {
-    const { api } = takenApi({ taken }, null, async () => {
-      throw new ApiError("undo-late");
-    });
+  it("too late, through the real mapping, says so and reads the update again until the Undo is gone", async () => {
+    let reads = 0;
+    const api = mockApi("table");
+    api.ruleUpdate = async () => ({ update: null });
+    api.ruleTaken = async () => {
+      reads += 1;
+      return { taken: reads === 1 ? taken : null };
+    };
+    api.ruleUpdateUndoLast = undoLastThrough({ answer: "a1" }, { state: "failed", error: "too_late" });
     render(<RuleUpdateCard api={api} campaignRef={REF} name="Tavern rules" />);
     fireEvent.click(await screen.findByRole("button", { name: "↩️ Undo" }));
     expect(await screen.findByText("Can't undo this one. It was already undone, or DMbot has since taken a newer version. Nothing changed.")).toBeTruthy();
+    await waitFor(() => expect(reads).toBeGreaterThan(1));
+    expect(screen.queryByRole("button", { name: "↩️ Undo" })).toBeNull();
+  });
+
+  it("a queued Undo with no answer shows the plain words, through the real mapping", async () => {
+    const api = mockApi("table");
+    api.ruleUpdate = async () => ({ update: null });
+    api.ruleTaken = async () => ({ taken });
+    api.ruleUpdateUndoLast = undoLastThrough({}, null);
+    render(<RuleUpdateCard api={api} campaignRef={REF} name="Tavern rules" />);
+    fireEvent.click(await screen.findByRole("button", { name: "↩️ Undo" }));
+    expect(await screen.findByText("Couldn't do that just now. Nothing changed. Try again in a moment.")).toBeTruthy();
   });
 
   it("a waiting update hides the taken part", async () => {

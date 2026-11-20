@@ -60,6 +60,7 @@ export default function RuleUpdate({ api, campaignRef, name }: { api: AccountApi
   useEffect(() => {
     if (!api.ruleTaken || !loaded || (update && update.name === name)) {
       setTaken(null);
+      setTakenFailed(false);
       return;
     }
     let live = true;
@@ -118,7 +119,13 @@ export default function RuleUpdate({ api, campaignRef, name }: { api: AccountApi
       setResult({ kind: "undone", name, from: got.back ?? t.from });
       setRound((was) => was + 1);
     } catch (error) {
-      setAlert(error instanceof ApiError && error.kind === "undo-late" ? w.tooLateTaken : w.couldNot);
+      if (error instanceof ApiError && error.kind === "undo-late") {
+        // Too late: read both again, so the Undo goes away once the update is no longer taken (#4867).
+        setAlert(w.tooLateTaken);
+        setRound((was) => was + 1);
+      } else {
+        setAlert(w.couldNot);
+      }
     } finally {
       setUndoing(false);
     }
