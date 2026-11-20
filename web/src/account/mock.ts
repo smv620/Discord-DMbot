@@ -4230,6 +4230,12 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         ],
       };
     },
+    async packUpdateUndoLast(ref, setId, version): Promise<{ back: number | null }> {
+      calls.push(`packUpdateUndoLast:${ref}:${setId}:${version}`);
+      await reachable();
+      signedIn();
+      return { back: 3 };
+    },
     async ruleTaken(ref): Promise<{ taken: RuleUpdate | null }> {
       calls.push(`ruleTaken:${ref}`);
       await reachable();

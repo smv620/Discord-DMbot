@@ -12,4 +12,9 @@ export const packUpdateWords = {
   takenChanges: "Changes:",
   more: (n: number): string => `…and ${n} more.`,
   failed: "Couldn't load the changes.",
+  undo: "↩️ Undo",
+  undoLine: (from: number): string => `Undo goes back to version ${from}. DMbot will take the next new version.`,
+  undone: (back: number): string => `↩️ Undone. Back on version ${back}. DMbot will take the next new version; use Pick changes to choose.`,
+  tooLate: "Can't undo this one. It was already undone, or DMbot has since taken a newer version. Nothing changed.",
+  couldNot: "Couldn't do that just now. Nothing changed. Try again in a moment.",
 };
