@@ -62,6 +62,8 @@ EVERY_ACTION = (
     "heard-type",  # "Type it…" from the page (#4841)
     "rules-update-undo-last",  # the Undo of an update DMbot took (#4841)
     "pack-update-undo-last",  # the same for a followed pack (#4841)
+    "pack-update-pick",  # Pick changes on a followed pack, and its Undo (#4841)
+    "pack-update-undo",
 )  # fmt: skip
 
 
