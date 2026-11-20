@@ -115,7 +115,8 @@ class RuleTools:
     memory: MemoryStore
     takes: TakeStore
     settle: Callable[[int, str], Awaitable[None]]
-    # Followed homebrew packs (#4841 packs slice): the store (None when the bot's store is not a
+    # Followed homebrew packs (#4841 packs slice): `sets` narrowed to a pack store (the same object
+    # in production, so never pass a different one), None when the bot's store is not a
     # pack store) and what Discord does after a pack changes (a running session reads the
     # campaign's homebrew names again).
     packs: PackUpdateStore | None = None

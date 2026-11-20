@@ -212,3 +212,12 @@ class UndoingATake(PackBase):
                 await pack_updates.queue_undo_last(self.web, self.session, self.cref(), body)
             self.assertEqual(err.exception.code, "bad_action")
         self.assertEqual(await self.drain(), [])
+
+    async def test_someone_who_is_not_a_dm_is_refused_at_the_queue_door(self) -> None:
+        with self.assertRaises(RecapError) as err:
+            await pack_updates.queue_undo_last(
+                self.web, await self.signed(BOB), self.cref(),
+                {"setId": SET_A, "version": 2},
+            )  # fmt: skip
+        self.assertEqual(err.exception.code, "not_allowed")
+        self.assertEqual(len((await self.fetch())["taken"]), 1)  # (the take is still there)
