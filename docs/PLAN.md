@@ -5054,7 +5054,9 @@ paid plans and are **off on the server** (`DMBOT_RECAPS`) until dev1 has checked
     narrated-recap allowance. Background music alone is a music bed the length the voice-over
     would have had, with the same mood sections.
   - **The music's style: described, never borrowed.**
-    - The music prompts never name a composer, a game, a film or a soundtrack, as now. The owner's
+    - The writer is told never to name a composer, a game, a film or a soundtrack in a music
+      prompt. That is an instruction only, not a check (owner, 2026-11-20, #4851): a draft is never
+      refused or retried for it, because many such names share ordinary descriptive words. The owner's
       taste (the instrumental style of classic fantasy MMO scores) is written as a house sound
       palette in plain musical terms, in `audio/music.py`'s style table and the writer's
       music-prompt rule: sweeping orchestral strings, warm horns, a wordless choir, Celtic harp and
