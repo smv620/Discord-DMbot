@@ -90,3 +90,41 @@ async def queue_undo_last(db: Database, session: Session, ref: str, body: object
         db, session, ref, entity=None, action="pack-update-undo-last", target="",
         text=f"{set_id} {version}", flag=False,
     )  # fmt: skip
+
+
+PICK_MAX = 50  # changes one pick can name; the bot's limit too (`web_actions.PICK_MAX`)
+_TAKE = re.compile(r"^[0-9]{1,15}$")
+
+
+async def queue_pick(db: Database, session: Session, ref: str, body: object) -> str:
+    """ "Save my picks" on a pack: `{"setId", "version": <the version shown>, "kept": [<index>…]}`:
+    the indexes in the shown list the DM keeps; the rest are left out, which ends the follow and
+    copies the pack into the campaign's own homebrew. The id of the answer the page polls."""
+    set_id = body.get("setId") if isinstance(body, dict) else None
+    version = body.get("version") if isinstance(body, dict) else None
+    kept = body.get("kept") if isinstance(body, dict) else None
+    if not (isinstance(set_id, str) and _PACK.fullmatch(set_id)):
+        raise RecapError("bad_action")
+    if not (isinstance(version, int) and not isinstance(version, bool) and 0 <= version < 10**9):
+        raise RecapError("bad_action")
+    if not isinstance(kept, list) or len(kept) > PICK_MAX:
+        raise RecapError("bad_action")
+    mask = 0
+    for i in kept:
+        if not (isinstance(i, int) and not isinstance(i, bool) and 0 <= i < PICK_MAX):
+            raise RecapError("bad_action")
+        mask |= 1 << i
+    return await relationships._queue(
+        db, session, ref, entity=None, action="pack-update-pick", target="",
+        text=f"{set_id} {version} {mask:x}", flag=False,
+    )  # fmt: skip
+
+
+async def queue_undo(db: Database, session: Session, ref: str, take: str) -> str:
+    """↩️ Undo of a pack pick, by the id its answer carried (this DM's own, the newest, a day)."""
+    if not _TAKE.fullmatch(take):
+        raise RecapError("not_found")
+    return await relationships._queue(
+        db, session, ref, entity=None, action="pack-update-undo", target="", text=take,
+        flag=False,
+    )  # fmt: skip
