@@ -361,6 +361,28 @@ class TheGoldenSet(unittest.IsolatedAsyncioTestCase):
         self.assertGreaterEqual(len(rows), 4)  # the header and at least three invented sessions
 
 
+class TheGoldenReasons(unittest.IsolatedAsyncioTestCase):
+    """A golden session that does not finish says why as codes and counts (#4879)."""
+
+    def test_a_problem_becomes_a_code_and_an_unknown_one_becomes_other(self) -> None:
+        self.assertEqual(
+            run.problem_code("no quotation marks: tell it as narration"), "quotation-marks"
+        )
+        self.assertEqual(
+            run.problem_code("names that are not allowed: Zed Quux. Use only the names"),
+            "names-not-allowed",
+        )
+        self.assertEqual(run.problem_code("something nobody wrote a check for"), "other")
+
+    async def test_a_failed_session_row_is_followed_by_a_why_line_with_no_words(self) -> None:
+        rows, clean = await run.run_golden(fx.Canned(AIError("x")), fx.Canned(), ("a", "b"), {})
+        self.assertFalse(clean)
+        why = [r for r in rows if r.startswith("  why: ")]
+        self.assertTrue(why)
+        self.assertIn("state ", why[0])
+        self.assertIn("calls ", why[0])
+
+
 class TheGoldenCost(unittest.IsolatedAsyncioTestCase):
     """`--golden` says its worst case in dollars and `--max-usd` stops it before a call that would
     pass the cap (#4859): stand-in clients, no AI."""
