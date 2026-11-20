@@ -5,6 +5,8 @@
 import { useEffect, useState } from "preact/hooks";
 
 import { problem, text } from "../content/sharing";
+import { RULE_UPDATES_LIVE } from "../content/rule-updates-switch";
+import LazyPanel from "./LazyPanel";
 import {
   ApiError,
   type AccountApi,
@@ -12,6 +14,9 @@ import {
   type SharedRuleSet,
   type SharedRulesCampaign,
 } from "./api";
+
+// The packs a campaign follows from other tables (#4872): loaded only while RULE_UPDATES_LIVE.
+const loadPackUpdates = () => import("./PackUpdates");
 
 type Load =
   | { kind: "loading" }
@@ -138,6 +143,7 @@ export default function SharingPage({ api }: { api: AccountApi }) {
                     no empty case to word here. */}
                 {c.publishes.length > 0 && <Shares items={c.publishes} />}
                 {c.follows.length > 0 && <Uses items={c.follows} />}
+                {RULE_UPDATES_LIVE && <LazyPanel load={loadPackUpdates} what="the packs DMbot follows" props={{ api, campaignRef: c.ref }} />}
               </section>
             ))}
           </>
