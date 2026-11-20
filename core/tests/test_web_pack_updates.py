@@ -30,7 +30,7 @@ OLD = pack(("Lamp", "Glows."), ("Rope", "Long."))
 NEW = pack(("Lamp", "Glows."), ("Rope", "Very long."), ("Flute", "Plays."))
 
 
-class PackUpdates(SharingBase):
+class PackBase(SharingBase):
     async def asyncSetUp(self) -> None:
         await super().asyncSetUp()
         await self.publish(self.two.id, SET_A, "Frost Pack")  # (versions 1 and 2)
@@ -58,6 +58,8 @@ class PackUpdates(SharingBase):
     async def fetch(self, session: Any = None) -> Any:
         return await pack_updates.read(self.web, session or self.session, self.cref())
 
+
+class PackUpdates(PackBase):
     async def test_a_newer_version_gives_core_s_own_lines(self) -> None:
         got = await self.fetch()
         changes = pack_diff.diff(OLD, NEW)
@@ -126,3 +128,87 @@ class PackUpdates(SharingBase):
         )  # fmt: skip
         got = (await self.fetch())["waiting"][0]
         self.assertEqual((len(got["lines"]), got["more"]), (pack_updates.MAX_LINES, 8))
+
+
+class UndoingATake(PackBase):
+    """The Undo of a pack's taken update (#4841 packs P2, migration 0567)."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        from dmbot.memory import web_actions as wa
+        from dmbot.memory.store import MemoryStore
+        from dmbot.rules import rule_sets
+        from dmbot.rules.pack_updates import PackUpdateStore
+        from dmbot.rules.web_updates import RuleTools, TakeStore
+
+        await self.follow_pack(NEW, version=2, previous_version=1, previous_content=OLD)
+        self.settled: list[str] = []
+        self.changed: list[tuple[int, str]] = []
+
+        async def settle(guild_id: int, campaign_id: str) -> None:
+            self.settled.append(campaign_id)
+
+        self.tools = RuleTools(
+            rule_sets.RuleSetStore(self.db), MemoryStore(self.db), TakeStore(self.db), settle,
+            PackUpdateStore(self.db), lambda g, c: self.changed.append((g, c)),
+        )  # fmt: skip
+        self.actions = wa.ActionStore(self.db)
+
+    async def drain(self) -> list[Any]:
+        from dmbot.memory import web_actions as wa
+        from dmbot.memory.store import MemoryStore
+
+        done = []
+        while (action := await self.actions.claim_next(THURSDAY.id)) is not None:
+            outcome = await wa.apply(
+                MemoryStore(self.db), THURSDAY.id, {ALICE.id}, action,
+                actions=self.actions, rules=self.tools,
+            )  # fmt: skip
+            await self.actions.finish(
+                THURSDAY.id, action, error=outcome.error, result_id=outcome.result_id,
+                result_counts=outcome.counts, result_batches=outcome.batches,
+            )  # fmt: skip
+            done.append(outcome)
+        return done
+
+    async def undo(self, version: int, set_id: str = SET_A) -> Any:
+        await pack_updates.queue_undo_last(
+            self.web, self.session, self.cref(), {"setId": set_id, "version": version}
+        )
+        (done,) = await self.drain()
+        return done
+
+    async def test_the_undo_puts_the_copy_before_back_and_a_session_is_told(self) -> None:
+        done = await self.undo(2)
+        self.assertEqual((done.error, done.counts), ("", "back:1"))
+        self.assertEqual(self.changed, [(THURSDAY.id, self.one.id)])
+        got = await self.fetch()
+        self.assertEqual(got["taken"], [])
+        self.assertEqual([w["from"] for w in got["waiting"]], [1])  # (waiting again)
+        self.assertEqual((await self.undo(2)).error, "too_late")
+
+    async def test_an_old_page_cannot_undo_a_newer_take(self) -> None:
+        self.assertEqual((await self.undo(1)).error, "too_late")
+        self.assertEqual(len((await self.fetch())["taken"]), 1)
+
+    async def test_another_pack_is_not_touched(self) -> None:
+        self.assertEqual((await self.undo(2, "b" * 32)).error, "too_late")
+        self.assertEqual(len((await self.fetch())["taken"]), 1)
+
+    async def test_the_answer_says_which_version_it_went_back_to(self) -> None:
+        from dmbot.web import relationships
+
+        answer = await pack_updates.queue_undo_last(
+            self.web, self.session, self.cref(), {"setId": SET_A, "version": 2}
+        )
+        await self.drain()
+        read = await relationships.read_answer(self.web, self.session, self.cref(), answer)
+        self.assertEqual((read["state"], read["back"], read["error"]), ("done", 1, ""))
+
+    async def test_a_bad_body_is_refused_before_anything_is_queued(self) -> None:
+        for body in [{}, {"setId": "x", "version": 2}, {"setId": SET_A}, {"setId": SET_A,
+                     "version": True}, {"setId": SET_A.upper(), "version": 2}, 5]:  # fmt: skip
+            with self.assertRaises(RecapError) as err:
+                await pack_updates.queue_undo_last(self.web, self.session, self.cref(), body)
+            self.assertEqual(err.exception.code, "bad_action")
+        self.assertEqual(await self.drain(), [])

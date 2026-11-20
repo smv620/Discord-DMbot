@@ -7,11 +7,13 @@ are read, never a story word."""
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 from dmbot.db import Database
 from dmbot.rules import pack_diff
 from dmbot.rules.pack_content import BadPack, valid_content
+from dmbot.web import relationships
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -70,3 +72,21 @@ async def read(db: Database, session: Session, ref: str) -> dict[str, Any]:
         "waiting": [i for i in waiting if i is not None],
         "taken": [i for i in taken if i is not None],
     }
+
+
+_PACK = re.compile(r"^[0-9a-f]{32}$")
+
+
+async def queue_undo_last(db: Database, session: Session, ref: str, body: object) -> str:
+    """↩️ Undo of the update DMbot took on a pack: `{"setId": <the pack's id>, "version": <the
+    version now, as shown>}`."""
+    set_id = body.get("setId") if isinstance(body, dict) else None
+    version = body.get("version") if isinstance(body, dict) else None
+    if not (isinstance(set_id, str) and _PACK.fullmatch(set_id)):
+        raise RecapError("bad_action")
+    if not (isinstance(version, int) and not isinstance(version, bool) and 0 <= version < 10**9):
+        raise RecapError("bad_action")
+    return await relationships._queue(
+        db, session, ref, entity=None, action="pack-update-undo-last", target="",
+        text=f"{set_id} {version}", flag=False,
+    )  # fmt: skip
