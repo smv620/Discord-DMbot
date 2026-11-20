@@ -1,7 +1,7 @@
 """0565_web_rule_taken
 
-The website's "Did they mean…?", the "Type it…" answer (#4841 part B, slice B2; Supervisor's
-ruling on #4841): the DM types the right name for a waiting question.
+The website's Undo of an update DMbot already took on a followed house-rules set (#4841 part C,
+slice C3; Supervisor's ruling on #4841): a DM-only read door for the take and one queue action.
 """
 
 from __future__ import annotations

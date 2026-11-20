@@ -136,3 +136,15 @@ class TakenUpdate(SharingBase):
             await rule_updates.queue_undo_last(
                 self.web, await self.signed(BOB), self.cref(), {"version": 2}
             )
+
+    async def test_a_long_list_of_changes_is_cut_and_counted(self) -> None:
+        many = {
+            "rules": [
+                {"number": n, "rule": f"Rule {n}", "instead": None}
+                for n in range(1, rule_updates.MAX_LINES + 8)
+            ],
+            "link": None,
+        }
+        await self.sql("UPDATE rule_set_follows SET content = %s::jsonb", json.dumps(many))
+        got = await self.taken()
+        self.assertEqual((len(got["lines"]), got["more"]), (rule_updates.MAX_LINES, 7 + 1 - 1))
