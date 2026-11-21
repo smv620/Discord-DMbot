@@ -4883,36 +4883,42 @@ class MemoryStore:
         if len(description) > DESCRIPTION_MAX:
             raise MemoryRuleError(f"That's too long (at most {DESCRIPTION_MAX} characters).")
         async with self._write(guild_id, campaign_id, source) as w:
-            await _check_player(w, played_by)
-            onto = await _load_ontology(w)
-            onto.active_type(type)
-            _check_role(onto, type, role, played_by)
-            row = await w.insert(
-                ENTITIES,
-                {
-                    "id": new_id(),
-                    "type": type,
-                    "name": name,
-                    "description": description.strip(),
-                    "status": status,
-                    "merged_into": None,
-                    "source": source,
-                    "created_at": w.now,
-                    "played_by": played_by,
-                    "role": role,
-                    "needs_look": False,
-                    "unique_item": None,
-                    "hidden_from_players": hidden_from_players,
-                },
-            )
-            await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", status, False, None))
-            if session_started_at is not None:
-                await record_name_session(w, str(row["id"]), session_started_at)
-            if role == PLAYER_CHARACTER and played_by is not None:
-                await _sync_plays(w, row["id"])
-            if status == CONFIRMED:  # (added already kept: a map's pin with its name, #4670)
-                await _rematch_pins(w, str(row["id"]))
+            row = await _make_entity(
+                w, type=type, name=name, source=source, status=status, description=description,
+                played_by=played_by, role=role, hidden_from_players=hidden_from_players,
+                session_started_at=session_started_at,
+            )  # fmt: skip
             return Written(_entity(row), w.batch)
+
+    async def link_new_event(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        thread_id: str,
+        name: str,
+        *,
+        ends_it: bool,
+        source: str,
+        from_session_at: int | None = None,
+    ) -> Written[Relation]:
+        """A new event the DM typed, and its link to the thread (advances or ends it), in ONE write
+        (#4950): if the link fails nothing is made, so no unlinked event is left behind, and one
+        Undo takes both. Made as any name the DM types: kept, and hidden from the players until
+        they learn it (#2404)."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can do that.")
+        check_named("event", name)
+        async with self._write(guild_id, campaign_id, source) as w:
+            row = await _make_entity(
+                w, type="event", name=clean_text(name), source=source, status=CONFIRMED,
+                description="", played_by=None, role=None, hidden_from_players=True,
+                session_started_at=None,
+            )  # fmt: skip
+            fact, _flags = await self.add_relation_in(
+                w, str(row["id"]), "resolves" if ends_it else "advances", thread_id,
+                confidence=1.0, status=CONFIRMED, from_session_at=from_session_at,
+            )  # fmt: skip
+            return Written(fact, w.batch)
 
     async def name_met(
         self,
@@ -12661,3 +12667,50 @@ async def _met_done(
         "DELETE FROM memory_met WHERE guild_id = %s AND campaign_id = %s AND id = %s",
         (*w.ids, row["id"]),
     )
+
+
+async def _make_entity(
+    w: Any,
+    *,
+    type: str,
+    name: str,
+    source: str,
+    status: str,
+    description: str,
+    played_by: int | None,
+    role: str | None,
+    hidden_from_players: bool,
+    session_started_at: int | None,
+) -> Any:
+    """The writes that make a new entry (and its first alias), inside the caller's write: shared by
+    `add_entity` and `link_new_event` so an entry and what hangs on it can be one change."""
+    await _check_player(w, played_by)
+    onto = await _load_ontology(w)
+    onto.active_type(type)
+    _check_role(onto, type, role, played_by)
+    row = await w.insert(
+        ENTITIES,
+        {
+            "id": new_id(),
+            "type": type,
+            "name": name,
+            "description": description.strip(),
+            "status": status,
+            "merged_into": None,
+            "source": source,
+            "created_at": w.now,
+            "played_by": played_by,
+            "role": role,
+            "needs_look": False,
+            "unique_item": None,
+            "hidden_from_players": hidden_from_players,
+        },
+    )
+    await w.insert(ALIASES, _new_alias(w, row["id"], name, "full", status, False, None))
+    if session_started_at is not None:
+        await record_name_session(w, str(row["id"]), session_started_at)
+    if role == PLAYER_CHARACTER and played_by is not None:
+        await _sync_plays(w, row["id"])
+    if status == CONFIRMED:  # (added already kept: a map's pin with its name, #4670)
+        await _rematch_pins(w, str(row["id"]))
+    return row

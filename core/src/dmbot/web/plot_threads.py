@@ -14,7 +14,7 @@ from typing import Any
 
 from dmbot.db import Database
 from dmbot.memory import threads
-from dmbot.memory.models import State
+from dmbot.memory.models import THREAD_TYPES, State
 from dmbot.web import relationships
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
@@ -32,6 +32,8 @@ def stalled_after() -> int:
 
 _ID = re.compile(r"^[0-9a-f]{32}$")
 ROLE_MAX = 60  # the card's own limit on "Their part"
+NAME_MAX = 100  # a thread's or an event's name, as the card's forms
+DUE_MAX = 120  # a promise's due note, as the card's form
 
 
 async def read(db: Database, session: Session, ref: str) -> dict[str, Any]:
@@ -197,4 +199,97 @@ async def queue_involve(db: Database, session: Session, ref: str, body: object) 
     return await relationships._queue(
         db, session, ref, entity=None, action="thread-involve", target="",
         text=f"{thread} {who} {part}".strip(), flag=False,
+    )  # fmt: skip
+
+
+async def queue_new(db: Database, session: Session, ref: str, body: object) -> str:
+    """Start a thread or a promise (#3696 slice 2c): `{"kind": <thread kind>, "state": <a state
+    word>, "name": <1 to 100 characters>}`. The id of the answer the page polls at
+    `.../web/answers/{id}`; a done answer carries the new thread's id."""
+    kind = body.get("kind") if isinstance(body, dict) else None
+    state = body.get("state") if isinstance(body, dict) else None
+    name = body.get("name") if isinstance(body, dict) else None
+    if kind not in THREAD_TYPES or state not in threads.ALL_STATES or not isinstance(name, str):
+        raise RecapError("bad_action")
+    clean = " ".join(name.split())
+    if not clean or len(clean) > NAME_MAX:
+        raise RecapError("bad_action")
+    return await relationships._queue(
+        db, session, ref, entity=None, action="thread-new", target="",
+        text=f"{kind} {state} {clean}", flag=False,
+    )  # fmt: skip
+
+
+async def queue_due(db: Database, session: Session, ref: str, body: object) -> str:
+    """A promise's due note (#3696 slice 2c): `{"promise": <32 hex>, "due": <at most 120
+    characters, empty clears it>}`."""
+    promise = body.get("promise") if isinstance(body, dict) else None
+    due = body.get("due", "") if isinstance(body, dict) else None
+    if not isinstance(promise, str) or not _ID.fullmatch(promise) or not isinstance(due, str):
+        raise RecapError("bad_action")
+    note = " ".join(due.split())
+    if len(note) > DUE_MAX:
+        raise RecapError("bad_action")
+    return await relationships._queue(
+        db, session, ref, entity=None, action="thread-due", target="",
+        text=f"{promise} {note}".strip(), flag=False,
+    )  # fmt: skip
+
+
+async def queue_party(db: Database, session: Session, ref: str, body: object) -> str:
+    """Who made a promise, or who it was made to (#3696 slice 2c): `{"promise": <32 hex>, "side":
+    "by" | "to", "who": <32 hex>}`."""
+    promise = body.get("promise") if isinstance(body, dict) else None
+    side = body.get("side") if isinstance(body, dict) else None
+    who = body.get("who") if isinstance(body, dict) else None
+    if (
+        not isinstance(promise, str) or not _ID.fullmatch(promise)
+        or not isinstance(who, str) or not _ID.fullmatch(who) or side not in ("by", "to")
+    ):  # fmt: skip
+        raise RecapError("bad_action")
+    return await relationships._queue(
+        db, session, ref, entity=None, action="thread-party", target="",
+        text=f"{promise} {side} {who}", flag=False,
+    )  # fmt: skip
+
+
+async def queue_link(db: Database, session: Session, ref: str, body: object) -> str:
+    """Link an event to a thread (#3696 slice 2d): `{"thread": <32 hex>, "how": "moved" | "ended",
+    "event": <32 hex>}`, or `"newEvent": <a name, 1 to 100 characters>` in place of `event` to make
+    the event on the spot, as the card does. The id of the answer the page polls at
+    `.../web/answers/{id}`."""
+    thread = body.get("thread") if isinstance(body, dict) else None
+    how = body.get("how") if isinstance(body, dict) else None
+    event = body.get("event") if isinstance(body, dict) else None
+    fresh = body.get("newEvent") if isinstance(body, dict) else None
+    if not isinstance(thread, str) or not _ID.fullmatch(thread) or how not in ("moved", "ended"):
+        raise RecapError("bad_action")
+    if isinstance(event, str) and fresh is None and _ID.fullmatch(event):
+        which = event
+    elif isinstance(fresh, str) and event is None:
+        name = " ".join(fresh.split())
+        if not name or len(name) > NAME_MAX:
+            raise RecapError("bad_action")
+        which = f"new {name}"
+    else:
+        raise RecapError("bad_action")
+    return await relationships._queue(
+        db, session, ref, entity=None, action="thread-link", target="",
+        text=f"{thread} {how} {which}", flag=False,
+    )  # fmt: skip
+
+
+async def queue_led_to(db: Database, session: Session, ref: str, body: object) -> str:
+    """Say what one thing led to (#3696 slice 2d): `{"from": <32 hex>, "to": <32 hex>}`, a clue,
+    an event or a thread that led to a thread or an event."""
+    source = body.get("from") if isinstance(body, dict) else None
+    target = body.get("to") if isinstance(body, dict) else None
+    if (
+        not isinstance(source, str) or not _ID.fullmatch(source)
+        or not isinstance(target, str) or not _ID.fullmatch(target) or source == target
+    ):  # fmt: skip
+        raise RecapError("bad_action")
+    return await relationships._queue(
+        db, session, ref, entity=None, action="thread-led-to", target="",
+        text=f"{source} {target}", flag=False,
     )  # fmt: skip
