@@ -271,3 +271,21 @@ class TheTriggers(ScriptCase):
         )
         await self.sql("DELETE FROM transcript_lines WHERE id = %s", (self.ids[1],))
         self.assertEqual(len(await self.theatre.read(GUILD + 1, theirs)), 1)
+
+
+class ReadByStart(ScriptCase):
+    """The recap's checks read a script by the session's start (#3901, part 2): only that
+    campaign's session, never another's."""
+
+    async def test_it_reads_the_campaigns_own_session_in_order(self) -> None:
+        await self.theatre.replace(GUILD, self.session, self.rows())
+        found = await self.theatre.read_by_start(GUILD, self.campaign.id, START)
+        self.assertEqual([x.position for x in found], list(range(len(found))))
+        self.assertEqual(found, await self.theatre.read(GUILD, self.session))
+
+    async def test_another_campaign_another_start_or_another_server_reads_nothing(self) -> None:
+        await self.theatre.replace(GUILD, self.session, self.rows())
+        other = await self.campaigns.create(GUILD, "Other", DM_USER)
+        self.assertEqual(await self.theatre.read_by_start(GUILD, other.id, START), [])
+        self.assertEqual(await self.theatre.read_by_start(GUILD, self.campaign.id, START + 1), [])
+        self.assertEqual(await self.theatre.read_by_start(GUILD + 1, self.campaign.id, START), [])

@@ -195,6 +195,9 @@ class Settings:
     # every "him" and "it" resolved in brackets. Off until dev1's measured run; with it off nothing
     # is asked of the AI and the session is exactly as it was.
     theatre_on: bool = False
+    # The recap's "did we miss anything" check and its fact check also read the session's script
+    # (#3901, part 2). Needs theatre_on; off until dev1's scores are in.
+    recap_reads_script: bool = False
     # The relationship reader beside the old one (#3244), on the test server only.
     rel_read_on: bool = False
     # The start-up wizard's link, offered first by the New campaign buttons (#3955): off until dev1
@@ -503,6 +506,11 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     if family_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
             'DMBOT_STORY_FAMILY_ONLY must be 1 (on) or 0 (off), got "' + family_raw + '".'
+        )
+    reads_script_raw = (get("DMBOT_RECAP_READS_SCRIPT") or "0").lower()
+    if reads_script_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError(
+            'DMBOT_RECAP_READS_SCRIPT must be 1 (on) or 0 (off), got "' + reads_script_raw + '".'
         )
     theatre_raw = (get("DMBOT_THEATRE_ON") or "0").lower()
     if theatre_raw not in ("0", "1", "true", "on", "false", "off"):
@@ -844,6 +852,8 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         recap_reveals_on=recap_reveals_raw in ("1", "true", "on"),
         story_family_only=family_raw in ("1", "true", "on"),
         theatre_on=theatre_raw in ("1", "true", "on"),
+        recap_reads_script=reads_script_raw in ("1", "true", "on")
+        and theatre_raw in ("1", "true", "on"),
         rel_read_on=rel_read_raw in ("1", "true", "on"),
         wizard_link_on=wizard_raw in ("1", "true", "on"),
         role_match=role_match_raw in ("1", "true", "on"),

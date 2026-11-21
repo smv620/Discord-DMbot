@@ -72,18 +72,21 @@ async def score(
     musts: Sequence[str],
     checks: Sequence[tuple[str, bool, str]] | None,
     client: Client,
+    script: str = "",
     examples: Sequence[str] | None = None,
 ) -> list[str]:
     """Ask the coverage check about a finished recap and format the counts, then (when the caller
     gives the campaign's recap examples, even an empty list) the storytelling judge. A recap that
-    is not ready has nothing to score: the caller does not ask."""
+    is not ready has nothing to score: the caller does not ask. `script`: the session's script,
+    given to the check as the live path gives it (#3901), so the score can be run with and
+    without it."""
     wanted = must_list(musts)
     beats = bt.from_json(sheet) if sheet else []
     sentences = rd.sentences_of(summary)
     try:
         reply = await client.complete(
-            covg.SYSTEM,
-            covg.message(wanted, beats, sentences),
+            covg.system(script),
+            covg.message(wanted, beats, sentences, script),
             max_tokens=covg.room(len(wanted)),
             schema=covg.SCHEMA,
         )
@@ -125,7 +128,7 @@ def read_texts(recap_path: Path, beats_path: Path) -> tuple[str, str]:
 
 
 async def score_recap_file(
-    recap_text: str, beats_text: str, musts: Sequence[str], client: Client
+    recap_text: str, beats_text: str, musts: Sequence[str], client: Client, script: str = ""
 ) -> list[str]:
     """Score a recap that was written earlier, by a build that had no `--score`: its text
     (`recap_text`), judged against the beat sheet of a run of the SAME session (`beats_text`), so
@@ -138,4 +141,4 @@ async def score_recap_file(
         return ["", "Must-haves: the beats file is not a saved beat sheet (beats.json)."]
     from dmbot.recaps.style import defaults  # (a file has no campaign: the built-in examples)
 
-    return await score(recap, beats, musts, None, client, examples=defaults())
+    return await score(recap, beats, musts, None, client, script, examples=defaults())
