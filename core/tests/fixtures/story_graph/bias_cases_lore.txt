@@ -18,3 +18,11 @@ Nobody believes the Lantern Guild hates gnomes.
 Mithral Keep trusts human traders who pay the toll.
 The Copper Moot distrusts Captain Vell.
 Redhollow does not trust dragonborn.
+
+Fresh sentences (#4982), added before any reader change:
+Most folk in Stonebridge distrust gnomes.
+The Iron Brotherhood has long despised elves.
+Willowmere treats halflings as kin.
+Ashford is friendly toward dwarves.
+The Gilded Hand mistrusts the Varnish folk.
+Ashford sells elven bows at the autumn fair.

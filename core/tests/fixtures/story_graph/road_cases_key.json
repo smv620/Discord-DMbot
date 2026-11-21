@@ -1,0 +1,30 @@
+{
+  "about": "Invented lore for the road condition reader (#4258, memory/route_condition.py; #4982). `cases`: a route and its value (open, hard, closed, gone); `between`: the road between two places and its value. `must_not` names a route and its sentence; that route must give nothing.",
+  "cases": [
+    {"route": "Frostgate Pass", "value": "closed"},
+    {"route": "The Old Ford Bridge", "value": "closed"},
+    {"route": "Wolfrun Trail", "value": "hard"},
+    {"route": "Kestrel Bridge", "value": "gone"},
+    {"route": "Saltway", "value": "hard"},
+    {"route": "Greyspan", "value": "gone"},
+    {"route": "Thornway", "value": "open"},
+    {"route": "Ravenmoor Road", "value": "closed"},
+    {"route": "Snowdrift Pass", "value": "closed"},
+    {"route": "Hollow Bridge", "value": "closed"}
+  ],
+  "between": [
+    {"a": "brindle", "b": "mosswick", "value": "closed"},
+    {"a": "oakhollow", "b": "fenwick", "value": "closed"}
+  ],
+  "must_not": [
+    {"route": "Ironpeak Pass", "line": "Travelers say Ironpeak Pass is snowed in."},
+    {"route": "Coldwater Bridge", "line": "Is Coldwater Bridge out?"},
+    {"route": "Hagmire Road", "line": "If Hagmire Road is flooded, we turn back."},
+    {"route": "Blackfen Bridge", "line": "Blackfen Bridge is not closed."},
+    {"route": "Gullet Pass", "line": "Gullet Pass was closed until spring."},
+    {"route": "Highcrag Pass", "line": "A blizzard on Highcrag Pass slowed us for a day."},
+    {"route": "Icewind Pass", "line": "The road to Icewind Pass is closed."},
+    {"route": "Dunmore Bridge", "line": "Dunmore Bridge is out of reach of the carts."},
+    {"route": "Reedway", "line": "Reedway is no more than a muddy track."}
+  ]
+}

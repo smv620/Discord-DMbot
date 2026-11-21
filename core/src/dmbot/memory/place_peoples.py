@@ -31,6 +31,8 @@ import re
 from collections.abc import Collection
 from typing import NamedTuple
 
+from dmbot.memory import hedges
+
 CULTURE, POPULATION = "culture", "population"
 OTHER = "other"
 
@@ -185,6 +187,8 @@ _POPULATION = (
         _LEAD + r"an?\s+(?:" + "|".join(_SETTLEMENTS) + r")\s+of\s+(?:[\d,]+\s+)?" + rf"{_PEOPLE}\b"
     ),
 )
+# A past state the text ends in the same clause ("… until the flood"): who lives there no longer
+_NO_LONGER = re.compile(r"\b(?:until|till|before)\b")
 _SHARES = {
     "almost entirely": "all", "almost all": "all", "mostly": "most", "mainly": "most",
     "largely": "most", "many": "many", "a few": "few",
@@ -229,7 +233,11 @@ def _words(text: str) -> list[str]:
 def read(name: str, text: str, known: Collection[str] = ()) -> list[Found]:
     """The culture and the people the words right beside a place's name state, by the set phrases
     above only; at most one of each. Anything else says nothing: a missing row is the safe side.
-    `known`: the campaign's entry names, so a named culture is never one of them."""
+    `known`: the campaign's entry names, so a named culture is never one of them. A sentence that
+    asks, supposes or reports someone's view says nothing (`hedges`, #4982)."""
+    first = re.search(r"(?<!\w)" + re.escape(name) + r"(?!\w)", text, re.IGNORECASE)
+    if first is not None and hedges.hedged(text, first.start(), first.end()):
+        return []
     around = _around(name, text)
     if around is None:
         return []
@@ -255,6 +263,8 @@ def read(name: str, text: str, known: Collection[str] = ()) -> list[Found]:
     said = " ".join(after.split()).casefold()
     for shape in _POPULATION:
         m = shape.match(said)
+        if m is not None and _NO_LONGER.search(said, m.end()):
+            break  # ("was mostly dwarves until the flood": not so now, #4982)
         if m is not None:
             share = m.groupdict().get("share")
             out.append(Found(POPULATION, _PLURALS[m["people"]], _SHARES.get(share or "", "")))
