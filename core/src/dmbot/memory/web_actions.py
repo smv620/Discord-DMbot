@@ -53,6 +53,7 @@ from dmbot.memory.models import (
     PROPOSED,
     REJECTED,
     THREAD_TYPES,
+    Entity,
     MemoryRuleError,
     Relation,
     TooLateToUndo,
@@ -163,6 +164,7 @@ WORLD_ACTIONS = ("world-keep", "world-not", "world-undo")
 THREAD_STATE_ACTIONS = ("thread-state", "thread-check")  # a thread's state (#3696 slice 2a)
 THREAD_INVOLVE_ACTION = "thread-involve"  # who is involved in a thread (#3696 slice 2b)
 THREAD_NEW_ACTIONS = ("thread-new", "thread-due", "thread-party")  # (#3696 slice 2c)
+THREAD_LINK_ACTIONS = ("thread-link", "thread-led-to")  # an event, what led to what (slice 2d)
 LEAVE_ACTIONS = ("leave-yes", "leave-no")  # "Still in the party?" (#4895, party knowledge slice 6a)
 JOIN_ACTIONS = (  # the DM's join question (#4778) and "Let me choose" (#4799)
     "join-everyone", "join-party", "join-undo", "join-choices", "join-choose",
@@ -812,6 +814,8 @@ async def apply(
         return await _thread_involve(memory, guild_id, cid, action)
     if action.action in THREAD_NEW_ACTIONS:
         return await _thread_new(memory, guild_id, cid, action)
+    if action.action in THREAD_LINK_ACTIONS:
+        return await _thread_link(memory, guild_id, cid, action)
     if action.action in PART_ACTIONS:
         if actions is None and action.action == "part-undo":
             return _failed(FAILED)
@@ -1625,9 +1629,9 @@ async def _thread_state(memory: MemoryStore, guild_id: int, cid: str, a: Action)
 
 async def _thread_involve(memory: MemoryStore, guild_id: int, cid: str, a: Action) -> Outcome:
     """The card's "👥 Add who's involved" from the page (#3696 slice 2b): its own store call,
-    `involve`. The text is `<thread id> <who's id> <their part>` (the door limits the shape
-    and the part to 1 to 60 characters: the store's `involve` refuses an empty part, which the
-    card's "optional" box would send, #4937). As the card's name search does, only a
+    `involve`. The text is `<thread id> <who's id>[ <their part>]` (the door limits the shape
+    and the part to 60 characters; an empty part is kept, as the card's "optional" box says,
+    #4937, #4940). As the card's name search does, only a
     confirmed character, group, place, item or other entry that is not a person card, a deed or a
     thread and is not the thread itself can be added, and the thread must be a confirmed, un-merged
     thread of this campaign: anything else is `gone`. One change, no Undo, as on the card."""
@@ -1693,6 +1697,59 @@ async def _thread_new(memory: MemoryStore, guild_id: int, cid: str, a: Action) -
     except MemoryRuleError:
         return _failed(FAILED)
     return Outcome()
+
+
+async def _thread_link(memory: MemoryStore, guild_id: int, cid: str, a: Action) -> Outcome:
+    """The card's "📌 Link an event" and "Led to…" from the page (#3696 slice 2d), through the same
+    store calls (`link_event`, `led_to`), so the thread rules and the DM check stay the card's
+    (GraphEngineer: the link is the Story Graph's own connection, but the website does not use its
+    generic edit). `thread-link` is `<thread id> moved|ended <event id>` or `<thread id>
+    moved|ended new <event name>`: an event typed by name is made with its link in one write, hidden
+    from the players like any name the DM adds by hand (#2404), as the card does (`link_new_event`,
+    #4950, so a failed link leaves no event behind); `thread-led-to` is
+    `<from id> <to id>` and the store refuses a link to itself, a loop and the wrong kinds
+    (`failed`, nothing written). One change each, no Undo, as on the card. An entry that is
+    gone, merged away or not confirmed is `gone`."""
+
+    async def usable(entry_id: str, kinds: tuple[str, ...]) -> Entity | None:
+        entry = await memory.entity(guild_id, cid, entry_id)
+        ok = entry is not None and entry.status == CONFIRMED and entry.merged_into is None
+        return entry if ok and entry is not None and entry.type in kinds else None
+
+    first, _, rest = a.text.partition(" ")
+    try:
+        if a.action == "thread-led-to":
+            # (the store checks the kinds; a thread, event or clue leads to a thread or an event)
+            source_entry = await memory.entity(guild_id, cid, first)
+            target_entry = await memory.entity(guild_id, cid, rest)
+            for entry in (source_entry, target_entry):
+                if entry is None or entry.status != CONFIRMED or entry.merged_into is not None:
+                    return _failed(GONE)
+            await memory.led_to(guild_id, cid, first, rest, source=DM)
+            return Outcome()
+        thread = await usable(first, THREAD_TYPES)
+        how, _, which = rest.partition(" ")
+        if thread is None:
+            return _failed(GONE)
+        if which.startswith("new "):
+            # (the page searches the names first and offers "new" only when nothing matches, as the
+            # card's `link_by_name` does) The event and its link are ONE write, one change, so a
+            # link that fails leaves no event behind (#4950, `link_new_event`).
+            done = await memory.link_new_event(
+                guild_id, cid, thread.id, which[4:], ends_it=how == "ended", source=DM
+            )
+            event_id = done.value.subject_id
+        else:
+            found = await usable(which, ("event",))
+            if found is None:
+                return _failed(GONE)
+            event_id = found.id
+            done = await memory.link_event(
+                guild_id, cid, thread.id, event_id, ends_it=how == "ended", source=DM
+            )
+    except MemoryRuleError:
+        return _failed(FAILED)
+    return Outcome(result_id=event_id, batches=(done.batch,) if done.batch else ())
 
 
 async def _join_choose(

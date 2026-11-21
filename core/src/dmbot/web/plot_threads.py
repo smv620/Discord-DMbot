@@ -32,7 +32,7 @@ def stalled_after() -> int:
 
 _ID = re.compile(r"^[0-9a-f]{32}$")
 ROLE_MAX = 60  # the card's own limit on "Their part"
-NAME_MAX = 100  # a thread's name, as the card's form
+NAME_MAX = 100  # a thread's or an event's name, as the card's forms
 DUE_MAX = 120  # a promise's due note, as the card's form
 
 
@@ -181,7 +181,7 @@ async def queue_state(db: Database, session: Session, ref: str, body: object) ->
 
 async def queue_involve(db: Database, session: Session, ref: str, body: object) -> str:
     """Say who or what has a part in a thread (#3696 slice 2b): `{"thread": <32 hex>, "who":
-    <32 hex>, "role": <their part, 1 to 60 characters>}`. The id of the answer the
+    <32 hex>, "role": <their part, optional, at most 60 characters>}`. The id of the answer the
     page polls at `.../web/answers/{id}`. The bot runs the card's own `involve` and checks both
     entries again."""
     thread = body.get("thread") if isinstance(body, dict) else None
@@ -194,11 +194,11 @@ async def queue_involve(db: Database, session: Session, ref: str, body: object) 
     if not isinstance(role, str):
         raise RecapError("bad_action")
     part = " ".join(role.split())  # (the card collapses spaces the same way, then counts)
-    if not part or len(part) > ROLE_MAX:  # (`involve` refuses an empty part, so the page asks)
+    if len(part) > ROLE_MAX:  # (an empty part is kept as it is, as the card's "(optional)" says)
         raise RecapError("bad_action")
     return await relationships._queue(
         db, session, ref, entity=None, action="thread-involve", target="",
-        text=f"{thread} {who} {part}", flag=False,
+        text=f"{thread} {who} {part}".strip(), flag=False,
     )  # fmt: skip
 
 
@@ -250,4 +250,46 @@ async def queue_party(db: Database, session: Session, ref: str, body: object) ->
     return await relationships._queue(
         db, session, ref, entity=None, action="thread-party", target="",
         text=f"{promise} {side} {who}", flag=False,
+    )  # fmt: skip
+
+
+async def queue_link(db: Database, session: Session, ref: str, body: object) -> str:
+    """Link an event to a thread (#3696 slice 2d): `{"thread": <32 hex>, "how": "moved" | "ended",
+    "event": <32 hex>}`, or `"newEvent": <a name, 1 to 100 characters>` in place of `event` to make
+    the event on the spot, as the card does. The id of the answer the page polls at
+    `.../web/answers/{id}`."""
+    thread = body.get("thread") if isinstance(body, dict) else None
+    how = body.get("how") if isinstance(body, dict) else None
+    event = body.get("event") if isinstance(body, dict) else None
+    fresh = body.get("newEvent") if isinstance(body, dict) else None
+    if not isinstance(thread, str) or not _ID.fullmatch(thread) or how not in ("moved", "ended"):
+        raise RecapError("bad_action")
+    if isinstance(event, str) and fresh is None and _ID.fullmatch(event):
+        which = event
+    elif isinstance(fresh, str) and event is None:
+        name = " ".join(fresh.split())
+        if not name or len(name) > NAME_MAX:
+            raise RecapError("bad_action")
+        which = f"new {name}"
+    else:
+        raise RecapError("bad_action")
+    return await relationships._queue(
+        db, session, ref, entity=None, action="thread-link", target="",
+        text=f"{thread} {how} {which}", flag=False,
+    )  # fmt: skip
+
+
+async def queue_led_to(db: Database, session: Session, ref: str, body: object) -> str:
+    """Say what one thing led to (#3696 slice 2d): `{"from": <32 hex>, "to": <32 hex>}`, a clue,
+    an event or a thread that led to a thread or an event."""
+    source = body.get("from") if isinstance(body, dict) else None
+    target = body.get("to") if isinstance(body, dict) else None
+    if (
+        not isinstance(source, str) or not _ID.fullmatch(source)
+        or not isinstance(target, str) or not _ID.fullmatch(target) or source == target
+    ):  # fmt: skip
+        raise RecapError("bad_action")
+    return await relationships._queue(
+        db, session, ref, entity=None, action="thread-led-to", target="",
+        text=f"{source} {target}", flag=False,
     )  # fmt: skip
