@@ -24,6 +24,9 @@ log = logging.getLogger(__name__)
 
 
 class WorkerLease:
+    """Times come from each process's own clock; processes on one server agree to well within the
+    lease (minutes), so a database clock is not worth the cost of testing with it."""
+
     def __init__(
         self,
         db: Database,
@@ -70,6 +73,9 @@ class WorkerLease:
             )
 
     async def _keep_renewing(self, holder: str) -> None:
+        """Renew every third of the lease, so one failed beat still leaves two thirds of the time.
+        A lost lease is logged and the work goes on: the recap's own lease and the job's deadline
+        end it before another recap's audio could be harmed for long."""
         while True:
             await asyncio.sleep(self._every)
             try:
@@ -84,16 +90,19 @@ class WorkerLease:
         """`async with lease.hold() as got:` - got is False when another holder has it. While
         inside, the lease is renewed in the background; on the way out it is given back."""
         holder = secrets.token_hex(16)
-        if not await self.acquire(holder):
-            yield False
-            return
-        beat = asyncio.create_task(self._keep_renewing(holder))
+        beat: asyncio.Task[None] | None = None
         try:
+            # (inside the try: a cancel after the upsert commits must still give the lease back)
+            if not await self.acquire(holder):
+                yield False
+                return
+            beat = asyncio.create_task(self._keep_renewing(holder))
             yield True
         finally:
-            beat.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await beat
+            if beat is not None:
+                beat.cancel()
+                # (gather, not a suppressed await: a cancel aimed at this task still gets through)
+                await asyncio.gather(beat, return_exceptions=True)
             try:
                 await asyncio.shield(self.release(holder))
             except Exception as exc:  # (it lapses by itself at `leased_until`)

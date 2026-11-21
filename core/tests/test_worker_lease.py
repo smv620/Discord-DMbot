@@ -72,3 +72,52 @@ class TheLease(DatabaseTest):
             async with lease.hold():
                 raise RuntimeError("boom")
         self.assertTrue(await lease.acquire("next"))
+
+    async def until_of(self) -> int:
+        async with self.db.unscoped() as conn:
+            cur = await conn.execute("SELECT leased_until FROM worker_leases WHERE kind = 'audio'")
+            row = await cur.fetchone()
+            assert row is not None
+            return int(row["leased_until"])
+
+    async def test_the_heartbeat_pushes_the_end_out_while_it_is_held(self) -> None:
+        clock = Clock()
+        lease = self.lease(clock)
+        async with lease.hold():
+            before = await self.until_of()
+            clock.now += 30
+            await asyncio.sleep(0.1)
+            self.assertGreater(await self.until_of(), before)
+
+    async def test_the_same_holder_can_take_it_again(self) -> None:
+        clock = Clock()
+        lease = self.lease(clock)
+        self.assertTrue(await lease.acquire("one"))
+        self.assertTrue(await lease.acquire("one"))
+
+    async def test_a_lost_lease_ends_the_heartbeat_without_hurting_the_work(self) -> None:
+        clock = Clock()
+        lease = self.lease(clock)
+        async with lease.hold() as got:
+            self.assertTrue(got)
+            clock.now += 61  # (past its end before a beat ran)
+            self.assertTrue(await self.lease(clock).acquire("taker"))
+            await asyncio.sleep(0.1)  # (the beat finds it lost and stops; the body goes on)
+        self.assertFalse(await self.lease(clock).acquire("other"))  # (the taker's, not freed)
+
+    async def test_a_cancelled_task_gives_the_lease_back(self) -> None:
+        clock = Clock()
+        lease = self.lease(clock)
+        entered = asyncio.Event()
+
+        async def work() -> None:
+            async with lease.hold():
+                entered.set()
+                await asyncio.sleep(60)
+
+        task = asyncio.create_task(work())
+        await entered.wait()
+        task.cancel()
+        with self.assertRaises(asyncio.CancelledError):
+            await task
+        self.assertTrue(await lease.acquire("next"))
