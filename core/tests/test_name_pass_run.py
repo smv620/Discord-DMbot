@@ -617,7 +617,7 @@ class ThePass(NamesTest):
         from tests.fake_import_state import FakeImportState
 
         state = FakeImportState()
-        self.bot.import_state = state  # type: ignore[attr-defined]
+        cast(Any, self.bot).import_state = state
         held: list[Any] = []
         kept = 0
         store = SimpleNamespace(pending_scans=AsyncMock(side_effect=[1, 1, 0]))
