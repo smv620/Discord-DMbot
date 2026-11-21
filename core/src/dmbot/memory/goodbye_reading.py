@@ -60,42 +60,64 @@ there are none."""
 
 _LIST_START = re.compile(r'\s*\{\s*"claims"\s*:')
 # Saying leaving the party, in the quote's own words
+_TO_THE_PARTY = (
+    r"(?=\s*(?:$|[.!,;:]|and\b|then\b|to\s+(?:the\s+(?:party|group|others|company|team)|everyone"
+    r"|everybody|us|you|y'all|all|(?:his|her|their|my|our)\s+(?:friends|companions|party)"
+    r"|the\s+rest)\b))"
+)
 _LEAVING = re.compile(
+    # (a goodbye said to the party, never to the innkeeper: "says goodbye to everyone")
     r"\b(?:says?|said|saying|bids?|bade|waves?|waved)\s+(?:(?:a|their|his|her|my|your|our)\s+)?"
-    r"(?:good-?byes?|farewells?)\b"
-    r"|\bgood-?byes?\b|\bfarewell\b"
-    r"|\b(?:leaves?|leaving|left|quits?|quitting|quit)\s+(?:the\s+)?(?:party|group|company|team"
+    r"(?:good-?byes?|farewells?)"
+    + _TO_THE_PARTY
+    + r"|\b(?:leaves?|leaving|left|quits?|quitting|quit)\s+(?:the\s+)?(?:party|group|company|team"
     r"|band|crew|adventure)\b"
     r"|\bparts?\s+ways\b|\bparted\s+ways\b|\bparting\s+ways\b"
-    r"|\b(?:retires?|retired|retiring)\b"
+    # (retiring from the adventure, never to a room for the night)
+    r"|\b(?:retires?|retired|retiring)\s+from\s+(?:adventuring|the\s+(?:party|group|road|adventure)"
+    r"|adventure)\b"
     r"|\b(?:stays?|stayed|staying|remains?|remained)\s+behind\b"
     r"|\b(?:goes|go|going|went|heads?|headed|heading|returns?|returned|returning|rides?|rode"
     r"|sails?|sailed|walks?|walked)\s+(?:back\s+)?home\b"
     r"|\b(?:won't|will\s+not|isn't|is\s+not)\s+(?:be\s+)?(?:coming|travell?ing)\s+with\b",
     re.IGNORECASE,
 )
-# A negation, a plan or a wish before the leaving word: "won't leave the party", "wants to go home"
+# A negation, a plan, a wish or a condition before the leaving word: "won't leave the party",
+# "wants to go home", "will leave the party tomorrow", "if Okthandom won't be coming with you"
 _NOT_SAID = re.compile(
-    r"\b(?:not|never|no\s+longer\s+wants?|don't|don’t|doesn't|doesn’t|didn't|didn’t|won't|won’t"
-    r"|can't|can’t|cannot|wouldn't|wouldn’t|shouldn't|shouldn’t|if|unless|might|may|maybe"
-    r"|perhaps|could|should|would|wants?\s+to|wanted\s+to|wish(?:es)?\s+to|plans?\s+to"
+    r"\b(?:not|never|no\s+longer\s+wants?|don't|doesn't|didn't|won't|can't|cannot|wouldn't"
+    r"|shouldn't|if|unless|whether|might|may|maybe|perhaps|could|should|would|will|shall|\w+'ll"
+    r"|going\s+to|gonna|wants?\s+to|wanted\s+to|wish(?:es)?\s+to|plans?\s+to|planning\s+to"
     r"|thinks?\s+about|thinking\s+about|considers?|considering|threatens?\s+to|about\s+to"
-    r"|tempted\s+to|almost|nearly)\b[^.!?;]*$",
+    r"|tempted\s+to|almost|nearly|pretends?\s+to)\b[^.!?;]*$",
     re.IGNORECASE,
 )
-# The phrase "won't be coming with" is itself a goodbye: its negation is the leaving, not a denial
-_NEGATIVE_GOODBYE = re.compile(r"(?:won't|will\s+not|isn't|is\s+not)\s+(?:be\s+)?\S+\s+with$", re.I)
+# A trip, never a goodbye: what follows the leaving words in the same clause ("stays behind to
+# guard the door", "heads home for the night", "leaves the party for a day", "... tomorrow")
+_ONLY_A_TRIP = re.compile(
+    r"\b(?:for\s+(?:the|a|an|one|two|three|a\s+few|some)\s+(?:night|day|days|hour|hours|while"
+    r"|moment|bit|week|evening|morning)|for\s+now|tonight|today|tomorrow|soon|later|next"
+    r"|until|till|briefly|for\s+a\s+(?:spell|rest)|to\s+(?:guard|watch|keep\s+watch|scout|rest"
+    r"|sleep|shop|buy|fetch|get|look|check|wait|hold|cover|deal)|to\s+the\s+(?:market|shop|inn"
+    r"|tavern|stables?|temple|room))\b",
+    re.IGNORECASE,
+)
+# The leaving character's own player speaking of their character: "I say goodbye to everyone"
+_FIRST_PERSON = re.compile(r"\b(?:i|i'm|i've|i'll|my|me)\b", re.IGNORECASE)
 
 
 @dataclass(frozen=True, slots=True)
 class Goodbye:
     """One player character heard leaving: as the reader named them, the cited lines' numbers
     that hold the quote, and who spoke each (ids, filled at the run's end; None for no one known).
-    No words of the transcript."""
+    No words of the transcript. `own`: the lines that don't name the character but say the
+    goodbye in the first person ("I say goodbye to everyone"): only that character's own player may
+    have said them (`whose`)."""
 
     who: str
     lines: tuple[str, ...]
     speakers: tuple[int | None, ...] = ()
+    own: tuple[str, ...] = ()
 
 
 @dataclass(slots=True)
@@ -128,7 +150,9 @@ def check_who(who: str) -> str:
 
 
 def check_quote(quote: str, line: str) -> str:
-    """Why this quote is refused against this line, or "" when it holds (pure; the rules above)."""
+    """Why this quote is refused against this line, or "" when it holds (pure; the rules above).
+    The leaving words are found in the line itself where the quote is, so what follows the quote
+    counts too (a goodbye "to the innkeeper", a stay behind "to guard the door")."""
     q = _plain(quote)
     words = len(q.split())
     if not QUOTE_WORDS[0] <= words <= QUOTE_WORDS[1]:
@@ -137,18 +161,27 @@ def check_quote(quote: str, line: str) -> str:
     at = plain.find(q)
     if at < 0:
         return "leave_quote_not_in_line"
-    m = _LEAVING.search(q)
-    if m is None:
+    m = _LEAVING.search(plain, at)
+    if m is None or m.start() >= at + len(q):
         return "leave_not_said"
-    # (what the line says up to the leaving word, and the clause it ends: a question or a denial
-    # is no goodbye)
-    before = plain[: at + m.start()]
-    clause = re.split(r"[.!;:]", plain[at + m.start() :], maxsplit=1)[0]
-    if "?" in clause:
-        return "leave_not_said"
-    if _NOT_SAID.search(before) and not _NEGATIVE_GOODBYE.search(plain[: at + m.end()].rstrip()):
+    # (what the line says up to the leaving words, and the rest of their clause: a question, a
+    # denial, a plan or a trip is no goodbye)
+    before = plain[: m.start()]
+    clause = re.split(r"[.!;:]", plain[m.start() :], maxsplit=1)[0]
+    if (
+        "?" in clause
+        or _NOT_SAID.search(before)
+        or _ONLY_A_TRIP.search(clause[m.end() - m.start() :])
+    ):
         return "leave_not_said"
     return ""
+
+
+def names_who(who: str, line: str) -> bool:
+    """Whether the line names the character, by any of the reader's name's words of three letters
+    or more ("Okthandom" in "Okthandom Ironfist says goodbye")."""
+    plain = _plain(line)
+    return any(re.search(rf"\b{re.escape(w)}\b", plain) for w in _plain(who).split() if len(w) >= 3)
 
 
 def parse_leaves(answer: str, lines: Mapping[str, str]) -> Parsed:
@@ -191,10 +224,20 @@ def parse_leaves(answer: str, lines: Mapping[str, str]) -> Parsed:
             out.drop(why)
             continue
         holds: list[str] = []
+        own: list[str] = []
         for n in numbers:
             why = check_quote(quote, lines[n])
-            if not why:
+            if why:
+                continue
+            # (the goodbye is the named character's: the line names them, or says it as "I", which
+            # only their own player may; "Mira says goodbye" cited for Okthandom is no one's)
+            if names_who(who, lines[n]):
                 holds.append(n)
+            elif _FIRST_PERSON.search(_plain(quote)):
+                holds.append(n)
+                own.append(n)
+            else:
+                why = "leave_who_not_in_line"
         if not holds:
             out.drop(why or "leave_quote_not_in_line")
             continue
@@ -202,13 +245,14 @@ def parse_leaves(answer: str, lines: Mapping[str, str]) -> Parsed:
         if key in seen:
             continue
         seen.add(key)
-        out.goodbyes.append(Goodbye(" ".join(who.split()), tuple(holds)))
+        out.goodbyes.append(Goodbye(" ".join(who.split()), tuple(holds), own=tuple(own)))
     return out
 
 
 def once_each(found: Iterable[Goodbye]) -> list[Goodbye]:
     """One goodbye per character across a session's batches: the first's name, with every
-    batch's lines and their speakers, so the question goes with any of their forgets."""
+    batch's lines, their speakers and which must be the player's own, so the question goes with
+    any of their forgets."""
     out: dict[str, Goodbye] = {}
     for g in found:
         key = name_key(g.who)
@@ -218,7 +262,8 @@ def once_each(found: Iterable[Goodbye]) -> list[Goodbye]:
             continue
         pairs = dict(zip(first.lines, first.speakers, strict=False))
         pairs.update((n, s) for n, s in zip(g.lines, g.speakers, strict=False) if n not in pairs)
-        out[key] = Goodbye(first.who, tuple(pairs), tuple(pairs.values()))
+        own = tuple(dict.fromkeys((*first.own, *g.own)))
+        out[key] = Goodbye(first.who, tuple(pairs), tuple(pairs.values()), own)
     return list(out.values())
 
 
@@ -247,7 +292,13 @@ def whose(
         entity_id = ids[0]
         player = played_by.get(entity_id)
         allowed = {*dm_ids, *([player] if player is not None else [])}
-        if not g.speakers or any(s is None or s not in allowed for s in g.speakers):
+        # (a line in the first person is the player's own: the DM saying "I" is an NPC or the DM)
+        if (
+            not g.speakers
+            or len(g.speakers) != len(g.lines)
+            or any(s is None or s not in allowed for s in g.speakers)
+            or any(s != player for n, s in zip(g.lines, g.speakers, strict=True) if n in g.own)
+        ):
             dropped["leave_not_dm_or_player"] += 1
             continue
         heard = {s for s in g.speakers if s is not None}
@@ -262,6 +313,7 @@ __all__ = [
     "Parsed",
     "check_quote",
     "check_who",
+    "names_who",
     "once_each",
     "parse_leaves",
     "whose",

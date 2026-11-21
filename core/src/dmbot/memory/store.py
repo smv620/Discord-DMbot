@@ -3318,16 +3318,26 @@ class MemoryStore:
         """Goodbyes heard in a session (#4537 slice 6b): one `leave` question for each character,
         with who said it (ids only), asked only of a character in the party now (read in the same
         transaction) and never twice for one session (`join_questions.ask_heard`). It is sent
-        after play like the others. Nothing closes a stretch here (§11). Returns how many were
-        asked."""
+        after play like the others. Nothing closes a stretch here (§11). Written only while the
+        session is there and everyone it cites still has lines in it and is still recorded, read
+        under the session's row lock first (the lock order "Delete my transcripts" and a stop
+        take), as the language questions are (#4745): the reader's consent check was several
+        awaits ago, and a forget in between must not be outrun. Returns how many were asked."""
+        from dmbot.memory.trait_offers import still_there
+
         if not goodbyes:
             return 0
         async with self._db.guild(guild_id) as conn:
+            there = await still_there(conn, guild_id, campaign_id, session_id)
+            if there is None:
+                return 0
             scope = Scope(conn, guild_id, campaign_id, 0)  # (the version is not read here)
             members = set(await party_record.current_members(scope))
             now = int(self._clock())
             asked = 0
             for entity_id, speakers in goodbyes:
+                if not set(speakers) <= there:
+                    continue
                 if entity_id in members and await join_questions_mod.ask_heard(
                     scope, entity_id, speakers, session_id, now
                 ):

@@ -14,9 +14,9 @@ from typing import Any, ClassVar
 from unittest.mock import patch
 
 from dmbot.ai import Reply
-from dmbot.campaigns import CampaignStore
 from dmbot.config import ConfigError, load_settings
 from dmbot.memory import extractor, goodbye_reading, join_questions, party_record
+from dmbot.memory.claims import ClaimStore
 from dmbot.memory.goodbye_reading import (
     Goodbye,
     check_quote,
@@ -26,7 +26,8 @@ from dmbot.memory.goodbye_reading import (
     whose,
 )
 from dmbot.memory.join_questions import LEAVE
-from dmbot.transcript import store as transcript_store
+from dmbot.transcript.models import Line
+from tests.agreed import agree
 from tests.test_config import BASE
 from tests.test_extractor import ALICE, BOB, DM, Kept, dm_session, go, line
 from tests.test_party_leave import ANNA, BEN, DM_ID, GUILD, Party
@@ -61,6 +62,20 @@ class TheQuote(unittest.TestCase):
             ("goes to the market", "Mira goes to the market."),
             ("turn left", "Turn left at the bridge."),
             ("thinking about going home", "Vell is thinking about going home."),
+            # (the reviewer's: a condition, a plan, a room for the night, a goodbye to an NPC, a
+            # trip; each is a false question the sample's counts would otherwise have to catch)
+            ("won't be coming with you", "If Okthandom won't be coming with you, take the cart."),
+            ("won't be coming with you", "Maybe Okthandom won't be coming with you."),
+            ("will leave the party", "Mira will leave the party tomorrow."),
+            ("going to leave the party", "Mira is going to leave the party."),
+            ("Vell retires", "Vell retires to her room for the night."),
+            ("says goodbye", "Mira says goodbye to the innkeeper."),
+            ("I say goodbye", "I say goodbye to the guards."),
+            ("a farewell feast", "There is a farewell feast tonight."),
+            ("stays behind", "Tuck stays behind to guard the door."),
+            ("heads home", "Mira heads home for the night."),
+            ("leaves the party", "Vell leaves the party for a day."),
+            ("isn't coming with us", "Tuck isn't coming with us to the market."),
         ):
             with self.subTest(quote):
                 self.assertEqual(check_quote(quote, said), "leave_not_said")
@@ -119,8 +134,21 @@ class TheAnswer(unittest.TestCase):
 
     def test_once_each_across_batches_keeps_every_line_and_speaker(self) -> None:
         a = Goodbye("Okthandom", ("2",), (DM,))
-        b = Goodbye("okthandom", ("12", "2"), (ALICE, DM))
-        self.assertEqual(once_each([a, b]), [Goodbye("Okthandom", ("2", "12"), (DM, ALICE))])
+        b = Goodbye("okthandom", ("12", "2"), (ALICE, DM), own=("12",))
+        self.assertEqual(
+            once_each([a, b]), [Goodbye("Okthandom", ("2", "12"), (DM, ALICE), ("12",))]
+        )
+
+    def test_the_line_names_the_character_or_is_said_as_i(self) -> None:
+        lines = {"1": "Mira says goodbye to everyone.", "2": "I say goodbye to everyone."}
+        got = parse_leaves(
+            answer(("Okthandom", "Mira says goodbye", [1]), ("Okthandom", "I say goodbye", [2])),
+            lines,
+        )
+        # ("Mira says goodbye" is Mira's, never Okthandom's; "I say goodbye" waits for `whose`
+        # to show it was Okthandom's own player who said it)
+        self.assertEqual(got.goodbyes, [Goodbye("Okthandom", ("2",), own=("2",))])
+        self.assertEqual(got.dropped, {"leave_who_not_in_line": 1})
 
 
 class WhoMaySayIt(unittest.TestCase):
@@ -155,6 +183,14 @@ class WhoMaySayIt(unittest.TestCase):
         )
         self.assertEqual(asks, [])
         self.assertEqual(dropped, {"leave_not_dm_or_player": 4})
+
+    def test_a_line_said_as_i_is_the_players_own_never_the_dms(self) -> None:
+        asks, dropped = self.go(
+            Goodbye("Okthandom", ("1",), (DM,), own=("1",)),  # (the DM as an NPC, or the DM)
+            Goodbye("Mira", ("2",), (BOB,), own=("2",)),
+        )
+        self.assertEqual(asks, [("e-mira", (BOB,))])
+        self.assertEqual(dropped, {"leave_not_dm_or_player": 1})
 
     def test_a_shared_name_or_one_out_of_the_party_is_no_ones(self) -> None:
         asks, dropped = self.go(
@@ -210,6 +246,20 @@ class InTheClaimsCall(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report.goodbyes, [])
         self.assertIn("leave_speaker_gone", report.line())
 
+    async def test_a_line_voiced_as_an_npc_is_no_ones_and_an_import_asks_nothing(self) -> None:
+        lines = [
+            line(1, DM, "Farewell, Okthandom says goodbye to everyone!", entity="Mayor Brask"),
+            *dm_session(10)[1:],
+        ]
+        quote = answer(("Okthandom", "Okthandom says goodbye", [1]))
+        report = await go(LeaveAnswer(quote), Kept(), lines, leaves=True)
+        self.assertEqual(report.goodbyes, [Goodbye("Okthandom", ("1",), (None,))])
+        self.assertEqual(whose(report.goodbyes, {"okthandom": {"e"}}, {"e"}, {}, {DM})[0], [])
+        ai = LeaveAnswer(quote)
+        imported = await go(ai, Kept(), lines, leaves=True, imported=True)
+        self.assertNotIn(goodbye_reading.LEAVE_ADDENDUM, ai.systems[0])
+        self.assertEqual(imported.goodbyes, [])
+
     async def test_a_cut_answer_is_counted_and_family_only_asks_nothing(self) -> None:
         report = await go(LeaveAnswer('{"claims": [{"sub', cut=True), Kept(), dm_session(10),
                           leaves=True)  # fmt: skip
@@ -228,7 +278,22 @@ class TheSwitch(unittest.TestCase):
 
 
 class TheQuestion(Party):
-    """The store's side: `MemoryStore.ask_goodbyes` and the forgets (0574)."""
+    """The store's side: `MemoryStore.ask_goodbyes` and the forgets (0574). Each session has a
+    line from the DM, Anna (Vell's player) and Ben (Tuck's), all recorded, as a real one would."""
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        await agree(self.db, GUILD, DM_ID, ANNA, BEN)
+
+    async def session(self, start: int, end: int | None) -> str:
+        sid = await self.played(start, end)
+        await self.sessions.add_lines(
+            GUILD, sid,
+            [Line(start + 1, DM_ID, "Vell says goodbye.", "x"),
+             Line(start + 2, ANNA, "I say goodbye.", "x"),
+             Line(start + 3, BEN, "Farewell.", "x")],
+        )  # fmt: skip
+        return sid
 
     async def heard(self) -> list[Any]:
         async with self.db.guild(GUILD) as conn:
@@ -243,7 +308,7 @@ class TheQuestion(Party):
             ]
 
     async def test_asked_once_per_session_and_sent_after_play(self) -> None:
-        sid = await self.played(9_000, None)
+        sid = await self.session(9_000, None)
         asked = await self.memory.ask_goodbyes(GUILD, self.c, [(self.vell, [DM_ID, ANNA])], sid)
         self.assertEqual(asked, 1)
         self.assertEqual(await self.heard(), [(self.vell, LEAVE, "waiting", [DM_ID, ANNA], sid)])
@@ -257,13 +322,13 @@ class TheQuestion(Party):
             await self.memory.ask_goodbyes(GUILD, self.c, [(self.vell, [DM_ID])], sid), 0
         )
         # (a later session's goodbye is a new one)
-        later = await self.played(12_000, 13_000)
+        later = await self.session(12_000, 13_000)
         self.assertEqual(
             await self.memory.ask_goodbyes(GUILD, self.c, [(self.vell, [DM_ID])], later), 1
         )
 
     async def test_only_the_party_now_and_one_waiting_per_character(self) -> None:
-        sid = await self.played(9_000, 9_500)
+        sid = await self.session(9_000, 9_500)
         await self.memory.leave_party(GUILD, self.c, self.tuck, "left")
         await self.dies(self.vell)  # (a death question already waits for Vell)
         asked = await self.memory.ask_goodbyes(
@@ -272,36 +337,75 @@ class TheQuestion(Party):
         self.assertEqual(asked, 0)
         self.assertEqual([r[1] for r in await self.heard()], [join_questions.DIED])
 
-    async def test_its_speakers_or_its_sessions_forget_takes_a_waiting_one(self) -> None:
-        sid = await self.played(9_000, 9_500)
+    async def test_nothing_is_written_for_someone_gone_since_the_read(self) -> None:
+        # (the reader's consent check was several awaits ago: a stop, a deletion, or a speaker with
+        # no lines in the session is caught at the write, under the session's lock)
+        sid = await self.session(9_000, 9_500)
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "DELETE FROM consent WHERE guild_id = %s AND user_id = %s", (GUILD, ANNA)
+            )
+        self.assertEqual(
+            await self.memory.ask_goodbyes(GUILD, self.c, [(self.vell, [DM_ID, ANNA])], sid), 0
+        )
+        self.assertEqual(
+            await self.memory.ask_goodbyes(GUILD, self.c, [(self.tuck, [99])], sid), 0
+        )  # (someone with no lines in it)
+        self.assertEqual(
+            await self.memory.ask_goodbyes(GUILD, self.c, [(self.tuck, [DM_ID])], "f" * 32), 0
+        )  # (the session is gone)
+        self.assertEqual(await self.heard(), [])
+
+    async def test_stop_recording_me_takes_a_waiting_one(self) -> None:
+        sid = await self.session(9_000, 9_500)
         await self.memory.ask_goodbyes(GUILD, self.c, [(self.vell, [ANNA])], sid)
+        await ClaimStore(self.memory).forget_speaker(GUILD, ANNA)
+        self.assertEqual(await self.heard(), [])
+
+    async def test_its_forgets_take_only_a_waiting_goodbye_and_leave_other_kinds(self) -> None:
+        sid = await self.session(9_000, 9_500)
+        await self.dies(self.vell)  # (a death: no speaker owns it)
         await self.memory.ask_goodbyes(GUILD, self.c, [(self.tuck, [DM_ID, BEN])], sid)
         await self.memory.staying_answer_stays(GUILD, self.c, self.tuck)  # (answered: stays)
+        third = await self.pc("Rook", ANNA)
+        await self.memory.ask_goodbyes(GUILD, self.c, [(third, [ANNA])], sid)
         async with self.db.guild(GUILD) as conn:
             self.assertEqual(await join_questions.forget_speaker(conn, GUILD, ANNA, self.c), 1)
             self.assertEqual(await join_questions.forget_speaker(conn, GUILD, BEN), 0)
-        self.assertEqual(await self.heard(), [(self.tuck, LEAVE, "stays", [DM_ID], sid)])
+        self.assertCountEqual(  # (the rows share one clock reading: their order is the ids')
+            await self.heard(),
+            [(self.vell, join_questions.DIED, "waiting", [], None),
+             (self.tuck, LEAVE, "stays", [DM_ID], sid)],
+        )  # fmt: skip
+        await self.memory.ask_goodbyes(GUILD, self.c, [(third, [DM_ID])], sid)
         async with self.db.guild(GUILD) as conn:
-            await join_questions.forget_session(conn, GUILD, sid)
-        self.assertEqual(await self.heard(), [(self.tuck, LEAVE, "stays", [DM_ID], None)])
+            self.assertEqual(await join_questions.forget_session(conn, GUILD, sid), 1)
+        self.assertCountEqual(  # (the rows share one clock reading: their order is the ids')
+            await self.heard(),
+            [(self.vell, join_questions.DIED, "waiting", [], None),
+             (self.tuck, LEAVE, "stays", [DM_ID], None)],
+        )  # fmt: skip
 
     async def test_deleting_my_transcripts_takes_it_through_the_real_path(self) -> None:
-        sid = await self.played(9_000, 9_500)
+        sid = await self.session(9_000, 9_500)
         await self.memory.ask_goodbyes(GUILD, self.c, [(self.vell, [ANNA])], sid)
-        real = join_questions.forget_speaker
-        with patch.object(join_questions, "forget_speaker", wraps=real) as f:
-            async with self.db.guild(GUILD) as conn:
-                await transcript_store._forget_memory_traces(conn, GUILD, ANNA, [], self.c)
-        self.assertEqual(f.call_count, 1)
+        await self.sessions.delete_person(GUILD, ANNA)
         self.assertEqual(await self.heard(), [])
 
-    async def test_a_move_keeps_only_those_recorded_there(self) -> None:
-        sid = await self.played(9_000, 9_500)
-        await self.memory.ask_goodbyes(GUILD, self.c, [(self.vell, [ANNA])], sid)
-        await self.memory.ask_goodbyes(GUILD, self.c, [(self.tuck, [DM_ID])], sid)
+    async def test_a_move_keeps_only_those_recorded_there_and_leaves_other_kinds(self) -> None:
+        sid = await self.session(9_000, 9_500)
+        await self.dies(self.vell)
+        await self.memory.ask_goodbyes(GUILD, self.c, [(self.tuck, [DM_ID, BEN])], sid)
+        third = await self.pc("Rook", ANNA)
+        await self.memory.ask_goodbyes(GUILD, self.c, [(third, [ANNA])], sid)
+        await self.memory.staying_answer_stays(GUILD, self.c, self.tuck)
         async with self.db.guild(GUILD) as conn:
             await join_questions.keep_recorded(conn, GUILD, self.c, [DM_ID])
-        self.assertEqual([r[0] for r in await self.heard()], [self.tuck])
+        self.assertCountEqual(  # (the rows share one clock reading: their order is the ids')
+            await self.heard(),
+            [(self.vell, join_questions.DIED, "waiting", [], None),
+             (self.tuck, LEAVE, "stays", [DM_ID], sid)],
+        )  # fmt: skip
 
     async def test_a_whole_session_with_goodbyes_closes_no_stretch(self) -> None:
         # (§11 and Supervisor's ruling: only the DM's answer or the card's button ends one)
@@ -313,20 +417,62 @@ class TheQuestion(Party):
             return await real(*args, **kwargs)
 
         with patch.object(party_record, "close_span", counted):
-            sid = await self.played(9_000, None)
-            await self.memory.ask_goodbyes(
+            sid = await self.session(9_000, None)
+            asked = await self.memory.ask_goodbyes(
                 GUILD, self.c, [(self.vell, [ANNA]), (self.tuck, [DM_ID])], sid
             )
             await self.sessions.end_session(GUILD, sid, 9_500)
             await self.memory.staying_questions_to_send(GUILD, self.c)
+        self.assertEqual(asked, 2)
         self.assertEqual(calls, [])
         self.assertEqual(await self.open_stretches(), {self.vell, self.tuck})
 
-    async def test_the_campaign_store_wires_the_move(self) -> None:
-        # (a move runs `keep_recorded` beside the language questions')
-        import inspect
 
-        from dmbot.campaigns import store as campaign_store
+class TheBotsStep(unittest.IsolatedAsyncioTestCase):
+    """`DMBot._ask_goodbyes`: confirmed characters only, the players and the DMs, counts only in
+    the log, and never raises."""
 
-        self.assertIn("join_questions.keep_recorded", inspect.getsource(campaign_store))
-        self.assertIsNotNone(CampaignStore)
+    def bot(self, memory: Any) -> Any:
+        from types import SimpleNamespace
+
+        from dmbot.bot import DMBot
+
+        me = SimpleNamespace(memory=memory)
+        me._ask_goodbyes = DMBot._ask_goodbyes.__get__(me)
+        return me
+
+    async def test_it_asks_for_whose_goodbye_holds_and_logs_counts_only(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        from dmbot.memory.models import CONFIRMED, PROPOSED
+
+        ok = SimpleNamespace(id="e-ok", status=CONFIRMED, type="character", played_by=ALICE)
+        maybe = SimpleNamespace(id="e-mb", status=PROPOSED, type="character", played_by=BOB)
+        lookup = SimpleNamespace(
+            names=[SimpleNamespace(entity_id="e-ok", text="Okthandom"),
+                   SimpleNamespace(entity_id="e-mb", text="Mira")],
+            entities={"e-ok": ok, "e-mb": maybe},
+        )  # fmt: skip
+        memory = SimpleNamespace(
+            lookup_data=AsyncMock(),
+            current_party=AsyncMock(return_value=["e-ok", "e-mb"]),
+            ask_goodbyes=AsyncMock(return_value=1),
+        )
+        report = extractor.Report()
+        report.goodbyes = [
+            Goodbye("Okthandom", ("1",), (ALICE,)),
+            Goodbye("Mira", ("2",), (DM,)),  # (not a confirmed character: no one's)
+        ]
+        with (
+            patch("dmbot.bot.CampaignLookup.build", return_value=lookup),
+            self.assertLogs("dmbot.bot", "INFO") as logs,
+        ):
+            await self.bot(memory)._ask_goodbyes(GUILD, "c", report, "s", {DM})
+        memory.ask_goodbyes.assert_awaited_once_with(GUILD, "c", [("e-ok", (ALICE,))], "s")
+        self.assertIn("1 asked, 1 leave_not_a_member", "\n".join(logs.output))
+        self.assertNotIn("Okthandom", "\n".join(logs.output))
+        memory.lookup_data = AsyncMock(side_effect=RuntimeError("Okthandom"))
+        with self.assertLogs("dmbot.bot", "WARNING") as logs:
+            await self.bot(memory)._ask_goodbyes(GUILD, "c", report, "s", {DM})  # (never raises)
+        self.assertNotIn("Okthandom", "\n".join(logs.output))

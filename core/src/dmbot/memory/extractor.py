@@ -700,9 +700,10 @@ async def run(
     `leaves` (#4537 slice 6b, DMBOT_PARTY_LEAVES): the claims call is also asked which player
     characters said goodbye to the party (`goodbye_reading.LEAVE_ADDENDUM`), in the same call, with
     a quote checked against the cited lines. What holds is only gathered (`Report.goodbyes`, names
-    and line numbers with who spoke each, no words): the caller keeps the DM's and the character's
-    own player's lines and asks the DM, after play. Nothing closes a stretch here (§11). Never in
-    `family_only`."""
+    and line numbers with who spoke each, no words; a line voiced as an NPC is no one's): the
+    caller keeps the DM's and the character's own player's lines and asks the DM, after play.
+    Nothing closes a stretch here (§11). Never in `family_only`, nor for an imported session (old
+    history: a goodbye in it may have been undone long since)."""
     report = Report()
     # (theories are the first kind of reading: asked when either switch is on, the rest only with
     # the readings switch)
@@ -723,7 +724,9 @@ async def run(
     met = met and not family_only
     languages = languages and not family_only
     weather = weather and not family_only
-    leaves = leaves and not family_only
+    # (an imported session is old history: a goodbye in it may be long undone, so none is asked)
+    leaves = leaves and not family_only and not imported
+    voiced: set[str] = set()  # (with `leaves`: lines the DM said as a named NPC, no one's goodbye)
     system = (
         SYSTEM
         + (MET_ADDENDUM if met else "")
@@ -851,6 +854,7 @@ async def run(
             report.leaves_dropped.update(said.dropped)
             report.leaves_cut += int(reply.cut)
             report.goodbyes.extend(said.goodbyes)
+            voiced.update(str(s.number) for s in batch if s.voiced)
         answered_by = reply.model or answered_by
         everyone.update(speakers)
         heard.update((number, text) for number, _who, text in rows)
@@ -1095,10 +1099,13 @@ async def run(
             g for g in report.goodbyes if all(everyone.get(n) in still for n in g.lines)
         ]
         report.leaves_dropped["leave_speaker_gone"] += len(report.goodbyes) - len(recorded_goodbyes)
+        named = [g for g in recorded_goodbyes if name_key(g.who) not in skip]
+        report.leaves_dropped["leave_skip"] += len(recorded_goodbyes) - len(named)
+        # (a line the DM said as a named NPC is the story's words, never the DM's: no one's, so
+        # `whose` refuses it, as weather leaves it out, #4748)
         report.goodbyes = goodbyes_once(
-            replace(g, speakers=tuple(everyone.get(n) for n in g.lines))
-            for g in recorded_goodbyes
-            if name_key(g.who) not in skip
+            replace(g, speakers=tuple(None if n in voiced else everyone.get(n) for n in g.lines))
+            for g in named
         )
         report.leaves = len(report.goodbyes)
     report.through_ms = reached

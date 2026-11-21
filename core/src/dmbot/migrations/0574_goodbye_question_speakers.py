@@ -21,6 +21,4 @@ SQL = r"""
         ADD COLUMN session_id  TEXT CHECK (session_id IS NULL OR char_length(session_id) <= 64);
     CREATE INDEX memory_join_questions_session ON memory_join_questions (guild_id, session_id)
         WHERE session_id IS NOT NULL;
-    CREATE INDEX memory_join_questions_speakers ON memory_join_questions USING gin (speaker_ids)
-        WHERE cardinality(speaker_ids) > 0;
     """
