@@ -80,7 +80,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { PartyRecordCharacter, ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, WorldRoadNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion, PlotThreads } from "./api";
+import type { PartyRecordCharacter, ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, WorldRoadNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion, PlotThreads, LeaveGroup } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type LorePdf, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
@@ -693,6 +693,21 @@ function startWeb(big: boolean, lonely = false): WebState {
     links.push({ id: "lp1", a: "pair-brask", b: "pair-ford", words: "lives at", secret: false, direction: "a-b" });
   }
   return { nodes, links, nextLink: links.length + 1 };
+}
+
+// The "Still in the party?" questions waiting in a pretend campaign (#4895): one death, one goodbye with two in it.
+function pretendLeaveGroups(): LeaveGroup[] {
+  return [
+    { group: "dead-okthandom", kind: "died", characters: [{ id: "lv-okthandom", name: "Okthandom" }] },
+    {
+      group: "bye-tavin",
+      kind: "leave",
+      characters: [
+        { id: "lv-tavin", name: "Tavin" },
+        { id: "lv-brynn", name: "Brynn Ashwood-of-the-Northern-Wastes" },
+      ],
+    },
+  ];
 }
 
 // The open plot threads (#3696, slice 1): in play first, then resolved or dropped; one stalled, one promise, one with no state yet.
@@ -1354,6 +1369,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const calls: string[] = [];
   // The join question's groups per campaign (#4778 part b): made when first read, then changed by the answers.
   const joinState: Record<string, { group: string; answer: "waiting" | "everyone"; names: string[] }[]> = {};
+  // The "Still in the party?" questions waiting, by campaign (#4895). An answer takes its character out of the list.
+  const leaveState: Record<string, LeaveGroup[]> = {};
   // The party record (#4778 a2): Wren is in the party; Ash left and is out. A leave or a return is one change, with one Undo.
   const pretendParty = (): PartyRecordCharacter[] => [
     { id: "p1".repeat(16), name: "Wren", inParty: true, spans: [{ from: 1700000000, to: null, ended: null, session: 2 }] },
@@ -3748,6 +3765,26 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       }
       const [done] = list.splice(at, 1);
       return done!.names.length === 2 ? { batch: null, given: null } : { batch: 61, given: 3 };
+    },
+    // The "Still in the party?" questions (#4895): DM only. A "left" answer gives its batch, for the Undo through answerJoin's undo.
+    async leaveQuestions(ref): Promise<LeaveGroup[]> {
+      calls.push(`leaveQuestions:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      return structuredClone((leaveState[ref] ??= pretendLeaveGroups()));
+    },
+    async answerLeave(ref, change): Promise<{ batch: number | null }> {
+      calls.push(`answerLeave:${ref}:${change.character}:${change.answer}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const list = (leaveState[ref] ??= pretendLeaveGroups());
+      const group = list.find((g) => g.characters.some((c) => c.id === change.character));
+      if (!group) throw new ApiError("gone");
+      group.characters = group.characters.filter((c) => c.id !== change.character);
+      const left = change.answer === "left";
+      return { batch: left ? 71 : null };
     },
     // The party record (#4778 a2): DM only. A leave of someone not in the party is `not-in-party`; a return of someone in it is `already-back`.
     async partyRecord(ref) {
