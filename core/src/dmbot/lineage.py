@@ -118,6 +118,7 @@ NOT_STAMPED: dict[str, str] = {
     # (#4841: a day-long undo handle for a website pick of a followed set's rules; no story)
     # (#4799: the choices worked out for a DM's page, gone within an hour; ids and counts)
     "web_join_choices": "answers worked out for a page and kept an hour, not story",
+    "web_reveals": "what the characters learned, in words for a page and kept an hour, not story",
     # (#3843: what a worker wants the bot to say in Discord; ids and counts, swept in days)
     # (#4904: what an import's scans leave for the report at its end; counts, ids and names)
     "import_state": "bookkeeping for an import's report, taken when it is made, not story",

@@ -93,6 +93,7 @@ from dmbot.web import (
     relationships,
     report,
     restores,
+    reveals,
     rule_sharing,
     rule_updates,
     script_make,
@@ -3117,6 +3118,45 @@ def create_app(
             body = None
         try:
             return {"answer": await join_choices.queue_pick(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/reveals")
+    async def me_campaign_reveals(ref: str, signed: Signed) -> list[dict[str, Any]]:
+        """What the characters learned, waiting to be kept, as the bot last worked it out for this
+        DM (#3863): DM only."""
+        session, _token = signed
+        try:
+            return await reveals.read(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/reveals/ask", status_code=202)
+    async def me_campaign_reveals_ask(ref: str, signed: Signed) -> dict[str, str]:
+        """Have the bot work the list out (it reads only, no AI call); polled at
+        `.../web/answers/{answer}`."""
+        session, _token = signed
+        try:
+            return {"answer": await reveals.queue_ask(db, session, ref)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/reveals/answer", status_code=202)
+    async def me_campaign_reveals_answer(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"id", "answer": "keep" | "not"}`; polled at `.../web/answers/{answer}`; the Undo of a
+        keep is `join-undo`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await reveals.queue_answer(db, session, ref, body)}
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
