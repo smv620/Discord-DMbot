@@ -23,6 +23,7 @@ import discord
 from dmbot.discord_limits import MESSAGE_MAX, SELECT_OPTIONS_MAX
 from dmbot.maps import measure_words
 from dmbot.memory import map_facts as mf
+from dmbot.memory import standing
 from dmbot.memory import world_notes as wn
 from dmbot.memory.layer_words import RULED, climate_words, culture_words, land_words, people_words
 from dmbot.memory.models import DM, MemoryRuleError, TooLateToUndo
@@ -63,8 +64,12 @@ LAYER = {
     mf.CULTURE: "Culture", mf.POPULATION: "Who lives here",  # (#4257: never "people")
     mf.CONDITION: "Road condition",  # (#4258; the ux-critic: "condition" alone reads as Poisoned)
 }  # fmt: skip
-GROUP = {wn.PLACE: "Places", wn.LANGUAGE: "Languages", wn.ROAD: "Roads"}
-ONE = {wn.PLACE: "place", wn.LANGUAGE: "language", wn.ROAD: "road"}
+# (a bias is "a feeling" here: plain words, #4229 slice 4)
+GROUP = {wn.PLACE: "Places", wn.LANGUAGE: "Languages", wn.ROAD: "Roads", wn.BIAS: "Feelings"}
+ONE = {wn.PLACE: "place", wn.LANGUAGE: "language", wn.ROAD: "road", wn.BIAS: "feeling"}
+# (the list's heading, where it wraps: a whole people is judged, not a character's mood)
+HEADING = {wn.BIAS: "Feelings toward peoples"}
+TOWARD = standing.TOWARD
 ROAD_LENGTH = "Road length"
 
 
@@ -81,6 +86,8 @@ def guess(note: wn.Note) -> str:
     """What DMbot guessed, in the place screen's own words ("arctic", "Ruled by: Ten-Towns")."""
     if note.kind in (wn.LANGUAGE, wn.ROAD):  # (a road: its length's own words, "20 miles")
         return note.value
+    if note.kind == wn.BIAS:  # ("unfriendly toward dwarves", "wary of orcs")
+        return f"{TOWARD.get(note.how, note.how.lower() + ' toward')} {note.value}"
     f = note.fact
     if note.layer == mf.CONTROL:
         return f"{RULED.get(note.how or 'rules', 'Ruled by').lower()} {note.ruler}"
@@ -103,6 +110,8 @@ def full_line(note: wn.Note) -> str:
     """The note in the message text, where it wraps: "**Icewind Dale** · land: arctic"."""
     if note.kind == wn.LANGUAGE:
         return f"**{_md(note.name)}** speaks {_md(note.value)}"
+    if note.kind == wn.BIAS:  # ("**Mithral Hall** is unfriendly toward dwarves")
+        return f"**{_md(note.name)}** is {_md(guess(note))}"  # (the standing card's "is")
     if note.kind == wn.ROAD:  # ("**Targos to Bryn Shander** · your lore says 20 miles; on …")
         said = measure_words.road_note(
             note.value, note.session_at is not None, note.measured, note.map_title
@@ -118,8 +127,15 @@ def option(note: wn.Note) -> discord.SelectOption:
     what = (
         "Language" if note.kind == wn.LANGUAGE
         else ROAD_LENGTH if note.kind == wn.ROAD
+        else "Feeling" if note.kind == wn.BIAS
         else LAYER[note.layer]
     )  # fmt: skip
+    if note.kind == wn.BIAS:  # (who → whom first, so a phone tells two of one place apart)
+        return discord.SelectOption(
+            label=logic.shorten(f"{note.name} → {note.value}", 100),
+            description=logic.shorten(f"{note.how} · {source(note)}", 100),
+            value=note.id,
+        )
     return discord.SelectOption(
         label=logic.shorten(f"{note.name}: {guess(note)}", 100),
         description=logic.shorten(f"{what} · {source(note)}", 100),
@@ -156,7 +172,7 @@ def list_text(notes: Sequence[wn.Note]) -> str:
     for kind in wn.KINDS:
         group = [n for n in shown if n.kind == kind]
         if group:
-            lines.append(f"\n**{GROUP[kind]}**")
+            lines.append(f"\n**{HEADING.get(kind, GROUP[kind])}**")
             lines.extend(f"• {full_line(n)}" for n in group)
     if len(shown) < len(notes):
         lines.append(MORE.format(shown=len(shown), total=len(notes)))
@@ -280,6 +296,12 @@ class OneNote(_Menu):
                 relation_id=self.note.relation_id,
             )  # fmt: skip
             return
+        if self.note.kind == wn.BIAS:  # (the five steps, as the standing card's)
+            await interaction.response.edit_message(
+                content=PICK_STEP.format(name=_md(self.note.name), people=_md(self.note.value)),
+                view=BiasStep(self.campaign_id, self.note),
+            )
+            return
         if self.note.kind == wn.PLACE:
             from dmbot.ui.place_world import show_world
 
@@ -294,6 +316,37 @@ class OneNote(_Menu):
         await show_world_notes(interaction, self.campaign_id)
 
 
+PICK_STEP = "How does **{name}** feel toward {people}? One tap saves it."
+
+
+class BiasStep(_Menu):
+    """✏️ Change on a feeling DMbot read (#4229 slice 4): one of standing's five steps, kept as the
+    DM's word in one change (one Undo); ↩ Back to the note."""
+
+    def __init__(self, campaign_id: str, note: wn.Note) -> None:
+        super().__init__()
+        self.campaign_id, self.note = campaign_id, note
+        for step in standing.STEPS:
+            self.add_item(_Button(self._pick(step), label=step))
+        self.add_item(_Button(self._back, label=BACK, row=1))
+
+    def _pick(self, step: str) -> Handler:
+        async def pick(interaction: discord.Interaction) -> None:
+            said = f"**{_md(self.note.name)}** is {step.lower()} toward {_md(self.note.value)}"
+            await _act(
+                interaction, self.campaign_id, [self.note.id], lambda _: f"✅ Kept: {said}.",
+                step=step,
+            )  # fmt: skip
+
+        return pick
+
+    async def _back(self, interaction: discord.Interaction) -> None:
+        self.stop()
+        await interaction.response.edit_message(
+            content=note_text(self.note), view=OneNote(self.campaign_id, self.note)
+        )
+
+
 async def _act(
     interaction: discord.Interaction,
     campaign_id: str,
@@ -302,9 +355,10 @@ async def _act(
     *,
     turn_down: bool = False,
     note_words: str = "",
+    step: str = "",
 ) -> None:
-    """Keep these lines, or turn one down, as one change; then say so (`done` gets how many were
-    kept), with ↩ Undo."""
+    """Keep these lines, or turn one down, or (`step`, a feeling's ✏️ Change) keep one at another
+    step, as one change; then say so (`done` gets how many were kept), with ↩ Undo."""
     await _answer_first(interaction, in_place=True)
     campaign = await _campaign_for(interaction, campaign_id)
     memory = _memory(interaction)
@@ -315,7 +369,12 @@ async def _act(
         await _tell(interaction, ONLY_DM)
         return
     try:
-        if turn_down:
+        if step:
+            changed_to = await memory.change_read_bias(
+                campaign.guild_id, campaign.id, wn.split_id(ids[0])[1], step, source=DM
+            )
+            batch, n = changed_to.batch, 1
+        elif turn_down:
             written = await memory.turn_down_world_note(
                 campaign.guild_id, campaign.id, ids[0], source=DM
             )

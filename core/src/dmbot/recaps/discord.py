@@ -58,7 +58,14 @@ from dmbot.memory.models import (
 from dmbot.memory.recall import DM_SCREEN, PLAYERS, RecallService
 from dmbot.memory.scene import SceneTracker, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
-from dmbot.outbox import RECAP_READY, Outbox
+from dmbot.outbox import (
+    RECAP_ALLOWANCE,
+    RECAP_FAILED,
+    RECAP_NAMES,
+    RECAP_READY,
+    RECAP_UNCHECKED,
+    Outbox,
+)
 from dmbot.recaps import allowance as recap_allowance
 from dmbot.recaps import critics, cues, name_answers, short, uploaded, voice
 from dmbot.recaps import feedback as recap_feedback
@@ -114,6 +121,7 @@ from dmbot.ui.recap_dm import AUDIO_WHY, RecapButton, ready_text, ready_view
 from dmbot.ui.recap_hold import WriteNowButton, hold_line_key, hold_view
 from dmbot.ui.recap_share import ShareButton
 from dmbot.ui.recap_short import EXPIRED, WRITING, ShortRecapButton, ask_key, ask_view
+from dmbot.worker_lease import Slots
 
 if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from collections.abc import Coroutine, Hashable, Sequence
@@ -161,6 +169,7 @@ log = logging.getLogger("dmbot.bot")
 
 RECAP_ATTACHMENT_MAX = 24 * 1024 * 1024  # Discord's own most for a message
 RECAP_DEFAULT_FILE_LIMIT = 10 * 1024 * 1024 - 65536  # a server's smallest limit, with some room
+RECAP_SLOTS = 3  # with the worker: recap jobs at once, across every process (#3845)
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
 WEB_RESTORE_ALIVE_EVERY_S = 30  # seconds between touches of the queued website restores
 WEB_RESTORE_TIDY_EVERY = 30  # rounds (about a minute) between the restore rows' upkeep
@@ -266,6 +275,7 @@ class RecapFeatures:
         recap_worker: RecapWorker | None
         recaps: RecapStore | None
         outbox: Outbox | None
+        recap_slots: Slots | None
         headless: bool
         outbox_wake: asyncio.Event
         settings: Settings
@@ -385,7 +395,13 @@ class RecapFeatures:
                         outbox_delivery.run(
                             self.outbox,
                             lambda: [g.id for g in self.guilds],
-                            {RECAP_READY: self.deliver_recap_ready},
+                            {
+                                RECAP_READY: self.deliver_recap_ready,
+                                RECAP_FAILED: self.deliver_recap_failed,
+                                RECAP_NAMES: self.deliver_recap_names,
+                                RECAP_UNCHECKED: self.deliver_recap_unchecked,
+                                RECAP_ALLOWANCE: self.deliver_recap_allowance,
+                            },
                             self.outbox_wake,
                         ),
                         "outbox",
@@ -1099,17 +1115,40 @@ class RecapFeatures:
         """A recap that DMbot could not finish checking for three days (#2255): said once in
         the DM Bot channel, with the link to the recap page. Nothing goes to the table. Fixed
         words only."""
+        if await self._queued(
+            gid, cid, RECAP_UNCHECKED, {"session_at": job.session_at, "keeps": job.keeps_previous}
+        ):
+            return
+        await self._say_unchecked(gid, cid, job.session_at, job.keeps_previous)
+
+    async def _say_unchecked(self, gid: int, cid: str, session_at: int, keeps: bool) -> bool:
         campaign = await self.campaigns.get(gid, cid)
         channel = self._upkeep_channel(campaign)[0] if campaign is not None else None
         if channel is None:
-            return
-        link = page_link(self.settings.site_url, gid, cid, job.session_at)
+            return True  # nowhere to say it: done
+        link = page_link(self.settings.site_url, gid, cid, session_at)
         where = f"\nYour recap page: {link}" if self.settings.site_url else ""
-        await self.post(
+        return await self.post(
             channel,
             f"{critics.UNCHECKED_TOLD}{where}",
-            view=again_view(cid, job.session_at, keep=job.keeps_previous),
+            view=again_view(cid, session_at, keep=keeps),
         )
+
+    async def _queued(self, gid: int, cid: str, kind: str, payload: Mapping[str, Any]) -> bool:
+        """With the worker on, what a job wants said in Discord is an outbox row (ids and counts
+        only) that the bot builds and posts (#3843, #4903), so a job never needs a Discord
+        connection. True when it was queued; False means the caller says it itself (the bot with
+        the worker off, as before)."""
+        if not (self.settings.worker_on and self.outbox is not None):
+            return False
+        await self.outbox.add_now(gid, cid, kind, payload)
+        return True
+
+    async def deliver_recap_unchecked(self, gid: int, cid: str, payload: Mapping[str, Any]) -> None:
+        if not await self._say_unchecked(
+            gid, cid, int(payload["session_at"]), bool(payload["keeps"])
+        ):
+            raise RuntimeError("not-posted")
 
     async def _say_writing(
         self, campaign: Campaign, channel_id: int, session_at: int, note: str = ""
@@ -1567,20 +1606,32 @@ class RecapFeatures:
         message = await self._recap_refusal(gid, cid, audio=audio)
         if message is None:
             return None
+        if not await self._queued(gid, cid, RECAP_ALLOWANCE, {"audio": audio}):
+            await self._say_allowance(gid, cid, message)
+        return message
+
+    async def _say_allowance(self, gid: int, cid: str, message: str) -> bool:
         campaign = await self.campaigns.get(gid, cid)
         channel, counts_only = (
             self._upkeep_channel(campaign) if campaign is not None else (None, False)
         )
-        if channel is not None:
-            # The DM Bot channel is read by the campaign's people, who are not told the owner's
-            # plan or its count (#1470): a fixed line there, the full words on the DM screen.
-            shown = (
-                "your recap allowance is used up. See your recap page for when the next one is."
-                if counts_only
-                else message
-            )
-            await self.post(channel, f"📜 Recap: {shown}")
-        return message
+        if channel is None:
+            return True
+        # The DM Bot channel is read by the campaign's people, who are not told the owner's plan or
+        # its count (#1470): a fixed line there, the full words on the DM screen.
+        shown = (
+            "your recap allowance is used up. See your recap page for when the next one is."
+            if counts_only
+            else message
+        )
+        return await self.post(channel, f"📜 Recap: {shown}")
+
+    async def deliver_recap_allowance(self, gid: int, cid: str, payload: Mapping[str, Any]) -> None:
+        """Said again from the bot's own read of the allowance, so the words are never the
+        worker's: nothing to say (it is allowed again) is done."""
+        message = await self._recap_refusal(gid, cid, audio=bool(payload.get("audio")))
+        if message is not None and not await self._say_allowance(gid, cid, message):
+            raise RuntimeError("not-posted")
 
     async def _recap_refusal(self, gid: int, cid: str, *, audio: bool) -> str | None:
         """The same check with no side effects: the refusal's words, or None when one more is
@@ -1719,24 +1770,12 @@ class RecapFeatures:
         )
         if campaign is not None and channel is not None:
             if job.state == "ready":
-                if self.settings.worker_on and self.outbox is not None:
-                    # (#3843) said by the bot's delivery round, built there from the ids alone
-                    await self.outbox.add_now(gid, cid, RECAP_READY, {"session_at": job.session_at})
-                else:
+                if not await self._queued(gid, cid, RECAP_READY, {"session_at": job.session_at}):
                     await self._post_recap_ready(gid, cid, job, channel, counts_only, link)
-            elif not campaign.recaps_email:
-                where = f": {link}" if link else " on the website"
-                await self.post(
-                    channel,
-                    "📜 I couldn't write this session's recap. "
-                    f"Try again from your recap page{where}"
-                    + (
-                        "\nThe recap you had before is kept: press ↩️ to bring it back."
-                        if job.keeps_previous
-                        else ""
-                    ),
-                    view=again_view(cid, job.session_at, keep=job.keeps_previous),
-                )
+            elif not campaign.recaps_email and not await self._queued(
+                gid, cid, RECAP_FAILED, {"session_at": job.session_at, "keeps": job.keeps_previous}
+            ):
+                await self._say_failed(cid, channel, job.session_at, job.keeps_previous, link)
         if campaign is not None and job.state == "ready" and job.to_confirm:
             await self._queue_recap_names(gid, cid, job, campaign)
         if campaign is not None and not campaign.recaps_email:
@@ -1751,6 +1790,33 @@ class RecapFeatures:
                 job,
                 campaign.dm_accounts if campaign is not None else (),
             )
+
+    async def _say_failed(
+        self, cid: str, channel: int, session_at: int, keeps: bool, link: str
+    ) -> bool:
+        where = f": {link}" if link else " on the website"
+        return await self.post(
+            channel,
+            "📜 I couldn't write this session's recap. "
+            f"Try again from your recap page{where}"
+            + ("\nThe recap you had before is kept: press ↩️ to bring it back." if keeps else ""),
+            view=again_view(cid, session_at, keep=keeps),
+        )
+
+    async def deliver_recap_failed(self, gid: int, cid: str, payload: Mapping[str, Any]) -> None:
+        """The outbox's "couldn't write it" (#4903): the same line `recap_told` says itself with
+        the worker off, from the recap's id. A campaign that is gone, or whose DM wants email, has
+        nothing to say."""
+        campaign = await self.campaigns.get(gid, cid)
+        if campaign is None or campaign.recaps_email:
+            return
+        channel, _ = self._upkeep_channel(campaign)
+        if channel is None:
+            return
+        at = int(payload["session_at"])
+        link = page_link(self.settings.site_url, gid, cid, at) if self.settings.site_url else ""
+        if not await self._say_failed(cid, channel, at, bool(payload["keeps"]), link):
+            raise RuntimeError("not-posted")
 
     async def _post_recap_ready(
         self, gid: int, cid: str, job: Job, channel: int, counts_only: bool, link: str
@@ -1823,17 +1889,40 @@ class RecapFeatures:
                     continue
                 added += 1
             await self._link_recap_names(gid, cid, job)
-            names_channel, _ = self._upkeep_channel(campaign)
-            if added and names_channel is not None:
-                await self.post(names_channel, recap_names_text(added), view=review_view(cid))
-            if added:
-                await self._private_names_note(gid, cid, job.dm_user_id, added)
+            if added and not await self._queued(
+                gid, cid, RECAP_NAMES, {"session_at": job.session_at, "added": added}
+            ):
+                await self._say_names(gid, cid, campaign, job.dm_user_id, added)
+            # (a worker has no live tables, so this always drops its own cache: harmless, and the
+            # bot's cache follows the database's own notification)
             if self.lookup is not None and not any(
                 t.campaign_id == cid for t in self.tables.values()
             ):
                 self.lookup.drop([cid])
         except Exception:
             log.exception("Recap: couldn't queue the names to confirm")
+
+    async def _say_names(
+        self, gid: int, cid: str, campaign: Campaign, dm_user_id: int, added: int
+    ) -> bool:
+        """The channel's line and the DM's private note about names added to the check."""
+        names_channel, _ = self._upkeep_channel(campaign)
+        if names_channel is not None and not await self.post(
+            names_channel, recap_names_text(added), view=review_view(cid)
+        ):
+            return False  # (the private note waits: a retry of this row must not repeat it)
+        await self._private_names_note(gid, cid, dm_user_id, added)
+        return True
+
+    async def deliver_recap_names(self, gid: int, cid: str, payload: Mapping[str, Any]) -> None:
+        """The outbox's "names added to your check" (#4903): the count is the row's, the DM is read
+        from the recap, so nothing but ids travelled."""
+        campaign = await self.campaigns.get(gid, cid)
+        job = await self.recaps.get(gid, cid, int(payload["session_at"])) if self.recaps else None
+        if campaign is None or job is None:
+            return
+        if not await self._say_names(gid, cid, campaign, job.dm_user_id, int(payload["added"])):
+            raise RuntimeError("not-posted")
 
     async def _link_recap_names(self, gid: int, cid: str, job: Job) -> None:
         """Remember which waiting suggestions are this recap's names to check (ids only), so its
@@ -1920,22 +2009,62 @@ class RecapFeatures:
                 await self.post_recaps(guild.id)
             except Exception:
                 log.exception("Recap: posting failed for a server")
-        done = 0
-        for guild in list(self.guilds):
+        if self.settings.worker_on:
+            return  # the jobs are the worker's (#4903); holds and Post stay with the bot
+        await self.run_recap_jobs()
+
+    async def run_recap_jobs(self) -> None:
+        """The due recap jobs, a few at a time (no Discord: whatever a job wants said goes to the
+        outbox with the worker on). The bot's round runs it with the worker off, else the worker."""
+        if not self.settings.recaps_on or self.recaps is None or self.recap_worker is None:
+            return
+        # Every server's due jobs together, the longest wait first: a campaign with many sessions,
+        # or a server whose id sorts early, never keeps another's job from its turn (#3845). A
+        # campaign has one job at a time (`due`), so oldest-first is round-robin across campaigns.
+        waiting: list[tuple[int, int, str, int]] = []
+        for guild_id in await self.work_guild_ids():
             try:
-                due = await self.recaps.due(guild.id)
+                waiting += [
+                    (since, guild_id, cid, at)
+                    for cid, at, since in await self.recaps.due_aged(guild_id)
+                ]
             except Exception:
                 log.exception("Recap: couldn't list the due jobs for a server")
-                continue
-            for cid, at in due:
-                if done >= RECAPS_PER_ROUND:
-                    return
-                done += 1  # counted before it runs, so a job that raises can't stall the round
-                with log_context(guild_id=guild.id, campaign_id=cid):
-                    try:
-                        await self.recap_worker.run(guild.id, cid, at)
-                    except Exception:
-                        log.exception("Recap: a job failed unexpectedly")
+        waiting.sort()
+        if self.settings.worker_on and self.recap_slots is not None:
+            # (the worker: up to RECAP_SLOTS at once across every process, by the slot leases. The
+            # round waits for the slowest of them before the next is picked, and the three oldest
+            # are chosen before the slots are asked: if other processes hold the slots, these wait
+            # their turn rather than younger jobs jumping ahead.)
+            await asyncio.gather(*(self._run_recap_job(*w[1:]) for w in waiting[:RECAP_SLOTS]))
+            return
+        for _, guild_id, cid, at in waiting[:RECAPS_PER_ROUND]:
+            await self._run_recap_job(guild_id, cid, at)
+
+    async def _run_recap_job(self, guild_id: int, cid: str, at: int) -> None:
+        """One job, never raising. With the worker on it first takes one of the recap slots (a job
+        that finds none left waits for the next round)."""
+        assert self.recap_worker is not None
+        with log_context(guild_id=guild_id, campaign_id=cid):
+            try:
+                if self.settings.worker_on and self.recap_slots is not None:
+                    async with self.recap_slots.hold() as got:
+                        if got:
+                            await self.recap_worker.run(guild_id, cid, at)
+                else:
+                    await self.recap_worker.run(guild_id, cid, at)
+            except Exception:
+                log.exception("Recap: a job failed unexpectedly")
+
+    async def _recap_jobs_loop(self) -> None:
+        """The worker's loop for the recap text jobs (#4903): every minute, as the bot's round."""
+        await asyncio.sleep(90)
+        while True:
+            try:
+                await self.run_recap_jobs()
+            except Exception:
+                log.exception("The recap jobs failed")
+            await asyncio.sleep(RECAP_ROUND_S)
 
     async def work_guild_ids(self) -> list[int]:
         """The servers a background round works: the bot's own, and for the worker (no Discord

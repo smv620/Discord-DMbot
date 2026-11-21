@@ -141,6 +141,10 @@ STORE = {
     "shows players nothing",
     "_make_secret": "writes: the DM's own Make it secret or End the old one on a 🤫 question "
     "(#4524), through the store's own rules; shows players nothing",
+    "_merge_in": "writes: a kept hand-over's 'from whom' moves to the entry kept (#4170); "
+    "never shows anything",
+    "_reopen_after_hand_over_undo": "writes: an Undo of a kept sale reopens the seller's tie it "
+    "ended (#4170); never shows anything",
     "_met_back": "writes: moves the other's own knows up to met (#3881); never shows anything",
     "_has_parent": DM_ONLY + ": whether a place may be given an assumed parent (#4173 slice 3)",
     "_replace_assumed": "writes: a stated parent rejects the place's assumed one (#4173 slice 3)",

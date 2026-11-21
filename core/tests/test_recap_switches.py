@@ -145,7 +145,7 @@ def fake_bot(camp: Any, *, plan: dict[str, bool] | None = None, audio_on: bool =
         "recap_session", "_queue_recap", "_say_writing", "_hold_or_queue", "recap_allowed",
         "recap_told", "recap_audio_wanted", "recap_audio_switched", "recap_audio_allowed",
         "recap_plan_facts", "recap_audio_why", "_recap_allowance", "_recap_refusal",
-        "_upkeep_channel", "_post_recap_ready",
+        "_upkeep_channel", "_queued", "_say_failed", "_post_recap_ready", "_say_names",
     ):  # fmt: skip
         setattr(bot, name, getattr(DMBot, name).__get__(bot))
     return bot

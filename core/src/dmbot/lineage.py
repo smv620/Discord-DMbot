@@ -119,6 +119,8 @@ NOT_STAMPED: dict[str, str] = {
     # (#4799: the choices worked out for a DM's page, gone within an hour; ids and counts)
     "web_join_choices": "answers worked out for a page and kept an hour, not story",
     # (#3843: what a worker wants the bot to say in Discord; ids and counts, swept in days)
+    # (#4904: what an import's scans leave for the report at its end; counts, ids and names)
+    "import_state": "bookkeeping for an import's report, taken when it is made, not story",
     "outbox": "a message waiting to be said in Discord, ids and counts only, not story",
     "web_rule_takes": "a day-long undo handle for a pick of a followed set's rules, not story",
     # (#4448: which time-limit messages were said; the limit itself is a stamped part)
