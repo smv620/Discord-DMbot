@@ -1296,11 +1296,14 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
         # a story thread's keep, or a change to its parts and branches (#4457, #4476): how it ended
         # and the change it made, for the page's Undo (none when it changed nothing)
         made = got.get("resultBatches") or []
-        return {
+        out_thread: dict[str, Any] = {
             "state": got["state"],
             "error": got["error"],
             "batch": int(made[0]) if got["state"] == "done" and made else None,
         }
+        if got["action"] == "thread-new":  # (a new thread: its id, for the page's next step)
+            out_thread["id"] = str(got.get("resultId") or "") if got["state"] == "done" else None
+        return out_thread
     if str(got["action"]).startswith("maps-"):
         # a Maps page press (#4347): how it ended, and the change it made for the page's Undo
         made = got.get("resultBatches") or []

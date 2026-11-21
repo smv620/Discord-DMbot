@@ -10,7 +10,7 @@ from typing import Any
 from dmbot.memory import threads
 from dmbot.memory import web_actions as wa
 from dmbot.memory.models import OPEN, RESOLVED
-from dmbot.web import plot_threads, sessions
+from dmbot.web import plot_threads, relationships, sessions
 from dmbot.web.recaps import RecapError
 from tests.test_recap_web import BOB, NOW
 from tests.test_web_api import ALICE, THURSDAY
@@ -35,8 +35,8 @@ class ThreadWeb(Web):
         while (action := await self.actions.claim_next(self.g)) is not None:
             outcome = await wa.apply(self.memory, self.g, {ALICE.id}, action, actions=self.actions)
             await self.actions.finish(
-                self.g, action, error=outcome.error, result_counts=outcome.counts,
-                result_batches=outcome.batches,
+                self.g, action, error=outcome.error, result_id=outcome.result_id,
+                result_counts=outcome.counts, result_batches=outcome.batches,
             )  # fmt: skip
             done.append(outcome)
         return done
@@ -252,3 +252,133 @@ class AddingWhoIsInvolved(ThreadWeb):
         await self.involve(self.bell, mira, "villain")
         outcomes = await self.bot_loop()
         self.assertEqual([bool(o.error) for o in outcomes], [False, False])
+
+
+class StartingAThreadOrAPromise(ThreadWeb):
+    """Slice 2c (migration 0582): a new thread or promise, a promise's due note, its parties."""
+
+    async def new(self, kind: str, name: str, state: str = "open") -> str:
+        return await plot_threads.queue_new(
+            self.web, self.session, self.cref, {"kind": kind, "state": state, "name": name}
+        )
+
+    async def made(self, name: str) -> Any:
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT id, type, status, description FROM memory_entities"
+                " WHERE campaign_id = %s AND name = %s", (self.one.id, name),
+            )  # fmt: skip
+            return await cur.fetchone()
+
+    async def promise(self, name: str = "Bring the healer back") -> str:
+        made = await self.memory.new_thread(self.g, self.one.id, name, "promise", OPEN, source="dm")
+        return str(made.value.id)
+
+    async def test_every_kind_can_be_started_and_the_answer_carries_its_id(self) -> None:
+        for kind in ("thread", "quest", "mystery", "hook", "goal", "promise"):
+            answer = await self.new(kind, f"A new {kind}")
+            (outcome,) = await self.bot_loop()
+            self.assertFalse(outcome.error)
+            row = await self.made(f"A new {kind}")
+            self.assertEqual((row["type"], row["status"]), (kind, "confirmed"))
+            self.assertEqual(outcome.result_id, row["id"])
+            got = await relationships.read_answer(self.web, self.session, self.cref, answer)
+            self.assertEqual((got["state"], got["id"]), ("done", row["id"]))
+
+    async def test_a_name_of_a_hundred_characters_goes_through_the_table_check(self) -> None:
+        name = "The long road to the " + "far " * 19
+        name = name.strip()[:100]
+        await self.new("quest", name)
+        (outcome,) = await self.bot_loop()
+        self.assertFalse(outcome.error)
+        self.assertIsNotNone(await self.made(name))
+
+    async def test_a_due_note_is_saved_and_an_empty_one_clears_it(self) -> None:
+        promise = await self.promise()
+        due = "By the full moon " + "x" * 100
+        for text in (due[:120], ""):
+            await plot_threads.queue_due(
+                self.web, self.session, self.cref, {"promise": promise, "due": text}
+            )
+            (outcome,) = await self.bot_loop()
+            self.assertFalse(outcome.error)
+            row = await self.made("Bring the healer back")
+            self.assertEqual(row["description"], text)
+
+    async def test_a_due_note_for_a_quest_or_a_made_up_id_is_gone(self) -> None:
+        for target in (self.bell, "a" * 32):
+            await plot_threads.queue_due(
+                self.web, self.session, self.cref, {"promise": target, "due": "soon"}
+            )
+        outcomes = await self.bot_loop()
+        self.assertEqual([o.error for o in outcomes], [wa.GONE, wa.GONE])
+
+    async def test_who_promised_and_who_it_was_promised_to(self) -> None:
+        promise = await self.promise()
+        mira = await self.add("Mira", "character")
+        keep = await self.add("Greywater Keep", "place")
+        for side, who in (("by", mira), ("to", keep)):
+            await plot_threads.queue_party(
+                self.web, self.session, self.cref, {"promise": promise, "side": side, "who": who}
+            )
+        outcomes = await self.bot_loop()
+        self.assertEqual([bool(o.error) for o in outcomes], [False, False])
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT predicate, subject_id FROM memory_relations WHERE object_id = %s"
+                " ORDER BY predicate", (promise,),
+            )  # fmt: skip
+            rows = [(str(r["predicate"]), str(r["subject_id"])) for r in await cur.fetchall()]
+        self.assertEqual(rows, [("promised_by", mira), ("promised_to", keep)])
+
+    async def test_a_place_cannot_make_a_promise_and_a_quest_has_no_parties(self) -> None:
+        promise = await self.promise()
+        keep = await self.add("Greywater Keep", "place")
+        mira = await self.add("Mira", "character")
+        for target, side, who in ((promise, "by", keep), (self.bell, "by", mira)):
+            await plot_threads.queue_party(
+                self.web, self.session, self.cref, {"promise": target, "side": side, "who": who}
+            )
+        first, second = await self.bot_loop()
+        self.assertEqual(first.error, wa.FAILED)  # (the store refuses a place as the maker)
+        self.assertEqual(second.error, wa.GONE)  # (a quest is not a promise)
+
+    async def test_another_campaigns_promise_is_gone(self) -> None:
+        theirs = await self.memory.new_thread(
+            self.g, self.two.id, "Their promise", "promise", OPEN, source="dm"
+        )
+        await plot_threads.queue_due(
+            self.web, self.session, self.cref, {"promise": theirs.value.id, "due": "soon"}
+        )
+        (outcome,) = await self.bot_loop()
+        self.assertEqual(outcome.error, wa.GONE)
+
+    async def test_only_a_dm_queues_these_and_bad_bodies_are_refused(self) -> None:
+        who: Any = BOB
+        bob = await sessions.find(
+            self.web, await sessions.sign_in(self.web, who, [THURSDAY], now=NOW, days=30), now=NOW
+        )
+        assert bob is not None
+        with self.assertRaises(RecapError) as err:
+            await plot_threads.queue_new(
+                bob_web := self.web, bob, self.cref, {"kind": "quest", "state": "open", "name": "X"}
+            )
+        self.assertEqual(err.exception.code, "not_allowed")
+        self.assertIs(bob_web, self.web)
+        promise = await self.promise()
+        bad = (
+            (plot_threads.queue_new, {"kind": "person", "state": "open", "name": "X"}),
+            (plot_threads.queue_new, {"kind": "quest", "state": "going", "name": "X"}),
+            (plot_threads.queue_new, {"kind": "quest", "state": "open", "name": "  "}),
+            (plot_threads.queue_new, {"kind": "quest", "state": "open", "name": "x" * 101}),
+            (plot_threads.queue_new, 5),
+            (plot_threads.queue_due, {"promise": promise, "due": "x" * 121}),
+            (plot_threads.queue_due, {"promise": "nope", "due": "soon"}),
+            (plot_threads.queue_party, {"promise": promise, "side": "from", "who": promise}),
+            (plot_threads.queue_party, {"promise": promise, "side": "by", "who": "nope"}),
+        )
+        for fn, body in bad:
+            with self.assertRaises(RecapError) as refused:
+                await fn(self.web, self.session, self.cref, body)
+            self.assertEqual(refused.exception.code, "bad_action")
+        self.assertIsNone(await self.actions.claim_next(self.g))

@@ -162,6 +162,7 @@ MAP_ACTIONS = ("map-terrain", "map-climate", "map-control", "map-show")
 WORLD_ACTIONS = ("world-keep", "world-not", "world-undo")
 THREAD_STATE_ACTIONS = ("thread-state", "thread-check")  # a thread's state (#3696 slice 2a)
 THREAD_INVOLVE_ACTION = "thread-involve"  # who is involved in a thread (#3696 slice 2b)
+THREAD_NEW_ACTIONS = ("thread-new", "thread-due", "thread-party")  # (#3696 slice 2c)
 LEAVE_ACTIONS = ("leave-yes", "leave-no")  # "Still in the party?" (#4895, party knowledge slice 6a)
 JOIN_ACTIONS = (  # the DM's join question (#4778) and "Let me choose" (#4799)
     "join-everyone", "join-party", "join-undo", "join-choices", "join-choose",
@@ -809,6 +810,8 @@ async def apply(
         return await _thread_state(memory, guild_id, cid, action)
     if action.action == THREAD_INVOLVE_ACTION:
         return await _thread_involve(memory, guild_id, cid, action)
+    if action.action in THREAD_NEW_ACTIONS:
+        return await _thread_new(memory, guild_id, cid, action)
     if action.action in PART_ACTIONS:
         if actions is None and action.action == "part-undo":
             return _failed(FAILED)
@@ -1648,6 +1651,47 @@ async def _thread_involve(memory: MemoryStore, guild_id: int, cid: str, a: Actio
         await memory.involve(guild_id, cid, thread.id, who.id, role, source=DM)
     except MemoryRuleError:
         return _failed(GONE)
+    return Outcome()
+
+
+async def _thread_new(memory: MemoryStore, guild_id: int, cid: str, a: Action) -> Outcome:
+    """A new thread or promise, a promise's due note, and who made a promise or who it was made to,
+    from the page (#3696 slice 2c): the 🧵 card's own store calls (`new_thread`, `set_due`,
+    `promise_party`), one change each and, as on the card, no Undo. `thread-new` is
+    `<kind> <state> <name>` and answers with the new thread's id (so the page can follow with a due
+    note for a promise, as the card's form does in two calls); `thread-due` is
+    `<promise id>[ <note>]` (empty clears it); `thread-party` is `<promise id> by|to <who's id>`.
+    The door limits the shapes. The thread or promise must be a confirmed, un-merged entry of this
+    campaign (`gone` otherwise); the store itself refuses what is not a promise, a kind that is not
+    a thread kind and a `who` of the wrong kind, answered `gone` for an entry that went and
+    `failed` for a rule the DM broke (a name too long or already taken)."""
+    if a.action == "thread-new":
+        kind, state, name = a.text.split(" ", 2)
+        try:
+            made = await memory.new_thread(guild_id, cid, name, kind, state, source=DM)
+        except MemoryRuleError:
+            return _failed(FAILED)
+        return Outcome(result_id=made.value.id)
+    thread_id, _, rest = a.text.partition(" ")
+    thread = await memory.entity(guild_id, cid, thread_id)
+    if (
+        thread is None
+        or thread.type != thread_model.PROMISE
+        or thread.status != CONFIRMED
+        or thread.merged_into is not None
+    ):
+        return _failed(GONE)
+    try:
+        if a.action == "thread-due":
+            await memory.set_due(guild_id, cid, thread.id, rest, source=DM)
+        else:
+            side, _, who_id = rest.partition(" ")
+            who = await memory.entity(guild_id, cid, who_id)
+            if who is None or who.status != CONFIRMED or who.merged_into is not None:
+                return _failed(GONE)
+            await memory.promise_party(guild_id, cid, thread.id, who.id, to=side == "to", source=DM)
+    except MemoryRuleError:
+        return _failed(FAILED)
     return Outcome()
 
 
