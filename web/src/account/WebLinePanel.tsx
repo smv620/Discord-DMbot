@@ -12,7 +12,7 @@ import { KNOWS_HOW_LIVE } from "../content/knows-how-switch";
 import { knowsHowOf, knowsHowWords } from "../content/knows-how-words";
 import { WHO_KNOWS_LIVE } from "../content/who-knows-switch";
 import { webPage as words } from "../content/web-words";
-import { type AccountApi, type WebEdge, type WebLinkChange, type WebRevealTarget } from "./api";
+import { type AccountApi, type WebEdge, type WebLinkChange, type WebRevealTarget, type WebViewer } from "./api";
 import LazyPanel from "./LazyPanel";
 import SavingWait from "./SavingWait";
 import { dimmedName, markSecret } from "./know";
@@ -115,7 +115,7 @@ export function WhoKnows({
   const [chosen, setChosen] = useState<Set<string>>(new Set());
   const [names, setNames] = useState<Map<string, string>>(new Map()); // the names of the characters, by id
   const [q, setQ] = useState("");
-  const [list, setList] = useState<{ id: string; name: string }[]>([]);
+  const [list, setList] = useState<WebViewer[]>([]);
   const [total, setTotal] = useState(0);
   const [failed, setFailed] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -266,6 +266,7 @@ export function WhoKnows({
                 <label class="choice">
                   <input type="checkbox" checked={chosen.has(v.id)} onChange={() => toggle(v)} />
                   <span>{v.name}</span>
+                  {v.note && <span class="small muted"> ({v.note})</span>}
                 </label>
               </li>
             ))}
