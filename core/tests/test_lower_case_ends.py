@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock
 
+from dmbot.memory import background as bg
 from dmbot.memory import descriptions
 from dmbot.memory.models import CONFIRMED, NewName
 from dmbot.ui import name_background as ui_bg
@@ -20,6 +21,7 @@ from tests.test_background_connections import name
 from tests.test_memory_names import DM, GUILD, NamesTest
 
 SOLD = "Claude sold the wolf figurine to Belleros"
+KNOWN = {"belleros": "Belleros", "wolf figurine": "wolf figurine", "old mill": "old mill"}
 LATER = "Much later, Claude sold the wolf figurine to Belleros for 75 gold."
 
 
@@ -41,12 +43,26 @@ class TheRule(unittest.TestCase):
         e = names[at]
         if main:
             lookup.entities[e.entity_id] = SimpleNamespace(name=main, type=entries[at][2])
-        onto = SimpleNamespace(is_a=lambda kind, root: kind == root)
+        # (a campaign's own kinds sit under the core ones: "relic" is an item, "ruin" a place)
+        parents = {"relic": "item", "ruin": "place"}
+        onto = SimpleNamespace(is_a=lambda kind, root: root in (kind, parents.get(kind)))
         return ui_bg._kept_thing(cast(Any, lookup), cast(Any, onto), cast(Any, e))
 
     def test_a_kept_item_or_place_in_small_letters(self) -> None:
         self.assertTrue(self.kept(("1", "wolf figurine", "item")))
         self.assertTrue(self.kept(("1", "old mill", "place")))
+
+    def test_a_campaigns_own_kind_under_item_or_place(self) -> None:
+        self.assertTrue(self.kept(("1", "moon chalice", "relic")))
+        self.assertTrue(self.kept(("1", "sunken keep", "ruin")))
+
+    def test_a_near_twin_spelling_on_another_entry_is_a_question(self) -> None:
+        # ("Wolf-Figurine" and "wolf figurine" are one name key: two entries, never a guess)
+        lookup, names = self.lookup(("1", "wolf figurine", "item"), ("2", "Wolf-Figurine", "item"))
+        names[1].key = names[0].key
+        lookup.by_key = {names[0].key: names}
+        onto = SimpleNamespace(is_a=lambda kind, root: kind == root)
+        self.assertFalse(ui_bg._kept_thing(cast(Any, lookup), cast(Any, onto), cast(Any, names[0])))
 
     def test_people_and_groups_keep_the_old_rule(self) -> None:
         self.assertFalse(self.kept(("1", "old tom", "character")))
@@ -63,6 +79,32 @@ class TheRule(unittest.TestCase):
 
     def test_another_spelling_is_never_one(self) -> None:
         self.assertFalse(self.kept(("1", "figurine", "item"), main="Wolf Figurine of Kel"))
+
+
+class OnlyWhole(unittest.TestCase):
+    """`keep_connections`' `whole_only` (the reviewer's finding on #4923): a word of a small-letter
+    name ("wolf", "the mill") never stands for it, and its quote must hold it whole."""
+
+    def kept(self, b: str, quote: str) -> list[Any]:
+        made = bg.Connection("Belleros", "owns", b, quote)
+        return bg.keep_connections([[made]], [], KNOWN, whole_only={"wolf figurine", "old mill"})
+
+    def test_a_word_of_it_is_not_the_name(self) -> None:
+        for end, quote in (
+            ("wolf", "Belleros owns the wolf"),
+            ("figurine", "Belleros owns the figurine"),
+            ("the figurine", "Belleros owns the figurine"),
+            ("the mill", "Belleros owns the mill"),
+        ):
+            with self.subTest(end):
+                self.assertEqual(self.kept(end, quote), [])
+
+    def test_the_quote_must_hold_it_whole(self) -> None:
+        self.assertEqual(self.kept("wolf figurine", "Belleros owns the wolf"), [])
+
+    def test_the_whole_name_is_kept_with_its_article(self) -> None:
+        got = self.kept("the wolf figurine", "Belleros owns the wolf figurine")
+        self.assertEqual([c.b for c in got], ["wolf figurine"])
 
 
 class TheLaterUpload(NamesTest):

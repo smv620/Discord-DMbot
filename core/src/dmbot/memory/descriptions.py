@@ -43,6 +43,7 @@ def matches_alone(text: str, kind: str, source: str) -> bool:
 # figurine as "Frost Brand" says which sword. Not when it starts like a description ("the cave",
 # "a dagger": #3431 stands there), and the caller checks the rest (its own main name, confirmed, an
 # item or a place, the only entry with that spelling).
+# (only these three, as the ruling says; `_LEADING` above is wider on purpose, for people)
 _ARTICLES = frozenset({"the", "a", "an"})
 
 

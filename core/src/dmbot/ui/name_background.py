@@ -3244,16 +3244,24 @@ def upload_label(label: str, now: float) -> str:
 def _kept_thing(lookup: CampaignLookup, onto: Ontology, e: NameEntry) -> bool:
     """A kept item's or place's own main name in small letters ("wolf figurine") is an end too
     (#4923; Supervisor's ruling): only its main name, never another spelling; only an item or a
-    place (people and groups keep #3431's rule: "the guard"); the only entry with that spelling,
-    so two are a "Which one?", never a guess; and never one starting "the", "a" or "an". The quote
-    must still hold it whole, as every end's does (`background.keep_connections`)."""
+    place (people and groups keep #3431's rule: "the guard"); the only entry with that name key
+    (any spelling of any entry, secret or waiting too), so two are never a guess; and never one
+    starting "the", "a" or "an". The caller checks it is confirmed, not secret and no person at the
+    table, and matches it only whole (`background.keep_connections`'s `whole_only`). `by_key` holds
+    story names only (the table's people are `people_by_key`), so a person never counts here."""
     entity = lookup.entities[e.entity_id]
     return (
         e.text == entity.name
         and (onto.is_a(entity.type, "item") or onto.is_a(entity.type, "place"))
         and descriptions.kept_thing_alone(e.text)
-        and len({x.entity_id for x in lookup.by_key.get(e.key, ()) if not x.person}) == 1
+        and len({x.entity_id for x in lookup.by_key.get(e.key, ())}) == 1
     )
+
+
+def _pronoun_ends(ends: Mapping[str, str], whole_only: Collection[str]) -> list[str]:
+    """The names an open pronoun may be settled to: the ends, without the small-letter things
+    #4923 let in, which reach only connections that name them whole."""
+    return [n for n in ends.values() if n not in whole_only]
 
 
 async def queue_links(
@@ -3317,18 +3325,18 @@ async def queue_links(
     lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
     onto = await memory.ontology(campaign.guild_id, campaign.id)
     ends: dict[str, str] = {}
+    whole_only: set[str] = set()  # (the names `_kept_thing` let in: matched whole only, #4923)
     for key, entries in lookup.by_key.items():
         for e in entries:
             # (a description such as "the woman" is no end of a connection: #3431; the lookup does
             # not carry who typed a name, so only a name with a capital counts here, and the
             # Cleaner, which only fixes spelling, still reads every spelling)
-            if (
-                e.confirmed
-                and not e.secret
-                and not e.person
-                and (descriptions.matches_alone(e.text, e.kind, "") or _kept_thing(lookup, onto, e))
-            ):
-                ends.setdefault(key, lookup.entities[e.entity_id].name)
+            if e.confirmed and not e.secret and not e.person:
+                if descriptions.matches_alone(e.text, e.kind, ""):
+                    ends.setdefault(key, lookup.entities[e.entity_id].name)
+                elif _kept_thing(lookup, onto, e):
+                    ends.setdefault(key, lookup.entities[e.entity_id].name)
+                    whole_only.add(lookup.entities[e.entity_id].name)
     owners: dict[str, set[str]] = {}
     for main, spellings in (known_spellings or {}).items():
         for sp in spellings:
@@ -3418,14 +3426,14 @@ async def queue_links(
     settled = who_resolve.Settled()
     if unsettled:
         if who_ai is not None:
-            names = [*dict.fromkeys([*ends.values(), *(f.name for f in found)])]
+            names = [*dict.fromkeys([*_pronoun_ends(ends, whole_only), *(f.name for f in found)])]
             settled = await who_resolve.settle(
                 unsettled, who_ai, names, until=until, progress=on_who, players=players
             )
         else:
             # (the check was switched off: left out and counted, as before it existed, except an
             # open pronoun that names a player character, which waits for the DM: #3238)
-            names = [*dict.fromkeys([*ends.values(), *(f.name for f in found)])]
+            names = [*dict.fromkeys([*_pronoun_ends(ends, whole_only), *(f.name for f in found)])]
             settled = who_resolve.pc_picks(unsettled, names, players)
         if dropped is not None:
             dropped["not_in_text"] += settled.unresolved
@@ -3442,7 +3450,7 @@ async def queue_links(
     kept = bg.keep_connections(
         answers, found, ends, cap=bg.MAX_CONNECTIONS, skip=known, dropped=dropped,
         questions=questions, speaker=speaker, picks=picks,
-        secret_keys={*secret_spellings, *campaign_secrets},
+        secret_keys={*secret_spellings, *campaign_secrets}, whole_only=whole_only,
     )  # fmt: skip
     # A pronoun-resolved question or unnamed person is secret as a connection would be: when its
     # named end is a secret spelling, of this reading or of the campaign (`keep_connections` does
