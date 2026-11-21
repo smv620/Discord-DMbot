@@ -364,13 +364,24 @@ class Settings:
     link_token_secret: bytes = field(default=b"", repr=False)
 
 
-def load_settings(env: Mapping[str, str] | None = None) -> Settings:
+def load_settings(env: Mapping[str, str] | None = None, *, worker: bool = False) -> Settings:
+    """The settings from the environment. The worker (#3844) has no Discord connection, so it needs
+    no token."""
     env = os.environ if env is None else env
 
     def get(name: str) -> str:
         return env.get(name, "").strip()
 
-    missing = [n for n in ("DISCORD_TOKEN", "EARS_SHARED_SECRET", "DATABASE_URL") if not get(n)]
+    needed = (
+        ("EARS_SHARED_SECRET", "DATABASE_URL")
+        if worker
+        else (
+            "DISCORD_TOKEN",
+            "EARS_SHARED_SECRET",
+            "DATABASE_URL",
+        )
+    )
+    missing = [n for n in needed if not get(n)]
     if missing:
         raise ConfigError(
             f"Missing required settings: {', '.join(missing)}. "
