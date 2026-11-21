@@ -2032,7 +2032,10 @@ class RecapFeatures:
                 log.exception("Recap: couldn't list the due jobs for a server")
         waiting.sort()
         if self.settings.worker_on and self.recap_slots is not None:
-            # (the worker: up to RECAP_SLOTS at once across every process, by the slot leases)
+            # (the worker: up to RECAP_SLOTS at once across every process, by the slot leases. The
+            # round waits for the slowest of them before the next is picked, and the three oldest
+            # are chosen before the slots are asked: if other processes hold the slots, these wait
+            # their turn rather than younger jobs jumping ahead.)
             await asyncio.gather(*(self._run_recap_job(*w[1:]) for w in waiting[:RECAP_SLOTS]))
             return
         for _, guild_id, cid, at in waiting[:RECAPS_PER_ROUND]:

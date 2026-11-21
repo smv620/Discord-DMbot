@@ -7,7 +7,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from dmbot.worker_lease import WorkerLease
+from dmbot.worker_lease import Slots, WorkerLease
 from tests.pg import DatabaseTest
 
 
@@ -128,8 +128,6 @@ class TheSlots(DatabaseTest):
     """At most n holders of a kind at once, across processes (#3845)."""
 
     def slots(self) -> Any:
-        from dmbot.worker_lease import Slots
-
         return Slots(self.db, "recap_slot", 3, ttl_s=60, clock=Clock(), renew_every_s=0.01)
 
     async def test_three_hold_at_once_and_a_fourth_finds_none(self) -> None:
@@ -143,3 +141,16 @@ class TheSlots(DatabaseTest):
             self.assertTrue(one and two and three)
         async with slots.hold() as again:
             self.assertTrue(again)
+
+    async def test_a_slot_is_given_back_when_the_body_raises(self) -> None:
+        slots = self.slots()
+        with self.assertRaises(RuntimeError):
+            async with slots.hold(), slots.hold(), slots.hold():
+                raise RuntimeError("boom")
+        async with slots.hold() as one, slots.hold() as two, slots.hold() as three:
+            self.assertTrue(one and two and three)
+
+    def test_a_kind_has_one_to_twenty_six_slots(self) -> None:
+        for bad in (0, 27):
+            with self.assertRaises(ValueError):
+                Slots(object(), "recap_slot", bad, ttl_s=60)  # type: ignore[arg-type]
