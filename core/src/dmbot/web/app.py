@@ -86,6 +86,7 @@ from dmbot.web import (
     pc_icons,
     pictures,
     place_world,
+    plot_threads,
     private_scenes,
     recap_style,
     relationships,
@@ -3115,6 +3116,16 @@ def create_app(
             body = None
         try:
             return {"answer": await join_choices.queue_pick(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/plot-threads")
+    async def me_campaign_plot_threads(ref: str, signed: Signed) -> dict[str, Any]:
+        """The campaign's story threads, as Discord's threads card shows them (#3696): DM only."""
+        session, _token = signed
+        try:
+            return await plot_threads.read(db, session, ref)
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
