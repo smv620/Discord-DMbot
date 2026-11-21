@@ -70,6 +70,7 @@ EVERY_ACTION = (
     "leave-no",
     "thread-state",  # a plot thread's state from the Plot threads panel (#3696 slice 2a)
     "thread-check",
+    "thread-involve",  # "Add who's involved" (#3696 slice 2b)
 )  # fmt: skip
 
 

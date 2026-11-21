@@ -3176,6 +3176,23 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.post("/me/campaigns/{ref}/plot-threads/involve", status_code=202)
+    async def me_campaign_plot_thread_involve(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"thread", "who", "role"}`: someone or something has a part in a thread (#3696 slice
+        2b); polled at `.../web/answers/{answer}`. DM only."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await plot_threads.queue_involve(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/join-questions")
     async def me_campaign_join_questions(ref: str, signed: Signed) -> dict[str, Any]:
         """The join questions waiting for the DM (#4778): "What does Mira know about what came
