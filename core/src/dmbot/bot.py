@@ -13334,13 +13334,18 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             else set()
         )
         for cid in sorted(kept):
-            if await store.pending_scans(gid, cid):
+            # (a report is kept inside `_scan_import`, before `finish_scan` ends the session's
+            # scan, so "no scan pending" means every session's report is already in the table)
+            if self.import_state is None or await store.pending_scans(gid, cid):
                 continue  # the import is not over: one report at the end
-            assert self.import_state is not None
-            reports = [
-                name_pass_logic.report_from_json(s.split(":", 1)[1])
-                for s in await self.import_state.take_strings(gid, cid, REPORTS)
-            ]
+            reports = []
+            for text in await self.import_state.take_strings(gid, cid, REPORTS):
+                try:
+                    reports.append(name_pass_logic.report_from_json(text.partition(":")[2]))
+                except Exception as exc:  # (a damaged row costs its own report, never the round)
+                    log.warning(
+                        "Import: a kept name-pass report was unreadable (%s)", type(exc).__name__
+                    )
             campaign = await self.campaigns.get(gid, cid)
             if reports and campaign is not None:
                 views = name_pass_undo.undo_views_import(cid, [r.fixed for r in reports])

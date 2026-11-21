@@ -179,7 +179,12 @@ class TheImportNamesReport(unittest.IsolatedAsyncioTestCase):
         cand = Candidate("Vane", (), 1, (), ())
         report = Report(unsure=(cand,), new=(cand, cand))
         state = FakeImportState()
-        await state.add_strings(GUILD, "c" * 32, "reports", [f"k:{report_to_json(report)}"])
+        await state.add_strings(
+            GUILD,
+            "c" * 32,
+            "reports",
+            ["damaged-row-with-no-colon", "k:{not json", f"k:{report_to_json(report)}"],
+        )  # (two damaged rows: each costs only itself, the good one is still reported)
         campaign = SimpleNamespace(
             id="c" * 32, guild_id=GUILD, dm_bot_channel_id=UPKEEP, dm_screen_channel_id=SCREEN
         )

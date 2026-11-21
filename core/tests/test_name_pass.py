@@ -188,8 +188,8 @@ class TheReportAsText(unittest.TestCase):
             report_to_json,
         )
 
-        near = Near("e1", "Oskar Vane", "character", 0.83)
-        cand = Candidate("Vane", ("Oscar Vane",), 3, (near,), ("said by the gate",))
+        near = Near("e1", "Ærik: the Red", "character", 0.83)
+        cand = Candidate("Vane", ("Oscar Vane",), 3, (near,), ("said: by the gate",))
         report = Report(
             fixed=(Fixed("Oskar Vane", (("Oscar", 2), ("Oskar", 1)), 7_000_000_000_001),),
             unsure=(cand,),

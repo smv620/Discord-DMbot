@@ -344,23 +344,24 @@ def report_from_json(text: str) -> Report:
     data = json.loads(text)
 
     def near(n: dict[str, Any]) -> Near:
-        return Near(n["entity_id"], n["name"], n["kind"], float(n["likeness"]))
+        return Near(n["entity_id"], n["name"], n.get("kind", "name"), float(n.get("likeness", 0)))
 
     def candidate(c: dict[str, Any]) -> Candidate:
         return Candidate(
-            c["heard"], tuple(c["also"]), int(c["times"]),
-            tuple(near(n) for n in c["near"]), tuple(c["lines"]),
+            c["heard"], tuple(c.get("also", ())), int(c.get("times", 1)),
+            tuple(near(n) for n in c.get("near", ())), tuple(c.get("lines", ())),
         )  # fmt: skip
 
+    # (`.get` with a default for what a later version may add, so an older row still reads)
     return Report(
         fixed=tuple(
             Fixed(f["name"], tuple((str(a), int(b)) for a, b in f["forms"]), int(f["batch"]))
-            for f in data["fixed"]
+            for f in data.get("fixed", ())
         ),
-        unsure=tuple(candidate(c) for c in data["unsure"]),
-        new=tuple(candidate(c) for c in data["new"]),
-        guarded=int(data["guarded"]),
-        cut=bool(data["cut"]),
+        unsure=tuple(candidate(c) for c in data.get("unsure", ())),
+        new=tuple(candidate(c) for c in data.get("new", ())),
+        guarded=int(data.get("guarded", 0)),
+        cut=bool(data.get("cut", False)),
     )
 
 
