@@ -234,6 +234,14 @@ async def _joins(src: Sources, g: int, c: str) -> Counted:
     return Counted(n, oldest)
 
 
+async def _leaves(src: Sources, g: int, c: str) -> Counted:
+    """A goodbye or a death, waiting for the DM's "still in the party?" (#4537 slice 6)."""
+    if src.memory is None:
+        return Counted(0)
+    n, oldest = await src.memory.staying_questions_waiting(g, c)
+    return Counted(n, oldest)
+
+
 async def _maps(src: Sources, g: int, c: str) -> Counted:
     """Maps a player kept that no DM has answered yet (`MapStore.waiting_for_a_dm`)."""
     if src.maps is None:
@@ -254,6 +262,7 @@ _COUNTERS: dict[str, Callable[[Sources, int, str], Awaitable[Counted]]] = {
     kinds.THREADS: _threads,
     kinds.SECRETS: _secrets,
     kinds.JOINS: _joins,
+    kinds.LEAVES: _leaves,
     kinds.MAPS: _maps,
     kinds.CLAIMS: _claims,
     kinds.READINGS: _readings,

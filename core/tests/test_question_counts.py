@@ -70,6 +70,7 @@ class TheKinds(unittest.TestCase):
                 "Story threads to check",  # (#4453)
                 "Known or secret?",  # (#4524)
                 "New in the party",  # (#4537)
+                "Still in the party?",  # (#4537 slice 6)
                 "Maps waiting for your yes",
                 "Facts to check",
                 "What people believe",

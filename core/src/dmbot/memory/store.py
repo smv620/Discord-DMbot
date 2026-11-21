@@ -3228,7 +3228,72 @@ class MemoryStore:
                 span = await party_record.close_span(w, entity_id, ended)
             except party_record.PartyError as exc:
                 raise MemoryRuleError(str(exc)) from exc
+            await _answer_staying(w, entity_id, join_questions_mod.LEFT)
             return Written(span, w.batch)
+
+    # The goodbye and death questions (#4537 slice 6a, §4 "Readers only suggest"; Supervisor's
+    # ruling on slice 6): "Okthandom is marked dead. Mark Okthandom as no longer in the party?"
+    # "Left the party" closes the stretch with the card's own call (`leave_party`), in the same
+    # change; "Still in the party" writes nothing and answers the question. Nothing else ever
+    # closes a stretch (§11).
+
+    async def staying_questions_to_send(
+        self, guild_id: int, campaign_id: str
+    ) -> list[join_questions_mod.Question]:
+        """Claim the goodbye and death questions not sent yet (one kind per message), none while
+        one of the campaign's sessions is running. Give them back with `unclaim_join_questions`."""
+        async with self._db.guild(guild_id) as conn:
+            return await join_questions_mod.claim(
+                conn, guild_id, campaign_id, int(self._clock()), join_questions_mod.STAYING
+            )
+
+    async def staying_question_groups_waiting(self, guild_id: int, campaign_id: str) -> list[str]:
+        """The sent goodbye and death questions still unanswered (❓ Questions for you)."""
+        async with self._db.guild(guild_id) as conn:
+            return await join_questions_mod.waiting_groups(
+                conn, guild_id, campaign_id, join_questions_mod.STAYING
+            )
+
+    async def staying_questions_waiting(
+        self, guild_id: int, campaign_id: str
+    ) -> tuple[int, int | None]:
+        """How many goodbye and death questions wait for the DM, and since when."""
+        async with self._db.guild(guild_id) as conn:
+            return await join_questions_mod.count_waiting(
+                conn, guild_id, campaign_id, join_questions_mod.STAYING
+            )
+
+    async def staying_answer_left(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> Written[party_record.Span]:
+        """ "Left the party" on a goodbye or death question: the card's own call (`leave_party`),
+        so one change and one Undo, and the question is answered in it (its Undo asks again). Why
+        it ended is the question's own: "died" for a death, "left" for a goodbye (the card can
+        say otherwise later). `AlreadyAnswered` when none still waits for this character."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT kind FROM memory_join_questions WHERE guild_id = %s AND campaign_id = %s"
+                " AND entity_id = %s AND status = 'waiting' AND kind IN ('leave', 'died')",
+                (guild_id, campaign_id, entity_id),
+            )
+            row = await cur.fetchone()
+            if row is None:
+                raise join_questions_mod.AlreadyAnswered("Another DM already answered this.")
+        ended = "died" if row["kind"] == join_questions_mod.DIED else "left"
+        return await self.leave_party(guild_id, campaign_id, entity_id, ended)
+
+    async def staying_answer_stays(self, guild_id: int, campaign_id: str, entity_id: str) -> None:
+        """ "Still in the party": nothing is written but the answer, so the same goodbye or death
+        isn't asked again. `AlreadyAnswered` when none still waits for this character."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "UPDATE memory_join_questions SET status = 'stays', answered_at = %s"
+                " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s"
+                " AND status = 'waiting' AND kind IN ('leave', 'died') RETURNING id",
+                (int(self._clock()), guild_id, campaign_id, entity_id),
+            )
+            if await cur.fetchone() is None:
+                raise join_questions_mod.AlreadyAnswered("Another DM already answered this.")
 
     async def back_in_party(
         self, guild_id: int, campaign_id: str, entity_id: str
@@ -3253,7 +3318,7 @@ class MemoryStore:
             await knowers.catch_up_returner(w, entity_id)
             cur = await w.conn.execute(
                 "SELECT kind FROM memory_join_questions WHERE guild_id = %s AND campaign_id = %s"
-                " AND entity_id = %s AND status = 'waiting'",
+                " AND entity_id = %s AND status = 'waiting' AND kind IN ('join', 'back')",
                 (*w.ids, entity_id),
             )
             row = await cur.fetchone()
@@ -10894,6 +10959,17 @@ async def _recheck_companions(w: Changes, entity_ids: Collection[str]) -> None:
         )
         if problem is not None:
             raise MemoryRuleError(f"A companion still travels with that. {problem}")
+
+
+async def _answer_staying(w: Changes, entity_id: str, status: str) -> None:
+    """A goodbye or death question still waiting for this character is answered by this change
+    (the card's "Left the party" answers it too, #4537 slice 6a): its Undo asks again."""
+    await w.conn.execute(
+        "UPDATE memory_join_questions SET status = %s, answered_at = %s, answered_batch = %s"
+        " WHERE guild_id = %s AND campaign_id = %s AND entity_id = %s AND status = 'waiting'"
+        " AND kind IN ('leave', 'died')",
+        (status, w.now, w.batch, *w.ids, entity_id),
+    )
 
 
 async def _entity_row(w: Scope, entity_id: str, *, allow_rejected: bool = False) -> dict[str, Any]:
