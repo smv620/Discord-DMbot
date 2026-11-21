@@ -884,7 +884,9 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
           ? ((await call("POST", `${base}/world-notes/keep`, { ids: change.ids })) as { answer: string })
           : change.action === "not"
             ? ((await call("POST", `${base}/world-notes/not`, { id: change.id })) as { answer: string })
-            : ((await call("POST", `${base}/world-notes/${change.batch}/undo`, {})) as { answer: string });
+            : change.action === "bias"
+              ? ((await call("POST", `${base}/world-notes/bias`, { id: change.id, step: change.step })) as { answer: string })
+              : ((await call("POST", `${base}/world-notes/${change.batch}/undo`, {})) as { answer: string });
       if (!queued?.answer) throw new ApiError("server");
       const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
       return { kept: typeof got.kept === "number" ? got.kept : null, batch: typeof got.batch === "number" ? got.batch : null };

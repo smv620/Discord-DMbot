@@ -5,8 +5,9 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 
 import { ROADS_LIVE } from "../content/roads-switch";
+import { WORLD_FEELINGS_LIVE } from "../content/world-feelings-switch";
 import { SHOWN_AT_MOST, worldNotesWords as w } from "../content/world-notes-words";
-import { ApiError, type AccountApi, type WorldLanguageNote, type WorldNotes, type WorldPlaceNote, type WorldRoadNote } from "./api";
+import { ApiError, type AccountApi, type WorldFeelingNote, type WorldLanguageNote, type WorldNotes, type WorldPlaceNote, type WorldRoadNote } from "./api";
 
 type Said = { ok: boolean; text: string; batch: number | null };
 
@@ -58,6 +59,9 @@ export default function WorldNotes({ api, refId, onSignedOut }: { api: AccountAp
   const notRight = (line: string, id: string) =>
     press({ action: "not", id }, (m) => ({ ok: true, text: `${w.takenOut(line)} ${w.notAgain}`, batch: m.batch }));
   const undo = (batch: number) => press({ action: "undo", batch }, () => ({ ok: true, text: w.undone, batch: null }));
+  // A feeling's step is changed in one tap; the line leaves the list and Undo takes it back (#4959).
+  const changeFeeling = (f: WorldFeelingNote, step: WorldFeelingNote["step"]) =>
+    press({ action: "bias", id: f.id, step }, (m) => ({ ok: true, text: w.kept(w.feelingLine(f.name, step, f.target)), batch: m.batch }));
 
   if (problem) {
     return (
@@ -82,7 +86,9 @@ export default function WorldNotes({ api, refId, onSignedOut }: { api: AccountAp
   }
   // The Roads group (#4784) is drawn only behind ROADS_LIVE; with the switch off, nothing about roads shows or is counted.
   const roads: WorldRoadNote[] = ROADS_LIVE ? (notes.roads ?? []) : [];
-  const total = notes.places.length + notes.languages.length + roads.length;
+  // The Feelings group (#4959) is drawn only behind WORLD_FEELINGS_LIVE, and counted only then.
+  const feelings: WorldFeelingNote[] = WORLD_FEELINGS_LIVE ? (notes.feelings ?? []) : [];
+  const total = notes.places.length + notes.languages.length + roads.length + feelings.length;
   const group = (title: string, kind: "place" | "language", lines: (WorldPlaceNote | WorldLanguageNote)[], keepAllWords: (n: number) => string) => {
     if (lines.length === 0) return null;
     const shown = lines.slice(0, SHOWN_AT_MOST);
@@ -124,6 +130,16 @@ export default function WorldNotes({ api, refId, onSignedOut }: { api: AccountAp
       {group(w.places, "place", notes.places, w.keepAllPlaces)}
       {group(w.languages, "language", notes.languages, w.keepAllLanguages)}
       {roads.length > 0 && <RoadsGroup roads={roads} busy={busy} keepOne={keepOne} keepAll={keepAll} />}
+      {feelings.length > 0 && (
+        <FeelingsGroup
+          feelings={feelings}
+          busy={busy}
+          keepOne={keepOne}
+          keepAll={keepAll}
+          notRight={notRight}
+          changeFeeling={changeFeeling}
+        />
+      )}
       {said && (
         <p class={said.ok ? "small" : "small warn"} role={said.ok ? "status" : "alert"}>
           {said.text}{" "}
@@ -172,6 +188,91 @@ function RoadsGroup({
       {roads.length > shown.length && <p class="small muted">{w.showing(shown.length, roads.length)}</p>}
       <button type="button" class="button secondary" disabled={busy} onClick={() => void keepAll(shown.map((n) => n.id))}>
         {w.keepAllRoads(shown.length)}
+      </button>
+    </div>
+  );
+}
+
+/** The Feelings group (#4959): one line per guess ("Mithral Keep is unfriendly toward elves") with ✅ Keep, ✏️ Change, 🚫 Not right, and Keep all
+ * for the shown lines. Change opens in place with the five steps, the current one first, and Back. A feeling's keep id is `bias:<32 hex>`. */
+function FeelingsGroup({
+  feelings,
+  busy,
+  keepOne,
+  keepAll,
+  notRight,
+  changeFeeling,
+}: {
+  feelings: WorldFeelingNote[];
+  busy: boolean;
+  keepOne: (line: string, id: string) => Promise<void>;
+  keepAll: (ids: string[]) => Promise<void>;
+  notRight: (line: string, id: string) => Promise<void>;
+  changeFeeling: (f: WorldFeelingNote, step: WorldFeelingNote["step"]) => Promise<void>;
+}) {
+  const [changing, setChanging] = useState<string | null>(null);
+  const shown = feelings.slice(0, SHOWN_AT_MOST);
+  return (
+    <div class="stack" key="feeling">
+      <h3 class="small">{w.feelings}</h3>
+      <ul class="stack">
+        {shown.map((f) => {
+          const line = w.feelingLine(f.name, f.step, f.target);
+          const question = w.feelingQuestion(f.name, f.target);
+          // The current step comes first, then the other four in order.
+          const steps = [f.step, ...w.steps.filter((s) => s !== f.step)];
+          return (
+            <li key={f.id} class="stack">
+              <p>{line}</p>
+              <p class="small muted">{`${f.step} · ${w.fromLore}`}</p>
+              <p class="row">
+                <button type="button" class="button secondary" disabled={busy} aria-label={w.keepLabel(line)} onClick={() => void keepOne(line, f.id)}>
+                  {w.keep}
+                </button>
+                <button
+                  type="button"
+                  class="button secondary"
+                  disabled={busy}
+                  aria-expanded={changing === f.id}
+                  onClick={() => setChanging(changing === f.id ? null : f.id)}
+                >
+                  {w.changeFeeling}
+                </button>
+                <button type="button" class="button secondary" disabled={busy} aria-label={w.notRightLabel(line)} onClick={() => void notRight(line, f.id)}>
+                  {w.notRight}
+                </button>
+              </p>
+              {changing === f.id && (
+                <div class="stack" role="group" aria-label={question}>
+                  <p class="small">{question}</p>
+                  <p class="row">
+                    {steps.map((s) => (
+                      <button
+                        key={s}
+                        type="button"
+                        class={s === f.step ? "button" : "button secondary"}
+                        disabled={busy}
+                        onClick={() => {
+                          setChanging(null);
+                          void changeFeeling(f, s);
+                        }}
+                      >
+                        {s}
+                      </button>
+                    ))}
+                    <button type="button" class="button secondary" disabled={busy} onClick={() => setChanging(null)}>
+                      {w.feelingBack}
+                    </button>
+                  </p>
+                </div>
+              )}
+            </li>
+          );
+        })}
+      </ul>
+      {feelings.length > shown.length && <p class="small muted">{w.showing(shown.length, feelings.length)}</p>}
+      <button type="button" class="button secondary" disabled={busy} onClick={() => void keepAll(shown.map((f) => f.id))}>
+        {w.keepAllFeelings(shown.length)}
       </button>
     </div>
   );
