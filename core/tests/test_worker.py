@@ -14,6 +14,7 @@ from dmbot.config import ConfigError, load_settings
 from dmbot.recaps.discord import RecapFeatures
 from dmbot.worker import __main__ as worker
 
+F: Any = RecapFeatures  # (stand-in bots stand in for the class: untyped on purpose)
 BASE = {"DISCORD_TOKEN": "t", "EARS_SHARED_SECRET": "s", "DATABASE_URL": "postgresql://x/y"}
 NO_TOKEN = {k: v for k, v in BASE.items() if k != "DISCORD_TOKEN"}
 
@@ -57,18 +58,18 @@ class TheLoops(unittest.IsolatedAsyncioTestCase):
             def __getattr__(self, name: str) -> None:
                 return None
 
-        bot = Bot()
-        bot.seen = seen  # type: ignore[attr-defined]
-        bot.settings = load_settings({**BASE, "DMBOT_WORKER": "1" if worker_on else "0"})  # type: ignore[attr-defined]
-        bot.audio_worker = object()  # type: ignore[attr-defined]
-        bot._recap_audio_loop = audio_loop  # type: ignore[attr-defined]
-        bot._watched = watched  # type: ignore[attr-defined]
+        bot: Any = Bot()
+        bot.seen = seen
+        bot.settings = load_settings({**BASE, "DMBOT_WORKER": "1" if worker_on else "0"})
+        bot.audio_worker = object()
+        bot._recap_audio_loop = audio_loop
+        bot._watched = watched
         return bot
 
     async def test_the_bot_runs_the_audio_job_only_with_the_worker_off(self) -> None:
         for on in (False, True):
             stub = self.stub(worker_on=on)
-            tasks = RecapFeatures.recap_tasks(stub)
+            tasks = F.recap_tasks(stub)
             named = {t[0]: t[1] for t in tasks if isinstance(t, tuple)}
             await named["recap-audio"]
             self.assertEqual(stub.seen, [{"job": not on}])
@@ -84,9 +85,9 @@ class TheServers(unittest.IsolatedAsyncioTestCase):
             campaigns=SimpleNamespace(guilds_with_campaigns=listed),
             guilds=[SimpleNamespace(id=9)],
         )
-        self.assertEqual(await RecapFeatures.work_guild_ids(stub), [3, 5])
+        self.assertEqual(await F.work_guild_ids(stub), [3, 5])
         stub.headless = False
-        self.assertEqual(await RecapFeatures.work_guild_ids(stub), [9])
+        self.assertEqual(await F.work_guild_ids(stub), [9])
 
 
 class TheAudioLoop(unittest.IsolatedAsyncioTestCase):
@@ -116,7 +117,7 @@ class TheAudioLoop(unittest.IsolatedAsyncioTestCase):
             patch("dmbot.recaps.discord.asyncio.sleep", sleep),
             self.assertRaises(asyncio.CancelledError),
         ):
-            await RecapFeatures._recap_audio_loop(stub, job=job, notices=notices)
+            await F._recap_audio_loop(stub, job=job, notices=notices)
         return calls
 
     async def test_job_and_notices_are_separate_halves_of_one_loop(self) -> None:
