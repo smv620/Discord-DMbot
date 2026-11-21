@@ -159,7 +159,7 @@ class ChangingAThreadsState(Web):
 class AddingWhoIsInvolved(ChangingAThreadsState):
     """Slice 2b (migration 0581): the card's `involve` from the page."""
 
-    async def involve(self, thread: str, who: str, role: str = "", user: Any = None) -> str:
+    async def involve(self, thread: str, who: str, role: str = "helper", user: Any = None) -> str:
         return await plot_threads.queue_involve(
             self.web, user or self.session, self.cref,
             {"thread": thread, "who": who, "role": role},
