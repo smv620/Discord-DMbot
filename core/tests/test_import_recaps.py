@@ -22,6 +22,7 @@ from dmbot.memory.store import MemoryStore
 from dmbot.transcript.import_job import STALE_SCAN_S, ImportStore
 from dmbot.transcript.models import Line
 from dmbot.transcript.store import TranscriptStore
+from tests.fake_import_state import FakeImportState
 from tests.pg import DatabaseTest
 
 GUILD, DM, MIRA = 77, 5, 7001
@@ -162,7 +163,7 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         _import_unhonoured={},
         _import_party={},
         _import_queued={},
-        _import_unchecked={},
+        import_state=FakeImportState(),
         _propose_new_names=AsyncMock(return_value=["Kazeth"]),
         repair_names=AsyncMock(return_value=0),  # PlotBot's name pass (#2628): its own tests
         _hold_or_queue=AsyncMock(return_value="held"),
@@ -530,7 +531,7 @@ class TheCrashAndTheNews(WithImports):
         bot, campaign = fake_bot(self.store)
         campaign.id = self.campaign.id
         campaign.dm_bot_channel_id = 88
-        bot._import_unchecked[self.campaign.id] = 2
+        await bot.import_state.bump(GUILD, self.campaign.id, "unchecked", 2)
         await bot._tell_import_news(GUILD, self.store)
         channel, text = bot.post.await_args.args[:2]
         self.assertEqual(channel, 88)
@@ -594,7 +595,7 @@ class TheCrashAndTheNews(WithImports):
         self.assertEqual(done, 1)
         posted = " ".join(c.args[1] for c in bot.post.await_args_list)
         self.assertIn("Kazeth", posted)  # the new names still reach the DM
-        self.assertEqual(bot._import_unchecked, {})
+        self.assertEqual(await bot.import_state.counted(GUILD, "unchecked"), {})
         self.assertTrue(any("couldn't link the party" in line for line in logs.output))
 
     async def test_different_reasons_all_appear(self) -> None:
