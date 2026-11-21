@@ -109,3 +109,37 @@ class WorkerLease:
                 log.warning(
                     "Worker lease (%s): release failed (%s)", self._kind, type(exc).__name__
                 )
+
+
+class Slots:
+    """A few leases of one kind, so at most `n` jobs of that kind run at once across every process
+    (#3845: recaps three at a time). A kind's slots are `<kind>_a`, `<kind>_b`, ... (a lease's kind
+    is letters and '_' only)."""
+
+    def __init__(
+        self,
+        db: Database,
+        kind: str,
+        n: int,
+        *,
+        ttl_s: int,
+        clock: Callable[[], float] = time.time,
+        renew_every_s: float | None = None,
+    ) -> None:
+        self._leases = [
+            WorkerLease(
+                db, f"{kind}_{chr(ord('a') + i)}", ttl_s=ttl_s, clock=clock,
+                renew_every_s=renew_every_s,
+            )
+            for i in range(n)
+        ]  # fmt: skip
+
+    @contextlib.asynccontextmanager
+    async def hold(self) -> AsyncIterator[bool]:
+        """`async with slots.hold() as got:` - got is False when every slot is taken."""
+        async with contextlib.AsyncExitStack() as stack:
+            for lease in self._leases:
+                if await stack.enter_async_context(lease.hold()):
+                    yield True
+                    return
+            yield False

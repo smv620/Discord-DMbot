@@ -446,6 +446,7 @@ from dmbot.recaps.discord import (
     HINTS_WAIT_S,
     LORE_SWEEP_EVERY_S,
     NAME_ANSWERS_PER_ROUND,
+    RECAP_SLOTS,
     WEB_STYLE_PER_ROUND,
     RecapFeatures,
 )
@@ -457,7 +458,7 @@ from dmbot.recaps.plot_backup import PlotFineSection, PlotIssuesSection
 from dmbot.recaps.plot_talk_run import TalkRunner, TalkStore
 from dmbot.recaps.requests import RequestStore
 from dmbot.recaps.session_split import SessionSplitter, release_recap_lines
-from dmbot.recaps.store import RecapRightsSection, RecapSection, RecapStore
+from dmbot.recaps.store import LEASE_S, RecapRightsSection, RecapSection, RecapStore
 from dmbot.recaps.style import NotesSection, NoteStore, StyleSection, StyleStore
 from dmbot.retention import RetentionJob
 from dmbot.retention_channels import ChannelCounts, HasChannels, retire_channels
@@ -703,6 +704,7 @@ from dmbot.ui.upload_notice import UndoUploadButton, notice_text, notice_view
 from dmbot.ui.world_notes import WorldNotesButton
 from dmbot.upload_notices import Notice as UploadNotice
 from dmbot.upload_notices import UploadNotices
+from dmbot.worker_lease import Slots
 
 REPORT_CALLS = 8  # AI calls a session may spend on the after-session report (grading and sorting)
 MEANING_RUN_CALLS = 50  # Voyage AI calls one after-session run may make (64 texts each)
@@ -1133,6 +1135,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.headless = False
         # What a worker wants said in Discord, which the bot delivers (#3843).
         self.outbox = Outbox(recaps.db) if recaps is not None else None
+        # At most three recap jobs at once, across the bot and the worker (#3845).
+        self.recap_slots = (
+            Slots(recaps.db, "recap_slot", RECAP_SLOTS, ttl_s=LEASE_S)
+            if recaps is not None
+            else None
+        )
         self.outbox_wake = asyncio.Event()
         # The lore DMs uploaded on the website, waiting to be read (#3022), and the reads running.
         self.lore_uploads = lore_queue.LoreQueue(recaps.db) if recaps is not None else None
