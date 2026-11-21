@@ -322,10 +322,19 @@ describe("Let me choose on the join question (#4891)", () => {
     expect(screen.getByText("Session 3")).toBeTruthy();
   });
 
-  it("a back question always says the later-pick Undo line", async () => {
+  it("a back question whose first pick is undone says what was known before leaving, when it waits again", async () => {
     const { api } = choiceApi({ waitingAgain: true, choose: async () => ({ chose: [{ id: "n1234567", count: 14 }], choseMore: 0, first: true, batch: 9 }) });
     render(card(api, ["Mira"], true));
     expect(await screen.findByText("Until then Mira knows only what was known before leaving.")).toBeTruthy();
+    await clickFirstGive();
+    await clickWhenEnabled("↩️ Undo");
+    expect(await screen.findByText("↩️ Undone. Mira knows only what Mira knew before leaving, plus what was said at the table since.")).toBeTruthy();
+  });
+
+  it("a back question whose question was answered otherwise says the later-pick line", async () => {
+    const { api } = choiceApi({ waitingAgain: false, choose: async () => ({ chose: [{ id: "n1234567", count: 14 }], choseMore: 0, first: true, batch: 9 }) });
+    render(card(api, ["Mira"], true));
+    await screen.findByText("Until then Mira knows only what was known before leaving.");
     await clickFirstGive();
     await clickWhenEnabled("↩️ Undo");
     expect(await screen.findByText("↩️ Undone. Mira no longer knows what that pick gave.")).toBeTruthy();
