@@ -204,6 +204,7 @@ _CHOICES: dict[str, Sequence[str]] = {
     "knows_how": KNOWS_HOWS,
     "route_state": route_words.STATES,  # (a route's state, #4173 slice 6d)
     "end_reason": (*END_REASONS, whereabouts.MOVED),  # (a move, #4173 slice 5)
+    "hand_over": ("", *END_REASONS),  # (a kept hand-over, #4170; "" for any other)
     "place_level": place_levels.LEVELS,
     "place_level_from": place_levels.FROM,
     "form": place_levels.FORMS,  # a place's form (#4173 slice 6a)
@@ -268,6 +269,8 @@ def _valid(column: str, value: object) -> bool:
         return column in _NULLABLE
     if column in _IDS:
         return is_id(value)
+    if column == "hand_over_from":  # (who a kept hand-over came from, #4170; "" for none)
+        return value == "" or is_id(value)
     if column in _VERSIONS:
         return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 10_000
     if column == "played_by":
@@ -609,6 +612,12 @@ def _check_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             )
         ):
             raise CampaignError(DAMAGED)
+        # and a kept hand-over is whole, on an owns or carries only (#4170), as the database says
+        if table is RELATIONS and (
+            bool(raw.get("hand_over")) != bool(raw.get("hand_over_from"))
+            or (raw.get("hand_over") and raw.get("predicate") not in ("owns", "carries"))
+        ):
+            raise CampaignError(DAMAGED)
         if table is SHEETS:
             raw = _checked_sheet(raw)
         elif table is EVIDENCE:
@@ -928,6 +937,8 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "length_unit": None,
                 "length_approx": False,
                 "length_from": None,
+                "hand_over": "",  # from before #4170: a kept hand-over didn't say how
+                "hand_over_from": "",
                 **raw,
                 "definition_version": version,
             }

@@ -26,6 +26,7 @@ from dmbot.memory import kin, next_words, place_words, quote_kind, route_words, 
 from dmbot.memory import reputation_words as feeling_words
 from dmbot.memory.backstory_links import QUOTE_MAX
 from dmbot.memory.end_match import FILLER, SHORTEST, Ends
+from dmbot.memory.hand_over import SALES
 from dmbot.memory.list_names import split_list
 from dmbot.memory.models import name_key
 from dmbot.memory.ontology import DISGUISED_AS, FALLBACK_PREDICATE, SYNONYMS
@@ -147,8 +148,8 @@ INFERRED_CHARS = 80  # why DMbot inferred a connection (#2959 item 5): one short
 
 # How an item changed hands (#4115; Supervisor's ruling, 2026-11-10): the `change` a connection
 # may carry, with `from` the one who had it before. A sale, a gift or a trade moves the owning
-# (and the holding); a theft or a loss moves only the holding, so its owner still owns it.
-SALES = ("sold", "gave", "traded")
+# (and the holding); a theft or a loss moves only the holding, so its owner still owns it. The
+# sales are `hand_over.SALES` (one list, #4170).
 TAKEN = ("stolen", "lost")
 HAND_OVERS = (*SALES, *TAKEN)
 

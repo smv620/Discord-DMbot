@@ -247,7 +247,8 @@ RELATIONS = Table(
      "mention_ids", "from_session_at", "to_session_at", "from_game_time", "to_game_time",
      "secret", "created_at", "definition_version", "unrevealed", "directional", "decided",
      "via_alias_id", "knows_how", "end_reason", "both_ways", "assumed", "route_state",
-     "length_words", "length_amount", "length_unit", "length_approx", "length_from"),
+     "length_words", "length_amount", "length_unit", "length_approx", "length_from",
+     "hand_over", "hand_over_from"),
     # unrevealed: held back from the players until said at the table (#2404). directional: an
     # older row's role has no direction (#2457). knows_how: the story didn't say (#3881).
     # end_reason: an end from before #4115 has none. both_ways: its kind's default (#4154).
@@ -257,6 +258,7 @@ RELATIONS = Table(
         "knows_how": "", "end_reason": None, "both_ways": None, "assumed": False,
         "route_state": "", "length_words": None, "length_amount": None, "length_unit": None,
         "length_approx": False, "length_from": None,  # (no length before #4255)
+        "hand_over": "", "hand_over_from": "",  # (no kept hand-over said how before #4170)
     },
 )  # fmt: skip
 CORRECTIONS = Table(
@@ -1157,6 +1159,8 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
         "length_unit": None,
         "length_approx": False,
         "length_from": None,
+        "hand_over": "",  # no kept hand-over said how before #4170
+        "hand_over_from": "",
     },
     # unique_item: nobody said, the name decides (#1267). audience_limited: off (#1649).
     # made_before_name_gate: a snapshot from before the column is a row from before it (#2358)
