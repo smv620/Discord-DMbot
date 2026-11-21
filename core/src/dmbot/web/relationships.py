@@ -22,7 +22,7 @@ from typing import Any
 from dmbot import progress
 from dmbot.consent import TERMS_VERSION
 from dmbot.db import Database
-from dmbot.memory import gate, kin, party_icons, reputation_words, web_actions
+from dmbot.memory import gate, kin, knowers, party_icons, reputation_words, web_actions
 from dmbot.memory.claims import Extracted, condition_of
 from dmbot.memory.link_kinds import link_kind
 from dmbot.memory.link_words import (
@@ -560,9 +560,20 @@ def link_holders(
     names = {str(v["id"]): str(v["name"]) for v in known["viewers"]}
     out: dict[str, list[dict[str, str]]] = {}
     for link in data.connections:
-        holders = [
-            {"id": c, "name": names[c]} for c in who(gate.CONNECTION, str(link)) if c in names
-        ]
+        raw = data.knowers.get((gate.CONNECTION, str(link)), {})
+        own = raw if isinstance(raw, Mapping) else dict.fromkeys(raw, 1.0)  # (a plain list: sure)
+        holders = []
+        for c in who(gate.CONNECTION, str(link)):
+            if c not in names:
+                continue
+            holder = {"id": c, "name": names[c]}
+            # DMbot's guess (#3940, #4968): an NPC's own row below 1.0 (never a player character's,
+            # and never a character who knows only through a group's row), "sure" at the guess's
+            # top step and "likely" below it. A DM's save of the list that showed it keeps it.
+            sure = own.get(c)
+            if sure is not None and sure < 1.0 and c not in data.player_characters:
+                holder["guess"] = "sure" if sure >= knowers.GUESS_SURE else "likely"
+            holders.append(holder)
         out[str(link)] = sorted(holders, key=lambda h: (h["name"].casefold(), h["id"]))
     return out
 

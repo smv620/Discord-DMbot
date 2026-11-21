@@ -67,3 +67,46 @@ def test_sharing_the_work_changes_no_answer() -> None:
     shared = relationships._knowers(known)
     assert relationships.know_words(known, shared) == relationships.know_words(known)
     assert relationships.link_holders(known, shared) == relationships.link_holders(known)
+
+
+def _guess_known(rows: list[list[Any]], groups: list[list[str]], pcs: list[str]) -> dict[str, Any]:
+    known = _known(rows, groups, ["e1"])
+    known["connections"] = {"x": ["e1", "e1"]}
+    known["playerCharacters"] = pcs
+    known["viewers"] = [
+        {"id": "ann", "name": "Ann"},
+        {"id": "bob", "name": "Bob"},
+        {"id": "cy", "name": "Cy"},
+        {"id": "dee", "name": "Dee"},
+    ]
+    return known
+
+
+def test_an_npc_below_one_is_marked_as_dmbots_guess_sure_or_likely() -> None:
+    known = _guess_known(
+        [
+            [gate.CONNECTION, "x", "ann", 0.9],
+            [gate.CONNECTION, "x", "bob", 0.6],
+            [gate.CONNECTION, "x", "cy", 1.0],
+        ],
+        [],
+        [],
+    )
+    got = relationships.link_holders(known)["x"]
+    assert got == [
+        {"id": "ann", "name": "Ann", "guess": "sure"},
+        {"id": "bob", "name": "Bob", "guess": "likely"},
+        {"id": "cy", "name": "Cy"},
+    ]
+
+
+def test_a_player_character_is_never_marked_and_neither_is_a_group_member() -> None:
+    known = _guess_known(
+        [[gate.CONNECTION, "x", "ann", 0.6], [gate.CONNECTION, "x", "party", 1.0]],
+        [["dee", "party"]],
+        ["ann"],
+    )
+    known["viewers"].append({"id": "party", "name": "The party"})
+    got = {h["id"]: h for h in relationships.link_holders(known)["x"]}
+    assert "guess" not in got["ann"]  # (a player character's certainty is another matter)
+    assert "guess" not in got["dee"]  # (knows only through the group's row)
