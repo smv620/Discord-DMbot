@@ -32,6 +32,19 @@ VERBS: dict[str, str] = {
     **dict.fromkeys(_FRIENDLY, standing.FRIENDLY),
     **dict.fromkeys(_DEVOTED, standing.DEVOTED),
 }
+# The perfect tense, after "has" or "have" ("has long despised elves", Supervisor's ruling C2 on
+# #4982). Only the perfect: a bare past ("despised elves") may be a feeling that has ended, so it
+# stays a miss, the safe side.
+_PERFECT: dict[str, str] = {
+    **dict.fromkeys(("hated", "despised", "loathed"), standing.HOSTILE),
+    **dict.fromkeys(
+        ("distrusted", "mistrusted", "disliked", "shunned", "resented"), standing.UNFRIENDLY
+    ),
+    "feared": standing.WARY,
+    **dict.fromkeys(("welcomed", "trusted", "liked"), standing.FRIENDLY),
+    **dict.fromkeys(("revered", "loved", "honoured", "honored"), standing.DEVOTED),
+}
+_HAS = r"(?:has|have)(?:\s+(?:long|always|still|openly|deeply|greatly))*\s+"
 # (a word or two the text may put between the holder and the verb, or the verb and the people)
 _LINK = r"(?:\s+(?:openly|deeply|still|always|greatly|all|most|the|its|their))*\s+"
 _SENTENCES = re.compile(r"(?<=[.!?])\s+|\n+")
@@ -96,7 +109,7 @@ def read(text: str, holders: Mapping[str, str], cultures: Mapping[str, str]) -> 
     names = {n.casefold(): ("culture", i) for n, i in cultures.items()}
     if not holders:
         return []
-    verb = _alternation(VERBS)
+    verb = rf"{_alternation(VERBS)}|{_HAS}(?P<perfect>{_alternation(_PERFECT)})"
     whole = _alternation({**_PLURAL, **names})  # (a culture's name is whole wherever it stands)
     single = _alternation(_SINGLE)
     target = rf"(?:(?P<whole>{whole})(?:\s+folk)?|(?P<single>{single}){_WHOLE_AFTER})(?!\w)"
@@ -128,7 +141,11 @@ def read(text: str, holders: Mapping[str, str], cultures: Mapping[str, str]) -> 
             continue
         for pattern, holder_id in patterns:
             for m in pattern.finditer(sentence):
-                step = VERBS[m["verb"].casefold()]
+                step = (
+                    _PERFECT[m["perfect"].casefold()]
+                    if m["perfect"]
+                    else VERBS[m["verb"].casefold()]
+                )
                 words = [m["whole"] or m["single"]]
                 at = m.end()
                 while (n := more.match(sentence, at)) is not None:  # (the rest of a list)
