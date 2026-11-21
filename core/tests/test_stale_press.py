@@ -9,7 +9,7 @@ from __future__ import annotations
 import datetime as dt
 import unittest
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, patch
 
 from dmbot.memory import join_questions
@@ -58,7 +58,7 @@ class ThePress(unittest.IsolatedAsyncioTestCase):
     async def test_answered_since_the_message_says_already_answered(self) -> None:
         bot, interaction = self.bot([True]), SimpleNamespace(message=message(VELL))
         with patch.object(party_leave, "_edit", AsyncMock()) as edit:
-            await party_leave._gone(interaction, bot, self.campaign, VELL)
+            await party_leave._gone(cast(Any, interaction), bot, self.campaign, VELL)
         edit.assert_awaited_once_with(interaction, party_leave.ANSWERED)
         since = bot.memory.staying_answered_since.await_args.args[3]
         self.assertEqual(since, int(SENT.timestamp()))
@@ -71,20 +71,20 @@ class ThePress(unittest.IsolatedAsyncioTestCase):
             patch.object(party_leave, "_edit", AsyncMock()) as edit,
             patch.object(party_leave, "_after_answer", after),
         ):
-            await party_leave._gone(interaction, bot, self.campaign, VELL)
+            await party_leave._gone(cast(Any, interaction), bot, self.campaign, VELL)
         after.assert_awaited_once_with(bot, self.campaign, TUCK, party_leave.NOT_WAITING)
         edit.assert_awaited_once_with(interaction, "redrawn", rest)
 
     async def test_removed_with_nobody_left_drops_the_buttons(self) -> None:
         bot, interaction = self.bot([False]), SimpleNamespace(message=message(VELL))
         with patch.object(party_leave, "_edit", AsyncMock()) as edit:
-            await party_leave._gone(interaction, bot, self.campaign, VELL)
+            await party_leave._gone(cast(Any, interaction), bot, self.campaign, VELL)
         edit.assert_awaited_once_with(interaction, party_leave.NOT_WAITING, None)
 
     async def test_a_failed_check_says_the_words_true_either_way(self) -> None:
         bot, interaction = self.bot(RuntimeError("down")), SimpleNamespace(message=message(VELL))
         with patch.object(party_leave, "_edit", AsyncMock()) as edit:
-            await party_leave._gone(interaction, bot, self.campaign, VELL)
+            await party_leave._gone(cast(Any, interaction), bot, self.campaign, VELL)
         edit.assert_awaited_once_with(interaction, party_leave.NOT_WAITING, None)
 
 
@@ -170,7 +170,8 @@ class TheStoreRead(Party):
             ])],
         ))  # fmt: skip
         with patch.object(party_leave, "_edit", AsyncMock()) as edit:
-            await party_leave._gone(interaction, bot, campaign, self.vell)
+            await party_leave._gone(cast(Any, interaction), bot, campaign, self.vell)
+        assert edit.await_args is not None
         text, view = edit.await_args.args[1], edit.await_args.args[2]
         self.assertTrue(text.startswith(party_leave.NOT_WAITING))
         self.assertIn("Tuck", text)
