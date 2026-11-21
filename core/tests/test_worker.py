@@ -131,7 +131,6 @@ class TheAudioLoop(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.one_round(True, True), ["job", "refresh", "notices"])
 
 
-F: Any = RecapFeatures  # (stand-in bots stand in for the class: untyped on purpose)
 CID = "0123456789abcdef0123456789abcdef"  # (a campaign id: 32 hex, as a button needs)
 
 
