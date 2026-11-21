@@ -234,6 +234,14 @@ async def _joins(src: Sources, g: int, c: str) -> Counted:
     return Counted(n, oldest)
 
 
+async def _leaves(src: Sources, g: int, c: str) -> Counted:
+    """A goodbye or a death, waiting for the DM's "still in the party?" (#4537 slice 6)."""
+    if src.memory is None:
+        return Counted(0)
+    n, oldest = await src.memory.staying_questions_waiting(g, c)
+    return Counted(n, oldest)
+
+
 async def _reveals(src: Sources, g: int, c: str) -> Counted:
     """What the characters learned that waits for the DM's Keep or Not this (#3863): what the
     reveal card counts (`RevealProposals.count_waiting`), leaving out a proposal whose speaker is
@@ -266,6 +274,7 @@ _COUNTERS: dict[str, Callable[[Sources, int, str], Awaitable[Counted]]] = {
     kinds.THREADS: _threads,
     kinds.SECRETS: _secrets,
     kinds.JOINS: _joins,
+    kinds.LEAVES: _leaves,
     kinds.REVEALS: _reveals,
     kinds.MAPS: _maps,
     kinds.CLAIMS: _claims,

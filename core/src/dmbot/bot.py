@@ -597,6 +597,7 @@ from dmbot.ui import (
     party_card,
     party_choose,
     party_join,
+    party_leave,
     party_tell,
     player_id,
     recap_audio,
@@ -1955,6 +1956,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(*party_card.DYNAMIC_ITEMS)  # 🚪 Has left the party, #4537
         self.add_dynamic_items(*party_tell.DYNAMIC_ITEMS)  # 📖 Catch up's Undo, #4537 4b
         self.add_dynamic_items(*party_join.DYNAMIC_ITEMS)  # the join question, #4537 slice 2b
+        self.add_dynamic_items(*party_leave.DYNAMIC_ITEMS)  # still in the party?, #4537 6a
         self.add_dynamic_items(*party_choose.DYNAMIC_ITEMS)  # Let me choose, #4537 slice 4c
         self.add_dynamic_items(  # a DM shows or hides a map, #4414
             map_show.CampaignSelect, map_show.MapSelect, map_show.ActButton,
@@ -3524,6 +3526,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # Characters who joined the party: "What does Mira know about what came before?",
             # one private message, never during play (#4537 slice 2b; off unless its switch is on)
             ("party join questions", lambda: self.send_join_questions(table)),
+            # A player character marked dead (or, slice 6b, a goodbye heard): "Still in the
+            # party?", one private message, never during play (#4537 slice 6a; no switch)
+            ("party staying questions", lambda: self.send_staying_questions(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
             # The biggest clashes PlotBot graded, up to three; no AI call here (#2660)
             ("big clashes", lambda: self.tell_contradictions(table)),
@@ -12617,6 +12622,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if message.id != pressed_message_id:
                 with contextlib.suppress(discord.HTTPException):
                     await message.edit(content=shown, view=None)
+
+    async def send_staying_questions(self, table: Table) -> None:
+        """The after-session step for the goodbye and death questions (#4537 slice 6a)."""
+        if table.campaign_id is not None:
+            await party_leave.send_staying_questions(self, table.guild_id, table.campaign_id)
 
     async def send_join_questions(self, table: Table) -> None:
         """The after-session step for the party join question (#4537 slice 2b)."""
