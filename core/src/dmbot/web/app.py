@@ -76,6 +76,7 @@ from dmbot.web import (
     met_list,
     my_lines,
     names_smart,
+    node_traits,
     npc_pages,
     offers,
     optional_rules,
@@ -2280,6 +2281,16 @@ def create_app(
         session, _token = signed
         try:
             return await read_node_summary(db, session, ref, node, peek=peek == "1")
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/web/nodes/{node}/traits")
+    async def me_campaign_web_node_traits(ref: str, node: str, signed: Signed) -> dict[str, Any]:
+        """A character's lineage and class, for a DM of the campaign only (#3925)."""
+        session, _token = signed
+        try:
+            return await node_traits.read(db, session, ref, node)
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
