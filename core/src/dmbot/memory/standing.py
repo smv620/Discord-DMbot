@@ -73,6 +73,13 @@ def step_of(score: float) -> str:
     return DEVOTED
 
 
+# Each step's own words before a people ("wary of orcs"; #4229, the reviewer: "wary toward" reads
+# wrong), for World notes' feelings and the first meeting's reminder.
+TOWARD = {
+    HOSTILE: "hostile to", UNFRIENDLY: "unfriendly toward", WARY: "wary of",
+    FRIENDLY: "friendly toward", DEVOTED: "devoted to",
+}  # fmt: skip
+
 # How the DM's step reads on a "knows" line (#3642): in the readers' own words, so the line keeps
 # the shape "knows (wary)" whoever set it.
 LINE_WORD = {
