@@ -1072,11 +1072,25 @@ def _is_cannot_show(exc: MemoryRuleError) -> bool:
     return reason.startswith("Show ") and reason.endswith("common knowledge is something they see.")
 
 
+SHOWN_WORD = "shown"  # (`<answer> shown <ids>`: the characters the page's list showed, #4968)
+
+
 def _who_of(text: str) -> tuple[str, list[str]]:
     """The website's answer as the door let it through: `dm`, `everyone`, `common` or
     `some <ids>`. An empty one is "" (the store refuses it as no answer)."""
     words = text.split()
+    if SHOWN_WORD in words:  # (what the list showed is `_shown_of`'s, not part of the answer)
+        words = words[: words.index(SHOWN_WORD)]
     return (words[0], words[1:]) if words else ("", [])
+
+
+def _shown_of(text: str) -> list[str] | None:
+    """The characters the website's list showed, when the answer says so (`... shown <ids>`,
+    #4968), else None: an older page, which saves as before."""
+    words = text.split()
+    if SHOWN_WORD not in words:
+        return None
+    return words[words.index(SHOWN_WORD) + 1 :]
 
 
 async def _alias_who(
@@ -2690,7 +2704,9 @@ async def _link(memory: MemoryStore, guild_id: int, cid: str, entity_id: str, a:
             # A job stopped between the two and retried carries only the second.
             who, characters = _who_of(a.text)
             made: list[int] = []
-            await link_edits.set_who_knows(memory, guild_id, cid, link, who, characters, made=made)
+            await link_edits.set_who_knows(
+                memory, guild_id, cid, link, who, characters, made=made, listed=_shown_of(a.text)
+            )
             return replace(pair, batches=tuple(made))
         else:
             return _failed(FAILED)

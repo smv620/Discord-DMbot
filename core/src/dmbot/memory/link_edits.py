@@ -10,7 +10,7 @@ are never logged here.
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Collection, Sequence
 
 from dmbot.memory import kin
 from dmbot.memory.models import DM, REJECTED, MemoryRuleError, Relation, Written
@@ -64,9 +64,12 @@ async def set_who_knows(
     *,
     players_only: bool = False,
     made: list[int] | None = None,
+    listed: Collection[str] | None = None,
 ) -> Written[object]:
     """ "Who knows this?" for one connection, with its fourth answer, 🌍 Common knowledge (#4537
-    slice 1b). See `with_common`; the flags are `_set_flags`."""
+    slice 1b). See `with_common`; the flags are `_set_flags`. `listed`: the characters the DM's
+    list showed (the website's, #4968): DMbot's guess of one of them kept is the DM's word, and
+    one the list never showed is left as it is."""
     ends = (link.subject_id, link.object_id)
     shown = await memory.entries_shown(guild_id, campaign_id, ends)
     hidden_id = next((e for e in ends if e not in shown), None)
@@ -78,7 +81,7 @@ async def set_who_knows(
     async def flags(answer: str, chosen: Sequence[str], log: list[int]) -> Written[object]:
         return await _set_flags(
             memory, guild_id, campaign_id, link, answer, chosen,
-            players_only=players_only, made=log,
+            players_only=players_only, made=log, listed=listed,
         )  # fmt: skip
 
     return await with_common(
@@ -184,6 +187,7 @@ async def _set_flags(
     *,
     players_only: bool = False,
     made: list[int] | None = None,
+    listed: Collection[str] | None = None,
 ) -> Written[object]:
     """ "Who knows this?" for one connection (#2935), the one call the name card and the website
     share. Only the DM (hidden from the party, no knowers), only these player characters (hidden
@@ -245,6 +249,7 @@ async def _set_flags(
             source=DM,
             players_only=players_only,
             dm_chose_secret=True,
+            listed=listed,
         ),
     )
     # (hiding it with no one to know it is the only change: that one is what Undo takes back, #4159)

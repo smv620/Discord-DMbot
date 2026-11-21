@@ -9024,13 +9024,15 @@ class MemoryStore:
         source: str,
         dm_chose_secret: bool,
         players_only: bool = False,
+        listed: Collection[str] | None = None,
     ) -> Written[list[str]]:
         """ "Who knows this?" for a hidden connection (#2935): exactly these player characters know
-        it, or only the DM when none. One change, so Undo takes it back. Only the DM."""
+        it, or only the DM when none. One change, so Undo takes it back. Only the DM. `listed`: the
+        characters the DM's list showed (`knowers.set_connection_knowers`, #4968)."""
         async with self._write(guild_id, campaign_id, source, dm_chose_secret=dm_chose_secret) as w:
             await beliefs.perspective_ids(w)
             chosen = await knowers.set_connection_knowers(
-                w, relation_id, character_ids, players_only=players_only
+                w, relation_id, character_ids, players_only=players_only, listed=listed
             )
             return Written(chosen, w.batch)
 
