@@ -365,6 +365,9 @@ UNSCOPED_TABLES = (
     "account_moves",
     "recap_audio_strays",
     "move_code_asks",
+    # One row for each kind of background work, naming who holds it and until when (#3842): a kind
+    # word, a random token and a time, nothing about any server. No grant for the website.
+    "worker_leases",
     # One copy of each published homebrew page, whoever imported it (#1633): public content with
     # no campaign scope, the second exception to campaign isolation. No grant for the website.
     "homebrew_pages",
