@@ -77,6 +77,43 @@ describe("the Plot threads panel (#3696, slice 1)", () => {
     expect((await screen.findByRole("alert")).textContent).toBe(w.failed);
   });
 
+  it("a failed read says what to do next and offers Try again", async () => {
+    await open(async () => {
+      throw new ApiError("network");
+    });
+    expect((await screen.findByRole("alert")).textContent).toBe(w.failed);
+    expect(screen.getByRole("button", { name: w.tryAgain })).toBeTruthy();
+  });
+
+  it("Try again reads again and draws the threads", async () => {
+    const api = mockApi("table");
+    let calls = 0;
+    api.plotThreads = async () => {
+      calls += 1;
+      if (calls === 1) throw new ApiError("network");
+      return answer();
+    };
+    render(<PlotThreadsPanel api={api} refId={REF} />);
+    fireEvent.click(await screen.findByRole("button", { name: w.tryAgain }));
+    expect(await screen.findByText("The drowned bell")).toBeTruthy();
+    expect(calls).toBe(2);
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("Try again that fails again shows the failure line again", async () => {
+    const api = mockApi("table");
+    let calls = 0;
+    api.plotThreads = async () => {
+      calls += 1;
+      throw new ApiError("network");
+    };
+    render(<PlotThreadsPanel api={api} refId={REF} />);
+    fireEvent.click(await screen.findByRole("button", { name: w.tryAgain }));
+    await waitFor(() => expect(calls).toBe(2));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.failed);
+    expect(screen.getByRole("button", { name: w.tryAgain })).toBeTruthy();
+  });
+
   it("says there are no threads yet", async () => {
     await open(answer({ total: 0 }, []));
     expect(await screen.findByText(w.none)).toBeTruthy();
