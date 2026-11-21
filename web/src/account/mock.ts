@@ -695,7 +695,6 @@ function startWeb(big: boolean, lonely = false): WebState {
   return { nodes, links, nextLink: links.length + 1 };
 }
 
-/** The pretend names a DM may look at the web as (#2999): two player characters first, then NPCs. */
 // The open plot threads (#3696, slice 1): in play first, then resolved or dropped; one stalled, one promise, one with no state yet.
 function pretendPlotThreads(): PlotThreads {
   return {
@@ -734,6 +733,7 @@ function pretendPlotThreads(): PlotThreads {
   };
 }
 
+/** The pretend names a DM may look at the web as (#2999): two player characters first, then NPCs. */
 const PRETEND_VIEWERS: { id: string; name: string; kind: "pc" | "npc"; group: "party" | "left" | "other"; note?: string }[] = [
   { id: "pc-cerric", name: "Cerric", kind: "pc", group: "party" },
   { id: "pc-mira", name: "Mira", kind: "pc", group: "party" },

@@ -4,6 +4,7 @@ export const plotThreadsWords = {
   heading: "Plot threads",
   intro: "The threads DMbot keeps for your campaign. Only you see this.",
   loading: "Loading…",
+  slow: "Still loading. This is taking longer than usual.",
   failed: "Couldn't load the threads.",
   none: "No threads yet. Add one from a name's card in Discord.",
   noState: "No state yet",

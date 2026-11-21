@@ -103,7 +103,7 @@ describe("the Plot threads panel (#3696, slice 1)", () => {
     expect(screen.getByText(w.quiet(3), { exact: false })).toBeTruthy();
   });
 
-  it("uses the stalled line the answer sends ready-made, and the plural for two", async () => {
+  it("uses the stalled line the answer sends ready-made, not the one it would build", async () => {
     await open(answer({ stalledCount: 2, stalledLine: "2 threads haven't moved for 3 or more sessions, as core words it." }, [thread()]));
     expect(await screen.findByText("2 threads haven't moved for 3 or more sessions, as core words it.")).toBeTruthy();
   });
@@ -134,10 +134,14 @@ describe("the Plot threads panel (#3696, slice 1)", () => {
     expect(within(card).getByText(`${w.movedBy} Cerric, ${w.endedIt("Tavin")}`)).toBeTruthy();
     const toggle = within(card).getByRole("button", { name: w.seeHistory });
     expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    // The list is always in the page, so the toggle's aria-controls points at a real element, open or shut.
+    const listId = toggle.getAttribute("aria-controls");
+    expect(listId).toMatch(/^plot-history-/);
+    expect(document.getElementById(listId!)).not.toBeNull();
     fireEvent.click(toggle);
     expect(within(card).getByRole("button", { name: w.hideHistory }).getAttribute("aria-expanded")).toBe("true");
     expect(within(card).getByText("Open (Session 2)")).toBeTruthy();
-    expect(within(card).getByRole("list", { hidden: true }).id).toMatch(/^plot-history-/);
+    expect(document.getElementById(listId!)!.hidden).toBe(false);
   });
 
   it("a promise shows made by, made to and due, and a line with nothing in it is not shown", async () => {
@@ -180,5 +184,55 @@ describe("the Plot threads panel (#3696, slice 1)", () => {
     await open(answer({ total: 150 }, many));
     expect(await screen.findByText(w.showing(150))).toBeTruthy();
     expect(screen.getByRole("region", { name: w.listLabel }).querySelectorAll("article")).toHaveLength(100);
+  });
+
+  it("draws nothing when the API has no plot-threads method (an older build)", async () => {
+    const api = mockApi("table");
+    delete api.plotThreads;
+    const { container } = render(<PlotThreadsPanel api={api} refId={REF} />);
+    expect(container.textContent).toBe("");
+  });
+
+  it("a sign-out hands over to the sign-in page and draws nothing more", async () => {
+    const api = mockApi("table");
+    api.plotThreads = async () => {
+      throw new ApiError("signed-out");
+    };
+    const onSignedOut = vi.fn();
+    render(<PlotThreadsPanel api={api} refId={REF} onSignedOut={onSignedOut} />);
+    await waitFor(() => expect(onSignedOut).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("alert")).toBeNull();
+  });
+
+  it("a change of campaign drops the old campaign's threads until the new answer comes", async () => {
+    const api = mockApi("table");
+    api.plotThreads = async () => answer({}, [thread({ name: "Old campaign bell" })]);
+    const { rerender } = render(<PlotThreadsPanel api={api} refId={REF} />);
+    await screen.findByText("Old campaign bell");
+    api.plotThreads = () => new Promise<PlotThreads>(() => {});
+    rerender(<PlotThreadsPanel api={api} refId="200.cmp2" />);
+    await waitFor(() => expect(screen.queryByText("Old campaign bell")).toBeNull());
+    expect(screen.getByRole("status").textContent).toBe(w.loading);
+  });
+
+  it("a player's read is refused by the mock and draws nothing", async () => {
+    const api = mockApi("table");
+    const { container } = render(<PlotThreadsPanel api={api} refId="100.cmp1.web-player" />);
+    await waitFor(() => expect(api.calls.some((c) => c.startsWith("plotThreads:"))).toBe(true));
+    await waitFor(() => expect(container.textContent).toBe(""));
+  });
+
+  it("a read that runs for fifteen seconds says it is taking longer than usual", async () => {
+    vi.useFakeTimers();
+    try {
+      const api = mockApi("table");
+      api.plotThreads = () => new Promise<PlotThreads>(() => {});
+      render(<PlotThreadsPanel api={api} refId={REF} />);
+      expect(screen.queryByText(w.slow)).toBeNull();
+      await vi.advanceTimersByTimeAsync(15000);
+      expect(screen.getByText(w.slow)).toBeTruthy();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });

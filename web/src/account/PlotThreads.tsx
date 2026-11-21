@@ -10,23 +10,33 @@ import { ApiError, type AccountApi, type PlotThread, type PlotThreads } from "./
 
 // Names listed before "+N more" in Came from and Led to, as on Discord's card.
 const CUT = 5;
+// A read that has run this long says so, instead of showing the same words forever.
+const SLOW_MS = 15000;
 
 export default function PlotThreadsPanel({ api, refId, onSignedOut }: { api: AccountApi; refId: string; onSignedOut?: () => void }) {
   const [list, setList] = useState<PlotThreads | null>(null);
   const [problem, setProblem] = useState<"failed" | "hidden" | null>(null);
   const [open, setOpen] = useState<Record<string, boolean>>({});
+  const [slow, setSlow] = useState(false);
 
   useEffect(() => {
     if (!PLOT_THREADS_LIVE || !api.plotThreads) return;
+    // A change of campaign drops the old campaign's threads and message until the new answer comes.
+    setList(null);
+    setProblem(null);
+    setSlow(false);
+    const slowTimer = setTimeout(() => setSlow(true), SLOW_MS);
     let stale = false;
     api.plotThreads(refId).then(
       (got) => {
         if (stale) return;
+        clearTimeout(slowTimer);
         setList(got);
         setProblem(null);
       },
       (error: unknown) => {
         if (stale) return;
+        clearTimeout(slowTimer);
         if (error instanceof ApiError && error.kind === "signed-out") return onSignedOut?.();
         // A player, or another campaign's DM, is refused: nothing is drawn, not an error.
         if (error instanceof ApiError && (error.kind === "not-allowed" || error.kind === "not-found")) setProblem("hidden");
@@ -35,6 +45,7 @@ export default function PlotThreadsPanel({ api, refId, onSignedOut }: { api: Acc
     );
     return () => {
       stale = true;
+      clearTimeout(slowTimer);
     };
   }, [api, refId]);
 
@@ -52,6 +63,7 @@ export default function PlotThreadsPanel({ api, refId, onSignedOut }: { api: Acc
       <section class="stack" aria-label={w.heading}>
         <h2 class="small">{w.heading}</h2>
         <p class="muted" role="status">{w.loading}</p>
+        {slow && <p class="small">{w.slow}</p>}
       </section>
     );
   }
@@ -71,7 +83,7 @@ export default function PlotThreadsPanel({ api, refId, onSignedOut }: { api: Acc
           <ul class="stack">
             {list.threads.map((t) => (
               <li key={t.id}>
-                <Thread thread={t} isOpen={!!open[t.id]} onToggle={() => setOpen({ ...open, [t.id]: !open[t.id] })} />
+                <Thread thread={t} isOpen={!!open[t.id]} onToggle={() => setOpen((prev) => ({ ...prev, [t.id]: !prev[t.id] }))} />
               </li>
             ))}
           </ul>
@@ -121,13 +133,11 @@ function Thread({ thread: t, isOpen, onToggle }: { thread: PlotThread; isOpen: b
           <button type="button" class="button secondary" aria-expanded={isOpen} aria-controls={historyId} onClick={onToggle}>
             {isOpen ? w.hideHistory : w.seeHistory}
           </button>
-          {isOpen && (
-            <ul id={historyId} class="small">
-              {t.history.map((line, i) => (
-                <li key={i}>{line}</li>
-              ))}
-            </ul>
-          )}
+          <ul id={historyId} class="small" hidden={!isOpen}>
+            {t.history.map((line, i) => (
+              <li key={i}>{line}</li>
+            ))}
+          </ul>
         </div>
       )}
     </article>
