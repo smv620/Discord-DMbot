@@ -3379,14 +3379,14 @@ export interface AccountApi {
   heardKeep?(ref: string, question: string): Promise<{ code: string | null }>;
   /** A name typed for a waiting question ("Type it…", #4865); resolves with the code the bot saved (`fixed-new`). */
   heardType?(ref: string, question: string, name: string): Promise<{ code: string | null }>;
-  /** "Only what everyone knows" or "What the party knows" for one message, or Undo of the latter by its change number. `given` is how
-   * many things the party gave (null when nothing was copied). */
   /** The "Let me choose" choices of a join question (#4891). */
   joinChoices?(ref: string, group: string): Promise<JoinChoices>;
   /** Asks the bot to work the choices out; resolves when they are kept. */
   askJoinChoices?(ref: string, group: string): Promise<void>;
   /** One pick: a session (by its time) or a story thread (by its id); resolves with what it gave and its Undo batch (#4891). */
   joinChoose?(ref: string, group: string, pick: { session: number } | { thread: string }): Promise<JoinChoose>;
+  /** "Only what everyone knows" or "What the party knows" for one message, or Undo of the latter by its change number. `given` is how
+   * many things the party gave (null when nothing was copied). */
   answerJoin?(
     ref: string,
     change: { action: "everyone" | "party"; group: string } | { action: "undo"; batch: number },

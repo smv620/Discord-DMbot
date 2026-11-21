@@ -31,6 +31,7 @@ const mira: JoinChoices = {
 /** An API that answers the choices as given, records the asks and the picks, and runs the Undo as given. */
 function choiceApi(over: {
   choices?: JoinChoices;
+  waitingAgain?: boolean;
   ask?: () => Promise<void>;
   choose?: (pick: unknown) => Promise<{ chose: { id: string; count: number }[]; choseMore: number; first: boolean; batch: number | null }>;
   undo?: () => Promise<{ batch: number | null; given: number | null }>;
@@ -44,6 +45,7 @@ function choiceApi(over: {
     if (over.ask) await over.ask();
   };
   api.joinChoices = async () => over.choices ?? mira;
+  api.joinQuestions = async () => (over.waitingAgain ? [{ group: GROUP, answer: "waiting", names: ["Mira"] }] : []);
   api.joinChoose = async (_ref, _group, pick) => {
     picks.push(pick);
     return over.choose ? over.choose(pick) : { chose: [{ id: "n1234567", count: 14 }], choseMore: 0, first: true, batch: 9 };
@@ -59,6 +61,20 @@ function choiceApi(over: {
 /** Clicks a button once it is enabled: the Undo appears while the pick is still settling (#4891). */
 async function clickWhenEnabled(name: string): Promise<void> {
   const button = (await screen.findByRole("button", { name })) as HTMLButtonElement;
+  await waitFor(() => expect(button.disabled).toBe(false));
+  fireEvent.click(button);
+}
+
+/** Clicks the first Give button (the first session's), once it is enabled. */
+async function clickFirstGive(): Promise<void> {
+  const button = (await screen.findAllByRole("button", { name: "Give" }))[0] as HTMLButtonElement;
+  await waitFor(() => expect(button.disabled).toBe(false));
+  fireEvent.click(button);
+}
+
+/** Clicks the first Undo button (the first pick's), once it is enabled. */
+async function clickFirstUndo(): Promise<void> {
+  const button = (await screen.findAllByRole("button", { name: "↩️ Undo" }))[0] as HTMLButtonElement;
   await waitFor(() => expect(button.disabled).toBe(false));
   fireEvent.click(button);
 }
@@ -104,7 +120,7 @@ describe("Let me choose on the join question (#4891)", () => {
     expect(await screen.findByText("✅ Mira now knows 14 things the rest of the party knew from session 3. Nothing was sent to Mira's player.")).toBeTruthy();
     expect(picks).toEqual([{ session: 1000 }]);
     await clickWhenEnabled("↩️ Undo");
-    expect(await screen.findByText("↩️ Undone. Mira knows only what everyone knows again, plus what was said at the table since.")).toBeTruthy();
+    expect(await screen.findByText("↩️ Undone. Mira no longer knows what that pick gave.")).toBeTruthy();
     expect(undos).toEqual([{ action: "undo", batch: 9 }]);
   });
 
@@ -213,4 +229,106 @@ describe("Let me choose on the join question (#4891)", () => {
       batch: 9,
     });
   });
+
+  it("each pick keeps its own line and Undo: undoing the first changes only its line", async () => {
+    const { api, undos } = choiceApi({
+      waitingAgain: true,
+      choose: async () => ({ chose: [{ id: "n1234567", count: 14 }], choseMore: 0, first: true, batch: 9 }),
+    });
+    render(card(api));
+    await clickFirstGive();
+    await screen.findByText("✅ Mira now knows 14 things the rest of the party knew from session 3. Nothing was sent to Mira's player.");
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "↩️ Undo" })).toHaveLength(1));
+    await clickFirstGive();
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "↩️ Undo" })).toHaveLength(2));
+    await clickFirstUndo();
+    expect(await screen.findByText("↩️ Undone. Mira knows only what everyone knows again, plus what was said at the table since.")).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: "↩️ Undo" })).toHaveLength(1);
+    expect(screen.getAllByText("✅ Mira now knows 14 things the rest of the party knew from session 3. Nothing was sent to Mira's player.")).toHaveLength(1);
+    expect(undos).toEqual([{ action: "undo", batch: 9 }]);
+  });
+
+  it("nothing left to give from a pick says so on the card, in the join words", async () => {
+    const { api } = choiceApi({
+      choose: async () => {
+        throw new ApiError("nothing-left");
+      },
+    });
+    render(card(api));
+    await clickFirstGive();
+    expect(await screen.findByText("Mira already knows everything the rest of the party knows from session 3 (another DM may have given it). Nothing changed.")).toBeTruthy();
+  });
+
+  it("a too-late pick says the join card's too-late line, and a gone Undo says it too", async () => {
+    const pickLate = choiceApi({
+      choose: async () => {
+        throw new ApiError("undo-late");
+      },
+    });
+    render(card(pickLate.api));
+    await clickFirstGive();
+    expect(await screen.findByText("Can't undo this one: some of it changed since. Open the character's card to fix it.")).toBeTruthy();
+    cleanup();
+    const goneUndo = choiceApi({
+      undo: async () => {
+        throw new ApiError("gone");
+      },
+    });
+    render(card(goneUndo.api));
+    await clickFirstGive();
+    await clickWhenEnabled("↩️ Undo");
+    expect(await screen.findByText("Can't undo this one: some of it changed since. Open the character's card to fix it.")).toBeTruthy();
+  });
+
+  it("a count of zero is left out of the line", async () => {
+    const zero: JoinChoices = {
+      madeAt: 1_800_000_000,
+      choices: {
+        members: [
+          { id: "n1234567", name: "Mira" },
+          { id: "n7654321", name: "Tavin" },
+        ],
+        sessions: [{ at: 1000, number: 3, counts: { n1234567: 14, n7654321: 0 } }],
+        threads: [],
+        sessionsInAll: 1,
+        threadsInAll: 0,
+        nobody: false,
+      },
+    };
+    const { api } = choiceApi({ choices: zero });
+    render(card(api, ["Mira", "Tavin"]));
+    expect(await screen.findByText("14 things Mira doesn't know yet")).toBeTruthy();
+    expect(screen.queryByText(/Tavin doesn't know/)).toBeNull();
+    expect(screen.queryByText(/Tavin 0/)).toBeNull();
+  });
+
+  it("a pick whose id matches no character says the generic done line, with its Undo", async () => {
+    const { api } = choiceApi({ choose: async () => ({ chose: [{ id: "zzzzzzzz", count: 4 }], choseMore: 0, first: false, batch: 11 }) });
+    render(card(api));
+    await clickFirstGive();
+    expect(await screen.findByText("✅ Done. Nothing was sent to the players.")).toBeTruthy();
+    expect(await screen.findByRole("button", { name: "↩️ Undo" })).toBeTruthy();
+  });
+
+  it("a failed re-read keeps the list and says the counts may be out of date", async () => {
+    const { api } = choiceApi({});
+    render(card(api));
+    await screen.findByText("Choose what Mira knows. Nothing changes until you pick.");
+    api.joinChoices = async () => {
+      throw new Error("offline");
+    };
+    await clickFirstGive();
+    expect(await screen.findByText("These counts may be out of date. Press Look again.")).toBeTruthy();
+    expect(screen.getByText("Session 3")).toBeTruthy();
+  });
+
+  it("a back question always says the later-pick Undo line", async () => {
+    const { api } = choiceApi({ waitingAgain: true, choose: async () => ({ chose: [{ id: "n1234567", count: 14 }], choseMore: 0, first: true, batch: 9 }) });
+    render(card(api, ["Mira"], true));
+    expect(await screen.findByText("Until then Mira knows only what was known before leaving.")).toBeTruthy();
+    await clickFirstGive();
+    await clickWhenEnabled("↩️ Undo");
+    expect(await screen.findByText("↩️ Undone. Mira no longer knows what that pick gave.")).toBeTruthy();
+  });
 });
+

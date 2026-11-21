@@ -11,7 +11,9 @@ export const joinChooseWords = {
   lookAgain: "Look again",
   working: "DMbot is working out what each session and story thread would give.",
   stillWorking: "Still working. This can take a while.",
-  secondsSoFar: (s: number): string => `${s} seconds so far.`,
+  secondsSoFar: (s: number): string => (s === 1 ? "1 second so far." : `${s} seconds so far.`),
+  // A re-read after a pick that failed: the list stays, and this says it may be out of date (#4891).
+  staleCounts: "These counts may be out of date. Press Look again.",
   workedOut: (ago: string): string => `Worked out ${ago} ago.`,
   failed: "Couldn't work it out just now. Nothing changed. Try again in a moment.",
   head: (who: string, know: string): string => `Choose what ${who} ${know}. Nothing changes until you pick.`,
@@ -38,11 +40,14 @@ export const joinChooseWords = {
   // A pick's done line: one character, or several (the first's count, then the others').
   doneOne: (name: string, n: number, source: string): string =>
     `✅ ${name} now knows ${things(n)} the rest of the party knew from ${source}. Nothing was sent to ${name}'s player.`,
+  // The first character of several, as the done line starts: "Mira now knows 14 more things".
+  doneManyFirst: (name: string, n: number): string => `${name} now knows ${n} more ${n === 1 ? "thing" : "things"}`,
+  // A pick whose names match no character, or that gave only to characters not named: nothing is claimed about who knows what.
+  doneGeneric: "✅ Done. Nothing was sent to the players.",
   doneMany: (first: string, rest: string[], source: string): string =>
     `✅ From ${source}, ${first}${rest.length ? ` and ${rest.join(" and ")}` : ""}. Nothing was sent to the players.`,
   moreGiven: (n: number): string => `${n} more ${n === 1 ? "character was" : "characters were"} given things too.`,
   undo: "↩️ Undo",
-  undoLine: "You can undo this for a day.",
   undoneFirst: (who: string): string => `↩️ Undone. ${who} knows only what everyone knows again, plus what was said at the table since.`,
   undonePick: (who: string, know: string): string => `↩️ Undone. ${who} no longer ${know} what that pick gave.`,
   nothingLeft: (who: string, know: string, source: string): string =>
