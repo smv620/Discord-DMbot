@@ -662,23 +662,23 @@ async def party_entries(
         )
         if await cur.fetchone() is not None:
             return None  # (a group holds an entry: let the full gate follow its members)
+    # Each entry every member holds, or every member but the one whose own entry it is (a
+    # character knows its own entry without a row): decided in the query, so only the ids come
+    # back, not each entry's list of holders (#4911: the players' recall waits on this).
     cur = await scope.conn.execute(
-        "SELECT about_entity_id, array_agg(perspective_id) AS holders FROM memory_knowers"
-        " WHERE guild_id = %s AND campaign_id = %s AND about_entity_id IS NOT NULL"
-        " AND cardinality(hidden_by) = 0 AND perspective_id = ANY(%s) GROUP BY about_entity_id",
-        (*scope.ids, list(views.values())),
-    )
-    rows = await cur.fetchall()
-    everyone = set(views.values())
-    own = {entity: view for entity, view in views.items()}
-    seen = set()
-    for row in rows:
-        entry = str(row["about_entity_id"])
-        missing = everyone - set(row["holders"] or ())
-        # (a character knows its own entry without a row)
-        if not missing or missing == {own.get(entry)}:
-            seen.add(entry)
-    if len(everyone) == 1:  # a lone player character knows its own entry whatever the lists say
+        "SELECT k.about_entity_id FROM memory_knowers k"
+        " LEFT JOIN unnest(%s::text[], %s::text[]) AS o(entity_id, view_id)"
+        " ON o.entity_id = k.about_entity_id"
+        " WHERE k.guild_id = %s AND k.campaign_id = %s AND k.about_entity_id IS NOT NULL"
+        " AND cardinality(k.hidden_by) = 0 AND k.perspective_id = ANY(%s)"
+        " GROUP BY k.about_entity_id, o.view_id"
+        " HAVING count(DISTINCT k.perspective_id)"
+        "  FILTER (WHERE o.view_id IS NULL OR k.perspective_id <> o.view_id)"
+        "  = %s - (CASE WHEN o.view_id IS NULL THEN 0 ELSE 1 END)",
+        (list(views), list(views.values()), *scope.ids, list(views.values()), len(views)),
+    )  # fmt: skip
+    seen = {str(r["about_entity_id"]) for r in await cur.fetchall()}
+    if len(views) == 1:  # a lone player character knows its own entry whatever the lists say
         seen.update(views)
     # Common knowledge (#4537): an entry "everyone" holds is in the party's view while it is shown
     # (as `common_while_shown` reads it), whatever the characters' own rows say: even a 0.0 row of

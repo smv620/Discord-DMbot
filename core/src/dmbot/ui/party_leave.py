@@ -47,6 +47,9 @@ STAYS_DONE = "✅ {name} is still in the party."
 LATER_DONE = "Kept for later in ❓ Questions for you."
 UNDONE = "↩️ Undone. {name} is in the party again."
 ANSWERED = "Already answered (by you or another DM). Nothing changed."
+# (#4908: the question was removed, not answered: its speaker stopped being recorded or its
+# session's transcript was deleted; Supervisor's words)
+NOT_WAITING = "This question isn't waiting any more."
 FAILED = "Couldn't do that just now. Nothing changed. Try again in a moment."
 CANT_UNDO = (
     "Can't undo this one: something changed since. Open {name}'s card to put {name} back in the "
@@ -173,6 +176,46 @@ async def send_staying_questions(bot: Any, guild_id: int, campaign_id: str) -> i
     return asked
 
 
+def _others_on(message: Any, entity_id: str) -> list[str]:
+    """The other characters with buttons on this message, read from its own buttons' ids: the
+    pressed character's row may be gone (a forget), so its group can't be looked up through it."""
+    found: list[str] = []
+    for row in getattr(message, "components", None) or []:
+        for item in getattr(row, "children", None) or []:
+            m = re.fullmatch(_LEFT, str(getattr(item, "custom_id", "") or ""))
+            if m is not None and m["entity"] != entity_id and m["entity"] not in found:
+                found.append(m["entity"])
+    return found
+
+
+async def _gone(interaction: discord.Interaction, bot: Any, campaign: Any, entity_id: str) -> None:
+    """A press on a question that no longer waits (#4908). Answered since this message was sent,
+    on a question sent by then (by this DM or another): "Already answered". Otherwise it was
+    removed by a forget, so "This question isn't waiting any more.", and the message is redrawn
+    with the other characters on it that still wait (found from its own buttons), or with none.
+    A failed check says the words that are true either way."""
+    message = getattr(interaction, "message", None)
+    sent = getattr(message, "created_at", None)
+    # (no message time: any answer counts, the older behaviour, never a false "removed")
+    since = int(sent.timestamp()) if sent is not None else 0
+    try:
+        answered = await bot.memory.staying_answered_since(
+            campaign.guild_id, campaign.id, entity_id, since
+        )
+        if answered:
+            await _edit(interaction, ANSWERED)
+            return
+        text, rest = NOT_WAITING, None
+        for other in _others_on(message, entity_id):
+            text, rest = await _after_answer(bot, campaign, other, NOT_WAITING)
+            if rest is not None:
+                break
+    except Exception as exc:  # (the type only)
+        log.warning("Staying question check failed (%s)", type(exc).__name__)
+        text, rest = NOT_WAITING, None
+    await _edit(interaction, text, rest)
+
+
 async def _name(bot: Any, campaign: Any, entity_id: str) -> str:
     [name] = await _names(bot.memory, campaign.guild_id, campaign.id, [entity_id])
     return name
@@ -209,7 +252,7 @@ class LeftButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], tem
             name = await _name(bot, campaign, self.entity_id)
             done = await bot.memory.staying_answer_left(g, c, self.entity_id)
         except AlreadyAnswered:
-            await _edit(interaction, ANSWERED)
+            await _gone(interaction, bot, campaign, self.entity_id)
             return
         except Exception as exc:
             log.warning("Staying answer failed (%s)", type(exc).__name__)
@@ -253,7 +296,7 @@ class StaysButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
             name = await _name(bot, campaign, self.entity_id)
             await bot.memory.staying_answer_stays(campaign.guild_id, campaign.id, self.entity_id)
         except AlreadyAnswered:
-            await _edit(interaction, ANSWERED)
+            await _gone(interaction, bot, campaign, self.entity_id)
             return
         except Exception as exc:
             log.warning("Staying answer failed (%s)", type(exc).__name__)

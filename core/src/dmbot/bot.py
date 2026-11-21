@@ -423,6 +423,7 @@ from dmbot.memory.web_join_choices import JoinChoicesStore
 from dmbot.memory.who_answers import WhoAnswers
 from dmbot.mentions import NO_PINGS
 from dmbot.off_the_record import NOT_TOLD, WAKE_MINUTES, OffTheRecord, Paused, paused_text
+from dmbot.outbox import Outbox
 from dmbot.pictures import sweep as picture_sweep
 from dmbot.pictures.actions import PictureActions
 from dmbot.pictures.bucket import Bucket, BucketError
@@ -1128,6 +1129,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.name_answers = name_answers.AnswerStore(recaps.db) if recaps is not None else None
         # What DMs did on the website's All names page, waiting to be applied (#2294).
         self.name_actions = web_actions.ActionStore(recaps.db) if recaps is not None else None
+        # What a worker wants said in Discord, which the bot delivers (#3843).
+        self.outbox = Outbox(recaps.db) if recaps is not None else None
+        self.outbox_wake = asyncio.Event()
         # The lore DMs uploaded on the website, waiting to be read (#3022), and the reads running.
         self.lore_uploads = lore_queue.LoreQueue(recaps.db) if recaps is not None else None
         # What DMbot asks the AI during a lore read or an import, for the DM's live window (#3710):
