@@ -59,7 +59,9 @@ def keep_all(n: int) -> str:
 
 LORE = "Your 🌍 Common knowledge lore"
 UNDO = "↩️ Undo"
-GONE_NOW = "Already answered. Showing what is left."
+# (#4908: a question can also be gone because its speaker stopped being recorded or its session's
+# transcript was deleted, not only answered: one sentence true of both, in Supervisor's words)
+GONE_NOW = "This question isn't waiting any more. Showing what is left."
 TOO_LATE = "It's too late to undo that one here. Showing what is left."
 NOTHING_TO_DO = "That had already changed, so nothing was done. Showing what is left."
 CANT_SHOW_YET = (

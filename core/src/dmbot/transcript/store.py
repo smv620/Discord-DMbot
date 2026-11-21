@@ -22,6 +22,7 @@ from dmbot.db import Database, row_int
 from dmbot.memory import (
     evidence,
     forget_readings,
+    join_questions,
     met_store,
     private_scene_store,
     secret_questions,
@@ -1317,6 +1318,7 @@ class TranscriptStore:
             await rel_store.forget_session(conn, guild_id, session_id)
             await met_store.forget_session(conn, guild_id, session_id)  # (the DM's words, #3172)
             await trait_offers.forget_session(conn, guild_id, session_id)  # (heard there, #4745)
+            await join_questions.forget_session(conn, guild_id, session_id)  # (a goodbye, 0574)
             # (the private scenes found in its lines, #2996 rule 5: the DM's marks stay)
             await private_scene_store.forget_session(conn, guild_id, session_id)
             # (the story threads read from its lines that still wait, #4522)
@@ -1482,6 +1484,8 @@ async def _forget_memory_traces(
     await met_store.forget_speaker(conn, guild_id, user_id, campaign_id)
     # the language questions heard in their lines (#4745)
     await trait_offers.forget_speaker(conn, guild_id, user_id, campaign_id)
+    # the goodbye questions heard in their lines (#4537 slice 6b, 0574)
+    await join_questions.forget_speaker(conn, guild_id, user_id, campaign_id)
     # the private scenes they spoke in (#2996 rule 5)
     await private_scene_store.forget_speaker(conn, guild_id, user_id, campaign_id)
     # the 🤫 questions that quote them (#4524)

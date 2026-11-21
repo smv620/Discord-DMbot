@@ -7738,6 +7738,43 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except Exception as exc:
             log.warning("Session languages weren't asked (%s)", type(exc).__name__)
 
+    async def _ask_goodbyes(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        report: extractor.Report,
+        session_id: str,
+        dm_ids: Collection[int],
+    ) -> None:
+        """The goodbyes a session's read heard (#4537 slice 6b; Supervisor's ruling T): each one
+        whose name is one confirmed character in the party now, and whose lines were all said by
+        a DM or that character's own player, becomes a `leave` question, sent with the others
+        after play ("party staying questions"). Nothing leaves the party here (§11). Never
+        raises; counts only in the log."""
+        from dmbot.memory import goodbye_reading
+        from dmbot.memory.models import CONFIRMED
+
+        try:
+            if self.memory is None:
+                return
+            lookup = CampaignLookup.build(await self.memory.lookup_data(guild_id, campaign_id))
+            names: dict[str, set[str]] = {}
+            for said in lookup.names:  # (memory names, not rules entries)
+                who = lookup.entities.get(said.entity_id)
+                if who is not None and who.status == CONFIRMED and who.type == "character":
+                    names.setdefault(name_key(said.text), set()).add(who.id)
+            played = {e.id: e.played_by for e in lookup.entities.values()}
+            members = await self.memory.current_party(guild_id, campaign_id)
+            asks, dropped = goodbye_reading.whose(report.goodbyes, names, members, played, dm_ids)
+            asked = await self.memory.ask_goodbyes(guild_id, campaign_id, asks, session_id)
+            log.info(
+                "Session goodbyes: %d asked%s",
+                asked,
+                "".join(f", {n} {k}" for k, n in sorted(dropped.items()) if n),
+            )
+        except Exception as exc:
+            log.warning("Session goodbyes weren't asked (%s)", type(exc).__name__)
+
     async def _map_check(
         self,
         table: Table,
@@ -10291,10 +10328,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     progress=progress,
                     languages=self.settings.session_languages_on,
                     weather=self.settings.weather_notes_on,
+                    leaves=self.settings.party_leaves_on,
                 )
             log.info(report.line())
             if report.heard_languages:  # (#4229 1d: each a question for the DM, never written)
                 await self._ask_heard_languages(gid, cid, report, session.started_at, sid)
+            if report.goodbyes:  # (#4537 6b: each an after-session question, never a leave)
+                await self._ask_goodbyes(gid, cid, report, sid, dm_ids)
             if report.heard_weather:  # (#4260 10c-2: a private note, after the session)
                 await self._weather_notes(gid, cid, report, session.started_at)
             # Counts and buttons go to the DM Bot channel when the campaign has one (the DM screen

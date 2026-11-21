@@ -2292,6 +2292,39 @@ export interface StoryThreadSuggestion {
   /** Up to three of the lines it was heard in, as spoken (#4526); "" lines never. Only for a session suggestion. */
   heard: string[];
 }
+/** The campaign's open plot threads, read for the Names page (#3696, slice 1): DM only. Every word is core's; the page only labels it. */
+export interface PlotThreads {
+  /** The campaign's "stalled after N sessions" setting (DMBOT_THREAD_STALLED_SESSIONS). */
+  after: number;
+  /** In play first (happening now, open, hinted; the quietest first, then by name), then resolved and dropped by name. At most 100. */
+  threads: PlotThread[];
+  /** How many threads are stalled, for the line that says so. */
+  stalledCount: number;
+  /** The stalled line ready-made, when the answer sends it; the page builds it from stalledCount and after until then. */
+  stalledLine?: string;
+  /** Every thread the campaign has, so the page can say when the list is cut at 100. */
+  total: number;
+}
+export interface PlotThread {
+  id: string;
+  name: string;
+  kind: "thread" | "quest" | "mystery" | "hook" | "goal" | "promise";
+  state: "hinted" | "open" | "going" | "resolved" | "abandoned" | null;
+  /** STATE_WORDS, or PROMISE_WORDS for a promise; "" when there is no state yet. */
+  stateWords: string;
+  /** The history lines, as core words them, oldest first. */
+  history: string[];
+  involved: { id: string; name: string; role: string }[];
+  /** Who moved the thread; endsIt is true for the one that ended it. */
+  movers: { id: string; name: string; endsIt: boolean; session: number | null }[];
+  cameFrom: { id: string; name: string }[];
+  ledTo: { id: string; name: string }[];
+  promise: { by: string[]; to: string[]; due: string } | null;
+  /** Known sessions since the thread was last touched (from the shared count, #4909). */
+  quiet: number;
+  /** Worked out from state and quiet, never stored (threads.is_stalled). */
+  stalled: boolean;
+}
 /** One press on the story threads card: keep one (the people and lines ticked, a new name if renamed), turn one down, or Undo. */
 /** One thread with lines waiting for the DM (#4616): `more` lines wait behind the ones shown, `sessions` is how many sessions said them. */
 /** One clue tied to a story thread (#4625; core `thread_clues.py`): `found` once a character finds it, `falseLead` when the DM marked it. */
@@ -3568,6 +3601,8 @@ export interface AccountApi {
   /** The story threads DMbot found in an upload (#4482): DM only; the list is read again after every press. */
   storyThreads?(ref: string): Promise<StoryThreads>;
   changeStoryThreads?(ref: string, change: StoryThreadsChange): Promise<StoryThreadsResult>;
+  /** The open plot threads, read for the Names page (#3696, slice 1). DM only. */
+  plotThreads?(ref: string): Promise<PlotThreads>;
   /** The 🧵 Progress to check lines a session's talk changed on the story threads (#4616): DM only; nothing for anyone else. */
   threadProgress?(ref: string): Promise<ThreadProgressThread[]>;
   /** Keep the ticked lines and turn the rest down, none happened, or take either back (#4616; core thread_progress.py). */
@@ -4060,7 +4095,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo", "ruleUpdateUndoLast", "heardQuestions", "heardPick", "heardKeep", "heardType", "packUpdateUndoLast", "packUpdatePick", "packUpdateUndo", "joinChoices", "askJoinChoices", "joinChoose", "leaveQuestions", "answerLeave"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo", "ruleUpdateUndoLast", "heardQuestions", "heardPick", "heardKeep", "heardType", "packUpdateUndoLast", "packUpdatePick", "packUpdateUndo", "joinChoices", "askJoinChoices", "joinChoose", "plotThreads", "leaveQuestions", "answerLeave"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "lorePdf", "lorePdfSend", "lorePdfCount", "lorePdfGo", "lorePdfDrop", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions", "ruleUpdate", "ruleTaken", "packUpdates"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */

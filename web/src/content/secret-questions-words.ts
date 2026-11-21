@@ -12,7 +12,9 @@ export const secretWords = {
   stillWorking: "DMbot is still working on your answer. Reload in a minute to see where it stands.",
   notAllowed: "Only a DM of the campaign can answer this.",
   couldNot: "DMbot couldn't change that, so it was left as it is. Showing what is left.",
-  gone: "Already answered. Showing what is left.",
+  // (#4908: answered, or removed when its speaker stopped being recorded or its transcript was
+  // deleted; true of both)
+  gone: "This question isn't waiting any more. Showing what is left.",
   tooLate: "It's too late to undo that one here. Showing what is left.",
   undo: "Undo",
   undone: "Undone. The question is back, so you can answer it again.",

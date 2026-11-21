@@ -24,11 +24,11 @@ change it rode on (`batch`) or answered with (`answered_batch`) is what Undo fol
 from __future__ import annotations
 
 import secrets
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from dmbot.memory._changes import Changes
+from dmbot.memory._changes import Changes, Scope
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 
 WAITING = "waiting"
@@ -171,6 +171,91 @@ async def withdraw(w: Changes, entity_id: str, kind: str) -> None:
     )
 
 
+async def ask_heard(
+    scope: Scope, entity_id: str, speakers: Sequence[int], session_id: str, now: int
+) -> bool:
+    """A goodbye heard in a session (#4537 slice 6b): one `leave` question about this character,
+    carrying who said it (ids only) and the session (0574), so it goes with their "delete my
+    data" and with the session's transcript. A reader's question is no change to memory, so it
+    rides no change (nothing to Undo; the DM's answer is the change). Not asked when a goodbye
+    from this session was asked about this character before, whatever the answer ("Still in the
+    party" is never asked again for the same goodbye), nor while a goodbye or death question
+    about them waits (the one waiting stands). Returns whether one was asked."""
+    cur = await scope.conn.execute(
+        "SELECT 1 FROM memory_join_questions WHERE guild_id = %s AND campaign_id = %s"
+        " AND entity_id = %s AND kind = 'leave' AND session_id = %s LIMIT 1",
+        (*scope.ids, entity_id, session_id),
+    )
+    if await cur.fetchone() is not None:
+        return False
+    cur = await scope.conn.execute(
+        "INSERT INTO memory_join_questions (guild_id, campaign_id, id, entity_id, created_at, kind,"
+        " speaker_ids, session_id) VALUES (%s, %s, %s, %s, %s, 'leave', %s, %s)"
+        " ON CONFLICT DO NOTHING RETURNING id",
+        (*scope.ids, secrets.token_hex(16), entity_id, now, sorted(set(speakers)), session_id),
+    )
+    return await cur.fetchone() is not None
+
+
+async def forget_speaker(
+    conn: Any, guild_id: int, user_id: int, campaign_id: str | None = None
+) -> int:
+    """Someone's words are forgotten (Stop recording me, Delete my transcripts, a DM's removal of a
+    speaker; #4745's rule, 0574): a goodbye question heard in their lines that still waits goes.
+    An answered one is the DM's own answer and stays, without their id. `campaign_id`: only that
+    campaign's. In the caller's transaction. Returns how many questions went."""
+    cur = await conn.execute(
+        "DELETE FROM memory_join_questions WHERE guild_id = %s AND %s = ANY(speaker_ids)"
+        " AND status = 'waiting' AND (%s::text IS NULL OR campaign_id = %s)",
+        (guild_id, user_id, campaign_id, campaign_id),
+    )
+    gone = int(cur.rowcount or 0)
+    await conn.execute(
+        "UPDATE memory_join_questions SET speaker_ids = array_remove(speaker_ids, %s::bigint)"
+        " WHERE guild_id = %s AND %s = ANY(speaker_ids) AND (%s::text IS NULL OR campaign_id = %s)",
+        (user_id, guild_id, user_id, campaign_id, campaign_id),
+    )
+    return gone
+
+
+async def forget_session(conn: Any, guild_id: int, session_id: str) -> int:
+    """A session's transcript is deleted: a goodbye question heard in it that still waits goes,
+    and an answered one forgets which session it came from. In the caller's transaction. Returns
+    how many questions went."""
+    cur = await conn.execute(
+        "DELETE FROM memory_join_questions WHERE guild_id = %s AND session_id = %s"
+        " AND status = 'waiting'",
+        (guild_id, session_id),
+    )
+    gone = int(cur.rowcount or 0)
+    await conn.execute(
+        "UPDATE memory_join_questions SET session_id = NULL WHERE guild_id = %s"
+        " AND session_id = %s",
+        (guild_id, session_id),
+    )
+    return gone
+
+
+async def keep_recorded(
+    conn: Any, guild_id: int, campaign_id: str, recorded: Collection[int]
+) -> None:
+    """A campaign moved to another server (`guild_id` is the new one): a waiting goodbye question
+    heard from someone not recorded there goes, and an answered one keeps only the ids of those
+    who are, as the language questions do. In the caller's transaction."""
+    who = sorted(set(recorded))
+    await conn.execute(
+        "DELETE FROM memory_join_questions WHERE guild_id = %s AND campaign_id = %s"
+        " AND status = 'waiting' AND NOT (speaker_ids <@ %s::bigint[])",
+        (guild_id, campaign_id, who),
+    )
+    await conn.execute(
+        "UPDATE memory_join_questions SET speaker_ids = ARRAY(SELECT u FROM unnest(speaker_ids)"
+        " AS u WHERE u = ANY(%s::bigint[]) ORDER BY u) WHERE guild_id = %s AND campaign_id = %s"
+        " AND NOT (speaker_ids <@ %s::bigint[])",
+        (who, guild_id, campaign_id, who),
+    )
+
+
 async def claim(
     conn: Any, guild_id: int, campaign_id: str, now: int, kinds: Sequence[str] = (JOIN, BACK)
 ) -> list[Question]:
@@ -294,9 +379,13 @@ __all__ = [
     "AlreadyAnswered",
     "Question",
     "ask",
+    "ask_heard",
     "claim",
     "count_waiting",
+    "forget_session",
+    "forget_speaker",
     "group",
+    "keep_recorded",
     "set_batch",
     "unclaim",
     "undo",

@@ -140,6 +140,10 @@ class Settings:
     # #4229 1d: the session reader also asks which languages a character was heard speaking, each
     # a question for the DM (DMBOT_SESSION_LANGUAGES, off until dev1's language_cases counts)
     session_languages_on: bool = False
+    # #4537 slice 6b: the session reader also hears a player character saying goodbye to the
+    # party, each an after-session question for the DM, never a closed stretch
+    # (DMBOT_PARTY_LEAVES, off until the sample's counts show no false goodbye questions)
+    party_leaves_on: bool = False
     # a character who joins a party with members is asked about ("What does Mira know about what
     # came before?") instead of copied what the party knows (DMBOT_PARTY_JOIN, #4537 slice 2b; off
     # until dev1's check on the test server)
@@ -572,6 +576,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         raise ConfigError(
             'DMBOT_SESSION_LANGUAGES must be 1 (on) or 0 (off), got "' + languages_raw + '".'
         )
+    leaves_raw = (get("DMBOT_PARTY_LEAVES") or "0").lower()
+    if leaves_raw not in ("0", "1", "true", "on", "false", "off"):
+        raise ConfigError('DMBOT_PARTY_LEAVES must be 1 (on) or 0 (off), got "' + leaves_raw + '".')
     weather_raw = (get("DMBOT_WEATHER_NOTES") or "0").lower()
     if weather_raw not in ("0", "1", "true", "on", "false", "off"):
         raise ConfigError(
@@ -828,6 +835,7 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         story_reveals_precheck=precheck_raw in ("1", "true", "on"),
         met_unnamed_on=met_raw in ("1", "true", "on"),
         session_languages_on=languages_raw in ("1", "true", "on"),
+        party_leaves_on=leaves_raw in ("1", "true", "on"),
         party_join_on=party_join_raw in ("1", "true", "on"),
         weather_notes_on=weather_raw in ("1", "true", "on"),
         private_scenes_on=private_raw in ("1", "true", "on"),
