@@ -184,13 +184,13 @@ class AddingWhoIsInvolved(ThreadWeb):
         self.assertFalse(outcome.error)
         self.assertEqual(await self.involved(self.bell), [(mira, "quest giver")])
 
-    async def test_a_part_is_required(self) -> None:
+    async def test_a_part_may_be_left_empty(self) -> None:
         keep = await self.add("Greywater Keep", "place")
         for role in ("", "   "):
-            with self.assertRaises(RecapError) as err:
-                await self.involve(self.bell, keep, role)
-            self.assertEqual(err.exception.code, "bad_action")
-        self.assertIsNone(await self.actions.claim_next(self.g))
+            await self.involve(self.bell, keep, role)
+        outcomes = await self.bot_loop()
+        self.assertEqual([bool(o.error) for o in outcomes], [False, False])
+        self.assertEqual(await self.involved(self.bell), [(keep, "")])
 
     async def test_another_thread_the_thread_itself_or_a_made_up_id_is_gone(self) -> None:
         other = await self.add("The missing heir", "mystery")
@@ -416,3 +416,145 @@ class StartingAThreadOrAPromise(ThreadWeb):
         self.assertFalse(first.error)
         # (whatever the store says about a repeat, the page gets a plain word, never a crash)
         self.assertIn(second.error, ("", wa.FAILED))
+
+
+class LinkingEventsAndLeadsTo(ThreadWeb):
+    """Slice 2d (migration 0583): "Link an event" and "Led to…" (`link_event`, `led_to`)."""
+
+    async def link_event_to(self, thread: str, how: str, **which: str) -> str:
+        return await plot_threads.queue_link(
+            self.web, self.session, self.cref, {"thread": thread, "how": how, **which}
+        )
+
+    async def facts(self, predicate: str) -> list[tuple[str, str]]:
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT subject_id, object_id FROM memory_relations WHERE predicate = %s"
+                " AND status = 'confirmed' AND campaign_id = %s", (predicate, self.one.id),
+            )  # fmt: skip
+            return [(str(r["subject_id"]), str(r["object_id"])) for r in await cur.fetchall()]
+
+    async def test_an_event_moves_a_thread_along_or_ends_it(self) -> None:
+        ford = await self.add("The ambush at the ford", "event")
+        await self.link_event_to(self.bell, "moved", event=ford)
+        await self.link_event_to(self.bell, "ended", event=ford)
+        first, second = await self.bot_loop()
+        self.assertFalse(first.error or second.error)
+        self.assertEqual(await self.facts("advances"), [(ford, self.bell)])
+        self.assertEqual(await self.facts("resolves"), [(ford, self.bell)])
+        self.assertEqual(len(first.batches), 1)
+
+    async def test_an_event_typed_by_name_is_made_hidden_and_linked(self) -> None:
+        await self.link_event_to(self.bell, "moved", newEvent="  The  bell rang ")
+        (outcome,) = await self.bot_loop()
+        self.assertFalse(outcome.error)
+        async with self.db.guild(self.g) as conn:
+            cur = await conn.execute(
+                "SELECT id, type, status, hidden_from_players FROM memory_entities"
+                " WHERE campaign_id = %s AND name = 'The bell rang'", (self.one.id,),
+            )  # fmt: skip
+            row = await cur.fetchone()
+        assert row is not None
+        self.assertEqual((row["type"], row["status"], row["hidden_from_players"]),
+                         ("event", "confirmed", True))  # fmt: skip
+        self.assertEqual(await self.facts("advances"), [(row["id"], self.bell)])
+
+    async def test_a_link_to_a_character_a_made_up_id_or_another_campaigns_thread_is_gone(
+        self,
+    ) -> None:
+        mira = await self.add("Mira", "character")
+        theirs = await self.memory.new_thread(
+            self.g, self.two.id, "Their bell", "quest", OPEN, source="dm"
+        )
+        ford = await self.add("The ambush at the ford", "event")
+        await self.link_event_to(self.bell, "moved", event=mira)
+        await self.link_event_to(self.bell, "moved", event="a" * 32)
+        await self.link_event_to(theirs.value.id, "moved", event=ford)
+        await self.link_event_to(ford, "moved", event=ford)  # (an event is not a thread)
+        outcomes = await self.bot_loop()
+        self.assertEqual([o.error for o in outcomes], [wa.GONE] * 4)
+
+    async def test_an_event_of_another_campaign_is_gone(self) -> None:
+        theirs = await self.memory.add_entity(
+            self.g, self.two.id, type="event", name="Their ambush", source="dm",
+            status="confirmed",
+        )  # fmt: skip
+        await self.link_event_to(self.bell, "moved", event=theirs.value.id)
+        (outcome,) = await self.bot_loop()
+        self.assertEqual(outcome.error, wa.GONE)
+
+    async def test_a_made_event_and_its_link_are_one_change(self) -> None:
+        await self.link_event_to(self.bell, "ended", newEvent="The bell fell")
+        (outcome,) = await self.bot_loop()
+        self.assertFalse(outcome.error)
+        self.assertEqual(len(outcome.batches), 1)  # (the event and its link are one change, #4950)
+
+    async def test_what_one_thing_led_to(self) -> None:
+        clue = await self.add("A muddy footprint", "clue")
+        ford = await self.add("The ambush at the ford", "event")
+        await plot_threads.queue_led_to(
+            self.web, self.session, self.cref, {"from": clue, "to": self.bell}
+        )
+        await plot_threads.queue_led_to(
+            self.web, self.session, self.cref, {"from": self.bell, "to": ford}
+        )
+        outcomes = await self.bot_loop()
+        self.assertEqual([bool(o.error) for o in outcomes], [False, False])
+        self.assertEqual(
+            sorted(await self.facts("led_to")), sorted([(clue, self.bell), (self.bell, ford)])
+        )
+
+    async def test_a_led_to_loop_the_wrong_kind_or_a_missing_entry_writes_nothing(self) -> None:
+        mira = await self.add("Mira", "character")
+        ford = await self.add("The ambush at the ford", "event")
+        for pair in (
+            (self.bell, ford),
+            (ford, self.bell),
+            (self.bell, mira),
+            (self.bell, "b" * 32),
+        ):
+            await plot_threads.queue_led_to(
+                self.web, self.session, self.cref, {"from": pair[0], "to": pair[1]}
+            )
+        outcomes = await self.bot_loop()
+        self.assertEqual(
+            [o.error for o in outcomes], ["", wa.FAILED, wa.FAILED, wa.GONE]
+        )  # (the second closes a loop, the third is a character)
+        self.assertEqual(await self.facts("led_to"), [(self.bell, ford)])
+
+    async def test_a_name_of_a_hundred_characters_goes_through_the_table_check(self) -> None:
+        name = ("The long night " * 8)[:99] + "x"
+        self.assertEqual(len(name), 100)
+        await self.link_event_to(self.bell, "moved", newEvent=name)
+        (outcome,) = await self.bot_loop()
+        self.assertFalse(outcome.error)
+
+    async def test_only_a_dm_queues_these_and_bad_bodies_are_refused(self) -> None:
+        who: Any = BOB
+        bob = await sessions.find(
+            self.web, await sessions.sign_in(self.web, who, [THURSDAY], now=NOW, days=30), now=NOW
+        )
+        assert bob is not None
+        ford = await self.add("The ambush at the ford", "event")
+        with self.assertRaises(RecapError) as err:
+            await plot_threads.queue_link(
+                self.web, bob, self.cref, {"thread": self.bell, "how": "moved", "event": ford}
+            )
+        self.assertEqual(err.exception.code, "not_allowed")
+        bad_links: tuple[object, ...] = (
+            {"thread": self.bell, "how": "pushed", "event": ford},
+            {"thread": self.bell, "how": "moved"},
+            {"thread": self.bell, "how": "moved", "event": ford, "newEvent": "X"},
+            {"thread": self.bell, "how": "moved", "newEvent": "  "},
+            {"thread": self.bell, "how": "moved", "newEvent": "x" * 101},
+            {"thread": "nope", "how": "moved", "event": ford}, 5,
+        )  # fmt: skip
+        for body in bad_links:
+            with self.assertRaises(RecapError) as refused:
+                await plot_threads.queue_link(self.web, self.session, self.cref, body)
+            self.assertEqual(refused.exception.code, "bad_action")
+        for body in ({"from": ford, "to": ford}, {"from": ford}, {"from": "x", "to": ford}, 5):
+            with self.assertRaises(RecapError) as refused:
+                await plot_threads.queue_led_to(self.web, self.session, self.cref, body)
+            self.assertEqual(refused.exception.code, "bad_action")
+        self.assertIsNone(await self.actions.claim_next(self.g))
