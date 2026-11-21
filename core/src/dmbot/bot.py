@@ -1128,6 +1128,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.name_answers = name_answers.AnswerStore(recaps.db) if recaps is not None else None
         # What DMs did on the website's All names page, waiting to be applied (#2294).
         self.name_actions = web_actions.ActionStore(recaps.db) if recaps is not None else None
+        # The worker (#3844) is the same bot without a Discord connection: it works every server
+        # that has a campaign (`work_guild_ids`) and runs only the loops moved to it.
+        self.headless = False
         # What a worker wants said in Discord, which the bot delivers (#3843).
         self.outbox = Outbox(recaps.db) if recaps is not None else None
         self.outbox_wake = asyncio.Event()
@@ -16602,6 +16605,106 @@ async def fill_parties(
     return steps
 
 
+async def build_bot(settings: Settings, db: Database, *, headless: bool = False) -> DMBot:
+    """Every store and the bot wired together, as `run` and the worker (#3844) both need them.
+    `headless` is the worker: it never logs in to Discord, so it skips what only a live bot needs
+    (the official relationships' seed, the Whisper model, the party fill)."""
+    if not headless:
+        await definitions.seed(db)  # the official relationships, by version (#1189)
+    transcriber = build_transcriber(settings.transcription)
+    if not headless:  # (a worker never transcribes: no model to load)
+        await transcriber.warm_up()  # load the Whisper model now, not on the first word
+    # With plans enforced, a hand-over, take-over or restore also needs room under the
+    # owner's campaign cap (#437 part 2c); otherwise a plan that works is enough.
+    campaigns = (
+        CampaignStore(db, has_free_slot=campaign_cap.has_room_for_one_more, restore_needs_slot=True)
+        if settings.enforce_plans
+        else CampaignStore(db)
+    )
+    homebrew_store, sources = HomebrewStore(db), SourceStore(db)
+    # DMBot sets this too; passing it here means the store never starts out wrong.
+    consent = ConsentStore(db, outside=settings.transcription.outside_engine)
+    register_backup_sections(
+        campaigns,
+        forget_audio=AudioFiles(settings.data_dir / "recap-audio").forget_campaign,
+        consenting=consent.consenting,
+    )
+    bot = DMBot(
+        settings,
+        consent,
+        campaigns,
+        SessionStore(db),
+        transcriber,
+        MemoryStore(db, keep_days=settings.memory_keep_days),
+        TranscriptStore(db),
+        SheetStore(db),
+        HouseRuleStore(db),
+        usage.Meter(db),
+        ClockStore(db),
+        HouseFileLinkStore(db),
+        EffectStore(db),
+        TestVoiceStore(db),
+        PackSuggestionStore(db),  # shared sets and homebrew packs (#1190, #1527, #1537)
+        RecapStore(db),
+        SuggestionStore(db),
+        homebrew_store,
+        WaitingQuestionStore(db),
+        OptOutStore(db),
+        sources,
+        HomebrewImporter(homebrew_store, sources),
+        AdventureStore(db),
+        PlanStore(db),
+        npcs_roster=NpcRosterStore(db),
+        recap_styles=StyleStore(db),
+        recap_notes=NoteStore(db),
+        recap_musts=MustStore(db),
+        installs=InstallStore(db),
+        recap_holds=recap_hold.HoldStore(db),
+        backstory_links=BackstoryLinks(db),
+    )
+    bot.house_wins = WinsStore(db)
+    bot.map_notes = MapNoteStore(db)  # maps put into words, for MapBot (#2450)
+    if settings.pictures_ready:  # kept pictures (#3274): the switch and all four R2 values
+        pictures = PictureStore(db)
+        bot.picture_bucket = Bucket(
+            settings.r2_account_id,
+            settings.r2_bucket,
+            settings.r2_access_key,
+            settings.r2_secret_key,
+        )
+        bot.picture_keeper = PictureKeeper(
+            pictures, bot.picture_bucket, settings.picture_storage_mb
+        )
+        bot.picture_store = pictures
+        if settings.maps_staging_ready:
+            bot.maps_staging = Bucket(
+                settings.r2_account_id,
+                settings.r2_staging_bucket,
+                settings.r2_staging_access_key,
+                settings.r2_staging_secret_key,
+            )
+        if bot.memory is not None:
+            bot.map_store = MapStore(db, bot.memory)  # the two yeses of a map (#4344)
+        bot.picture_actions = PictureActions(
+            db, pictures, bot.picture_bucket, settings.picture_storage_mb
+        )
+        bot._picture_db = db
+    if bot.image_desk is not None:  # the day's count lives in the database (#2450)
+        bot.image_desk.counter = ImageUseStore(db)
+    if bot.memory is not None:
+        # The party is the first entry of every campaign (#3954): made with each new campaign,
+        # and for every campaign that has none by the fill, in the background once the bot is
+        # starting, so it never holds up the login (idempotent: one read for a campaign that
+        # has its party). The task is kept on the bot, so it is not collected half done.
+        party_of = bot.memory.make_party
+        campaigns.on_create(party_of)
+        if not headless:
+            bot.party_fill = asyncio.get_running_loop().create_task(
+                fill_parties(campaigns, party_of)
+            )
+    return bot
+
+
 async def run(settings: Settings) -> None:
     entitlements.configure_free_users(settings.free_users)  # #771
     if not person_key.configure(settings.person_key):
@@ -16617,98 +16720,7 @@ async def run(settings: Settings) -> None:
         await alerter.alert(alerts.Problem.DATABASE_DOWN)  # before the exit, so it is sent
         raise
     try:
-        await definitions.seed(db)  # the official relationships, by version (#1189)
-        transcriber = build_transcriber(settings.transcription)
-        await transcriber.warm_up()  # load the Whisper model now, not on the first word
-        # With plans enforced, a hand-over, take-over or restore also needs room under the
-        # owner's campaign cap (#437 part 2c); otherwise a plan that works is enough.
-        campaigns = (
-            CampaignStore(
-                db, has_free_slot=campaign_cap.has_room_for_one_more, restore_needs_slot=True
-            )
-            if settings.enforce_plans
-            else CampaignStore(db)
-        )
-        homebrew_store, sources = HomebrewStore(db), SourceStore(db)
-        # DMBot sets this too; passing it here means the store never starts out wrong.
-        consent = ConsentStore(db, outside=settings.transcription.outside_engine)
-        register_backup_sections(
-            campaigns,
-            forget_audio=AudioFiles(settings.data_dir / "recap-audio").forget_campaign,
-            consenting=consent.consenting,
-        )
-        bot = DMBot(
-            settings,
-            consent,
-            campaigns,
-            SessionStore(db),
-            transcriber,
-            MemoryStore(db, keep_days=settings.memory_keep_days),
-            TranscriptStore(db),
-            SheetStore(db),
-            HouseRuleStore(db),
-            usage.Meter(db),
-            ClockStore(db),
-            HouseFileLinkStore(db),
-            EffectStore(db),
-            TestVoiceStore(db),
-            PackSuggestionStore(db),  # shared sets and homebrew packs (#1190, #1527, #1537)
-            RecapStore(db),
-            SuggestionStore(db),
-            homebrew_store,
-            WaitingQuestionStore(db),
-            OptOutStore(db),
-            sources,
-            HomebrewImporter(homebrew_store, sources),
-            AdventureStore(db),
-            PlanStore(db),
-            npcs_roster=NpcRosterStore(db),
-            recap_styles=StyleStore(db),
-            recap_notes=NoteStore(db),
-            recap_musts=MustStore(db),
-            installs=InstallStore(db),
-            recap_holds=recap_hold.HoldStore(db),
-            backstory_links=BackstoryLinks(db),
-        )
-        bot.house_wins = WinsStore(db)
-        bot.map_notes = MapNoteStore(db)  # maps put into words, for MapBot (#2450)
-        if settings.pictures_ready:  # kept pictures (#3274): the switch and all four R2 values
-            pictures = PictureStore(db)
-            bot.picture_bucket = Bucket(
-                settings.r2_account_id,
-                settings.r2_bucket,
-                settings.r2_access_key,
-                settings.r2_secret_key,
-            )
-            bot.picture_keeper = PictureKeeper(
-                pictures, bot.picture_bucket, settings.picture_storage_mb
-            )
-            bot.picture_store = pictures
-            if settings.maps_staging_ready:
-                bot.maps_staging = Bucket(
-                    settings.r2_account_id,
-                    settings.r2_staging_bucket,
-                    settings.r2_staging_access_key,
-                    settings.r2_staging_secret_key,
-                )
-            if bot.memory is not None:
-                bot.map_store = MapStore(db, bot.memory)  # the two yeses of a map (#4344)
-            bot.picture_actions = PictureActions(
-                db, pictures, bot.picture_bucket, settings.picture_storage_mb
-            )
-            bot._picture_db = db
-        if bot.image_desk is not None:  # the day's count lives in the database (#2450)
-            bot.image_desk.counter = ImageUseStore(db)
-        if bot.memory is not None:
-            # The party is the first entry of every campaign (#3954): made with each new campaign,
-            # and for every campaign that has none by the fill, in the background once the bot is
-            # starting, so it never holds up the login (idempotent: one read for a campaign that
-            # has its party). The task is kept on the bot, so it is not collected half done.
-            party_of = bot.memory.make_party
-            campaigns.on_create(party_of)
-            bot.party_fill = asyncio.get_running_loop().create_task(
-                fill_parties(campaigns, party_of)
-            )
+        bot = await build_bot(settings, db)
         _close_on_sigterm(bot)
         async with bot:
             await bot.start(settings.discord_token)

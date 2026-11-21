@@ -68,6 +68,42 @@ services:
       - ./web/src/content/help.ts:/app/knowledge/web/src/content/help.ts:ro
     restart: unless-stopped
 
+  # The worker (#3844): the bot's own services without a Discord connection, running the jobs that
+  # have moved to it (the recap audio so far). Same image and .env; it does nothing until
+  # DMBOT_WORKER=1 (then the bot stops running those jobs itself). No Discord token: it never logs in.
+  worker:
+    image: dmbot-core
+    command: ["python", "-m", "dmbot.worker"]
+    env_file: .env
+    environment:
+      DISCORD_TOKEN: ""
+      LOG_FORMAT: ${LOG_FORMAT:-json}
+      DATABASE_URL: postgresql://dmbot:${DMBOT_DB_PASSWORD}@postgres:5432/dmbot
+      POSTGRES_ADMIN_PASSWORD: ""
+      DMBOT_DB_PASSWORD: ""
+      DISCORD_CLIENT_SECRET: ""
+      WEB_SECRET_KEY: ""
+      PAYMENT_WEBHOOK_SECRET: ""
+      DMBOT_WEB_DB_PASSWORD: ""
+      CLOUDFLARE_TUNNEL_TOKEN: ""
+    depends_on:
+      postgres:
+        condition: service_healthy
+      core:
+        condition: service_started
+    volumes:
+      - recap-audio:/data/recap-audio   # the narration and music it makes
+    mem_limit: 1g
+    cpus: 1.0
+    healthcheck:
+      # The loop touches a file every 20 s; a stuck process stops touching it.
+      test: ["CMD-SHELL", "python -c \"import os, time; assert time.time() - os.path.getmtime('/tmp/dmbot-worker-alive') < 90\""]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
   ears:
     build: ./ears
     env_file: .env
