@@ -61,6 +61,7 @@ from dmbot.memory.models import (
     name_key,
 )
 from dmbot.memory.party_record import ENDED
+from dmbot.memory.reveal_proposals import RevealProposals
 from dmbot.memory.store import INT64_MAX, PERSON, MemoryStore
 from dmbot.memory.store import NAMES_NOT_SHOWN as NAMES_NOT_SHOWN_WORDS
 from dmbot.rules import homebrew, rule_sets, set_sync
@@ -165,6 +166,7 @@ THREAD_STATE_ACTIONS = ("thread-state", "thread-check")  # a thread's state (#36
 THREAD_INVOLVE_ACTION = "thread-involve"  # who is involved in a thread (#3696 slice 2b)
 THREAD_NEW_ACTIONS = ("thread-new", "thread-due", "thread-party")  # (#3696 slice 2c)
 THREAD_LINK_ACTIONS = ("thread-link", "thread-led-to")  # an event, what led to what (slice 2d)
+REVEALS_ACTIONS = ("reveals-ask", "reveals-keep", "reveals-not")  # what they learned (#3863)
 LEAVE_ACTIONS = ("leave-yes", "leave-no")  # "Still in the party?" (#4895, party knowledge slice 6a)
 JOIN_ACTIONS = (  # the DM's join question (#4778) and "Let me choose" (#4799)
     "join-everyone", "join-party", "join-undo", "join-choices", "join-choose",
@@ -511,7 +513,8 @@ class ActionStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
-                " AND user_id = %s AND action IN ('join-party', 'join-choose', 'leave-yes')"
+                " AND user_id = %s AND action IN ('join-party', 'join-choose', 'leave-yes',"
+                " 'reveals-keep')"
                 " AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
                 (guild_id, campaign_id, user_id, batch),
             )
@@ -756,6 +759,8 @@ async def apply(
     rules: RuleTools | None = None,
     heard: HeardFn | None = None,
     join_choices: JoinChoicesFn | None = None,
+    reveals_ask: RevealsAskFn | None = None,
+    reveals_drop: RevealsDropFn | None = None,
 ) -> Outcome:
     """Do one action the way Discord's name card does. Nothing here logs the DM's words."""
     if action.action in MAPS_PAGE_ACTIONS:
@@ -806,6 +811,8 @@ async def apply(
         if actions is None:
             return _failed(FAILED)
         return await _join(memory, actions, guild_id, cid, action, join_choices)
+    if action.action in REVEALS_ACTIONS:
+        return await _reveals(memory, waiting, guild_id, cid, action, reveals_ask, reveals_drop)
     if action.action in LEAVE_ACTIONS:
         return await _leave(memory, guild_id, cid, action)
     if action.action in THREAD_STATE_ACTIONS:
@@ -1591,6 +1598,10 @@ async def _rule_undo(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Ou
 # the DM's page (given the guild, the campaign, the question's group and the DM).
 # It answers whether there was anything to choose (False: the question is gone or has no one left).
 JoinChoicesFn = Callable[[int, str, str, int], Awaitable[bool]]
+# (#3863) work out the waiting reveals in words for one DM and keep them for the page: (server,
+# campaign, DM) -> how many; and take an answered proposal out of every DM's kept set.
+RevealsAskFn = Callable[[int, str, int], Awaitable[int]]
+RevealsDropFn = Callable[[int, str, str], Awaitable[None]]
 CHOSE_MAX = 10  # characters named in one pick's answer (the answer is 200 characters at most)
 
 
@@ -1770,6 +1781,55 @@ async def _thread_link(memory: MemoryStore, guild_id: int, cid: str, a: Action) 
     except MemoryRuleError:
         return _failed(FAILED)
     return Outcome(result_id=event_id, batches=(done.batch,) if done.batch else ())
+
+
+async def _reveals(
+    memory: MemoryStore,
+    waiting: Waiting | None,
+    guild_id: int,
+    cid: str,
+    a: Action,
+    ask: RevealsAskFn | None,
+    drop: RevealsDropFn | None,
+) -> Outcome:
+    """What the characters learned, from the page (#3863 step 2), the same store calls as the
+    🧠 card (`RevealProposals.keep` / `dismiss`, with the consent re-check inside). `reveals-ask`
+    works the words out (no AI call: the gate and the names, read now) and keeps them for this DM's
+    page, replacing the earlier set, so asking again adds nothing twice; the answer is `n:<how
+    many>`. Keep gives the change for the page's Undo (`join-undo`); a keep that changed nothing
+    (they already knew it) is `nothing_left`, not a failure; a proposal gone, or whose statement or
+    speaker is gone, is `gone`. Either answer takes it out of the kept set at once. The queue is
+    worked one action at a time, so an ask never lands between a press and its `drop`. A press may
+    name any proposal of this campaign (the DM may answer one the page has not shown): the store
+    scopes it to the campaign and the DM."""
+    if a.action == "reveals-ask":
+        if ask is None:
+            return _failed(FAILED)
+        try:
+            return Outcome(counts=f"n:{await ask(guild_id, cid, a.user_id)}")
+        except Exception as exc:  # (the type only: a database error can quote the row's words)
+            log.warning("The waiting reveals could not be worked out (%s)", type(exc).__name__)
+            return _failed(FAILED)
+    if waiting is None:
+        return _failed(FAILED)
+    proposals = RevealProposals(memory)
+    batch: int | None = None
+    try:
+        if a.action == "reveals-keep":
+            batch = await proposals.keep(
+                guild_id, cid, a.text, opted_in=await waiting.opted_in(), source=DM
+            )
+        else:
+            await proposals.dismiss(guild_id, cid, a.text, source=DM)
+    except MemoryRuleError:
+        if drop is not None:
+            await drop(guild_id, cid, a.text)
+        return _failed(GONE)
+    if drop is not None:
+        await drop(guild_id, cid, a.text)
+    if a.action == "reveals-keep" and batch is None:
+        return _failed(NOTHING_LEFT)
+    return Outcome(batches=(batch,) if batch is not None else ())
 
 
 async def _join_choose(

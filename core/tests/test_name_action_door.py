@@ -74,6 +74,7 @@ EVERY_ACTION = (
     "world-bias",  # ✏️ Change on a feeling DMbot read (#4932)
     "thread-new", "thread-due", "thread-party",  # a new thread or promise, due note, parties (2c)
     "thread-link", "thread-led-to",  # an event on a thread, what led to what (2d)
+    "reveals-ask", "reveals-keep", "reveals-not",  # what the characters learned (#3863)
 )  # fmt: skip
 
 

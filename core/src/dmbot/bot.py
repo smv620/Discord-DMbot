@@ -422,6 +422,7 @@ from dmbot.memory.story_watch import StoryWatch
 from dmbot.memory.table_names import NameThenAnswer
 from dmbot.memory.vectors import VectorStore
 from dmbot.memory.web_join_choices import JoinChoicesStore
+from dmbot.memory.web_reveals import RevealsStore
 from dmbot.memory.who_answers import WhoAnswers
 from dmbot.mentions import NO_PINGS
 from dmbot.off_the_record import NOT_TOLD, WAKE_MINUTES, OffTheRecord, Paused, paused_text
@@ -14022,6 +14023,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                                 rules=self._rule_tools(),
                                 heard=self.answer_waiting_coded,
                                 join_choices=self._work_out_join_choices,
+                                reveals_ask=self._work_out_reveals,
+                                reveals_drop=self._drop_reveal,
                             )
                         )
                     except Exception as exc:  # the row must never stay "working" for a bug
@@ -14718,6 +14721,33 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         await JoinChoicesStore(db).save(guild_id, campaign_id, group_id, user_id, choices)
         return True
 
+    async def _work_out_reveals(self, guild_id: int, campaign_id: str, user_id: int) -> int:
+        """What the characters learned, for the website (#3863 step 2): the waiting proposals in
+        words, as the 🧠 card shows them (`waiting` with its consent re-check, `describe` through
+        the gate; one with nothing left to keep is dropped), kept for this DM's page
+        (`web_reveals`), replacing their earlier set. No AI call, so the page may ask before every
+        read. Only a DM of the campaign (checked again here)."""
+        db, memory = self._picture_db, self.memory
+        if db is None or memory is None:
+            raise RuntimeError("the list cannot be kept yet")
+        campaign = await self.campaigns.get(guild_id, campaign_id)
+        if campaign is None or user_id not in campaign.dm_user_ids:
+            raise RuntimeError("only a DM of the campaign")
+        proposals = RevealProposals(memory)
+        shown = []
+        for proposal in await proposals.waiting(
+            guild_id, campaign_id, opted_in=await self.consent.consenting(guild_id)
+        ):
+            words = await proposals.describe(guild_id, campaign_id, proposal)
+            if words is not None and words.who and words.what and words.how:
+                shown.append((proposal.id, words))  # (a line with a word missing is not shown)
+        return await RevealsStore(db).replace(guild_id, campaign_id, user_id, shown)
+
+    async def _drop_reveal(self, guild_id: int, campaign_id: str, proposal_id: str) -> None:
+        """An answered proposal leaves the website's kept lists at once (#3863)."""
+        if self._picture_db is not None:
+            await RevealsStore(self._picture_db).drop(guild_id, campaign_id, proposal_id)
+
     async def _sweep_rule_takes(self, guild_id: int) -> None:
         """The website's pick undo handles older than a day (#4841); counts only in the log."""
         db = self._picture_db
@@ -14729,6 +14759,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 log.info("%s website rule-pick undo handles were cleared", gone)
         except Exception as exc:
             log.warning("The rule-pick handles could not be swept: %s", type(exc).__name__)
+        try:
+            stale = await RevealsStore(db).sweep(guild_id)  # ("Things they learned", #3863)
+            if stale:
+                log.info("%s kept reveal lines were cleared", stale)
+        except Exception as exc:
+            log.warning("The kept reveal lines could not be swept: %s", type(exc).__name__)
         try:
             kept = await JoinChoicesStore(db).sweep(guild_id)  # ("Let me choose", #4799)
             if kept:
