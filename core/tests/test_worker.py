@@ -5,6 +5,7 @@ Discord."""
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import unittest
 from types import SimpleNamespace
 from typing import Any
@@ -245,8 +246,8 @@ class TheRecapTextJob(unittest.IsolatedAsyncioTestCase):
     async def test_the_job_round_is_the_workers_with_the_switch_on(self) -> None:
         ran: list[int] = []
 
-        async def due(gid: int) -> list[tuple[str, int]]:
-            return [(CID, 100)]
+        async def due(gid: int) -> list[tuple[str, int, int]]:
+            return [(CID, 100, 5)]
 
         class Worker:
             async def run(self, gid: int, cid: str, at: int) -> None:
@@ -258,7 +259,9 @@ class TheRecapTextJob(unittest.IsolatedAsyncioTestCase):
         def bot(on: bool) -> Any:
             b: Any = Silent()
             b.settings = SimpleNamespace(recaps_on=True, worker_on=on)
-            b.recaps = SimpleNamespace(due=due)
+            b.recaps = SimpleNamespace(due_aged=due)
+            b.recap_slots = None
+            b._run_recap_job = lambda *a: F._run_recap_job(b, *a)
             b.recap_worker = Worker()
             b.work_guild_ids = servers
             b.guilds = []
@@ -371,3 +374,56 @@ class TheOtherRecapLines(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(bot.posts, [])
         await F.deliver_recap_unchecked(bot, 1, CID, {"session_at": 100, "keeps": False})
         self.assertEqual(len(bot.posts), 1)
+
+
+class TheFairOrder(unittest.IsolatedAsyncioTestCase):
+    """The jobs a round takes are the ones that have waited longest, whichever server they are in
+    (#3845); with the worker on, up to three run at once, each under a slot."""
+
+    def bot(self, *, worker_on: bool, free_slots: int = 3) -> Any:
+        ran: list[tuple[int, str]] = []
+        waits = {1: [("a", 1, 900)], 2: [("b", 1, 100), ("c", 1, 300)], 3: [("d", 1, 200)]}
+
+        async def due_aged(gid: int) -> list[tuple[str, int, int]]:
+            return waits[gid]
+
+        class Worker:
+            async def run(self, gid: int, cid: str, at: int) -> None:
+                ran.append((gid, cid))
+
+        async def servers() -> list[int]:
+            return [1, 2, 3]
+
+        left = [free_slots]
+
+        class Slots:
+            @contextlib.asynccontextmanager
+            async def hold(self) -> Any:
+                got = left[0] > 0
+                left[0] -= 1
+                yield got
+
+        b: Any = Silent()
+        b.ran = ran
+        b.settings = SimpleNamespace(recaps_on=True, worker_on=worker_on)
+        b.recaps = SimpleNamespace(due_aged=due_aged)
+        b.recap_worker = Worker()
+        b.recap_slots = Slots()
+        b.work_guild_ids = servers
+        b._run_recap_job = lambda *a: F._run_recap_job(b, *a)
+        return b
+
+    async def test_without_the_worker_the_two_longest_waits_run_in_order(self) -> None:
+        bot = self.bot(worker_on=False)
+        await F.run_recap_jobs(bot)
+        self.assertEqual(bot.ran, [(2, "b"), (3, "d")])  # (not server 1's, which sorts first)
+
+    async def test_with_the_worker_three_run_at_once_the_longest_waits_first(self) -> None:
+        bot = self.bot(worker_on=True)
+        await F.run_recap_jobs(bot)
+        self.assertEqual(sorted(bot.ran), [(2, "b"), (2, "c"), (3, "d")])
+
+    async def test_a_job_with_no_slot_left_waits_for_the_next_round(self) -> None:
+        bot = self.bot(worker_on=True, free_slots=1)
+        await F.run_recap_jobs(bot)
+        self.assertEqual(len(bot.ran), 1)

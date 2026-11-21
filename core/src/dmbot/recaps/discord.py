@@ -121,6 +121,7 @@ from dmbot.ui.recap_dm import AUDIO_WHY, RecapButton, ready_text, ready_view
 from dmbot.ui.recap_hold import WriteNowButton, hold_line_key, hold_view
 from dmbot.ui.recap_share import ShareButton
 from dmbot.ui.recap_short import EXPIRED, WRITING, ShortRecapButton, ask_key, ask_view
+from dmbot.worker_lease import Slots
 
 if TYPE_CHECKING:  # (only for annotations: `bot.py` imports this module)
     from collections.abc import Coroutine, Hashable, Sequence
@@ -168,6 +169,7 @@ log = logging.getLogger("dmbot.bot")
 
 RECAP_ATTACHMENT_MAX = 24 * 1024 * 1024  # Discord's own most for a message
 RECAP_DEFAULT_FILE_LIMIT = 10 * 1024 * 1024 - 65536  # a server's smallest limit, with some room
+RECAP_SLOTS = 3  # with the worker: recap jobs at once, across every process (#3845)
 RECAPS_PER_ROUND = 2  # recap jobs worked in one minute, across all servers (a small global limit)
 WEB_RESTORE_ALIVE_EVERY_S = 30  # seconds between touches of the queued website restores
 WEB_RESTORE_TIDY_EVERY = 30  # rounds (about a minute) between the restore rows' upkeep
@@ -273,6 +275,7 @@ class RecapFeatures:
         recap_worker: RecapWorker | None
         recaps: RecapStore | None
         outbox: Outbox | None
+        recap_slots: Slots | None
         headless: bool
         outbox_wake: asyncio.Event
         settings: Settings
@@ -2015,22 +2018,43 @@ class RecapFeatures:
         outbox with the worker on). The bot's round runs it with the worker off, else the worker."""
         if not self.settings.recaps_on or self.recaps is None or self.recap_worker is None:
             return
-        done = 0
+        # Every server's due jobs together, the longest wait first: a campaign with many sessions,
+        # or a server whose id sorts early, never keeps another's job from its turn (#3845). A
+        # campaign has one job at a time (`due`), so oldest-first is round-robin across campaigns.
+        waiting: list[tuple[int, int, str, int]] = []
         for guild_id in await self.work_guild_ids():
             try:
-                due = await self.recaps.due(guild_id)
+                waiting += [
+                    (since, guild_id, cid, at)
+                    for cid, at, since in await self.recaps.due_aged(guild_id)
+                ]
             except Exception:
                 log.exception("Recap: couldn't list the due jobs for a server")
-                continue
-            for cid, at in due:
-                if done >= RECAPS_PER_ROUND:
-                    return
-                done += 1  # counted before it runs, so a job that raises can't stall the round
-                with log_context(guild_id=guild_id, campaign_id=cid):
-                    try:
-                        await self.recap_worker.run(guild_id, cid, at)
-                    except Exception:
-                        log.exception("Recap: a job failed unexpectedly")
+        waiting.sort()
+        if self.settings.worker_on and self.recap_slots is not None:
+            # (the worker: up to RECAP_SLOTS at once across every process, by the slot leases. The
+            # round waits for the slowest of them before the next is picked, and the three oldest
+            # are chosen before the slots are asked: if other processes hold the slots, these wait
+            # their turn rather than younger jobs jumping ahead.)
+            await asyncio.gather(*(self._run_recap_job(*w[1:]) for w in waiting[:RECAP_SLOTS]))
+            return
+        for _, guild_id, cid, at in waiting[:RECAPS_PER_ROUND]:
+            await self._run_recap_job(guild_id, cid, at)
+
+    async def _run_recap_job(self, guild_id: int, cid: str, at: int) -> None:
+        """One job, never raising. With the worker on it first takes one of the recap slots (a job
+        that finds none left waits for the next round)."""
+        assert self.recap_worker is not None
+        with log_context(guild_id=guild_id, campaign_id=cid):
+            try:
+                if self.settings.worker_on and self.recap_slots is not None:
+                    async with self.recap_slots.hold() as got:
+                        if got:
+                            await self.recap_worker.run(guild_id, cid, at)
+                else:
+                    await self.recap_worker.run(guild_id, cid, at)
+            except Exception:
+                log.exception("Recap: a job failed unexpectedly")
 
     async def _recap_jobs_loop(self) -> None:
         """The worker's loop for the recap text jobs (#4903): every minute, as the bot's round."""
