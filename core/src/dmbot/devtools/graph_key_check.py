@@ -148,6 +148,9 @@ class Report:
     # A character's languages (#4229; owner, 2026-11-14: a property of the character, never a tie):
     # found, missed, and extra (a language row the key does not list). Counts only.
     languages: Counter[str] = field(default_factory=Counter)
+    # A place's, group's or people's feeling toward a lineage or a named culture (#4229 slice 4):
+    # found (the key's, at any step), missed, and extra (one the key does not list). Counts only.
+    attitudes: Counter[str] = field(default_factory=Counter)
     # A road's stated length (#4255; a property of the road, never a tie): found, missed, and extra
     # (a length on a road the key does not list). Counts only.
     route_lengths: Counter[str] = field(default_factory=Counter)
@@ -546,6 +549,7 @@ def check(backup: object, key: Mapping[str, Any], docs: str = "both") -> Report:
     _score_readings(report, graph, key, names)
     _score_threads(report, graph, key, names)
     _score_languages(report, graph, key, names, wanted)
+    _score_attitudes(report, graph, key, names, wanted)
     _score_route_lengths(report, graph, key, names, wanted)
     return report
 
@@ -584,6 +588,42 @@ def _score_languages(
         used.update(hit)
         report.languages["found" if hit else "missed"] += 1
     report.languages["extra"] += sum(1 for i in range(len(rows)) if i not in used)
+
+
+def _score_attitudes(
+    report: Report,
+    graph: Graph,
+    key: Mapping[str, Any],
+    names: Mapping[str, list[str]],
+    wanted: set[str],
+) -> None:
+    """The key's `attitudes` (#4229 slice 4): {holder, toward}, `toward` a lineage key ("elf") or a
+    named culture's name. An open backup row from that holder toward it is found, at any step (the
+    step is the DM's to set); none is missed. Every other open row toward a lineage or a culture is
+    extra: a feeling the lore never states. A key with no `attitudes` list is not scored, and an
+    empty one scores every such row as extra (the sample lore states none). Lore only."""
+    if "attitudes" not in key or "lore" not in wanted:
+        return
+    cultures = {str(r["id"]): name_key(str(r["name"])) for r in graph.tables.get("culture", [])}
+    rows = [
+        r
+        for r in graph.tables.get("attitude", [])
+        if r.get("closed_at") is None and (r.get("toward_lineage") or r.get("toward_culture_id"))
+    ]
+    used: set[int] = set()
+    for want in key["attitudes"]:
+        who = graph.ids(names.get(want["holder"], [want["holder"]]))
+        toward = name_key(str(want["toward"]))
+        hit = [
+            i
+            for i, r in enumerate(rows)
+            if str(r["holder_id"]) in who
+            and toward
+            in (str(r.get("toward_lineage") or ""), cultures.get(str(r.get("toward_culture_id"))))
+        ]
+        used.update(hit)
+        report.attitudes["found" if hit else "missed"] += 1
+    report.attitudes["extra"] += sum(1 for i in range(len(rows)) if i not in used)
 
 
 def _same_length(stored: Mapping[str, Any], words: str) -> bool:
@@ -1037,6 +1077,7 @@ def summarize(report: Report) -> dict[str, Any]:
         **({"progress": dict(report.progress)} if report.progress else {}),
         **({"readings": dict(report.readings)} if report.readings else {}),
         **({"languages": dict(report.languages)} if report.languages else {}),
+        **({"attitudes": dict(report.attitudes)} if report.attitudes else {}),
         **({"route_lengths": dict(report.route_lengths)} if report.route_lengths else {}),
     }
 
@@ -1079,6 +1120,9 @@ def render(report: Report, counts_only: bool = False) -> str:
     if report.languages:  # (#4229: a character's languages, a property, not a tie)
         c = report.languages
         lines.append(f"Languages: found {c['found']}, missed {c['missed']}, extra {c['extra']}")
+    if report.attitudes:  # (#4229 slice 4: feelings toward a lineage or a culture)
+        c = report.attitudes
+        lines.append(f"Feelings: found {c['found']}, missed {c['missed']}, extra {c['extra']}")
     if report.threads:  # (#4453: story threads, quests slice 1)
         c = report.threads
         lines.append(

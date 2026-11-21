@@ -281,7 +281,9 @@ ATTITUDES = Table(
     "memory_attitudes",
     "id",
     ("id", "holder_id", "toward_id", "score", "weight", "source", "from_session_at",
-     "created_at", "closed_at"),
+     "created_at", "closed_at", "toward_lineage", "toward_culture_id", "status"),
+    # (#4229 slice 4: toward a lineage or a named culture instead of an entry; DMbot's reads wait)
+    defaults={"toward_lineage": None, "toward_culture_id": None, "status": "confirmed"},
 )  # fmt: skip
 # Who holds beliefs (The truth, The party, a character) and what each believes of a connection
 # (#2409). A belief is never edited: a new row is the new belief, the highest `seq` wins.
@@ -466,7 +468,10 @@ DEPENDENTS: dict[str, tuple[tuple[str, str, bool], ...]] = {
     ),
     # (a logged delete of a culture is refused while a row points at it: the database's cascade
     # would delete those rows outside the log)
-    "memory_cultures": (("memory_map_facts", "culture_id", False),),
+    "memory_cultures": (
+        ("memory_map_facts", "culture_id", False),
+        ("memory_attitudes", "toward_culture_id", False),  # (a bias toward it, #4229)
+    ),
     "memory_map_facts": (("map_features", "fact_id", False),),  # an area on a map (#4670)
     # (the database would set these to NULL outside the log: #4346)
     "campaign_maps": (
@@ -1141,6 +1146,8 @@ _ADDED_LATER: dict[str, dict[str, Any]] = {
     "campaign_maps": {"grid_from": None},  # (0530: nobody had set a grid before)
     # (a row logged before #4259 rested on no map: nothing wrote `map_id` before slice 8)
     "memory_map_facts": {"map_id": None},
+    # (before #4229 slice 4 every attitude was the DM's, toward an entry)
+    "memory_attitudes": {"toward_lineage": None, "toward_culture_id": None, "status": "confirmed"},
     "memory_relations": {
         "definition_version": 1,
         "unrevealed": False,
