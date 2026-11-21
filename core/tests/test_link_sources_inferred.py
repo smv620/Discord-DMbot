@@ -42,3 +42,15 @@ class TheReason(unittest.TestCase):
         got = page()
         link_sources.attach(got, {}, True)
         self.assertNotIn("inferred", got["edges"][0]["links"][0])
+
+    def test_a_quote_and_a_reason_together_give_only_the_reason(self) -> None:
+        got = page()
+        link_sources.attach(got, self.rows(inferred="she is called his sister", quote="x"), True)
+        link = got["edges"][0]["links"][0]
+        self.assertEqual(link["inferred"], "she is called his sister")
+        self.assertNotIn("quote", link)
+
+    def test_an_empty_reason_gives_no_key(self) -> None:
+        got = page()
+        link_sources.attach(got, self.rows(inferred=""), True)
+        self.assertNotIn("inferred", got["edges"][0]["links"][0])
