@@ -5961,7 +5961,10 @@ class MemoryStore:
                     held = (await knowers.connection_knowers(w, [made.id])).get(made.id, [])
                     if known_by not in held:
                         fresh = not await knowers.holds(w, "connection", made.id, known_by)
-                        await knowers.set_connection_knowers(w, made.id, [*held, known_by])
+                        # (`held` is player characters only: an NPC who knows it stays, #4972)
+                        await knowers.set_connection_knowers(
+                            w, made.id, [*held, known_by], players_only=True
+                        )
                         if fresh:  # (the backstory's own character: never copied, #4795)
                             await knowers.mark_backstory(w, "connection", made.id, known_by)
                 except MemoryRuleError:
@@ -8486,8 +8489,12 @@ class MemoryStore:
                     fresh = backstory_of is not None and not await knowers.holds(
                         w, "connection", value[0].id, backstory_of
                     )  # (only a row this write makes is the backstory's, #4795)
+                    # (`held` is player characters only: an NPC who knows it keeps knowing, #4972)
                     await knowers.set_connection_knowers(
-                        w, value[0].id, [*held, *(k for k in known_by if k not in held)]
+                        w,
+                        value[0].id,
+                        [*held, *(k for k in known_by if k not in held)],
+                        players_only=True,
                     )
                     if fresh and backstory_of is not None and backstory_of in known_by:
                         await knowers.mark_backstory(w, "connection", value[0].id, backstory_of)
@@ -9024,13 +9031,15 @@ class MemoryStore:
         source: str,
         dm_chose_secret: bool,
         players_only: bool = False,
+        listed: Collection[str] | None = None,
     ) -> Written[list[str]]:
         """ "Who knows this?" for a hidden connection (#2935): exactly these player characters know
-        it, or only the DM when none. One change, so Undo takes it back. Only the DM."""
+        it, or only the DM when none. One change, so Undo takes it back. Only the DM. `listed`: the
+        characters the DM's list showed (`knowers.set_connection_knowers`, #4968)."""
         async with self._write(guild_id, campaign_id, source, dm_chose_secret=dm_chose_secret) as w:
             await beliefs.perspective_ids(w)
             chosen = await knowers.set_connection_knowers(
-                w, relation_id, character_ids, players_only=players_only
+                w, relation_id, character_ids, players_only=players_only, listed=listed
             )
             return Written(chosen, w.batch)
 
