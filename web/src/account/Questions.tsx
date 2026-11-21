@@ -19,6 +19,7 @@ import { TRAIT_QUESTIONS_LIVE } from "../content/trait-questions-switch";
 import { SECRET_QUESTIONS_LIVE } from "../content/secret-questions-switch";
 import { PARTY_JOIN_LIVE } from "../content/party-join-switch";
 import { PARTY_LEAVES_LIVE } from "../content/party-leaves-switch";
+import { REVEALS_LIVE } from "../content/reveals-switch";
 import { HEARD_LIVE } from "../content/heard-switch";
 import { WORLD_NOTES_LIVE } from "../content/world-notes-switch";
 import { THREADS_LIVE } from "../content/threads-switch";
@@ -79,6 +80,8 @@ function howFor(kind: string, api: AccountApi): QuestionHow {
   if (kind === "party_joins") return PARTY_JOIN_LIVE && api.joinQuestions !== undefined ? "here" : "discord";
   // The "Still in the party?" question (#4895): answered here once its switch is on, else in Discord.
   if (kind === "party_leaves") return PARTY_LEAVES_LIVE && api.leaveQuestions !== undefined ? "here" : "discord";
+  // What the characters learned (#3863 step 2): answered here once its switch is on, else in Discord.
+  if (kind === "reveals") return REVEALS_LIVE && api.revealQuestions !== undefined ? "here" : "discord";
   // The "Did they mean…?" question (#4841 B1): answered here once its switch is on, else in Discord.
   if (kind === "heard") return HEARD_LIVE && api.heardQuestions !== undefined ? "here" : "discord";
   // The three kinds answered on another page (#4841 A): a link to it while that page's switch is on, else in Discord.

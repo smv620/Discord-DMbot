@@ -20,6 +20,7 @@ from dmbot.db import Database
 UNCHECKED = "unchecked"  # sessions of an import whose name check was given up
 LEFT_TOLD = "left_told"  # sessions the story read has not reached, as last told
 NAMES = "names"  # names an import's scans added (next conversion)
+REPORTS = "reports"  # each scanned session's name-pass report, as text (#4904)
 
 _KIND = re.compile(r"^[a-z_]{1,40}$")
 

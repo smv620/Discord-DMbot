@@ -81,7 +81,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { PartyRecordCharacter, ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, WorldRoadNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion, PlotThreads, LeaveGroup } from "./api";
+import type { RevealProposal, PartyRecordCharacter, ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, WorldRoadNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion, PlotThreads, LeaveGroup } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type LorePdf, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
@@ -694,6 +694,15 @@ function startWeb(big: boolean, lonely = false): WebState {
     links.push({ id: "lp1", a: "pair-brask", b: "pair-ford", words: "lives at", secret: false, direction: "a-b" });
   }
   return { nodes, links, nextLink: links.length + 1 };
+}
+
+// What the characters learned, waiting in a pretend campaign (#3863 step 2): a player's, a guess, and one already known.
+function pretendReveals(): RevealProposal[] {
+  return [
+    { id: "rv-player", who: "Tavin", what: "the ferryman owes the mill a favour", how: "overheard at the ford", player: true, guessing: false },
+    { id: "rv-guess", who: "Mira", what: "the cellar door is trapped", how: "guessed from a sound", player: false, guessing: true },
+    { id: "rv-known", who: "Brynn", what: "the heir is alive", how: "a rumour in the tavern", player: false, guessing: false },
+  ];
 }
 
 // The "Still in the party?" questions waiting in a pretend campaign (#4895): one death, one goodbye with two in it.
@@ -1372,6 +1381,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const joinState: Record<string, { group: string; answer: "waiting" | "everyone"; names: string[] }[]> = {};
   // The "Still in the party?" questions waiting, by campaign (#4895). An answer takes its character out of the list.
   const leaveState: Record<string, LeaveGroup[]> = {};
+  // What the characters learned, waiting, by campaign (#3863 step 2). A keep or a not takes its proposal out of the list.
+  const revealState: Record<string, RevealProposal[]> = {};
   // The open plot threads by campaign (#3696): a state change is kept here, so the next read shows it.
   const plotThreadsOf: Record<string, PlotThreads> = {};
   let plotThreadSeq = 0; // the ids of threads started in the pretend campaign (#3696, slice 2c)
@@ -3884,6 +3895,26 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       return done!.names.length === 2 ? { batch: null, given: null } : { batch: 61, given: 3 };
     },
     // The "Still in the party?" questions (#4895): DM only. A "left" answer gives its batch, for the Undo through answerJoin's undo.
+    async revealQuestions(ref): Promise<RevealProposal[]> {
+      calls.push(`revealQuestions:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      return structuredClone((revealState[ref] ??= pretendReveals()));
+    },
+    async answerReveal(ref, change): Promise<{ batch: number | null }> {
+      calls.push(`answerReveal:${ref}:${change.id}:${change.answer}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const list = (revealState[ref] ??= pretendReveals());
+      const at = list.findIndex((p) => p.id === change.id);
+      if (at < 0) throw new ApiError("gone");
+      list.splice(at, 1);
+      // "rv-known" was already known for sure: a keep changes nothing and has no batch to undo.
+      if (change.answer === "keep" && change.id !== "rv-known") return { batch: 81 };
+      return { batch: null };
+    },
     async leaveQuestions(ref): Promise<LeaveGroup[]> {
       calls.push(`leaveQuestions:${ref}`);
       await reachable();
