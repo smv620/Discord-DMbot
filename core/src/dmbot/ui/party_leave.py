@@ -176,25 +176,43 @@ async def send_staying_questions(bot: Any, guild_id: int, campaign_id: str) -> i
     return asked
 
 
+def _others_on(message: Any, entity_id: str) -> list[str]:
+    """The other characters with buttons on this message, read from its own buttons' ids: the
+    pressed character's row may be gone (a forget), so its group can't be looked up through it."""
+    found: list[str] = []
+    for row in getattr(message, "components", None) or []:
+        for item in getattr(row, "children", None) or []:
+            m = re.fullmatch(_LEFT, str(getattr(item, "custom_id", "") or ""))
+            if m is not None and m["entity"] != entity_id and m["entity"] not in found:
+                found.append(m["entity"])
+    return found
+
+
 async def _gone(interaction: discord.Interaction, bot: Any, campaign: Any, entity_id: str) -> None:
-    """A press on a question that no longer waits (#4908). Answered since this message was sent
-    (by this DM or another): "Already answered". Gone without an answer: it was removed by a
-    forget, so "This question isn't waiting any more.", and the message is redrawn with the
-    characters still waiting on it (its own buttons go)."""
+    """A press on a question that no longer waits (#4908). Answered since this message was sent,
+    on a question sent by then (by this DM or another): "Already answered". Otherwise it was
+    removed by a forget, so "This question isn't waiting any more.", and the message is redrawn
+    with the other characters on it that still wait (found from its own buttons), or with none.
+    A failed check says the words that are true either way."""
     message = getattr(interaction, "message", None)
     sent = getattr(message, "created_at", None)
+    # (no message time: any answer counts, the older behaviour, never a false "removed")
     since = int(sent.timestamp()) if sent is not None else 0
     try:
         answered = await bot.memory.staying_answered_since(
             campaign.guild_id, campaign.id, entity_id, since
         )
-    except Exception as exc:  # (the type only; the old words are never wrong to show)
+        if answered:
+            await _edit(interaction, ANSWERED)
+            return
+        text, rest = NOT_WAITING, None
+        for other in _others_on(message, entity_id):
+            text, rest = await _after_answer(bot, campaign, other, NOT_WAITING)
+            if rest is not None:
+                break
+    except Exception as exc:  # (the type only)
         log.warning("Staying question check failed (%s)", type(exc).__name__)
-        answered = True
-    if answered:
-        await _edit(interaction, ANSWERED)
-        return
-    text, rest = await _after_answer(bot, campaign, entity_id, NOT_WAITING)
+        text, rest = NOT_WAITING, None
     await _edit(interaction, text, rest)
 
 
