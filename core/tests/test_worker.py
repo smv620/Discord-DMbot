@@ -180,6 +180,7 @@ def recap_bot(*, worker_on: bool, email: bool = False) -> Any:
     bot._queued = lambda *a: RecapFeatures._queued(bot, *a)  # type: ignore[attr-defined]
     bot._say_failed = lambda *a: RecapFeatures._say_failed(bot, *a)  # type: ignore[attr-defined]
     bot._post_recap_ready = lambda *a: RecapFeatures._post_recap_ready(bot, *a)  # type: ignore[attr-defined]
+    bot._say_unchecked = lambda *a: RecapFeatures._say_unchecked(bot, *a)  # type: ignore[attr-defined]
     return bot
 
 
@@ -226,7 +227,7 @@ class TheRecapTextJob(unittest.IsolatedAsyncioTestCase):
         await RecapFeatures.recap_told(bot, 1, CID, self.JOB)
         self.assertEqual((bot.rows.rows, bot.posts), ([], []))
 
-    async def test_the_allowance_row_holds_nothing_and_the_bot_reads_the_refusal_itself(
+    async def test_the_allowance_row_holds_only_a_flag_and_the_bot_reads_the_refusal_itself(
         self,
     ) -> None:
         bot = recap_bot(worker_on=True)
@@ -239,7 +240,7 @@ class TheRecapTextJob(unittest.IsolatedAsyncioTestCase):
             await RecapFeatures._recap_allowance(bot, 1, CID, audio=False),
             "No recaps left this month.",
         )
-        self.assertEqual(bot.rows.rows, [(1, CID, "recap_allowance", {})])
+        self.assertEqual(bot.rows.rows, [(1, CID, "recap_allowance", {"audio": False})])
         self.assertEqual(bot.posts, [])
 
     async def test_the_job_round_is_the_workers_with_the_switch_on(self) -> None:
@@ -275,3 +276,101 @@ class TheRecapTextJob(unittest.IsolatedAsyncioTestCase):
 
 async def _none() -> None:
     return None
+
+
+class TheOtherRecapLines(unittest.IsolatedAsyncioTestCase):
+    """The other lines a recap job used to post itself (#4903), said by the bot from the row."""
+
+    def bot(self, *, posts: bool = True, counts_only: bool = False) -> Any:
+        bot = recap_bot(worker_on=True)
+        notes: list[int] = []
+
+        async def post(channel: int, text: str, view: Any = None, **kw: Any) -> bool:
+            bot.posts.append(text)
+            return posts
+
+        async def note(gid: int, cid: str, dm: int, added: int) -> None:
+            notes.append(added)
+
+        async def get_job(*_a: Any) -> Any:
+            return SimpleNamespace(dm_user_id=5)
+
+        bot.notes = notes  # type: ignore[attr-defined]
+        bot.post = post  # type: ignore[attr-defined]
+        bot._private_names_note = note  # type: ignore[attr-defined]
+        bot.recaps = SimpleNamespace(get=get_job)  # type: ignore[attr-defined]
+        bot._upkeep_channel = lambda c: (9, counts_only)  # type: ignore[attr-defined]
+        bot._say_names = lambda *a: RecapFeatures._say_names(bot, *a)  # type: ignore[attr-defined]
+        bot._say_allowance = lambda *a: RecapFeatures._say_allowance(bot, *a)  # type: ignore[attr-defined]
+        bot._say_unchecked = lambda *a: RecapFeatures._say_unchecked(bot, *a)  # type: ignore[attr-defined]
+        return bot
+
+    async def test_names_say_the_rows_count_and_the_private_note_follows_the_post(self) -> None:
+        bot = self.bot()
+        await RecapFeatures.deliver_recap_names(bot, 1, CID, {"session_at": 100, "added": 3})
+        self.assertEqual((len(bot.posts), bot.notes), (1, [3]))
+
+    async def test_a_refused_names_post_raises_and_sends_no_private_note(self) -> None:
+        bot = self.bot(posts=False)
+        with self.assertRaises(RuntimeError):
+            await RecapFeatures.deliver_recap_names(bot, 1, CID, {"session_at": 100, "added": 3})
+        self.assertEqual(bot.notes, [])  # (a retry cannot repeat it)
+
+    async def test_names_for_a_recap_that_is_gone_say_nothing(self) -> None:
+        bot = self.bot()
+
+        async def gone(*_a: Any) -> None:
+            return None
+
+        bot.recaps = SimpleNamespace(get=gone)
+        await RecapFeatures.deliver_recap_names(bot, 1, CID, {"session_at": 100, "added": 3})
+        self.assertEqual((bot.posts, bot.notes), ([], []))
+
+    async def test_the_audio_allowance_row_is_read_back_as_the_audio_refusal(self) -> None:
+        bot = self.bot()
+        asked: list[bool] = []
+
+        async def refusal(gid: int, cid: str, *, audio: bool) -> str | None:
+            asked.append(audio)
+            return "No narrations left." if audio else None
+
+        bot._recap_refusal = refusal  # type: ignore[attr-defined]
+        await RecapFeatures._recap_allowance(bot, 1, CID, audio=True)
+        self.assertEqual(bot.rows.rows[-1][2:], ("recap_allowance", {"audio": True}))
+        await RecapFeatures.deliver_recap_allowance(bot, 1, CID, {"audio": True})
+        self.assertEqual(asked[-1], True)
+        self.assertEqual(bot.posts, ["📜 Recap: No narrations left."])
+
+    async def test_an_allowance_that_has_room_again_says_nothing(self) -> None:
+        bot = self.bot()
+
+        async def refusal(gid: int, cid: str, *, audio: bool) -> None:
+            return None
+
+        bot._recap_refusal = refusal  # type: ignore[attr-defined]
+        await RecapFeatures.deliver_recap_allowance(bot, 1, CID, {"audio": False})
+        self.assertEqual(bot.posts, [])
+
+    async def test_the_dm_bot_channel_gets_the_fixed_allowance_line(self) -> None:
+        bot = self.bot(counts_only=True)
+
+        async def refusal(gid: int, cid: str, *, audio: bool) -> str:
+            return "You have used 2 of 2 on the Hobby plan."
+
+        bot._recap_refusal = refusal  # type: ignore[attr-defined]
+        await RecapFeatures.deliver_recap_allowance(bot, 1, CID, {"audio": False})
+        self.assertEqual(len(bot.posts), 1)
+        self.assertNotIn("Hobby", bot.posts[0])
+
+    async def test_unchecked_is_a_row_with_the_worker_on_and_said_from_it(self) -> None:
+        bot = self.bot()
+        job = SimpleNamespace(session_at=100, keeps_previous=False)
+        await RecapFeatures.recap_unchecked(bot, 1, CID, job)
+        self.assertEqual(
+            bot.rows.rows, [(1, CID, "recap_unchecked", {"session_at": 100, "keeps": False})]
+        )
+        self.assertEqual(bot.posts, [])
+        await RecapFeatures.deliver_recap_unchecked(
+            bot, 1, CID, {"session_at": 100, "keeps": False}
+        )
+        self.assertEqual(len(bot.posts), 1)

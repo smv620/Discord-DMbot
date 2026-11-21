@@ -1603,7 +1603,7 @@ class RecapFeatures:
         message = await self._recap_refusal(gid, cid, audio=audio)
         if message is None:
             return None
-        if not await self._queued(gid, cid, RECAP_ALLOWANCE, {}):
+        if not await self._queued(gid, cid, RECAP_ALLOWANCE, {"audio": audio}):
             await self._say_allowance(gid, cid, message)
         return message
 
@@ -1626,7 +1626,7 @@ class RecapFeatures:
     async def deliver_recap_allowance(self, gid: int, cid: str, payload: Mapping[str, Any]) -> None:
         """Said again from the bot's own read of the allowance, so the words are never the
         worker's: nothing to say (it is allowed again) is done."""
-        message = await self._recap_refusal(gid, cid, audio=False)
+        message = await self._recap_refusal(gid, cid, audio=bool(payload.get("audio")))
         if message is not None and not await self._say_allowance(gid, cid, message):
             raise RuntimeError("not-posted")
 
@@ -1890,6 +1890,8 @@ class RecapFeatures:
                 gid, cid, RECAP_NAMES, {"session_at": job.session_at, "added": added}
             ):
                 await self._say_names(gid, cid, campaign, job.dm_user_id, added)
+            # (a worker has no live tables, so this always drops its own cache: harmless, and the
+            # bot's cache follows the database's own notification)
             if self.lookup is not None and not any(
                 t.campaign_id == cid for t in self.tables.values()
             ):
@@ -1902,11 +1904,12 @@ class RecapFeatures:
     ) -> bool:
         """The channel's line and the DM's private note about names added to the check."""
         names_channel, _ = self._upkeep_channel(campaign)
-        ok = True
-        if names_channel is not None:
-            ok = await self.post(names_channel, recap_names_text(added), view=review_view(cid))
+        if names_channel is not None and not await self.post(
+            names_channel, recap_names_text(added), view=review_view(cid)
+        ):
+            return False  # (the private note waits: a retry of this row must not repeat it)
         await self._private_names_note(gid, cid, dm_user_id, added)
-        return ok
+        return True
 
     async def deliver_recap_names(self, gid: int, cid: str, payload: Mapping[str, Any]) -> None:
         """The outbox's "names added to your check" (#4903): the count is the row's, the DM is read
