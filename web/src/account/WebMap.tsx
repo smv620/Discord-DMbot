@@ -14,6 +14,8 @@ import { mapReadLine } from "./webReading";
 import { kindWords, webPage as words } from "../content/web-words";
 import { kindStyle } from "./webKinds";
 import NodeSummary from "./NodeSummary";
+import NodeTraits from "./NodeTraits";
+import { NODE_TRAITS_LIVE } from "../content/node-traits-switch";
 import type { AccountApi, IconChoice, WebEdge, WebNode } from "./api";
 import {
   MAX_SIM_NAMES,
@@ -866,6 +868,10 @@ export default function WebMap({
             />
           )}
           {api && <NodeSummary key={detail.id} api={api} refId={refId} id={detail.id} />}
+          {/* The lineage and class of a character (#3925): the DM's view only, and only for a character's own node. */}
+          {canEdit && NODE_TRAITS_LIVE && api?.nodeTraits && (detail.kind === "npc" || detail.kind === "player_character") && (
+            <NodeTraits key={detail.id} api={api} refId={refId} id={detail.id} />
+          )}
           {(detail.quests?.length ?? 0) > 1 && <p class="small">{words.alsoIn(detail.quests!.slice(1).map((q) => q.name).join(", "))}</p>}
           {sideLines.length === 0 ? (
             <p class="small">{words.sideNone}</p>
