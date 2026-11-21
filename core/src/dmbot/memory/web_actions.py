@@ -157,6 +157,7 @@ MAP_ACTIONS = ("map-terrain", "map-climate", "map-control", "map-show")
 # World notes (#4285, slice 1c): ✅ on the lines the page showed (their ids, space-separated), 🚫 on
 # one line, or ↩ Undo of one of those (the text is its change number). Filed under no name.
 WORLD_ACTIONS = ("world-keep", "world-not", "world-undo")
+LEAVE_ACTIONS = ("leave-yes", "leave-no")  # "Still in the party?" (#4895, party knowledge slice 6a)
 JOIN_ACTIONS = (  # the DM's join question (#4778) and "Let me choose" (#4799)
     "join-everyone", "join-party", "join-undo", "join-choices", "join-choose",
 )  # fmt: skip
@@ -502,7 +503,7 @@ class ActionStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
-                " AND user_id = %s AND action IN ('join-party', 'join-choose')"
+                " AND user_id = %s AND action IN ('join-party', 'join-choose', 'leave-yes')"
                 " AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
                 (guild_id, campaign_id, user_id, batch),
             )
@@ -797,6 +798,8 @@ async def apply(
         if actions is None:
             return _failed(FAILED)
         return await _join(memory, actions, guild_id, cid, action, join_choices)
+    if action.action in LEAVE_ACTIONS:
+        return await _leave(memory, guild_id, cid, action)
     if action.action in PART_ACTIONS:
         if actions is None and action.action == "part-undo":
             return _failed(FAILED)
@@ -1553,6 +1556,26 @@ async def _rule_undo(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Ou
 # It answers whether there was anything to choose (False: the question is gone or has no one left).
 JoinChoicesFn = Callable[[int, str, str, int], Awaitable[bool]]
 CHOSE_MAX = 10  # characters named in one pick's answer (the answer is 200 characters at most)
+
+
+async def _leave(memory: MemoryStore, guild_id: int, cid: str, a: Action) -> Outcome:
+    """The DM's answer to "Still in the party?" for one character, from the page (#4895): the same
+    store calls as Discord's buttons. `leave-yes` ("Left the party") is the card's own call, one
+    change whose number goes back for the page's Undo (`join-undo`, which takes back only a change
+    this DM's own done `leave-yes` made; the Undo asks the question again); `leave-no` ("Still in
+    the party") writes nothing but the answer. A question another DM already answered is `gone`."""
+    if not re.fullmatch(r"[0-9a-f]{32}", a.text):
+        return _failed(GONE)
+    try:
+        if a.action == "leave-no":
+            await memory.staying_answer_stays(guild_id, cid, a.text)
+            return Outcome()
+        done = await memory.staying_answer_left(guild_id, cid, a.text)
+    except (
+        MemoryRuleError
+    ):  # (AlreadyAnswered is one, and so is a character no longer in the party:
+        return _failed(GONE)  # `gone` for both, as Discord answers both with "already answered")
+    return _changed(done.batch)
 
 
 async def _join_choose(

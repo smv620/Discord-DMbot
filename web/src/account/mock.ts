@@ -80,7 +80,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { PartyRecordCharacter, ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, WorldRoadNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion } from "./api";
+import type { PartyRecordCharacter, ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, WorldRoadNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion, PlotThreads } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type LorePdf, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
@@ -693,6 +693,44 @@ function startWeb(big: boolean, lonely = false): WebState {
     links.push({ id: "lp1", a: "pair-brask", b: "pair-ford", words: "lives at", secret: false, direction: "a-b" });
   }
   return { nodes, links, nextLink: links.length + 1 };
+}
+
+// The open plot threads (#3696, slice 1): in play first, then resolved or dropped; one stalled, one promise, one with no state yet.
+function pretendPlotThreads(): PlotThreads {
+  return {
+    after: 3,
+    stalledCount: 1,
+    total: 4,
+    threads: [
+      {
+        id: "a1".repeat(16), name: "The drowned bell", kind: "thread", state: "going", stateWords: "Happening now",
+        history: ["Open (Session 2)", "checked, still going (Session 4)"],
+        involved: [{ id: "pc-cerric", name: "Cerric", role: "quest giver" }, { id: "npc-tavin", name: "Tavin", role: "" }],
+        movers: [{ id: "pc-cerric", name: "Cerric", endsIt: false, session: 4 }],
+        cameFrom: [{ id: "b2".repeat(16), name: "The river mill" }], ledTo: [{ id: "c3".repeat(16), name: "The bell tower" }],
+        promise: null, quiet: 0, stalled: false,
+      },
+      {
+        id: "d4".repeat(16), name: "Mira's word to the guard", kind: "promise", state: "open", stateWords: "Promised",
+        history: ["Open (Session 3)"],
+        involved: [{ id: "pc-mira", name: "Mira", role: "" }],
+        movers: [], cameFrom: [], ledTo: [],
+        promise: { by: ["Mira"], to: ["Guard 1"], due: "before the next full moon" }, quiet: 1, stalled: false,
+      },
+      {
+        id: "e5".repeat(16), name: "The missing courier", kind: "quest", state: "hinted", stateWords: "Hinted",
+        history: ["Hinted (Session 1)"],
+        involved: [], movers: [], cameFrom: [], ledTo: [],
+        promise: null, quiet: 3, stalled: true,
+      },
+      {
+        id: "f6".repeat(16), name: "The hooded stranger", kind: "mystery", state: null, stateWords: "",
+        history: [],
+        involved: [], movers: [], cameFrom: [], ledTo: [],
+        promise: null, quiet: 0, stalled: false,
+      },
+    ],
+  };
 }
 
 /** The pretend names a DM may look at the web as (#2999): two player characters first, then NPCs. */
@@ -3032,6 +3070,14 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     async storyThreads(ref) {
       calls.push(`storyThreads:${ref}`);
       return { suggestions: storyThreadList.map((t) => ({ ...t, people: t.people.map((p) => ({ ...p })), lines: t.lines.map((l) => ({ ...l })) })) };
+    },
+    // The open plot threads (#3696, slice 1): read only, DM only (a player is refused).
+    async plotThreads(ref) {
+      calls.push(`plotThreads:${ref}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      return pretendPlotThreads();
     },
     async changeStoryThreads(ref, change) {
       calls.push(`changeStoryThreads:${ref}:${JSON.stringify(change)}`);

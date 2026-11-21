@@ -15,7 +15,9 @@ export const traitWords = {
   yes: "Yes, change it",
   yesAdd: "Yes, add it",
   no: "No, leave it",
-  gone: "Already answered, maybe in Discord. Showing what is left.",
+  // (#4908: answered, maybe in Discord, or removed when its speaker stopped being recorded or its
+  // transcript was deleted; true of all)
+  gone: "This question isn't waiting any more. Showing what is left.",
   // A refused answer: a language's says the character has a sheet now (as Discord's card does); a lineage or class says
   // they may have been joined with another name or removed.
   refused: (who: string, name: string, kind: TraitKind): string =>

@@ -25,7 +25,7 @@ from dmbot.memory import thread_progress as tprog
 from dmbot.memory.gate import Viewer
 from dmbot.memory.models import DM, HINTED, MemoryRuleError, TooLateToUndo
 from dmbot.memory.thread_read import ReadBranch, ReadClue, ReadPart
-from dmbot.memory.thread_suggestions import ThreadSuggestionStore, Waiting, unkeep_in
+from dmbot.memory.thread_suggestions import GONE, ThreadSuggestionStore, Waiting, unkeep_in
 from dmbot.ui import logic
 from dmbot.ui import thread_progress_card as pcard
 from dmbot.ui.dmbot_commands import (
@@ -81,7 +81,9 @@ NOTHING_LEFT = (
     "📜 **Story threads**: nothing to check. 🎉 When DMbot finds more in your lore or a session, "
     "they show in ❓ Questions for you."
 )
-GONE_NOW = "That one was already answered. Here are the ones still waiting."
+# (#4908: a question can also be gone because its speaker stopped being recorded or its session's
+# transcript was deleted, not only answered: one sentence true of both, in Supervisor's words)
+GONE_NOW = "This question isn't waiting any more. Showing what is left."
 TOO_LATE = "⚠️ Can't undo: it was changed since. Change it in 🧵 Threads."
 NOT_AVAILABLE = (
     "Remembering names isn't switched on for this DMbot yet. Ask whoever runs DMbot to turn it on."
@@ -593,8 +595,9 @@ class ThreadQuestions(_Menu):
         except TooLateToUndo:
             self.undo, said = None, TOO_LATE
         except MemoryRuleError as exc:
-            # (a double press or an answer from elsewhere: the earlier Undo stays offered)
-            said = f"⚠️ {exc}"
+            # (a double press, an answer from elsewhere, or a forget that took it: the earlier Undo
+            # stays offered; a gone one says the words true of all three, #4908)
+            said = GONE_NOW if str(exc) == GONE else f"⚠️ {exc}"
         await self._show(interaction, said)
 
 
