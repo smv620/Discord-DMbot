@@ -228,7 +228,7 @@ match. "In Discord" says where the DM finds it today.
 | Rule clashes (house rule vs rule); rules alerts | clash card | on the way (#3697): the core half is built (the decided pairs, change one, clear one, own rules only; a pair with a followed set's rule is read-only there), the page is WebDev's; "Which wins?" after a save waits for the website rule editor (#3775); the clash is found by one AI call when a rule is saved, nothing is stored but the DM's answer; live alerts are Discord-only |
 | Plot check (ask, answer an issue, decide a proposal) | plot cards | Plot check (`PLOT_CHECK_LIVE`) |
 | Continuity and contradictions | continuity card | missing ⚠ |
-| Threads (open plot threads) | threads card | built, switched off: the read-only Plot threads panel on the Names page (`PLOT_THREADS_LIVE`, #3696 slice 1); the writes are slice 2 ⚠ |
+| Threads (open plot threads) | threads card | built, switched off: the read-only Plot threads panel on the Names page (`PLOT_THREADS_LIVE`, #3696 slice 1); the writes are slice 2: the state change and "Checked, still going" (slice 2a) have their core half (`POST …/plot-threads/state`, migration 0580), the page half is next; involved, new thread and promise, and links are 2b to 2d ⚠ |
 | Live heads-up (a secret about to be said) | live card | Discord-only: live at the table |
 | Questions for you (notice, reminders, 🔕 Not now) | private notices | The Questions page; notices are Discord-only |
 | Pictures: kept pictures, looked-at pictures, image fix | picture cards | Pictures gallery (`PICTURES_LIVE`) |
