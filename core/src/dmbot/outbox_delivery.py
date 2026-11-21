@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from typing import Any
 
@@ -25,8 +26,23 @@ from dmbot.outbox import CHANNEL, Outbox
 log = logging.getLogger(__name__)
 
 POLL_S = 30.0
+HANDLER_S = 60.0  # one delivery may take this long before it counts as a failed try
+SWEEP_EVERY_S = 3600.0
 Handler = Callable[[int, str, Mapping[str, Any]], Awaitable[None]]  # (server, campaign, payload)
 Listen = Callable[[str], Any]  # `Database.listen`: an async iterator of notification payloads
+
+
+async def _mark(done: Awaitable[None]) -> bool:
+    """A mark that fails costs only that row (it is claimed again after `STALE_S`), never the
+    round's other rows."""
+    try:
+        await done
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        log.warning("Outbox: could not mark a row (%s)", type(exc).__name__)
+        return False
+    return True
 
 
 async def deliver_round(outbox: Outbox, guild_id: int, handlers: Mapping[str, Handler]) -> int:
@@ -40,17 +56,18 @@ async def deliver_round(outbox: Outbox, guild_id: int, handlers: Mapping[str, Ha
                     await outbox.failed(guild_id, row.id, "unknown-kind", final=True)
                     continue
                 try:
-                    await handler(row.guild_id, row.campaign_id, row.payload)
+                    async with asyncio.timeout(HANDLER_S):  # (a stuck call is a failed try)
+                        await handler(row.guild_id, row.campaign_id, row.payload)
                 except asyncio.CancelledError:
                     raise
                 except Exception as exc:  # (the type only: a message could quote a row)
                     log.warning(
                         "Outbox: a %s row was not delivered (%s)", row.kind, type(exc).__name__
                     )
-                    await outbox.failed(guild_id, row.id, type(exc).__name__)
+                    await _mark(outbox.failed(guild_id, row.id, type(exc).__name__))
                     continue
-                await outbox.sent(guild_id, row.id)
-                said += 1
+                if await _mark(outbox.sent(guild_id, row.id)):
+                    said += 1
     except asyncio.CancelledError:
         raise
     except Exception as exc:
@@ -80,16 +97,19 @@ async def run(
     wake: asyncio.Event,
     *,
     poll_s: float = POLL_S,
+    clock: Callable[[], float] = time.monotonic,
 ) -> None:
     """The delivery loop: a round when woken or every `poll_s`; old rows are swept now and then."""
-    rounds = 0
+    last_sweep = clock()
     while True:
+        sweep = clock() - last_sweep >= SWEEP_EVERY_S
         for guild_id in list(guilds()):
             await deliver_round(outbox, guild_id, handlers)
-            rounds += 1
-            if rounds % 120 == 0:
+            if sweep:
                 with contextlib.suppress(Exception):
                     await outbox.sweep(guild_id)
+        if sweep:
+            last_sweep = clock()
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(wake.wait(), poll_s)
         wake.clear()

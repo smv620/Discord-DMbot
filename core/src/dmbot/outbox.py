@@ -3,8 +3,10 @@
 Only the bot holds the Discord connection, so a worker never posts; it writes a row here, in the
 same transaction as the work that made it (`add` takes the caller's connection), and the bot claims
 it, says it and marks it sent only after Discord accepted it. The payload holds ids and counts only,
-never a name, a transcript line or a document's words: `clean_payload` refuses anything else, so
-the bot builds the words itself when it delivers (a secret stays as secret as the bot's own reads
+never a name, a transcript line or a document's words: `clean_payload` refuses sentences, text with
+spaces, and anything that is not a number, a flag or one short word, and the producers send only
+ids (a single word such as a name would pass, so a producer must never pass one), so the bot builds
+the words itself when it delivers (a secret stays as secret as the bot's own reads
 make it). A claim is a lease: a row left `sending` by a bot that died is claimed again after
 `STALE_S`, and two bots never claim one row (`FOR UPDATE SKIP LOCKED`). A failed delivery is retried
 up to `MAX_TRIES` times, then ends `failed` with a short fixed reason. Rows older than `KEEP_S` go.
@@ -98,6 +100,13 @@ class Outbox:
         Each try is counted when it is claimed, so a bot that dies on a row cannot loop forever."""
         now = int(self._now())
         async with self._db.guild(guild_id) as conn:
+            # A delivery that died on its last try is given up on, never claimed again: a row that
+            # crashes or hangs the process cannot be tried for ever.
+            await conn.execute(
+                "UPDATE outbox SET state = 'failed', claimed_at = NULL, error = 'gave-up'"
+                " WHERE guild_id = %s AND state = 'sending' AND claimed_at <= %s AND tries >= %s",
+                (guild_id, now - STALE_S, MAX_TRIES),
+            )
             cur = await conn.execute(
                 "UPDATE outbox SET state = 'sending', tries = tries + 1, claimed_at = %s"
                 " WHERE (guild_id, id) IN (SELECT guild_id, id FROM outbox WHERE guild_id = %s"

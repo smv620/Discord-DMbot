@@ -394,7 +394,9 @@ class RecapFeatures:
                         "outbox-listen",
                     ),
                 ]
-                if self.outbox is not None
+                # (only with the worker on: off, the bot opens no listener and polls nothing, so the
+                # default path is as it was; rows left from a run with it on wait for it to come on)
+                if self.settings.worker_on and self.outbox is not None
                 else []
             ),
             *(

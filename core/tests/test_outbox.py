@@ -5,6 +5,7 @@ servers. Database tests: skipped where there is no Postgres."""
 from __future__ import annotations
 
 import asyncio
+import unittest
 from collections.abc import Mapping
 from typing import Any
 
@@ -143,3 +144,82 @@ class TheClaim(Base):
         self.now += 4 * 24 * 3600
         self.assertEqual(await self.box.sweep(1), 1)
         self.assertEqual(len(await self.box.claim(1)), 1)
+
+
+class ThePoisonRow(Base):
+    async def test_a_row_that_died_on_its_last_try_is_given_up_on(self) -> None:
+        row = await self.box.add_now(1, self.one.id, "recap_ready", {"session_at": 1})
+        for _ in range(MAX_TRIES):
+            self.assertEqual(len(await self.box.claim(1)), 1)
+            self.now += STALE_S + 1  # (the bot died on it each time)
+        self.assertEqual(await self.box.claim(1), [])
+        self.assertEqual(await self.state(1, row), ("failed", MAX_TRIES))
+
+    async def test_a_stuck_handler_is_a_failed_try_and_does_not_stop_the_next_row(self) -> None:
+        from unittest.mock import patch
+
+        first = await self.box.add_now(1, self.one.id, "recap_ready", {"session_at": 1})
+        await self.box.add_now(1, self.one.id, "recap_ready", {"session_at": 2})
+
+        async def stuck_on_one(gid: int, cid: str, payload: Mapping[str, Any]) -> None:
+            if payload["session_at"] == 1:
+                await asyncio.sleep(10)
+            await self.say(gid, cid, payload)
+
+        with patch("dmbot.outbox_delivery.HANDLER_S", 0.05):
+            self.assertEqual(await deliver_round(self.box, 1, {"recap_ready": stuck_on_one}), 1)
+        self.assertEqual(await self.state(1, first), ("waiting", 1))
+        self.assertEqual([p["session_at"] for _, _, p in self.said], [2])
+
+
+class TheRecapReadyDelivery(unittest.IsolatedAsyncioTestCase):
+    """`deliver_recap_ready` with stand-ins, no database: nothing to say is done, a refused post
+    raises (so the row is tried again), and the DM Bot channel's line has no title."""
+
+    def bot(self, *, state: str = "ready", channel: int | None = 9, posts: bool = True) -> Any:
+        from types import SimpleNamespace
+
+        job = SimpleNamespace(state=state, title="The Silver Lock", session_at=100)
+        campaign = SimpleNamespace(dm_bot_channel_id=7 if channel else None)
+        stub = SimpleNamespace(posted=[])
+
+        async def get(*_a: Any) -> Any:
+            return job if state != "gone" else None
+
+        async def get_campaign(*_a: Any) -> Any:
+            return campaign
+
+        async def post(chan: int, title: str, counts: bool, link: str) -> bool:
+            stub.posted.append((chan, title, counts))
+            return posts
+
+        async def post_ready(
+            gid: int, cid: str, j: Any, chan: int, counts: bool, link: str
+        ) -> bool:
+            return await post(chan, j.title, counts, link)
+
+        stub.recaps = SimpleNamespace(get=get)
+        stub.campaigns = SimpleNamespace(get=get_campaign)
+        stub.settings = SimpleNamespace(site_url="")
+        stub._upkeep_channel = lambda c: (channel, bool(c.dm_bot_channel_id))
+        stub._post_recap_ready = post_ready
+        return stub
+
+    async def deliver(self, stub: Any) -> None:
+        from dmbot.recaps.discord import RecapFeatures
+
+        await RecapFeatures.deliver_recap_ready(stub, 1, "c", {"session_at": 100})
+
+    async def test_a_ready_recap_is_posted_to_the_channel(self) -> None:
+        stub = self.bot()
+        await self.deliver(stub)
+        self.assertEqual(stub.posted, [(9, "The Silver Lock", True)])
+
+    async def test_nothing_to_say_is_done_not_failed(self) -> None:
+        for stub in (self.bot(state="gone"), self.bot(state="draft"), self.bot(channel=None)):
+            await self.deliver(stub)
+            self.assertEqual(stub.posted, [])
+
+    async def test_a_refused_post_raises_so_it_is_tried_again(self) -> None:
+        with self.assertRaises(RuntimeError):
+            await self.deliver(self.bot(posts=False))
