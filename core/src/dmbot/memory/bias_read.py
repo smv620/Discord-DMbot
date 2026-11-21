@@ -42,6 +42,12 @@ _NOT_A_STATEMENT = re.compile(
 # The holder starts its sentence or clause: "Travelers to X fear orcs" and "Nobody believes X hates
 # elves" are someone else's feeling or a doubted one (the reviewer's cases on #4229).
 _CLAUSE_START = r"(?:^\W*|[,;:]\s*|\band\s+|\bbut\s+)"
+# "The people of X distrust …": the holder's own people, said the long way (the fixture on #3545)
+_PEOPLE_OF = r"(?:the\s+(?:people|folk)\s+of\s+)?"
+# A list after the verb ("welcomes halflings and gnomes"): each further people is read too, but
+# only one a clause ends after, so "elves and dwarves trust nobody" gives no feeling toward dwarves
+_MORE = r"(?:\s*,\s*(?:and\s+|or\s+)?|\s+(?:and|or)\s+)"
+_ENDS = r"(?=\s*(?:[.,;:!]|\band\b|\bor\b|$))"
 # After an adjective or a singular, the people is whole only before "folk", "people" or "kind", or
 # at the end of a clause: "dwarven ale", "human traders" and "the elven dead" are no people.
 _WHOLE_AFTER = r"(?:\s+(?:folk|people|kind)\b|(?=\s*(?:[.,;:!]|\band\b|\bor\b|$)))"
@@ -93,6 +99,10 @@ def read(text: str, holders: Mapping[str, str], cultures: Mapping[str, str]) -> 
     whole = _alternation({**_PLURAL, **names})  # (a culture's name is whole wherever it stands)
     single = _alternation(_SINGLE)
     target = rf"(?:(?P<whole>{whole})(?:\s+folk)?|(?P<single>{single}){_WHOLE_AFTER})(?!\w)"
+    more = re.compile(
+        rf"{_MORE}(?:the\s+)?(?:(?P<whole>{whole})(?:\s+folk)?|(?P<single>{single})){_ENDS}",
+        re.I,
+    )
     present = [
         (name, holder_id)
         for name, holder_id in holders.items()
@@ -103,7 +113,8 @@ def read(text: str, holders: Mapping[str, str], cultures: Mapping[str, str]) -> 
     patterns = [
         (
             re.compile(
-                rf"{_CLAUSE_START}{re.escape(name)}(?:'s people|'s folk)?{_LINK}(?P<verb>{verb})"
+                rf"{_CLAUSE_START}{_PEOPLE_OF}{re.escape(name)}(?:'s people|'s folk)?{_LINK}"
+                rf"(?P<verb>{verb})"
                 rf"{_LINK}{target}",
                 re.I,
             ),
@@ -116,14 +127,21 @@ def read(text: str, holders: Mapping[str, str], cultures: Mapping[str, str]) -> 
             continue
         for pattern, holder_id in patterns:
             for m in pattern.finditer(sentence):
-                word = (m["whole"] or m["single"]).casefold()
-                kind, ref = names.get(word) or ("lineage", _PLURAL.get(word) or _SINGLE[word])
-                key = (holder_id, kind, ref)
-                if key not in out:
-                    out[key] = Found(
-                        holder_id,
-                        VERBS[m["verb"].casefold()],
-                        lineage=ref if kind == "lineage" else "",
-                        culture_id=ref if kind == "culture" else "",
-                    )
+                step = VERBS[m["verb"].casefold()]
+                words = [m["whole"] or m["single"]]
+                at = m.end()
+                while (n := more.match(sentence, at)) is not None:  # (the rest of a list)
+                    words.append(n["whole"] or n["single"])
+                    at = n.end()
+                for said in words:
+                    word = said.casefold()
+                    kind, ref = names.get(word) or ("lineage", _PLURAL.get(word) or _SINGLE[word])
+                    key = (holder_id, kind, ref)
+                    if key not in out:
+                        out[key] = Found(
+                            holder_id,
+                            step,
+                            lineage=ref if kind == "lineage" else "",
+                            culture_id=ref if kind == "culture" else "",
+                        )
     return list(out.values())

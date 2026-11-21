@@ -30,8 +30,23 @@ class TheReader(unittest.TestCase):
         )
         self.assertEqual(
             [(f.holder_id, f.step, f.lineage) for f in got],
-            [(HALL, standing.UNFRIENDLY, "elf"), (LEAGUE, standing.FRIENDLY, "halfling")],
+            [
+                (HALL, standing.UNFRIENDLY, "elf"),
+                (LEAGUE, standing.FRIENDLY, "halfling"),
+                (LEAGUE, standing.FRIENDLY, "gnome"),  # (the rest of a list, #3545 item 2)
+            ],
         )
+
+    def test_a_list_reads_only_peoples_a_clause_ends_after(self) -> None:
+        got = self.read("Mithral Keep distrusts elves and dwarves trust nobody there.")
+        self.assertEqual([f.lineage for f in got], ["elf"])
+        got = self.read("Mithral Keep hates orcs, goblins and elves.")  # (goblins: no lineage)
+        self.assertEqual([f.lineage for f in got], ["orc"])
+
+    def test_the_people_of_a_holder(self) -> None:
+        got = self.read("The people of Mithral Keep revere humans.")
+        self.assertEqual([(f.holder_id, f.step, f.lineage) for f in got],
+                         [(HALL, standing.DEVOTED, "human")])  # fmt: skip
 
     def test_toward_a_named_culture(self) -> None:
         got = self.read("Mithral Keep despises the Varnish folk.", {"Varnish": CULT})
