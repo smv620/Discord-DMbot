@@ -715,10 +715,14 @@ describe("link an event and led to (#4949)", () => {
   });
 
   it("a failed led to says nothing changed", async () => {
-    const { bell } = await withLinks({ ledFail: true });
+    const { api, bell } = await withLinks();
+    // The bot's "failed" (a loop or a wrong kind) reaches the page as a server error.
+    api.plotThreadLedTo = async () => {
+      throw new ApiError("server");
+    };
     fireEvent.click(within(bell).getByRole("button", { name: w.ledButton }));
     fireEvent.click(await within(bell).findByRole("button", { name: "The ambush at the ford" }));
-    expect((await screen.findByRole("alert")).textContent).toBe(w.couldNot);
+    expect((await screen.findByRole("alert")).textContent).toBe(w.ledFailed);
   });
 
   it("a thread or name that is gone says so and re-reads the list", async () => {

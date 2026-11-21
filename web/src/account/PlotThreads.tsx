@@ -155,7 +155,13 @@ export default function PlotThreadsPanel({ api, refId, onSignedOut }: { api: Acc
   const ledFor = (t: PlotThread, toId: string): Promise<void> =>
     runPress(async () => {
       if (!api.plotThreadLedTo) throw new ApiError("server");
-      await api.plotThreadLedTo(refId, { from: t.id, to: toId });
+      try {
+        await api.plotThreadLedTo(refId, { from: t.id, to: toId });
+      } catch (error) {
+        // A thread that is gone is said as such; any other failure (the bot's "failed", a loop or a wrong kind) says nothing was linked.
+        if (error instanceof ApiError && error.kind === "gone") throw error;
+        return { ok: false, text: w.ledFailed };
+      }
       setForm(null);
       return { ok: true, text: w.linked };
     });
