@@ -266,6 +266,7 @@ class RecapFeatures:
         recap_worker: RecapWorker | None
         recaps: RecapStore | None
         outbox: Outbox | None
+        headless: bool
         outbox_wake: asyncio.Event
         settings: Settings
         tables: dict[int, Table]
@@ -400,7 +401,12 @@ class RecapFeatures:
                 else []
             ),
             *(
-                [self._watched(self._recap_audio_loop(), "recap-audio")]
+                [
+                    self._watched(
+                        self._recap_audio_loop(job=not self.settings.worker_on),
+                        "recap-audio",
+                    )
+                ]
                 if self.audio_worker is not None
                 else []
             ),
@@ -1931,23 +1937,30 @@ class RecapFeatures:
                     except Exception:
                         log.exception("Recap: a job failed unexpectedly")
 
+    async def work_guild_ids(self) -> list[int]:
+        """The servers a background round works: the bot's own, and for the worker (no Discord
+        connection, so `guilds` is empty) every server that has a campaign (#3844)."""
+        if self.headless:
+            return await self.campaigns.guilds_with_campaigns()
+        return [g.id for g in self.guilds]
+
     async def run_recap_audio(self) -> None:
         """One round of the audio step: recaps whose text is ready and whose narration and music
         wait to be made, one at a time (each is minutes of provider work)."""
         if self.audio_worker is None or self.recaps is None:
             return
-        for guild in list(self.guilds):
+        for guild_id in await self.work_guild_ids():
             try:
-                if stuck := await self.recaps.fail_stuck_audio(guild.id):
+                if stuck := await self.recaps.fail_stuck_audio(guild_id):
                     log.warning("Recap audio: %d recap(s) never finished and were given up", stuck)
-                due = await self.recaps.audio_due(guild.id)
+                due = await self.recaps.audio_due(guild_id)
             except Exception:
                 log.exception("Recap audio: couldn't list the waiting recaps for a server")
                 continue
             for cid, at in due:
-                with log_context(guild_id=guild.id, campaign_id=cid):
+                with log_context(guild_id=guild_id, campaign_id=cid):
                     try:
-                        ran = await self.audio_worker.run(guild.id, cid, at)
+                        ran = await self.audio_worker.run(guild_id, cid, at)
                     except Exception:
                         log.exception("Recap audio: a job failed unexpectedly")
                         return
@@ -2132,16 +2145,19 @@ class RecapFeatures:
             self._import_queued.setdefault(campaign.id, []).append(ready.started_at)
         return ""
 
-    async def _recap_audio_loop(self) -> None:
+    async def _recap_audio_loop(self, *, job: bool = True, notices: bool = True) -> None:
         """Every minute: the narration and music of recaps whose text is ready (#1383). Its own
         loop, because one recap's audio is minutes of waiting on the provider and must never
-        hold up the text jobs or a DM's Post."""
+        hold up the text jobs or a DM's Post. `job` is the paid work (the worker's, #3844, when
+        `DMBOT_WORKER` is on); `notices` is what is said in Discord about it (always the bot's)."""
         await asyncio.sleep(120)
         while True:
             try:
-                await self.run_recap_audio()
-                await self.refresh_audio_waits()
-                await self.run_audio_notices()
+                if job:
+                    await self.run_recap_audio()
+                if notices:
+                    await self.refresh_audio_waits()
+                    await self.run_audio_notices()
             except Exception:
                 log.exception("The recap audio failed")
             await asyncio.sleep(RECAP_ROUND_S)
