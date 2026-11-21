@@ -20,6 +20,7 @@ import { PRIVATE_SCENES_LIVE } from "../content/private-scenes-switch";
 import { NOT_NAMED_LIVE } from "../content/not-named-switch";
 import { PLACE_SPELLING_LIVE } from "../content/place-spelling-switch";
 import { WORLD_NOTES_LIVE } from "../content/world-notes-switch";
+import { PLOT_THREADS_LIVE } from "../content/plot-threads-switch";
 import { THREADS_LIVE } from "../content/threads-switch";
 import { PLACE_ROUTES_LIVE } from "../content/place-routes-switch";
 import { PLACE_WORLD_LIVE } from "../content/place-world-switch";
@@ -438,6 +439,9 @@ export default function Names({ api, path, hash = "" }: { api: AccountApi; path:
       )}
       {THREADS_LIVE && data.canEdit && api.storyThreads !== undefined && (
         <LazyPanel load={() => import("./StoryThreads")} what="the story threads DMbot found" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />
+      )}
+      {PLOT_THREADS_LIVE && data.canEdit && api.plotThreads !== undefined && (
+        <LazyPanel load={() => import("./PlotThreads")} what="the open plot threads" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />
       )}
       {THREADS_LIVE && data.canEdit && api.threadProgress !== undefined && (
         <LazyPanel load={() => import("./ThreadProgress")} what="the progress DMbot heard on your story threads" props={{ api, refId: ref, onSignedOut: () => setView("signed-out") }} />
