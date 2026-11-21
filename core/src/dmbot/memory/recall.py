@@ -367,7 +367,8 @@ class RecallService:
                 "g": scope.guild_id,
                 "c": scope.campaign_id,
                 "dm": list(DM_ONLY_TYPES),
-                "open": ",".join(sorted(allowed)),  # (ids are hex: never hold a comma)
+                # (entry ids are 32 hex characters, CHECK in 0004: never a comma; order is moot)
+                "open": ",".join(allowed),
             },
         )
         forbidden = [str(r["word"]) for r in await cur.fetchall()]

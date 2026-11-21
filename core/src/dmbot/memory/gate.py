@@ -665,7 +665,6 @@ async def party_entries(
     # Each entry every member holds, or every member but the one whose own entry it is (a
     # character knows its own entry without a row): decided in the query, so only the ids come
     # back, not each entry's list of holders (#4911: the players' recall waits on this).
-    own = list(views.items())
     cur = await scope.conn.execute(
         "SELECT k.about_entity_id FROM memory_knowers k"
         " LEFT JOIN unnest(%s::text[], %s::text[]) AS o(entity_id, view_id)"
@@ -676,14 +675,10 @@ async def party_entries(
         " HAVING count(DISTINCT k.perspective_id)"
         "  FILTER (WHERE o.view_id IS NULL OR k.perspective_id <> o.view_id)"
         "  = %s - (CASE WHEN o.view_id IS NULL THEN 0 ELSE 1 END)",
-        (
-            [e for e, _ in own], [v for _, v in own], *scope.ids,
-            list(views.values()), len(views),
-        ),
+        (list(views), list(views.values()), *scope.ids, list(views.values()), len(views)),
     )  # fmt: skip
-    everyone = set(views.values())
     seen = {str(r["about_entity_id"]) for r in await cur.fetchall()}
-    if len(everyone) == 1:  # a lone player character knows its own entry whatever the lists say
+    if len(views) == 1:  # a lone player character knows its own entry whatever the lists say
         seen.update(views)
     # Common knowledge (#4537): an entry "everyone" holds is in the party's view while it is shown
     # (as `common_while_shown` reads it), whatever the characters' own rows say: even a 0.0 row of
