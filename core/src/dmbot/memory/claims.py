@@ -29,6 +29,7 @@ from dmbot.memory import (
     evidence,
     forget_readings,
     graph_review,
+    join_questions,
     kin,
     knowers,
     knows_how,
@@ -2000,6 +2001,8 @@ class ClaimStore:
             readings += await met_store.forget_speaker(conn, guild_id, user_id)  # (#3172 slice 5)
             # (the language questions heard in their lines, #4745)
             readings += await trait_offers.forget_speaker(conn, guild_id, user_id)
+            # (the goodbye questions heard in their lines, #4537 slice 6b, 0574)
+            readings += await join_questions.forget_speaker(conn, guild_id, user_id)
             # (the private scenes they spoke in, #2996 rule 5)
             readings += await private_scene_store.forget_speaker(conn, guild_id, user_id)
             readings += await scenes.forget(conn, guild_id, user_id)

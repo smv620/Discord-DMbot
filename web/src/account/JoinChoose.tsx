@@ -157,13 +157,13 @@ export default function JoinChoose({
       try {
         await api.answerJoin(campaignRef, { action: "undo", batch: p.batch });
         let waitingAgain = false;
-        if (p.first && !back && api.joinQuestions) {
+        if (p.first && api.joinQuestions) {
           const groups = await api.joinQuestions(campaignRef);
           waitingAgain = groups.some((x) => x.group === group && x.answer === "waiting");
         }
         if (live.current)
           setPicks((was) =>
-            was.map((x) => (x.key === p.key ? { ...x, state: "undone", text: p.first && waitingAgain ? w.undoneFirst(who) : w.undonePick(who, know) } : x)),
+            was.map((x) => (x.key === p.key ? { ...x, state: "undone", text: p.first && waitingAgain ? (back ? joinWords.backUndone(names) : w.undoneFirst(who)) : w.undonePick(who, know) } : x)),
           );
       } catch (error) {
         // A gone question or a late Undo: this pick can't be undone any more, and the card says so (#4891).
