@@ -1,0 +1,8 @@
+{
+  "campaign": "party cases (invented)",
+  "source": "party_cases_lore.txt and party_cases_session.txt",
+  "version": 1,
+  "how_to_read": "#4537 slice 6c: the goodbye questions the session must raise (leave), and the characters it must never ask about (must_not_leave). Stretches closed must stay 0: only the DM's answer closes one.",
+  "leave": ["Claude Ambere", "Belleros Stormgrace"],
+  "must_not_leave": ["Cerric Vanya'elen", "Okthandom Korran"]
+}
