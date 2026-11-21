@@ -32,6 +32,7 @@ from dmbot.campaigns.models import OWN_WRITING, CampaignError, fingerprint
 from dmbot.memory import background as bg
 from dmbot.memory import backstory_keep as keep
 from dmbot.memory import (
+    bias_read,
     descriptions,
     kin,
     lore_context,
@@ -1376,6 +1377,7 @@ async def _read_background(
         done.trait_questions += asked
         done.questions_left += asked
     await store_place_facts(memory, campaign, upload.text)  # land, climate, ruler (#4256)
+    await store_biases(memory, campaign, upload.text)  # "Mithral Hall distrusts orcs" (#4229)
     # the story threads it holds (#4453, quests slice 1): suggestions for the DM, never added
     done.thread_suggestions, done.threads_short = await store_thread_suggestions(
         bot, campaign, upload.text, label, read_ai, progress, until=started + THREADS_UNTIL_S
@@ -2087,6 +2089,47 @@ async def store_place_facts(
         dict(sorted(written.value.items())),
     )  # fmt: skip
     return written.value["written"]
+
+
+async def store_biases(memory: MemoryStore, campaign: Campaign, text: str) -> int:
+    """A place's, group's or people's feeling toward a lineage or a named culture, from set phrases
+    in the lore (`bias_read`, #4229 slice 4), written as DMbot's read for the DM to check in World
+    notes. Lore only (Supervisor's ruling: sessions come after the sample scores). A name two
+    entries share is skipped (DMbot can't tell which). Never raises; the log gets counts only."""
+    try:
+        lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+        onto = await memory.ontology(campaign.guild_id, campaign.id)
+        cultures = {
+            name: culture_id
+            for culture_id, name, _status in await memory.map_cultures(
+                campaign.guild_id, campaign.id
+            )
+        }
+    except Exception as exc:  # the type only: a database error can quote a row
+        log.warning("Biases couldn't be read (%s)", type(exc).__name__)
+        return 0
+    holders: dict[str, set[str]] = {}
+    for entry in lookup.names:
+        who = lookup.entities.get(entry.entity_id)
+        if who is None or who.status == REJECTED or entry.secret:
+            continue
+        # (a place, a group or a people: a person's own dislike is no bias, the owner's rule)
+        if any(onto.is_a(who.type, kind) for kind in ("place", "faction", "people")):
+            holders.setdefault(entry.text, set()).add(who.id)
+    unique = {name: next(iter(ids)) for name, ids in holders.items() if len(ids) == 1}
+    # (off the event loop: a long upload with many names takes a moment, and voice must not wait)
+    found = await asyncio.to_thread(bias_read.read, text, unique, cultures)
+    if not found:
+        return 0
+    try:
+        written = await memory.add_read_biases(
+            campaign.guild_id, campaign.id, found, source=BACKGROUND_SOURCE
+        )
+    except Exception as exc:  # the type only
+        log.warning("Biases couldn't be kept (%s)", type(exc).__name__)
+        return 0
+    log.info("Biases read: %d found, %d new", len(found), written.value)
+    return written.value
 
 
 async def _road_conditions(
