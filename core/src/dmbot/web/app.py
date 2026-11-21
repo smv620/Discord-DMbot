@@ -76,6 +76,7 @@ from dmbot.web import (
     met_list,
     my_lines,
     names_smart,
+    node_traits,
     npc_pages,
     offers,
     optional_rules,
@@ -2284,6 +2285,16 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.get("/me/campaigns/{ref}/web/nodes/{node}/traits")
+    async def me_campaign_web_node_traits(ref: str, node: str, signed: Signed) -> dict[str, Any]:
+        """A character's lineage and class, for a DM of the campaign only (#3925)."""
+        session, _token = signed
+        try:
+            return await node_traits.read(db, session, ref, node)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     relationship_refusals = {
         "not_found": (404, "not_found"),
         "bad_hops": (400, "bad_hops"),
@@ -2816,6 +2827,20 @@ def create_app(
             body = None
         try:
             return {"answer": await world_notes.queue_not(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/world-notes/bias", status_code=202)
+    async def me_campaign_world_bias(ref: str, request: Request, signed: Signed) -> dict[str, str]:
+        """✏️ Change on a feeling DMbot read (#4932): `{"id": "bias:…", "step": …}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await world_notes.queue_bias(db, session, ref, body)}
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

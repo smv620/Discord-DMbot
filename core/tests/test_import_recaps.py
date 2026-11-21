@@ -159,7 +159,6 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
         _import_entries={},
         _import_batches={},
         _import_starts={},
-        _import_reports={},
         _import_unhonoured={},
         _import_party={},
         _import_queued={},
@@ -177,6 +176,7 @@ def fake_bot(store: ImportStore, **kw: Any) -> Any:
     for name in (
         "run_import_followups",
         "_scan_import",
+        "_keep_import_reports",
         "_import_recap",
         "_start_import_recap",
         "_apply_import_plays",
