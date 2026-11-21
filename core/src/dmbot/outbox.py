@@ -25,6 +25,10 @@ from dmbot.db import Conn, Database
 
 CHANNEL = "dmbot_outbox"  # NOTIFY carries the server's id only (notifications skip row security)
 RECAP_READY = "recap_ready"  # a recap is ready: the bot posts it, with its buttons, for the DM
+RECAP_FAILED = "recap_failed"  # a recap could not be written (payload: session_at, keeps)
+RECAP_NAMES = "recap_names"  # names the recap kept were added to the check (session_at, added)
+RECAP_UNCHECKED = "recap_unchecked"  # a recap could not be finished checking (session_at, keeps)
+RECAP_ALLOWANCE = "recap_allowance"  # the month's allowance is used up (nothing but the kind)
 
 MAX_TRIES = 5
 STALE_S = 5 * 60  # a delivery that has been `sending` this long was a bot that died
