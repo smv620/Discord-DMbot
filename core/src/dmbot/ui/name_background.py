@@ -2953,6 +2953,7 @@ async def _secret_names_known_by(
                 source=DM,
                 dm_chose_secret=False,
                 backstory_of=known_by,  # (from that character's backstory, #4795)
+                adding=True,  # (everyone the DM told already keeps knowing it, #4977)
             )
         except MemoryRuleError:
             log.info("A secret name's first knowers were refused")

@@ -1052,8 +1052,9 @@ async def _narrow_to(w: Changes, relation_id: str, characters: Sequence[str]) ->
     """The DM's 👥 pick on a connection the players already see (#4534, #4524): it is held back
     now and exactly these characters know it, in the claim's own change, so one Undo gives it back
     to everyone. The pick is the DM's own choice, so the guard lets it through (the write is made
-    with `dm_chose_secret`). Returns how many know it now."""
-    return len(await knowers.set_connection_knowers(w, relation_id, characters))
+    with `dm_chose_secret`). Returns how many know it now. The picker offers the party's
+    characters only, so an NPC who knows it keeps knowing (`players_only`, #3197, #4977)."""
+    return len(await knowers.set_connection_knowers(w, relation_id, characters, players_only=True))
 
 
 async def _learn_in_scene(w: Changes, relation_id: str, characters: Sequence[str]) -> int:
