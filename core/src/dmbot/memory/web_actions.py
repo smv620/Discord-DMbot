@@ -157,7 +157,9 @@ MAP_ACTIONS = ("map-terrain", "map-climate", "map-control", "map-show")
 # World notes (#4285, slice 1c): ✅ on the lines the page showed (their ids, space-separated), 🚫 on
 # one line, or ↩ Undo of one of those (the text is its change number). Filed under no name.
 WORLD_ACTIONS = ("world-keep", "world-not", "world-undo")
-JOIN_ACTIONS = ("join-everyone", "join-party", "join-undo")  # the DM's join question (#4778)
+JOIN_ACTIONS = (  # the DM's join question (#4778) and "Let me choose" (#4799)
+    "join-everyone", "join-party", "join-undo", "join-choices", "join-choose",
+)  # fmt: skip
 PARTY_ACTIONS = (
     "party-leave",
     "party-back",
@@ -500,7 +502,7 @@ class ActionStore:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
-                " AND user_id = %s AND action = 'join-party'"
+                " AND user_id = %s AND action IN ('join-party', 'join-choose')"
                 " AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
                 (guild_id, campaign_id, user_id, batch),
             )
@@ -744,6 +746,7 @@ async def apply(
     lore_pdfs: lore_pdfs_mod.LorePdfs | None = None,
     rules: RuleTools | None = None,
     heard: HeardFn | None = None,
+    join_choices: JoinChoicesFn | None = None,
 ) -> Outcome:
     """Do one action the way Discord's name card does. Nothing here logs the DM's words."""
     if action.action in MAPS_PAGE_ACTIONS:
@@ -793,7 +796,7 @@ async def apply(
     if action.action in JOIN_ACTIONS:
         if actions is None:
             return _failed(FAILED)
-        return await _join(memory, actions, guild_id, cid, action)
+        return await _join(memory, actions, guild_id, cid, action, join_choices)
     if action.action in PART_ACTIONS:
         if actions is None and action.action == "part-undo":
             return _failed(FAILED)
@@ -1545,14 +1548,67 @@ async def _rule_undo(tools: RuleTools, guild_id: int, cid: str, a: Action) -> Ou
     return Outcome(counts=f"undone:{kept}")
 
 
+# "Let me choose" (#4799): the bot's own function, which works the choices out and keeps them for
+# the DM's page (given the guild, the campaign, the question's group and the DM).
+# It answers whether there was anything to choose (False: the question is gone or has no one left).
+JoinChoicesFn = Callable[[int, str, str, int], Awaitable[bool]]
+CHOSE_MAX = 10  # characters named in one pick's answer (the answer is 200 characters at most)
+
+
+async def _join_choose(
+    memory: MemoryStore, join_choices: JoinChoicesFn | None, guild_id: int, cid: str, a: Action
+) -> Outcome:
+    """ "Let me choose" from the page: `join-choices` works the choices out and keeps them for this
+    DM (the page reads them from its own door); `join-choose` gives one pick with
+    `MemoryStore.join_choose`, which checks the question and what is left to give again, so a stale
+    page can never give more than the bot would now. The answer is who was given how many things
+    (`first:<0|1> chose:<id first 8>=<n>,…`, ids and counts only, whether this pick answered the
+    question first), and the change for the page's Undo (`join-undo`, which takes back only a change
+    this DM's own done pick made)."""
+    group, _, pick = a.text.partition(" ")
+    if a.action == "join-choices":
+        if join_choices is None:
+            return _failed(FAILED)
+        try:
+            anything = await join_choices(guild_id, cid, group, a.user_id)
+        except Exception:
+            log.exception("The choices for a join question could not be worked out")
+            return _failed(FAILED)
+        return Outcome() if anything else _failed(GONE)
+    try:
+        if pick[:1] == "s" and pick[1:].isdigit():
+            done = await memory.join_choose(guild_id, cid, group, session_at=int(pick[1:]))
+        elif pick[:1] == "t":
+            done = await memory.join_choose(guild_id, cid, group, thread_id=pick[1:])
+        else:
+            return _failed(GONE)
+    except MemoryRuleError:  # (AlreadyAnswered is one)
+        return _failed(GONE)
+    told, first = done.value
+    if done.batch is None or not told:
+        return _failed(NOTHING_LEFT)  # nothing was left to give from this pick
+    # (`first` leads, so a long answer never cuts it off; at most `CHOSE_MAX` are named)
+    shown = list(told.items())[:CHOSE_MAX]
+    given = ",".join(f"{c[:8]}={n}" for c, n in shown)
+    more = f";more={len(told) - len(shown)}" if len(told) > len(shown) else ""
+    return Outcome(counts=f"first:{int(first)} chose:{given}{more}", batches=(done.batch,))
+
+
 async def _join(
-    memory: MemoryStore, actions: ActionStore, guild_id: int, cid: str, a: Action
+    memory: MemoryStore,
+    actions: ActionStore,
+    guild_id: int,
+    cid: str,
+    a: Action,
+    join_choices: JoinChoicesFn | None = None,
 ) -> Outcome:
     """The DM's answer to the join question from the page (#4778 part b), the same store calls as
     Discord's buttons: "Only what everyone knows" writes nothing, "What the party knows" is one
     change with one Undo. The store checks the question is still waiting (another DM may have
     answered: `gone`). ↩ Undo takes back only a change this DM's own done `join-party` made, read
     again here (a made-up number must never reach `undo`)."""
+    if a.action in ("join-choices", "join-choose"):
+        return await _join_choose(memory, join_choices, guild_id, cid, a)
     if a.action == "join-undo":
         if not (a.text.isascii() and a.text.isdigit()) or len(a.text) > 15:
             return _failed(GONE)

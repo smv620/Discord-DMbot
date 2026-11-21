@@ -64,6 +64,8 @@ EVERY_ACTION = (
     "pack-update-undo-last",  # the same for a followed pack (#4841)
     "pack-update-pick",  # Pick changes on a followed pack, and its Undo (#4841)
     "pack-update-undo",
+    "join-choices",  # "Let me choose" for the join question (#4799)
+    "join-choose",
 )  # fmt: skip
 
 
