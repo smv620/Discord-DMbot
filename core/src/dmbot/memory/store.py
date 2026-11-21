@@ -3295,6 +3295,22 @@ class MemoryStore:
             row = await cur.fetchone()
             return None if row is None else str(row["group_id"])
 
+    async def staying_answered_since(
+        self, guild_id: int, campaign_id: str, entity_id: str, since: int
+    ) -> bool:
+        """Whether a goodbye or death question about this character was answered at or after
+        `since` (a message's send time, in seconds; #4908). A press on a message whose question is
+        gone without one was removed by a forget ("Stop recording me", a deleted transcript), not
+        answered by another DM."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT 1 FROM memory_join_questions WHERE guild_id = %s AND campaign_id = %s"
+                " AND entity_id = %s AND kind IN ('leave', 'died') AND status IN ('left', 'stays')"
+                " AND answered_at >= %s LIMIT 1",
+                (guild_id, campaign_id, entity_id, since),
+            )
+            return await cur.fetchone() is not None
+
     async def staying_answer_stays(self, guild_id: int, campaign_id: str, entity_id: str) -> None:
         """ "Still in the party": nothing is written but the answer, so the same goodbye or death
         isn't asked again. `AlreadyAnswered` when none still waits for this character."""
