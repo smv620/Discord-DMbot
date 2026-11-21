@@ -69,7 +69,8 @@ class TheRule(unittest.TestCase):
         self.assertFalse(self.kept(("1", "night watch", "faction")))
 
     def test_a_name_starting_like_a_description_stays_one(self) -> None:
-        for text in ("the old mill", "a dagger", "an amulet", "The cave"):
+        for text in ("the old mill", "a dagger", "an amulet", "The cave", "my sword", "that cave",
+                     "their camp", "those ruins"):  # fmt: skip
             with self.subTest(text):
                 self.assertFalse(self.kept(("1", text, "place")))
                 self.assertFalse(descriptions.kept_thing_alone(text))
