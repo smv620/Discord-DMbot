@@ -81,7 +81,9 @@ NOTHING_LEFT = (
     "📜 **Story threads**: nothing to check. 🎉 When DMbot finds more in your lore or a session, "
     "they show in ❓ Questions for you."
 )
-GONE_NOW = "That one was already answered. Here are the ones still waiting."
+# (#4908: a question can also be gone because its speaker stopped being recorded or its session's
+# transcript was deleted, not only answered: one sentence true of both, in Supervisor's words)
+GONE_NOW = "This question isn't waiting any more. Here are the ones still waiting."
 TOO_LATE = "⚠️ Can't undo: it was changed since. Change it in 🧵 Threads."
 NOT_AVAILABLE = (
     "Remembering names isn't switched on for this DMbot yet. Ask whoever runs DMbot to turn it on."
