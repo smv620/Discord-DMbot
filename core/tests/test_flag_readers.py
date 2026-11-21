@@ -97,7 +97,7 @@ FILES: dict[str, tuple[str, str, str]] = {
     ),
     "memory/web_actions.py": (
         WRITES,
-        "WebDev-lead",
+        "GraphEngineer",
         "`_thread_link`: an event the DM typed on the website starts hidden, as the card's name "
         "search makes it (#2404, #3696)",
     ),
