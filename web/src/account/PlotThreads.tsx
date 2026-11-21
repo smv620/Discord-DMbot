@@ -556,16 +556,23 @@ function AddInvolvedForm({
   const [query, setQuery] = useState("");
   const [who, setWho] = useState<CampaignName | null>(null);
   const [part, setPart] = useState("");
+  // The names could not be read: the form says so, instead of "nothing called that yet" (#4953).
+  const [namesFailed, setNamesFailed] = useState(false);
 
+  // Read again each time the form opens: it is mounted when opened and unmounted when closed.
   useEffect(() => {
     let stale = false;
     const load = api.campaignNames ? api.campaignNames(refId) : Promise.resolve([] as CampaignName[]);
     load.then(
       (got) => {
-        if (!stale) setNames(got);
+        if (stale) return;
+        setNamesFailed(false);
+        setNames(got);
       },
       () => {
-        if (!stale) setNames([]);
+        if (stale) return;
+        setNamesFailed(true);
+        setNames([]);
       },
     );
     return () => {
@@ -577,7 +584,8 @@ function AddInvolvedForm({
   const matches = (names ?? [])
     .filter((n) => !NOT_INVOLVABLE.has(n.kind) && n.id !== threadId && n.text.toLowerCase().includes(needle))
     .slice(0, MATCHES);
-  const ready = who !== null && part.trim() !== "";
+  // The part is optional: a name is enough, and a blank part is sent as empty (#4953).
+  const ready = who !== null;
 
   return (
     <div class="stack" role="group" aria-label={w.addButton}>
@@ -594,6 +602,8 @@ function AddInvolvedForm({
       </label>
       {names === null ? (
         <p class="muted small">{w.loading}</p>
+      ) : namesFailed ? (
+        <p class="warn" role="alert">{w.namesFailed}</p>
       ) : matches.length === 0 ? (
         needle !== "" ? <p class="small">{w.noMatch}</p> : null
       ) : (
