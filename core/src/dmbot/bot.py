@@ -7759,10 +7759,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 return
             lookup = CampaignLookup.build(await self.memory.lookup_data(guild_id, campaign_id))
             names: dict[str, set[str]] = {}
-            for entry in lookup.names:
-                who = lookup.entities.get(entry.entity_id)
+            for said in lookup.names:  # (memory names, not rules entries)
+                who = lookup.entities.get(said.entity_id)
                 if who is not None and who.status == CONFIRMED and who.type == "character":
-                    names.setdefault(name_key(entry.text), set()).add(who.id)
+                    names.setdefault(name_key(said.text), set()).add(who.id)
             played = {e.id: e.played_by for e in lookup.entities.values()}
             members = await self.memory.current_party(guild_id, campaign_id)
             asks, dropped = goodbye_reading.whose(report.goodbyes, names, members, played, dm_ids)
