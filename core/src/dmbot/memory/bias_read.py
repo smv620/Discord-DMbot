@@ -23,6 +23,14 @@ _UNFRIENDLY = (
     "resents", "resent",
 )  # fmt: skip
 _WARY = ("fears", "fear", "is wary of", "are wary of")
+# The five steps' own words, as World notes says them ("is friendly toward dwarves"; Supervisor's
+# ruling C3 on #4982): "is" or "are", the step, then its word before a people
+_STEP_WORDS = (
+    (standing.HOSTILE, ("hostile to", "hostile toward", "hostile towards")),
+    (standing.UNFRIENDLY, ("unfriendly to", "unfriendly toward", "unfriendly towards")),
+    (standing.FRIENDLY, ("friendly to", "friendly toward", "friendly towards")),
+    (standing.DEVOTED, ("devoted to",)),
+)
 _FRIENDLY = ("welcomes", "welcome", "trusts", "trust", "likes", "like")
 _DEVOTED = ("reveres", "revere", "loves", "love", "honours", "honour", "honors", "honor")
 VERBS: dict[str, str] = {
@@ -31,6 +39,12 @@ VERBS: dict[str, str] = {
     **dict.fromkeys(_WARY, standing.WARY),
     **dict.fromkeys(_FRIENDLY, standing.FRIENDLY),
     **dict.fromkeys(_DEVOTED, standing.DEVOTED),
+    **{
+        f"{be} {words}": step
+        for step, said in _STEP_WORDS
+        for words in said
+        for be in ("is", "are")
+    },
 }
 # The perfect tense, after "has" or "have" ("has long despised elves", Supervisor's ruling C2 on
 # #4982). Only the perfect: a bare past ("despised elves") may be a feeling that has ended, so it

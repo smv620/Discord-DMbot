@@ -79,4 +79,4 @@ class BiasCases(unittest.TestCase):
 
 # What the reader scores today; a reader change that moves these updates them on purpose. The four
 # misses are #4982's fresh shapes, waiting for Supervisor's ruling on that issue.
-EXPECTED = {"found": 12, "missed": 2, "wrong_step": 0, "extra": 0}
+EXPECTED = {"found": 13, "missed": 1, "wrong_step": 0, "extra": 0}

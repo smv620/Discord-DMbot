@@ -43,6 +43,13 @@ class TheReader(unittest.TestCase):
         got = self.read("Mithral Keep hates orcs, goblins and elves.")  # (goblins: no lineage)
         self.assertEqual([f.lineage for f in got], ["orc"])
 
+    def test_the_steps_own_words(self) -> None:  # (Supervisor's ruling C3 on #4982)
+        got = self.read(
+            "Mithral Keep is friendly toward dwarves. The Silver League is hostile to orcs."
+        )
+        self.assertEqual([(f.step, f.lineage) for f in got],
+                         [(standing.FRIENDLY, "dwarf"), (standing.HOSTILE, "orc")])  # fmt: skip
+
     def test_the_perfect_tense_but_never_a_bare_past(self) -> None:  # (ruling C2 on #4982)
         got = self.read("Mithral Keep has long despised elves.")
         self.assertEqual([(f.step, f.lineage) for f in got], [(standing.HOSTILE, "elf")])
