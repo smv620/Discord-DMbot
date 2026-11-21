@@ -69,4 +69,4 @@ class CultureCases(unittest.TestCase):
 
 
 # What the reader scores today; a reader change that moves these updates them on purpose
-EXPECTED = {"found": 11, "missed": 1, "wrong": 0, "extra": 0, "must_not_said": 0}
+EXPECTED = {"found": 12, "missed": 0, "wrong": 0, "extra": 0, "must_not_said": 0}

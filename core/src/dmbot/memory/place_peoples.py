@@ -187,6 +187,9 @@ _POPULATION = (
         _LEAD + r"an?\s+(?:" + "|".join(_SETTLEMENTS) + r")\s+of\s+(?:[\d,]+\s+)?" + rf"{_PEOPLE}\b"
     ),
 )
+# "<place> is a(n) …" or "<place> was a(n) …": the same culture shapes after "is" (Supervisor's
+# ruling A on #4982); the article stays in what follows, as `_culture` reads it
+_IS_A = re.compile(r"^\s+(?P<verb>is|was)\s+(?=(?:an?|the)\b)", re.I)
 # A past state the text ends in the same clause ("… until the flood"): who lives there no longer
 _NO_LONGER = re.compile(r"\b(?:until|till|before)\b")
 _SHARES = {
@@ -260,6 +263,13 @@ def read(name: str, text: str, known: Collection[str] = ()) -> list[Found]:
         found = _culture(tail.split()[:4]) or _named(_words(after)[:4], known)
         if found is not None and not found.part:  # ("Waterdeep, the dwarven quarter": not said)
             out.append(found)
+    linked = _IS_A.match(after)
+    if linked is not None and not out:  # "Greywatch is an orcish fortress" (ruling A on #4982)
+        rest = after[linked.end() :]
+        found = _culture(_clean(rest).split()[:4]) or _named(_words(rest)[:4], known)
+        if found is not None and not found.part:
+            # ("was an elven town": once, as ruins are; the text says it is no longer so)
+            out.append(found._replace(how="once") if linked["verb"] == "was" else found)
     said = " ".join(after.split()).casefold()
     for shape in _POPULATION:
         m = shape.match(said)
