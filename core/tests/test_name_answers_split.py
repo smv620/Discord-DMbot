@@ -107,6 +107,17 @@ class SplitAndGroup(WithChecks):
         self.assertIn("Tavin and Mira", await self.waiting_names())
 
     async def test_join_group_adds_the_list_to_a_known_group(self) -> None:
+        await self.memory.add_entity(
+            GUILD,
+            self.one.id,
+            type="character",
+            name="Vell",
+            source="dm",
+            status=CONFIRMED,
+            role="player_character",
+            played_by=801,
+        )  # (a party: with no player character the table holds only common knowledge, #4811)
+
         async def entity(name: str, kind: str, status: str) -> str:
             written = await self.memory.add_entity(
                 GUILD, self.one.id, type=kind, name=name, source="dm", status=status
@@ -165,6 +176,16 @@ class SplitAndGroup(WithChecks):
         self.assertIn("Tavin and Mira", await self.waiting_names())
 
     async def test_a_group_with_a_secret_spelling_is_joined_as_in_discord(self) -> None:
+        await self.memory.add_entity(
+            GUILD,
+            self.one.id,
+            type="character",
+            name="Vell",
+            source="dm",
+            status=CONFIRMED,
+            role="player_character",
+            played_by=801,
+        )  # (a party: with no player character the table holds only common knowledge, #4811)
         listed = await self.waiting("Tavin and Mira", "character")
         group = (
             await self.memory.add_entity(
