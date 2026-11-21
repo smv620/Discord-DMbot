@@ -18,10 +18,10 @@ from dataclasses import dataclass, field
 
 from dmbot.memory import kin, knows_how, lore_knowledge, route_length, route_words, secret_questions
 from dmbot.memory import reputation_words as feeling_words
-from dmbot.memory.background import SALES
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink, Waiting
 from dmbot.memory.checks import conflicts
 from dmbot.memory.clues import KNOWS as KNOWS_PREDICATE
+from dmbot.memory.hand_over import SALES
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
     BACKGROUND_SOURCE,

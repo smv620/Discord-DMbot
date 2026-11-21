@@ -397,7 +397,9 @@ class TheOrderOfKeeping(NamesTest):
              NewName("Wolf figurine", "item", CONFIRMED)],
             source="dm",
         )  # fmt: skip
-        self.claude, self.bel, self.figurine = made.value
+        claude, bel, figurine = made.value
+        assert claude and bel and figurine
+        self.claude, self.bel, self.figurine = claude, bel, figurine  # (typed str)
         names = [
             name("Claude Ambere", "person", "Claude Ambere"),
             name("Belleros Stormgrace", "person", "Belleros Stormgrace keeps"),
@@ -534,12 +536,13 @@ class TheOrderOfKeeping(NamesTest):
         self.assertEqual((await self.rows())["carries"].end_reason, "sold")
 
     async def test_a_half_hand_over_is_refused_everywhere(self) -> None:
-        for kwargs in (
+        cases: tuple[dict[str, Any], ...] = (
             {"hand_over": "sold"},
             {"hand_over_from": self.claude},
             {"hand_over": "moved", "hand_over_from": self.claude},
             {"end_reason": "sold"},  # (an end reason with no end)
-        ):
+        )
+        for kwargs in cases:
             with self.subTest(kwargs), self.assertRaises(ValueError):
                 await self.memory.add_relation(
                     GUILD, self.campaign.id, self.bel, "owns", self.figurine, source=DM_SOURCE,
