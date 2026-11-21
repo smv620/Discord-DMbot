@@ -17,7 +17,9 @@ from __future__ import annotations
 # web module applies it: stalled is worked out, never stored. The door gives the count function
 # only the guild and campaign it has checked the DM against, never ids a caller supplied. DM only
 # (NULL for anyone else). Names, ids, states, counts and session numbers: no transcript or card
-# word. No table, no row changes. (`dmbot_web_threads` is the upload story threads' door, #4457.)
+# word (a thread's free-text description goes out for a promise only: its due note). The kinds are
+# the six the seed ontology gives a thread (a test pins them). No table, no row changes.
+# (`dmbot_web_threads` is the upload story threads' door, #4457.)
 SQL = r"""
     CREATE FUNCTION dmbot_web_plot_threads(g BIGINT, c TEXT) RETURNS JSONB
     LANGUAGE plpgsql STABLE SECURITY DEFINER AS $fn$
@@ -35,11 +37,11 @@ SQL = r"""
         END IF;
         SELECT count(*) INTO total FROM memory_entities e
             WHERE e.guild_id = g AND e.campaign_id = c AND e.type = ANY (kinds)
-              AND e.status = 'confirmed' AND e.merged_into IS NULL;
+              AND e.status = 'confirmed';
         SELECT COALESCE(array_agg(t.id ORDER BY lower(t.name), t.id), '{}') INTO ids
             FROM (SELECT e.id, e.name FROM memory_entities e
                   WHERE e.guild_id = g AND e.campaign_id = c AND e.type = ANY (kinds)
-                    AND e.status = 'confirmed' AND e.merged_into IS NULL
+                    AND e.status = 'confirmed'
                   ORDER BY lower(e.name), e.id LIMIT 100) t;
         RETURN (
             WITH f AS (
@@ -58,7 +60,9 @@ SQL = r"""
                 'threads', COALESCE((
                     SELECT jsonb_agg(jsonb_build_object(
                                'id', e.id, 'name', e.name, 'type', e.type,
-                               'description', e.description) ORDER BY lower(e.name), e.id)
+                               'description', CASE WHEN e.type = 'promise'
+                                                   THEN e.description ELSE '' END)
+                           ORDER BY lower(e.name), e.id)
                     FROM memory_entities e
                     WHERE e.guild_id = g AND e.campaign_id = c AND e.id = ANY (ids)),
                     '[]'::jsonb),

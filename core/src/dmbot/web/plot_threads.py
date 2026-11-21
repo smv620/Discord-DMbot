@@ -18,14 +18,14 @@ from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
-SHOWN = 100  # threads one answer lists (the door's limit too); `total` says how many there are
-
 
 def stalled_after() -> int:
     """How many quiet sessions make a live thread stalled: `DMBOT_THREAD_STALLED_SESSIONS` as the
     bot reads it (a whole number from 1 up), else the default."""
     raw = os.environ.get("DMBOT_THREAD_STALLED_SESSIONS", "").strip()
-    return int(raw) if raw.isdigit() and int(raw) >= 1 else threads.STALLED_AFTER
+    # (the same test as `config.py`: ASCII digits only, so a stray digit like "²" is no number)
+    ok = raw.isascii() and raw.isdigit() and int(raw) >= 1
+    return int(raw) if ok else threads.STALLED_AFTER
 
 
 async def read(db: Database, session: Session, ref: str) -> dict[str, Any]:

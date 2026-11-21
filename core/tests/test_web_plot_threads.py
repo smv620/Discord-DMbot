@@ -124,7 +124,7 @@ class TheShaping(unittest.TestCase):
     def test_a_fact_from_an_unconfirmed_name_is_left_out(self) -> None:
         got = plot_threads.shape(rows(), 3)
         bell = next(t for t in got["threads"] if t["id"] == T1)
-        self.assertNotIn("x", [p["role"] for p in bell["involved"]])
+        self.assertEqual([p["name"] for p in bell["involved"]], ["Mira"])
 
     def test_stalled_is_worked_out_from_the_count_and_the_after_setting_never_stored(self) -> None:
         got = plot_threads.shape(rows(), 3)
@@ -174,7 +174,7 @@ class TheDoor(Web):
             [(p["name"], p["role"]) for p in mine["involved"]], [("Mira Voss", "quest giver")]
         )
         self.assertEqual(got["after"], threads.STALLED_AFTER)
-        self.assertGreaterEqual(got["total"], 1)
+        self.assertEqual(got["total"], 1)
 
     async def test_a_player_is_refused(self) -> None:
         who: Any = BOB
@@ -185,3 +185,59 @@ class TheDoor(Web):
         with self.assertRaises(RecapError) as err:
             await plot_threads.read(self.web, bob, self.cref)
         self.assertEqual(err.exception.code, "not_allowed")
+
+
+class TheKinds(unittest.TestCase):
+    def test_the_door_lists_the_kinds_the_seed_ontology_gives_a_thread(self) -> None:
+        from pathlib import Path
+
+        from dmbot.memory.models import THREAD_TYPES
+
+        text = (
+            Path(plot_threads.__file__)
+            .parents[1]
+            .joinpath("migrations", "0576_web_plot_threads.py")
+            .read_text()
+        )
+        for kind in THREAD_TYPES:
+            self.assertIn(f"'{kind}'", text, kind)
+        self.assertEqual(text.count("ARRAY['thread'"), 1)
+
+
+class TheEnvironment(unittest.TestCase):
+    def test_the_stalled_after_setting_reads_like_the_bots(self) -> None:
+        import os
+        from unittest import mock
+
+        for value, expected in (
+            ("", threads.STALLED_AFTER), ("5", 5), ("0", threads.STALLED_AFTER),
+            ("abc", threads.STALLED_AFTER), ("\u00b2", threads.STALLED_AFTER),
+        ):  # fmt: skip
+            with mock.patch.dict(os.environ, {"DMBOT_THREAD_STALLED_SESSIONS": value}):
+                self.assertEqual(plot_threads.stalled_after(), expected, value)
+
+    def test_the_play_order_has_four_ranks_and_ties_go_by_name_then_id(self) -> None:
+        key = threads.play_key
+        self.assertLess(key(GOING, 0, "z", "1"), key(OPEN, 9, "a", "1"))
+        self.assertLess(key(OPEN, 0, "z", "1"), key("hinted", 9, "a", "1"))
+        self.assertLess(key("hinted", 0, "z", "1"), key(RESOLVED, 9, "a", "1"))
+        self.assertLess(key(OPEN, 5, "z", "1"), key(OPEN, 2, "a", "1"))  # the quietest first
+        self.assertLess(key(OPEN, 2, "a", "2"), key(OPEN, 2, "B", "1"))  # name, any case
+        self.assertLess(key(OPEN, 2, "a", "1"), key(OPEN, 2, "a", "2"))  # then id
+        self.assertEqual(key(None, 4, "x", "1")[0], 3)  # no state: after the live ones
+
+
+class TheCap(Web):
+    bob_has_a_hero = False
+
+    async def test_more_than_a_hundred_list_a_hundred_and_say_how_many_there_are(self) -> None:
+        for n in range(103):
+            await self.add(f"Thread {n:03d}", "thread")
+        got = await plot_threads.read(self.web, self.session, self.cref)
+        self.assertEqual((len(got["threads"]), got["total"]), (100, 103))
+
+    async def test_a_suggested_thread_is_not_listed(self) -> None:
+        guess = await self.add("A guess", "thread")
+        await self.sql("UPDATE memory_entities SET status = 'proposed' WHERE id = %s", guess)
+        got = await plot_threads.read(self.web, self.session, self.cref)
+        self.assertNotIn("A guess", [t["name"] for t in got["threads"]])
