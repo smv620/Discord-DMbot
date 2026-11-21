@@ -24,12 +24,12 @@ _NEXT = _PREV + ", 'thread-involve'"
 
 _ID = "[0-9a-f]{32}"
 _LAST_SHAPE = "           OR (act = 'thread-check' AND clean !~ '^" + _ID + "$')\n"
-_CAP = "WHEN act = 'players-line' THEN 120 ELSE 100 END)"
+_CAP = "WHEN act = 'offer-clear' THEN 300 ELSE 100 END)"
 _QUEUE_SWAPS = (
     # (the text holds two ids and the part, up to 126 characters: its cap is lifted for this action)
     (
         _CAP,
-        "WHEN act = 'players-line' THEN 120 WHEN act = 'thread-involve' THEN 130 ELSE 100 END)",
+        "WHEN act = 'offer-clear' THEN 300 WHEN act = 'thread-involve' THEN 130 ELSE 100 END)",
         1,
     ),
     (f"{_PREV})\n        THEN", f"{_NEXT})\n        THEN", 1),
