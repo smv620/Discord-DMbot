@@ -2,7 +2,7 @@
 // The Plot threads panel on the Names page (#3696, slice 1): the campaign's open plot threads, read only, for the DM. Its own file, fetched
 // only for a DM while PLOT_THREADS_LIVE. Every word the answer carries (state, history, roles, the stalled line) is shown as core sent it;
 // only the labels around them are worded here. A player gets nothing: the read refuses them, and the panel draws nothing.
-import { useEffect, useState } from "preact/hooks";
+import { useEffect, useRef, useState } from "preact/hooks";
 
 import { PLOT_THREADS_LIVE } from "../content/plot-threads-switch";
 import { plotThreadsWords as w } from "../content/plot-threads-words";
@@ -19,34 +19,45 @@ export default function PlotThreadsPanel({ api, refId, onSignedOut }: { api: Acc
   const [open, setOpen] = useState<Record<string, boolean>>({});
   const [slow, setSlow] = useState(false);
 
-  useEffect(() => {
+  // Each read takes the next number; an answer that is not the latest read's is dropped, so an old campaign or an old try cannot overwrite.
+  const latest = useRef(0);
+
+  /** Reads the threads for this campaign: the first look, and each "Try again". */
+  function read(): void {
     if (!PLOT_THREADS_LIVE || !api.plotThreads) return;
-    // A change of campaign drops the old campaign's threads and message until the new answer comes.
+    const mine = ++latest.current;
+    // A new read drops what was there: a change of campaign, or a retry, shows the loading line again.
     setList(null);
     setProblem(null);
     setSlow(false);
-    const slowTimer = setTimeout(() => setSlow(true), SLOW_MS);
-    let stale = false;
+    const slowTimer = setTimeout(() => {
+      if (mine === latest.current) setSlow(true);
+    }, SLOW_MS);
     api.plotThreads(refId).then(
       (got) => {
-        if (stale) return;
         clearTimeout(slowTimer);
+        if (mine !== latest.current) return;
         setList(got);
         setProblem(null);
       },
       (error: unknown) => {
-        if (stale) return;
         clearTimeout(slowTimer);
+        if (mine !== latest.current) return;
         if (error instanceof ApiError && error.kind === "signed-out") return onSignedOut?.();
         // A player, or another campaign's DM, is refused: nothing is drawn, not an error.
         if (error instanceof ApiError && (error.kind === "not-allowed" || error.kind === "not-found")) setProblem("hidden");
         else setProblem("failed");
       },
     );
+  }
+
+  useEffect(() => {
+    read();
+    // A campaign change (or unmount) makes the read in flight stale, so its answer is dropped.
     return () => {
-      stale = true;
-      clearTimeout(slowTimer);
+      latest.current += 1;
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [api, refId]);
 
   if (!PLOT_THREADS_LIVE || !api.plotThreads || problem === "hidden") return null;
@@ -55,6 +66,9 @@ export default function PlotThreadsPanel({ api, refId, onSignedOut }: { api: Acc
       <section class="stack" aria-label={w.heading}>
         <h2 class="small">{w.heading}</h2>
         <p role="alert">{w.failed}</p>
+        <button type="button" class="button secondary" onClick={() => read()}>
+          {w.tryAgain}
+        </button>
       </section>
     );
   }
