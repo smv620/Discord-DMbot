@@ -2606,13 +2606,14 @@ class MemoryStore:
         from_session_at: int | None = None,
     ) -> Written[Relation]:
         """The DM says who or what has a part in a thread, and the part (quest giver, target,
-        villain, victim, reward, or their own words)."""
+        villain, victim, reward, or their own words). The part is optional (the 🧵 card says so):
+        an empty one is kept as no part, and only one that is too long is refused (#4937)."""
         if source != DM:
             raise MemoryRuleError("Only the DM can do that.")
         async with self._write(guild_id, campaign_id, source) as w:
             fact, _flags = await self.add_relation_in(
                 w, who_id, "in_thread", thread_id, confidence=1.0, status=CONFIRMED,
-                detail=clean_text(role), from_session_at=from_session_at,
+                detail=clean_text(role) if role.strip() else "", from_session_at=from_session_at,
             )  # fmt: skip
             return Written(fact, w.batch)
 
