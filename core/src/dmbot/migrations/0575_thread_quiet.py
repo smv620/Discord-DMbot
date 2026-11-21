@@ -17,16 +17,20 @@ from __future__ import annotations
 #   each session the thread's name was heard in (`memory_heard`);
 # - quiet: how many of the campaign's known sessions (the distinct `memory_heard` session starts,
 #   so a session where nobody was heard does not count) started after `touched`.
-# SECURITY INVOKER: the caller's row-level security applies (the bot's scoped connection, or the
-# website's door, which checks the DM first). The search path is pinned like every function of
-# ours, so a caller's own path can't redirect a table name. No table, no row changes.
+# The known sessions are read once, as one sorted array (MATERIALIZED), never once per thread:
+# `memory_heard` has a row per name, session and speaker, so a long campaign has many.
+# SECURITY INVOKER: the caller's row-level security applies. Inside the website's SECURITY DEFINER
+# door it runs as the door's owner, so that door must pass the guild and campaign it has checked
+# the DM against, never ids the caller gave it unchecked. The search path is pinned like every
+# function of ours, so a caller's own path can't redirect a table name. No table, no row changes.
 SQL = r"""
     CREATE FUNCTION dmbot_thread_quiet(p_guild_id bigint, p_campaign_id text, p_thread_ids text[])
         RETURNS TABLE (entity_id text, touched_at bigint, quiet integer)
         LANGUAGE sql STABLE
         AS $fn$
-        WITH known AS (
-            SELECT DISTINCT h.session_started_at AS at FROM memory_heard h
+        WITH known AS MATERIALIZED (
+            SELECT COALESCE(array_agg(DISTINCT h.session_started_at), '{}') AS ats
+                FROM memory_heard h
                 WHERE h.guild_id = p_guild_id AND h.campaign_id = p_campaign_id
         ), touched AS (
             SELECT e.id, GREATEST(
@@ -34,7 +38,8 @@ SQL = r"""
                 (SELECT max(COALESCE(s.from_session_at, s.created_at)) FROM memory_states s
                     WHERE s.guild_id = e.guild_id AND s.campaign_id = e.campaign_id
                     AND s.entity_id = e.id),
-                (SELECT max(GREATEST(r.created_at, COALESCE(r.from_session_at, r.created_at)))
+                -- (GREATEST skips a NULL `from_session_at`: then the fact's `created_at` alone)
+                (SELECT max(GREATEST(r.created_at, r.from_session_at))
                     FROM memory_relations r JOIN memory_entities o
                     ON o.guild_id = r.guild_id AND o.campaign_id = r.campaign_id
                     AND o.id = r.subject_id AND o.status = 'confirmed'
@@ -51,8 +56,8 @@ SQL = r"""
             WHERE e.guild_id = p_guild_id AND e.campaign_id = p_campaign_id
             AND e.id = ANY(p_thread_ids)
         )
-        SELECT t.id, t.at, (SELECT count(*)::integer FROM known k WHERE k.at > t.at)
-            FROM touched t
+        SELECT t.id, t.at, (SELECT count(*)::integer FROM unnest(k.ats) a WHERE a > t.at)
+            FROM touched t CROSS JOIN known k
     $fn$;
     DO $do$
     BEGIN

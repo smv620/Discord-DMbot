@@ -6,12 +6,13 @@ Invented names. Needs Postgres."""
 
 from __future__ import annotations
 
+import secrets
 from typing import Any
 
 from dmbot.memory import states
 from dmbot.memory import threads as th
-from dmbot.memory.models import GOING, OPEN
-from tests.test_memory_store import GUILD_A
+from dmbot.memory.models import GOING, OPEN, Heard
+from tests.test_memory_store import DM, GUILD_A, GUILD_B
 from tests.test_threads import S1, S2, S3, S4, Threads
 
 PREDICATES = ("in_thread", "advances", "resolves", "promised_by", "promised_to")
@@ -35,23 +36,31 @@ class QuietInSql(Threads):
                 " AND id = %s",
                 (*ids, thread_id),
             )
-            created = int((await cur.fetchone())["created_at"])
+            row = await cur.fetchone()
+            assert row is not None
+            created = int(row["created_at"])
             cur = await conn.execute(
                 "SELECT * FROM memory_states WHERE guild_id = %s AND campaign_id = %s"
                 " AND entity_id = %s",
                 (*ids, thread_id),
             )
             history = [states.state_of(r) for r in await cur.fetchall()]
+            # (as the old `_threads` did: the facts read in SQL, the confirmed subjects in Python,
+            # so a mistake in the function's join isn't copied here)
             cur = await conn.execute(
-                "SELECT r.from_session_at, r.created_at FROM memory_relations r"
-                " JOIN memory_entities o ON o.guild_id = r.guild_id"
-                " AND o.campaign_id = r.campaign_id AND o.id = r.subject_id"
-                " AND o.status = 'confirmed' WHERE r.guild_id = %s AND r.campaign_id = %s"
-                " AND r.object_id = %s AND r.status = 'confirmed' AND r.to_session_at IS NULL"
-                " AND r.predicate = ANY(%s)",
+                "SELECT subject_id, from_session_at, created_at FROM memory_relations"
+                " WHERE guild_id = %s AND campaign_id = %s AND object_id = %s"
+                " AND status = 'confirmed' AND to_session_at IS NULL AND predicate = ANY(%s)",
                 (*ids, thread_id, list(PREDICATES)),
             )
-            facts = await cur.fetchall()
+            raw = await cur.fetchall()
+            cur = await conn.execute(
+                "SELECT id FROM memory_entities WHERE guild_id = %s AND campaign_id = %s"
+                " AND status = 'confirmed'",
+                ids,
+            )
+            confirmed = {r["id"] for r in await cur.fetchall()}
+            facts = [f for f in raw if f["subject_id"] in confirmed]
             cur = await conn.execute(
                 "SELECT entity_id, session_started_at FROM memory_heard WHERE guild_id = %s"
                 " AND campaign_id = %s",
@@ -113,8 +122,49 @@ class QuietInSql(Threads):
         self.assertEqual(got[self.heir], await self.reference(self.heir))
         self.assertEqual(got[self.heir][1], 1)  # (only S4 is known; the ended part is no touch)
 
-    async def test_only_that_campaigns_threads_and_only_the_ids_asked(self) -> None:
+    async def test_what_never_touches_a_thread(self) -> None:
+        # (a fact from a name not yet confirmed, a fact not confirmed itself, and a `led_to` link
+        # in a chain: none moves the thread; a state with no session counts by when it was saved)
+        await self.memory.set_condition(
+            GUILD_A, self.c, self.heir, GOING, source="dm", from_session_at=S1
+        )
+        before = await self.quiet([self.heir])
+        maybe = await self.add("A stranger", type="character", role="npc", status="proposed")
+        nxt = (await self.start("The Heir's Return", "quest", OPEN)).id
+        async with self.db.guild(GUILD_A) as conn:
+            for subject, predicate, status in (
+                (maybe, "in_thread", "confirmed"),
+                (self.mira, "advances", "proposed"),
+                (nxt, "led_to", "confirmed"),
+            ):
+                await conn.execute(
+                    "INSERT INTO memory_relations (guild_id, campaign_id, id, subject_id,"
+                    " predicate, object_id, detail, source, confidence, status, mention_ids,"
+                    " secret, created_at, from_session_at) VALUES (%s, %s, %s, %s, %s, %s, '',"
+                    " 'dm', 1, %s, '{}', false, %s, %s)",
+                    (GUILD_A, self.c, secrets.token_hex(16), subject, predicate, self.heir,
+                     status, S4, S4),
+                )  # fmt: skip
+        for s in (S2, S3):
+            await self.heard(s, self.mira)
+        got = await self.quiet([self.heir])
+        self.assertEqual(got[self.heir][0], before[self.heir][0])  # (touched as before)
+        self.assertEqual(got[self.heir], await self.reference(self.heir))
+        self.assertEqual(got[self.heir][1], 2)
+
+    async def test_only_that_campaigns_sessions_and_never_another_servers(self) -> None:
         self.assertEqual(await self.quiet([]), {})
         self.assertEqual(await self.quiet(["0" * 32]), {})
-        elsewhere = await self.quiet([self.heir], campaign="c" * 32)
-        self.assertEqual(elsewhere, {})
+        await self.memory.set_condition(
+            GUILD_A, self.c, self.heir, GOING, source="dm", from_session_at=S1
+        )
+        await self.heard(S2, self.mira)
+        mine = await self.quiet([self.heir])
+        # (another campaign in the same server holds later sessions: they are not this one's)
+        other = (await self.campaigns.create(GUILD_A, "Elsewhere", DM)).id
+        await self.memory.add_session_heard(GUILD_A, other, S3, [Heard(self.mira, 7, 1)])
+        await self.memory.add_session_heard(GUILD_A, other, S4, [Heard(self.mira, 7, 1)])
+        self.assertEqual(await self.quiet([self.heir]), mine)
+        self.assertEqual(await self.quiet([self.heir], campaign=other), {})
+        # (another server's call on this server's connection sees nothing: row-level security)
+        self.assertEqual(await self.quiet([self.heir], guild=GUILD_B, campaign=self.c), {})
