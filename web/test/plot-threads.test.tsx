@@ -30,7 +30,7 @@ function thread(over: Partial<PlotThread> = {}): PlotThread {
     id: "a1".repeat(16),
     name: "The drowned bell",
     kind: "thread",
-    state: "going",
+    state: "active",
     stateWords: "Happening now",
     history: [],
     involved: [],
@@ -273,3 +273,105 @@ describe("the Plot threads panel (#3696, slice 1)", () => {
     }
   });
 });
+
+// Change state (#4934, slice 2a): the five states per thread, Checked, still going on a live thread, and the press that waits on the bot.
+describe("change a thread's state (#4934)", () => {
+  async function withThreads(threads: PlotThread[]) {
+    const api = mockApi("table");
+    const reads = { n: 0 };
+    api.plotThreads = async () => {
+      reads.n += 1;
+      return answer({}, threads);
+    };
+    const sent: { thread: string; state: string }[] = [];
+    api.changePlotThreadState = async (_ref, change) => {
+      sent.push(change);
+    };
+    render(<PlotThreadsPanel api={api} refId={REF} />);
+    return { api, reads, sent };
+  }
+  /** The card of one thread, once the list has loaded. */
+  async function card(name: string): Promise<HTMLElement> {
+    return (await screen.findByText(name)).closest("article") as HTMLElement;
+  }
+
+  it("Change state offers the five states in a promise's own words for a promise", async () => {
+    await withThreads([thread({ name: "Mira's word", kind: "promise", state: "open", stateWords: "Promised" })]);
+    const c = await card("Mira's word");
+    fireEvent.click(within(c).getByRole("button", { name: w.changeState }));
+    for (const word of ["Made in passing", "Open", "Due soon", "Kept", "Broken or let go"]) {
+      expect(within(c).getByRole("button", { name: word })).toBeTruthy();
+    }
+    expect(within(c).queryByRole("button", { name: "Happening now" })).toBeNull();
+  });
+
+  it("Checked, still going is offered only for a live thread", async () => {
+    await withThreads([
+      thread({ name: "The drowned bell", state: "active" }),
+      thread({ id: "f1".repeat(16), name: "The old well", state: "resolved", stateWords: "Finished" }),
+    ]);
+    const live = await card("The drowned bell");
+    fireEvent.click(within(live).getByRole("button", { name: w.changeState }));
+    expect(within(live).getByRole("button", { name: w.checked })).toBeTruthy();
+    const done = await card("The old well");
+    fireEvent.click(within(done).getByRole("button", { name: w.changeState }));
+    expect(within(done).queryByRole("button", { name: w.checked })).toBeNull();
+  });
+
+  it("pressing a state calls the API, says what it marked, and re-reads the list", async () => {
+    const { reads, sent } = await withThreads([thread({ name: "The drowned bell", state: "active" })]);
+    const c = await card("The drowned bell");
+    fireEvent.click(within(c).getByRole("button", { name: w.changeState }));
+    fireEvent.click(within(c).getByRole("button", { name: "Finished" }));
+    expect(await screen.findByText(w.markedDone("Finished"))).toBeTruthy();
+    expect(sent).toEqual([{ thread: "a1".repeat(16), state: "resolved" }]);
+    await waitFor(() => expect(reads.n).toBe(2));
+  });
+
+  it("a thread that is gone says so and re-reads the list", async () => {
+    const { api, reads } = await withThreads([thread({ name: "The drowned bell", state: "active" })]);
+    api.changePlotThreadState = async () => {
+      throw new ApiError("gone");
+    };
+    const c = await card("The drowned bell");
+    fireEvent.click(within(c).getByRole("button", { name: w.changeState }));
+    fireEvent.click(within(c).getByRole("button", { name: "Finished" }));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.gone);
+    await waitFor(() => expect(reads.n).toBe(2));
+  });
+
+  it("a failed press says nothing changed, and leaves the states open to try again", async () => {
+    const { api } = await withThreads([thread({ name: "The drowned bell", state: "active" })]);
+    api.changePlotThreadState = async () => {
+      throw new ApiError("network");
+    };
+    const c = await card("The drowned bell");
+    fireEvent.click(within(c).getByRole("button", { name: w.changeState }));
+    fireEvent.click(within(c).getByRole("button", { name: "Finished" }));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.couldNot);
+    // The states are still there, so the DM can press again.
+    expect(within(c).getByRole("button", { name: "Finished" })).toBeTruthy();
+  });
+
+  it("every state button waits while one press is with the bot", async () => {
+    const { api, sent } = await withThreads([
+      thread({ name: "The drowned bell", state: "active" }),
+      thread({ id: "f2".repeat(16), name: "The old well", state: "open", stateWords: "Not started" }),
+    ]);
+    let release!: () => void;
+    api.changePlotThreadState = (_ref, change) =>
+      new Promise<void>((resolve) => {
+        sent.push(change);
+        release = resolve;
+      });
+    const bell = await card("The drowned bell");
+    fireEvent.click(within(bell).getByRole("button", { name: w.changeState }));
+    fireEvent.click(within(bell).getByRole("button", { name: "Finished" }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    const well = await card("The old well");
+    expect((within(well).queryByRole("button", { name: w.changeState }) as HTMLButtonElement).disabled).toBe(true);
+    release();
+    expect(await screen.findByText(w.markedDone("Finished"))).toBeTruthy();
+  });
+});
+
