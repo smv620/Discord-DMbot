@@ -159,6 +159,10 @@ python -m dmbot.devtools.picture_cases score /tmp/picture_cases.pdf
 
 Paste its lines on #3545: `kind_right`/`kind_wrong` (map, table, handout or other), `words_found`/`words_missed` (each phrase of the key), `words_not_in_picture` (words read that the picture doesn't hold, the false reads), `other_skipped`, the `cut`, `failed` and `not_read` counts, and `estimate_credits` (5 a picture) beside the run's cost. The switch stays off until these counts are in (Supervisor's ruling on #4003).
 
+## The feelings cases
+
+`bias_cases_lore.txt` and `bias_cases_key.json` (#4229 slice 4; plan on #3545) are invented lore for the reader of a place's, group's or people's feeling toward a lineage or a named culture (`memory/bias_read.py`, no AI). The key lists each stated feeling (holder, toward, step) and `must_not` sentences that must give nothing: someone else's feeling, a single character's, a question, an "if", "dwarven ale", "human traders", a feeling toward a person, and a negation. `tests/test_bias_cases.py` scores the reader on every CI run (found, missed, wrong step, extra); the sample lore states none, so this is where the reader's recall is measured.
+
 ## Changes to the keys
 
 - **2026-11-17, the guess cases (#4655, quests slice 7a):** `guess_cases_lore.txt`, `guess_cases_session.txt` and `guess_cases_key.json` / `.md` added (invented, Supervisor's ruling), with the check's `readings` / `must_not_readings` rows and its `Readings:` line.
