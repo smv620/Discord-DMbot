@@ -161,6 +161,42 @@ class Threads(ConfirmedMemoryTest):
         with self.assertRaises(MemoryRuleError):
             await self.memory.involve(GUILD_A, self.c, self.heir, self.mira, "x" * 500, source="dm")
 
+    async def test_a_new_event_and_its_link_are_one_write_and_one_undo(self) -> None:
+        # (#4950: the event typed on the card is made with its link, never left behind alone)
+        before = {e.name for e in await self.memory.entities(GUILD_A, self.c)}
+        made = await self.memory.link_new_event(
+            GUILD_A, self.c, self.heir, "The bridge falls", ends_it=False, source="dm"
+        )
+        got = await self.info()
+        self.assertEqual(
+            [(m.event.name, m.ends_it) for m in got.movers], [("The bridge falls", False)]
+        )
+        event = next(
+            e for e in await self.memory.entities(GUILD_A, self.c) if e.name == "The bridge falls"
+        )
+        self.assertTrue(event.hidden_from_players)  # (typed by the DM: unrevealed, #2404)
+        self.assertEqual(
+            before | {"The bridge falls"},
+            {e.name for e in await self.memory.entities(GUILD_A, self.c)},
+        )
+        await self.memory.undo(GUILD_A, self.c, made.batch)
+        self.assertEqual(before, {e.name for e in await self.memory.entities(GUILD_A, self.c)})
+        self.assertEqual(len((await self.info()).movers), 0)
+
+    async def test_a_link_that_fails_leaves_no_event_behind(self) -> None:
+        from dmbot.memory.models import MemoryRuleError
+
+        before = {e.name for e in await self.memory.entities(GUILD_A, self.c)}
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.link_new_event(
+                GUILD_A, self.c, "no-such-thread", "The bridge falls", ends_it=False, source="dm"
+            )  # (the link fails after the event would have been made)
+        self.assertEqual(before, {e.name for e in await self.memory.entities(GUILD_A, self.c)})
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.link_new_event(
+                GUILD_A, self.c, self.heir, "The bridge falls", ends_it=False, source="extractor"
+            )
+
     async def test_who_is_involved_and_what_moved_it(self) -> None:
         await self.memory.involve(GUILD_A, self.c, self.heir, self.mira, "quest giver", source="dm")
         await self.memory.link_event(
