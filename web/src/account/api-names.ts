@@ -42,7 +42,7 @@ import {
   SIGNED_OUT_EVENT,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
-import type { AccountApi, ApiHelpers, CharacterLanguages, HeardQuestions, JoinChoices, JoinGroup, PartyRecordCharacter, WebAnswer, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
+import type { AccountApi, ApiHelpers, CharacterLanguages, HeardQuestions, JoinChoices, JoinGroup, LeaveGroup, PartyRecordCharacter, WebAnswer, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
 /** The revealed list of an upload notice (#4661): plain lines of at most 200 characters, at most ten; anything else is dropped. */
@@ -657,6 +657,16 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       };
     },
     joinQuestions: async (ref) => ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/join-questions`)) as { groups: JoinGroup[] }).groups,
+    // The "Still in the party?" questions (#4895): DM only (the door answers anyone else with nothing).
+    leaveQuestions: async (ref) => ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/leave-questions`)) as { groups: LeaveGroup[] }).groups,
+    // Queued for the bot (202 {answer}), then waited for: a "left" answer gives its batch, for Undo through `answerJoin`'s undo.
+    answerLeave: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/leave-questions/answer`, { character: change.character, answer: change.answer })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { batch: typeof got.batch === "number" ? got.batch : null };
+    },
     // Queued for the bot (202 {answer}), then waited for: the batch and `given` of an answer; the batch of an Undo is in its path.
     answerJoin: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;
