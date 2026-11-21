@@ -120,6 +120,18 @@ describe("Still in the party? on the Questions page (#4895)", () => {
     expect(srv.sent).toEqual([]);
   });
 
+  it("a group set aside with Later stays hidden after another group is answered", async () => {
+    const srv = await open();
+    // Later on the death (the first group), then a goodbye in the second group is answered.
+    fireEvent.click(screen.getAllByRole("button", { name: laterName })[0]!);
+    expect(await screen.findByText(w.laterDone)).toBeTruthy();
+    expect(screen.queryByText(w.died("Okthandom"))).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Tavin: stays" }));
+    expect(await screen.findByText(w.stayedDone("Tavin"))).toBeTruthy();
+    expect(srv.sent).toEqual([{ character: "lv-tavin", answer: "stays" }]);
+    expect(screen.queryByText(w.died("Okthandom"))).toBeNull();
+  });
+
   it("Left the party sends the answer, says so, and offers Undo, which asks the question again", async () => {
     const srv = await open();
     fireEvent.click(screen.getByRole("button", { name: w.left }));

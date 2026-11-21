@@ -40,7 +40,7 @@ export default function LeaveQuestions({
   // The row being answered (a character id), or "undo" while an Undo is with the bot.
   const [busy, setBusy] = useState<string | null>(null);
   const [undo, setUndo] = useState<Undo | null>(null);
-  // Groups set aside with "Later" until the list is read again.
+  // Groups set aside with "Later" stay hidden for the life of the card (until the page is left or reloaded).
   const [later, setLater] = useState<Set<string>>(new Set());
   const statusRef = useRef<HTMLParagraphElement | null>(null);
   const flight = useRef(false);
@@ -58,7 +58,6 @@ export default function LeaveQuestions({
       if (!live.current) return;
       setGroups(got);
       setFailed(false);
-      setLater(new Set());
       onLeft?.(got.reduce((n, g) => n + g.characters.length, 0));
     } catch {
       if (live.current) setFailed(true);
