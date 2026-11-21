@@ -5,5 +5,5 @@ export const entry: Item = {
   title: "See the open plot threads on the Names page",
   what: "On the Names page, the threads DMbot keeps for your campaign, with what is happening now, who is involved and what moved them. Only you see this.",
   held: "Held until the website's Plot threads panel is deployed and switched on (#3696).",
-  order: 137,
+  order: 139,
 };
