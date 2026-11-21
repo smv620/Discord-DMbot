@@ -45,4 +45,6 @@ class TheWorldNotesActionsMatch(unittest.TestCase):
         from dmbot.memory.web_actions import WORLD_ACTIONS
 
         door = importlib.import_module("dmbot.migrations.0481_world_notes_door")
-        self.assertEqual(set(door.ACTIONS), set(WORLD_ACTIONS))
+        # (#4932: 0585 adds ✏️ Change on a feeling, `world-bias`, to the same list)
+        biases = importlib.import_module("dmbot.migrations.0585_web_world_biases")
+        self.assertEqual({*door.ACTIONS, *biases.ACTIONS}, set(WORLD_ACTIONS))
