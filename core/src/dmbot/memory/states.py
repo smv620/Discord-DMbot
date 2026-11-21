@@ -34,11 +34,13 @@ from dmbot.memory.checks import (
     acts_after_end,
 )
 from dmbot.memory.models import (
+    DEAD,
     DM,
     ENDED,
     GOING,
     HINTED,
     OPEN,
+    PLAYER_CHARACTER,
     REJECTED,
     Entity,
     MemoryRuleError,
@@ -219,7 +221,35 @@ async def set_condition(
             "closed_at": None,
         },
     )
+    await _ask_about_a_death(w, entity, old, condition)
     return state_of(row)
+
+
+async def _ask_about_a_death(
+    w: Changes, entity: Mapping[str, Any], old: str | None, condition: str
+) -> None:
+    """A player character in the party marked dead asks the DM, after play, whether they are no
+    longer in the party (#4537 slice 6a; Supervisor's ruling S): asked in this change, so an Undo
+    of the death takes a question still waiting with it (`join_questions.undo`). Nothing closes
+    the stretch here, or anywhere but the DM's own answer or the card's button (§11: characters
+    come back in this game, Revivify and Raise Dead, so a death is never final by itself). A
+    death taken back by a later condition withdraws the question still waiting; one already
+    answered stays answered. (Undoing that later condition brings "dead" back but not the
+    question: a later reader must not count on one being there.)
+
+    A death set from a card between sessions waits like any other and goes with the next
+    after-session step or when the DM opens ❓ Questions for you, where it is counted at once."""
+    # (here, not at the top: join_questions and party_record are small and load nothing of
+    # this module, but keeping the state module's imports to its own reads keeps it cheap)
+    from dmbot.memory import join_questions, party_record
+
+    if entity.get("role") != PLAYER_CHARACTER:
+        return
+    if condition == DEAD and old != DEAD:
+        if entity["id"] in await party_record.current_members(w):
+            await join_questions.ask(w, [entity["id"]], join_questions.DIED)
+    elif old == DEAD and condition != DEAD:
+        await join_questions.withdraw(w, entity["id"], join_questions.DIED)
 
 
 ONLY_LIVE_THREADS = "Only a thread that is hinted, open or going on can be checked."
