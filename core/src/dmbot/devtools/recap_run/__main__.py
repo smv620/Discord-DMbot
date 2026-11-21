@@ -454,6 +454,54 @@ def explain_failures(out: Outcome) -> list[str]:
     return rows
 
 
+# A check's problem sentence -> a short code. The golden table must hold no words of a session, and
+# a problem can carry names, so only the fixed wording of each kind is matched (#4879).
+PROBLEM_CODES = (
+    ("names that are not allowed", "names-not-allowed"),
+    ("names that are not in the beat sheet", "names-not-in-beats"),
+    ("it copies the table word for word", "copies-table"),
+    ("it copies a style example", "copies-example"),
+    ("no quotation marks", "quotation-marks"),
+    ("it must open with an emotion cue", "no-emotion-cue"),
+    ("it names something the DM keeps secret", "names-secret"),
+    ("a name is too like one the DM keeps", "name-like-secret"),
+    ("the recap is empty", "empty"),
+    ("it must end exactly where", "ends-early"),
+    ("every housekeeping bullet", "housekeeping"),
+    ("give exactly one music prompt", "music-count"),
+    ("was not there in one of the scenes", "absent-name"),
+    ("a sentence says more than the sheet", "sheet-line-overreach"),
+    ("a sentence says which names are the same", "same-person-tie"),
+    ("a sentence names", "present-too"),
+)
+
+
+def problem_code(problem: str) -> str:
+    """A check's problem as a code, never its words ("other" when it is not a known kind)."""
+    low = problem.casefold()
+    for start, code in PROBLEM_CODES:
+        if low.startswith(start.casefold()) or f": {start.casefold()}" in low:
+            return code
+    return "other"
+
+
+def failure_codes(out: Outcome) -> str:
+    """Why a golden session stopped, as counts and codes only: the state, the calls, and for each
+    failed try the stage and how many problems of each kind. Nothing from the session's words."""
+    job = out.job
+    parts = [f"state {job.state}", f"calls {out.fast.calls + out.careful.calls}"]
+    for stage, attempt, problems in out.failures:
+        kinds: dict[str, int] = {}
+        for problem in problems:
+            code = problem_code(problem)
+            kinds[code] = kinds.get(code, 0) + 1
+        said = ",".join(f"{code}x{n}" for code, n in sorted(kinds.items())) or "none"
+        parts.append(f"{STAGE_WORDS.get(stage, stage)} try {attempt}: {said}")
+    if not out.failures:
+        parts.append("no check failed")
+    return "; ".join(parts)
+
+
 def names_a_secret_anywhere(job: Job, inputs: pl.Inputs) -> bool:
     text = " ".join([job.title, job.summary, *job.housekeeping, *job.music])
     return names_a_secret(text, inputs.secret_names, inputs.allowed_names)
@@ -917,6 +965,8 @@ async def run_golden(
             f"{session.name:<18} {job.state:<8} {out.fast.calls + out.careful.calls:>5}"
             f"  {found}/{len(session.reference):<4} {leak:>5}  {grade}"
         )
+        if job.state != "ready":
+            rows.append(f"  why: {failure_codes(out)}")
         clean = clean and job.state == "ready" and not leak
     spend = dollars(prices.get(models[0]), total_in, total_out)
     rows.append(f"tokens in {total_in}, out {total_out}; spend about {spend} (fast-tier price)")

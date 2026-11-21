@@ -9035,6 +9035,13 @@ class MemoryStore:
         async with self._read(guild_id, campaign_id, snapshot=True) as scope:
             return await gate.visible_to(scope, viewer)
 
+    async def entries_shown_to_table(self, guild_id: int, campaign_id: str) -> frozenset[str]:
+        """The entries the table holds now (`gate.table_viewer` with no live session: the current
+        party, or common knowledge only with nobody in it; Supervisor's ruling M on #4537): what
+        a keep may treat as "shown to the players" (#4823). Reads only (§9 rule 6)."""
+        async with self._read(guild_id, campaign_id, snapshot=True) as scope:
+            return await gate.entries_for(scope, await gate.table_viewer(scope))
+
     async def entries_seen_by(
         self, guild_id: int, campaign_id: str, user_id: int
     ) -> frozenset[str]:

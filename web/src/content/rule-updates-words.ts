@@ -12,6 +12,8 @@ export const ruleUpdateWords = {
   more: (n: number): string => `…and ${n} more.`,
   failed: "Couldn't load the changes.",
   pick: "Pick changes",
+  // The legend of the picker's group: the intro's first sentence (#4884).
+  pickLegend: "Pick the changes to keep.",
   pickIntro: (name: string): string =>
     `Pick the changes to keep. Leaving anything out ends your follow of ${name}: your table keeps its own copy of the rules, with the changes you kept, and stops getting this set's updates. You can undo it for a day.`,
   save: "Save my picks",

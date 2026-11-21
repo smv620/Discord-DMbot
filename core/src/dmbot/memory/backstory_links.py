@@ -169,6 +169,15 @@ class Waiting:
     hand_over: str = ""
     assumed: bool = False  # DMbot assumed it (#4173 slice 3): never one of the DM's questions
     inferred_sure: bool = False  # as on `NewLink` (#4636 part 3)
+    # `secret` only because an end is a clue only some people know: the DM's own "only some know
+    # this" carried to the card (its 👥 Some know, hand-over and secret-name rules), never into the
+    # kept row, whose view is the gate's (Supervisor's ruling (a) on #4823)
+    clue_end: bool = False
+
+    @property
+    def own_secret(self) -> bool:
+        """The connection's own secret, as the upload or the DM made it: what a kept row stores."""
+        return self.secret and not self.clue_end
 
 
 def _hand_over(link: NewLink) -> tuple[str, str]:
@@ -580,9 +589,10 @@ class BackstoryLinks:
                     prev = None
                 if prev is not None:  # (asked once that one is a confirmed name too)
                     ready = ready and entities[prev]["status"] == "confirmed"
-                # A clue only some people know makes it secret. A name merely not shown to the
-                # players yet (#2321; every new name starts so, #2404) does not: a backstory
-                # connection is kept unrevealed instead, and cannot be shown before both names are.
+                # A clue only some people know makes it secret on the DM's card: the DM's own
+                # "only some know this" switch (Supervisor's ruling (a) on #4823). The kept row's
+                # view is the gate's (`own_secret`, `backstory_keep.shown_entry_ids`). A name merely
+                # not shown to the players yet (#2321, #2404) does not: kept unrevealed instead.
                 hidden = any(entities[x]["audience_limited"] for x in (a, b))
                 out.append(
                     Waiting(
@@ -594,7 +604,7 @@ class BackstoryLinks:
                         _guesses(r["npc_guesses"]), prev or "",
                         str(entities[prev]["name"]) if prev else "",
                         str(r["hand_over"]) if prev else "", bool(r["assumed"]),
-                        bool(r["inferred_sure"]),
+                        bool(r["inferred_sure"]), hidden and not r["secret"],
                     )
                 )  # fmt: skip
             # Deletes first, then inserts: a moved row may land on a key a dropped row had.
