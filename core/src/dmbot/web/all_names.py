@@ -466,6 +466,7 @@ def _arguments(body: object) -> tuple[str, str, str, str, bool]:
         hows = map_facts.HOWS[layer]
         if not isinstance(how, str) or not isinstance(words, str):
             raise RecapError("bad_name")
+        words = " ".join(words.split())  # (a blank is no words)
         if value is None:  # "Not sure": the layer is cleared (every lineage)
             if how or words:
                 raise RecapError("bad_name")

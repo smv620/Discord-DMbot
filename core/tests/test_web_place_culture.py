@@ -77,3 +77,39 @@ class TheActions(Culture):
     async def test_a_player_character_is_not_a_place_and_the_bot_refuses_it(self) -> None:
         outcome = await self.run_one(self.sword, action="map-culture", value="dwarf", how="strong")
         self.assertNotEqual(outcome, [""])
+
+
+class TheNamedCultures(Culture):
+    async def make(self, name: str = "Illuskan") -> str:
+        await self.run_one(self.keep, action="map-culture", value="other", how="strong", words=name)
+        return str((await self.world())["cultures"][0]["id"])
+
+    async def test_a_rejected_culture_is_not_named_or_listed(self) -> None:
+        culture = await self.make()
+        async with self.db.guild(self.g) as conn:
+            await conn.execute(
+                "UPDATE memory_cultures SET status = 'rejected' WHERE id = %s", (culture,)
+            )
+        got = await self.world()
+        self.assertEqual(got["cultures"], [])
+        (row,) = await self.rows("culture")
+        self.assertIsNone(row["culture"])
+
+    async def test_the_picker_lists_only_kept_cultures_by_name_and_at_most_fourteen(self) -> None:
+        for n in range(16):
+            await self.run_one(
+                self.keep, action="map-culture", value="other", how="some", words=f"Folk {n:02d}"
+            )
+        names = [c["name"] for c in (await self.world())["cultures"]]
+        self.assertEqual(len(names), 14)
+        self.assertEqual(names, sorted(names, key=str.lower))
+
+    async def test_another_campaigns_culture_is_not_listed_or_taken(self) -> None:
+        other = await self.memory.add_entity(
+            self.g, self.two.id, type="place", name="Their keep", source="dm", status="confirmed"
+        )
+        await self.memory.set_map_fact(
+            self.g, self.two.id, other.value.id, "culture", "other", how="strong", words="Reghed",
+            source="dm",
+        )  # fmt: skip
+        self.assertEqual((await self.world())["cultures"], [])
