@@ -70,6 +70,8 @@ class TheKinds(unittest.TestCase):
                 "Story threads to check",  # (#4453)
                 "Known or secret?",  # (#4524)
                 "New in the party",  # (#4537)
+                "Still in the party?",  # (#4537 slice 6)
+                "Things the characters learned",  # (#3863)
                 "Maps waiting for your yes",
                 "Facts to check",
                 "What people believe",
@@ -100,6 +102,37 @@ class WhatCountsAsAnAnswer(unittest.TestCase):
 
     def test_the_total_adds_every_kind(self) -> None:
         self.assertEqual(total({kinds.NAMES: Counted(2), kinds.WHICH: Counted(3)}), 5)
+
+
+class TheRevealsCount(unittest.IsolatedAsyncioTestCase):
+    """What the characters learned (#3863): the count is the reveal card's own, with the people
+    recorded in that campaign as the only speakers that count. Stand-ins, no database."""
+
+    async def counted(self, recorded: object, waiting: int) -> tuple[int, list[object]]:
+        from unittest.mock import patch
+
+        seen: list[object] = []
+
+        async def count_waiting(_self: object, g: int, c: str, *, opted_in: object) -> int:
+            seen.append(opted_in)
+            return waiting
+
+        async def who(_g: int, _c: str) -> object:
+            return recorded
+
+        src = Sources(db=object(), memory=object(), recorded=who if recorded is not None else None)  # type: ignore[arg-type]
+        with patch("dmbot.memory.reveal_proposals.RevealProposals.count_waiting", count_waiting):
+            got = await counts.count_kinds(src, 1, "c", only={kinds.REVEALS})
+        return got[kinds.REVEALS].n, seen
+
+    async def test_the_count_is_the_cards_and_asks_with_who_is_recorded(self) -> None:
+        self.assertEqual(await self.counted({7}, 3), (3, [{7}]))
+
+    async def test_an_empty_recorded_list_is_passed_on_as_empty_not_as_no_filter(self) -> None:
+        self.assertEqual(await self.counted(set(), 2), (2, [set()]))
+
+    async def test_nobody_known_to_be_recorded_counts_nothing(self) -> None:
+        self.assertEqual(await self.counted(None, 3), (0, []))
 
 
 class TheCounts(Base):
