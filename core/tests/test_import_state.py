@@ -66,6 +66,19 @@ class TheSets(Base):
         )
         self.assertEqual(await self.state.take_strings(1, self.one.id, "names"), [])
 
+    async def test_add_each_keeps_alike_values_one_by_one_in_order_and_takes_them_once(
+        self,
+    ) -> None:
+        await self.state.add_each(1, self.one.id, "unhonoured", ["switched off", "plan"])
+        await self.state.add_each(1, self.one.id, "unhonoured", ["switched off"])
+        got = await self.state.take_each(1, self.one.id, "unhonoured")
+        self.assertEqual(got, ["switched off", "plan", "switched off"])
+        self.assertEqual(await self.state.take_each(1, self.one.id, "unhonoured"), [])
+
+    async def test_a_value_with_a_colon_comes_back_whole(self) -> None:
+        await self.state.add_each(1, self.one.id, "unhonoured", ["it said: no"])
+        self.assertEqual(await self.state.take_each(1, self.one.id, "unhonoured"), ["it said: no"])
+
     async def test_nothing_added_leaves_no_row(self) -> None:
         await self.state.add_strings(1, self.one.id, "names", [])
         self.assertEqual(await self.state.campaigns_with(1, ["names", "unchecked"]), set())

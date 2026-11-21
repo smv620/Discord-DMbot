@@ -3,7 +3,7 @@ database: the same calls and the same take-once rules."""
 
 from __future__ import annotations
 
-from collections.abc import Collection
+from collections.abc import Collection, Sequence
 
 
 class FakeImportState:
@@ -41,3 +41,9 @@ class FakeImportState:
     async def campaigns_with(self, gid: int, kinds: Collection[str]) -> set[str]:
         keys = [*self.counts, *self.sets]
         return {c for (g, c, k) in keys if g == gid and k in kinds}
+
+    async def add_each(self, gid: int, cid: str, kind: str, values: Sequence[str]) -> None:
+        self.sets.setdefault((gid, cid, kind), []).extend(f"{i}:{v}" for i, v in enumerate(values))
+
+    async def take_each(self, gid: int, cid: str, kind: str) -> list[str]:
+        return [v.partition(":")[2] for v in self.sets.pop((gid, cid, kind), [])]

@@ -12,6 +12,7 @@ from __future__ import annotations
 import json
 import re
 import time
+import uuid
 from collections.abc import Callable, Collection, Sequence
 from typing import Any
 
@@ -19,7 +20,14 @@ from dmbot.db import Database
 
 UNCHECKED = "unchecked"  # sessions of an import whose name check was given up
 LEFT_TOLD = "left_told"  # sessions the story read has not reached, as last told
-NAMES = "names"  # names an import's scans added (next conversion)
+ADDED_NAMES = "names"  # names an import's scans added
+SPEAKERS = "speakers"  # who spoke in the lines its scans read (user ids as text)
+ENTRIES = "entries"  # the entries its scans proposed (the only ones the import may add)
+STARTS = "starts"  # the starts of the sessions its scans read (as text)
+BATCHES = "batches"  # the import batches whose scans ended in its report
+PARTY = "party"  # player characters linked (a counter: the largest seen)
+UNHONOURED = "unhonoured"  # why recaps were not made (one line each, kept as many times)
+QUEUED = "queued"  # the starts of the sessions whose recap was queued at once
 REPORTS = "reports"  # each scanned session's name-pass report, as text (#4904)
 
 _KIND = re.compile(r"^[a-z_]{1,40}$")
@@ -125,6 +133,19 @@ class ImportState:
                 (guild_id, campaign_id, self._kind(kind), json.dumps(list(values)),
                  int(self._now())),
             )  # fmt: skip
+
+    async def add_each(
+        self, guild_id: int, campaign_id: str, kind: str, values: Sequence[str]
+    ) -> None:
+        """Add values that count one by one even when alike (two sessions that failed for the same
+        reason are two): each is kept under its own key and `take_each` gives them back in order."""
+        await self.add_strings(
+            guild_id, campaign_id, kind, [f"{uuid.uuid4().hex}:{v}" for v in values]
+        )
+
+    async def take_each(self, guild_id: int, campaign_id: str, kind: str) -> list[str]:
+        """The values `add_each` kept, in the order added, removed."""
+        return [v.partition(":")[2] for v in await self.take_strings(guild_id, campaign_id, kind)]
 
     async def take_strings(self, guild_id: int, campaign_id: str, kind: str) -> list[str]:
         """The set, removed ([] when there was none)."""

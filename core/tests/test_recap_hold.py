@@ -254,7 +254,6 @@ def fake_bot(
         _group_started={},
         decision_lines=DecisionLines(),
         user=SimpleNamespace(id=1),
-        _import_queued={},
         settings=SimpleNamespace(site_url="", recaps_on=True, story_extractor_on=extractor),
         extractor_ai=object() if extractor else None,
         transcripts=SimpleNamespace(

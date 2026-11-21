@@ -43,6 +43,7 @@ from dmbot.campaigns import Campaign
 from dmbot.dm_screen import upkeep
 from dmbot.dm_screen.recap_panel import PlanFacts, audio_how
 from dmbot.entitlements import RECAP_AUDIO_PLANS
+from dmbot.import_state import QUEUED, UNHONOURED, ImportState
 from dmbot.logs import log_context
 from dmbot.memory import gate
 from dmbot.memory.exposures import secret_connections
@@ -237,8 +238,7 @@ class RecapFeatures:
         _group_locks: dict[str, asyncio.Lock]
         _group_made: dict[str, list[int]]
         _group_started: dict[tuple[int, str, str], float]
-        _import_queued: dict[str, list[int]]
-        _import_unhonoured: dict[str, list[str]]
+        import_state: ImportState | None
         _short_asks: dict[str, int]
         _voice_next: int
         _voice_tasks: dict[int, asyncio.Task[None]]
@@ -2212,8 +2212,8 @@ class RecapFeatures:
             campaign = await self.campaigns.get(gid, ready.campaign_id)
             if campaign is not None:
                 why = await self._import_recap(campaign, ready)
-                if why:
-                    self._import_unhonoured.setdefault(ready.campaign_id, []).append(why)
+                if why and self.import_state is not None:
+                    await self.import_state.add_each(gid, ready.campaign_id, UNHONOURED, [why])
             await store.mark_recap_started(gid, ready.session_id)
         except PlanUnchecked:
             log.warning("Import: the plan could not be checked; the recap is tried again")
@@ -2221,9 +2221,10 @@ class RecapFeatures:
             log.exception("Import: a session's recap could not be started")
             if await store.note_recap_failure(gid, ready.session_id) >= IMPORT_RECAP_TRIES:
                 await store.mark_recap_started(gid, ready.session_id)  # let go
-                self._import_unhonoured.setdefault(ready.campaign_id, []).append(
-                    "it could not be started"
-                )
+                if self.import_state is not None:
+                    await self.import_state.add_each(
+                        gid, ready.campaign_id, UNHONOURED, ["it could not be started"]
+                    )
 
     async def _import_recap(self, campaign: Campaign, ready: Ready) -> str:
         """The recap of one scanned import the DM asked for: through the same gates as after a live
@@ -2270,8 +2271,10 @@ class RecapFeatures:
             group_id=ready.import_id,
             say=False,
         )
-        if result == "queued":
-            self._import_queued.setdefault(campaign.id, []).append(ready.started_at)
+        if result == "queued" and self.import_state is not None:
+            await self.import_state.add_each(
+                campaign.guild_id, campaign.id, QUEUED, [str(ready.started_at)]
+            )
         return ""
 
     async def _recap_audio_loop(self, *, job: bool = True, notices: bool = True) -> None:
