@@ -10935,18 +10935,16 @@ async def _threads(scope: Scope, stalled_after: int) -> list[threads_mod.ThreadI
             [sorted({f["subject_id"] for f in facts} | {f["object_id"] for f in facts})],
         )
     }
+    # When each was last touched and how many known sessions started since: one SQL function
+    # (0575) that the website's Threads panel calls too, so the two can't disagree (#3696, ruling
+    # (a)); the rule itself stays `threads.is_stalled`.
     cur = await scope.conn.execute(
-        "SELECT entity_id, session_started_at FROM memory_heard"
-        " WHERE guild_id = %s AND campaign_id = %s",
-        scope.ids,
+        "SELECT entity_id, touched_at, quiet FROM dmbot_thread_quiet(%s, %s, %s)",
+        (*scope.ids, ids),
     )
-    heard: dict[str, set[int]] = {}
-    sessions: set[int] = set()
-    for h in await cur.fetchall():
-        sessions.add(int(h["session_started_at"]))
-        if h["entity_id"] in by_id:
-            heard.setdefault(h["entity_id"], set()).add(int(h["session_started_at"]))
-    known = sorted(sessions)
+    counted = {
+        str(q["entity_id"]): (int(q["touched_at"]), int(q["quiet"])) for q in await cur.fetchall()
+    }
     out: list[threads_mod.ThreadInfo] = []
     for r in sorted(rows, key=lambda e: (name_key(e["name"]), e["id"])):
         history = tuple(by_id[r["id"]])
@@ -10985,14 +10983,7 @@ async def _threads(scope: Scope, stalled_after: int) -> list[threads_mod.ThreadI
         )
         by = tuple(others[f["subject_id"]] for f in mine if f["predicate"] == "promised_by")
         to = tuple(others[f["subject_id"]] for f in mine if f["predicate"] == "promised_to")
-        touch = threads_mod.last_touch(
-            r["created_at"],
-            history,
-            [f["from_session_at"] for f in mine],
-            [f["created_at"] for f in mine],
-            heard.get(r["id"], ()),
-        )
-        quiet = threads_mod.sessions_since(touch, known)
+        touch, quiet = counted[r["id"]]
         state = next((s for s in reversed(history) if s.closed_at is None), None)
         now = state.condition if state is not None else None
         out.append(

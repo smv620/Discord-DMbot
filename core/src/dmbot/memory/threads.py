@@ -165,7 +165,8 @@ def names_line(label: str, names: Sequence[str]) -> str | None:
 
 
 def sessions_since(touch: int, sessions: Iterable[int]) -> int:
-    """How many known sessions started after `touch`."""
+    """How many known sessions started after `touch`. The bot and the website count it in SQL
+    (`dmbot_thread_quiet`, 0575, #3696); this is the reference its tests compare against."""
     return sum(1 for s in sessions if s > touch)
 
 
@@ -180,7 +181,8 @@ def last_touch(
     fact_saved: Iterable[int],
     heard_in: Iterable[int],
 ) -> int:
-    """The newest of everything that counts as touching a thread."""
+    """The newest of everything that counts as touching a thread: the reference
+    `dmbot_thread_quiet` (0575) is tested against."""
     times = [created_at, *heard_in, *fact_saved]
     times += [s.from_session_at if s.from_session_at is not None else s.created_at for s in states]
     times += [t for t in fact_times if t is not None]
