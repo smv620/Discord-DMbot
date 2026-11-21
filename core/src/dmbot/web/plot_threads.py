@@ -179,7 +179,7 @@ async def queue_state(db: Database, session: Session, ref: str, body: object) ->
 
 async def queue_involve(db: Database, session: Session, ref: str, body: object) -> str:
     """Say who or what has a part in a thread (#3696 slice 2b): `{"thread": <32 hex>, "who":
-    <32 hex>, "role": <their part, optional, at most 60 characters>}`. The id of the answer the
+    <32 hex>, "role": <their part, 1 to 60 characters>}`. The id of the answer the
     page polls at `.../web/answers/{id}`. The bot runs the card's own `involve` and checks both
     entries again."""
     thread = body.get("thread") if isinstance(body, dict) else None
@@ -192,6 +192,8 @@ async def queue_involve(db: Database, session: Session, ref: str, body: object) 
     if not isinstance(role, str) or len(role) > ROLE_MAX:
         raise RecapError("bad_action")
     part = " ".join(role.split())  # (the card collapses spaces the same way)
+    if not part:  # (`involve` refuses an empty part, so the page asks for one)
+        raise RecapError("bad_action")
     return await relationships._queue(
         db, session, ref, entity=None, action="thread-involve", target="",
         text=f"{thread} {who} {part}".strip(), flag=False,

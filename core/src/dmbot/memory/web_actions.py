@@ -1622,8 +1622,9 @@ async def _thread_state(memory: MemoryStore, guild_id: int, cid: str, a: Action)
 
 async def _thread_involve(memory: MemoryStore, guild_id: int, cid: str, a: Action) -> Outcome:
     """The card's "👥 Add who's involved" from the page (#3696 slice 2b): its own store call,
-    `involve`. The text is `<thread id> <who's id>[ <their part>]` (the door limits the shape
-    and the part to the card's 60 characters). As the card's name search does, only a
+    `involve`. The text is `<thread id> <who's id> <their part>` (the door limits the shape
+    and the part to 1 to 60 characters: the store's `involve` refuses an empty part, which the
+    card's "optional" box would send, #4937). As the card's name search does, only a
     confirmed character, group, place, item or other entry that is not a person card, a deed or a
     thread and is not the thread itself can be added, and the thread must be a confirmed, un-merged
     thread of this campaign: anything else is `gone`. One change, no Undo, as on the card."""

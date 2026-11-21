@@ -6,9 +6,10 @@ Supervisor's ruling on slice 2): the 🧵 card's "👥 Add who's involved".
 
 from __future__ import annotations
 
-# `thread-involve` is the queue door's new action: the text is `<thread id> <who's id>` with the
-# part after a space when there is one (the card's 60 characters at most, free words, spaces
-# collapsed by the door; the door's text cap of 100 is 130 for this action alone). The bot runs
+# `thread-involve` is the queue door's new action: the text is `<thread id> <who's id> <part>`
+# (the part is 1 to 60 characters of free words, spaces collapsed by the door; the store's
+# `involve` refuses an empty part, #4937, so the website asks for one; the door's text cap of 100
+# is 130 for this action alone). The bot runs
 # the store's own `involve`, the call the card's form makes (one change; the card has no Undo for
 # it, so the page has none). The queue door's lists, shape check and the table's action list are
 # read back as they are and each anchor must be found exactly once. No table changes, no new door.
@@ -36,7 +37,7 @@ _QUEUE_SWAPS = (
     (
         _LAST_SHAPE,
         _LAST_SHAPE
-        + f"           OR (act = 'thread-involve' AND clean !~ '^{_ID} {_ID}( .{{1,60}})?$')\n",
+        + f"           OR (act = 'thread-involve' AND clean !~ '^{_ID} {_ID} .{{1,60}}$')\n",
         1,
     ),
     (

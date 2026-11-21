@@ -180,19 +180,20 @@ class AddingWhoIsInvolved(ChangingAThreadsState):
         self.assertFalse(outcome.error)
         self.assertEqual(await self.involved(self.bell), [(mira, "quest giver")])
 
-    async def test_a_name_is_added_without_a_part(self) -> None:
+    async def test_a_part_is_required(self) -> None:
         keep = await self.add("Greywater Keep", "place")
-        await self.involve(self.bell, keep)
-        (outcome,) = await self.bot_loop()
-        self.assertFalse(outcome.error)
-        self.assertEqual(await self.involved(self.bell), [(keep, "")])
+        for role in ("", "   "):
+            with self.assertRaises(RecapError) as err:
+                await self.involve(self.bell, keep, role)
+            self.assertEqual(err.exception.code, "bad_action")
+        self.assertIsNone(await self.actions.claim_next(self.g))
 
     async def test_another_thread_the_thread_itself_or_a_made_up_id_is_gone(self) -> None:
         other = await self.add("The missing heir", "mystery")
-        for who in (other, self.bell, "a" * 32):
+        for who in (other, "a" * 32):
             await self.involve(self.bell, who)
         outcomes = await self.bot_loop()
-        self.assertEqual([o.error for o in outcomes], [wa.GONE] * 3)
+        self.assertEqual([o.error for o in outcomes], [wa.GONE] * 2)
         self.assertEqual(await self.involved(self.bell), [])
 
     async def test_a_character_is_not_a_thread_to_add_people_to(self) -> None:
