@@ -609,6 +609,20 @@ class Choices(Base):
         self.assertTrue(self.fake.paths("text-to-speech"))
         self.assertTrue(self.fake.paths("/v1/music"))
 
+    async def test_another_process_holding_the_audio_lease_means_no_paid_call(self) -> None:
+        # (#3842: "one recap's audio at a time" holds across processes, not only inside one)
+        from dmbot.recaps.store import AUDIO_LEASE_S
+        from dmbot.worker_lease import WorkerLease
+
+        other = WorkerLease(self.db, "audio", ttl_s=AUDIO_LEASE_S, clock=lambda: self.now)
+        self.assertTrue(await other.acquire("another-process"))
+        self.assertIsNone(await self.worker().run(1, self.one.id, 100))
+        self.assertEqual(self.fake.paths("text-to-speech"), [])
+        await other.release("another-process")
+        job = await self.worker().run(1, self.one.id, 100)
+        assert job is not None
+        self.assertEqual(job.audio, "ready")
+
     async def test_voice_over_alone_makes_the_voice_and_its_mix_and_asks_for_no_music(self) -> None:
         await self.reapprove("voice")
         job = await self.worker().run(1, self.one.id, 100)

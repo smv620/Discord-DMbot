@@ -43,6 +43,7 @@ from dmbot.recaps.audio.render import (
     kinds_for,
 )
 from dmbot.recaps.store import AUDIO_LEASE_S, AUDIO_MAX_TRIES, Job, RecapStore
+from dmbot.worker_lease import WorkerLease
 
 log = logging.getLogger(__name__)
 
@@ -126,6 +127,7 @@ class AudioWorker:
         voice_tags: bool = True,
         have_ffmpeg: Callable[[], bool] = _has_ffmpeg,
         clock: Callable[[], float] = time.time,
+        lease: WorkerLease | None = None,
     ) -> None:
         self._store = store
         self._voice_tags = voice_tags  # mood cues become delivery tags (#1983)
@@ -140,14 +142,18 @@ class AudioWorker:
         self._max = max_credits
         self._have_ffmpeg = have_ffmpeg
         self._now = clock
-        self._one = asyncio.Lock()  # one recap's audio at a time: memory, credits, the counter
+        # One recap's audio at a time across every process (a bot and a worker): memory, credits,
+        # the counter (#3842). It was an asyncio.Lock, which only held inside one process.
+        self._lease = lease or WorkerLease(store.db, "audio", ttl_s=AUDIO_LEASE_S, clock=clock)
         self._start = 0  # the provider's credit count when this job began
         self._choice = ""  # the approved choice read by the last check (#2083)
 
     async def run(self, gid: int, cid: str, session_at: int) -> Job | None:
         """Make the audio of one recap, if it is waiting and nobody else has it. None if it
         was not this worker's to make."""
-        async with self._one:
+        async with self._lease.hold() as got:
+            if not got:
+                return None
             if not await self._store.audio_lease(gid, cid, session_at):
                 return None
             try:
