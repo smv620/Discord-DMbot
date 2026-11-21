@@ -42,7 +42,7 @@ import {
   SIGNED_OUT_EVENT,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
-import type { AccountApi, ApiHelpers, CharacterLanguages, HeardQuestions, JoinGroup, PartyRecordCharacter, WebAnswer, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
+import type { AccountApi, ApiHelpers, CharacterLanguages, HeardQuestions, JoinChoices, JoinGroup, PartyRecordCharacter, WebAnswer, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
 /** The revealed list of an upload notice (#4661): plain lines of at most 200 characters, at most ten; anything else is dropped. */
@@ -633,6 +633,28 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
         if (error instanceof ApiError && error.kind === "typed-problem" && reason !== null) error.reason = reason;
         throw error;
       }
+    },
+    // "Let me choose" (#4891): the choices are read; asking the bot is queued and waited for; a pick is queued and waited for.
+    joinChoices: async (ref, group) =>
+      (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/join-questions/${encodeURIComponent(group)}/choices`)) as JoinChoices,
+    askJoinChoices: async (ref, group) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/join-questions/choices`, { group })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    joinChoose: async (ref, group, pick) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const body = "session" in pick ? { group, session: pick.session } : { group, thread: pick.thread };
+      const queued = (await call("POST", `${base}/join-questions/choose`, body)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return {
+        chose: Array.isArray(got.chose) ? got.chose : [],
+        choseMore: typeof got.choseMore === "number" ? got.choseMore : 0,
+        first: got.first === true,
+        batch: typeof got.batch === "number" ? got.batch : null,
+      };
     },
     joinQuestions: async (ref) => ((await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/join-questions`)) as { groups: JoinGroup[] }).groups,
     // Queued for the bot (202 {answer}), then waited for: the batch and `given` of an answer; the batch of an Undo is in its path.
