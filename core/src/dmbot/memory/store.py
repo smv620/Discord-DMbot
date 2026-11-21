@@ -9054,12 +9054,18 @@ class MemoryStore:
         dm_chose_secret: bool,
         players_only: bool = False,
         backstory_of: str | None = None,
+        adding: bool = False,
     ) -> Written[list[str]]:
         """ "Who knows this?" for a secret other name (#2935). Only the DM. `players_only`: the
         list holds player characters only, so an NPC who knows it keeps knowing (#3197).
         `backstory_of`: the name came from that character's backstory, so that character's row
-        is marked and never copied to another (#4795)."""
+        is marked and never copied to another (#4795). `adding`: these characters learn it on top
+        of everyone who knows it already (an upload's first knower, #4977), never in their place."""
         async with self._write(guild_id, campaign_id, source, dm_chose_secret=dm_chose_secret) as w:
+            if adding:  # (read in the same write, so nobody told meanwhile is dropped)
+                held = (await knowers.alias_knowers(w, [alias_id])).get(alias_id, [])
+                character_ids = [*held, *(c for c in character_ids if c not in held)]
+                players_only = True
             fresh = backstory_of is not None and not await knowers.holds(
                 w, "alias", alias_id, backstory_of
             )
