@@ -17,6 +17,7 @@ type Undo = { batch: number; name: string };
 function sayFailure(error: unknown, undoName: string | null): string {
   if (!(error instanceof ApiError)) return w.couldNot;
   if (error.kind === "gone") return w.gone;
+  if (error.kind === "still-waiting") return w.unsure;
   // The bot's own words for an Undo that is too late or whose question changed (waitForAnswer maps them to these kinds).
   if (undoName !== null && (error.kind === "undo-late" || error.kind === "changed")) return w.tooLate(undoName);
   return w.couldNot;
@@ -89,8 +90,10 @@ export default function LeaveQuestions({
     }
   }
 
-  const answer = (c: { id: string; name: string }, choice: "left" | "stays") =>
-    press(c.id, async () => {
+  const answer = (c: { id: string; name: string }, choice: "left" | "stays") => {
+    // A new answer takes back the Undo of the last one: it would revert a different character now.
+    setUndo(null);
+    return press(c.id, async () => {
       const got = await api.answerLeave!(campaignRef, { character: c.id, answer: choice });
       if (!live.current) return;
       if (choice === "left") {
@@ -100,6 +103,7 @@ export default function LeaveQuestions({
         setSaid({ ok: true, text: w.stayedDone(c.name) });
       }
     });
+  };
 
   const takeBack = (u: Undo) =>
     press(
@@ -117,6 +121,8 @@ export default function LeaveQuestions({
   const setAside = (g: LeaveGroup) => {
     setLater((was) => new Set(was).add(g.group));
     setSaid({ ok: true, text: w.laterDone });
+    // The walk counts what is still shown, so a part set aside with Later can finish (#4740).
+    onLeft?.(shown.filter((x) => x.group !== g.group).reduce((n, x) => n + x.characters.length, 0));
   };
 
   if (!PARTY_LEAVES_LIVE || !api.leaveQuestions || !api.answerLeave) return null;
@@ -131,7 +137,14 @@ export default function LeaveQuestions({
     );
   }
   if (!groups) return <p class="muted" role="status">{w.loading}</p>;
-  const shown = groups.filter((g) => !later.has(g.group));
+  const refreshNotice = failed ? (
+    <p class="warn" role="alert">
+      {w.refreshFailed}{" "}
+      <button type="button" class="button secondary" onClick={() => void read()}>{w.tryAgain}</button>
+    </p>
+  ) : null;
+  // Empty groups are not drawn; a group set aside with Later is hidden until the list is read again.
+  const shown = groups.filter((g) => g.characters.length > 0 && !later.has(g.group));
 
   return (
     <section id={id} class="stack" aria-labelledby={`${id}-heading`}>
@@ -146,8 +159,9 @@ export default function LeaveQuestions({
           {said.text}
         </p>
       )}
+      {refreshNotice}
       {shown.map((g) => (
-        <section key={g.group} class="stack" aria-label={w.title}>
+        <section key={g.group} class="stack" aria-label={`${w.title}: ${g.characters.map((c) => c.name).join(", ")}`}>
           {g.characters.map((c) => {
             const questionId = `${id}-${c.id}-q`;
             const many = g.characters.length > 1;
@@ -159,7 +173,7 @@ export default function LeaveQuestions({
                     type="button"
                     class="button secondary"
                     aria-describedby={questionId}
-                    disabled={busy === c.id}
+                    disabled={busy !== null}
                     onClick={() => void answer(c, "left")}
                   >
                     {many ? w.shortLeft(c.name) : w.left}
@@ -168,7 +182,7 @@ export default function LeaveQuestions({
                     type="button"
                     class="button secondary"
                     aria-describedby={questionId}
-                    disabled={busy === c.id}
+                    disabled={busy !== null}
                     onClick={() => void answer(c, "stays")}
                   >
                     {many ? w.shortStays(c.name) : w.stays}
@@ -179,7 +193,13 @@ export default function LeaveQuestions({
             );
           })}
           <div class="row">
-            <button type="button" class="button secondary" disabled={busy !== null} onClick={() => setAside(g)}>
+            <button
+              type="button"
+              class="button secondary"
+              aria-label={`${w.later}: ${g.characters.map((c) => c.name).join(", ")}`}
+              disabled={busy !== null}
+              onClick={() => setAside(g)}
+            >
               {w.later}
             </button>
           </div>

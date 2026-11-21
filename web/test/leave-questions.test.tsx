@@ -27,6 +27,7 @@ afterEach(() => {
 });
 
 const REF = "100.cmp1";
+const laterName = new RegExp(`^${w.later}`);
 const GROUPS: LeaveGroup[] = [
   { group: "dead-1", kind: "died", characters: [{ id: "lv-okthandom", name: "Okthandom" }] },
   {
@@ -91,19 +92,28 @@ describe("Still in the party? on the Questions page (#4895)", () => {
     expect(screen.getByRole("button", { name: w.stays })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Tavin: left" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "Tavin: stays" })).toBeTruthy();
-    expect(screen.getAllByRole("button", { name: w.later })).toHaveLength(2);
+    expect(screen.getAllByRole("button", { name: laterName })).toHaveLength(2);
   });
 
   it("a name longer than sixteen characters is cut in its buttons, with an ellipsis", async () => {
     await open();
-    expect(shortName("Brynn Ashwood-of-the-Northern-Wastes")).toBe("Brynn Ashwood-of…");
+    // Core's rule (party_leave.py): a longer name is cut to fifteen characters and "…", sixteen in all.
+    expect(shortName("Brynn Ashwood-of-the-Northern-Wastes")).toBe("Brynn Ashwood-o…");
     expect(shortName("Okthandom")).toBe("Okthandom");
-    expect(screen.getByRole("button", { name: "Brynn Ashwood-of…: left" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Brynn Ashwood-o…: left" })).toBeTruthy();
+  });
+
+  it("a name of exactly sixteen characters is not cut; seventeen is cut to fifteen and an ellipsis", () => {
+    const sixteen = "s".repeat(16);
+    const seventeen = "t".repeat(17);
+    expect(shortName(sixteen)).toBe(sixteen);
+    expect(shortName(seventeen)).toBe(`${"t".repeat(15)}…`);
+    expect([...shortName(seventeen)]).toHaveLength(16);
   });
 
   it("Later hides its group, sends nothing, and says it is kept for later", async () => {
     const srv = await open();
-    fireEvent.click(screen.getAllByRole("button", { name: w.later })[1]!);
+    fireEvent.click(screen.getAllByRole("button", { name: laterName })[1]!);
     expect(await screen.findByText(w.laterDone)).toBeTruthy();
     expect(screen.queryByText(w.leave("Tavin"))).toBeNull();
     expect(screen.getByText(w.died("Okthandom"))).toBeTruthy();
@@ -159,6 +169,30 @@ describe("Still in the party? on the Questions page (#4895)", () => {
     expect((await screen.findByRole("alert")).textContent).toBe(w.tooLate("Okthandom"));
   });
 
+  it("a Left that ran out of wait says it is not sure, and never that nothing changed; the row is gone because the bot took it", async () => {
+    const srv = await open();
+    const base = srv.api.answerLeave!;
+    srv.api.answerLeave = async (ref, change) => {
+      await base(ref, change); // the bot applied it ...
+      throw new ApiError("still-waiting"); // ... but the wait ran out before the page heard
+    };
+    fireEvent.click(screen.getByRole("button", { name: w.left }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toBe(w.unsure);
+    expect(alert.textContent).not.toContain("Nothing changed");
+    expect(screen.queryByText(w.died("Okthandom"))).toBeNull();
+  });
+
+  it("a failed read after an answer keeps the rows and says the list may be out of date", async () => {
+    const srv = await open();
+    // The list read after the answer fails; the rows already on screen stay.
+    srv.api.leaveQuestions = async () => {
+      throw new ApiError("network");
+    };
+    fireEvent.click(screen.getByRole("button", { name: "Tavin: stays" }));
+    expect((await screen.findByRole("alert")).textContent).toContain(w.refreshFailed);
+  });
+
   it("any other failure says nothing changed", async () => {
     const srv = await open();
     srv.api.answerLeave = async () => {
@@ -199,7 +233,9 @@ describe("Still in the party? on the Questions page (#4895)", () => {
     on.myQuestions = async () => counts;
     render(<Questions api={on} />);
     const line = (await screen.findByText(label)).closest("li") as HTMLElement;
-    expect(within(line).getByRole("button", { name: `${questionsPage.showHere}: ${kindWords("party_leaves").label}` })).toBeTruthy();
+    fireEvent.click(within(line).getByRole("button", { name: `${questionsPage.showHere}: ${kindWords("party_leaves").label}` }));
+    // Opening it draws the card itself, with the question from the page's own list.
+    expect(await screen.findByText(w.died("Okthandom"))).toBeTruthy();
     cleanup();
 
     live.on = false;

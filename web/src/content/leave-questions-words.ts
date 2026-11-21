@@ -1,13 +1,13 @@
 // The words of the "Still in the party?" question on the Questions page (#4895, party knowledge 6a): core's ui/party_leave.py words, with
 // no markdown. A name is the character's own, never a pronoun. DM only.
 
-// A name longer than this is cut in a button, as core cuts it, so the button stays short.
+// A name longer than this is cut in a button, as core cuts it (party_leave.py SHORT_NAME): the cut name, ellipsis included, is this long.
 const SHORT = 16;
 
 /** The name as a button shows it: cut to sixteen characters with "…" when it is longer. */
 export function shortName(name: string): string {
   const chars = [...name];
-  return chars.length > SHORT ? `${chars.slice(0, SHORT).join("")}…` : name;
+  return chars.length > SHORT ? `${chars.slice(0, SHORT - 1).join("")}…` : name;
 }
 
 export const leaveWords = {
@@ -30,5 +30,8 @@ export const leaveWords = {
   gone: "Already answered (by you or another DM). Nothing changed.",
   tooLate: (name: string): string => `Can't undo this one: something changed since. Open ${name}'s card to put ${name} back in the party.`,
   couldNot: "Couldn't do that just now. Nothing changed. Try again in a moment.",
+  // The bot may still have made the change when the wait ran out: say so, and do not say nothing changed.
+  unsure: "Not sure it went through. The list below shows what is still waiting.",
+  refreshFailed: "Couldn't read the list again. What is shown may be out of date.",
   saving: "Working on it…",
 };
