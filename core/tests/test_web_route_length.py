@@ -144,6 +144,14 @@ class TheActions(Routes):
             with self.assertRaises(RecapError) as bad:
                 await route_lengths.queue_set(self.web, self.session, self.cref, body)
             self.assertEqual(bad.exception.code, "bad_action")
+        with self.assertRaises(RecapError) as kept:
+            await route_lengths.queue_keep(
+                self.web, bob, self.cref, {"on": "place", "id": self.pass_}
+            )
+        self.assertEqual(kept.exception.code, "not_allowed")
+        with self.assertRaises(RecapError) as undone:
+            await route_lengths.queue_undo(self.web, bob, self.cref, "5")
+        self.assertEqual(undone.exception.code, "not_allowed")
         with self.assertRaises(RecapError) as long:
             await route_lengths.queue_set(
                 self.web, self.session, self.cref,

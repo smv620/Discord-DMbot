@@ -12,12 +12,13 @@ import re
 from typing import Any
 
 from dmbot.db import Database
+from dmbot.memory import route_length
 from dmbot.web import relationships
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
 
-WORDS_MAX = 60  # the card's own limit (`route_length.WORDS_MAX`)
+WORDS_MAX = route_length.WORDS_MAX  # the card's own limit
 _ID = re.compile(r"^[0-9a-f]{32}$")
 _BATCH = re.compile(r"^[0-9]{1,15}$")
 ON = {"connection": "c", "place": "p"}

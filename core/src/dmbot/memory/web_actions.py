@@ -1867,6 +1867,8 @@ async def _route_length(
         return await _route_undo(memory, actions, guild_id, cid, a)
     kind, _, rest = a.text.partition(" ")
     target, _, words = rest.partition(" ")
+    if kind not in ("c", "p"):  # (the door's shape check says so too)
+        return _failed(GONE)
     on = "connection" if kind == "c" else "place"
     try:
         batch: int | None
