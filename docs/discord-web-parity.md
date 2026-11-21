@@ -215,7 +215,7 @@ match. "In Discord" says where the DM finds it today.
 | Connections DMbot inferred from lore (marked, kept only one by one) | connection card, Why (#2959) | #3928 |
 | The party: player characters; Who plays them | party note, name card | Story Graph: PC icons (#3622); assigning a player to a player character: Names, change the kind to player character with their Discord ID (WebDev confirmed) |
 | Deeds the party did | deeds card | #3591 |
-| What the characters learned (Keep / Not this) | reveal card | #3863 |
+| What the characters learned (Keep / Not this) | reveal card | built, switched off: the Questions page (`REVEALS_LIVE`, #3863 step 2); needs core's door and routes |
 | Unnamed people (a scene's summary) | unnamed card | #3595, #3597, the scene (#3644) |
 | Met but not named (who the party met in play that nobody named): name, Same as…, remove | Names home → 📋 More lists → 👣 Met but not named (DM only, #4045, #4103) | Names page → 👣 Met but not named (DM only): built, switched off, `MET_LIST_LIVE` (#4084; core 0438 and the bot's actions are merged or in review) |
 | Met but not named (who the party met in play that nobody named): name, Same as…, remove | Names home → 📋 More lists → 👣 Met but not named (DM only, #4045, #4103) | #4084 (the website's page; the bot already applies its actions) |
