@@ -41,9 +41,65 @@ class TheWords(unittest.TestCase):
             party_leave.STAYS_DONE.format(name="Vell"), "✅ Vell is still in the party."
         )
 
+    def test_a_button_keeps_its_action_on_a_phone(self) -> None:
+        self.assertEqual(
+            party_leave._label(party_leave.LEFT_BUTTON, "Vell", False), "Left the party"
+        )
+        self.assertEqual(party_leave._label(party_leave.LEFT_BUTTON, "Vell", True), "Vell: left")
+        long = party_leave._label(party_leave.STAYS_BUTTON, "Bartholomew Thistlewood", True)
+        self.assertTrue(long.endswith(": stays"))
+        self.assertLessEqual(len(long), 25)
+
+    def test_each_character_has_its_own_row_and_later_comes_last(self) -> None:
+        people = [(f"{i:032x}", f"N{i}") for i in range(6)]
+        view = party_leave.question_view("c" * 32, people)
+        rows = [item.row for item in view.children]
+        self.assertEqual(rows, [0, 0, 1, 1, 2, 2, 3, 3, 4])  # (four characters, then "Later")
+
     def test_its_own_kind_on_the_questions_list(self) -> None:
         self.assertEqual(kinds.LABELS[kinds.LEAVES], "Still in the party?")
         self.assertIn(kinds.LEAVES, kinds.ORDER)
+
+
+class TheMessageAfterAnAnswer(unittest.IsolatedAsyncioTestCase):
+    """One answered, the rest of the same message stay with their buttons (the ux-critic)."""
+
+    async def test_the_others_still_waiting_stay_under_the_confirmation(self) -> None:
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock
+
+        vell, tuck = "a" * 32, "b" * 32
+        group = [
+            SimpleNamespace(entity_id=vell, kind=DIED, status=join_questions.LEFT),
+            SimpleNamespace(entity_id=tuck, kind=DIED, status="waiting"),
+        ]
+        names = {vell: "Vell", tuck: "Tuck"}
+        memory = SimpleNamespace(
+            staying_group_for=AsyncMock(return_value="g" * 32),
+            join_question_group=AsyncMock(return_value=group),
+            entity=AsyncMock(side_effect=lambda g, c, e: SimpleNamespace(name=names[e])),
+        )
+        bot = SimpleNamespace(memory=memory)
+        campaign = SimpleNamespace(guild_id=GUILD, id="c" * 32)
+        text, view = await party_leave._after_answer(bot, campaign, vell, "✅ Vell has left.")
+        self.assertTrue(text.startswith("✅ Vell has left.\n\n**Tuck is marked dead.**"))
+        self.assertEqual(
+            [item.custom_id[:14] for item in view.children][:2],
+            ["dmbot:pleavel:", "dmbot:pleaves:"],
+        )
+        many = [
+            SimpleNamespace(entity_id=f"{i:032x}", kind=DIED, status="waiting") for i in range(6)
+        ]
+        memory.join_question_group = AsyncMock(return_value=many)
+        memory.entity = AsyncMock(return_value=SimpleNamespace(name="Someone"))
+        shown = await party_leave.waiting_in(bot, campaign, "g" * 32)
+        assert shown is not None
+        self.assertIn("Buttons for the first 4 here.", shown[0])
+        memory.join_question_group = AsyncMock(return_value=group)
+        memory.entity = AsyncMock(side_effect=lambda g, c, e: SimpleNamespace(name=names[e]))
+        group[1].status = "stays"
+        text, view = await party_leave._after_answer(bot, campaign, vell, "✅ Vell has left.")
+        self.assertEqual((text, view), ("✅ Vell has left.", None))
 
 
 class Party(DatabaseTest):
@@ -172,6 +228,43 @@ class ADeath(Party):
             self.assertEqual(await join_questions.waiting_entities(conn, GUILD, self.c), {cara})
         self.assertEqual(await self.memory.join_questions_waiting(GUILD, self.c), (1, 10_000))
         self.assertEqual(await self.memory.staying_questions_waiting(GUILD, self.c), (1, 10_000))
+
+    async def test_from_the_first_session_leaves_a_death_question_alone(self) -> None:
+        # (the review's case: one who joined and died; the join's own answer answers the join only)
+        self.memory.party_join = True
+        cara = await self.pc("Cara", 700_000_000_000_000_604)
+        batch = await self.dies(cara)
+        await self.memory.join_from_first_session(GUILD, self.c, cara)
+        self.assertEqual(await self.memory.staying_questions_waiting(GUILD, self.c), (1, 10_000))
+        assert batch is not None
+        await self.memory.undo(GUILD, self.c, batch)  # (not refused: the death had no copy)
+        self.assertEqual(await self.memory.staying_questions_waiting(GUILD, self.c), (0, None))
+
+    async def test_two_dms_answer_one_wins_the_other_is_told(self) -> None:
+        await self.dies(self.vell)
+        await self.memory.staying_answer_stays(GUILD, self.c, self.vell)
+        with self.assertRaises(AlreadyAnswered):
+            await self.memory.staying_answer_left(GUILD, self.c, self.vell)
+        self.assertEqual(await self.open_stretches(), {self.vell, self.tuck})  # (stays won)
+        await self.dies(self.tuck)
+        await self.memory.staying_answer_left(GUILD, self.c, self.tuck)
+        with self.assertRaises(AlreadyAnswered):
+            await self.memory.staying_answer_stays(GUILD, self.c, self.tuck)
+
+    async def test_the_join_prompt_and_reads_ignore_a_death_question(self) -> None:
+        await self.dies(self.vell)
+        self.assertFalse(await self.memory.join_question_waiting_for(GUILD, self.c, self.vell))
+        async with self.memory._write(GUILD, self.c, DM) as w:  # (withdraw touches its kind only)
+            await join_questions.ask(w, [self.tuck], join_questions.LEAVE)
+            await join_questions.withdraw(w, self.tuck, DIED)
+        self.assertEqual({r[1] for r in await self.rows()}, {DIED, join_questions.LEAVE})
+
+    async def test_the_latest_message_of_a_character_is_found(self) -> None:
+        await self.dies(self.vell)
+        [sent] = await self.memory.staying_questions_to_send(GUILD, self.c)
+        self.assertEqual(
+            await self.memory.staying_group_for(GUILD, self.c, self.vell), sent.group_id
+        )
 
     async def test_a_readers_death_asks_the_dm_too(self) -> None:
         # (the question is the DM's own confirmation: a reader's "dead" never closes anything)

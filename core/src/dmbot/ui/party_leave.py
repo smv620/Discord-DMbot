@@ -7,7 +7,8 @@ slice 6, 2026-11-21).
   Okthandom as no longer in the party?" (the ruling's words, the same whether the death came from
   play or from a card edit between sessions), or, for a goodbye heard at the table (slice 6b),
   "Okthandom said goodbye at the table. Has Okthandom left the party?".
-- **The answers:** "Left the party" closes the character's stretch with the card's own call, one
+- **The answers** (each redraws the message with whoever in it still waits): "Left the party"
+  closes the character's stretch with the card's own call, one
   change with its ↩️ Undo (which asks again). "Still in the party" writes nothing and is a plain
   answer, never a warning: characters come back in this game (Revivify, Raise Dead). "Later"
   keeps it in ❓ Questions for you.
@@ -41,16 +42,21 @@ LEFT_BUTTON = "Left the party"
 STAYS_BUTTON = "Still in the party"
 LATER_BUTTON = "Later"
 UNDO = "↩️ Undo"
-LEFT_DONE = "✅ {name} has left the party. Everything {name} knows stays with {name}."
+LEFT_DONE = "✅ {name} has left the party. DMbot keeps what {name} knew, in case {name} comes back."
 STAYS_DONE = "✅ {name} is still in the party."
-LATER_DONE = "Kept for later. It stays in ❓ Questions for you."
-UNDONE = "↩️ {name} is in the party again, as before."
+LATER_DONE = "Kept for later in ❓ Questions for you."
+UNDONE = "↩️ Undone. {name} is in the party again."
 ANSWERED = "Already answered (by you or another DM). Nothing changed."
 FAILED = "Couldn't do that just now. Nothing changed. Try again in a moment."
-CANT_UNDO = "Can't undo that now: something changed since. Use {name}'s card instead."
+CANT_UNDO = (
+    "Can't undo this one: something changed since. Open {name}'s card to put {name} back in the "
+    "party."
+)
 OPEN_LABEL = "🧭 Still in the party?"
-WAIT_FOR_PLAY = "A session is running. DMbot will ask when it ends."
-NOTHING_LEFT = "Nothing to ask about the party just now."
+WAIT_FOR_PLAY = "A session is running. DMbot will ask who's still in the party when it ends."
+NOTHING_LEFT = "No characters to ask about right now."
+MORE_THERE = "Buttons for the first {n} here. The rest are in ❓ Questions for you."
+SHORT_NAME = 16  # (a name on a button, so the action is never the part a phone cuts off)
 MOST_SHOWN = 4  # (characters in one message: two buttons each, and "Later", within Discord's 25)
 
 _ID = r"[0-9a-f]{32}"
@@ -67,34 +73,66 @@ def line_for(kind: str, name: str) -> str:
 
 
 def _label(base: str, name: str, many: bool) -> str:
-    # (with several characters in one message each button says whose it is; Discord's limit)
-    return f"{name}: {base.lower()}"[:80] if many else base
+    """A button's words: the action alone, or with several characters in one message the name
+    (cut short, so the action always shows on a phone) and the action in one word. Pure."""
+    if not many:
+        return base
+    short = name if len(name) <= SHORT_NAME else name[: SHORT_NAME - 1] + "…"
+    return f"{short}: {'left' if base == LEFT_BUTTON else 'stays'}"
 
 
 def question_view(
     campaign_id: str, people: Sequence[tuple[str, str]], *, later: bool = True
 ) -> discord.ui.View:
-    """The buttons of one message: for each (entity id, name), "Left the party" and "Still in
-    the party", then one "Later"."""
+    """The buttons of one message: for each (entity id, name as written, not escaped) its own
+    row, "Left the party" and "Still in the party" (neither one leaned on: both are plain
+    answers), then one "Later" on the last row."""
     view = discord.ui.View(timeout=None)
     many = len(people) > 1
-    for entity_id, name in people[:MOST_SHOWN]:
-        view.add_item(LeftButton(campaign_id, entity_id, _label(LEFT_BUTTON, name, many)))
-        view.add_item(StaysButton(campaign_id, entity_id, _label(STAYS_BUTTON, name, many)))
+    shown = people[:MOST_SHOWN]
+    for row, (entity_id, name) in enumerate(shown):
+        view.add_item(LeftButton(campaign_id, entity_id, _label(LEFT_BUTTON, name, many), row))
+        view.add_item(StaysButton(campaign_id, entity_id, _label(STAYS_BUTTON, name, many), row))
     if later:
-        view.add_item(LaterButton(campaign_id))
+        view.add_item(LaterButton(campaign_id, len(shown)))
     return view
 
 
-async def question_for(bot: Any, campaign: Any, group_id: str) -> tuple[str, discord.ui.View]:
-    """The text and buttons of one sent goodbye or death question (also ❓ Questions for you)."""
+async def _raw_names(bot: Any, campaign: Any, ids: Sequence[str]) -> list[str]:
+    """The names as written, for buttons (Discord shows a label as it is, no markdown)."""
+    out = []
+    for entity_id in ids:
+        entity = await bot.memory.entity(campaign.guild_id, campaign.id, entity_id)
+        out.append(entity.name if entity is not None else "A character")
+    return out
+
+
+async def waiting_in(bot: Any, campaign: Any, group_id: str) -> tuple[str, discord.ui.View] | None:
+    """The text and buttons for the characters of one message still waiting, or None when none
+    is (also what ❓ Questions for you shows)."""
     g, c = campaign.guild_id, campaign.id
-    questions = [q for q in await bot.memory.join_question_group(g, c, group_id)]
-    waiting = [q for q in questions if q.status == "waiting"] or questions
-    names = await _names(bot.memory, g, c, [q.entity_id for q in waiting])
-    text = "\n".join(line_for(q.kind, n) for q, n in zip(waiting, names, strict=True))
-    people = [(q.entity_id, n) for q, n in zip(waiting, names, strict=True)]
-    return text, question_view(campaign.id, people)
+    waiting = [
+        q for q in await bot.memory.join_question_group(g, c, group_id) if q.status == "waiting"
+    ]
+    if not waiting:
+        return None
+    ids = [q.entity_id for q in waiting]
+    names = await _names(bot.memory, g, c, ids)
+    lines = [line_for(q.kind, n) for q, n in zip(waiting, names, strict=True)]
+    if len(waiting) > MOST_SHOWN:
+        lines.append(MORE_THERE.format(n=MOST_SHOWN))
+    raw = await _raw_names(bot, campaign, ids)
+    return "\n".join(lines), question_view(campaign.id, list(zip(ids, raw, strict=True)))
+
+
+async def _after_answer(bot: Any, campaign: Any, entity_id: str, done: str) -> tuple[str, Any]:
+    """The message once one character is answered: the confirmation on top, and the characters
+    of the same message still waiting below it with their buttons, so none seems to vanish."""
+    group = await bot.memory.staying_group_for(campaign.guild_id, campaign.id, entity_id)
+    rest = None if group is None else await waiting_in(bot, campaign, group)
+    if rest is None:
+        return done, None
+    return done + "\n\n" + rest[0], rest[1]
 
 
 async def send_staying_questions(bot: Any, guild_id: int, campaign_id: str) -> int:
@@ -117,7 +155,10 @@ async def send_staying_questions(bot: Any, guild_id: int, campaign_id: str) -> i
             campaign = await bot.campaigns.get(guild_id, campaign_id)
             if campaign is None or group_id is None:
                 break
-            text, view = await question_for(bot, campaign, group_id)
+            shown = await waiting_in(bot, campaign, group_id)
+            if shown is None:
+                break
+            text, view = shown
             if not await bot.ask_privately(guild_id, campaign_id, text, view):
                 await memory.unclaim_join_questions(guild_id, campaign_id, group_id)
                 break
@@ -140,10 +181,12 @@ async def _name(bot: Any, campaign: Any, entity_id: str) -> str:
 class LeftButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_LEFT):
     """ "Left the party": the card's own call, one change with its ↩️ Undo."""
 
-    def __init__(self, campaign_id: str, entity_id: str, label: str = LEFT_BUTTON) -> None:
+    def __init__(
+        self, campaign_id: str, entity_id: str, label: str = LEFT_BUTTON, row: int | None = None
+    ) -> None:
         super().__init__(
             discord.ui.Button(
-                label=label, style=discord.ButtonStyle.primary,
+                label=label, style=discord.ButtonStyle.secondary, row=row,
                 custom_id=f"dmbot:pleavel:{campaign_id}:{entity_id}",
             )
         )  # fmt: skip
@@ -173,19 +216,22 @@ class LeftButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], tem
             await _edit(interaction, FAILED)
             return
         log.info("A DM answered a staying question: left the party")
-        view = discord.ui.View(timeout=None)
-        if done.batch is not None:
-            view.add_item(StayingUndoButton(self.campaign_id, self.entity_id, done.batch))
-        await _edit(interaction, LEFT_DONE.format(name=name), view)
+        text, rest = await _after_answer(bot, campaign, self.entity_id, LEFT_DONE.format(name=name))
+        view = rest or discord.ui.View(timeout=None)
+        if done.batch is not None:  # (its ↩️ Undo, on a row of its own below the others)
+            view.add_item(StayingUndoButton(self.campaign_id, self.entity_id, done.batch, row=4))
+        await _edit(interaction, text, view)
 
 
 class StaysButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_STAYS):
     """ "Still in the party": a plain answer; nothing is written."""
 
-    def __init__(self, campaign_id: str, entity_id: str, label: str = STAYS_BUTTON) -> None:
+    def __init__(
+        self, campaign_id: str, entity_id: str, label: str = STAYS_BUTTON, row: int | None = None
+    ) -> None:
         super().__init__(
             discord.ui.Button(
-                label=label, style=discord.ButtonStyle.secondary,
+                label=label, style=discord.ButtonStyle.secondary, row=row,
                 custom_id=f"dmbot:pleaves:{campaign_id}:{entity_id}",
             )
         )  # fmt: skip
@@ -214,16 +260,19 @@ class StaysButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
             await _edit(interaction, FAILED)
             return
         log.info("A DM answered a staying question: still in the party")
-        await _edit(interaction, STAYS_DONE.format(name=name))
+        text, rest = await _after_answer(
+            bot, campaign, self.entity_id, STAYS_DONE.format(name=name)
+        )
+        await _edit(interaction, text, rest)
 
 
 class LaterButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_LATER):
     """ "Later": nothing changes; the question stays in ❓ Questions for you."""
 
-    def __init__(self, campaign_id: str) -> None:
+    def __init__(self, campaign_id: str, row: int | None = None) -> None:
         super().__init__(
             discord.ui.Button(
-                label=LATER_BUTTON, style=discord.ButtonStyle.secondary,
+                label=LATER_BUTTON, style=discord.ButtonStyle.secondary, row=row,
                 custom_id=f"dmbot:pleavek:{campaign_id}",
             )
         )  # fmt: skip
@@ -245,10 +294,12 @@ class LaterButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], te
 class StayingUndoButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_UNDO):
     """↩️ Undo of "Left the party": the stretch is open again and the question asked again."""
 
-    def __init__(self, campaign_id: str, entity_id: str, batch: int) -> None:
+    def __init__(
+        self, campaign_id: str, entity_id: str, batch: int, row: int | None = None
+    ) -> None:
         super().__init__(
             discord.ui.Button(
-                label=UNDO, style=discord.ButtonStyle.secondary,
+                label=UNDO, style=discord.ButtonStyle.secondary, row=row,
                 custom_id=f"dmbot:pleaveu:{campaign_id}:{entity_id}:{batch}",
             )
         )  # fmt: skip
@@ -266,22 +317,21 @@ class StayingUndoButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View
         campaign = await _dm_campaign(interaction, self.campaign_id)
         if campaign is None or bot.memory is None:
             return
+        name = "the character"  # (until it is read, so the refusal below always has one)
         try:
             name = await _name(bot, campaign, self.entity_id)
             await bot.memory.undo(campaign.guild_id, campaign.id, self.batch)
         except (TooLateToUndo, MemoryRuleError):
-            await _edit(interaction, CANT_UNDO.format(name="the character"))
+            await _edit(interaction, CANT_UNDO.format(name=name))
             return
         except Exception as exc:
             log.warning("Undoing a staying answer failed (%s)", type(exc).__name__)
             await _edit(interaction, FAILED)
             return
         log.info("A DM undid a staying answer")
-        await _edit(
-            interaction,
-            UNDONE.format(name=name),
-            question_view(self.campaign_id, [(self.entity_id, name)], later=False),
-        )
+        # (the question waits again: drawn again with its own words and buttons, ruling S)
+        text, rest = await _after_answer(bot, campaign, self.entity_id, UNDONE.format(name=name))
+        await _edit(interaction, text, rest)
 
 
 class LeavesOpenButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]], template=_OPEN):
@@ -312,10 +362,13 @@ class LeavesOpenButton(discord.ui.DynamicItem[discord.ui.Button[discord.ui.View]
         g, c = campaign.guild_id, campaign.id
         try:
             # (one not sent yet is claimed here and shown in this reply only, never sent twice)
+            # (both kinds, a death and a goodbye, each its own message, as the sender does)
             sent = len(await bot.memory.staying_questions_to_send(g, c))
+            sent += len(await bot.memory.staying_questions_to_send(g, c))
             groups = await bot.memory.staying_question_groups_waiting(g, c)
             waiting, _ = await bot.memory.staying_questions_waiting(g, c)
-            shown = [await question_for(bot, campaign, group) for group in groups[:5]]
+            drawn = [await waiting_in(bot, campaign, group) for group in groups[:5]]
+            shown = [d for d in drawn if d is not None]
         except Exception as exc:
             log.warning("Staying questions not shown (%s)", type(exc).__name__)
             await _followup(interaction, FAILED)
@@ -333,7 +386,7 @@ __all__ = [
     "DYNAMIC_ITEMS",
     "LeavesOpenButton",
     "line_for",
-    "question_for",
     "question_view",
     "send_staying_questions",
+    "waiting_in",
 ]

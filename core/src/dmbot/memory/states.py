@@ -234,8 +234,14 @@ async def _ask_about_a_death(
     the stretch here, or anywhere but the DM's own answer or the card's button (§11: characters
     come back in this game, Revivify and Raise Dead, so a death is never final by itself). A
     death taken back by a later condition withdraws the question still waiting; one already
-    answered stays answered."""
-    from dmbot.memory import join_questions, party_record  # (here: they import nothing of ours)
+    answered stays answered. (Undoing that later condition brings "dead" back but not the
+    question: a later reader must not count on one being there.)
+
+    A death set from a card between sessions waits like any other and goes with the next
+    after-session step or when the DM opens ❓ Questions for you, where it is counted at once."""
+    # (here, not at the top: join_questions and party_record are small and load nothing of
+    # this module, but keeping the state module's imports to its own reads keeps it cheap)
+    from dmbot.memory import join_questions, party_record
 
     if entity.get("role") != PLAYER_CHARACTER:
         return

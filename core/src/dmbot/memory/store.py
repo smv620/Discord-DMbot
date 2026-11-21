@@ -3224,12 +3224,7 @@ class MemoryStore:
         one word (`party_record.ENDED`). One change, one Undo; every row the character holds stays.
         Refused (`MemoryRuleError`) for a character not in the party now, or a word not offered."""
         async with self._write(guild_id, campaign_id, DM) as w:
-            try:
-                span = await party_record.close_span(w, entity_id, ended)
-            except party_record.PartyError as exc:
-                raise MemoryRuleError(str(exc)) from exc
-            await _answer_staying(w, entity_id, join_questions_mod.LEFT)
-            return Written(span, w.batch)
+            return Written(await _leave_in(w, entity_id, ended), w.batch)
 
     # The goodbye and death questions (#4537 slice 6a, §4 "Readers only suggest"; Supervisor's
     # ruling on slice 6): "Okthandom is marked dead. Mark Okthandom as no longer in the party?"
@@ -3270,17 +3265,35 @@ class MemoryStore:
         so one change and one Undo, and the question is answered in it (its Undo asks again). Why
         it ended is the question's own: "died" for a death, "left" for a goodbye (the card can
         say otherwise later). `AlreadyAnswered` when none still waits for this character."""
-        async with self._db.guild(guild_id) as conn:
-            cur = await conn.execute(
+        async with self._write(guild_id, campaign_id, DM) as w:
+            # (one write, the question locked first: a "Still in the party" pressed by another DM
+            # meanwhile wins or waits, never both, #4537 6a review)
+            cur = await w.conn.execute(
                 "SELECT kind FROM memory_join_questions WHERE guild_id = %s AND campaign_id = %s"
-                " AND entity_id = %s AND status = 'waiting' AND kind IN ('leave', 'died')",
-                (guild_id, campaign_id, entity_id),
+                " AND entity_id = %s AND status = 'waiting' AND kind IN ('leave', 'died')"
+                " FOR UPDATE",
+                (*w.ids, entity_id),
             )
             row = await cur.fetchone()
             if row is None:
                 raise join_questions_mod.AlreadyAnswered("Another DM already answered this.")
-        ended = "died" if row["kind"] == join_questions_mod.DIED else "left"
-        return await self.leave_party(guild_id, campaign_id, entity_id, ended)
+            ended = "died" if row["kind"] == join_questions_mod.DIED else "left"
+            return Written(await _leave_in(w, entity_id, ended), w.batch)
+
+    async def staying_group_for(
+        self, guild_id: int, campaign_id: str, entity_id: str
+    ) -> str | None:
+        """The message (group) this character's latest sent goodbye or death question went in, so
+        an answer can redraw that message with the characters still waiting on it."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT group_id FROM memory_join_questions WHERE guild_id = %s"
+                " AND campaign_id = %s AND entity_id = %s AND kind IN ('leave', 'died')"
+                " AND group_id IS NOT NULL ORDER BY created_at DESC, id LIMIT 1",
+                (guild_id, campaign_id, entity_id),
+            )
+            row = await cur.fetchone()
+            return None if row is None else str(row["group_id"])
 
     async def staying_answer_stays(self, guild_id: int, campaign_id: str, entity_id: str) -> None:
         """ "Still in the party": nothing is written but the answer, so the same goodbye or death
@@ -3383,6 +3396,7 @@ class MemoryStore:
             cur = await conn.execute(
                 "UPDATE memory_join_questions SET status = 'everyone', answered_at = %s"
                 " WHERE guild_id = %s AND campaign_id = %s AND group_id = %s"
+                " AND kind IN ('join', 'back')"  # (never a goodbye or death message, 0570)
                 f" AND status = 'waiting' RETURNING {join_questions_mod._COLUMNS}",
                 (int(self._clock()), guild_id, campaign_id, group_id),
             )
@@ -3402,7 +3416,7 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, DM) as w:
             cur = await w.conn.execute(
                 "SELECT id, entity_id FROM memory_join_questions WHERE guild_id = %s"
-                " AND campaign_id = %s AND group_id = %s"
+                " AND campaign_id = %s AND group_id = %s AND kind IN ('join', 'back')"
                 " AND status IN ('waiting', 'everyone', 'chosen')"  # (after picks: the rest, 4c)
                 " ORDER BY created_at, id FOR UPDATE",
                 (*w.ids, group_id),
@@ -3442,7 +3456,7 @@ class MemoryStore:
             await w.conn.execute(
                 "UPDATE memory_join_questions SET status = 'first', answered_at = %s,"
                 " answered_batch = %s WHERE guild_id = %s AND campaign_id = %s"
-                " AND entity_id = %s AND status = 'waiting'",
+                " AND entity_id = %s AND status = 'waiting' AND kind IN ('join', 'back')",
                 (w.now, w.batch, *w.ids, entity_id),
             )
             return Written(given, w.batch)
@@ -3487,7 +3501,8 @@ class MemoryStore:
         (and then finds nothing to give)."""
         cur = await w.conn.execute(
             "SELECT entity_id FROM memory_join_questions WHERE guild_id = %s AND campaign_id = %s"
-            " AND group_id = %s AND status IN ('waiting', 'everyone', 'chosen')"
+            " AND group_id = %s AND kind IN ('join', 'back')"
+            " AND status IN ('waiting', 'everyone', 'chosen')"
             " ORDER BY created_at, id" + (" FOR UPDATE" if lock else ""),
             (*w.ids, group_id),
         )
@@ -10959,6 +10974,17 @@ async def _recheck_companions(w: Changes, entity_ids: Collection[str]) -> None:
         )
         if problem is not None:
             raise MemoryRuleError(f"A companion still travels with that. {problem}")
+
+
+async def _leave_in(w: Changes, entity_id: str, ended: str) -> party_record.Span:
+    """The card's "Left the party" inside an open write: the stretch closes (the only call that
+    closes one, §11), and a goodbye or death question still waiting is answered by it."""
+    try:
+        span = await party_record.close_span(w, entity_id, ended)
+    except party_record.PartyError as exc:
+        raise MemoryRuleError(str(exc)) from exc
+    await _answer_staying(w, entity_id, join_questions_mod.LEFT)
+    return span
 
 
 async def _answer_staying(w: Changes, entity_id: str, status: str) -> None:
