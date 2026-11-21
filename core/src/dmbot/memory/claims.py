@@ -27,6 +27,7 @@ import psycopg
 from dmbot.memory import (
     descriptions,
     evidence,
+    first_feeling,
     forget_readings,
     graph_review,
     join_questions,
@@ -42,7 +43,16 @@ from dmbot.memory import (
     who_answers,
 )
 from dmbot.memory import unnamed as unnamed_mod
-from dmbot.memory._changes import ALIASES, CLAIMS, ENTITIES, RELATIONS, STATES, Changes
+from dmbot.memory._changes import (
+    ALIASES,
+    ATTITUDES,
+    CLAIMS,
+    ENTITIES,
+    RELATIONS,
+    RULE_LINKS,
+    STATES,
+    Changes,
+)
 from dmbot.memory.clues import KNOWS as KNOWS_PREDICATE
 from dmbot.memory.list_names import split_list
 from dmbot.memory.models import (
@@ -60,6 +70,7 @@ from dmbot.memory.models import (
     NAME_MAX,
     PLAYER_CHARACTER,
     PROPOSED,
+    SPECIES,
     Flag,
     MemoryRuleError,
     clean_text,
@@ -453,6 +464,14 @@ def resolve_relationship(onto: Ontology, text: str) -> tuple[PredicateTerm, bool
 # friend, ally and enemy relationships are read as `knows` with the word they always meant.
 _FILLER = frozenset({"is", "are", "was", "were", "a", "an", "the"})
 _OLD_FEELING = {"ally_of": reputation_words.FRIENDLY, "enemy_of": reputation_words.HOSTILE}
+
+
+def is_condition(claim: Claim) -> bool:
+    """Whether a stored claim is a state ("is dead") rather than a connection between two."""
+    wording = Extracted(
+        claim.subject, claim.relationship, claim.object, claim.details, claim.lines, claim.how
+    )
+    return condition_of(wording) is not None
 
 
 def feeling_of(
@@ -1760,6 +1779,84 @@ class ClaimStore:
         found = ready[:limit]  # the limit is after the split: waiting ones can't hide ready ones
         found.sort(key=lambda c: name_key(c.subject))  # stable: oldest first within a name
         return found
+
+    async def starting_feelings(
+        self, guild_id: int, campaign_id: str, claims: Sequence[Claim]
+    ) -> dict[str, str]:
+        """The "Starting feeling?" line for each question that would be the first `knows`
+        between two characters (#4229 slice 4b): worked out now, never stored, from the DM's
+        kept feelings only (`first_feeling`). A question whose names no longer mean one entry
+        each, or whose two already have a connection, gets none."""
+        out: dict[str, str] = {}
+        if not claims:
+            return out
+        async with self._store._read(guild_id, campaign_id) as scope:
+            onto = await _load_ontology(scope)
+            entities = await scope.select(
+                ENTITIES, " AND status IN ('proposed', 'confirmed') AND type <> 'person'"
+            )
+            aliases = await scope.select(ALIASES, " AND status <> 'rejected'")
+            names = names_of(entities, aliases)
+            pairs: dict[str, tuple[str, str]] = {}
+            for claim in claims:
+                if is_condition(claim):
+                    continue
+                a = _entry_of(names, claim.subject, claim.subject_picked)
+                b = _entry_of(names, claim.object, claim.object_picked)
+                if isinstance(a, str) or isinstance(b, str) or a[0] == b[0]:
+                    continue
+                if feeling_of(onto, claim.relationship, claim.details, (a[1], b[1])) is None:
+                    continue
+                pairs[claim.id] = (a[0], b[0])
+            if not pairs:
+                return out
+            ids = sorted({i for pair in pairs.values() for i in pair})
+            # (every confirmed connection, ended ones too: two once connected have met; only the
+            # live ones are homes)
+            rows = await scope.select(
+                RELATIONS,
+                " AND status = %s AND (subject_id = ANY(%s) OR object_id = ANY(%s))",
+                [CONFIRMED, ids, ids],
+            )
+            holders = sorted({str(r["object_id"]) for r in rows if r["to_session_at"] is None})
+            homes = await scope.select(
+                ATTITUDES,
+                " AND status = 'confirmed' AND closed_at IS NULL AND holder_id = ANY(%s)",
+                [holders],
+            )
+            species = await scope.select(
+                RULE_LINKS, " AND entity_id = ANY(%s) AND kind = %s ORDER BY created_at, id",
+                [ids, SPECIES],
+            )  # fmt: skip
+        ties: dict[str, list[first_feeling.Tie]] = {}
+        met: set[frozenset[str]] = set()
+        for r in rows:
+            s_id, o_id = str(r["subject_id"]), str(r["object_id"])
+            met.add(frozenset((s_id, o_id)))
+            if r["to_session_at"] is not None:
+                continue
+            ties.setdefault(s_id, []).append(
+                first_feeling.Tie(str(r["predicate"]), o_id, str(r["detail"] or ""))
+            )
+        lineages: dict[str, str] = {}
+        for r in species:
+            lineages.setdefault(str(r["entity_id"]), first_feeling.lineage_key(str(r["name"])))
+        kept = [
+            first_feeling.Kept(
+                str(r["holder_id"]), str(r["toward_id"] or ""), str(r["toward_lineage"] or ""),
+                float(r["score"]),
+            )
+            for r in homes
+            if r["toward_id"] is not None or r["toward_lineage"] is not None
+        ]  # fmt: skip
+        shown = {str(e["id"]): str(e["name"]) for e in entities if e["status"] == CONFIRMED}
+        for claim_id, (a, b) in pairs.items():
+            if frozenset((a, b)) in met:  # (not a first meeting: they're already connected)
+                continue
+            said = first_feeling.line(a, b, ties, lineages, kept, shown)
+            if said:
+                out[claim_id] = said
+        return out
 
     @staticmethod
     def _split(

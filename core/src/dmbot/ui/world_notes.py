@@ -69,12 +69,7 @@ GROUP = {wn.PLACE: "Places", wn.LANGUAGE: "Languages", wn.ROAD: "Roads", wn.BIAS
 ONE = {wn.PLACE: "place", wn.LANGUAGE: "language", wn.ROAD: "road", wn.BIAS: "feeling"}
 # (the list's heading, where it wraps: a whole people is judged, not a character's mood)
 HEADING = {wn.BIAS: "Feelings toward peoples"}
-# Each step's own words before a people (the reviewer on #4229: "wary toward" reads wrong)
-TOWARD = {
-    standing.HOSTILE: "hostile to", standing.UNFRIENDLY: "unfriendly toward",
-    standing.WARY: "wary of", standing.FRIENDLY: "friendly toward",
-    standing.DEVOTED: "devoted to",
-}  # fmt: skip
+TOWARD = standing.TOWARD
 ROAD_LENGTH = "Road length"
 
 
