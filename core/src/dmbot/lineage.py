@@ -118,6 +118,8 @@ NOT_STAMPED: dict[str, str] = {
     # (#4841: a day-long undo handle for a website pick of a followed set's rules; no story)
     # (#4799: the choices worked out for a DM's page, gone within an hour; ids and counts)
     "web_join_choices": "answers worked out for a page and kept an hour, not story",
+    # (#3843: what a worker wants the bot to say in Discord; ids and counts, swept in days)
+    "outbox": "a message waiting to be said in Discord, ids and counts only, not story",
     "web_rule_takes": "a day-long undo handle for a pick of a followed set's rules, not story",
     # (#4448: which time-limit messages were said; the limit itself is a stamped part)
     "time_limit_told": "a record of a private message said, not story; the limit is stamped",
