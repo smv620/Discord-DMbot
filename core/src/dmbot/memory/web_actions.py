@@ -158,7 +158,9 @@ TOLD_ACTIONS = ("told-add", "told-remove")
 MATCH_ACTIONS = ("match-confirm", "match-undo")
 # A place's land, climate and ruler, and the switch for showing them to players (#4287): the text is
 # "<value> <shade>", or "<group id> <how>" for the ruler, or blank for "Not sure".
-MAP_ACTIONS = ("map-terrain", "map-climate", "map-control", "map-show")
+MAP_ACTIONS = (
+    "map-terrain", "map-climate", "map-control", "map-culture", "map-population", "map-show",
+)  # fmt: skip
 # World notes (#4285, slice 1c): ✅ on the lines the page showed (their ids, space-separated), 🚫 on
 # one line, or ↩ Undo of one of those (the text is its change number). Filed under no name.
 WORLD_ACTIONS = ("world-keep", "world-not", "world-undo", "world-bias")
@@ -235,6 +237,17 @@ async def _map_fact(
     try:
         if a.action == "map-show":
             await memory.show_map_facts(guild_id, cid, entity_id, a.flag, source=DM)
+        elif a.action in ("map-culture", "map-population"):
+            # (#4412) `<lineage | culture id> <how>` or `other <how> <words>`; `-` is no how, and
+            # no text clears the layer (every lineage), as Discord's pickers do
+            first, _, rest = a.text.partition(" ")
+            how, words = rest, ""
+            if first == "other":
+                how, _, words = rest.partition(" ")
+            await memory.set_map_fact(
+                guild_id, cid, entity_id, a.action[4:], first or None,
+                how="" if how == "-" else how, words=words, source=DM,
+            )  # fmt: skip
         else:
             first, _, how = a.text.partition(" ")
             await memory.set_map_fact(
