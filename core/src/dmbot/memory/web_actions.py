@@ -1593,6 +1593,8 @@ async def _thread_state(memory: MemoryStore, guild_id: int, cid: str, a: Action)
     gone, merged away or not a thread is `gone`; `check_thread` refuses a thread that is not live
     (`gone` too: the page's list was out of date)."""
     thread_id, _, state = a.text.partition(" ")
+    # (the queue door's shape check already limits `state` to the five words; a word that is odd
+    # anyway is refused by `set_condition` and answered `gone` below)
     entity = await memory.entity(guild_id, cid, thread_id)
     if (
         entity is None

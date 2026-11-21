@@ -63,7 +63,7 @@ class ChangingAThreadsState(Web):
         (outcome,) = await self.bot_loop()
         self.assertFalse(outcome.error)
         after = await self.memory.state_history(self.g, self.one.id, self.bell)
-        self.assertGreater(len(after), before)  # (the check wrote a dated row)
+        self.assertEqual(len(after), before + 1)  # (the check wrote a dated row)
         self.assertEqual(await self.now(self.bell), [OPEN])
 
     async def test_checked_still_going_writes_a_dated_row_and_keeps_the_state(self) -> None:
@@ -99,6 +99,36 @@ class ChangingAThreadsState(Web):
         await self.sql("UPDATE memory_entities SET status = 'proposed' WHERE id = %s", guess)
         await self.press(guess, "active")
         (outcome,) = await self.bot_loop()
+        self.assertEqual(outcome.error, wa.GONE)
+
+    async def test_another_campaigns_thread_is_gone(self) -> None:
+        made = await self.memory.new_thread(
+            self.g, self.two.id, "Their bell", "quest", OPEN, source="dm"
+        )
+        await self.press(made.value.id, "active")
+        (outcome,) = await self.bot_loop()
+        self.assertEqual(outcome.error, wa.GONE)
+        rows = await self.memory.state_history(self.g, self.two.id, made.value.id)
+        self.assertEqual([r.condition for r in rows if r.closed_at is None], ["open"])
+
+    async def test_a_merged_away_thread_is_gone(self) -> None:
+        old = await self.add("Old bell", "quest")
+        await self.sql(
+            "UPDATE memory_entities SET merged_into = %s, status = 'merged' WHERE id = %s",
+            self.bell,
+            old,
+        )
+        await self.press(old, "active")
+        (outcome,) = await self.bot_loop()
+        self.assertEqual(outcome.error, wa.GONE)
+
+    async def test_a_state_the_door_never_lets_in_is_still_refused_by_the_bot(self) -> None:
+        # (apply() is the backstop if a queued row is ever odd: the store refuses the word)
+        row = wa.Action(
+            id="x" * 32, campaign_id=self.one.id, entity_id="", user_id=ALICE.id,
+            action="thread-state", text=f"{self.bell} bogus",
+        )  # fmt: skip
+        outcome = await wa.apply(self.memory, self.g, {ALICE.id}, row, actions=self.actions)
         self.assertEqual(outcome.error, wa.GONE)
 
     async def test_only_a_dm_queues_it(self) -> None:
