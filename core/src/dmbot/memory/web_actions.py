@@ -1730,12 +1730,17 @@ async def _thread_link(memory: MemoryStore, guild_id: int, cid: str, a: Action) 
         how, _, which = rest.partition(" ")
         if thread is None:
             return _failed(GONE)
+        batches: list[int] = []
         if which.startswith("new "):
+            # (the page searches the names first and offers "new" only when nothing matches, as the
+            # card's `link_by_name` does; a retry after a failed link would make a second event)
             made = await memory.add_entity(
                 guild_id, cid, type="event", name=which[4:], source=DM, status=CONFIRMED,
                 hidden_from_players=True,
             )  # fmt: skip
             event_id = made.value.id
+            if made.batch:
+                batches.append(made.batch)
         else:
             found = await usable(which, ("event",))
             if found is None:
@@ -1746,7 +1751,9 @@ async def _thread_link(memory: MemoryStore, guild_id: int, cid: str, a: Action) 
         )
     except MemoryRuleError:
         return _failed(FAILED)
-    return Outcome(result_id=event_id, batches=(done.batch,) if done.batch else ())
+    if done.batch:
+        batches.append(done.batch)
+    return Outcome(result_id=event_id, batches=tuple(batches))
 
 
 async def _join_choose(

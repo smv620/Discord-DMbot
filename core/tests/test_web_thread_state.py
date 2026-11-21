@@ -474,6 +474,21 @@ class LinkingEventsAndLeadsTo(ThreadWeb):
         outcomes = await self.bot_loop()
         self.assertEqual([o.error for o in outcomes], [wa.GONE] * 4)
 
+    async def test_an_event_of_another_campaign_is_gone(self) -> None:
+        theirs = await self.memory.add_entity(
+            self.g, self.two.id, type="event", name="Their ambush", source="dm",
+            status="confirmed",
+        )  # fmt: skip
+        await self.link_event_to(self.bell, "moved", event=theirs.value.id)
+        (outcome,) = await self.bot_loop()
+        self.assertEqual(outcome.error, wa.GONE)
+
+    async def test_a_made_event_and_its_link_are_both_reported(self) -> None:
+        await self.link_event_to(self.bell, "ended", newEvent="The bell fell")
+        (outcome,) = await self.bot_loop()
+        self.assertFalse(outcome.error)
+        self.assertEqual(len(outcome.batches), 2)  # (the event, then the link)
+
     async def test_what_one_thing_led_to(self) -> None:
         clue = await self.add("A muddy footprint", "clue")
         ford = await self.add("The ambush at the ford", "event")
@@ -508,7 +523,8 @@ class LinkingEventsAndLeadsTo(ThreadWeb):
         self.assertEqual(await self.facts("led_to"), [(self.bell, ford)])
 
     async def test_a_name_of_a_hundred_characters_goes_through_the_table_check(self) -> None:
-        name = ("The very long night " * 6)[:100].strip()
+        name = ("The long night " * 8)[:99] + "x"
+        self.assertEqual(len(name), 100)
         await self.link_event_to(self.bell, "moved", newEvent=name)
         (outcome,) = await self.bot_loop()
         self.assertFalse(outcome.error)

@@ -32,7 +32,7 @@ def stalled_after() -> int:
 
 _ID = re.compile(r"^[0-9a-f]{32}$")
 ROLE_MAX = 60  # the card's own limit on "Their part"
-NAME_MAX = 100  # a thread's name, as the card's form
+NAME_MAX = 100  # a thread's or an event's name, as the card's forms
 DUE_MAX = 120  # a promise's due note, as the card's form
 
 
