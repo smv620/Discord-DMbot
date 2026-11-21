@@ -81,7 +81,7 @@ import type {
   RuleSharingAnswer,
   RuleSharingChoice,
 } from "./api";
-import type { RevealProposal, PartyRecordCharacter, ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, WorldRoadNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion, PlotThreads, LeaveGroup } from "./api";
+import type { RevealProposal, WorldFeelingNote, PartyRecordCharacter, ThreadClue, ThreadClues, ThreadCluesChange, ThreadProgressThread, StoryThreadSuggestion, ThreadCardPart, WorldLanguageNote, WorldPlaceNote, WorldRoadNote, CleanupView, ImportClock, TraitOffer, HandOverQuestion, NameAnswerResult, NameGroupHint, SecretQuestion, PlotThreads, LeaveGroup } from "./api";
 import { ApiError, type WaitingClaim, type HouseFileRequest, type HouseFileState, type AiFeedRead, type LoreUpload, type LorePdf, type RecapStyle, type RecapStyleAction, type WebLinkKind, type FixAnswer, type FixMode, type PlotIssue, type PlotMessage, type PlotProposal, type WaitingLook, type IconChoice } from "./api";
 import { NAME_LIMIT } from "../content/names-words";
 import { FEELINGS, type Feeling } from "../content/knows-feeling-words";
@@ -1179,7 +1179,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     { id: `road:${"c1".repeat(16)}`, name: "Targos to Bryn Shander", note: "The map puts it three hours' ride apart; the lore says two days.", fromSession: 1_700_000_000 },
     { id: `road:${"c2".repeat(16)}`, name: "Bryn Shander to Icewind Dale", note: "Forty miles on the map; the lore says it is a week's walk.", fromSession: null },
   ];
-  const worldNotes: { places: WorldPlaceNote[]; languages: WorldLanguageNote[]; roads: WorldRoadNote[] } = {
+  const worldNotes: { places: WorldPlaceNote[]; languages: WorldLanguageNote[]; roads: WorldRoadNote[]; feelings: WorldFeelingNote[] } = {
     places: [
       { id: `place:${"a1".repeat(16)}`, entityId: "n24", name: "Saltmarsh", layer: "terrain", value: "swamp", words: "", how: null, rulerId: null, ruler: null, from: "session", fromSession: 1_700_000_000 },
       { id: `place:${"a2".repeat(16)}`, entityId: "n24", name: "Saltmarsh", layer: "climate", value: "temperate", words: "", how: "wet", rulerId: null, ruler: null, from: "session", fromSession: 1_700_000_000 },
@@ -1187,8 +1187,13 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
     ],
     languages: [{ id: `language:${"b1".repeat(16)}`, entityId: "n3", name: "Brother Venn", language: "Giant", from: "lore", fromSession: null }],
     roads: worldRoads,
+    // The Feelings group (#4959): DMbot's guesses of how a people feels toward another, for the DM to keep, change or turn down.
+    feelings: [
+      { id: `bias:${"d1".repeat(16)}`, entityId: "n7", name: "Mithral Keep", target: "elves", step: "Unfriendly" },
+      { id: `bias:${"d2".repeat(16)}`, entityId: "n8", name: "Greywatch", target: "the Ashen Court", step: "Wary" },
+    ],
   };
-  const worldBatches = new Map<number, { places: WorldPlaceNote[]; languages: WorldLanguageNote[]; roads: WorldRoadNote[] }>();
+  const worldBatches = new Map<number, { places: WorldPlaceNote[]; languages: WorldLanguageNote[]; roads: WorldRoadNote[]; feelings: WorldFeelingNote[] }>();
   // The story threads DMbot found in an upload (#4482), waiting for the DM; a keep or a 🚫 takes one out, and Undo puts it back.
   const storyThreadList: StoryThreadSuggestion[] = [
     {
@@ -3264,7 +3269,12 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     async worldNotes(ref) {
       calls.push(`worldNotes:${ref}`);
-      return { places: worldNotes.places.map((n) => ({ ...n })), languages: worldNotes.languages.map((n) => ({ ...n })), roads: worldNotes.roads.map((n) => ({ ...n })) };
+      return {
+        places: worldNotes.places.map((n) => ({ ...n })),
+        languages: worldNotes.languages.map((n) => ({ ...n })),
+        roads: worldNotes.roads.map((n) => ({ ...n })),
+        feelings: worldNotes.feelings.map((n) => ({ ...n })),
+      };
     },
     // ✅, 🚫 and ↩ Undo on World notes (#4285): a line checked meanwhile is "gone", as the real bot says.
     async changeWorldNotes(ref, change) {
@@ -3276,20 +3286,32 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
         worldNotes.places.push(...back.places);
         worldNotes.languages.push(...back.languages);
         worldNotes.roads.push(...back.roads);
+        worldNotes.feelings.push(...back.feelings);
         return { kept: null, batch: null };
+      }
+      // A feeling changed to another step leaves the list, as a kept line does; Undo puts it back as it was (#4959).
+      if (change.action === "bias") {
+        const feeling = worldNotes.feelings.find((n) => n.id === change.id);
+        if (!feeling) throw new ApiError("gone");
+        worldNotes.feelings = worldNotes.feelings.filter((n) => n.id !== change.id);
+        const batch = ++lastBatch;
+        worldBatches.set(batch, { places: [], languages: [], roads: [], feelings: [feeling] });
+        return { kept: null, batch };
       }
       const ids = change.action === "keep" ? change.ids : [change.id];
       const places = worldNotes.places.filter((n) => ids.includes(n.id));
       const languages = worldNotes.languages.filter((n) => ids.includes(n.id));
       if (change.action === "not" && change.id.startsWith("road:")) throw new ApiError("bad-action");
       const roads = worldNotes.roads.filter((n) => ids.includes(n.id));
-      if (places.length + languages.length + roads.length === 0) throw new ApiError("gone");
+      const feelings = worldNotes.feelings.filter((n) => ids.includes(n.id));
+      if (places.length + languages.length + roads.length + feelings.length === 0) throw new ApiError("gone");
       worldNotes.roads = worldNotes.roads.filter((n) => !ids.includes(n.id));
       worldNotes.places = worldNotes.places.filter((n) => !ids.includes(n.id));
       worldNotes.languages = worldNotes.languages.filter((n) => !ids.includes(n.id));
+      worldNotes.feelings = worldNotes.feelings.filter((n) => !ids.includes(n.id));
       const batch = ++lastBatch;
-      worldBatches.set(batch, { places, languages, roads });
-      return { kept: change.action === "keep" ? places.length + languages.length + roads.length : null, batch };
+      worldBatches.set(batch, { places, languages, roads, feelings });
+      return { kept: change.action === "keep" ? places.length + languages.length + roads.length + feelings.length : null, batch };
     },
     // The Maps page (#4347). A ref ending `.player` is a player's campaign: the player rule applies, and `shown` and `state` are only on their own rows.
     // A map's pins, scale, grid and north (#4672): DM only. A ref ending `.pins-none` has none; `.pins-fail` cannot be read.

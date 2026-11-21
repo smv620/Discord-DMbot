@@ -2,6 +2,9 @@
 // stay level. DM only. A line's own words (the land, climate and ruler) come from the place screen's words (place-world-words.ts).
 import { placeWorldWords as place } from "./place-world-words";
 
+/** The words for each step, as Discord's card has them: "Mithral Keep is unfriendly toward elves". */
+const STEP_WORDS: Record<string, string> = { Hostile: "hostile to", Unfriendly: "unfriendly toward", Wary: "wary of", Friendly: "friendly toward", Devoted: "devoted to" };
+
 export const SHOWN_AT_MOST = 25; // Discord's menu limit; Keep all keeps only the lines the DM was shown
 
 export const worldNotesWords = {
@@ -14,6 +17,13 @@ export const worldNotesWords = {
   places: "Places",
   languages: "Languages",
   roads: "Roads",
+  feelings: "Feelings toward peoples",
+  changeFeeling: "✏️ Change",
+  feelingBack: "↩ Back",
+  steps: ["Hostile", "Unfriendly", "Wary", "Friendly", "Devoted"] as const,
+  feelingLine: (name: string, step: string, target: string): string => `${name} is ${STEP_WORDS[step] ?? step} ${target}`,
+  feelingQuestion: (name: string, target: string): string => `How does ${name} feel toward ${target}? One tap saves it.`,
+  keepAllFeelings: (n: number): string => (n === 1 ? "✅ Keep the 1 feeling" : `✅ Keep all ${n} feelings`),
   keep: "✅ Keep",
   notRight: "🚫 Not right",
   undo: "↩ Undo",

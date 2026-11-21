@@ -2145,11 +2145,21 @@ export interface WorldRoadNote {
   note: string;
   fromSession: number | null;
 }
+/** A guess of how a people feels toward another (#4932, #4959): its keep id is `bias:<32 hex>`, the same as its id. */
+export interface WorldFeelingNote {
+  id: string;
+  entityId: string;
+  name: string;
+  target: string;
+  step: "Hostile" | "Unfriendly" | "Wary" | "Friendly" | "Devoted";
+}
 export interface WorldNotes {
   places: WorldPlaceNote[];
   languages: WorldLanguageNote[];
   /** The Roads group (#4784, behind ROADS_LIVE); an empty list when there is none, absent from an older API. */
   roads?: WorldRoadNote[];
+  /** The Feelings group (#4932): missing from an API older than core's door, then the group shows nothing. */
+  feelings?: WorldFeelingNote[];
 }
 /** A character's stretch in the party (#4778 a2): `from` and `to` are unix seconds (`to` null while open); `ended` is why it ended
  * ("left", "retired", "died", "away") and `session` the session it began at, each null when unknown. */
@@ -2231,7 +2241,11 @@ export interface RevealProposal {
   guessing: boolean;
 }
 /** One press on World notes: ✅ Keep the shown lines (at most 25), 🚫 Not right on one, or ↩ Undo by its change number. */
-export type WorldNotesChange = { action: "keep"; ids: string[] } | { action: "not"; id: string } | { action: "undo"; batch: number };
+export type WorldNotesChange =
+  | { action: "keep"; ids: string[] }
+  | { action: "not"; id: string }
+  | { action: "bias"; id: string; step: WorldFeelingNote["step"] }
+  | { action: "undo"; batch: number };
 /** What a press gave back: how many a Keep kept, and the change it made (for Undo; none when nothing changed). */
 export interface WorldNotesResult {
   kept: number | null;
