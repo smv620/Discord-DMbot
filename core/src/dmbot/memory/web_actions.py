@@ -27,6 +27,7 @@ from dmbot.memory import beliefs, evidence, link_edits, map_uploads, name_edits,
 from dmbot.memory import claims as claims_mod
 from dmbot.memory import lore_pdfs as lore_pdfs_mod
 from dmbot.memory import thread_clues as clues_mod
+from dmbot.memory import threads as thread_model
 from dmbot.memory import time_limits as tl
 from dmbot.memory import unnamed as unnamed_mod
 from dmbot.memory._changes import ALREADY_UNDONE, CLAIMS, MAP_PICTURE_GONE, Changes
@@ -50,6 +51,7 @@ from dmbot.memory.models import (
     PRONOUNCED,
     PROPOSED,
     REJECTED,
+    THREAD_TYPES,
     MemoryRuleError,
     Relation,
     TooLateToUndo,
@@ -157,6 +159,7 @@ MAP_ACTIONS = ("map-terrain", "map-climate", "map-control", "map-show")
 # World notes (#4285, slice 1c): ✅ on the lines the page showed (their ids, space-separated), 🚫 on
 # one line, or ↩ Undo of one of those (the text is its change number). Filed under no name.
 WORLD_ACTIONS = ("world-keep", "world-not", "world-undo")
+THREAD_STATE_ACTIONS = ("thread-state", "thread-check")  # a thread's state (#3696 slice 2a)
 LEAVE_ACTIONS = ("leave-yes", "leave-no")  # "Still in the party?" (#4895, party knowledge slice 6a)
 JOIN_ACTIONS = (  # the DM's join question (#4778) and "Let me choose" (#4799)
     "join-everyone", "join-party", "join-undo", "join-choices", "join-choose",
@@ -800,6 +803,8 @@ async def apply(
         return await _join(memory, actions, guild_id, cid, action, join_choices)
     if action.action in LEAVE_ACTIONS:
         return await _leave(memory, guild_id, cid, action)
+    if action.action in THREAD_STATE_ACTIONS:
+        return await _thread_state(memory, guild_id, cid, action)
     if action.action in PART_ACTIONS:
         if actions is None and action.action == "part-undo":
             return _failed(FAILED)
@@ -1576,6 +1581,37 @@ async def _leave(memory: MemoryStore, guild_id: int, cid: str, a: Action) -> Out
     ):  # (AlreadyAnswered is one, and so is a character no longer in the party:
         return _failed(GONE)  # `gone` for both, as Discord answers both with "already answered")
     return _changed(done.batch)
+
+
+async def _thread_state(memory: MemoryStore, guild_id: int, cid: str, a: Action) -> Outcome:
+    """A plot thread's state from the page (#3696 slice 2a), the same store calls as the 🧵 card's
+    buttons: `thread-state` (`<thread id> <state>`) is `set_condition`, and the state it is already
+    in counts as checked, as on the card; `thread-check` is "Checked, still going" (`check_thread`).
+    Each is one change and, as on the card, has no Undo. Only a confirmed thread, quest, mystery,
+    hook, goal or promise of this campaign: `set_condition` also moves a character's or an item's
+    state, so what the id names is read again here (a made-up id must never reach it). One that is
+    gone, merged away or not a thread is `gone`; `check_thread` refuses a thread that is not live
+    (`gone` too: the page's list was out of date)."""
+    thread_id, _, state = a.text.partition(" ")
+    entity = await memory.entity(guild_id, cid, thread_id)
+    if (
+        entity is None
+        or entity.type not in THREAD_TYPES
+        or entity.status != CONFIRMED
+        or entity.merged_into is not None
+    ):
+        return _failed(GONE)
+    try:
+        if a.action == "thread-check":
+            await memory.check_thread(guild_id, cid, thread_id, source=DM)
+            return Outcome()
+        moved = await memory.set_condition(guild_id, cid, thread_id, state, source=DM)
+        if moved.value[0] is None and state in thread_model.LIVE_STATES:
+            # The state it is already in: the DM means "still", so it counts as checked.
+            await memory.check_thread(guild_id, cid, thread_id, source=DM)
+    except MemoryRuleError:
+        return _failed(GONE)
+    return Outcome()
 
 
 async def _join_choose(

@@ -1,0 +1,126 @@
+"""A plot thread's state from the website (#3696 slice 2a, migration 0580): only a DM queues it, the
+bot runs the card's own store calls (`set_condition`, `check_thread`), only a confirmed thread of
+the campaign can be moved (a character's id must never reach `set_condition`), and a thread that
+cannot be checked is `gone`. Postgres. Invented names."""
+
+from __future__ import annotations
+
+from typing import Any
+
+from dmbot.memory import threads
+from dmbot.memory import web_actions as wa
+from dmbot.memory.models import OPEN, RESOLVED
+from dmbot.web import plot_threads, sessions
+from dmbot.web.recaps import RecapError
+from tests.test_recap_web import BOB, NOW
+from tests.test_web_api import ALICE, THURSDAY
+from tests.test_web_relationships import Web
+
+
+class ChangingAThreadsState(Web):
+    bob_has_a_hero = False
+
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.actions = wa.ActionStore(self.db)
+        made = await self.memory.new_thread(
+            self.g, self.one.id, "The drowned bell", "quest", OPEN, source="dm"
+        )
+        self.bell = made.value.id
+
+    async def bot_loop(self) -> list[wa.Outcome]:
+        done = []
+        while (action := await self.actions.claim_next(self.g)) is not None:
+            outcome = await wa.apply(self.memory, self.g, {ALICE.id}, action, actions=self.actions)
+            await self.actions.finish(
+                self.g, action, error=outcome.error, result_counts=outcome.counts,
+                result_batches=outcome.batches,
+            )  # fmt: skip
+            done.append(outcome)
+        return done
+
+    async def press(self, thread: str, state: str, who: Any = None) -> str:
+        return await plot_threads.queue_state(
+            self.web, who or self.session, self.cref, {"thread": thread, "state": state}
+        )
+
+    async def now(self, thread: str) -> list[str]:
+        rows = await self.memory.state_history(self.g, self.one.id, thread)
+        return [r.condition for r in rows if r.closed_at is None]
+
+    async def test_a_state_change_is_the_cards_own_store_call(self) -> None:
+        await self.press(self.bell, "active")
+        (outcome,) = await self.bot_loop()
+        self.assertFalse(outcome.error)
+        self.assertEqual(await self.now(self.bell), ["active"])
+        await self.press(self.bell, "resolved")
+        await self.bot_loop()
+        self.assertEqual(await self.now(self.bell), [RESOLVED])
+
+    async def test_the_state_it_is_already_in_counts_as_checked(self) -> None:
+        before = len(await self.memory.state_history(self.g, self.one.id, self.bell))
+        await self.press(self.bell, "open")
+        (outcome,) = await self.bot_loop()
+        self.assertFalse(outcome.error)
+        after = await self.memory.state_history(self.g, self.one.id, self.bell)
+        self.assertGreater(len(after), before)  # (the check wrote a dated row)
+        self.assertEqual(await self.now(self.bell), [OPEN])
+
+    async def test_checked_still_going_writes_a_dated_row_and_keeps_the_state(self) -> None:
+        before = len(await self.memory.state_history(self.g, self.one.id, self.bell))
+        await self.press(self.bell, "check")
+        (outcome,) = await self.bot_loop()
+        self.assertFalse(outcome.error)
+        after = await self.memory.state_history(self.g, self.one.id, self.bell)
+        self.assertEqual(len(after), before + 1)
+        self.assertEqual(await self.now(self.bell), [OPEN])
+
+    async def test_a_resolved_thread_cannot_be_checked(self) -> None:
+        await self.press(self.bell, "resolved")
+        await self.press(self.bell, "check")
+        first, second = await self.bot_loop()
+        self.assertFalse(first.error)
+        self.assertEqual(second.error, wa.GONE)
+
+    async def test_a_character_is_never_moved_by_a_thread_press(self) -> None:
+        tavin = await self.add("Tavin", "character", role="player_character")
+        await self.press(tavin, "active")
+        (outcome,) = await self.bot_loop()
+        self.assertEqual(outcome.error, wa.GONE)
+        self.assertEqual(await self.now(tavin), [])
+
+    async def test_a_made_up_thread_is_gone(self) -> None:
+        await self.press("a" * 32, "active")
+        (outcome,) = await self.bot_loop()
+        self.assertEqual(outcome.error, wa.GONE)
+
+    async def test_a_thread_that_is_not_confirmed_is_gone(self) -> None:
+        guess = await self.add("A guess", "thread")
+        await self.sql("UPDATE memory_entities SET status = 'proposed' WHERE id = %s", guess)
+        await self.press(guess, "active")
+        (outcome,) = await self.bot_loop()
+        self.assertEqual(outcome.error, wa.GONE)
+
+    async def test_only_a_dm_queues_it(self) -> None:
+        who: Any = BOB
+        bob = await sessions.find(
+            self.web, await sessions.sign_in(self.web, who, [THURSDAY], now=NOW, days=30), now=NOW
+        )
+        assert bob is not None
+        with self.assertRaises(RecapError) as err:
+            await self.press(self.bell, "active", who=bob)
+        self.assertEqual(err.exception.code, "not_allowed")
+        self.assertIsNone(await self.actions.claim_next(self.g))
+
+    async def test_a_bad_body_is_refused_before_anything_is_queued(self) -> None:
+        for body in (
+            {"thread": "nope", "state": "active"}, {"thread": self.bell, "state": "done"},
+            {"thread": self.bell}, {"state": "active"}, 5,
+        ):  # fmt: skip
+            with self.assertRaises(RecapError) as err:
+                await plot_threads.queue_state(self.web, self.session, self.cref, body)
+            self.assertEqual(err.exception.code, "bad_action")
+        self.assertIsNone(await self.actions.claim_next(self.g))
+
+    def test_every_state_the_page_may_send_is_a_card_state(self) -> None:
+        self.assertEqual(threads.ALL_STATES, ("hinted", "open", "active", "resolved", "abandoned"))
