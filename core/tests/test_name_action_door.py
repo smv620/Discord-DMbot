@@ -68,6 +68,8 @@ EVERY_ACTION = (
     "join-choose",
     "leave-yes",  # "Still in the party?" for a death or a goodbye (#4895)
     "leave-no",
+    "thread-state",  # a plot thread's state from the Plot threads panel (#3696 slice 2a)
+    "thread-check",
 )  # fmt: skip
 
 

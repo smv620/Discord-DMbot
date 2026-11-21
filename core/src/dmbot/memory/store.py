@@ -40,6 +40,8 @@ from dmbot.db import Database, row_int
 from dmbot.memory import (
     as_of,
     beliefs,
+    bias_read,
+    biases,
     descriptions,
     evidence,
     gate,
@@ -2141,6 +2143,35 @@ class MemoryStore:
         async with self._write(guild_id, campaign_id, source) as w:
             everywhere = await world_notes.turn_down(w, line_id)
             return Written(everywhere, w.batch)
+
+    async def change_read_bias(
+        self, guild_id: int, campaign_id: str, row_id: str, step: str, *, source: str
+    ) -> Written[bool]:
+        """The DM's ✏️ Change on a feeling DMbot read (#4229 slice 4): kept at another step as the
+        DM's word, one change (one Undo). MemoryRuleError(world_notes.GONE) when it was answered
+        meanwhile."""
+        if source != DM:
+            raise MemoryRuleError("Only the DM can say that.")
+        if step not in standing.SCORE_OF:
+            raise MemoryRuleError("Pick one of the five: " + ", ".join(standing.STEPS) + ".")
+        async with self._write(guild_id, campaign_id, source) as w:
+            if not await biases.set_step(w, row_id, step):
+                raise MemoryRuleError(world_notes.GONE)
+            return Written(True, w.batch)
+
+    async def add_read_biases(
+        self, guild_id: int, campaign_id: str, found: Sequence[bias_read.Found], *, source: str
+    ) -> Written[int]:
+        """The biases a lore reader found (#4229 slice 4), as DMbot's read for the DM to check in
+        World notes, in one change of its own (its own Undo). How many were new."""
+        async with self._write(guild_id, campaign_id, source) as w:
+            onto = await _load_ontology(w)
+            added = 0
+            for f in found:
+                added += await biases.add_read(
+                    w, onto, f.holder_id, f.step, lineage=f.lineage, culture_id=f.culture_id
+                )
+            return Written(added, w.batch if added else None)
 
     async def add_read_map_facts(
         self, guild_id: int, campaign_id: str, found: Sequence[map_fact_store.Read], *, source: str
@@ -11173,6 +11204,9 @@ async def _move_standing(w: Changes, keep_id: str, gone_id: str) -> None:
         )
         for r in rows:
             a = keep_id if r[held] == gone_id else r[held]
+            if table is ATTITUDES and r[aimed] is None:
+                await _move_bias(w, r, a)
+                continue
             b = keep_id if r[aimed] == gone_id else r[aimed]
             taken = await w.select(
                 table, f" AND closed_at IS NULL AND {held} = %s AND {aimed} = %s", [a, b]
@@ -11181,6 +11215,35 @@ async def _move_standing(w: Changes, keep_id: str, gone_id: str) -> None:
                 await w.update(table, r["id"], {"closed_at": w.now})
             else:
                 await w.update(table, r["id"], {held: a, aimed: b})
+
+
+async def _move_bias(w: Changes, row: dict[str, Any], keep_id: str) -> None:
+    """A bias toward a lineage or a culture (#4229 slice 4) moves with its holder's merge. The
+    kept holder's own row for that target wins, open or closed (a feeling the DM turned down there
+    never comes back through a merge), except that the DM's own beats DMbot's open read. A kept
+    entry that can't hold a bias (a person) closes it."""
+    kept = await w.get(ENTITIES, keep_id)
+    onto = await _load_ontology(w)
+    if kept is None or not biases.may_hold(onto, str(kept["type"])):
+        await w.update(ATTITUDES, row["id"], {"closed_at": w.now})
+        return
+    target = "toward_lineage" if row["toward_lineage"] else "toward_culture_id"
+    theirs = await w.select(
+        ATTITUDES, f" AND holder_id = %s AND {target} = %s", [keep_id, row[target]]
+    )
+    open_read = [t for t in theirs if t["closed_at"] is None and t["status"] == biases.READ]
+    if (
+        row["status"] == biases.CONFIRMED
+        and open_read
+        and len(open_read) == len([t for t in theirs if t["closed_at"] is None])
+    ):
+        for t in open_read:
+            await w.update(ATTITUDES, t["id"], {"closed_at": w.now})
+        await w.update(ATTITUDES, row["id"], {"holder_id": keep_id})
+    elif theirs:
+        await w.update(ATTITUDES, row["id"], {"closed_at": w.now})
+    else:
+        await w.update(ATTITUDES, row["id"], {"holder_id": keep_id})
 
 
 ONLY_PLAYERS_DO = "Only a player character or the party does a deed."
@@ -11199,7 +11262,11 @@ async def _standing_index(
         [[standing.MEMBER_OF, standing.LOCATED_IN, standing.OF_PEOPLE]],
     )
     impressions = await scope.select(IMPRESSIONS, " AND closed_at IS NULL")
-    attitudes = await scope.select(ATTITUDES, " AND closed_at IS NULL")
+    # (toward an entry and the DM's: a bias toward a lineage or a culture, and DMbot's read of one,
+    # are not on the ladders, #4229 slice 4)
+    attitudes = await scope.select(
+        ATTITUDES, " AND closed_at IS NULL AND toward_id IS NOT NULL AND status = 'confirmed'"
+    )
     deeds = await _deed_rows(scope, {e["id"]: e for e in entities})
     return standing.Index(
         (

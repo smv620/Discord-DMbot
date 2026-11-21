@@ -9,11 +9,13 @@ out here, never stored. Names, ids, states, counts and session numbers only."""
 from __future__ import annotations
 
 import os
+import re
 from typing import Any
 
 from dmbot.db import Database
 from dmbot.memory import threads
 from dmbot.memory.models import State
+from dmbot.web import relationships
 from dmbot.web.names import _parse
 from dmbot.web.recaps import RecapError, _guild_of, _scoped
 from dmbot.web.sessions import Session
@@ -26,6 +28,9 @@ def stalled_after() -> int:
     # (the same test as `config.py`: ASCII digits only, so a stray digit like "²" is no number)
     ok = raw.isascii() and raw.isdigit() and int(raw) >= 1
     return int(raw) if ok else threads.STALLED_AFTER
+
+
+_ID = re.compile(r"^[0-9a-f]{32}$")
 
 
 async def read(db: Database, session: Session, ref: str) -> dict[str, Any]:
@@ -149,3 +154,23 @@ def shape(got: dict[str, Any], after: int) -> dict[str, Any]:
         "stalledLine": threads.stalled_line(len(stalled), after, promises) if stalled else None,
         "threads": out,
     }
+
+
+async def queue_state(db: Database, session: Session, ref: str, body: object) -> str:
+    """Change one thread's state (#3696 slice 2a): `{"thread": <32 hex>, "state": <a state word>}`,
+    or `{"thread": ..., "state": "check"}` for "Checked, still going". The id of the answer the page
+    polls at `.../web/answers/{id}`. The bot runs the card's own store calls; the page has no Undo,
+    as the card has none."""
+    thread = body.get("thread") if isinstance(body, dict) else None
+    state = body.get("state") if isinstance(body, dict) else None
+    if not isinstance(thread, str) or not _ID.fullmatch(thread):
+        raise RecapError("bad_action")
+    if state == "check":
+        action, text = "thread-check", thread
+    elif state in threads.ALL_STATES:
+        action, text = "thread-state", f"{thread} {state}"
+    else:
+        raise RecapError("bad_action")
+    return await relationships._queue(
+        db, session, ref, entity=None, action=action, target="", text=text, flag=False
+    )  # fmt: skip
