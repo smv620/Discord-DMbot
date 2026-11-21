@@ -151,6 +151,16 @@ class Threads(ConfirmedMemoryTest):
         await self.memory.set_condition(GUILD_A, self.c, self.heir, OPEN, source="dm")
         self.assertEqual((await self.info()).state.condition, OPEN)  # type: ignore[union-attr]
 
+    async def test_a_part_is_optional_and_only_a_too_long_one_is_refused(self) -> None:
+        # (#4937: the card says "Their part (optional)", so empty must be kept, not an error)
+        from dmbot.memory.models import MemoryRuleError
+
+        await self.memory.involve(GUILD_A, self.c, self.heir, self.mira, "  ", source="dm")
+        got = await self.memory.thread(GUILD_A, self.c, self.heir)
+        self.assertEqual([(i.who.name, i.role) for i in got.involved], [("Mira", "")])
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.involve(GUILD_A, self.c, self.heir, self.mira, "x" * 500, source="dm")
+
     async def test_who_is_involved_and_what_moved_it(self) -> None:
         await self.memory.involve(GUILD_A, self.c, self.heir, self.mira, "quest giver", source="dm")
         await self.memory.link_event(
