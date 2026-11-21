@@ -43,6 +43,10 @@ class TheReader(unittest.TestCase):
         got = self.read("Mithral Keep hates orcs, goblins and elves.")  # (goblins: no lineage)
         self.assertEqual([f.lineage for f in got], ["orc"])
 
+    def test_most_folk_in_a_holder(self) -> None:  # (Supervisor's ruling C1 on #4982)
+        got = self.read("Most folk in Mithral Keep distrust gnomes.")
+        self.assertEqual([(f.holder_id, f.lineage) for f in got], [(HALL, "gnome")])
+
     def test_the_people_of_a_holder(self) -> None:
         got = self.read("The people of Mithral Keep revere humans.")
         self.assertEqual([(f.holder_id, f.step, f.lineage) for f in got],

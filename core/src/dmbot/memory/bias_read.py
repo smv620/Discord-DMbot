@@ -42,8 +42,9 @@ _NOT_A_STATEMENT = re.compile(
 # The holder starts its sentence or clause: "Travelers to X fear orcs" and "Nobody believes X hates
 # elves" are someone else's feeling or a doubted one (the reviewer's cases on #4229).
 _CLAUSE_START = r"(?:^\W*|[,;:]\s*|\band\s+|\bbut\s+)"
-# "The people of X distrust …": the holder's own people, said the long way (the fixture on #3545)
-_PEOPLE_OF = r"(?:the\s+(?:people|folk)\s+of\s+)?"
+# "The people of X distrust …", "Most folk in X distrust …": the holder's own people, said the long
+# way (the fixture on #3545; "most folk in", Supervisor's ruling C1 on #4982)
+_PEOPLE_OF = r"(?:(?:the|most)\s+(?:people|folk)\s+(?:of|in)\s+)?"
 # A list after the verb ("welcomes halflings and gnomes"): each further people is read too, but
 # only one a clause ends after, so "elves and dwarves trust nobody" gives no feeling toward dwarves
 _MORE = r"(?:\s*,\s*(?:and\s+|or\s+)?|\s+(?:and|or)\s+)"
