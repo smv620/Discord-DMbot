@@ -184,13 +184,13 @@ class AddingWhoIsInvolved(ThreadWeb):
         self.assertFalse(outcome.error)
         self.assertEqual(await self.involved(self.bell), [(mira, "quest giver")])
 
-    async def test_a_part_is_required(self) -> None:
+    async def test_a_part_may_be_left_empty(self) -> None:
         keep = await self.add("Greywater Keep", "place")
         for role in ("", "   "):
-            with self.assertRaises(RecapError) as err:
-                await self.involve(self.bell, keep, role)
-            self.assertEqual(err.exception.code, "bad_action")
-        self.assertIsNone(await self.actions.claim_next(self.g))
+            await self.involve(self.bell, keep, role)
+        outcomes = await self.bot_loop()
+        self.assertEqual([bool(o.error) for o in outcomes], [False, False])
+        self.assertEqual(await self.involved(self.bell), [(keep, "")])
 
     async def test_another_thread_the_thread_itself_or_a_made_up_id_is_gone(self) -> None:
         other = await self.add("The missing heir", "mystery")
