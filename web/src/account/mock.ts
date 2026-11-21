@@ -2332,6 +2332,21 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
     },
     // The short summary of a picked name (#3243): a pretend DM reads it at once; a player's first name is behind a
     // spoiler gate until they ask with `peek`. An id that is not on the graph is not found.
+    // A character's lineage and class (#3925): DM only. "pc-cerric" is a Dwarf and a Cleric, "npc-guard-1" has none; any other node has none.
+    async nodeTraits(ref, node) {
+      calls.push(`nodeTraits:${ref}:${node}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      if (node === "pc-cerric") {
+        return [
+          { kind: "species", name: "Dwarf", known: true, edition: "2024" },
+          { kind: "class", name: "Cleric", known: true, edition: "2014" },
+          { kind: "class", name: "Skald", known: false, edition: "" },
+        ];
+      }
+      return [];
+    },
     async webNodeSummary(ref, id, peek) {
       calls.push(`webNodeSummary:${ref}:${id}${peek ? ":peek" : ""}`);
       await reachable();
