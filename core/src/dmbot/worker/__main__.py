@@ -4,9 +4,10 @@ It builds the same stores and workers as the bot (`bot.build_bot(headless=True)`
 (no `DISCORD_TOKEN` is needed or used), works every server that has a campaign
 (`DMBot.work_guild_ids`, from the database), and runs only the loops that have moved to it. With
 `DMBOT_WORKER=0` it does nothing (the bot runs everything itself, which is the way back), and says
-so. Moved so far: the recap text jobs and the recap audio job (the audio one at a time across
-processes by the database lease, part 1 of #2128). What a job wants said in Discord is written to
-the outbox (part 2) or left in the job's state for the bot's own notices; the worker never posts.
+so. Moved so far: the recap text jobs, the import cleaning and the recap audio job (the audio one
+at a time across processes by the database lease, part 1 of #2128). What a job wants said in
+Discord is written to the outbox (part 2) or left in the job's state for the bot's own notices; the
+worker never posts.
 
 It touches a file every `BEAT_S` from a task of its own, so the container's healthcheck can tell
 a dead process or event loop from a live one. It cannot tell a hung job (a paid audio render may
@@ -64,6 +65,8 @@ def loops(bot: Any) -> list[tuple[str, Coroutine[Any, Any, None]]]:
     out: list[tuple[str, Coroutine[Any, Any, None]]] = []
     if bot.recap_worker is not None:
         out.append(("recap-text", bot._recap_jobs_loop()))
+    if bot.import_job is not None:
+        out.append(("import-clean", bot._import_loop(clean=True, followups=False)))
     if bot.audio_worker is not None:
         out.append(("recap-audio", bot._recap_audio_loop(job=True, notices=False)))
     return out

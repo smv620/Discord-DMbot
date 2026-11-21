@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
+from dmbot.bot import DMBot
 from dmbot.config import ConfigError, load_settings
 from dmbot.recaps.discord import RecapFeatures
 from dmbot.worker import __main__ as worker
@@ -39,14 +40,16 @@ class TheLoops(unittest.IsolatedAsyncioTestCase):
         bot = SimpleNamespace(
             audio_worker=object(),
             recap_worker=object(),
+            import_job=object(),
             _recap_audio_loop=loop,
             _recap_jobs_loop=lambda: loop(),
+            _import_loop=loop,
         )
         got = worker.loops(bot)
-        self.assertEqual([name for name, _ in got], ["recap-text", "recap-audio"])
+        self.assertEqual([name for name, _ in got], ["recap-text", "import-clean", "recap-audio"])
         for _, coro in got:
             coro.close()
-        bot.audio_worker = bot.recap_worker = None
+        bot.audio_worker = bot.recap_worker = bot.import_job = None
         self.assertEqual(worker.loops(bot), [])
 
     def stub(self, *, worker_on: bool) -> Any:
@@ -427,3 +430,49 @@ class TheFairOrder(unittest.IsolatedAsyncioTestCase):
         bot = self.bot(worker_on=True, free_slots=1)
         await F.run_recap_jobs(bot)
         self.assertEqual(len(bot.ran), 1)
+
+
+class TheImportLoop(unittest.IsolatedAsyncioTestCase):
+    """Cleaning is the worker's half of the import loop; the follow-ups (scan, news) stay the bot's
+    (#4904): each half runs only where its flag is set, over the servers the database lists."""
+
+    async def one_round(self, clean: bool, followups: bool) -> list[str]:
+        calls: list[str] = []
+
+        class Store:
+            async def resume(self, gid: int, *, older_than_s: int) -> None:
+                calls.append(f"resume {gid}")
+
+        class Job:
+            store = Store()
+
+            async def run_round(self, gid: int, at_once: int) -> None:
+                calls.append(f"clean {gid}")
+
+        async def follow(gid: int) -> int:
+            calls.append(f"follow {gid}")
+            return 0
+
+        async def servers() -> list[int]:
+            return [4]
+
+        sleeps: list[float] = []
+
+        async def sleep(seconds: float) -> None:
+            sleeps.append(seconds)
+            if len(sleeps) > 1:
+                raise asyncio.CancelledError
+
+        bot: Any = Silent()
+        bot.import_job = Job()
+        bot.settings = SimpleNamespace(server_jobs_at_once=1)
+        bot.run_import_followups = follow
+        bot.work_guild_ids = servers
+        with patch("dmbot.bot.asyncio.sleep", sleep), self.assertRaises(asyncio.CancelledError):
+            await DMBot._import_loop(bot, clean=clean, followups=followups)
+        return calls
+
+    async def test_the_worker_cleans_and_the_bot_follows_up(self) -> None:
+        self.assertEqual(await self.one_round(True, False), ["resume 4", "clean 4"])
+        self.assertEqual(await self.one_round(False, True), ["follow 4"])
+        self.assertEqual(await self.one_round(True, True), ["resume 4", "clean 4", "follow 4"])

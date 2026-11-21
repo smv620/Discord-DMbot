@@ -2099,7 +2099,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 else []
             ),
             *(
-                [self._watched(self._import_loop(), "session-imports")]
+                [
+                    self._watched(
+                        self._import_loop(clean=not self.settings.worker_on), "session-imports"
+                    )
+                ]
                 if self.import_job is not None
                 else []
             ),
@@ -12827,23 +12831,29 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return "there"
         return user.display_name
 
-    async def _import_loop(self) -> None:
-        """Every 30 seconds: the sessions a DM imported that wait to be cleaned (#2105). A restart
-        puts one it was in the middle of back in the queue."""
+    async def _import_loop(self, *, clean: bool = True, followups: bool = True) -> None:
+        """Every 30 seconds: the sessions a DM imported that wait to be cleaned (#2105), and what
+        follows a cleaned one (the name scan, the story read, the recap and the news). A restart
+        puts a cleaning it was in the middle of back in the queue. `clean` is the Discord-free
+        half, the worker's with `DMBOT_WORKER` on (#4904); `followups` stays with the bot, which
+        posts the news and asks the DM."""
         assert self.import_job is not None
         await asyncio.sleep(45)
-        for guild in list(self.guilds):
-            try:
-                await self.import_job.store.resume(guild.id, older_than_s=0)
-            except Exception:
-                log.exception("Import: couldn't put the unfinished ones back")
-        while True:
-            for guild in list(self.guilds):
+        if clean:
+            for gid in await self.work_guild_ids():
                 try:
-                    await self.import_job.run_round(
-                        guild.id, int(getattr(self.settings, "server_jobs_at_once", 1))
-                    )
-                    await self.run_import_followups(guild.id)
+                    await self.import_job.store.resume(gid, older_than_s=0)
+                except Exception:
+                    log.exception("Import: couldn't put the unfinished ones back")
+        while True:
+            for gid in await self.work_guild_ids():
+                try:
+                    if clean:
+                        await self.import_job.run_round(
+                            gid, int(getattr(self.settings, "server_jobs_at_once", 1))
+                        )
+                    if followups:
+                        await self.run_import_followups(gid)
                 except Exception:
                     log.exception("Import: a round failed for a server")
             await asyncio.sleep(IMPORT_ROUND_S)
