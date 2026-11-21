@@ -179,6 +179,7 @@ class Threads(ConfirmedMemoryTest):
             before | {"The bridge falls"},
             {e.name for e in await self.memory.entities(GUILD_A, self.c)},
         )
+        assert made.batch is not None
         await self.memory.undo(GUILD_A, self.c, made.batch)
         self.assertEqual(before, {e.name for e in await self.memory.entities(GUILD_A, self.c)})
         self.assertEqual(len((await self.info()).movers), 0)
