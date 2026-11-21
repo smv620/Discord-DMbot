@@ -28,7 +28,12 @@ class OnTheCard(ConfirmedMemoryTest):
         view = CampaignLookup.build(await self.memory.lookup_data(GUILD_A, self.c))
         shown: Any = view.for_viewer(secrets)
         connections = await self.memory.relations(GUILD_A, self.c, entity_id=self.mira)
-        text = name_card.card_text(shown, self.mira, connections, secrets=secrets)
+        held = frozenset(
+            shown.entities
+        )  # (what this reader holds: the gate's answer, here every one)
+        text = name_card.card_text(
+            shown, self.mira, connections, secrets=secrets, seen=held, table=held
+        )
         assert text is not None
         return text
 

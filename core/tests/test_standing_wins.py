@@ -192,7 +192,7 @@ class TheStoreReader(NamesTest):
         scores = await self.scores(self.bel)
         dm = card_text(lookup.for_viewer(True), self.bel, links, secrets=True, standing=scores)
         seen = lookup.for_viewer(False)
-        players = card_text(seen, self.bel, links, secrets=False, standing=scores)
+        players = card_text(seen, self.bel, links, secrets=False, standing=scores, seen={self.bel})
         self.assertIn("knows (hostile)", dm or "")
         self.assertNotIn("friendly", dm or "")
         self.assertIn("knows **Cerric**", players or "")
