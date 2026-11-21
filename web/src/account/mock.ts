@@ -3120,6 +3120,18 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       t.quiet = 0;
       t.stalled = false;
     },
+    // Adds one name to a thread with its part (#3696, slice 2b): DM only; a thread or a name not in the list is gone.
+    async addPlotThreadInvolved(ref, change) {
+      calls.push(`addPlotThreadInvolved:${ref}:${change.thread}:${change.who}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const list = (plotThreadsOf[ref] ??= pretendPlotThreads());
+      const t = list.threads.find((x) => x.id === change.thread);
+      const who = names.find((n) => n.id === change.who);
+      if (!t || !who) throw new ApiError("gone");
+      t.involved = [...t.involved, { id: who.id, name: who.text, role: change.role }];
+    },
     async changeStoryThreads(ref, change) {
       calls.push(`changeStoryThreads:${ref}:${JSON.stringify(change)}`);
       if (change.action === "undo") {

@@ -375,3 +375,121 @@ describe("change a thread's state (#4934)", () => {
   });
 });
 
+// Add who's involved (#4939, slice 2b): a name and its part, from the campaign's names, like Discord's 🧵 card.
+describe("add who's involved (#4939)", () => {
+  const NAMES = [
+    { id: "n-mira", text: "Mira", kind: "character", saidAs: null },
+    { id: "n-hall", text: "Old Hall", kind: "place", saidAs: null },
+    { id: "n-quest", text: "The Quest", kind: "quest", saidAs: null },
+    { id: "n-person", text: "Someone", kind: "person", saidAs: null },
+    { id: "n-deed", text: "A deed", kind: "deed", saidAs: null },
+  ];
+  /** A thread list that keeps what is added, so the re-read shows it. */
+  async function withAdds(opts: { names?: boolean } = {}) {
+    const api = mockApi("table");
+    let threads = [thread({ name: "The drowned bell", state: "active" })];
+    const reads = { n: 0 };
+    api.plotThreads = async () => {
+      reads.n += 1;
+      return answer({}, threads);
+    };
+    api.campaignNames = async () => (opts.names === false ? [] : NAMES);
+    const sent: { thread: string; who: string; role: string }[] = [];
+    api.addPlotThreadInvolved = async (_ref, change) => {
+      sent.push(change);
+      threads = threads.map((t) =>
+        t.id === change.thread ? { ...t, involved: [...t.involved, { id: change.who, name: "Mira", role: change.role }] } : t,
+      );
+    };
+    render(<PlotThreadsPanel api={api} refId={REF} />);
+    const c = (await screen.findByText("The drowned bell")).closest("article") as HTMLElement;
+    return { api, reads, sent, c };
+  }
+
+  it("Add who's involved lists names that are not threads, people cards or deeds and narrows as you type", async () => {
+    const { c } = await withAdds();
+    fireEvent.click(within(c).getByRole("button", { name: w.addButton }));
+    expect(await within(c).findByRole("button", { name: "Mira" })).toBeTruthy();
+    expect(within(c).getByRole("button", { name: "Old Hall" })).toBeTruthy();
+    expect(within(c).queryByRole("button", { name: "The Quest" })).toBeNull();
+    expect(within(c).queryByRole("button", { name: "Someone" })).toBeNull();
+    expect(within(c).queryByRole("button", { name: "A deed" })).toBeNull();
+    fireEvent.input(within(c).getByLabelText(w.searchLabel), { target: { value: "hal" } });
+    expect(within(c).getByRole("button", { name: "Old Hall" })).toBeTruthy();
+    expect(within(c).queryByRole("button", { name: "Mira" })).toBeNull();
+  });
+
+  it("Add stays off until a name is picked and a part is typed", async () => {
+    const { c } = await withAdds();
+    fireEvent.click(within(c).getByRole("button", { name: w.addButton }));
+    const add = await within(c).findByRole("button", { name: w.addSubmit });
+    expect((add as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.click(await within(c).findByRole("button", { name: "Mira" }));
+    expect((add as HTMLButtonElement).disabled).toBe(true);
+    fireEvent.input(within(c).getByLabelText(w.partLabel), { target: { value: "quest giver" } });
+    expect((add as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("a suggestion fills the part", async () => {
+    const { c } = await withAdds();
+    fireEvent.click(within(c).getByRole("button", { name: w.addButton }));
+    fireEvent.click(await within(c).findByRole("button", { name: "villain" }));
+    expect((within(c).getByLabelText(w.partLabel) as HTMLInputElement).value).toBe("villain");
+  });
+
+  it("adding calls the API, says Added, and the thread shows the new name", async () => {
+    const { sent, c } = await withAdds();
+    fireEvent.click(within(c).getByRole("button", { name: w.addButton }));
+    fireEvent.click(await within(c).findByRole("button", { name: "Mira" }));
+    fireEvent.input(within(c).getByLabelText(w.partLabel), { target: { value: "quest giver" } });
+    fireEvent.click(within(c).getByRole("button", { name: w.addSubmit }));
+    expect(await screen.findByText(w.added)).toBeTruthy();
+    expect(sent).toEqual([{ thread: "a1".repeat(16), who: "n-mira", role: "quest giver" }]);
+    expect(await within(c).findByText(`${w.involved} ${w.person("Mira", "quest giver")}`)).toBeTruthy();
+  });
+
+  it("a name that is gone says so and re-reads the list", async () => {
+    const { api, reads, c } = await withAdds();
+    api.addPlotThreadInvolved = async () => {
+      throw new ApiError("gone");
+    };
+    fireEvent.click(within(c).getByRole("button", { name: w.addButton }));
+    fireEvent.click(await within(c).findByRole("button", { name: "Mira" }));
+    fireEvent.input(within(c).getByLabelText(w.partLabel), { target: { value: "target" } });
+    fireEvent.click(within(c).getByRole("button", { name: w.addSubmit }));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.addGone);
+    await waitFor(() => expect(reads.n).toBe(2));
+  });
+
+  it("a failed add says nothing changed, and keeps the form open", async () => {
+    const { api, c } = await withAdds();
+    api.addPlotThreadInvolved = async () => {
+      throw new ApiError("network");
+    };
+    fireEvent.click(within(c).getByRole("button", { name: w.addButton }));
+    fireEvent.click(await within(c).findByRole("button", { name: "Mira" }));
+    fireEvent.input(within(c).getByLabelText(w.partLabel), { target: { value: "target" } });
+    fireEvent.click(within(c).getByRole("button", { name: w.addSubmit }));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.couldNot);
+    expect(within(c).getByLabelText(w.partLabel)).toBeTruthy();
+  });
+
+  it("the form waits while an add is with the bot", async () => {
+    const { api, sent, c } = await withAdds();
+    let release!: () => void;
+    api.addPlotThreadInvolved = (_ref, change) =>
+      new Promise<void>((resolve) => {
+        sent.push(change);
+        release = resolve;
+      });
+    fireEvent.click(within(c).getByRole("button", { name: w.addButton }));
+    fireEvent.click(await within(c).findByRole("button", { name: "Mira" }));
+    fireEvent.input(within(c).getByLabelText(w.partLabel), { target: { value: "target" } });
+    fireEvent.click(within(c).getByRole("button", { name: w.addSubmit }));
+    await waitFor(() => expect(sent).toHaveLength(1));
+    expect((within(c).getByLabelText(w.partLabel) as HTMLInputElement).disabled).toBe(true);
+    expect((within(c).getByRole("button", { name: w.addSubmit }) as HTMLButtonElement).disabled).toBe(true);
+    release();
+    expect(await screen.findByText(w.added)).toBeTruthy();
+  });
+});

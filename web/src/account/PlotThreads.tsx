@@ -6,7 +6,7 @@ import { useEffect, useRef, useState } from "preact/hooks";
 
 import { PLOT_THREADS_LIVE } from "../content/plot-threads-switch";
 import { plotThreadsWords as w, plotThreadStates } from "../content/plot-threads-words";
-import { ApiError, type AccountApi, type PlotThread, type PlotThreadState, type PlotThreads } from "./api";
+import { ApiError, type AccountApi, type CampaignName, type PlotThread, type PlotThreadState, type PlotThreads } from "./api";
 import SavingWait from "./SavingWait";
 
 // Names listed before "+N more" in Came from and Led to, as on Discord's card.
@@ -23,6 +23,8 @@ export default function PlotThreadsPanel({ api, refId, onSignedOut }: { api: Acc
   const [changing, setChanging] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [said, setSaid] = useState<{ ok: boolean; text: string } | null>(null);
+  // The thread whose "Add who's involved" form is open (#3696, slice 2b).
+  const [adding, setAdding] = useState<string | null>(null);
   const statusRef = useRef<HTMLParagraphElement | null>(null);
 
   // Each read takes the next number; an answer that is not the latest read's is dropped, so an old campaign or an old try cannot overwrite.
@@ -91,6 +93,23 @@ export default function PlotThreadsPanel({ api, refId, onSignedOut }: { api: Acc
     }
   }
 
+  /** Adds one name to a thread with its part; a success closes the form, a failure leaves it open to try again. */
+  async function pressAdd(t: PlotThread, whoId: string, role: string): Promise<void> {
+    if (busy || !api.addPlotThreadInvolved) return;
+    setBusy(true);
+    setSaid(null);
+    try {
+      await api.addPlotThreadInvolved(refId, { thread: t.id, who: whoId, role });
+      setAdding(null);
+      setSaid({ ok: true, text: w.added });
+    } catch (error) {
+      setSaid({ ok: false, text: error instanceof ApiError && error.kind === "gone" ? w.addGone : w.couldNot });
+    } finally {
+      await refresh();
+      setBusy(false);
+    }
+  }
+
   useEffect(() => {
     read();
     // A campaign change (or unmount) makes the read in flight stale, so its answer is dropped.
@@ -151,6 +170,12 @@ export default function PlotThreadsPanel({ api, refId, onSignedOut }: { api: Acc
                   busy={busy}
                   onChange={() => setChanging(changing === t.id ? null : t.id)}
                   onPress={(state) => void press(t, state)}
+                  api={api}
+                  refId={refId}
+                  canAdd={!!api.addPlotThreadInvolved}
+                  adding={adding === t.id}
+                  onAddToggle={() => setAdding(adding === t.id ? null : t.id)}
+                  onAddSubmit={(whoId, role) => void pressAdd(t, whoId, role)}
                 />
               </li>
             ))}
@@ -172,6 +197,12 @@ function Thread({
   busy,
   onChange,
   onPress,
+  api,
+  refId,
+  canAdd,
+  adding,
+  onAddToggle,
+  onAddSubmit,
 }: {
   thread: PlotThread;
   isOpen: boolean;
@@ -181,9 +212,16 @@ function Thread({
   busy: boolean;
   onChange: () => void;
   onPress: (state: PlotThreadState | "check") => void;
+  api: AccountApi;
+  refId: string;
+  canAdd: boolean;
+  adding: boolean;
+  onAddToggle: () => void;
+  onAddSubmit: (whoId: string, role: string) => void;
 }) {
   const historyId = `plot-history-${t.id}`;
   const changeId = `plot-change-${t.id}`;
+  const addId = `plot-add-${t.id}`;
   const promise = t.kind === "promise";
   // "Checked, still going" is offered only while the thread is live: hinted, open or happening now.
   const live = t.state === "hinted" || t.state === "open" || t.state === "active";
@@ -250,6 +288,25 @@ function Thread({
           )}
         </div>
       )}
+      {canAdd && (
+        <div class="stack">
+          <button
+            type="button"
+            class="button secondary"
+            aria-expanded={adding}
+            aria-controls={adding ? addId : undefined}
+            disabled={busy}
+            onClick={onAddToggle}
+          >
+            {adding ? w.closeChange : w.addButton}
+          </button>
+          {adding && (
+            <div id={addId}>
+              <AddInvolvedForm api={api} refId={refId} threadId={t.id} busy={busy} onSubmit={onAddSubmit} onClose={onAddToggle} />
+            </div>
+          )}
+        </div>
+      )}
       {t.history.length > 0 && (
         <div>
           <button type="button" class="button secondary" aria-expanded={isOpen} aria-controls={historyId} onClick={onToggle}>
@@ -277,3 +334,118 @@ function CutLine({ label, names }: { label: string; names: string[] }) {
     </p>
   );
 }
+
+// Kinds that are not a name you can put in a thread: threads and their parts, people cards and deeds (#3696, slice 2b).
+const NOT_INVOLVABLE = new Set(["thread", "quest", "mystery", "hook", "goal", "promise", "person", "deed"]);
+// Most matches the search list shows at once.
+const MATCHES = 8;
+
+/** "Add who's involved": a search over the campaign's names, a required part, and Add. The names are read once, when the form opens. */
+function AddInvolvedForm({
+  api,
+  refId,
+  threadId,
+  busy,
+  onSubmit,
+  onClose,
+}: {
+  api: AccountApi;
+  refId: string;
+  threadId: string;
+  busy: boolean;
+  onSubmit: (whoId: string, role: string) => void;
+  onClose: () => void;
+}) {
+  const [names, setNames] = useState<CampaignName[] | null>(null);
+  const [query, setQuery] = useState("");
+  const [who, setWho] = useState<CampaignName | null>(null);
+  const [part, setPart] = useState("");
+
+  useEffect(() => {
+    let stale = false;
+    const load = api.campaignNames ? api.campaignNames(refId) : Promise.resolve([] as CampaignName[]);
+    load.then(
+      (got) => {
+        if (!stale) setNames(got);
+      },
+      () => {
+        if (!stale) setNames([]);
+      },
+    );
+    return () => {
+      stale = true;
+    };
+  }, [api, refId]);
+
+  const needle = query.trim().toLowerCase();
+  const matches = (names ?? [])
+    .filter((n) => !NOT_INVOLVABLE.has(n.kind) && n.id !== threadId && n.text.toLowerCase().includes(needle))
+    .slice(0, MATCHES);
+  const ready = who !== null && part.trim() !== "";
+
+  return (
+    <div class="stack" role="group" aria-label={w.addButton}>
+      <label class="stack">
+        {w.searchLabel}
+        <input
+          type="search"
+          value={query}
+          placeholder={w.searchPlaceholder}
+          disabled={busy}
+          autoComplete="off"
+          onInput={(e) => setQuery((e.target as HTMLInputElement).value)}
+        />
+      </label>
+      {names === null ? (
+        <p class="muted small">{w.loading}</p>
+      ) : matches.length === 0 ? (
+        needle !== "" ? <p class="small">{w.noMatch}</p> : null
+      ) : (
+        <ul class="stack">
+          {matches.map((n) => (
+            <li key={n.id}>
+              <button
+                type="button"
+                class={who?.id === n.id ? "button" : "button secondary"}
+                aria-pressed={who?.id === n.id}
+                disabled={busy}
+                onClick={() => setWho(n)}
+              >
+                {n.text}
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <label class="stack">
+        {w.partLabel}
+        <input
+          type="text"
+          value={part}
+          maxLength={w.partMax}
+          placeholder={w.partPlaceholder}
+          disabled={busy}
+          autoComplete="off"
+          onInput={(e) => setPart((e.target as HTMLInputElement).value)}
+        />
+      </label>
+      <div class="row">
+        {w.suggestions.map((s) => (
+          <button key={s} type="button" class="button secondary" disabled={busy} onClick={() => setPart(s)}>
+            {s}
+          </button>
+        ))}
+      </div>
+      <div class="row">
+        <button type="button" class="button" disabled={busy || !ready} onClick={() => who && onSubmit(who.id, part.trim())}>
+          {w.addSubmit}
+        </button>
+        <button type="button" class="button secondary" disabled={busy} onClick={onClose}>
+          {w.closeChange}
+        </button>
+      </div>
+      <SavingWait active={busy} stage={w.working} />
+    </div>
+  );
+}
+
