@@ -382,3 +382,37 @@ class StartingAThreadOrAPromise(ThreadWeb):
                 await fn(self.web, self.session, self.cref, body)
             self.assertEqual(refused.exception.code, "bad_action")
         self.assertIsNone(await self.actions.claim_next(self.g))
+
+    def test_the_doors_kinds_and_states_are_the_ones_the_store_knows(self) -> None:
+        import importlib
+
+        from dmbot.memory.models import THREAD_TYPES
+
+        mig = importlib.import_module("dmbot.migrations.0582_web_thread_new")
+        self.assertEqual(mig._KINDS.split("|"), list(THREAD_TYPES))
+        self.assertEqual(mig._STATES.split("|"), list(threads.ALL_STATES))
+
+    async def test_a_party_who_is_unconfirmed_or_merged_is_gone(self) -> None:
+        promise = await self.promise()
+        guess = await self.add("A guess", "character")
+        await self.sql("UPDATE memory_entities SET status = 'proposed' WHERE id = %s", guess)
+        old = await self.add("Old Mira", "character")
+        mira = await self.add("Mira", "character")
+        await self.sql(
+            "UPDATE memory_entities SET merged_into = %s, status = 'merged' WHERE id = %s",
+            mira, old,
+        )  # fmt: skip
+        for who in (guess, old):
+            await plot_threads.queue_party(
+                self.web, self.session, self.cref, {"promise": promise, "side": "by", "who": who}
+            )
+        outcomes = await self.bot_loop()
+        self.assertEqual([o.error for o in outcomes], [wa.GONE, wa.GONE])
+
+    async def test_a_second_thread_with_the_same_name_is_the_stores_call(self) -> None:
+        await self.new("quest", "The missing heir")
+        await self.new("quest", "The missing heir")
+        first, second = await self.bot_loop()
+        self.assertFalse(first.error)
+        # (whatever the store says about a repeat, the page gets a plain word, never a crash)
+        self.assertIn(second.error, ("", wa.FAILED))
