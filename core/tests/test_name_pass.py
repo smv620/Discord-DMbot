@@ -173,3 +173,29 @@ class Reporting(unittest.TestCase):
         self.assertNotEqual(np.batch_of("s1", "a"), np.batch_of("s1", "b"))
         self.assertNotEqual(np.batch_of("s1", "a"), np.batch_of("s2", "a"))
         self.assertGreaterEqual(np.batch_of("s1", "a"), np.BATCH_BASE)
+
+
+class TheReportAsText(unittest.TestCase):
+    """A report is kept as text until the import's one report is made (#4904)."""
+
+    def test_a_report_comes_back_equal(self) -> None:
+        from dmbot.transcript.name_pass import (
+            Candidate,
+            Fixed,
+            Near,
+            Report,
+            report_from_json,
+            report_to_json,
+        )
+
+        near = Near("e1", "Oskar Vane", "character", 0.83)
+        cand = Candidate("Vane", ("Oscar Vane",), 3, (near,), ("said by the gate",))
+        report = Report(
+            fixed=(Fixed("Oskar Vane", (("Oscar", 2), ("Oskar", 1)), 7_000_000_000_001),),
+            unsure=(cand,),
+            new=(cand,),
+            guarded=2,
+            cut=True,
+        )
+        self.assertEqual(report_from_json(report_to_json(report)), report)
+        self.assertEqual(report_from_json(report_to_json(Report())), Report())

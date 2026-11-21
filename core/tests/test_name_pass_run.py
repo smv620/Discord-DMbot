@@ -614,7 +614,12 @@ class ThePass(NamesTest):
         await self.transcripts.add_lines(
             GUILD, quiet, [Line(MS + 3_000_000, PLAYER, "Nothing here.", "Nothing here.")]
         )
-        held = self.bot._import_reports.setdefault((GUILD, self.campaign.id), [])
+        from tests.fake_import_state import FakeImportState
+
+        state = FakeImportState()
+        self.bot.import_state = state  # type: ignore[attr-defined]
+        held: list[Any] = []
+        kept = 0
         store = SimpleNamespace(pending_scans=AsyncMock(side_effect=[1, 1, 0]))
         tell = DMBot._tell_import_news.__get__(self.bot)
         for sid in (self.session, quiet, second):
@@ -622,6 +627,8 @@ class ThePass(NamesTest):
             await self.bot.repair_names(
                 GUILD, self.campaign.id, sid, {PLAYER}, {PLAYER}, held, game_only=True
             )
+            await DMBot._keep_import_reports.__get__(self.bot)(GUILD, self.campaign.id, held[kept:])
+            kept = len(held)
             await tell(GUILD, store)
             if sid != second:
                 self.bot.ask_privately.assert_not_awaited()  # type: ignore[attr-defined]
@@ -631,7 +638,7 @@ class ThePass(NamesTest):
         from dmbot.transcript import name_pass as np
 
         self.assertEqual(posted[2], np.import_text(held))
-        self.assertNotIn((GUILD, self.campaign.id), self.bot._import_reports)
+        self.assertEqual(await state.campaigns_with(GUILD, ["reports"]), set())  # (taken once)
         self.bot.ask_privately.reset_mock()  # type: ignore[attr-defined]
         live = await self.transcripts.open_session(GUILD, self.campaign.id, START + 4000)
         await self.transcripts.end_session(GUILD, live, START + 4100)

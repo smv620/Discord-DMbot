@@ -18,6 +18,7 @@ import re
 import shutil
 import signal
 import time
+import uuid
 from collections import Counter
 from collections.abc import (
     Awaitable,
@@ -306,7 +307,7 @@ from dmbot.ears.protocol import (
 from dmbot.ears.server import EarsServer
 from dmbot.fightbot import FightState
 from dmbot.image_desk import ImageDesk, ImageUseStore
-from dmbot.import_state import LEFT_TOLD, UNCHECKED, ImportState
+from dmbot.import_state import LEFT_TOLD, REPORTS, UNCHECKED, ImportState
 from dmbot.install_record import InstallStore
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
@@ -1251,9 +1252,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         # The last entries a DM removed, per campaign, so the list can put them back (memory only).
         self.homebrew_removed: dict[tuple[int, str], list[Any]] = {}
         self._short_asks: dict[str, int] = {}  # campaign -> session its open question is about
-        # Each imported session's name-pass report, kept until the import's last session is
-        # scanned and then posted as one (#2649).
-        self._import_reports: dict[tuple[int, str], list[name_pass_logic.Report]] = {}
+        # (Each imported session's name-pass report is kept in `import_state` until the import's
+        # last session is scanned and then posted as one, #2649, #4904.)
         self._import_names: dict[str, list[str]] = {}  # campaign -> names its import scans added
         # campaign -> who spoke in the lines its import scans read (checked again before adding)
         self._import_speakers: dict[str, set[int]] = {}
@@ -13312,16 +13312,35 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 await store.done_plays(gid, play)
         log.info("Import: %d 'plays' choice(s) made, %d dropped", made, dropped)
 
+    async def _keep_import_reports(
+        self, gid: int, cid: str, reports: list[name_pass_logic.Report]
+    ) -> None:
+        """Keep the name-pass reports of an import's sessions (in the database, #4904) until its one
+        report at the end. Each is kept under its own key, so two alike are both kept."""
+        if reports and self.import_state is not None:
+            await self.import_state.add_strings(
+                gid, cid, REPORTS,
+                [f"{uuid.uuid4().hex}:{name_pass_logic.report_to_json(r)}" for r in reports],
+            )  # fmt: skip
+
     async def _tell_import_news(self, gid: int, store: ImportStore) -> None:
         """Say once, on the DM screen, what an import found: the new names and the sessions whose
         name check was given up, in one 📝 line when the import's last session has been scanned
         (the given-up note stands alone only when no names were found), and the recaps that were
         asked for and could not be written."""
-        for key in [k for k in self._import_reports if k[0] == gid]:
-            cid = key[1]
+        kept = (
+            await self.import_state.campaigns_with(gid, [REPORTS])
+            if self.import_state is not None
+            else set()
+        )
+        for cid in sorted(kept):
             if await store.pending_scans(gid, cid):
                 continue  # the import is not over: one report at the end
-            reports = self._import_reports.pop(key, [])
+            assert self.import_state is not None
+            reports = [
+                name_pass_logic.report_from_json(s.split(":", 1)[1])
+                for s in await self.import_state.take_strings(gid, cid, REPORTS)
+            ]
             campaign = await self.campaigns.get(gid, cid)
             if reports and campaign is not None:
                 views = name_pass_undo.undo_views_import(cid, [r.fixed for r in reports])
@@ -13522,11 +13541,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
         lines = [(uid, text) for uid, text in rows if uid in agreed]
         if not lines:
+            fixed_here: list[name_pass_logic.Report] = []
             await self.repair_names(
-                gid, ready.campaign_id, ready.session_id, (), agreed,
-                self._import_reports.setdefault((gid, ready.campaign_id), []),
+                gid, ready.campaign_id, ready.session_id, (), agreed, fixed_here,
                 game_only=True, recheck=recorded,
             )  # (marks it)  # fmt: skip
+            await self._keep_import_reports(gid, ready.campaign_id, fixed_here)
             return []
         users = {uid for uid, _ in lines} | set(agreed) | set(campaign.dm_user_ids)
         self._import_speakers.setdefault(ready.campaign_id, set()).update(uid for uid, _ in lines)
@@ -13535,8 +13555,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self._import_starts.setdefault(ready.campaign_id, set()).add(ready.started_at)
         # PlotBot's name pass (#2628) for an imported session too, before the scan and the recap;
         # the lines are read again when it fixed something.
-        held = self._import_reports.setdefault((gid, ready.campaign_id), [])
-        if await self.repair_names(
+        held: list[name_pass_logic.Report] = []
+        repaired = await self.repair_names(
             gid,
             ready.campaign_id,
             ready.session_id,
@@ -13545,7 +13565,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             held,
             game_only=True,
             recheck=recorded,
-        ):
+        )
+        await self._keep_import_reports(gid, ready.campaign_id, held)
+        if repaired:
             rows = await self.import_job.store.scan_lines(gid, ready.session_id)
             lines = [(uid, text) for uid, text in rows if uid in agreed] or lines
         # What an imported session says is what was said at the table: held-back names it says

@@ -25,6 +25,7 @@ transcript.
 
 from __future__ import annotations
 
+import dataclasses
 import hashlib
 import json
 from collections.abc import Iterable, Sequence
@@ -329,6 +330,38 @@ class Report:
     @property
     def quiet(self) -> bool:
         return not (self.fixed or self.unsure or self.new or self.guarded or self.cut)
+
+
+def report_to_json(report: Report) -> str:
+    """A report as text, to keep it in the database until the import's one report is made (#4904:
+    the scans may run in the worker, the report is the bot's). Words from a transcript, kept as
+    any campaign row is: the same people may read it as read the report."""
+    return json.dumps(dataclasses.asdict(report), ensure_ascii=False)
+
+
+def report_from_json(text: str) -> Report:
+    """The report `report_to_json` made."""
+    data = json.loads(text)
+
+    def near(n: dict[str, Any]) -> Near:
+        return Near(n["entity_id"], n["name"], n["kind"], float(n["likeness"]))
+
+    def candidate(c: dict[str, Any]) -> Candidate:
+        return Candidate(
+            c["heard"], tuple(c["also"]), int(c["times"]),
+            tuple(near(n) for n in c["near"]), tuple(c["lines"]),
+        )  # fmt: skip
+
+    return Report(
+        fixed=tuple(
+            Fixed(f["name"], tuple((str(a), int(b)) for a, b in f["forms"]), int(f["batch"]))
+            for f in data["fixed"]
+        ),
+        unsure=tuple(candidate(c) for c in data["unsure"]),
+        new=tuple(candidate(c) for c in data["new"]),
+        guarded=int(data["guarded"]),
+        cut=bool(data["cut"]),
+    )
 
 
 # PlotBot's answer stopped at its limit (#2649): every word it did not reach is "not sure", which
