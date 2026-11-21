@@ -379,3 +379,71 @@ describe("Undo for an update DMbot already took (#4867)", () => {
   });
 });
 
+describe("the sets' picker: a labelled group and focus (#4884)", () => {
+  const small: RuleUpdate = { ...waiting, more: 0 };
+
+  /** An API that answers the pick as given, or refuses it. */
+  function pickApi(pick: () => Promise<{ kept: number; left: number; take: number | null }>) {
+    const api = mockApi("table");
+    let reads = 0;
+    api.ruleUpdate = async () => {
+      reads += 1;
+      return { update: reads > 1 ? null : small };
+    };
+    api.ruleUpdatePick = pick;
+    return api;
+  }
+
+  it("the checkboxes sit in a group named by the intro's first sentence, and focus is in the picker on open", async () => {
+    render(<RuleUpdateCard api={pickApi(async () => ({ kept: 1, left: 2, take: 7 }))} campaignRef={REF} name="Tavern rules" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pick changes" }));
+    expect(await screen.findByRole("group", { name: "Pick the changes to keep." })).toBeTruthy();
+    expect(document.activeElement).toBe((await screen.findAllByRole("checkbox"))[0]);
+  });
+
+  it("the Pick button names its picker only while it is open", async () => {
+    render(<RuleUpdateCard api={pickApi(async () => ({ kept: 1, left: 2, take: 7 }))} campaignRef={REF} name="Tavern rules" />);
+    const pick = (await screen.findByRole("button", { name: "Pick changes" })) as HTMLButtonElement;
+    expect(pick.getAttribute("aria-controls")).toBeNull();
+    fireEvent.click(pick);
+    await waitFor(() => expect(pick.getAttribute("aria-controls")).toBeTruthy());
+    const controls = pick.getAttribute("aria-controls") as string;
+    await waitFor(() => expect(document.getElementById(controls)).toBeTruthy());
+  });
+
+  it("Never mind returns focus to the Pick changes button", async () => {
+    render(<RuleUpdateCard api={pickApi(async () => ({ kept: 1, left: 2, take: 7 }))} campaignRef={REF} name="Tavern rules" />);
+    const pick = (await screen.findByRole("button", { name: "Pick changes" })) as HTMLButtonElement;
+    fireEvent.click(pick);
+    fireEvent.click(await screen.findByRole("button", { name: "Never mind" }));
+    expect(document.activeElement).toBe(pick);
+  });
+
+  it("after a refused pick, focus goes back into the picker", async () => {
+    render(
+      <RuleUpdateCard
+        api={pickApi(async () => {
+          throw new ApiError("gone");
+        })}
+        campaignRef={REF}
+        name="Tavern rules"
+      />,
+    );
+    fireEvent.click(await screen.findByRole("button", { name: "Pick changes" }));
+    const boxes = await screen.findAllByRole("checkbox");
+    fireEvent.click(boxes[1] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: "Save my picks" }));
+    expect(await screen.findByText("This campaign isn't following a set of house rules, or there is nothing new to take.")).toBeTruthy();
+    expect(document.activeElement).toBe((await screen.findAllByRole("checkbox"))[0]);
+  });
+
+  it("after a saved pick, focus goes to the saved line", async () => {
+    render(<RuleUpdateCard api={pickApi(async () => ({ kept: 1, left: 1, take: 7 }))} campaignRef={REF} name="Tavern rules" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Pick changes" }));
+    fireEvent.click((await screen.findAllByRole("checkbox"))[1] as HTMLElement);
+    fireEvent.click(screen.getByRole("button", { name: "Save my picks" }));
+    const done = await screen.findByText("✅ Done. Tavern rules is now your own copy: you kept 1 change and left out 1 change. You no longer get its updates. Your own rules still win.");
+    await waitFor(() => expect(document.activeElement).toBe(done));
+  });
+});
+
