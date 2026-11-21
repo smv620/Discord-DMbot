@@ -31,6 +31,22 @@ class TheText(unittest.TestCase):
         with self.assertRaises(RecapError):
             who_text({"who": "common", "characters": ["a" * 32]})
 
+    def test_the_ids_the_page_showed_ride_after_the_answer(self) -> None:
+        a, b, c = "a" * 32, "b" * 32, "c" * 32
+        self.assertEqual(who_text({"who": "dm", "shown": [a, b]}), f"dm shown {a} {b}")
+        self.assertEqual(who_text({"who": "everyone", "shown": [a]}), f"everyone shown {a}")
+        self.assertEqual(
+            who_text({"who": "some", "characters": [a], "shown": [a, b, c]}),
+            f"some {a} shown {a} {b} {c}",
+        )
+        self.assertEqual(who_text({"who": "dm", "shown": []}), "dm")  # (an older page: none)
+
+    def test_a_bad_shown_list_is_refused_before_the_door(self) -> None:
+        a = "a" * 32
+        for shown in (["nope"], [a, a], [a] * 51, "abc", [1]):
+            with self.subTest(shown=shown), self.assertRaises(RecapError):
+                who_text({"who": "dm", "shown": shown})
+
     def test_a_bad_answer_is_refused_before_the_door(self) -> None:
         a = "a" * 32
         bodies: list[dict[str, Any]] = [
@@ -179,6 +195,32 @@ class TheDoor(Web):
         got = await self.rows()
         self.assertEqual(len(got), 1)
         self.assertEqual(len(got[0]["text"]), 5 + 50 * 33 - 1)
+
+    # Migration 0588: ` shown <ids>` after the answer.
+    async def test_each_answer_may_carry_the_ids_the_page_showed(self) -> None:
+        await self.link_who({"who": "dm", "shown": [self.rook, self.npc]})
+        await self.link_who({"who": "some", "characters": [self.rook], "shown": [self.rook]})
+        texts = sorted(r["text"] for r in await self.rows())
+        self.assertEqual(
+            texts,
+            sorted([f"dm shown {self.rook} {self.npc}", f"some {self.rook} shown {self.rook}"]),
+        )
+
+    async def test_fifty_and_fifty_fit_the_table(self) -> None:
+        ids = [await self.add(f"Extra {n:02d}", "character", role="npc") for n in range(50)]
+        await self.link_who({"who": "some", "characters": ids, "shown": ids})
+        (row,) = await self.rows()
+        self.assertGreater(len(row["text"]), 3000)
+
+    async def test_the_ticked_ids_are_still_checked_before_the_shown_part(self) -> None:
+        place = await self.add("Greywater Keep", "place")
+        with self.assertRaises(RecapError) as err:
+            await self.link_who({"who": "some", "characters": [place], "shown": [self.rook]})
+        self.assertEqual(err.exception.code, "bad_target")
+
+    async def test_a_repeat_before_the_shown_part_is_still_refused(self) -> None:
+        with self.assertRaises(RecapError):
+            await self.link_who({"who": "some", "characters": [self.rook, self.rook]})
 
 
 class TheBotAppliesIt(Editing):
