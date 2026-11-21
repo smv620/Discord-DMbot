@@ -189,12 +189,12 @@ async def queue_involve(db: Database, session: Session, ref: str, body: object) 
         raise RecapError("bad_action")
     if not isinstance(who, str) or not _ID.fullmatch(who) or who == thread:
         raise RecapError("bad_action")
-    if not isinstance(role, str) or len(role) > ROLE_MAX:
+    if not isinstance(role, str):
         raise RecapError("bad_action")
-    part = " ".join(role.split())  # (the card collapses spaces the same way)
-    if not part:  # (`involve` refuses an empty part, so the page asks for one)
+    part = " ".join(role.split())  # (the card collapses spaces the same way, then counts)
+    if not part or len(part) > ROLE_MAX:  # (`involve` refuses an empty part, so the page asks)
         raise RecapError("bad_action")
     return await relationships._queue(
         db, session, ref, entity=None, action="thread-involve", target="",
-        text=f"{thread} {who} {part}".strip(), flag=False,
+        text=f"{thread} {who} {part}", flag=False,
     )  # fmt: skip

@@ -27,7 +27,7 @@ _ID = "[0-9a-f]{32}"
 _LAST_SHAPE = "           OR (act = 'thread-check' AND clean !~ '^" + _ID + "$')\n"
 _CAP = "WHEN act = 'offer-clear' THEN 300 ELSE 100 END)"
 _QUEUE_SWAPS = (
-    # (the text holds two ids and the part, up to 126 characters: its cap is lifted for this action)
+    # (the text holds two ids and the part, up to 126 characters: its cap is 130 for this action)
     (
         _CAP,
         "WHEN act = 'offer-clear' THEN 300 WHEN act = 'thread-involve' THEN 130 ELSE 100 END)",
@@ -78,6 +78,25 @@ SQL = (
             || replace(d, '])', ', """
     + _ADDED
     + r"""])');
+    END
+    $do$;
+
+    -- The table's own text limit, read back as it is: a `thread-involve` text gets 130 (the door's
+    -- function limits it first; this is the table's check beside it).
+    DO $do$
+    DECLARE
+        d text;
+        one text := ' WHEN (action = ''offer-clear''::text) THEN 300';
+        more text := ' WHEN (action = ''thread-involve''::text) THEN 130';
+    BEGIN
+        SELECT pg_get_constraintdef(oid) INTO d FROM pg_constraint
+            WHERE conname = 'name_actions_text_check' AND conrelid = 'name_actions'::regclass;
+        IF (length(d) - length(replace(d, one, ''))) <> length(one) THEN
+            RAISE EXCEPTION 'the text limit did not have the expected shape';
+        END IF;
+        ALTER TABLE name_actions DROP CONSTRAINT name_actions_text_check;
+        EXECUTE 'ALTER TABLE name_actions ADD CONSTRAINT name_actions_text_check '
+            || replace(d, one, more || one);
     END
     $do$;
 

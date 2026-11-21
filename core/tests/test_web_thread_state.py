@@ -17,7 +17,9 @@ from tests.test_web_api import ALICE, THURSDAY
 from tests.test_web_relationships import Web
 
 
-class ChangingAThreadsState(Web):
+class ThreadWeb(Web):
+    """A DM's campaign with one quest, and the bot's loop over the queue (no tests of its own)."""
+
     bob_has_a_hero = False
 
     async def asyncSetUp(self) -> None:
@@ -48,6 +50,8 @@ class ChangingAThreadsState(Web):
         rows = await self.memory.state_history(self.g, self.one.id, thread)
         return [r.condition for r in rows if r.closed_at is None]
 
+
+class ChangingAThreadsState(ThreadWeb):
     async def test_a_state_change_is_the_cards_own_store_call(self) -> None:
         await self.press(self.bell, "active")
         (outcome,) = await self.bot_loop()
@@ -156,7 +160,7 @@ class ChangingAThreadsState(Web):
         self.assertEqual(threads.ALL_STATES, ("hinted", "open", "active", "resolved", "abandoned"))
 
 
-class AddingWhoIsInvolved(ChangingAThreadsState):
+class AddingWhoIsInvolved(ThreadWeb):
     """Slice 2b (migration 0581): the card's `involve` from the page."""
 
     async def involve(self, thread: str, who: str, role: str = "helper", user: Any = None) -> str:
@@ -231,3 +235,20 @@ class AddingWhoIsInvolved(ChangingAThreadsState):
                 await plot_threads.queue_involve(self.web, self.session, self.cref, body)
             self.assertEqual(bad.exception.code, "bad_action")
         self.assertIsNone(await self.actions.claim_next(self.g))
+
+    async def test_a_part_of_sixty_characters_goes_through_the_table_check_too(self) -> None:
+        mira = await self.add("Mira", "character")
+        part = ("quest giver " * 5)[:60].strip()
+        await self.involve(self.bell, mira, part + "   ")  # (spaces count after collapsing)
+        (outcome,) = await self.bot_loop()
+        self.assertFalse(outcome.error)
+        self.assertEqual(await self.involved(self.bell), [(mira, part)])
+        with self.assertRaises(RecapError):
+            await self.involve(self.bell, mira, "x" * 61)
+
+    async def test_a_second_add_of_the_same_name_is_not_an_error(self) -> None:
+        mira = await self.add("Mira", "character")
+        await self.involve(self.bell, mira, "villain")
+        await self.involve(self.bell, mira, "villain")
+        outcomes = await self.bot_loop()
+        self.assertEqual([bool(o.error) for o in outcomes], [False, False])
