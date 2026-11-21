@@ -1571,8 +1571,10 @@ async def _leave(memory: MemoryStore, guild_id: int, cid: str, a: Action) -> Out
             await memory.staying_answer_stays(guild_id, cid, a.text)
             return Outcome()
         done = await memory.staying_answer_left(guild_id, cid, a.text)
-    except MemoryRuleError:  # (AlreadyAnswered is one)
-        return _failed(GONE)
+    except (
+        MemoryRuleError
+    ):  # (AlreadyAnswered is one, and so is a character no longer in the party:
+        return _failed(GONE)  # `gone` for both, as Discord answers both with "already answered")
     return _changed(done.batch)
 
 

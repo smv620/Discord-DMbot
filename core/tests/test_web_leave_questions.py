@@ -84,13 +84,18 @@ class LeavingOnTheWeb(Web):
     async def test_a_goodbye_is_its_own_kind_and_a_join_question_is_not_listed(self) -> None:
         await self.ask(self.tavin, "leave")
         self.assertEqual((await self.read())["groups"][0]["kind"], "leave")
+        # (the join door keeps to joins: a goodbye is never offered with the join buttons)
+        self.assertEqual(
+            (await join_questions.read(self.web, self.session, self.cref))["groups"], []
+        )
         await self.sql("DELETE FROM memory_join_questions")
         await self.ask(self.tavin, "join")
         self.assertEqual((await self.read())["groups"], [])
-        self.assertEqual(
-            await join_questions.read(self.web, self.session, self.cref),
-            await join_questions.read(self.web, self.session, self.cref),
-        )
+
+    async def test_an_npc_is_not_listed(self) -> None:
+        npc = await self.add("Old Bram", "character", role="npc")
+        await self.ask(npc)
+        self.assertEqual((await self.read())["groups"], [])
 
     async def test_an_unsent_answered_or_left_character_is_not_listed(self) -> None:
         await self.ask(self.tavin, sent=False)

@@ -17,7 +17,9 @@ from __future__ import annotations
 # `staying_answer_stays` (nothing written but the answer), and `join-undo` takes back a
 # `leave-yes` change of this DM's own. "Later" is the page's own: it writes nothing. The queue
 # door's lists, shape check and the table's action list are read back as they are and each anchor
-# must be found exactly once. No table changes.
+# must be found exactly once. No table changes. This door is the only place a `leave` or `died`
+# question shows on the website (the join door keeps to join and back, 0570): a change to either
+# door must look at both.
 ACTIONS = ("leave-yes", "leave-no")
 _PREV = (
     "'join-undo', 'party-leave', 'party-back', 'party-undo', 'party-catch-up-choices', "
