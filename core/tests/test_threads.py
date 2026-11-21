@@ -156,7 +156,7 @@ class Threads(ConfirmedMemoryTest):
         from dmbot.memory.models import MemoryRuleError
 
         await self.memory.involve(GUILD_A, self.c, self.heir, self.mira, "  ", source="dm")
-        got = await self.memory.thread(GUILD_A, self.c, self.heir)
+        got = await self.info()
         self.assertEqual([(i.who.name, i.role) for i in got.involved], [("Mira", "")])
         with self.assertRaises(MemoryRuleError):
             await self.memory.involve(GUILD_A, self.c, self.heir, self.mira, "x" * 500, source="dm")
