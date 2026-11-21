@@ -650,7 +650,8 @@ def _relation(r: dict[str, Any]) -> Relation:
         str(r.get("route_state") or ""),
         length_words=r.get("length_words"), length_amount=r.get("length_amount"),
         length_unit=r.get("length_unit"), length_approx=bool(r.get("length_approx")),
-        length_from=r.get("length_from"),
+        length_from=r.get("length_from"), hand_over=str(r.get("hand_over") or ""),
+        hand_over_from=str(r.get("hand_over_from") or ""),
     )  # fmt: skip
 
 
@@ -686,6 +687,8 @@ def _relation_row(rel: Relation) -> dict[str, Any]:
         "length_unit": rel.length_unit,
         "length_approx": rel.length_approx,
         "length_from": rel.length_from,
+        "hand_over": rel.hand_over,
+        "hand_over_from": rel.hand_over_from,
     }
 
 
@@ -7567,6 +7570,10 @@ class MemoryStore:
                 (keep_id, *w.ids, gone_id),
             )
         await _move_plan_links(w, keep_id, gone_id)
+        # a kept hand-over from the one merged away is from the one kept now (#4170), as a waiting
+        # one is followed through `merged_into`; through `w`, so an Undo of the merge puts it back
+        for row in await w.select(RELATIONS, " AND hand_over_from = %s", [gone_id]):
+            await w.update(RELATIONS, row["id"], {"hand_over_from": keep_id})
         await states.move_states(w, onto, keep_id, kept["type"], gone_id)
         if confirm_keys and source != DM:
             raise ValueError("Only the DM confirms names")
@@ -8436,6 +8443,9 @@ class MemoryStore:
         knows_how: str = "",
         assumed: bool = False,
         route_state: str = "",
+        hand_over: str = "",
+        hand_over_from: str = "",
+        end_reason: str | None = None,
     ) -> Written[tuple[Relation, list[Flag]]]:
         """Store a fact, checked against the rules. Problems become flags for the DM to
         review; the fact is stored as given either way. A fact already known is only
@@ -8447,7 +8457,9 @@ class MemoryStore:
         fact that already exists never makes it secret (an upload never hides what the players
         were already shown, #3025); its status still upgrades as usual, and a new fact is made as
         asked. `dm_chose_secret`: the DM's own
-        🤫 on the card (#4524), which may make an existing public one secret."""
+        🤫 on the card (#4524), which may make an existing public one secret. `hand_over` and
+        `hand_over_from` (#4170): a kept hand-over, how and from whom; `end_reason`: a tie kept
+        already ended (with `to_session_at`) because a kept hand-over took it away."""
         async with self._write(guild_id, campaign_id, source, dm_chose_secret=dm_chose_secret) as w:
             value = await self.add_relation_in(
                 w, subject_id, predicate, object_id, confidence=confidence, status=status,
@@ -8455,6 +8467,7 @@ class MemoryStore:
                 secret=secret, mention_ids=mention_ids, unrevealed=unrevealed,
                 directional=directional, decided=decided, keep_flags=keep_flags,
                 by_hand=by_hand, knows_how=knows_how, assumed=assumed, route_state=route_state,
+                hand_over=hand_over, hand_over_from=hand_over_from, end_reason=end_reason,
             )  # fmt: skip
             if known_by and w.source == DM and (value[0].secret or value[0].unrevealed):
                 # The characters who know it from the start (#2935): the same change as the
@@ -8501,6 +8514,9 @@ class MemoryStore:
         both_ways: bool | None = None,
         assumed: bool = False,
         route_state: str = "",
+        hand_over: str = "",
+        hand_over_from: str = "",
+        end_reason: str | None = None,
     ) -> tuple[Relation, list[Flag]]:
         """`add_relation` inside a write that is already open (#1301), with the same checks;
         the write's own source is the fact's source. The caller opened `w` for the right
@@ -8516,8 +8532,18 @@ class MemoryStore:
         `assumed` (#4173 slice 3): a place's parent DMbot assumed from where the story was, kept
         held back, never flagged and never written over a stated parent; a stated parent written
         here replaces the place's assumed one (see `_replace_assumed`). `route_state` (#4173 slice
-        6d): on a `route_to` only, known (""), travelled or planned (`route_words`)."""
+        6d): on a `route_to` only, known (""), travelled or planned (`route_words`).
+        `hand_over`, `hand_over_from` and `end_reason`: see `add_relation` (#4170); a twin already
+        there gains the hand-over when it has none, and a twin is never ended here."""
         source = made_by or w.source
+        if bool(hand_over) != bool(hand_over_from) or (hand_over and hand_over not in END_REASONS):
+            raise ValueError("A hand-over is a reason and who it came from.")
+        if hand_over_from and not is_id(hand_over_from):
+            raise ValueError("Bad hand-over ID")
+        if end_reason is not None and (to_session_at is None or end_reason not in END_REASONS):
+            raise ValueError("An end reason goes with an end.")
+        if (hand_over or end_reason is not None) and predicate not in hand_over_mod.HELD:
+            raise MemoryRuleError("Only owning or holding something ends with a reason.")
         _check_choice(route_state, route_words.STATES, "route state")
         _check_choice(knows_how, KNOWS_HOWS, "how they know each other")
         if unrevealed and source != DM:
@@ -8604,6 +8630,7 @@ class MemoryStore:
             # (between two people only: a character "knows" a place or a secret, never "met" it)
             knows_how=knows_how if pred.key == KNOWS and _people(types.values()) else "",
             both_ways=both_ways, assumed=assumed, route_state=route_state,
+            end_reason=end_reason, hand_over=hand_over, hand_over_from=hand_over_from,
         )  # fmt: skip
         existing = await _relations_touching(w, s, o)
         same = duplicate_of(
@@ -8629,6 +8656,9 @@ class MemoryStore:
             if live and new.knows_how == KNOWS_MET:
                 hidden = bool(upgrade.get("secret", same.secret)) or same.unrevealed
                 await _met_back(w, s, o, existing, hidden=hidden)
+            if hand_over and live and not same.hand_over and same.to_session_at is None:
+                # (a live twin kept by the sale's press now says how it came, #4170)
+                upgrade = {**upgrade, "hand_over": hand_over, "hand_over_from": hand_over_from}
             if same.assumed and not assumed and live and status == CONFIRMED:
                 # (stated and kept now: the guess was right; a mere proposal changes nothing)
                 upgrade = {**upgrade, "assumed": False}
@@ -9953,6 +9983,7 @@ class MemoryStore:
                 await _recheck_led_to_after_undo(w, batch)
                 await _settle_kinds_after_undo(w, batch)
                 await _reopen_claims_after_undo(w, batch)
+                await _reopen_after_hand_over_undo(w, batch)
                 if after is not None:
                     await after(w)
                 return Written(None, w.batch)
@@ -11986,6 +12017,36 @@ async def _settle_kinds_after_undo(w: Changes, batch: int) -> None:
         by_type.setdefault(str(row["type"]), []).append(str(row["id"]))
     for type_key, group in by_type.items():
         await states.settle_kind(w, onto, group, type_key)
+
+
+async def _reopen_after_hand_over_undo(w: Changes, batch: int) -> None:
+    """An Undo that takes back a kept hand-over (#4170; Supervisor's condition) opens again the
+    seller's ties kept AFTER it and stored already ended because of it: those ends were written in
+    their own keeps, so the batch alone would leave them ended. The ties it ended when it was kept
+    come back with the batch itself. Read from the hand-over as the batch wrote it: an insert, or a
+    twin that gained the hand-over. Each reopening is logged in this Undo, so a redo ends them
+    again."""
+    cur = await w.conn.execute(
+        "SELECT made_at, before, after FROM memory_changes WHERE guild_id = %s AND campaign_id = %s"
+        " AND batch = %s AND table_name = %s AND COALESCE(after->>'hand_over', '') <> ''"
+        " AND COALESCE(before->>'hand_over', '') = ''",
+        (*w.ids, batch, RELATIONS.name),
+    )
+    for change in await cur.fetchall():
+        sale = change["after"]
+        kinds = list(
+            hand_over_mod.HELD
+            if sale["hand_over"] in hand_over_mod.SALES
+            else [whereabouts.CARRIES]
+        )
+        for row in await w.select(
+            RELATIONS,
+            " AND subject_id = %s AND object_id = %s AND predicate = ANY(%s) AND end_reason = %s"
+            " AND to_session_at IS NOT NULL AND created_at >= %s AND status <> 'rejected'",
+            [sale["hand_over_from"], sale["object_id"], kinds, sale["hand_over"],
+             change["made_at"]],
+        ):  # fmt: skip
+            await w.update(RELATIONS, row["id"], {"to_session_at": None, "end_reason": None})
 
 
 async def _recheck_led_to_after_undo(w: Changes, batch: int) -> None:

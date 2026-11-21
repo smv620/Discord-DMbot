@@ -4630,15 +4630,25 @@ class ConnectionOffer(_Menu):
             held: list[str] = []
             try:
                 shown = await keep.shown_entry_ids(memory, campaign.guild_id, campaign.id)
-                await keep.end_replaced(
-                    memory, campaign.guild_id, campaign.id, old, start, ended, held=held, link=c,
-                    hidden=secret or c.secret or knowers is not None
+                hidden = (
+                    secret or c.secret or knowers is not None
                     or ((
                         view.unrevealed
                         if view.unrevealed is not None
                         else keep.kept_unrevealed(c, secret or c.secret, shown)
                     )
-                    and not view.reveal),
+                    and not view.reveal)
+                )  # fmt: skip
+                # (the same upload's sale kept first took the item already, #4170)
+                late_at, late_why, late_ask = keep.late_end(
+                    c,
+                    await memory.relations(campaign.guild_id, campaign.id, include_secret=True),
+                    hidden=hidden,
+                    start=start if old else None,
+                )
+                await keep.end_replaced(
+                    memory, campaign.guild_id, campaign.id, old, start, ended, held=held, link=c,
+                    hidden=hidden,
                     # (only the DM's own Players toggle on this card is their choice to hide, #4524:
                     # a secret name in the text or the card's default is DMbot's, and asks)
                     dm_chose_secret=self.choice is True or knowers is not None,
@@ -4663,6 +4673,8 @@ class ConnectionOffer(_Menu):
                     # (from the uploader's character's own backstory, never a 👥 pick, #4795)
                     backstory_of=c.known_by if knowers is None and c.known_by else None,
                     from_session_at=start if old else None,  # (starts as the old one ends)
+                    to_session_at=late_at if late_why else None, end_reason=late_why,
+                    hand_over=c.hand_over, hand_over_from=c.hand_over_from,
                     # a secret SPELLING in the text never hides what the players were shown (#3025);
                     # the DM's own 🤫 button is their word and does
                     keep_flags=not secret and not view.reveal and knowers is None,
@@ -4694,6 +4706,11 @@ class ConnectionOffer(_Menu):
                 memory, campaign.guild_id, campaign.id, held, by=made.id, start=start,
                 label=c.upload or "", batch=kept.batch,
             )  # fmt: skip
+            if late_ask is not None and late_at is not None:
+                await keep.ask_held(
+                    memory, campaign.guild_id, campaign.id, [made.id], by=late_ask.id,
+                    start=late_at, label=c.upload or "", batch=kept.batch,
+                )  # fmt: skip
             # Where it came from, for the DM's "Why?" (#2946, and #2959 item 5's "DMbot inferred
             # this"): only a connection made just now, and never a reason to lose it.
             if c.upload and made.created_at >= now:
