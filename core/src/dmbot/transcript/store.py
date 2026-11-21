@@ -22,6 +22,7 @@ from dmbot.db import Database, row_int
 from dmbot.memory import (
     evidence,
     forget_readings,
+    join_questions,
     met_store,
     private_scene_store,
     secret_questions,
@@ -145,6 +146,26 @@ class TranscriptStore:
             row = await cur.fetchone()
             assert row is not None
             return str(row["id"])
+
+    async def import_for_goodbyes(
+        self, guild_id: int, campaign_id: str, session_id: str, started_at: int
+    ) -> tuple[int | None, bool]:
+        """For a goodbye's question (#4537, ruling V): when this session was imported (None: it
+        was played live) and whether it is the campaign's newest session (none started after
+        it)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT imported_at FROM session_imports WHERE guild_id = %s AND session_id = %s",
+                (guild_id, session_id),
+            )
+            row = await cur.fetchone()
+            cur = await conn.execute(
+                "SELECT 1 FROM transcript_sessions WHERE guild_id = %s AND campaign_id = %s"
+                " AND started_at > %s LIMIT 1",
+                (guild_id, campaign_id, started_at),
+            )
+            newest = await cur.fetchone() is None
+        return (None if row is None else int(row["imported_at"])), newest
 
     async def is_import(self, guild_id: int, session_id: str) -> bool:
         """Was this session loaded from a file? Its lines carry the dates the DM chose, not the
@@ -1317,6 +1338,7 @@ class TranscriptStore:
             await rel_store.forget_session(conn, guild_id, session_id)
             await met_store.forget_session(conn, guild_id, session_id)  # (the DM's words, #3172)
             await trait_offers.forget_session(conn, guild_id, session_id)  # (heard there, #4745)
+            await join_questions.forget_session(conn, guild_id, session_id)  # (a goodbye, 0574)
             # (the private scenes found in its lines, #2996 rule 5: the DM's marks stay)
             await private_scene_store.forget_session(conn, guild_id, session_id)
             # (the story threads read from its lines that still wait, #4522)
@@ -1482,6 +1504,8 @@ async def _forget_memory_traces(
     await met_store.forget_speaker(conn, guild_id, user_id, campaign_id)
     # the language questions heard in their lines (#4745)
     await trait_offers.forget_speaker(conn, guild_id, user_id, campaign_id)
+    # the goodbye questions heard in their lines (#4537 slice 6b, 0574)
+    await join_questions.forget_speaker(conn, guild_id, user_id, campaign_id)
     # the private scenes they spoke in (#2996 rule 5)
     await private_scene_store.forget_speaker(conn, guild_id, user_id, campaign_id)
     # the 🤫 questions that quote them (#4524)

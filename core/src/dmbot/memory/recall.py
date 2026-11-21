@@ -346,28 +346,32 @@ class RecallService:
         ) and not any(e.get("players_text") for e in walk.entities.values()):
             return None
         # (an entry may be named when it is confirmed, named, not the DM's own kind, and the gate
-        # says this audience holds it; slice 5a: the gate, not the flags)
-        cur = await scope.conn.execute(
-            "SELECT e.id, e.name AS word, (e.status = 'confirmed' AND NOT e.unnamed"
-            " AND NOT e.type = ANY(%s)) AS may FROM memory_entities e WHERE e.guild_id = %s"
-            " AND e.campaign_id = %s AND e.type <> 'person'",
-            (list(DM_ONLY_TYPES), *scope.ids),
+        # says this audience holds it; slice 5a: the gate, not the flags). Decided in the query,
+        # so only the names that may not be told come back, never every row of the campaign: a
+        # big campaign's thousands of open names cost the players' recall its speed (#4911).
+        # (one round trip, and the gate's ids sent as one joined string: a list of thousands of
+        # ids costs more to send than the query costs to run)
+        opened = (
+            "e.status = 'confirmed' AND NOT e.unnamed AND NOT e.type = ANY(%(dm)s)"
+            " AND e.id = ANY(string_to_array(%(open)s, ','))"
         )
-        named = {str(r["id"]): (str(r["word"]), bool(r["may"])) for r in await cur.fetchall()}
-        open_ids = {i for i, (_, may) in named.items() if may and i in allowed}
-        forbidden = [word for i, (word, _) in named.items() if i not in open_ids]
         cur = await scope.conn.execute(
-            "SELECT a.entity_id, a.text, (a.secret OR a.status <> 'confirmed') AS closed"
-            " FROM memory_aliases a JOIN memory_entities e ON e.guild_id = a.guild_id"
+            "SELECT e.name AS word FROM memory_entities e WHERE e.guild_id = %(g)s"
+            f" AND e.campaign_id = %(c)s AND e.type <> 'person' AND NOT ({opened})"
+            " UNION ALL"
+            " SELECT a.text FROM memory_aliases a JOIN memory_entities e ON e.guild_id = a.guild_id"
             " AND e.campaign_id = a.campaign_id AND e.id = a.entity_id"
-            " WHERE a.guild_id = %s AND a.campaign_id = %s AND e.type <> 'person'",
-            scope.ids,
+            " WHERE a.guild_id = %(g)s AND a.campaign_id = %(c)s AND e.type <> 'person'"
+            f" AND (a.secret OR a.status <> 'confirmed' OR NOT ({opened}))",
+            {
+                "g": scope.guild_id,
+                "c": scope.campaign_id,
+                "dm": list(DM_ONLY_TYPES),
+                # (entry ids are 32 hex characters, CHECK in 0004: never a comma; order is moot)
+                "open": ",".join(allowed),
+            },
         )
-        forbidden += [
-            str(r["text"])
-            for r in await cur.fetchall()
-            if r["closed"] or str(r["entity_id"]) not in open_ids
-        ]
+        forbidden = [str(r["word"]) for r in await cur.fetchall()]
         shown = [str(e["name"]) for e in walk.entities.values()]
         return NameGuard(forbidden, allowed=shown)
 
