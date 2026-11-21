@@ -28,6 +28,7 @@ import {
   type WebOverview,
   type WebRevealTarget,
   type WebView,
+  type WebViewer,
 } from "./api";
 import { currentItem, pairFromItem } from "./itemLink";
 import WebMap from "./WebMap";
@@ -1100,7 +1101,7 @@ function SeeAsPicker({
   onBack: () => void;
 }) {
   const [q, setQ] = useState("");
-  const [list, setList] = useState<{ id: string; name: string }[]>([]);
+  const [list, setList] = useState<WebViewer[]>([]);
   const [total, setTotal] = useState(0);
   const [failed, setFailed] = useState(false);
   const latest = useRef(0);
@@ -1184,6 +1185,7 @@ function SeeAsPicker({
               onClick={() => onPick(v.id)}
             >
               {v.name}
+              {v.note && <span class="small muted"> ({v.note})</span>}
             </button>
           </li>
         ))}

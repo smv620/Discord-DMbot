@@ -74,6 +74,8 @@ import type {
   RuleSharing,
   HeardQuestions,
   RuleUpdate,
+  JoinChoices,
+  JoinChoose,
   PackUpdates,
   RuleSharingAnswer,
   RuleSharingChoice,
@@ -694,10 +696,11 @@ function startWeb(big: boolean, lonely = false): WebState {
 }
 
 /** The pretend names a DM may look at the web as (#2999): two player characters first, then NPCs. */
-const PRETEND_VIEWERS: { id: string; name: string; kind: "pc" | "npc" }[] = [
-  { id: "pc-cerric", name: "Cerric", kind: "pc" },
-  { id: "pc-mira", name: "Mira", kind: "pc" },
-  ...Array.from({ length: 28 }, (_, i) => ({ id: `npc-guard-${i + 1}`, name: `Guard ${i + 1}`, kind: "npc" as const })),
+const PRETEND_VIEWERS: { id: string; name: string; kind: "pc" | "npc"; group: "party" | "left" | "other"; note?: string }[] = [
+  { id: "pc-cerric", name: "Cerric", kind: "pc", group: "party" },
+  { id: "pc-mira", name: "Mira", kind: "pc", group: "party" },
+  { id: "npc-tavin", name: "Tavin", kind: "npc", group: "left", note: "Retired" },
+  ...Array.from({ length: 28 }, (_, i) => ({ id: `npc-guard-${i + 1}`, name: `Guard ${i + 1}`, kind: "npc" as const, group: "other" as const })),
 ];
 
 function webView(ref: string): "dm" | "manager" | "none" {
@@ -3656,6 +3659,33 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-allowed");
       return structuredClone(joinState[ref] ??= pretendJoinGroups());
+    },
+    async joinChoices(ref, group): Promise<JoinChoices> {
+      calls.push(`joinChoices:${ref}:${group}`);
+      await reachable();
+      signedIn();
+      return {
+        madeAt: 1_800_000_000,
+        choices: {
+          members: [{ id: "n1234567", name: "Mira" }],
+          sessions: [{ at: 1000, number: 3, counts: { n1234567: 14 } }],
+          threads: [{ id: "t1", name: "The Ashen Road", counts: { n1234567: 9 } }],
+          sessionsInAll: 2,
+          threadsInAll: 1,
+          nobody: false,
+        },
+      };
+    },
+    async askJoinChoices(ref, group): Promise<void> {
+      calls.push(`askJoinChoices:${ref}:${group}`);
+      await reachable();
+      signedIn();
+    },
+    async joinChoose(ref, group, pick): Promise<JoinChoose> {
+      calls.push(`joinChoose:${ref}:${group}:${JSON.stringify(pick)}`);
+      await reachable();
+      signedIn();
+      return { chose: [{ id: "n1234567", count: 14 }], choseMore: 0, first: true, batch: 9 };
     },
     async answerJoin(ref, change) {
       calls.push(`answerJoin:${ref}:${change.action}:${change.action === "undo" ? change.batch : change.group}`);
