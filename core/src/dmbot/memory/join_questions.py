@@ -24,11 +24,11 @@ change it rode on (`batch`) or answered with (`answered_batch`) is what Undo fol
 from __future__ import annotations
 
 import secrets
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 from typing import Any
 
-from dmbot.memory._changes import Changes
+from dmbot.memory._changes import Changes, Scope
 from dmbot.memory.models import MemoryRuleError, TooLateToUndo
 
 WAITING = "waiting"
@@ -38,6 +38,16 @@ FIRST = "first"
 CHOSEN = "chosen"  # ("Let me choose": the first pick answered it, #4537 slice 4c, 0558)
 JOIN = "join"  # (the question's kind: new to the party)
 BACK = "back"  # (or back in it after leaving, #4537 slice 4a)
+LEAVE = "leave"  # (a goodbye heard at the table: still in the party? #4537 slice 6, 0570)
+DIED = "died"  # (a player character marked dead: still in the party? slice 6a, 0570)
+LEFT = "left"  # ("Left the party": the stretch closed, with the card's own call)
+STAYS = "stays"  # ("Still in the party": nothing written, never asked again for it)
+# The two families: a join or coming back asks what the character knows, a goodbye or a death
+# whether they are still in the party. One question waits per character in each (0570), and the
+# join's own reads (the since-when prompt, "not yet caught up") count only the first family.
+KNOWS = (JOIN, BACK)
+STAYING = (LEAVE, DIED)
+_KNOWS_SQL = " AND kind IN ('join', 'back')"
 
 
 class AlreadyAnswered(MemoryRuleError):
@@ -54,7 +64,7 @@ class Question:
     group_id: str | None
     sent_at: int | None
     created_at: int
-    kind: str = "join"  # (JOIN, or BACK: a character who left and came back, 0555)
+    kind: str = "join"  # (JOIN; BACK, one who left and came back, 0555; LEAVE or DIED, 0570)
 
 
 _COLUMNS = "id, entity_id, status, group_id, sent_at, created_at, kind"
@@ -82,9 +92,10 @@ def _question(row: Any) -> Question:
 
 
 async def ask(w: Changes, entity_ids: Sequence[str], kind: str = "join") -> None:
-    """Ask about these characters, who joined (or, `kind` BACK, came back) in this change: one
-    question each, one message for all of one kind when sent. A character with a question already
-    waiting is not asked twice (the one waiting stands)."""
+    """Ask about these characters, who joined (or, `kind` BACK, came back; LEAVE, said goodbye;
+    DIED, were marked dead) in this change: one question each, one message for all of one kind
+    when sent. A character with a question of the same family already waiting is not asked twice
+    (the one waiting stands)."""
     if not entity_ids:
         return
     rows = [(secrets.token_hex(16), e) for e in dict.fromkeys(entity_ids)]
@@ -143,24 +154,124 @@ async def undo(w: Changes, batch: int) -> None:
         "UPDATE memory_join_questions SET status = CASE status WHEN 'party' THEN 'everyone'"
         " ELSE 'waiting' END, answered_batch = NULL"
         " WHERE guild_id = %s AND campaign_id = %s AND answered_batch = %s"
-        " AND status IN ('party', 'first', 'chosen')",
+        # ("Left the party" undone: the goodbye or death question waits again)
+        " AND status IN ('party', 'first', 'chosen', 'left')",
         (*w.ids, batch),
     )
 
 
-async def claim(conn: Any, guild_id: int, campaign_id: str, now: int) -> list[Question]:
+async def withdraw(w: Changes, entity_id: str, kind: str) -> None:
+    """A question of `kind` about this character that still waits goes (a death taken back by a
+    later condition: Revivify, Raise Dead). One already answered stays answered: its own Undo is
+    the way back (Supervisor's ruling S on #4537)."""
+    await w.conn.execute(
+        "DELETE FROM memory_join_questions WHERE guild_id = %s AND campaign_id = %s"
+        " AND entity_id = %s AND kind = %s AND status = 'waiting'",
+        (*w.ids, entity_id, kind),
+    )
+
+
+async def ask_heard(
+    scope: Scope, entity_id: str, speakers: Sequence[int], session_id: str, now: int
+) -> bool:
+    """A goodbye heard in a session (#4537 slice 6b): one `leave` question about this character,
+    carrying who said it (ids only) and the session (0574), so it goes with their "delete my
+    data" and with the session's transcript. A reader's question is no change to memory, so it
+    rides no change (nothing to Undo; the DM's answer is the change). Not asked when a goodbye
+    from this session was asked about this character before, whatever the answer ("Still in the
+    party" is never asked again for the same goodbye), nor while a goodbye or death question
+    about them waits (the one waiting stands). Returns whether one was asked."""
+    cur = await scope.conn.execute(
+        "SELECT 1 FROM memory_join_questions WHERE guild_id = %s AND campaign_id = %s"
+        " AND entity_id = %s AND kind = 'leave' AND session_id = %s LIMIT 1",
+        (*scope.ids, entity_id, session_id),
+    )
+    if await cur.fetchone() is not None:
+        return False
+    cur = await scope.conn.execute(
+        "INSERT INTO memory_join_questions (guild_id, campaign_id, id, entity_id, created_at, kind,"
+        " speaker_ids, session_id) VALUES (%s, %s, %s, %s, %s, 'leave', %s, %s)"
+        " ON CONFLICT DO NOTHING RETURNING id",
+        (*scope.ids, secrets.token_hex(16), entity_id, now, sorted(set(speakers)), session_id),
+    )
+    return await cur.fetchone() is not None
+
+
+async def forget_speaker(
+    conn: Any, guild_id: int, user_id: int, campaign_id: str | None = None
+) -> int:
+    """Someone's words are forgotten (Stop recording me, Delete my transcripts, a DM's removal of a
+    speaker; #4745's rule, 0574): a goodbye question heard in their lines that still waits goes.
+    An answered one is the DM's own answer and stays, without their id. `campaign_id`: only that
+    campaign's. In the caller's transaction. Returns how many questions went."""
+    cur = await conn.execute(
+        "DELETE FROM memory_join_questions WHERE guild_id = %s AND %s = ANY(speaker_ids)"
+        " AND status = 'waiting' AND (%s::text IS NULL OR campaign_id = %s)",
+        (guild_id, user_id, campaign_id, campaign_id),
+    )
+    gone = int(cur.rowcount or 0)
+    await conn.execute(
+        "UPDATE memory_join_questions SET speaker_ids = array_remove(speaker_ids, %s::bigint)"
+        " WHERE guild_id = %s AND %s = ANY(speaker_ids) AND (%s::text IS NULL OR campaign_id = %s)",
+        (user_id, guild_id, user_id, campaign_id, campaign_id),
+    )
+    return gone
+
+
+async def forget_session(conn: Any, guild_id: int, session_id: str) -> int:
+    """A session's transcript is deleted: a goodbye question heard in it that still waits goes,
+    and an answered one forgets which session it came from. In the caller's transaction. Returns
+    how many questions went."""
+    cur = await conn.execute(
+        "DELETE FROM memory_join_questions WHERE guild_id = %s AND session_id = %s"
+        " AND status = 'waiting'",
+        (guild_id, session_id),
+    )
+    gone = int(cur.rowcount or 0)
+    await conn.execute(
+        "UPDATE memory_join_questions SET session_id = NULL WHERE guild_id = %s"
+        " AND session_id = %s",
+        (guild_id, session_id),
+    )
+    return gone
+
+
+async def keep_recorded(
+    conn: Any, guild_id: int, campaign_id: str, recorded: Collection[int]
+) -> None:
+    """A campaign moved to another server (`guild_id` is the new one): a waiting goodbye question
+    heard from someone not recorded there goes, and an answered one keeps only the ids of those
+    who are, as the language questions do. In the caller's transaction."""
+    who = sorted(set(recorded))
+    await conn.execute(
+        "DELETE FROM memory_join_questions WHERE guild_id = %s AND campaign_id = %s"
+        " AND status = 'waiting' AND NOT (speaker_ids <@ %s::bigint[])",
+        (guild_id, campaign_id, who),
+    )
+    await conn.execute(
+        "UPDATE memory_join_questions SET speaker_ids = ARRAY(SELECT u FROM unnest(speaker_ids)"
+        " AS u WHERE u = ANY(%s::bigint[]) ORDER BY u) WHERE guild_id = %s AND campaign_id = %s"
+        " AND NOT (speaker_ids <@ %s::bigint[])",
+        (who, guild_id, campaign_id, who),
+    )
+
+
+async def claim(
+    conn: Any, guild_id: int, campaign_id: str, now: int, kinds: Sequence[str] = (JOIN, BACK)
+) -> list[Question]:
     """Take the questions not sent yet, to send them as one message: none while a session of the
-    campaign is running (never during play). One message holds one kind (a join or a coming
-    back, worded differently), the kind of the oldest one waiting; call again for the other. The
-    rows are marked in the statement that reads them, so two callers never send the same one."""
+    campaign is running (never during play). One message holds one kind (a join, a coming back,
+    a goodbye or a death, each worded differently), the kind of the oldest one waiting among
+    `kinds`; call again for the next. The rows are marked in the statement that reads them, so two
+    callers never send the same one."""
     unsent = (
         " WHERE q.guild_id = %s AND q.campaign_id = %s AND q.status = 'waiting'"
-        " AND q.sent_at IS NULL"
+        " AND q.sent_at IS NULL AND q.kind = ANY(%s)"
         + _IN_PARTY
         + " AND NOT EXISTS (SELECT 1 FROM transcript_sessions s WHERE s.guild_id = %s"
         "  AND s.campaign_id = %s AND s.ended_at IS NULL)"
     )
-    ids = (guild_id, campaign_id, guild_id, campaign_id)
+    ids = (guild_id, campaign_id, list(kinds), guild_id, campaign_id)
     cur = await conn.execute(
         "SELECT q.kind FROM memory_join_questions q" + unsent + " ORDER BY q.created_at, q.id"
         " LIMIT 1",
@@ -197,13 +308,18 @@ async def group(conn: Any, guild_id: int, campaign_id: str, group_id: str) -> li
     return [_question(r) for r in await cur.fetchall()]
 
 
-async def waiting_groups(conn: Any, guild_id: int, campaign_id: str) -> list[str]:
-    """The sent messages still waiting for an answer, oldest first (❓ Questions for you)."""
+async def waiting_groups(
+    conn: Any, guild_id: int, campaign_id: str, kinds: Sequence[str] = (JOIN, BACK)
+) -> list[str]:
+    """The sent messages of `kinds` still waiting for an answer, oldest first (❓ Questions for
+    you)."""
     cur = await conn.execute(
         "SELECT q.group_id, min(q.created_at) AS at FROM memory_join_questions q"
         " WHERE q.guild_id = %s AND q.campaign_id = %s AND q.status = 'waiting'"
-        " AND q.group_id IS NOT NULL" + _IN_PARTY + " GROUP BY q.group_id ORDER BY at, q.group_id",
-        (guild_id, campaign_id),
+        " AND q.group_id IS NOT NULL AND q.kind = ANY(%s)"
+        + _IN_PARTY
+        + " GROUP BY q.group_id ORDER BY at, q.group_id",
+        (guild_id, campaign_id, list(kinds)),
     )
     return [str(r["group_id"]) for r in await cur.fetchall()]
 
@@ -212,7 +328,7 @@ async def waiting_for(conn: Any, guild_id: int, campaign_id: str, entity_id: str
     """Whether this character has a join question waiting (the since-when prompt asks only then)."""
     cur = await conn.execute(
         "SELECT 1 FROM memory_join_questions WHERE guild_id = %s AND campaign_id = %s"
-        " AND entity_id = %s AND status = 'waiting' LIMIT 1",
+        " AND entity_id = %s AND status = 'waiting'" + _KNOWS_SQL + " LIMIT 1",
         (guild_id, campaign_id, entity_id),
     )
     return await cur.fetchone() is not None
@@ -223,18 +339,22 @@ async def waiting_entities(conn: Any, guild_id: int, campaign_id: str) -> set[st
     out of "what the party knows" (Supervisor's ruling on #4780)."""
     cur = await conn.execute(
         "SELECT DISTINCT entity_id FROM memory_join_questions WHERE guild_id = %s"
-        " AND campaign_id = %s AND status = 'waiting'",
+        " AND campaign_id = %s AND status = 'waiting'" + _KNOWS_SQL,
         (guild_id, campaign_id),
     )
     return {str(r["entity_id"]) for r in await cur.fetchall()}
 
 
-async def count_waiting(conn: Any, guild_id: int, campaign_id: str) -> tuple[int, int | None]:
-    """How many characters wait for the DM's answer, and since when (the board's count)."""
+async def count_waiting(
+    conn: Any, guild_id: int, campaign_id: str, kinds: Sequence[str] = (JOIN, BACK)
+) -> tuple[int, int | None]:
+    """How many questions of `kinds` wait for the DM's answer, and since when (the board's
+    count)."""
     cur = await conn.execute(
         "SELECT count(*) AS n, min(q.created_at) AS oldest FROM memory_join_questions q"
-        " WHERE q.guild_id = %s AND q.campaign_id = %s AND q.status = 'waiting'" + _IN_PARTY,
-        (guild_id, campaign_id),
+        " WHERE q.guild_id = %s AND q.campaign_id = %s AND q.status = 'waiting'"
+        " AND q.kind = ANY(%s)" + _IN_PARTY,
+        (guild_id, campaign_id, list(kinds)),
     )
     row = await cur.fetchone()
     if row is None:
@@ -245,21 +365,32 @@ async def count_waiting(conn: Any, guild_id: int, campaign_id: str) -> tuple[int
 __all__ = [
     "BACK",
     "CHOSEN",
+    "DIED",
     "EVERYONE",
     "FIRST",
     "JOIN",
+    "KNOWS",
+    "LEAVE",
+    "LEFT",
     "PARTY",
+    "STAYING",
+    "STAYS",
     "WAITING",
     "AlreadyAnswered",
     "Question",
     "ask",
+    "ask_heard",
     "claim",
     "count_waiting",
+    "forget_session",
+    "forget_speaker",
     "group",
+    "keep_recorded",
     "set_batch",
     "unclaim",
     "undo",
     "waiting_entities",
     "waiting_for",
     "waiting_groups",
+    "withdraw",
 ]

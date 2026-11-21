@@ -148,6 +148,11 @@ def parse_args(argv: Sequence[str] | None) -> argparse.Namespace:
         action="store_true",
         help="the old way: accept everything (#3544) instead of sure, then the AI's decisions",
     )
+    parser.add_argument(
+        "--party-key",
+        type=Path,
+        help="score the goodbye questions against this key (party_cases_key.json, #4537 6c)",
+    )
     parser.add_argument("--yes", action="store_true", help="spend the money")
     return parser.parse_args(argv)
 
@@ -520,6 +525,15 @@ async def run(
                 say(line)
         except Exception as exc:  # (a count that can't be read never fails the run)
             say(f"Counts: not read ({type(exc).__name__})")
+        # The party's questions and closed stretches (#4537 slice 6c), scored against the party
+        # key when one is given (`--party-key`): counts only.
+        try:
+            given = getattr(args, "party_key", None)
+            key = counts.load_party_key(given) if given else None
+            for line in await counts.read_party(db, gid, cid, key):
+                say(line)
+        except Exception as exc:
+            say(f"Party counts: not read ({type(exc).__name__})")
     finally:
         # The bot's own AI by step, read here so a run that stopped part way still counts what the
         # bot spent before it stopped (the db is open on every path only until the next line).

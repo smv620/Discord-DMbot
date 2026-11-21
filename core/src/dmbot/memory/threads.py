@@ -80,17 +80,22 @@ class ThreadInfo:
     led_to: tuple[Entity, ...] = ()  # ...and what it led to
 
 
+def play_key(state: str | None, quiet: int, name: str, thread_id: str) -> tuple[int, int, str, str]:
+    """How a list of threads is ordered: the ones happening now first, then the open ones, then the
+    hinted; within each the quietest first, then by name; anything else (finished, dropped, no
+    state) after them by name. The one order, for Discord's list and the website's panel."""
+    order = {GOING: 0, OPEN: 1, HINTED: 2}
+    rank = order.get(state or "", 3)
+    return (rank, -quiet if rank < 3 else 0, name.lower(), thread_id)
+
+
 def in_play_first(infos: Iterable[ThreadInfo]) -> list[ThreadInfo]:
     """Live threads for a list: the ones happening now first, then the open ones, then the
     hinted; within each the quietest first, then by name."""
-    order = {GOING: 0, OPEN: 1, HINTED: 2}
     return sorted(
         infos,
-        key=lambda t: (
-            order.get(t.state.condition if t.state else "", 3),
-            -t.quiet_sessions,
-            t.thread.name.lower(),
-            t.thread.id,
+        key=lambda t: play_key(
+            t.state.condition if t.state else None, t.quiet_sessions, t.thread.name, t.thread.id
         ),
     )
 
@@ -165,7 +170,8 @@ def names_line(label: str, names: Sequence[str]) -> str | None:
 
 
 def sessions_since(touch: int, sessions: Iterable[int]) -> int:
-    """How many known sessions started after `touch`."""
+    """How many known sessions started after `touch`. The bot and the website count it in SQL
+    (`dmbot_thread_quiet`, 0575, #3696); this is the reference its tests compare against."""
     return sum(1 for s in sessions if s > touch)
 
 
@@ -180,7 +186,8 @@ def last_touch(
     fact_saved: Iterable[int],
     heard_in: Iterable[int],
 ) -> int:
-    """The newest of everything that counts as touching a thread."""
+    """The newest of everything that counts as touching a thread: the reference
+    `dmbot_thread_quiet` (0575) is tested against."""
     times = [created_at, *heard_in, *fact_saved]
     times += [s.from_session_at if s.from_session_at is not None else s.created_at for s in states]
     times += [t for t in fact_times if t is not None]

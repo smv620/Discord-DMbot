@@ -72,6 +72,8 @@ export const questionsPage = {
     secrets: { label: "Known or secret?", how: "discord" },
     // Characters who joined the party (#4537 slice 2b): answered in Discord for now; the website half is #4778.
     party_joins: { label: "New in the party", how: "discord" },
+    // A goodbye or a death: still in the party? (#4537 slice 6): answered in Discord until the website's half.
+    party_leaves: { label: "Still in the party?", how: "discord" },
     // What the characters learned, waiting to be kept (#3863): answered in Discord until the website's card (step 2).
     reveals: { label: "Things the characters learned", how: "discord" },
     // A map a player kept, waiting for a DM's yes (#4344): asked in Discord until the Maps page (#4347).

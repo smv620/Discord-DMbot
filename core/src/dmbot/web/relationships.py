@@ -1282,6 +1282,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "progress-",
             "clue-",
             "join-",
+            "leave-",
             "party-",
             "rules-update-",
             "pack-update-",
@@ -1351,7 +1352,7 @@ async def read_answer(db: Database, session: Session, ref: str, answer: str) -> 
             "mergedKept": int(undone[1]) if undone else None,
             "back": int(back[1]) if back else None,
         }
-    if str(got["action"]).startswith(("join-", "party-")):
+    if str(got["action"]).startswith(("join-", "leave-", "party-")):
         # the DM's join answer (#4778): how it ended, how many things "What the party knows" gave
         # (Discord's "the N things the party knew"), and the change it made for the page's Undo
         made = got.get("resultBatches") or []
