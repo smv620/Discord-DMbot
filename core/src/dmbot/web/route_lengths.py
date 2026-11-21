@@ -25,13 +25,19 @@ ON = {"connection": "c", "place": "p"}
 
 
 def attach(page: dict[str, Any], rows: list[dict[str, Any]], full: bool) -> None:
-    """Adds `length` (`{words, read}`; `read` only for the DM's own view: DMbot read it and it is
-    not yet the DM's) to each connection and each name of a graph page that has one, in place."""
+    """Marks each route (`route: true`, the DM's own view: a route with no length yet is a route
+    all the same, so the page can offer 🛣️ Length) and adds `length` (`{words, read}`; `read` only
+    for the DM's own view: DMbot read it and it is not yet the DM's) to each connection and each
+    name of a graph page that has one, in place."""
     by_id = {(str(r["kind"]), str(r["id"])): r for r in rows}
 
     def one(kind: str, item: dict[str, Any]) -> None:
         row = by_id.get((kind, str(item["id"])))
         if row is None:
+            return
+        if full:
+            item["route"] = True
+        if row.get("words") is None:
             return
         length: dict[str, Any] = {"words": str(row["words"])}
         if full:

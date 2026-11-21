@@ -77,6 +77,15 @@ class TheDoor(Routes):
         theirs = await self.lengths(await self.bob_session(), full=False)
         self.assertNotIn("length", theirs["edges"][0]["links"][0])
 
+    async def test_the_dm_is_told_which_are_routes_even_with_no_length_yet(self) -> None:
+        mine = await self.lengths()
+        link = mine["edges"][0]["links"][0]
+        self.assertEqual((link["route"], "length" in link), (True, False))
+        self.assertTrue(mine["nodes"][0]["route"])  # (Icewind Pass is a route place)
+        self.assertNotIn("route", mine["nodes"][1])  # (Targos is not)
+        theirs = await self.lengths(await self.bob_session(), full=False)
+        self.assertNotIn("route", theirs["edges"][0]["links"][0])
+
     async def test_a_length_the_dm_set_shows_to_a_player_without_the_read_flag(self) -> None:
         await self.memory.set_route_length(
             self.g, self.one.id, self.pass_, "a day on foot", on="place", source="dm"

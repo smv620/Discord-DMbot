@@ -7,8 +7,10 @@ The website shows a route's stated length and lets the DM set it, take it off or
 from __future__ import annotations
 
 # `dmbot_web_route_lengths(g, c, ids)`: a member of the campaign's server gets, for each id asked
-# that is a kept `route_to` connection or a kept route place (`form = 'route'`) with a stated
-# length, `{id, kind: 'connection' | 'place', words, from}` (`from` is `read` or `dm`). **Players
+# that is a kept `route_to` connection or a kept route place (`form = 'route'`),
+# `{id, kind: 'connection' | 'place', words, from}` (`words` and `from` are null for a route with no
+# length yet, which the DM alone is told about so the page can offer 🛣️ Length; `from` is `read` or
+# `dm`). **Players
 # never see a length DMbot read** (`length_from = 'read'`): the door leaves those rows out for
 # anyone who is not a DM of the campaign, so they see one only once the DM set or kept it (the
 # design basis, §4). Only the words and who gave them: the amount and unit stay in the store. The
@@ -120,15 +122,13 @@ SQL = (
                 FROM memory_relations r
                 WHERE r.guild_id = g AND r.campaign_id = c AND r.id = ANY (ids)
                   AND r.predicate = 'route_to' AND r.status = 'confirmed'
-                  AND r.length_words IS NOT NULL
-                  AND (is_dm OR r.length_from = 'dm')
+                  AND (is_dm OR (r.length_words IS NOT NULL AND r.length_from = 'dm'))
                 UNION ALL
                 SELECT e.id, 'place', e.length_words, e.length_from
                 FROM memory_entities e
                 WHERE e.guild_id = g AND e.campaign_id = c AND e.id = ANY (ids)
                   AND e.form = 'route' AND e.status = 'confirmed' AND e.merged_into IS NULL
-                  AND e.length_words IS NOT NULL
-                  AND (is_dm OR e.length_from = 'dm')
+                  AND (is_dm OR (e.length_words IS NOT NULL AND e.length_from = 'dm'))
                 LIMIT 20000) t), '[]'::jsonb);
     END
     $fn$;
