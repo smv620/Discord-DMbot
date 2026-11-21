@@ -35,12 +35,12 @@ class TheLoops(unittest.IsolatedAsyncioTestCase):
             return None
 
         bot = SimpleNamespace(audio_worker=object(), _recap_audio_loop=loop)
-        got = worker.loops(bot, load_settings({**BASE, "DMBOT_WORKER": "1"}))
+        got = worker.loops(bot)
         self.assertEqual([name for name, _ in got], ["recap-audio"])
         for _, coro in got:
             coro.close()
         bot.audio_worker = None
-        self.assertEqual(worker.loops(bot, load_settings(BASE)), [])
+        self.assertEqual(worker.loops(bot), [])
 
     def stub(self, *, worker_on: bool) -> Any:
         seen: list[dict[str, bool]] = []

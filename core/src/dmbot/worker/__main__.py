@@ -8,8 +8,11 @@ so. Moved so far: the recap audio job (one at a time across processes by the dat
 of #2128). What a job wants said in Discord is written to the outbox (part 2) or left in the job's
 state for the bot's own notices; the worker never posts.
 
-It touches a file every `BEAT_S` so the container's healthcheck can tell a stuck loop from a quiet
-one. Counts and stage words only in the log.
+It touches a file every `BEAT_S` from a task of its own, so the container's healthcheck can tell
+a dead process or event loop from a live one. It cannot tell a hung job (a paid audio render may
+rightly take twenty minutes); the job's own deadline and the lease's expiry handle that. A loop
+that ends by itself is a fault: the worker exits 1 and the container restarts. Counts and stage
+words only in the log.
 """
 
 from __future__ import annotations
@@ -55,7 +58,7 @@ async def _wait_for_stop() -> asyncio.Event:
     return stop
 
 
-def loops(bot: Any, settings: Settings) -> list[tuple[str, Coroutine[Any, Any, None]]]:
+def loops(bot: Any) -> list[tuple[str, Coroutine[Any, Any, None]]]:
     """The loops the worker runs: each only where its worker exists on the bot. The bot starts the
     same ones (with `job` off) only when `DMBOT_WORKER` is off, so the two never both run a job."""
     out: list[tuple[str, Coroutine[Any, Any, None]]] = []
@@ -82,17 +85,17 @@ async def run(settings: Settings) -> int:
     entitlements.configure_free_guilds(settings.free_guilds)
     dm_links.configure_site(settings.site_url)
     alerts.install(alerts.Alerter(settings.mail))
+    stop = await _wait_for_stop()  # (first: a stop during start-up still closes the database)
     db = await Database.open(settings.database_url, max_size=settings.database_pool_max)
     tasks: list[asyncio.Task[None]] = []
     try:
         bot = await build_bot(settings, db, headless=True)
         bot.headless = True
         tasks = [asyncio.create_task(_beat(HEARTBEAT), name="beat")]
-        tasks += [asyncio.create_task(c, name=n) for n, c in loops(bot, settings)]
+        tasks += [asyncio.create_task(c, name=n) for n, c in loops(bot)]
         log.info(
             "The worker is running: %s", ", ".join(t.get_name() for t in tasks[1:]) or "nothing"
         )
-        stop = await _wait_for_stop()
         stopper = asyncio.create_task(stop.wait())
         await asyncio.wait([stopper, *tasks], return_when=asyncio.FIRST_COMPLETED)
         stopper.cancel()

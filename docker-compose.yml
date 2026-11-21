@@ -77,6 +77,7 @@ services:
     env_file: .env
     environment:
       DISCORD_TOKEN: ""
+      DMBOT_WORKER_BEAT: /tmp/dmbot-worker-alive   # the file its loop touches; the healthcheck reads it
       LOG_FORMAT: ${LOG_FORMAT:-json}
       DATABASE_URL: postgresql://dmbot:${DMBOT_DB_PASSWORD}@postgres:5432/dmbot
       POSTGRES_ADMIN_PASSWORD: ""
@@ -90,14 +91,14 @@ services:
       postgres:
         condition: service_healthy
       core:
-        condition: service_started
+        condition: service_started   # (the bot's start runs the database migrations)
     volumes:
-      - recap-audio:/data/recap-audio   # the narration and music it makes
+      - recap-audio:/data/recap-audio   # the narration and music it makes (the same files the bot read)
     mem_limit: 1g
     cpus: 1.0
     healthcheck:
       # The loop touches a file every 20 s; a stuck process stops touching it.
-      test: ["CMD-SHELL", "python -c \"import os, time; assert time.time() - os.path.getmtime('/tmp/dmbot-worker-alive') < 90\""]
+      test: ["CMD-SHELL", "python -c \"import os, time; assert time.time() - os.path.getmtime(os.environ['DMBOT_WORKER_BEAT']) < 90\""]
       interval: 30s
       timeout: 5s
       retries: 3
