@@ -62,18 +62,18 @@ class TheLoops(unittest.IsolatedAsyncioTestCase):
             def __getattr__(self, name: str) -> None:
                 return None
 
-        bot = Bot()
-        bot.seen = seen  # type: ignore[attr-defined]
-        bot.settings = load_settings({**BASE, "DMBOT_WORKER": "1" if worker_on else "0"})  # type: ignore[attr-defined]
-        bot.audio_worker = object()  # type: ignore[attr-defined]
-        bot._recap_audio_loop = audio_loop  # type: ignore[attr-defined]
-        bot._watched = watched  # type: ignore[attr-defined]
+        bot: Any = Bot()
+        bot.seen = seen
+        bot.settings = load_settings({**BASE, "DMBOT_WORKER": "1" if worker_on else "0"})
+        bot.audio_worker = object()
+        bot._recap_audio_loop = audio_loop
+        bot._watched = watched
         return bot
 
     async def test_the_bot_runs_the_audio_job_only_with_the_worker_off(self) -> None:
         for on in (False, True):
             stub = self.stub(worker_on=on)
-            tasks = RecapFeatures.recap_tasks(stub)
+            tasks = F.recap_tasks(stub)
             named = {t[0]: t[1] for t in tasks if isinstance(t, tuple)}
             await named["recap-audio"]
             self.assertEqual(stub.seen, [{"job": not on}])
@@ -89,9 +89,9 @@ class TheServers(unittest.IsolatedAsyncioTestCase):
             campaigns=SimpleNamespace(guilds_with_campaigns=listed),
             guilds=[SimpleNamespace(id=9)],
         )
-        self.assertEqual(await RecapFeatures.work_guild_ids(stub), [3, 5])
+        self.assertEqual(await F.work_guild_ids(stub), [3, 5])
         stub.headless = False
-        self.assertEqual(await RecapFeatures.work_guild_ids(stub), [9])
+        self.assertEqual(await F.work_guild_ids(stub), [9])
 
 
 class TheAudioLoop(unittest.IsolatedAsyncioTestCase):
@@ -121,7 +121,7 @@ class TheAudioLoop(unittest.IsolatedAsyncioTestCase):
             patch("dmbot.recaps.discord.asyncio.sleep", sleep),
             self.assertRaises(asyncio.CancelledError),
         ):
-            await RecapFeatures._recap_audio_loop(stub, job=job, notices=notices)
+            await F._recap_audio_loop(stub, job=job, notices=notices)
         return calls
 
     async def test_job_and_notices_are_separate_halves_of_one_loop(self) -> None:
@@ -130,6 +130,7 @@ class TheAudioLoop(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(await self.one_round(True, True), ["job", "refresh", "notices"])
 
 
+F: Any = RecapFeatures  # (stand-in bots stand in for the class: untyped on purpose)
 CID = "0123456789abcdef0123456789abcdef"  # (a campaign id: 32 hex, as a button needs)
 
 
@@ -159,7 +160,7 @@ def recap_bot(*, worker_on: bool, email: bool = False) -> Any:
     class Bot(Silent):
         pass
 
-    bot = Bot()
+    bot: Any = Bot()
 
     async def post(channel: int, text: str, view: Any = None, **kw: Any) -> bool:
         posts.append(text)
@@ -170,17 +171,17 @@ def recap_bot(*, worker_on: bool, email: bool = False) -> Any:
             recaps_email=email, dm_bot_channel_id=7, dm_accounts=(), guild_id=gid, id=cid
         )
 
-    bot.posts = posts  # type: ignore[attr-defined]
-    bot.rows = Rows()  # type: ignore[attr-defined]
-    bot.outbox = bot.rows  # type: ignore[attr-defined]
-    bot.post = post  # type: ignore[attr-defined]
-    bot.campaigns = SimpleNamespace(get=get_campaign)  # type: ignore[attr-defined]
-    bot._upkeep_channel = lambda c: (9, False)  # type: ignore[attr-defined]
-    bot.settings = SimpleNamespace(worker_on=worker_on, site_url="")  # type: ignore[attr-defined]
-    bot._queued = lambda *a: RecapFeatures._queued(bot, *a)  # type: ignore[attr-defined]
-    bot._say_failed = lambda *a: RecapFeatures._say_failed(bot, *a)  # type: ignore[attr-defined]
-    bot._post_recap_ready = lambda *a: RecapFeatures._post_recap_ready(bot, *a)  # type: ignore[attr-defined]
-    bot._say_unchecked = lambda *a: RecapFeatures._say_unchecked(bot, *a)  # type: ignore[attr-defined]
+    bot.posts = posts
+    bot.rows = Rows()
+    bot.outbox = bot.rows
+    bot.post = post
+    bot.campaigns = SimpleNamespace(get=get_campaign)
+    bot._upkeep_channel = lambda c: (9, False)
+    bot.settings = SimpleNamespace(worker_on=worker_on, site_url="")
+    bot._queued = lambda *a: F._queued(bot, *a)
+    bot._say_failed = lambda *a: F._say_failed(bot, *a)
+    bot._post_recap_ready = lambda *a: F._post_recap_ready(bot, *a)
+    bot._say_unchecked = lambda *a: F._say_unchecked(bot, *a)
     return bot
 
 
@@ -194,37 +195,35 @@ class TheRecapTextJob(unittest.IsolatedAsyncioTestCase):
 
     async def test_a_failed_recap_is_a_row_with_the_worker_on_and_a_post_with_it_off(self) -> None:
         on = recap_bot(worker_on=True)
-        await RecapFeatures.recap_told(on, 1, CID, self.JOB)
+        await F.recap_told(on, 1, CID, self.JOB)
         self.assertEqual(on.posts, [])
         self.assertEqual(
             on.rows.rows, [(1, CID, "recap_failed", {"session_at": 100, "keeps": True})]
         )
         off = recap_bot(worker_on=False)
-        await RecapFeatures.recap_told(off, 1, CID, self.JOB)
+        await F.recap_told(off, 1, CID, self.JOB)
         self.assertEqual(off.rows.rows, [])
         self.assertEqual(len(off.posts), 1)
         self.assertIn("couldn't write", off.posts[0])
 
     async def test_the_handler_says_the_same_words_the_bot_said_itself(self) -> None:
         said = recap_bot(worker_on=False)
-        await RecapFeatures.recap_told(said, 1, CID, self.JOB)
+        await F.recap_told(said, 1, CID, self.JOB)
         handled = recap_bot(worker_on=True)
-        handled._say_failed = lambda *a: RecapFeatures._say_failed(handled, *a)  # type: ignore[attr-defined]
-        await RecapFeatures.deliver_recap_failed(
-            handled, 1, CID, {"session_at": 100, "keeps": True}
-        )
+        handled._say_failed = lambda *a: F._say_failed(handled, *a)
+        await F.deliver_recap_failed(handled, 1, CID, {"session_at": 100, "keeps": True})
         self.assertEqual(handled.posts, said.posts)
 
     async def test_a_ready_recap_is_a_row_with_the_worker_on(self) -> None:
         bot = recap_bot(worker_on=True)
         ready = SimpleNamespace(**{**vars(self.JOB), "state": "ready"})
-        await RecapFeatures.recap_told(bot, 1, CID, ready)
+        await F.recap_told(bot, 1, CID, ready)
         self.assertEqual(bot.rows.rows, [(1, CID, "recap_ready", {"session_at": 100})])
         self.assertEqual(bot.posts, [])
 
     async def test_a_dm_who_wants_email_gets_no_failed_line_either_way(self) -> None:
         bot = recap_bot(worker_on=True, email=True)
-        await RecapFeatures.recap_told(bot, 1, CID, self.JOB)
+        await F.recap_told(bot, 1, CID, self.JOB)
         self.assertEqual((bot.rows.rows, bot.posts), ([], []))
 
     async def test_the_allowance_row_holds_only_a_flag_and_the_bot_reads_the_refusal_itself(
@@ -235,9 +234,9 @@ class TheRecapTextJob(unittest.IsolatedAsyncioTestCase):
         async def refusal(gid: int, cid: str, *, audio: bool) -> str:
             return "No recaps left this month."
 
-        bot._recap_refusal = refusal  # type: ignore[attr-defined]
+        bot._recap_refusal = refusal
         self.assertEqual(
-            await RecapFeatures._recap_allowance(bot, 1, CID, audio=False),
+            await F._recap_allowance(bot, 1, CID, audio=False),
             "No recaps left this month.",
         )
         self.assertEqual(bot.rows.rows, [(1, CID, "recap_allowance", {"audio": False})])
@@ -257,20 +256,20 @@ class TheRecapTextJob(unittest.IsolatedAsyncioTestCase):
             return [4, 6]
 
         def bot(on: bool) -> Any:
-            b = Silent()
-            b.settings = SimpleNamespace(recaps_on=True, worker_on=on)  # type: ignore[attr-defined]
-            b.recaps = SimpleNamespace(due=due)  # type: ignore[attr-defined]
-            b.recap_worker = Worker()  # type: ignore[attr-defined]
-            b.work_guild_ids = servers  # type: ignore[attr-defined]
-            b.guilds = []  # type: ignore[attr-defined]
-            b.run_recap_jobs = lambda: RecapFeatures.run_recap_jobs(b)  # type: ignore[attr-defined]
-            b.release_recap_holds = lambda gid: _none()  # type: ignore[attr-defined]
-            b.post_recaps = lambda gid: _none()  # type: ignore[attr-defined]
+            b: Any = Silent()
+            b.settings = SimpleNamespace(recaps_on=True, worker_on=on)
+            b.recaps = SimpleNamespace(due=due)
+            b.recap_worker = Worker()
+            b.work_guild_ids = servers
+            b.guilds = []
+            b.run_recap_jobs = lambda: F.run_recap_jobs(b)
+            b.release_recap_holds = lambda gid: _none()
+            b.post_recaps = lambda gid: _none()
             return b
 
-        await RecapFeatures.run_recaps(bot(True))  # the bot's round: holds and Post only
+        await F.run_recaps(bot(True))  # the bot's round: holds and Post only
         self.assertEqual(ran, [])
-        await RecapFeatures.run_recap_jobs(bot(True))  # the worker's
+        await F.run_recap_jobs(bot(True))  # the worker's
         self.assertEqual(ran, [4, 6])
 
 
@@ -295,25 +294,25 @@ class TheOtherRecapLines(unittest.IsolatedAsyncioTestCase):
         async def get_job(*_a: Any) -> Any:
             return SimpleNamespace(dm_user_id=5)
 
-        bot.notes = notes  # type: ignore[attr-defined]
-        bot.post = post  # type: ignore[attr-defined]
-        bot._private_names_note = note  # type: ignore[attr-defined]
-        bot.recaps = SimpleNamespace(get=get_job)  # type: ignore[attr-defined]
-        bot._upkeep_channel = lambda c: (9, counts_only)  # type: ignore[attr-defined]
-        bot._say_names = lambda *a: RecapFeatures._say_names(bot, *a)  # type: ignore[attr-defined]
-        bot._say_allowance = lambda *a: RecapFeatures._say_allowance(bot, *a)  # type: ignore[attr-defined]
-        bot._say_unchecked = lambda *a: RecapFeatures._say_unchecked(bot, *a)  # type: ignore[attr-defined]
+        bot.notes = notes
+        bot.post = post
+        bot._private_names_note = note
+        bot.recaps = SimpleNamespace(get=get_job)
+        bot._upkeep_channel = lambda c: (9, counts_only)
+        bot._say_names = lambda *a: F._say_names(bot, *a)
+        bot._say_allowance = lambda *a: F._say_allowance(bot, *a)
+        bot._say_unchecked = lambda *a: F._say_unchecked(bot, *a)
         return bot
 
     async def test_names_say_the_rows_count_and_the_private_note_follows_the_post(self) -> None:
         bot = self.bot()
-        await RecapFeatures.deliver_recap_names(bot, 1, CID, {"session_at": 100, "added": 3})
+        await F.deliver_recap_names(bot, 1, CID, {"session_at": 100, "added": 3})
         self.assertEqual((len(bot.posts), bot.notes), (1, [3]))
 
     async def test_a_refused_names_post_raises_and_sends_no_private_note(self) -> None:
         bot = self.bot(posts=False)
         with self.assertRaises(RuntimeError):
-            await RecapFeatures.deliver_recap_names(bot, 1, CID, {"session_at": 100, "added": 3})
+            await F.deliver_recap_names(bot, 1, CID, {"session_at": 100, "added": 3})
         self.assertEqual(bot.notes, [])  # (a retry cannot repeat it)
 
     async def test_names_for_a_recap_that_is_gone_say_nothing(self) -> None:
@@ -323,7 +322,7 @@ class TheOtherRecapLines(unittest.IsolatedAsyncioTestCase):
             return None
 
         bot.recaps = SimpleNamespace(get=gone)
-        await RecapFeatures.deliver_recap_names(bot, 1, CID, {"session_at": 100, "added": 3})
+        await F.deliver_recap_names(bot, 1, CID, {"session_at": 100, "added": 3})
         self.assertEqual((bot.posts, bot.notes), ([], []))
 
     async def test_the_audio_allowance_row_is_read_back_as_the_audio_refusal(self) -> None:
@@ -334,10 +333,10 @@ class TheOtherRecapLines(unittest.IsolatedAsyncioTestCase):
             asked.append(audio)
             return "No narrations left." if audio else None
 
-        bot._recap_refusal = refusal  # type: ignore[attr-defined]
-        await RecapFeatures._recap_allowance(bot, 1, CID, audio=True)
+        bot._recap_refusal = refusal
+        await F._recap_allowance(bot, 1, CID, audio=True)
         self.assertEqual(bot.rows.rows[-1][2:], ("recap_allowance", {"audio": True}))
-        await RecapFeatures.deliver_recap_allowance(bot, 1, CID, {"audio": True})
+        await F.deliver_recap_allowance(bot, 1, CID, {"audio": True})
         self.assertEqual(asked[-1], True)
         self.assertEqual(bot.posts, ["📜 Recap: No narrations left."])
 
@@ -347,8 +346,8 @@ class TheOtherRecapLines(unittest.IsolatedAsyncioTestCase):
         async def refusal(gid: int, cid: str, *, audio: bool) -> None:
             return None
 
-        bot._recap_refusal = refusal  # type: ignore[attr-defined]
-        await RecapFeatures.deliver_recap_allowance(bot, 1, CID, {"audio": False})
+        bot._recap_refusal = refusal
+        await F.deliver_recap_allowance(bot, 1, CID, {"audio": False})
         self.assertEqual(bot.posts, [])
 
     async def test_the_dm_bot_channel_gets_the_fixed_allowance_line(self) -> None:
@@ -357,20 +356,18 @@ class TheOtherRecapLines(unittest.IsolatedAsyncioTestCase):
         async def refusal(gid: int, cid: str, *, audio: bool) -> str:
             return "You have used 2 of 2 on the Hobby plan."
 
-        bot._recap_refusal = refusal  # type: ignore[attr-defined]
-        await RecapFeatures.deliver_recap_allowance(bot, 1, CID, {"audio": False})
+        bot._recap_refusal = refusal
+        await F.deliver_recap_allowance(bot, 1, CID, {"audio": False})
         self.assertEqual(len(bot.posts), 1)
         self.assertNotIn("Hobby", bot.posts[0])
 
     async def test_unchecked_is_a_row_with_the_worker_on_and_said_from_it(self) -> None:
         bot = self.bot()
         job = SimpleNamespace(session_at=100, keeps_previous=False)
-        await RecapFeatures.recap_unchecked(bot, 1, CID, job)
+        await F.recap_unchecked(bot, 1, CID, job)
         self.assertEqual(
             bot.rows.rows, [(1, CID, "recap_unchecked", {"session_at": 100, "keeps": False})]
         )
         self.assertEqual(bot.posts, [])
-        await RecapFeatures.deliver_recap_unchecked(
-            bot, 1, CID, {"session_at": 100, "keeps": False}
-        )
+        await F.deliver_recap_unchecked(bot, 1, CID, {"session_at": 100, "keeps": False})
         self.assertEqual(len(bot.posts), 1)
