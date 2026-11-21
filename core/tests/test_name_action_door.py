@@ -71,6 +71,7 @@ EVERY_ACTION = (
     "thread-state",  # a plot thread's state from the Plot threads panel (#3696 slice 2a)
     "thread-check",
     "thread-involve",  # "Add who's involved" (#3696 slice 2b)
+    "world-bias",  # ✏️ Change on a feeling DMbot read (#4932)
     "thread-new", "thread-due", "thread-party",  # a new thread or promise, due note, parties (2c)
 )  # fmt: skip
 

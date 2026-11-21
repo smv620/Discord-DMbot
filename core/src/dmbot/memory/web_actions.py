@@ -159,7 +159,7 @@ MATCH_ACTIONS = ("match-confirm", "match-undo")
 MAP_ACTIONS = ("map-terrain", "map-climate", "map-control", "map-show")
 # World notes (#4285, slice 1c): ✅ on the lines the page showed (their ids, space-separated), 🚫 on
 # one line, or ↩ Undo of one of those (the text is its change number). Filed under no name.
-WORLD_ACTIONS = ("world-keep", "world-not", "world-undo")
+WORLD_ACTIONS = ("world-keep", "world-not", "world-undo", "world-bias")
 THREAD_STATE_ACTIONS = ("thread-state", "thread-check")  # a thread's state (#3696 slice 2a)
 THREAD_INVOLVE_ACTION = "thread-involve"  # who is involved in a thread (#3696 slice 2b)
 THREAD_NEW_ACTIONS = ("thread-new", "thread-due", "thread-party")  # (#3696 slice 2c)
@@ -474,12 +474,12 @@ class ActionStore:
     async def world_batch_made(
         self, guild_id: int, campaign_id: str, user_id: int, batch: int
     ) -> bool:
-        """Whether `batch` is the change this DM's own done World notes ✅ or 🚫 made from the
+        """Whether `batch` is the change this DM's own done World notes ✅, 🚫 or ✏️ made from the
         website (#4285), so the page's Undo can only take back what they did themselves."""
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(
                 "SELECT 1 FROM name_actions WHERE guild_id = %s AND campaign_id = %s"
-                " AND user_id = %s AND action IN ('world-keep', 'world-not')"
+                " AND user_id = %s AND action IN ('world-keep', 'world-not', 'world-bias')"
                 " AND state = 'done' AND %s = ANY (result_batches) LIMIT 1",
                 (guild_id, campaign_id, user_id, batch),
             )
@@ -1217,6 +1217,12 @@ async def _world(
                 counts=f"kept:{written.value}",
                 batches=(written.batch,) if written.batch is not None else (),
             )
+        if a.action == "world-bias":
+            # ✏️ Change on a feeling: `bias:<row id> <step>`, kept at that step as the DM's own
+            line, _, step = a.text.partition(" ")
+            row_id = line.removeprefix("bias:")
+            changed = await memory.change_read_bias(guild_id, cid, row_id, step, source=DM)
+            return Outcome(batches=(changed.batch,) if changed.batch is not None else ())
         done = await memory.turn_down_world_note(guild_id, cid, a.text, source=DM)
     except MemoryRuleError:
         return _failed(GONE)

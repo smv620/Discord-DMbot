@@ -2820,6 +2820,20 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.post("/me/campaigns/{ref}/world-notes/bias", status_code=202)
+    async def me_campaign_world_bias(ref: str, request: Request, signed: Signed) -> dict[str, str]:
+        """✏️ Change on a feeling DMbot read (#4932): `{"id": "bias:…", "step": …}`."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await world_notes.queue_bias(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.post("/me/campaigns/{ref}/world-notes/{batch}/undo", status_code=202)
     async def me_campaign_world_undo(ref: str, batch: str, signed: Signed) -> dict[str, str]:
         """↩ Undo of a ✅ or 🚫 by the change number its answer carried."""
