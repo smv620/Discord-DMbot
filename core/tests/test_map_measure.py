@@ -327,6 +327,12 @@ class WhoSeesWhat(
         await super().asyncSetUp()
         self.bryn = await self.place("Bryn Shander")
         await self.record()  # (Targos and Bryn Shander pinned, a scale bar read)
+        # (the players' answer is the table's: with no player character it is common knowledge
+        # only, failing closed, Supervisor's ruling M on #4537; a party of one stands for it)
+        await self.memory.add_entity(
+            GUILD_A, self.one.id, name="Pcwyn Testhand", type="character",
+            role="player_character", played_by=4243, status="confirmed", source="dm",
+        )  # fmt: skip
 
     async def ask(self, question: str, *, dm: bool) -> Any:  # (words, NOT_SHOWN or None)
         asked = measure_phrase.read(question)
@@ -431,20 +437,28 @@ class WhoSeesWhat(
         )
 
 
-class NoPartyYet(unittest.TestCase):  # (`gate.public_entries`: the names every player may read)
-    def test_hidden_limited_unnamed_and_secret_names_stay_out(self) -> None:
-        from dmbot.memory import gate
-        from dmbot.memory.models import lookup_key
+class NoPartyYet(PinsBase):  # (no player character: the table's answer is common knowledge only)
+    async def asyncSetUp(self) -> None:
+        await super().asyncSetUp()
+        self.bryn = await self.place("Bryn Shander")
+        await self.record()
 
-        def row(i: str, name: str, **flags: bool) -> dict[str, Any]:
-            base = {"hidden_from_players": False, "audience_limited": False, "unnamed": False}
-            base.update(flags)
-            return {"id": i, "name": name, "status": "confirmed", "merged_into": None, **base}
+    async def test_a_player_is_not_answered_from_what_only_the_flags_show(self) -> None:
+        # (Supervisor's ruling M on #4537: never "everything shown" with nobody to ask, 5c)
+        await self.maps.set_audience(GUILD_A, self.one.id, self.map_id, "table")
+        asked = measure_phrase.read("how far is Targos from Bryn Shander?")
+        assert asked is not None
+        said = await self.maps.measure(GUILD_A, self.one.id, asked, dm=False)
+        self.assertIs(said, words.NOT_SHOWN)  # (both kept places, neither known: to the DM)
 
-        rows = [
-            row("a", "Targos"), row("b", "Bryn Shander", hidden_from_players=True),
-            row("c", "Easthaven", audience_limited=True), row("d", "a tall stranger", unnamed=True),
-            row("e", "The Sunken Tower"),
-        ]  # fmt: skip
-        secret = [{"entity_id": "e", "key": lookup_key("The Sunken Tower"), "secret": True}]
-        self.assertEqual(gate.public_entries(rows, secret), frozenset({"a"}))
+    async def test_what_everyone_knows_is_answered(self) -> None:
+        # (fails closed to common knowledge, not to nothing)
+        await self.maps.set_audience(GUILD_A, self.one.id, self.map_id, "table")
+        await self.memory.add_common_knowledge(
+            GUILD_A, self.one.id, "entry", [self.targos, self.bryn], source="dm"
+        )
+        asked = measure_phrase.read("how far is Targos from Bryn Shander?")
+        assert asked is not None
+        said = await self.maps.measure(GUILD_A, self.one.id, asked, dm=False)
+        assert isinstance(said, str)
+        self.assertTrue(said.startswith("About "), said)

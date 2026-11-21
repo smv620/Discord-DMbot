@@ -423,6 +423,15 @@ class MemorySection:
             # connections, as the migration did (a belief the file has is left as it is)
             await beliefs.backfill(conn, guild_id, campaign_id)
         except (pg_errors.IntegrityError, pg_errors.DataError) as exc:
+            # The file passed its checks and the database still refused a row: say which table and
+            # rule (names only, never a value: #4858, where "damaged" hid it)
+            where = getattr(exc, "diag", None)
+            log.warning(
+                "Backup memory restore: the database refused a row (%s, table %s, rule %s)",
+                type(exc).__name__,
+                getattr(where, "table_name", None),
+                getattr(where, "constraint_name", None),
+            )
             raise CampaignError(DAMAGED) from exc
         await bump_version(conn, guild_id, campaign_id)
 
