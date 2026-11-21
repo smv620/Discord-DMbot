@@ -41,6 +41,7 @@ from dmbot.memory.models import (
     CLAIM_PROPOSED,
     CLAIM_REJECTED,
     CONFIRMED,
+    DEED,
     DM,
     KNOWS_HOWS,
     LIVE,
@@ -160,6 +161,7 @@ MAP_ACTIONS = ("map-terrain", "map-climate", "map-control", "map-show")
 # one line, or ↩ Undo of one of those (the text is its change number). Filed under no name.
 WORLD_ACTIONS = ("world-keep", "world-not", "world-undo")
 THREAD_STATE_ACTIONS = ("thread-state", "thread-check")  # a thread's state (#3696 slice 2a)
+THREAD_INVOLVE_ACTION = "thread-involve"  # who is involved in a thread (#3696 slice 2b)
 LEAVE_ACTIONS = ("leave-yes", "leave-no")  # "Still in the party?" (#4895, party knowledge slice 6a)
 JOIN_ACTIONS = (  # the DM's join question (#4778) and "Let me choose" (#4799)
     "join-everyone", "join-party", "join-undo", "join-choices", "join-choose",
@@ -805,6 +807,8 @@ async def apply(
         return await _leave(memory, guild_id, cid, action)
     if action.action in THREAD_STATE_ACTIONS:
         return await _thread_state(memory, guild_id, cid, action)
+    if action.action == THREAD_INVOLVE_ACTION:
+        return await _thread_involve(memory, guild_id, cid, action)
     if action.action in PART_ACTIONS:
         if actions is None and action.action == "part-undo":
             return _failed(FAILED)
@@ -1611,6 +1615,36 @@ async def _thread_state(memory: MemoryStore, guild_id: int, cid: str, a: Action)
         if moved.value[0] is None and state in thread_model.LIVE_STATES:
             # The state it is already in: the DM means "still", so it counts as checked.
             await memory.check_thread(guild_id, cid, thread_id, source=DM)
+    except MemoryRuleError:
+        return _failed(GONE)
+    return Outcome()
+
+
+async def _thread_involve(memory: MemoryStore, guild_id: int, cid: str, a: Action) -> Outcome:
+    """The card's "👥 Add who's involved" from the page (#3696 slice 2b): its own store call,
+    `involve`. The text is `<thread id> <who's id>[ <their part>]` (the door limits the shape
+    and the part to the card's 60 characters). As the card's name search does, only a
+    confirmed character, group, place, item or other entry that is not a person card, a deed or a
+    thread and is not the thread itself can be added, and the thread must be a confirmed, un-merged
+    thread of this campaign: anything else is `gone`. One change, no Undo, as on the card."""
+    thread_id, _, rest = a.text.partition(" ")
+    who_id, _, role = rest.partition(" ")
+    thread = await memory.entity(guild_id, cid, thread_id)
+    who = await memory.entity(guild_id, cid, who_id)
+    if (
+        thread is None
+        or thread.type not in THREAD_TYPES
+        or thread.status != CONFIRMED
+        or thread.merged_into is not None
+        or who is None
+        or who.id == thread.id
+        or who.status != CONFIRMED
+        or who.merged_into is not None
+        or who.type in (*THREAD_TYPES, "person", DEED)
+    ):
+        return _failed(GONE)
+    try:
+        await memory.involve(guild_id, cid, thread.id, who.id, role, source=DM)
     except MemoryRuleError:
         return _failed(GONE)
     return Outcome()

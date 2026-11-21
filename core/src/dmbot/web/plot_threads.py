@@ -31,6 +31,7 @@ def stalled_after() -> int:
 
 
 _ID = re.compile(r"^[0-9a-f]{32}$")
+ROLE_MAX = 60  # the card's own limit on "Their part"
 
 
 async def read(db: Database, session: Session, ref: str) -> dict[str, Any]:
@@ -173,4 +174,25 @@ async def queue_state(db: Database, session: Session, ref: str, body: object) ->
         raise RecapError("bad_action")
     return await relationships._queue(
         db, session, ref, entity=None, action=action, target="", text=text, flag=False
+    )  # fmt: skip
+
+
+async def queue_involve(db: Database, session: Session, ref: str, body: object) -> str:
+    """Say who or what has a part in a thread (#3696 slice 2b): `{"thread": <32 hex>, "who":
+    <32 hex>, "role": <their part, optional, at most 60 characters>}`. The id of the answer the
+    page polls at `.../web/answers/{id}`. The bot runs the card's own `involve` and checks both
+    entries again."""
+    thread = body.get("thread") if isinstance(body, dict) else None
+    who = body.get("who") if isinstance(body, dict) else None
+    role = body.get("role", "") if isinstance(body, dict) else None
+    if not isinstance(thread, str) or not _ID.fullmatch(thread):
+        raise RecapError("bad_action")
+    if not isinstance(who, str) or not _ID.fullmatch(who) or who == thread:
+        raise RecapError("bad_action")
+    if not isinstance(role, str) or len(role) > ROLE_MAX:
+        raise RecapError("bad_action")
+    part = " ".join(role.split())  # (the card collapses spaces the same way)
+    return await relationships._queue(
+        db, session, ref, entity=None, action="thread-involve", target="",
+        text=f"{thread} {who} {part}".strip(), flag=False,
     )  # fmt: skip
