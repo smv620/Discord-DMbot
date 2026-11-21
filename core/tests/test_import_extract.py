@@ -12,6 +12,7 @@ from unittest.mock import AsyncMock, patch
 
 from dmbot.bot import DMBot
 from dmbot.transcript.import_job import STALE_SCAN_S
+from tests.fake_import_state import FakeImportState
 from tests.test_import_recaps import DAY, GUILD, START, WithImports
 
 BOT: Any = DMBot  # (the methods are called on stand-ins)
@@ -125,7 +126,7 @@ def bot_for(store: Any, outcomes: list[str], **kw: Any) -> Any:
         extractor_ai=object(),
         settings=SimpleNamespace(story_extractor_on=True),
         _import_reading=set(),
-        _import_left_told={},
+        import_state=FakeImportState(),
         _extract_import=extract,
         campaigns=SimpleNamespace(
             get=AsyncMock(
@@ -181,7 +182,7 @@ class TheSweep(WithImports):
         self.assertEqual(me.post.await_count, 2)
         await me._tell_imports_left(GUILD, self.store, {})  # (all read: no word)
         self.assertEqual(me.post.await_count, 2)
-        self.assertEqual(me._import_left_told, {})
+        self.assertEqual(await me.import_state.counted(GUILD, "left_told"), {})
 
     async def test_the_word_goes_to_the_dm_bot_channel_when_there_is_one(self) -> None:
         me = bot_for(self.store, [])

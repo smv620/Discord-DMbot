@@ -115,6 +115,9 @@ _VOICE_CO = (
     "(Supervisor, #2604). A restored campaign makes its own when it makes audio"
 )
 NOT_IN_BACKUP: dict[str, str] = {
+    "import_state": "what an import's scans leave for its one end-of-import report (#4904): "
+    "counts, ids and the names they added, taken when the report is made. A restored campaign has "
+    "no import under way",
     "outbox": "what a worker wants the bot to say in Discord (#3843): ids and counts, delivered "
     "within seconds and swept after a few days. A restored campaign has nothing waiting to say",
     "sheet_waits": "a D&D Beyond sheet link the DM gave in the wizard for a character with no "

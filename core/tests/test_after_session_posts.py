@@ -14,6 +14,7 @@ from dmbot.bot import DMBot
 from dmbot.ui import continuity as continuity_ui
 from dmbot.ui import private_scenes_list
 from dmbot.ui import threads as threads_ui
+from tests.fake_import_state import FakeImportState
 
 GUILD, SCREEN, UPKEEP = 1, 50, 60
 
@@ -182,7 +183,7 @@ class TheImportNamesReport(unittest.IsolatedAsyncioTestCase):
             _import_reports={(GUILD, "c" * 32): [report]},
             _import_party={},
             _import_names={},
-            _import_unchecked={},
+            import_state=FakeImportState(),
             _import_speakers={},
             _import_entries={},
             _import_batches={},
@@ -221,7 +222,7 @@ class TheUnhonouredRecapsLine(unittest.IsolatedAsyncioTestCase):
             _import_reports={},
             _import_party={},
             _import_names={},
-            _import_unchecked={},
+            import_state=FakeImportState(),
             _import_speakers={},
             _import_entries={},
             _import_batches={},
