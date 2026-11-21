@@ -40,9 +40,9 @@ class Traits(Web):
         self.assertEqual(
             got["traits"],
             [
+                {"kind": "species", "name": "Dwarf", "known": True, "edition": "2024"},
                 {"kind": "class", "name": "Cleric", "known": True, "edition": "2014"},
                 {"kind": "class", "name": "Skald", "known": False, "edition": ""},
-                {"kind": "species", "name": "Dwarf", "known": True, "edition": "2024"},
             ],
         )
 
@@ -63,7 +63,7 @@ class Traits(Web):
         )  # fmt: skip
         self.assertEqual((await self.read(old))["traits"], [])
 
-    async def test_a_player_or_another_campaigns_dm_gets_nothing(self) -> None:
+    async def test_a_player_gets_nothing(self) -> None:
         who: Any = BOB
         bob = await sessions.find(
             self.web, await sessions.sign_in(self.web, who, [THURSDAY], now=NOW, days=30), now=NOW
@@ -71,6 +71,12 @@ class Traits(Web):
         assert bob is not None
         with self.assertRaises(RecapError) as err:
             await self.read(self.torvin, bob)
+        self.assertEqual(err.exception.code, "not_allowed")
+
+    async def test_a_dm_of_another_campaign_is_refused_for_this_ones_character(self) -> None:
+        other = f"{self.g}.{self.two.id}"  # (not a campaign this DM runs)
+        with self.assertRaises(RecapError) as err:
+            await node_traits.read(self.web, self.session, other, self.torvin)
         self.assertEqual(err.exception.code, "not_allowed")
 
     async def test_a_bad_id_is_not_found(self) -> None:

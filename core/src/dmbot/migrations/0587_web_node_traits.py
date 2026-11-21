@@ -8,11 +8,12 @@ from __future__ import annotations
 
 # `dmbot_web_node_traits(g, c, e)`: NULL unless the caller is a DM of the campaign (0404's check).
 # Else the rules links `memory_rule_links` keeps for that one character (kinds `species` and
-# `class` only: the card's two), `[{kind, name, known, edition}]` ordered by kind then name, and
-# `[]` for an entry that is not a character the DM keeps (confirmed or waiting, not merged). The
-# rows are the card's (`MemoryStore.rule_links`); the page words the line, with the 2014 tag and
-# "(not in DMbot's rules)", so the two cannot drift. DM only because a spoilers upload may give a
-# lineage the players should not see. Names and flags only: no line of lore. No table, no action.
+# `class` only: the card's two), `[{kind, name, known, edition}]`, the species first (as the
+# card's line reads), then by name, and `[]` for an entry that is not a character the DM keeps
+# (confirmed or waiting, not merged). The rows are the card's (`MemoryStore.rule_links`); the page
+# words the line, with the 2014 tag and "(not in DMbot's rules)", so the two cannot drift. DM only
+# because a spoilers upload may give a lineage the players should not see. Names and flags only:
+# no line of lore. No table, no action.
 
 SQL = r"""
     CREATE FUNCTION dmbot_web_node_traits(g BIGINT, c TEXT, e TEXT) RETURNS JSONB
@@ -28,7 +29,7 @@ SQL = r"""
         RETURN COALESCE((
             SELECT jsonb_agg(jsonb_build_object(
                        'kind', l.kind, 'name', l.name, 'known', l.known,
-                       'edition', COALESCE(l.edition, '')) ORDER BY l.kind, l.name)
+                       'edition', COALESCE(l.edition, '')) ORDER BY (l.kind <> 'species'), l.name)
             FROM memory_rule_links l
             JOIN memory_entities x ON x.guild_id = l.guild_id AND x.campaign_id = l.campaign_id
                                   AND x.id = l.entity_id AND x.type = 'character'
