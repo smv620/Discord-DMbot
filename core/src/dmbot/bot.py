@@ -13302,12 +13302,13 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         for cid in list(over | self._import_speakers.keys() | self._import_entries.keys()):
             if await store.pending_scans(gid, cid):
                 continue  # the import is not over: say it once at the end
-            names = self._import_names.pop(cid, [])
+            # (the database read first: if it fails, nothing has been taken from memory yet)
             skipped = (
                 await self.import_state.take_count(gid, cid, UNCHECKED)
                 if self.import_state is not None
                 else 0
             )
+            names = self._import_names.pop(cid, [])
             # (taken now so none outlives its import, whichever way the report below goes)
             speakers = self._import_speakers.pop(cid, set())
             entries = self._import_entries.pop(cid, set())

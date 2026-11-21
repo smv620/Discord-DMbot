@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import re
 import time
-from collections.abc import Callable, Collection
+from collections.abc import Callable, Collection, Sequence
 from typing import Any
 
 from dmbot.db import Database
@@ -101,9 +101,11 @@ class ImportState:
             return {r["campaign_id"]: int(r["n"]) for r in await cur.fetchall()}
 
     async def add_strings(
-        self, guild_id: int, campaign_id: str, kind: str, values: Collection[str]
+        self, guild_id: int, campaign_id: str, kind: str, values: Sequence[str]
     ) -> None:
-        """Add to a set of strings (a value kept twice is kept once, in the order first added)."""
+        """Add to a set of strings (a value kept twice is kept once, in the order first added; a
+        Sequence, so that order is the caller's, never a set's). A kind holds a counter or a list,
+        never both: mixing them is a database error."""
         if not values:
             return
         async with self._db.guild(guild_id) as conn:

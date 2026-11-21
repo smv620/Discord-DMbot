@@ -4,6 +4,8 @@ campaign. Database tests: skipped where there is no Postgres."""
 
 from __future__ import annotations
 
+import asyncio
+
 from dmbot.campaigns.store import CampaignStore
 from dmbot.import_state import ImportState
 from tests import recap_fixtures as fx
@@ -34,6 +36,11 @@ class TheCounters(Base):
         await self.state.put_count(1, self.one.id, "left_told", 0)
         self.assertEqual(await self.state.counted(1, "left_told"), {})
 
+    async def test_put_count_overwrites_and_adds_to_nothing(self) -> None:
+        await self.state.put_count(1, self.one.id, "left_told", 3)
+        await self.state.put_count(1, self.one.id, "left_told", 1)
+        self.assertEqual(await self.state.count(1, self.one.id, "left_told"), 1)
+
     async def test_campaigns_and_servers_are_apart(self) -> None:
         await self.state.bump(1, self.one.id, "unchecked")
         await self.state.bump(2, self.other.id, "unchecked", 5)
@@ -42,8 +49,6 @@ class TheCounters(Base):
         self.assertEqual(await self.state.counted(2, "unchecked"), {self.other.id: 5})
 
     async def test_two_bumps_at_once_lose_nothing(self) -> None:
-        import asyncio
-
         await asyncio.gather(*(self.state.bump(1, self.one.id, "unchecked") for _ in range(8)))
         self.assertEqual(await self.state.count(1, self.one.id, "unchecked"), 8)
 
