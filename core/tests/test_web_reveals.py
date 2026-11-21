@@ -182,6 +182,24 @@ class RevealsOnTheWeb(Web):
         self.assertEqual(second.error, wa.GONE)
         self.assertEqual(Fake.kept, [])
 
+    async def test_the_queue_door_itself_refuses_a_bad_shape_and_a_player(self) -> None:
+        from dmbot.web import relationships
+
+        for action, text in (
+            ("reveals-ask", "x"),
+            ("reveals-keep", "not-an-id"),
+            ("reveals-not", "g" * 32),
+        ):
+            with self.assertRaises(RecapError, msg=action):
+                await relationships._queue(
+                    self.web, self.session, self.cref, entity=None, action=action, target="",
+                    text=text, flag=False,
+                )  # fmt: skip
+        bob = await self.bob_session()
+        with self.assertRaises(RecapError):
+            await reveals.queue_ask(self.web, bob, self.cref)
+        self.assertIsNone(await self.actions.claim_next(self.g))
+
     async def test_a_bad_answer_is_refused_before_anything_is_queued(self) -> None:
         for body in (None, {}, {"id": "nope", "answer": "keep"}, {"id": P1, "answer": "maybe"}):
             with self.assertRaises(RecapError):

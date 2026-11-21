@@ -1778,14 +1778,17 @@ async def _reveals(
     page, replacing the earlier set, so asking again adds nothing twice; the answer is `n:<how
     many>`. Keep gives the change for the page's Undo (`join-undo`); a keep that changed nothing
     (they already knew it) is `nothing_left`, not a failure; a proposal gone, or whose statement or
-    speaker is gone, is `gone`. Either answer takes it out of the kept set at once."""
+    speaker is gone, is `gone`. Either answer takes it out of the kept set at once. The queue is
+    worked one action at a time, so an ask never lands between a press and its `drop`. A press may
+    name any proposal of this campaign (the DM may answer one the page has not shown): the store
+    scopes it to the campaign and the DM."""
     if a.action == "reveals-ask":
         if ask is None:
             return _failed(FAILED)
         try:
             return Outcome(counts=f"n:{await ask(guild_id, cid, a.user_id)}")
-        except Exception:
-            log.exception("The waiting reveals could not be worked out")
+        except Exception as exc:  # (the type only: a database error can quote the row's words)
+            log.warning("The waiting reveals could not be worked out (%s)", type(exc).__name__)
             return _failed(FAILED)
     if waiting is None:
         return _failed(FAILED)

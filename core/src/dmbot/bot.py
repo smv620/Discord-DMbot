@@ -14712,8 +14712,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             guild_id, campaign_id, opted_in=await self.consent.consenting(guild_id)
         ):
             words = await proposals.describe(guild_id, campaign_id, proposal)
-            if words is not None:
-                shown.append((proposal.id, words))
+            if words is not None and words.who and words.what and words.how:
+                shown.append((proposal.id, words))  # (a line with a word missing is not shown)
         return await RevealsStore(db).replace(guild_id, campaign_id, user_id, shown)
 
     async def _drop_reveal(self, guild_id: int, campaign_id: str, proposal_id: str) -> None:
