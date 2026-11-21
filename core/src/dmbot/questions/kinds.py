@@ -25,6 +25,7 @@ THREADS: Final = "threads"  # story threads the lore holds, to keep or turn down
 SECRETS: Final = "secrets"  # what the players know that sounded like a secret (#4524)
 JOINS: Final = "party_joins"  # characters who joined: what do they know of before? (#4537)
 LEAVES: Final = "party_leaves"  # a goodbye or a death: still in the party? (#4537 slice 6)
+REVEALS: Final = "reveals"  # what the characters learned, waiting to be kept (#3863, #2996)
 
 # In the order the list shows them (the ones people answer most first).
 ORDER: Final[tuple[str, ...]] = (
@@ -40,6 +41,7 @@ ORDER: Final[tuple[str, ...]] = (
     SECRETS,
     JOINS,
     LEAVES,
+    REVEALS,
     MAPS,
     CLAIMS,
     READINGS,
@@ -61,6 +63,7 @@ LABELS: Final[dict[str, str]] = {
     SECRETS: "Known or secret?",
     JOINS: "New in the party",
     LEAVES: "Still in the party?",
+    REVEALS: "Things the characters learned",
     MAPS: "Maps waiting for your yes",
     CLAIMS: "Facts to check",
     READINGS: "What people believe",

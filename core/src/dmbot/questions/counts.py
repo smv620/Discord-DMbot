@@ -242,6 +242,18 @@ async def _leaves(src: Sources, g: int, c: str) -> Counted:
     return Counted(n, oldest)
 
 
+async def _reveals(src: Sources, g: int, c: str) -> Counted:
+    """What the characters learned that waits for the DM's Keep or Not this (#3863): what the
+    reveal card counts (`RevealProposals.count_waiting`), leaving out a proposal whose speaker is
+    no longer recorded. With nobody known to be recorded it counts nothing, never everything."""
+    from dmbot.memory.reveal_proposals import RevealProposals
+
+    if src.memory is None or src.recorded is None:
+        return Counted(0)
+    opted_in = await src.recorded(g, c)
+    return Counted(await RevealProposals(src.memory).count_waiting(g, c, opted_in=opted_in))
+
+
 async def _maps(src: Sources, g: int, c: str) -> Counted:
     """Maps a player kept that no DM has answered yet (`MapStore.waiting_for_a_dm`)."""
     if src.maps is None:
@@ -263,6 +275,7 @@ _COUNTERS: dict[str, Callable[[Sources, int, str], Awaitable[Counted]]] = {
     kinds.SECRETS: _secrets,
     kinds.JOINS: _joins,
     kinds.LEAVES: _leaves,
+    kinds.REVEALS: _reveals,
     kinds.MAPS: _maps,
     kinds.CLAIMS: _claims,
     kinds.READINGS: _readings,
