@@ -6259,6 +6259,28 @@ dozen screens, and gets the same list, words and context in both places.
   instructions. Off by default (`DMBOT_AI_FEED` and the page's switch); whether paying customers' DMs get it is the
   owner's call before it goes on for them.
 
+**Places (#4173; owner's directions and Supervisor's rulings, 2026-11-11 to 11-13).**
+
+**How big a place is.** Every place has a level: plane, world, region, settlement, district, street, building or room (`place_levels.LEVELS`). DMbot reads it from the text ("the city of", "a tavern") and marks it as read; the DM's own word always wins. "Is in" is only kept when the inner place is smaller, so a tavern is never in a room.
+
+**Where the campaign is set.** One place can be the campaign's setting. It's chosen at setup, on the website or in Discord, and is read from the lore when nobody chose.
+
+**The "where the story is" chain.** As lore and sessions are read, each scene's place is noted in order. A place named with no parent gets an *assumed* parent from where the story was: stored, never asked, held back from the players, and marked "(assumed)" on the DM's card. A parent that is stated later replaces it. "That's right" makes it a stated parent.
+
+**Where people and things are.** A person or item has one current whereabouts. Moving ends the old place as history ("was in"), never deletes it. Being on a road or at sea closes the town level and below; arriving opens it again. A move into a bigger place that the smaller one turns out to be inside ("in the bakery", "in Waterdeep", then "the bakery is in Waterdeep") never counts as leaving.
+
+**Next to.** One kind, `next_to`, for places that touch: borders read both ways; "on the shore of" and "at the foot of" read one way. The same two places are never both "in" and "next to" each other: a reader that finds both asks the DM.
+
+**A place's form.** An area by default, or water (lake, bay, sea, river) or a route (a named road, a pass). Water and routes sit outside the size order. The DM can change the form in one tap.
+
+**Routes.** `route_to` joins two places by a stated way. The means come from a fixed list (road, river, sea, air, portal, the wild, or the text's own words); two means between two places are two routes. A means word alone makes no route, so both places must be named. A route can be known, *travelled* (a journey in a session, with its order; at most one leg per pair, means and session) or *planned* (never where anyone is; a dropped plan ends as history; the DM's own prep plans are held back). A named road is itself a place, and towns on it are "next to" it. A route can carry its stated length (hours, days or miles, "about" kept) and its condition (open, hard going, closed, gone), each with its history.
+
+**Maps (MapBot) write to the graph** under one rule of who wins: the DM's own word, then a map, then the text, then an assumption. A map never overrides the DM's link, and "not sure" writes nothing. "Apart" ends a "next to" only when both places are drawn and labelled on that map and the AI is sure. A correction ends the old link as wrong (rejected), never as history, because geography doesn't change. The DM gets one private note listing each change in plain words, and one Undo takes back the whole map's changes.
+
+**Players see** only what was said at the table, or what the DM showed them. Assumed parents and DM-prep plans stay hidden until then.
+
+**Later:** items inside other items (containers) wait until the above has been live and the owner has seen it.
+
 **License (decided 2026-10-03).** Public repository under PolyForm Strict 1.0.0.
 
 ## Open decisions
