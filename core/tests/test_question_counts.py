@@ -127,6 +127,9 @@ class TheRevealsCount(unittest.IsolatedAsyncioTestCase):
     async def test_the_count_is_the_cards_and_asks_with_who_is_recorded(self) -> None:
         self.assertEqual(await self.counted({7}, 3), (3, [{7}]))
 
+    async def test_an_empty_recorded_list_is_passed_on_as_empty_not_as_no_filter(self) -> None:
+        self.assertEqual(await self.counted(set(), 2), (2, [set()]))
+
     async def test_nobody_known_to_be_recorded_counts_nothing(self) -> None:
         self.assertEqual(await self.counted(None, 3), (0, []))
 
