@@ -46,9 +46,24 @@ class TheFeelingsDoor(Feelings):
             await world_notes.read(self.web, bob, self.cref)
         self.assertEqual(err.exception.code, "not_allowed")
 
-    async def test_a_holder_that_is_merged_or_a_row_the_dm_answered_is_not_listed(self) -> None:
+    async def test_a_row_the_dm_answered_is_not_listed(self) -> None:
         (line,) = await self.feelings()
         await self.act("world-keep", line["id"])
+        self.assertEqual(await self.feelings(), [])
+
+    async def test_a_turned_down_row_and_a_merged_holder_are_not_listed(self) -> None:
+        (line,) = await self.feelings()
+        await self.act("world-not", line["id"])
+        self.assertEqual(await self.feelings(), [])
+        # (a new read on a holder that is merged away afterwards is not listed either)
+        other = await self.add("Old Keep", "place")
+        found = [bias_read.Found(other, standing.WARY, lineage="orc")]
+        await self.memory.add_read_biases(self.g, self.one.id, found, source="background")
+        self.assertEqual([f["name"] for f in await self.feelings()], ["Old Keep"])
+        await self.sql(
+            "UPDATE memory_entities SET merged_into = %s, status = 'merged' WHERE id = %s",
+            self.keep, other,
+        )  # fmt: skip
         self.assertEqual(await self.feelings(), [])
 
 

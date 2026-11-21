@@ -1,9 +1,10 @@
 """The website's World notes (#4285, slice 1c's door; the website half): DMbot's guesses about
-places and languages, for a DM of the campaign only. One database door (`dmbot_web_world_notes`,
-migration 0481) answers NULL to anyone else, so a player or a stranger gets "not allowed" and never
-a line. This module shapes the door's lines, and queues the three actions (`world-keep`,
-`world-not`, `world-undo`) through the one queue door as the connection edits do: the bot applies
-each in one write, so each is one Undo. Words, ids and counts only: no story text."""
+places, languages, roads and feelings, for a DM of the campaign only. One database door
+(`dmbot_web_world_notes`, migration 0481) answers NULL to anyone else, so a player or a stranger
+gets "not allowed" and never a line. This module shapes the door's lines, and queues the four
+actions (`world-keep`, `world-not`, `world-undo` and `world-bias`, the step pick of a feeling)
+through the one queue door as the connection edits do: the bot applies each in one write, so each
+is one Undo. Words, ids and counts only: no story text."""
 
 from __future__ import annotations
 
