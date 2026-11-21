@@ -483,11 +483,11 @@ class LinkingEventsAndLeadsTo(ThreadWeb):
         (outcome,) = await self.bot_loop()
         self.assertEqual(outcome.error, wa.GONE)
 
-    async def test_a_made_event_and_its_link_are_both_reported(self) -> None:
+    async def test_a_made_event_and_its_link_are_one_change(self) -> None:
         await self.link_event_to(self.bell, "ended", newEvent="The bell fell")
         (outcome,) = await self.bot_loop()
         self.assertFalse(outcome.error)
-        self.assertEqual(len(outcome.batches), 2)  # (the event, then the link)
+        self.assertEqual(len(outcome.batches), 1)  # (the event and its link are one change, #4950)
 
     async def test_what_one_thing_led_to(self) -> None:
         clue = await self.add("A muddy footprint", "clue")

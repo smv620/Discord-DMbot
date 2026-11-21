@@ -1704,8 +1704,9 @@ async def _thread_link(memory: MemoryStore, guild_id: int, cid: str, a: Action) 
     store calls (`link_event`, `led_to`), so the thread rules and the DM check stay the card's
     (GraphEngineer: the link is the Story Graph's own connection, but the website does not use its
     generic edit). `thread-link` is `<thread id> moved|ended <event id>` or `<thread id>
-    moved|ended new <event name>`: an event typed by name is made on the spot, hidden from the
-    players like any name the DM adds by hand (#2404), as the card does; `thread-led-to` is
+    moved|ended new <event name>`: an event typed by name is made with its link in one write, hidden
+    from the players like any name the DM adds by hand (#2404), as the card does (`link_new_event`,
+    #4950, so a failed link leaves no event behind); `thread-led-to` is
     `<from id> <to id>` and the store refuses a link to itself, a loop and the wrong kinds
     (`failed`, nothing written). One change each, no Undo, as on the card. An entry that is
     gone, merged away or not confirmed is `gone`."""
@@ -1730,30 +1731,25 @@ async def _thread_link(memory: MemoryStore, guild_id: int, cid: str, a: Action) 
         how, _, which = rest.partition(" ")
         if thread is None:
             return _failed(GONE)
-        batches: list[int] = []
         if which.startswith("new "):
             # (the page searches the names first and offers "new" only when nothing matches, as the
-            # card's `link_by_name` does; a retry after a failed link would make a second event)
-            made = await memory.add_entity(
-                guild_id, cid, type="event", name=which[4:], source=DM, status=CONFIRMED,
-                hidden_from_players=True,
-            )  # fmt: skip
-            event_id = made.value.id
-            if made.batch:
-                batches.append(made.batch)
+            # card's `link_by_name` does) The event and its link are ONE write, one change, so a
+            # link that fails leaves no event behind (#4950, `link_new_event`).
+            done = await memory.link_new_event(
+                guild_id, cid, thread.id, which[4:], ends_it=how == "ended", source=DM
+            )
+            event_id = done.value.subject_id
         else:
             found = await usable(which, ("event",))
             if found is None:
                 return _failed(GONE)
             event_id = found.id
-        done = await memory.link_event(
-            guild_id, cid, thread.id, event_id, ends_it=how == "ended", source=DM
-        )
+            done = await memory.link_event(
+                guild_id, cid, thread.id, event_id, ends_it=how == "ended", source=DM
+            )
     except MemoryRuleError:
         return _failed(FAILED)
-    if done.batch:
-        batches.append(done.batch)
-    return Outcome(result_id=event_id, batches=tuple(batches))
+    return Outcome(result_id=event_id, batches=(done.batch,) if done.batch else ())
 
 
 async def _join_choose(

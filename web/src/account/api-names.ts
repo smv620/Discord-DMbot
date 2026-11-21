@@ -821,6 +821,19 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       if (!queued?.answer) throw new ApiError("server");
       await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
     },
+    // A link of an event to a thread, and a thread that led to another (#3696, slice 2d): queued for the bot and waited for; no Undo.
+    linkPlotThreadEvent: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/plot-threads/link`, change)) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    plotThreadLedTo: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/plot-threads/led-to`, { from: change.from, to: change.to })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
     // A state change (or "check") is queued for the bot (202 {answer}) and waited for; the answer has no batch, so no Undo (#3696, slice 2a).
     changePlotThreadState: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;

@@ -95,12 +95,6 @@ FILES: dict[str, tuple[str, str, str]] = {
         "the writers: add_entity, set_hidden_from_players; and `_shown_when_said`, which "
         "reads them for what `reveal_said` shows and `ask_world_reveals` asks (#4590)",
     ),
-    "memory/web_actions.py": (
-        WRITES,
-        "GraphEngineer",
-        "`_thread_link`: an event the DM typed on the website starts hidden, as the card's name "
-        "search makes it (#2404, #3696)",
-    ),
     "recaps/name_answers.py": (
         READS,
         "CloudDev-lead",
