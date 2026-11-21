@@ -49,6 +49,12 @@ def attach(page: dict[str, Any], rows: Mapping[str, Mapping[str, Any]], full: bo
             quote = str((row or {}).get("quote") or "")
             if full and quote:
                 link["quote"] = quote
+            # DMbot's reason for a connection it inferred from the lore (#3928, 0403): the DM's
+            # alone, like the quote, and a kept inference never carries a quote (the door sends one
+            # or the other). Words about the DM's text, never the text.
+            reason = str((row or {}).get("inferred") or "")
+            if full and reason:
+                link["inferred"] = reason
 
 
 async def with_link_sources(
