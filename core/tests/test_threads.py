@@ -183,6 +183,16 @@ class Threads(ConfirmedMemoryTest):
         self.assertEqual(before, {e.name for e in await self.memory.entities(GUILD_A, self.c)})
         self.assertEqual(len((await self.info()).movers), 0)
 
+    async def test_an_empty_event_name_is_refused_and_nothing_is_written(self) -> None:
+        from dmbot.memory.models import MemoryRuleError
+
+        before = {e.name for e in await self.memory.entities(GUILD_A, self.c)}
+        with self.assertRaises(MemoryRuleError):
+            await self.memory.link_new_event(
+                GUILD_A, self.c, self.heir, "   ", ends_it=False, source="dm"
+            )
+        self.assertEqual(before, {e.name for e in await self.memory.entities(GUILD_A, self.c)})
+
     async def test_a_link_that_fails_leaves_no_event_behind(self) -> None:
         from dmbot.memory.models import MemoryRuleError
 

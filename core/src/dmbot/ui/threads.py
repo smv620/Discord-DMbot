@@ -25,6 +25,7 @@ from dmbot.memory.models import (
     THREAD_TYPES,
     MemoryRuleError,
 )
+from dmbot.memory.ontology import check_named
 from dmbot.memory.search import MAX_RESULTS, find
 from dmbot.ui import logic
 from dmbot.ui.dmbot_commands import (
@@ -703,6 +704,11 @@ async def _ask_how_new(
 ) -> None:
     """A new event name: nothing is made yet. The event and its link are made together when the DM
     answers (#4950), so leaving the question unanswered leaves nothing behind."""
+    try:
+        check_named("event", name)  # (a bad name is told now, as before, not after the question)
+    except MemoryRuleError as exc:
+        await show_thread(interaction, campaign_id, thread_id, note=f"⚠️ {exc}")
+        return
     await _replace(
         interaction,
         f"**{_md(name)}**: did it move the thread along, or end it?",
@@ -717,6 +723,7 @@ class HowLinked(_Menu):
         super().__init__()
         self.campaign_id, self.thread_id, self.event_id = campaign_id, thread_id, event_id
         self.new_name = new_name  # an event not made yet: made with its link, in one write
+        self._used = False  # (a second tap before the first finishes must not make a second event)
         self.add_item(
             _Button(
                 partial(self._link, False),
@@ -727,6 +734,9 @@ class HowLinked(_Menu):
         self.add_item(_Button(partial(self._link, True), label="Ended the thread"))
 
     async def _link(self, ends_it: bool, interaction: discord.Interaction) -> None:
+        if self._used:
+            return
+        self._used = True
         await _answer_first(interaction, in_place=True)
         got = await _dm_and_memory(interaction, self.campaign_id)
         if got is None:
