@@ -2185,6 +2185,25 @@ export interface HeardQuestions {
   total: number;
   questions: HeardQuestion[];
 }
+/** The "Let me choose" choices of a join question (#4891): what each session and story thread would give. `choices` is null until they are worked out. */
+export interface JoinChoices {
+  madeAt: number | null;
+  choices: null | {
+    members: { id: string; name: string }[];
+    sessions: { at: number; number: number; counts: Record<string, number> }[];
+    threads: { id: string; name: string; counts: Record<string, number> }[];
+    sessionsInAll: number;
+    threadsInAll: number;
+    nobody: boolean;
+  };
+}
+/** What a pick gave (#4891): the first eight characters of each member's id and how many; `first` when it answered the question. */
+export interface JoinChoose {
+  chose: { id: string; count: number }[];
+  choseMore: number;
+  first: boolean;
+  batch: number | null;
+}
 export interface JoinGroup {
   group: string;
   answer: "waiting" | "everyone";
@@ -2622,6 +2641,10 @@ export const READING_POLLS = 150;
 export interface WebAnswer {
   state: "waiting" | "working" | "done" | "failed";
   error?: string | null;
+  /** A "Let me choose" pick (#4891): what it gave, how much more, and whether it answered the question. */
+  chose?: { id: string; count: number }[] | null;
+  choseMore?: number | null;
+  first?: boolean | null;
   /** A refused typed name (#4865): the reason, for a `typed-problem`. */
   reason?: string | null;
   /** A saved "Did they mean…?" answer (#4857): `kept`, `fixed`, `fixed-new` or `line-kept`. */
@@ -3358,6 +3381,12 @@ export interface AccountApi {
   heardType?(ref: string, question: string, name: string): Promise<{ code: string | null }>;
   /** "Only what everyone knows" or "What the party knows" for one message, or Undo of the latter by its change number. `given` is how
    * many things the party gave (null when nothing was copied). */
+  /** The "Let me choose" choices of a join question (#4891). */
+  joinChoices?(ref: string, group: string): Promise<JoinChoices>;
+  /** Asks the bot to work the choices out; resolves when they are kept. */
+  askJoinChoices?(ref: string, group: string): Promise<void>;
+  /** One pick: a session (by its time) or a story thread (by its id); resolves with what it gave and its Undo batch (#4891). */
+  joinChoose?(ref: string, group: string, pick: { session: number } | { thread: string }): Promise<JoinChoose>;
   answerJoin?(
     ref: string,
     change: { action: "everyone" | "party"; group: string } | { action: "undo"; batch: number },
@@ -4017,7 +4046,7 @@ export interface ApiHelpers {
 /** The calls of each area, by name: what `httpApi` stands in for until the area's file is loaded. */
 export const ACCOUNT_METHODS = ["emailSignInRequest", "emailSignInUse", "offerHandover", "deleteCampaign", "restoreStage", "restorePart", "restoreGo", "restoreStatus", "restoreCancel", "campaignBackup", "takeBackHandover", "handoverLook", "handoverAccept", "handoverDecline", "removeDiscordAccount", "getMoveCode", "myEmail", "changeEmail", "confirmEmail", "cancelEmailChange", "sendSupport", "mySupport", "supportThread", "signOutEverywhere", "startTryIt", "checkoutUrl", "billingPortalUrl", "renewPlan", "extraHoursUrl", "downloadExport", "characters", "linkServer", "acceptOffer", "declineOffer", "withdrawOffer", "stopRecording", "myLines", "deleteMyLines", "myLinesStatus", "requestDelete", "confirmDelete"] as const satisfies readonly (keyof AccountApi)[];
 export const RECAPS_METHODS = ["recapAudioUrl", "recaps", "pastSessions", "sessionReport", "makeSessionReport", "answerReport", "setBeatPresent", "makeRecap", "addRecap", "recapList", "recap", "saveRecap", "approveRecap", "approveUnchecked", "recapAudioLinks", "recapChoices", "setRecapChoice", "askRecapAudioAgain", "plotCheck", "answerPlotIssue", "plotChatSend", "plotChat", "decidePlotProposal", "recapAudioRemake", "sendFix", "fixResult", "sendVoice", "voiceResult", "rewriteWith", "importPreview", "importMembers", "importConsent", "importCheck", "importStart", "importProgress", "importClock", "shareRecap", "publicRecap", "decideRecap"] as const satisfies readonly (keyof AccountApi)[];
-export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo", "ruleUpdateUndoLast", "heardQuestions", "heardPick", "heardKeep", "heardType", "packUpdateUndoLast", "packUpdatePick", "packUpdateUndo"] as const satisfies readonly (keyof AccountApi)[];
+export const NAMES_METHODS = ["placeWorld", "placeWorldTable", "namesFixed", "undoNameFix", "campaignNames", "suggestSaidAs", "hearSaidAs", "respellFromVoice", "saveSaidAs", "nameChecks", "answerNameCheck", "nameAnswerResult", "npcPage", "saveNpcNote", "myNpcNotes", "deleteMyNpcNotes", "allNames", "nameMatches", "answerMatch", "metList", "answerMet", "privateScenes", "notPrivateScene", "smartNames", "changeName", "nameThem", "toldPanel", "placeSpellings", "answerPlaceSpelling", "webGraph", "webSize", "webVersion", "webOverview", "webFind", "webNodeSummary", "webViewers", "confirmKinds", "confirmUndo", "confirmAnswer", "webWaiting", "answerWaiting", "myQuestions", "questionsTotal", "campaignNameChecks", "webReadings", "answerReading", "webPeek", "webReveal", "changeWebLink", "worldNotes", "changeWorldNotes", "storyThreads", "changeStoryThreads", "threadCard", "changeThreadParts", "characterLanguages", "changeCharacterLanguages", "maps", "changeMaps", "addMap", "mapFeatures", "nameSources", "uploadNotice", "undoUpload", "traitOffers", "answerTrait", "handOverQuestions", "answerHandOver", "graphCleanup", "cleanupPlaces", "clarifyName", "setPcIcon", "campaignKindOffers", "liftKindOffer", "secretQuestions", "answerSecret", "joinQuestions", "answerJoin", "partyRecord", "partyLeave", "partyBack", "partyUndo", "catchUpChoices", "catchUp", "threadProgress", "changeThreadProgress", "threadClues", "changeThreadClues", "partyCharacters", "threadGuesses", "ruleUpdatePick", "ruleUpdateUndo", "ruleUpdateUndoLast", "heardQuestions", "heardPick", "heardKeep", "heardType", "packUpdateUndoLast", "packUpdatePick", "packUpdateUndo", "joinChoices", "askJoinChoices", "joinChoose"] as const satisfies readonly (keyof AccountApi)[];
 export const CAMPAIGN_METHODS = ["transcriptCampaigns", "transcriptSessions", "transcript", "transcriptFile", "transcriptScript", "scriptOffer", "makeScript", "transcriptStretch", "transcriptPutBack", "transcriptLeaveOut", "sessionNotesList", "sessionNotes", "pictures", "pictureAction", "setCampaignSetting", "campaignOptionalRules", "campaignGameMasters", "campaignSheets", "chooseSheet", "sheetAnswer", "fixTranscriptLine", "fixAnswer", "campaignGameMasterCandidates", "campaignSettingAnswer", "timeline", "sharedRules", "houseRuleCampaigns", "houseRules", "ruleSharing", "chooseRuleSharing", "ruleSharingAnswer", "houseRulesFile", "improvement", "setImprovement", "homebrewCampaigns", "homebrew", "homebrewFile", "campaignPage", "loreAdd", "loreRead", "lorePdf", "lorePdfSend", "lorePdfCount", "lorePdfGo", "lorePdfDrop", "aiFeed", "recapStyle", "changeRecapStyle", "recapStyleAction", "campaignSpeakers", "removeSpeaker", "speakerRemoval", "saveRecapMusts", "recapMustsDefaults", "houseFile", "houseFileAdd", "ruleDecisions", "ruleUpdate", "ruleTaken", "packUpdates"] as const satisfies readonly (keyof AccountApi)[];
 
 /** A stand-in for each call of an area: the first use loads the area's file (once), and every call goes to it. */

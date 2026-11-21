@@ -7,6 +7,11 @@ import { useEffect, useRef, useState } from "preact/hooks";
 import { joinWords as w } from "../content/join-questions-words";
 import { ApiError, type AccountApi, type JoinGroup } from "./api";
 import SavingWait from "./SavingWait";
+import LazyPanel from "./LazyPanel";
+import { joinChooseWords as cw } from "../content/join-choose-words";
+
+// The "Let me choose" page is loaded only once the DM opens it (#4891).
+const loadJoinChoose = () => import("./JoinChoose");
 
 /** The plain line for an answer that did not go through, by the bot's error word. */
 function sayFailure(error: unknown, undoing: boolean): string {
@@ -35,6 +40,8 @@ export default function JoinQuestions({
   // The last "What the party knows" with its change number, and the names it was for (the card may show another message by then).
   const [undo, setUndo] = useState<{ batch: number; names: string[]; back: boolean } | null>(null);
   const flight = useRef(false);
+  // "Let me choose" (#4891): open or closed; the page is asked for and read only while it is open.
+  const [choosing, setChoosing] = useState(false);
   const live = useRef(true);
   useEffect(() => {
     live.current = true;
@@ -139,6 +146,20 @@ export default function JoinQuestions({
               <button type="button" class="button secondary" disabled={busy} onClick={() => void takeBack(undo)}>
                 {w.undo}
               </button>
+            </div>
+          )}
+          {api.joinChoices && (
+            <div class="stack">
+              <button type="button" class="button secondary" aria-expanded={choosing} onClick={() => setChoosing((was) => !was)}>
+                {cw.button}
+              </button>
+              {choosing && (
+                <LazyPanel
+                  load={loadJoinChoose}
+                  what="the Let me choose page"
+                  props={{ api, campaignRef, group: g.group, names: g.names, back: g.kind === "back", onClose: () => setChoosing(false) }}
+                />
+              )}
             </div>
           )}
           <SavingWait active={busy} stage={w.saving} />
