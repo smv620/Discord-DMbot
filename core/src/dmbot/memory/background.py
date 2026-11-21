@@ -1310,6 +1310,7 @@ def keep_connections(
     speaker: str | None = None,
     picks: list[Pick] | None = None,
     secret_keys: Collection[str] = (),
+    whole_only: Collection[str] = (),
 ) -> list[Connection]:
     """The pieces' connections as one list, each once, whose two ends are names DMbot will have:
     one of this reading's names (or its other spelling, public or secret) or `known` (a name key
@@ -1327,7 +1328,8 @@ def keep_connections(
 
     `speaker`: the character whose backstory this is, as the DM said (#2650). "I", "my" and "me"
     are that character, and so are a bare "his" or "her"; with no speaker, a connection that
-    needs "I" is left out as `whose` (counted, never guessed)."""
+    needs "I" is left out as `whose` (counted, never guessed). `whole_only` (#4923): names of
+    `known` matched only whole, in the end and in the quote."""
     lost = dropped if dropped is not None else Counter()
     names = list(names)
     ends: dict[str, str] = dict(known)
@@ -1351,7 +1353,12 @@ def keep_connections(
     spellings = {
         sp: f.name for f in names for sp in f.also if len(claimed.get(name_key(sp), ())) == 1
     }
-    reader = Ends(ends, {*ends.values()}, spellings)
+    # `whole_only` (#4923): a kept item's or place's name in small letters ("wolf figurine") is an
+    # end only by its whole name, never by one of its words ("wolf", "the mill"): a lower-case word
+    # is not a name as a capitalised one is (#3431), so it stays out of the by-its-words matching
+    # and its quote must hold it whole (below)
+    whole = {name_key(n) for n in whole_only}
+    reader = Ends(ends, {n for n in ends.values() if name_key(n) not in whole}, spellings)
     seen: set[tuple[str, str, str, tuple[str, bool] | None]] = set()
     # kin_of, by unordered pair: (its place in `out` or None, its role or "", the order it was said)
     kin_held: dict[tuple[str, str], tuple[int | None, str, tuple[str, str]]] = {}
@@ -1449,6 +1456,11 @@ def keep_connections(
             a, b = first.name, second.name
             if a is None or b is None or name_key(a) == name_key(b):
                 lost["name_not_found"] += 1
+                continue
+            if whole and any(
+                name_key(n) in whole and not _has(_squash(c.quote), n) for n in (a, b)
+            ):
+                lost["name_not_found"] += 1  # (a word of it in the quote is not the name, #4923)
                 continue
             # A spelling the text used for an end the AI wrote another way must not be another
             # name of the campaign (#2757): then it was that name, and the link is not this one's.

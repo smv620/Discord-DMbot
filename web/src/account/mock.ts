@@ -5,6 +5,7 @@
  *
  * The names are our own invented cast (docs/test-scripts/), never real people.
  */
+import { plotThreadsWords } from "../content/plot-threads-words";
 import type { PlanId } from "../content/pricing";
 import type {
   AccountApi,
@@ -718,7 +719,7 @@ function pretendPlotThreads(): PlotThreads {
     total: 4,
     threads: [
       {
-        id: "a1".repeat(16), name: "The drowned bell", kind: "thread", state: "going", stateWords: "Happening now",
+        id: "a1".repeat(16), name: "The drowned bell", kind: "thread", state: "active", stateWords: "Happening now",
         history: ["Open (Session 2)", "checked, still going (Session 4)"],
         involved: [{ id: "pc-cerric", name: "Cerric", role: "quest giver" }, { id: "npc-tavin", name: "Tavin", role: "" }],
         movers: [{ id: "pc-cerric", name: "Cerric", endsIt: false, session: 4 }],
@@ -1371,6 +1372,8 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const joinState: Record<string, { group: string; answer: "waiting" | "everyone"; names: string[] }[]> = {};
   // The "Still in the party?" questions waiting, by campaign (#4895). An answer takes its character out of the list.
   const leaveState: Record<string, LeaveGroup[]> = {};
+  // The open plot threads by campaign (#3696): a state change is kept here, so the next read shows it.
+  const plotThreadsOf: Record<string, PlotThreads> = {};
   // The party record (#4778 a2): Wren is in the party; Ash left and is out. A leave or a return is one change, with one Undo.
   const pretendParty = (): PartyRecordCharacter[] => [
     { id: "p1".repeat(16), name: "Wren", inParty: true, spans: [{ from: 1700000000, to: null, ended: null, session: 2 }] },
@@ -3094,7 +3097,28 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       await reachable();
       signedIn();
       if (webView(ref) !== "dm") throw new ApiError("not-allowed");
-      return pretendPlotThreads();
+      return structuredClone((plotThreadsOf[ref] ??= pretendPlotThreads()));
+    },
+    // A state change or "check" (#3696, slice 2a): a thread not in the list is gone; "check" needs a live thread.
+    async changePlotThreadState(ref, change) {
+      calls.push(`changePlotThreadState:${ref}:${change.thread}:${change.state}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const list = (plotThreadsOf[ref] ??= pretendPlotThreads());
+      const t = list.threads.find((x) => x.id === change.thread);
+      if (!t) throw new ApiError("gone");
+      const live = t.state === "hinted" || t.state === "open" || t.state === "active";
+      if (change.state === "check") {
+        if (!live) throw new ApiError("gone");
+        t.quiet = 0;
+        t.stalled = false;
+        return;
+      }
+      t.state = change.state;
+      t.stateWords = plotThreadsWords.stateWord(t.kind === "promise", change.state);
+      t.quiet = 0;
+      t.stalled = false;
     },
     async changeStoryThreads(ref, change) {
       calls.push(`changeStoryThreads:${ref}:${JSON.stringify(change)}`);

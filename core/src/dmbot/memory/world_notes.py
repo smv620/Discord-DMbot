@@ -28,13 +28,13 @@ from __future__ import annotations
 from collections.abc import Collection, Sequence
 from dataclasses import dataclass
 
-from dmbot.memory import gate, language_rows, map_fact_store, place_levels
+from dmbot.memory import biases, gate, language_rows, map_fact_store, place_levels
 from dmbot.memory import map_facts as mf
-from dmbot.memory._changes import ENTITIES, RELATIONS, STORY_LANGUAGES, Changes, Scope
+from dmbot.memory._changes import CULTURES, ENTITIES, RELATIONS, STORY_LANGUAGES, Changes, Scope
 from dmbot.memory.models import DM, MemoryRuleError
 
-PLACE, LANGUAGE, ROAD = "place", "language", "road"
-KINDS = (PLACE, LANGUAGE, ROAD)
+PLACE, LANGUAGE, ROAD, BIAS = "place", "language", "road", "bias"
+KINDS = (PLACE, LANGUAGE, ROAD, BIAS)
 GONE = "That note is gone already: it was checked or changed meanwhile."
 
 
@@ -90,9 +90,10 @@ _LANGUAGE_NOTES = (
 
 
 async def read(scope: Scope, *, with_roads: bool = False) -> list[Note]:
-    """Every open note of the campaign, places then languages, each oldest first. Only lines on
-    an entry the DM keeps (confirmed or waiting, never one turned down or merged away), and a
-    ruler only when the group is kept too (so ✅ never makes a group the DM turned down rule).
+    """Every open note of the campaign, places, languages, feelings then roads, each oldest
+    first. Only lines on an entry the DM keeps (confirmed or waiting, never one turned down or
+    merged away), and a ruler only when the group is kept too (so ✅ never makes a group the DM
+    turned down rule).
     `with_roads`: with the road lengths a map disagrees with (only while the map answers are on)."""
     names = {
         str(r["id"]): str(r["name"])
@@ -146,8 +147,27 @@ async def read(scope: Scope, *, with_roads: bool = False) -> list[Note]:
                     made_at=int(r["created_at"]),
                 )
             )  # fmt: skip
+    out.extend(await _biases(scope, names))
     if with_roads:
         out.extend(await _roads(scope, names))
+    return out
+
+
+async def _biases(scope: Scope, names: dict[str, str]) -> list[Note]:
+    """The biases DMbot read and the DM hasn't answered (#4229 slice 4): `value` names the target
+    ("duergar", or a culture's name) and `how` is the step. Only a holder the DM keeps."""
+    culture_names = {
+        str(r["id"]): str(r["name"])
+        for r in await scope.select(CULTURES, " AND status <> 'rejected'", [])
+    }
+    out: list[Note] = []
+    for b in await biases.waiting(scope):
+        target = biases.target_words(b, culture_names)
+        if b.holder_id in names and target:
+            out.append(
+                Note(note_id(BIAS, b.id), BIAS, b.holder_id, names[b.holder_id], target,
+                     how=b.step)
+            )  # fmt: skip
     return out
 
 
@@ -197,6 +217,7 @@ async def keep(w: Changes, line_ids: Collection[str]) -> int:
     for row_id in sorted(open_now[ROAD]):  # (as the road's ✅ Length is right, #4255)
         await w.update(RELATIONS, row_id, {"length_from": place_levels.BY_DM})
         kept += 1
+    kept += await biases.keep(w, sorted(open_now[BIAS]))  # (the DM's from now on, #4229)
     return kept
 
 
@@ -212,6 +233,10 @@ async def turn_down(w: Changes, line_id: str) -> bool:
         if done == map_fact_store.GONE_ALREADY:
             raise MemoryRuleError(GONE)
         return done == map_fact_store.NAME_TOO
+    if open_now[BIAS]:  # (closed as history: never read in again, #4229)
+        if not await biases.turn_down(w, next(iter(open_now[BIAS]))):
+            raise MemoryRuleError(GONE)
+        return False
     if not open_now[LANGUAGE]:
         raise MemoryRuleError(GONE)
     await language_rows.say_not(w, next(iter(open_now[LANGUAGE])))
@@ -234,6 +259,6 @@ def _split_all(line_ids: Collection[str]) -> dict[str, set[str]]:
 
 
 __all__ = [
-    "GONE", "KINDS", "LANGUAGE", "PLACE", "ROAD", "Note", "keep", "note_id", "of_kind", "read",
-    "split_id", "turn_down",
+    "BIAS", "GONE", "KINDS", "LANGUAGE", "PLACE", "ROAD", "Note", "keep", "note_id", "of_kind",
+    "read", "split_id", "turn_down",
 ]  # fmt: skip

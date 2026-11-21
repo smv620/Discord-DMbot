@@ -38,6 +38,26 @@ def matches_alone(text: str, kind: str, source: str) -> bool:
     return source == "dm"
 
 
+# A thing's or a place's own name kept in small letters ("wolf figurine", "old mill") is still a
+# name (#4923; Supervisor's ruling, 2026-11-21): the DM kept it, and "wolf figurine" says which
+# figurine as "Frost Brand" says which sword. Not when it starts like a description ("the cave",
+# "a dagger", "my sword": #3431 stands there), and the caller checks the rest (its own main
+# name, confirmed, an item or a place, the only entry with that name key).
+# (the description openers, Supervisor on #4929: "my sword" and "that cave" say what, not which)
+_ARTICLES = frozenset(
+    {"the", "a", "an", "my", "his", "her", "their", "our", "your", "its", "this", "that", "these",
+     "those"}
+)  # fmt: skip
+
+
+def kept_thing_alone(text: str) -> bool:
+    """Whether a kept item's or place's own main name may be an end by itself, in small letters
+    too: any name that doesn't start with an article or an owner or pointing word ("the", "my",
+    "that")."""
+    words = text.split()
+    return bool(words) and words[0].casefold() not in _ARTICLES
+
+
 # The last word of a description that names a person ("the woman", "a hooded figure"). Short and
 # plain on purpose: no race, class or job ("a dwarf", "a wizard", "a guard" say what someone is, and
 # "Bob is a dwarf" is not a tie to a person), and no thing or place ("the cave").
