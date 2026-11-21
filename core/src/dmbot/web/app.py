@@ -3193,6 +3193,57 @@ def create_app(
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None
 
+    @app.post("/me/campaigns/{ref}/plot-threads/new", status_code=202)
+    async def me_campaign_plot_thread_new(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"kind", "state", "name"}`: start a thread or a promise (#3696 slice 2c); polled at
+        `.../web/answers/{answer}`, which carries the new thread's id. DM only."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await plot_threads.queue_new(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/plot-threads/due", status_code=202)
+    async def me_campaign_plot_thread_due(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"promise", "due"}`: a promise's due note, empty clears it (#3696 slice 2c); polled at
+        `.../web/answers/{answer}`. DM only."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await plot_threads.queue_due(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/plot-threads/party", status_code=202)
+    async def me_campaign_plot_thread_party(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"promise", "side", "who"}`: who made a promise, or who it was made to (#3696 slice
+        2c); polled at `.../web/answers/{answer}`. DM only."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await plot_threads.queue_party(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
     @app.get("/me/campaigns/{ref}/join-questions")
     async def me_campaign_join_questions(ref: str, signed: Signed) -> dict[str, Any]:
         """The join questions waiting for the DM (#4778): "What does Mira know about what came
