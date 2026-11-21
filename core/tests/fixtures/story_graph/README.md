@@ -163,6 +163,10 @@ Paste its lines on #3545: `kind_right`/`kind_wrong` (map, table, handout or othe
 
 `bias_cases_lore.txt` and `bias_cases_key.json` (#4229 slice 4; plan on #3545) are invented lore for the reader of a place's, group's or people's feeling toward a lineage or a named culture (`memory/bias_read.py`, no AI). The key lists each stated feeling (holder, toward, step) and `must_not` sentences that must give nothing: someone else's feeling, a single character's, a question, an "if", "dwarven ale", "human traders", a feeling toward a person, and a negation. `tests/test_bias_cases.py` scores the reader on every CI run (found, missed, wrong step, extra); the sample lore states none, so this is where the reader's recall is measured.
 
+## The place culture and road condition cases
+
+`culture_cases_lore.txt` and `culture_cases_key.json`, and `road_cases_lore.txt` and `road_cases_key.json` (#4982), are invented lore for two more set-phrase readers: a place's culture and who lives there (`memory/place_peoples.py`, #4257) and a road's condition (`memory/route_condition.py`, #4258). Each key lists the stated cases and `must_not` sentences that must give nothing: someone else's view, a question, an "if", a negation, a past state, an adjective that only looks like a people, and a single person. `tests/test_culture_cases.py` and `tests/test_road_cases.py` score each reader on every CI run (found, missed, wrong, extra, and must-not lines that gave something), and pin today's counts: a reader change that moves them updates them on purpose. `bias_cases_*` gained five fresh sentences in #4982, scored before any reader change.
+
 ## Changes to the keys
 
 - **2026-11-17, the guess cases (#4655, quests slice 7a):** `guess_cases_lore.txt`, `guess_cases_session.txt` and `guess_cases_key.json` / `.md` added (invented, Supervisor's ruling), with the check's `readings` / `must_not_readings` rows and its `Readings:` line.

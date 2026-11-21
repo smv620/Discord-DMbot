@@ -23,6 +23,14 @@ _UNFRIENDLY = (
     "resents", "resent",
 )  # fmt: skip
 _WARY = ("fears", "fear", "is wary of", "are wary of")
+# The five steps' own words, as World notes says them ("is friendly toward dwarves"; Supervisor's
+# ruling C3 on #4982): "is" or "are", the step, then its word before a people
+_STEP_WORDS = (
+    (standing.HOSTILE, ("hostile to", "hostile toward", "hostile towards")),
+    (standing.UNFRIENDLY, ("unfriendly to", "unfriendly toward", "unfriendly towards")),
+    (standing.FRIENDLY, ("friendly to", "friendly toward", "friendly towards")),
+    (standing.DEVOTED, ("devoted to",)),
+)
 _FRIENDLY = ("welcomes", "welcome", "trusts", "trust", "likes", "like")
 _DEVOTED = ("reveres", "revere", "loves", "love", "honours", "honour", "honors", "honor")
 VERBS: dict[str, str] = {
@@ -31,7 +39,26 @@ VERBS: dict[str, str] = {
     **dict.fromkeys(_WARY, standing.WARY),
     **dict.fromkeys(_FRIENDLY, standing.FRIENDLY),
     **dict.fromkeys(_DEVOTED, standing.DEVOTED),
+    **{
+        f"{be} {words}": step
+        for step, said in _STEP_WORDS
+        for words in said
+        for be in ("is", "are")
+    },
 }
+# The perfect tense, after "has" or "have" ("has long despised elves", Supervisor's ruling C2 on
+# #4982). Only the perfect: a bare past ("despised elves") may be a feeling that has ended, so it
+# stays a miss, the safe side.
+_PERFECT: dict[str, str] = {
+    **dict.fromkeys(("hated", "despised", "loathed"), standing.HOSTILE),
+    **dict.fromkeys(
+        ("distrusted", "mistrusted", "disliked", "shunned", "resented"), standing.UNFRIENDLY
+    ),
+    "feared": standing.WARY,
+    **dict.fromkeys(("welcomed", "trusted", "liked"), standing.FRIENDLY),
+    **dict.fromkeys(("revered", "loved", "honoured", "honored"), standing.DEVOTED),
+}
+_HAS = r"(?:has|have)(?:\s+(?:long|always|still|openly|deeply|greatly))*\s+"
 # (a word or two the text may put between the holder and the verb, or the verb and the people)
 _LINK = r"(?:\s+(?:openly|deeply|still|always|greatly|all|most|the|its|their))*\s+"
 _SENTENCES = re.compile(r"(?<=[.!?])\s+|\n+")
@@ -42,8 +69,9 @@ _NOT_A_STATEMENT = re.compile(
 # The holder starts its sentence or clause: "Travelers to X fear orcs" and "Nobody believes X hates
 # elves" are someone else's feeling or a doubted one (the reviewer's cases on #4229).
 _CLAUSE_START = r"(?:^\W*|[,;:]\s*|\band\s+|\bbut\s+)"
-# "The people of X distrust …": the holder's own people, said the long way (the fixture on #3545)
-_PEOPLE_OF = r"(?:the\s+(?:people|folk)\s+of\s+)?"
+# "The people of X distrust …", "Most folk in X distrust …": the holder's own people, said the long
+# way (the fixture on #3545; "most folk in", Supervisor's ruling C1 on #4982)
+_PEOPLE_OF = r"(?:(?:the|most)\s+(?:people|folk)\s+(?:of|in)\s+)?"
 # A list after the verb ("welcomes halflings and gnomes"): each further people is read too, but
 # only one a clause ends after, so "elves and dwarves trust nobody" gives no feeling toward dwarves
 _MORE = r"(?:\s*,\s*(?:and\s+|or\s+)?|\s+(?:and|or)\s+)"
@@ -95,7 +123,7 @@ def read(text: str, holders: Mapping[str, str], cultures: Mapping[str, str]) -> 
     names = {n.casefold(): ("culture", i) for n, i in cultures.items()}
     if not holders:
         return []
-    verb = _alternation(VERBS)
+    verb = rf"{_alternation(VERBS)}|{_HAS}(?P<perfect>{_alternation(_PERFECT)})"
     whole = _alternation({**_PLURAL, **names})  # (a culture's name is whole wherever it stands)
     single = _alternation(_SINGLE)
     target = rf"(?:(?P<whole>{whole})(?:\s+folk)?|(?P<single>{single}){_WHOLE_AFTER})(?!\w)"
@@ -127,7 +155,11 @@ def read(text: str, holders: Mapping[str, str], cultures: Mapping[str, str]) -> 
             continue
         for pattern, holder_id in patterns:
             for m in pattern.finditer(sentence):
-                step = VERBS[m["verb"].casefold()]
+                step = (
+                    _PERFECT[m["perfect"].casefold()]
+                    if m["perfect"]
+                    else VERBS[m["verb"].casefold()]
+                )
                 words = [m["whole"] or m["single"]]
                 at = m.end()
                 while (n := more.match(sentence, at)) is not None:  # (the rest of a list)
