@@ -634,3 +634,119 @@ describe("new story threads and promises (#4944)", () => {
     expect(await screen.findByText(w.started)).toBeTruthy();
   });
 });
+
+// Link an event and Led to… (#4949, slice 2d): an event moved the thread along or ended it; a thread led to another.
+describe("link an event and led to (#4949)", () => {
+  const BELL = thread({ name: "The drowned bell", state: "active" });
+  const PROM = thread({ id: "p1".repeat(16), name: "Mira's word", kind: "promise", state: "open", stateWords: "Open", promise: { by: [], to: [], due: "" } });
+  const NAMES_49 = [
+    { id: "e1", text: "The ambush at the ford", kind: "event", saidAs: null },
+    { id: "n-mira", text: "Mira", kind: "character", saidAs: null },
+    { id: BELL.id, text: "The drowned bell", kind: "thread", saidAs: null },
+  ];
+  async function withLinks(opts: { ledFail?: boolean; linkGone?: boolean } = {}) {
+    const api = mockApi("table");
+    let threads: PlotThread[] = [BELL, PROM];
+    const reads = { n: 0 };
+    api.plotThreads = async () => {
+      reads.n += 1;
+      return answer({}, threads);
+    };
+    api.campaignNames = async () => NAMES_49;
+    const linked: Record<string, unknown>[] = [];
+    const led: { from: string; to: string }[] = [];
+    api.linkPlotThreadEvent = async (_ref, change) => {
+      if (opts.linkGone) throw new ApiError("gone");
+      linked.push(change);
+      const ev = "newEvent" in change ? change.newEvent : NAMES_49.find((n) => n.id === change.event)!.text;
+      threads = threads.map((t) =>
+        t.id === change.thread ? { ...t, movers: [...t.movers, { id: "m1", name: ev, endsIt: change.how === "ended", session: null }] } : t,
+      );
+    };
+    api.plotThreadLedTo = async (_ref, change) => {
+      if (opts.ledFail) throw new ApiError("network");
+      led.push(change);
+    };
+    render(<PlotThreadsPanel api={api} refId={REF} />);
+    await screen.findByText("The drowned bell");
+    const bell = (await screen.findByText("The drowned bell")).closest("article") as HTMLElement;
+    return { api, reads, linked, led, bell };
+  }
+
+  it("Link an event lists only events and asks whether it moved or ended the thread", async () => {
+    const { bell } = await withLinks();
+    fireEvent.click(within(bell).getByRole("button", { name: w.linkButton }));
+    expect(await within(bell).findByRole("button", { name: "The ambush at the ford" })).toBeTruthy();
+    expect(within(bell).queryByRole("button", { name: "Mira" })).toBeNull();
+    fireEvent.click(within(bell).getByRole("button", { name: "The ambush at the ford" }));
+    expect(within(bell).getByText(w.howQuestion)).toBeTruthy();
+    expect(within(bell).getByRole("button", { name: w.moved })).toBeTruthy();
+    expect(within(bell).getByRole("button", { name: w.ended })).toBeTruthy();
+  });
+
+  it("moved and ended call the API with the right how and show the event in Moved by", async () => {
+    const { linked, bell } = await withLinks();
+    fireEvent.click(within(bell).getByRole("button", { name: w.linkButton }));
+    fireEvent.click(await within(bell).findByRole("button", { name: "The ambush at the ford" }));
+    fireEvent.click(within(bell).getByRole("button", { name: w.moved }));
+    expect(await screen.findByText(w.linked)).toBeTruthy();
+    expect(linked).toEqual([{ thread: BELL.id, how: "moved", event: "e1" }]);
+    expect(await within(bell).findByText(`${w.movedBy} The ambush at the ford`)).toBeTruthy();
+  });
+
+  it("a name nothing matches offers to add it as a new event, and links it", async () => {
+    const { linked, bell } = await withLinks();
+    fireEvent.click(within(bell).getByRole("button", { name: w.linkButton }));
+    fireEvent.input(within(bell).getByLabelText(w.eventLabel), { target: { value: "Gate at dawn" } });
+    fireEvent.click(await within(bell).findByRole("button", { name: w.newEventChoice("Gate at dawn") }));
+    fireEvent.click(within(bell).getByRole("button", { name: w.moved }));
+    expect(await screen.findByText(w.linked)).toBeTruthy();
+    expect(linked).toEqual([{ thread: BELL.id, how: "moved", newEvent: "Gate at dawn" }]);
+  });
+
+  it("Led to… lists events and threads but not the thread itself, and saves the pick", async () => {
+    const { led, bell } = await withLinks();
+    fireEvent.click(within(bell).getByRole("button", { name: w.ledButton }));
+    expect(await within(bell).findByRole("button", { name: "The ambush at the ford" })).toBeTruthy();
+    expect(within(bell).queryByRole("button", { name: "The drowned bell" })).toBeNull();
+    fireEvent.click(within(bell).getByRole("button", { name: "The ambush at the ford" }));
+    expect(await screen.findByText(w.linked)).toBeTruthy();
+    expect(led).toEqual([{ from: BELL.id, to: "e1" }]);
+  });
+
+  it("a failed led to says nothing changed", async () => {
+    const { api, bell } = await withLinks();
+    // The bot's "failed" (a loop or a wrong kind) reaches the page as a server error.
+    api.plotThreadLedTo = async () => {
+      throw new ApiError("server");
+    };
+    fireEvent.click(within(bell).getByRole("button", { name: w.ledButton }));
+    fireEvent.click(await within(bell).findByRole("button", { name: "The ambush at the ford" }));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.ledFailed);
+  });
+
+  it("a thread or name that is gone says so and re-reads the list", async () => {
+    const { reads, bell } = await withLinks({ linkGone: true });
+    fireEvent.click(within(bell).getByRole("button", { name: w.linkButton }));
+    fireEvent.click(await within(bell).findByRole("button", { name: "The ambush at the ford" }));
+    fireEvent.click(within(bell).getByRole("button", { name: w.moved }));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.addGone);
+    await waitFor(() => expect(reads.n).toBe(2));
+  });
+
+  it("every button waits while a press is with the bot", async () => {
+    const { api, bell } = await withLinks();
+    let release!: () => void;
+    api.linkPlotThreadEvent = () =>
+      new Promise<void>((resolve) => {
+        release = resolve;
+      });
+    fireEvent.click(within(bell).getByRole("button", { name: w.linkButton }));
+    fireEvent.click(await within(bell).findByRole("button", { name: "The ambush at the ford" }));
+    fireEvent.click(within(bell).getByRole("button", { name: w.moved }));
+    await waitFor(() => expect((within(bell).getByRole("button", { name: w.moved }) as HTMLButtonElement).disabled).toBe(true));
+    expect((within(bell).getByRole("button", { name: w.ended }) as HTMLButtonElement).disabled).toBe(true);
+    release();
+    expect(await screen.findByText(w.linked)).toBeTruthy();
+  });
+});

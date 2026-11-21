@@ -11,6 +11,8 @@ import { ApiError, type AccountApi, type CampaignName, type PlotThread, type Plo
 // The kinds a promise's "Who promised?" and "Promised to" name can be (#3696, slice 2c): a character or a faction, and for "to" a place too.
 const BY_KINDS = ["character", "faction"];
 const TO_KINDS = ["character", "faction", "place"];
+// What a "Led to…" can be: an event, or a thread of any of its kinds (#3696, slice 2d).
+const LED_KINDS = ["event", "thread", "quest", "mystery", "hook", "goal", "promise"];
 // The four kinds a new story thread can be, as Discord's card offers them (a plain thread is not one of them).
 const NEW_KINDS = ["quest", "mystery", "hook", "goal"] as const;
 import SavingWait from "./SavingWait";
@@ -138,6 +140,30 @@ export default function PlotThreadsPanel({ api, refId, onSignedOut }: { api: Acc
       await api.addPlotThread(refId, { kind, state, name });
       setForm(null);
       return { ok: true, text: w.started };
+    });
+
+  /** A link of an event to a thread: it moved the thread along or ended it (#3696, slice 2d). */
+  const linkFor = (t: PlotThread, how: "moved" | "ended", pick: { event: string } | { newEvent: string }): Promise<void> =>
+    runPress(async () => {
+      if (!api.linkPlotThreadEvent) throw new ApiError("server");
+      await api.linkPlotThreadEvent(refId, { thread: t.id, how, ...pick });
+      setForm(null);
+      return { ok: true, text: w.linked };
+    });
+
+  /** One thread led to another thread or event (#3696, slice 2d). */
+  const ledFor = (t: PlotThread, toId: string): Promise<void> =>
+    runPress(async () => {
+      if (!api.plotThreadLedTo) throw new ApiError("server");
+      try {
+        await api.plotThreadLedTo(refId, { from: t.id, to: toId });
+      } catch (error) {
+        // A thread that is gone is said as such; any other failure (the bot's "failed", a loop or a wrong kind) says nothing was linked.
+        if (error instanceof ApiError && error.kind === "gone") throw error;
+        return { ok: false, text: w.ledFailed };
+      }
+      setForm(null);
+      return { ok: true, text: w.linked };
     });
 
   /** A new promise: made open; if the due box has a word, its due note is saved after, and a failure there is said apart. */
@@ -275,6 +301,8 @@ export default function PlotThreadsPanel({ api, refId, onSignedOut }: { api: Acc
                   onForm={setForm}
                   pressDue={(due) => void dueFor(t, due)}
                   pressParty={(side, whoId) => void partyFor(t, side, whoId)}
+                  pressLink={(how, pick) => void linkFor(t, how, pick)}
+                  pressLed={(toId) => void ledFor(t, toId)}
                   onAddSubmit={(whoId, role) => void pressAdd(t, whoId, role)}
                 />
               </li>
@@ -304,6 +332,8 @@ function Thread({
   onForm,
   pressDue,
   pressParty,
+  pressLink,
+  pressLed,
   onAddSubmit,
 }: {
   thread: PlotThread;
@@ -321,6 +351,8 @@ function Thread({
   onForm: (key: string | null) => void;
   pressDue: (due: string) => void;
   pressParty: (side: "by" | "to", whoId: string) => void;
+  pressLink: (how: "moved" | "ended", pick: { event: string } | { newEvent: string }) => void;
+  pressLed: (toId: string) => void;
   onAddSubmit: (whoId: string, role: string) => void;
 }) {
   const addKey = `add:${t.id}`;
@@ -414,6 +446,39 @@ function Thread({
           )}
         </div>
       )}
+      <div class="stack">
+        <div class="row">
+          <button type="button" class="button secondary" aria-expanded={form === `link:${t.id}`} disabled={busy} onClick={() => toggle(`link:${t.id}`)}>
+            {w.linkButton}
+          </button>
+          <button type="button" class="button secondary" aria-expanded={form === `led:${t.id}`} disabled={busy} onClick={() => toggle(`led:${t.id}`)}>
+            {w.ledButton}
+          </button>
+        </div>
+        {form === `link:${t.id}` && (
+          <LinkEventForm
+            api={api}
+            refId={refId}
+            threadId={t.id}
+            busy={busy}
+            onSubmit={(how, pick) => pressLink(how, pick)}
+            onClose={() => onForm(null)}
+          />
+        )}
+        {form === `led:${t.id}` && (
+          <NameSearch
+            api={api}
+            refId={refId}
+            kinds={LED_KINDS}
+            threadId={t.id}
+            busy={busy}
+            label={w.ledLabel}
+            placeholder={w.ledPlaceholder}
+            onPick={(id) => pressLed(id)}
+            onClose={() => onForm(null)}
+          />
+        )}
+      </div>
       {t.kind === "promise" && (
         <div class="stack">
           <div class="row">
@@ -721,6 +786,8 @@ function NameSearch({
   kinds,
   threadId,
   busy,
+  label = w.searchLabel,
+  placeholder = w.searchPlaceholder,
   onPick,
   onClose,
 }: {
@@ -729,6 +796,8 @@ function NameSearch({
   kinds: string[];
   threadId: string;
   busy: boolean;
+  label?: string;
+  placeholder?: string;
   onPick: (whoId: string) => void;
   onClose: () => void;
 }) {
@@ -757,13 +826,13 @@ function NameSearch({
     .slice(0, MATCHES);
 
   return (
-    <div class="stack" role="group" aria-label={w.searchLabel}>
+    <div class="stack" role="group" aria-label={label}>
       <label class="stack">
-        {w.searchLabel}
+        {label}
         <input
           type="search"
           value={query}
-          placeholder={w.searchPlaceholder}
+          placeholder={placeholder}
           disabled={busy}
           autoComplete="off"
           onInput={(e) => setQuery((e.target as HTMLInputElement).value)}
@@ -783,6 +852,113 @@ function NameSearch({
             </li>
           ))}
         </ul>
+      )}
+      <div class="row">
+        <button type="button" class="button secondary" disabled={busy} onClick={onClose}>
+          {w.closeChange}
+        </button>
+      </div>
+      <SavingWait active={busy} stage={w.working} />
+    </div>
+  );
+}
+
+/** "Link an event": a search over the campaign's events, or a new event made on the spot; then whether it moved the thread along or ended it (#3696, slice 2d). */
+function LinkEventForm({
+  api,
+  refId,
+  threadId,
+  busy,
+  onSubmit,
+  onClose,
+}: {
+  api: AccountApi;
+  refId: string;
+  threadId: string;
+  busy: boolean;
+  onSubmit: (how: "moved" | "ended", pick: { event: string } | { newEvent: string }) => void;
+  onClose: () => void;
+}) {
+  const [names, setNames] = useState<CampaignName[] | null>(null);
+  const [query, setQuery] = useState("");
+  // The event picked: an existing one (by id) or a new one (by its typed name), with the words to show for it.
+  const [pick, setPick] = useState<{ pick: { event: string } | { newEvent: string }; text: string } | null>(null);
+
+  useEffect(() => {
+    let stale = false;
+    const load = api.campaignNames ? api.campaignNames(refId) : Promise.resolve([] as CampaignName[]);
+    load.then(
+      (got) => {
+        if (!stale) setNames(got);
+      },
+      () => {
+        if (!stale) setNames([]);
+      },
+    );
+    return () => {
+      stale = true;
+    };
+  }, [api, refId]);
+
+  const typed = query.trim();
+  const needle = typed.toLowerCase();
+  const events = (names ?? [])
+    .filter((n) => n.kind === "event" && n.id !== threadId && n.text.toLowerCase().includes(needle))
+    .slice(0, MATCHES);
+
+  return (
+    <div class="stack" role="group" aria-label={w.linkButton}>
+      {pick === null ? (
+        <>
+          <label class="stack">
+            {w.eventLabel}
+            <input
+              type="search"
+              value={query}
+              maxLength={w.eventMax}
+              placeholder={w.eventPlaceholder}
+              disabled={busy}
+              autoComplete="off"
+              onInput={(e) => setQuery((e.target as HTMLInputElement).value)}
+            />
+          </label>
+          {names === null ? (
+            <p class="muted small">{w.loading}</p>
+          ) : events.length === 0 ? (
+            typed !== "" ? (
+              <div class="row">
+                <button type="button" class="button secondary" disabled={busy} onClick={() => setPick({ pick: { newEvent: typed }, text: typed })}>
+                  {w.newEventChoice(typed)}
+                </button>
+              </div>
+            ) : null
+          ) : (
+            <ul class="stack">
+              {events.map((n) => (
+                <li key={n.id}>
+                  <button type="button" class="button secondary" disabled={busy} onClick={() => setPick({ pick: { event: n.id }, text: n.text })}>
+                    {n.text}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          )}
+        </>
+      ) : (
+        <div class="stack">
+          <p>
+            <strong>{pick.text}</strong>
+          </p>
+          <p>{w.howQuestion}</p>
+          <div class="row">
+            <button type="button" class="button" disabled={busy} onClick={() => onSubmit("moved", pick.pick)}>
+              {w.moved}
+            </button>
+            <button type="button" class="button secondary" disabled={busy} onClick={() => onSubmit("ended", pick.pick)}>
+              {w.ended}
+            </button>
+          </div>
+        </div>
       )}
       <div class="row">
         <button type="button" class="button secondary" disabled={busy} onClick={onClose}>
