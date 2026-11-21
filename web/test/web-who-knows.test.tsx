@@ -246,3 +246,24 @@ describe("who knows this, on a held connection", () => {
     expect(within(panel).getByText(w.whoStateSome("Mara, Tavin, Brann, Lio and 2 more"))).toBeTruthy();
   });
 });
+
+// The "Who knows this?" character list uses the same order and leaver's note as See as… (#4888).
+describe("who knows this: the character list is in the API's order, with a leaver's note (#4888)", () => {
+  it("the character list lists in the order it is given and shows a leaver's note", async () => {
+    const panel = await openPanel(pageWith(graph([held()])));
+    fireEvent.click(within(panel).getByRole("button", { name: w.whoSome }));
+    await within(panel).findByRole("checkbox", { name: "Tavin (Retired)" });
+    const labels = within(within(panel).getByRole("list", { name: w.whoSomeLabel }))
+      .getAllByRole("checkbox")
+      .map((c) => c.closest("label")?.textContent);
+    expect(labels.slice(0, 4)).toEqual(["Cerric", "Mira", "Tavin (Retired)", "Guard 1"]);
+  });
+
+  it("a name with no note shows no brackets", async () => {
+    const panel = await openPanel(pageWith(graph([held()])));
+    fireEvent.click(within(panel).getByRole("button", { name: w.whoSome }));
+    const mira = await within(panel).findByRole("checkbox", { name: "Mira" });
+    expect(mira.closest("label")?.textContent).toBe("Mira");
+  });
+});
+

@@ -2062,6 +2062,10 @@ export interface WebViewer {
   id: string;
   name: string;
   kind: "pc" | "npc";
+  /** Where the name sits in the list, which the API orders (#4887): the party, then those who left, then the rest. */
+  group: "party" | "left" | "other";
+  /** Why a name is shown, such as "Retired" for one who left (#4887); left out when there is nothing to say. */
+  note?: string;
 }
 export interface WebViewers {
   viewers: WebViewer[];

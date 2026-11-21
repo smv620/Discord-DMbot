@@ -694,10 +694,11 @@ function startWeb(big: boolean, lonely = false): WebState {
 }
 
 /** The pretend names a DM may look at the web as (#2999): two player characters first, then NPCs. */
-const PRETEND_VIEWERS: { id: string; name: string; kind: "pc" | "npc" }[] = [
-  { id: "pc-cerric", name: "Cerric", kind: "pc" },
-  { id: "pc-mira", name: "Mira", kind: "pc" },
-  ...Array.from({ length: 28 }, (_, i) => ({ id: `npc-guard-${i + 1}`, name: `Guard ${i + 1}`, kind: "npc" as const })),
+const PRETEND_VIEWERS: { id: string; name: string; kind: "pc" | "npc"; group: "party" | "left" | "other"; note?: string }[] = [
+  { id: "pc-cerric", name: "Cerric", kind: "pc", group: "party" },
+  { id: "pc-mira", name: "Mira", kind: "pc", group: "party" },
+  { id: "npc-tavin", name: "Tavin", kind: "npc", group: "left", note: "Retired" },
+  ...Array.from({ length: 28 }, (_, i) => ({ id: `npc-guard-${i + 1}`, name: `Guard ${i + 1}`, kind: "npc" as const, group: "other" as const })),
 ];
 
 function webView(ref: string): "dm" | "manager" | "none" {
