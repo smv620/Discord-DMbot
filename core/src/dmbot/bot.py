@@ -307,7 +307,20 @@ from dmbot.ears.protocol import (
 from dmbot.ears.server import EarsServer
 from dmbot.fightbot import FightState
 from dmbot.image_desk import ImageDesk, ImageUseStore
-from dmbot.import_state import LEFT_TOLD, REPORTS, UNCHECKED, ImportState
+from dmbot.import_state import (
+    ADDED_NAMES,
+    BATCHES,
+    ENTRIES,
+    LEFT_TOLD,
+    PARTY,
+    QUEUED,
+    REPORTS,
+    SPEAKERS,
+    STARTS,
+    UNCHECKED,
+    UNHONOURED,
+    ImportState,
+)
 from dmbot.install_record import InstallStore
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
@@ -1255,22 +1268,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self._short_asks: dict[str, int] = {}  # campaign -> session its open question is about
         # (Each imported session's name-pass report is kept in `import_state` until the import's
         # last session is scanned and then posted as one, #2649, #4904.)
-        self._import_names: dict[str, list[str]] = {}  # campaign -> names its import scans added
-        # campaign -> who spoke in the lines its import scans read (checked again before adding)
-        self._import_speakers: dict[str, set[int]] = {}
-        # campaign -> the entries its import scans proposed (the only ones the import may add)
-        self._import_entries: dict[str, set[str]] = {}
-        # campaign -> the starts of the sessions its import scans read (their claims count)
-        self._import_starts: dict[str, set[int]] = {}
-        # campaign -> the import batches whose scans ended in this report (the notice's source)
-        self._import_batches: dict[str, set[str]] = {}
-        self._import_unhonoured: dict[str, list[str]] = {}  # campaign -> why recaps weren't made
-        self._import_party: dict[str, int] = {}  # campaign -> player characters linked (#3036)
-        # campaign -> the sessions of its import whose recap was queued at once (told in one line)
         self._audio_seen: dict[tuple[int, str, int], tuple[int, int]] = {}
         self._name_pass_asks: dict[str, list[tuple[str, int]]] = {}  # unsure words (#2628)
         self.audio_waits = recap_audio.AudioWaits()  # the live "Making the audio" lines (#2621)
-        self._import_queued: dict[str, list[int]] = {}
         # What an import's scans leave for its end-of-import report is kept in the database
         # (#4904): `unchecked` = how many of an import's sessions had their name check given up
         # (told once), `left_told` = sessions the story read still has, as last told.
@@ -12877,7 +12877,10 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     await store.finish_scan(gid, ready.session_id, int(time.time()))
                     await self._link_import_party(gid, ready)
                     await self._offer_import_time(gid, ready)
-                    self._import_names.setdefault(ready.campaign_id, []).extend(added)
+                    if self.import_state is not None:
+                        await self.import_state.add_strings(
+                            gid, ready.campaign_id, ADDED_NAMES, added
+                        )
                     return 1
                 except Exception:
                     log.exception("Import: a session's name scan failed")
@@ -13281,10 +13284,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             log.exception("Import: couldn't link the party for a session")
             return
         # said once at the end of the import, with the rest of its news (counts only)
-        if characters:
-            self._import_party[ready.campaign_id] = max(
-                characters, self._import_party.get(ready.campaign_id, 0)
-            )
+        if characters and self.import_state is not None:
+            await self.import_state.raise_count(gid, ready.campaign_id, PARTY, characters)
 
     async def _apply_import_plays(self, gid: int, store: ImportStore) -> None:
         """The DM's "plays which character" choices from the import page become links, through a
@@ -13373,10 +13374,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                         told and campaign.dm_screen_channel_id is not None
                     ):
                         await self.post(campaign.dm_screen_channel_id, more, extra)
-        for cid in list(self._import_party):
-            if await store.pending_scans(gid, cid):
+        linked = await self.import_state.counted(gid, PARTY) if self.import_state else {}
+        for cid in list(linked):
+            if await store.pending_scans(gid, cid) or self.import_state is None:
                 continue  # once, at the end of the import
-            characters = self._import_party.pop(cid)
+            characters = await self.import_state.take_count(gid, cid, PARTY)
             campaign = await self.campaigns.get(gid, cid)
             party_to = self._upkeep_channel(campaign)[0] if campaign is not None else None
             if party_to is not None:
@@ -13384,22 +13386,33 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         skipped_by = (
             await self.import_state.counted(gid, UNCHECKED) if self.import_state is not None else {}
         )
-        over = self._import_names.keys() | skipped_by.keys()
-        for cid in list(over | self._import_speakers.keys() | self._import_entries.keys()):
+        over = (
+            await self.import_state.campaigns_with(gid, [ADDED_NAMES, SPEAKERS, ENTRIES])
+            if self.import_state is not None
+            else set()
+        ) | set(skipped_by)
+        for cid in sorted(over):
             if await store.pending_scans(gid, cid):
                 continue  # the import is not over: say it once at the end
-            # (the database read first: if it fails, nothing has been taken from memory yet)
-            skipped = (
-                await self.import_state.take_count(gid, cid, UNCHECKED)
-                if self.import_state is not None
-                else 0
-            )
-            names = self._import_names.pop(cid, [])
-            # (taken now so none outlives its import, whichever way the report below goes)
-            speakers = self._import_speakers.pop(cid, set())
-            entries = self._import_entries.pop(cid, set())
-            batches = self._import_batches.pop(cid, set())
-            starts = self._import_starts.pop(cid, set())
+            state = self.import_state
+            # (taken now so none outlives its import, whichever way the report below goes. A read
+            # that fails costs this campaign's news for this import, never the other campaigns')
+            try:
+                skipped = await state.take_count(gid, cid, UNCHECKED) if state else 0
+                names = await state.take_strings(gid, cid, ADDED_NAMES) if state else []
+                speakers = (
+                    {int(v) for v in await state.take_strings(gid, cid, SPEAKERS)}
+                    if state
+                    else set()
+                )
+                entries = set(await state.take_strings(gid, cid, ENTRIES)) if state else set()
+                batches = set(await state.take_strings(gid, cid, BATCHES)) if state else set()
+                starts = (
+                    {int(v) for v in await state.take_strings(gid, cid, STARTS)} if state else set()
+                )
+            except Exception as exc:
+                log.warning("Import: the kept news could not be read (%s)", type(exc).__name__)
+                continue
             campaign = await self.campaigns.get(gid, cid)
             notice_to, counts_only = self._upkeep_channel(campaign) if campaign else (None, False)
             if campaign is None or notice_to is None:
@@ -13432,11 +13445,16 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 text = f"{text}\n{note}" if text else f"📝 {note}"
             if text:
                 await self.post(notice_to, text, view=review_view(cid) if names else None)
-        for cid in list(self._import_queued.keys() | self._import_unhonoured.keys()):
-            if await store.pending_scans(gid, cid):
+        waiting_news = (
+            await self.import_state.campaigns_with(gid, [QUEUED, UNHONOURED])
+            if self.import_state is not None
+            else set()
+        )
+        for cid in sorted(waiting_news):
+            if await store.pending_scans(gid, cid) or self.import_state is None:
                 continue  # once, at the end of the import
-            queued = self._import_queued.pop(cid, [])
-            reasons = self._import_unhonoured.pop(cid, [])
+            queued = [int(v) for v in await self.import_state.take_each(gid, cid, QUEUED)]
+            reasons = await self.import_state.take_each(gid, cid, UNHONOURED)
             campaign = await self.campaigns.get(gid, cid)
             if campaign is None or (
                 campaign.dm_screen_channel_id is None and campaign.dm_bot_channel_id is None
@@ -13555,10 +13573,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             await self._keep_import_reports(gid, ready.campaign_id, fixed_here)
             return []
         users = {uid for uid, _ in lines} | set(agreed) | set(campaign.dm_user_ids)
-        self._import_speakers.setdefault(ready.campaign_id, set()).update(uid for uid, _ in lines)
-        if ready.import_id:
-            self._import_batches.setdefault(ready.campaign_id, set()).add(ready.import_id)
-        self._import_starts.setdefault(ready.campaign_id, set()).add(ready.started_at)
+        if self.import_state is not None:
+            cid = ready.campaign_id
+            await self.import_state.add_strings(
+                gid, cid, SPEAKERS, sorted({str(uid) for uid, _ in lines})
+            )
+            if ready.import_id:
+                await self.import_state.add_strings(gid, cid, BATCHES, [ready.import_id])
+            await self.import_state.add_strings(gid, cid, STARTS, [str(ready.started_at)])
         # PlotBot's name pass (#2628) for an imported session too, before the scan and the recap;
         # the lines are read again when it fixed something.
         held: list[name_pass_logic.Report] = []
@@ -13595,11 +13617,19 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             gid, ready.campaign_id, [t for _, t in lines], users, ready.session_id,
             agreed=set(agreed), game_only=True,
         )  # fmt: skip
-        self._import_entries.setdefault(ready.campaign_id, set()).update(
-            e.id
-            for e in await self.memory.entities(gid, ready.campaign_id, statuses=("proposed",))
-            if e.id not in before
-        )  # (what was waiting before is not this import's, whatever its name)
+        if self.import_state is not None:
+            await self.import_state.add_strings(
+                gid,
+                ready.campaign_id,
+                ENTRIES,
+                sorted(
+                    e.id
+                    for e in await self.memory.entities(
+                        gid, ready.campaign_id, statuses=("proposed",)
+                    )
+                    if e.id not in before
+                ),
+            )  # (what was waiting before is not this import's, whatever its name)
         log.info("Import scan: %d lines, %d new names", len(lines), len(added))
         return added
 

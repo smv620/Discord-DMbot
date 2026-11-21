@@ -41,6 +41,15 @@ class TheCounters(Base):
         await self.state.put_count(1, self.one.id, "left_told", 1)
         self.assertEqual(await self.state.count(1, self.one.id, "left_told"), 1)
 
+    async def test_raise_count_only_ever_raises(self) -> None:
+        await self.state.raise_count(1, self.one.id, "party", 3)
+        await self.state.raise_count(
+            1, self.one.id, "party", 2
+        )  # (a smaller one does not lower it)
+        self.assertEqual(await self.state.count(1, self.one.id, "party"), 3)
+        await self.state.raise_count(1, self.one.id, "party", 5)
+        self.assertEqual(await self.state.count(1, self.one.id, "party"), 5)
+
     async def test_campaigns_and_servers_are_apart(self) -> None:
         await self.state.bump(1, self.one.id, "unchecked")
         await self.state.bump(2, self.other.id, "unchecked", 5)
@@ -65,6 +74,19 @@ class TheSets(Base):
             await self.state.take_strings(1, self.one.id, "names"), ["Bryn", "Kazeth", "Ember"]
         )
         self.assertEqual(await self.state.take_strings(1, self.one.id, "names"), [])
+
+    async def test_add_each_keeps_alike_values_one_by_one_in_order_and_takes_them_once(
+        self,
+    ) -> None:
+        await self.state.add_each(1, self.one.id, "unhonoured", ["switched off", "plan"])
+        await self.state.add_each(1, self.one.id, "unhonoured", ["switched off"])
+        got = await self.state.take_each(1, self.one.id, "unhonoured")
+        self.assertEqual(got, ["switched off", "plan", "switched off"])
+        self.assertEqual(await self.state.take_each(1, self.one.id, "unhonoured"), [])
+
+    async def test_a_value_with_a_colon_comes_back_whole(self) -> None:
+        await self.state.add_each(1, self.one.id, "unhonoured", ["it said: no"])
+        self.assertEqual(await self.state.take_each(1, self.one.id, "unhonoured"), ["it said: no"])
 
     async def test_nothing_added_leaves_no_row(self) -> None:
         await self.state.add_strings(1, self.one.id, "names", [])

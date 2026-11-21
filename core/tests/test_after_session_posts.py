@@ -190,14 +190,7 @@ class TheImportNamesReport(unittest.IsolatedAsyncioTestCase):
         )
         store = SimpleNamespace(pending_scans=AsyncMock(return_value=[]))
         fake: Any = SimpleNamespace(
-            _import_party={},
-            _import_names={},
             import_state=state,
-            _import_speakers={},
-            _import_entries={},
-            _import_batches={},
-            _import_queued={},
-            _import_unhonoured={},
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
             post=AsyncMock(),
             ask_privately=AsyncMock(return_value=True),
@@ -227,15 +220,10 @@ class TheUnhonouredRecapsLine(unittest.IsolatedAsyncioTestCase):
         campaign = SimpleNamespace(
             id="c" * 32, guild_id=GUILD, dm_bot_channel_id=bot_channel, dm_screen_channel_id=SCREEN
         )
+        state = FakeImportState()
+        await state.add_each(GUILD, "c" * 32, "unhonoured", ["recaps are switched off"])
         fake: Any = SimpleNamespace(
-            _import_party={},
-            _import_names={},
-            import_state=FakeImportState(),
-            _import_speakers={},
-            _import_entries={},
-            _import_batches={},
-            _import_queued={},
-            _import_unhonoured={"c" * 32: ["recaps are switched off"]},
+            import_state=state,
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
             post=AsyncMock(),
         )
