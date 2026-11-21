@@ -1,5 +1,11 @@
 // The words of the Plot threads panel on the Names page (#3696, slice 1): read only, DM only. The state words, the history lines, the roles
 // and the stalled line come from core in the answer, so this file holds only the labels the page says around them, worded as Discord's card.
+type PlotThreadStateName = "hinted" | "open" | "active" | "resolved" | "abandoned";
+const threadStateWords: Record<PlotThreadStateName, string> = { hinted: "Just a hint", open: "Not started", active: "Happening now", resolved: "Finished", abandoned: "Dropped" };
+const promiseStateWords: Record<PlotThreadStateName, string> = { hinted: "Made in passing", open: "Open", active: "Due soon", resolved: "Kept", abandoned: "Broken or let go" };
+/** The five states in the order the buttons show them. */
+export const plotThreadStates: PlotThreadStateName[] = ["hinted", "open", "active", "resolved", "abandoned"];
+
 export const plotThreadsWords = {
   heading: "Plot threads",
   intro: "The threads DMbot keeps for your campaign. Only you see this.",
@@ -7,6 +13,27 @@ export const plotThreadsWords = {
   slow: "Still loading. This is taking longer than usual.",
   failed: "Couldn't load the threads just now. Nothing changed. Try again in a moment.",
   tryAgain: "Try again",
+  changeState: "Change state",
+  addButton: "Add who's involved",
+  addSubmit: "Add",
+  searchLabel: "A name",
+  searchPlaceholder: "A character, a group, a place or an item",
+  partLabel: "Their part",
+  partPlaceholder: "quest giver, target, villain, victim, reward…",
+  partMax: 60,
+  suggestions: ["quest giver", "target", "villain", "victim", "reward", "takes it on", "the one missing", "in danger"],
+  noMatch: "Nothing called that yet. Add it under Names, then try again.",
+  added: "Added.",
+  addGone: "That thread or name has changed or is gone. The list is updated.",
+  closeChange: "Close",
+  checked: "✔ Checked, still going",
+  checkedDone: "Checked: still going.",
+  markedDone: (stateWords: string): string => `Marked: ${stateWords}.`,
+  working: "Working on it…",
+  gone: "That thread has changed or is gone. The list is updated.",
+  couldNot: "Couldn't do that just now. Nothing changed. Try again in a moment.",
+  // The state words each button shows: a promise has its own.
+  stateWord: (promise: boolean, state: PlotThreadStateName): string => (promise ? promiseStateWords : threadStateWords)[state],
   none: "No threads yet. Add one from a name's card in Discord.",
   noState: "No state yet",
   stalled: "Stalled",

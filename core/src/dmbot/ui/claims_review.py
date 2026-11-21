@@ -23,8 +23,7 @@ from dmbot.memory.claims import (
     STOPPED_NOW,
     Claim,
     ClaimStore,
-    Extracted,
-    condition_of,
+    is_condition,
 )
 from dmbot.memory.models import (
     CONFIRMED,
@@ -113,16 +112,7 @@ ALL_TRUE, ALL_SECRET = (
 _FINAL = (GONE, STOPPED_NOW, ODD_NOW)  # answers that end a question without a yes or a no
 
 
-def _is_condition(claim: Claim) -> bool:
-    return (
-        condition_of(
-            Extracted(
-                claim.subject, claim.relationship, claim.object, claim.details, claim.lines,
-                claim.how,
-            )
-        )
-        is not None
-    )  # fmt: skip
+_is_condition = is_condition  # (moved to the store module, #4229 slice 4b)
 
 
 def waiting_text(count: int, *, private: bool = False) -> str:
@@ -328,6 +318,8 @@ class ClaimsReview(_Menu):
         # batch). Kept when the next page comes, so the Undo is still there to press (#3624).
         self.last_bulk: list[tuple[str, int]] = []
         self.busy = False  # a bulk press is writing: a second one waits (#3624)
+        # A first meeting's "Starting feeling?" line, worked out with each page (#4229 slice 4b)
+        self.feelings: dict[str, str] = {}
 
     async def current_text(self, interaction: discord.Interaction) -> str | None:
         """A fresh page (the oldest waiting questions), or None when none are left."""
@@ -337,6 +329,14 @@ class ClaimsReview(_Menu):
         agreed = await _bot(interaction).consent.consenting(self.guild_id)
         waiting = await ClaimStore(memory).waiting(self.guild_id, self.campaign_id, opted_in=agreed)
         self.page, self.total, self.answered = waiting[:PAGE], len(waiting), {}
+        self.feelings = {}
+        try:  # (only a reminder: a failed read leaves the questions as they were)
+            if self.page:
+                self.feelings = await ClaimStore(memory).starting_feelings(
+                    self.guild_id, self.campaign_id, self.page
+                )
+        except Exception:
+            log.exception("starting feelings: read failed")
         # (the current party, in the party list's order: #4537 rule 13.1)
         group = await memory.party_and_others(self.guild_id, self.campaign_id)
         members = [i for i, _ in group.party]
@@ -391,11 +391,16 @@ class ClaimsReview(_Menu):
         for claim in self.page:
             if claim.id in self.answered or _is_condition(claim):
                 continue
+            said: list[str] = []
             guessed = guess_for(claim, self.party)
             if guessed:
                 who = party_names(self.party, guessed)
                 icon = knower_icon(len(guessed))
-                out[claim.id] = f"{icon} DMbot thinks only {who} {knows(len(guessed))} this."
+                said.append(f"{icon} DMbot thinks only {who} {knows(len(guessed))} this.")
+            if claim.id in self.feelings:
+                said.append(self.feelings[claim.id])
+            if said:
+                out[claim.id] = "\n   ".join(said)
         return out
 
     def _render(self) -> str:

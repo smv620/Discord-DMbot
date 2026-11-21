@@ -18,10 +18,10 @@ from dataclasses import dataclass, field
 
 from dmbot.memory import kin, knows_how, lore_knowledge, route_length, route_words, secret_questions
 from dmbot.memory import reputation_words as feeling_words
-from dmbot.memory.background import SALES
 from dmbot.memory.backstory_links import BackstoryLinks, NewLink, Waiting
 from dmbot.memory.checks import conflicts
 from dmbot.memory.clues import KNOWS as KNOWS_PREDICATE
+from dmbot.memory.hand_over import SALES
 from dmbot.memory.lookup import CampaignLookup
 from dmbot.memory.models import (
     BACKGROUND_SOURCE,
@@ -108,6 +108,48 @@ def hand_over_ties(link: Waiting, existing: Sequence[Relation]) -> list[Relation
         and r.object_id == link.object_id
         and r.predicate in kinds
     ]
+
+
+def handed_away(link: Waiting, existing: Sequence[Relation]) -> Relation | None:
+    """The kept hand-over that already took this item from `link`'s holder (#4170): `link` is
+    their own `owns` or `carries`, kept after the sale was (the same upload's "Claude carries
+    it", kept second). Then it is kept already ended, as the sale would have ended it. The kinds
+    are `hand_over_ties`' (after a theft or a loss they still own it). None when there is none, or
+    `link` is a hand-over itself. Pure."""
+    if link.hand_over or link.predicate not in ("owns", "carries"):
+        return None
+    for r in existing:
+        if (
+            r.hand_over
+            and r.hand_over_from == link.subject_id
+            and r.object_id == link.object_id
+            and r.status == CONFIRMED
+            # (ended or not: a sale the item has moved on from since still took it from them)
+            and link.predicate in (("owns", "carries") if r.hand_over in SALES else ("carries",))
+        ):
+            return r
+    return None
+
+
+def late_end(
+    link: Waiting, existing: Sequence[Relation], *, hidden: bool, start: int | None
+) -> tuple[int | None, str | None, Relation | None]:
+    """How `link` is kept when a kept hand-over already took the item (`handed_away`): its end
+    and reason, or, when the sale is held back from the players and this tie is not (`hidden`
+    False), no end and the sale to ask about, as `end_replaced` asks (a tie the players see never
+    ends by a sale they don't know of: `whereabouts`' rule). `start`: where the kept tie begins,
+    so its end is never before it. Returns (when, reason, the sale to ask about): a reason to end it
+    then, or the sale to ask "Did this change?" about, ending it then if the DM says so; (None,
+    None, None) when nothing took it."""
+    sale = handed_away(link, existing)
+    if sale is None:
+        return None, None, None
+    at = sale.from_session_at if sale.from_session_at is not None else sale.created_at
+    # (a tie that starts as another ends, `change_start`, ends after it starts, never with it)
+    at = max(at, start + 1) if start is not None else at
+    if _hidden(sale) and not hidden:
+        return at, None, sale
+    return at, sale.hand_over, None
 
 
 def _hidden(r: Relation) -> bool:
@@ -407,13 +449,8 @@ async def keep_all(
         # (a 🤫 question a keep asks cites this connection's upload: #4524)
         with secret_questions.evidence(c.upload or ""):
             now = int(time.time())
-            old = (
-                replaced_by(
-                    onto, c, await memory.relations(guild_id, campaign_id, include_secret=True)
-                )
-                if onto is not None
-                else []
-            )
+            rels = await memory.relations(guild_id, campaign_id, include_secret=True)
+            old = replaced_by(onto, c, rels) if onto is not None else []
             ended: list[int | None] = []
             held: list[str] = []
             on_top: list[int | None] = []
@@ -439,6 +476,10 @@ async def keep_all(
                 else:
                     secret, unrevealed = False, False
                     flags = flags and not now_hidden  # a shown one is not hidden by an old flag
+            # (the same upload's sale kept first took the item already, #4170)
+            late_at, late_why, late_ask = late_end(
+                c, rels, hidden=secret or unrevealed, start=start if old else None
+            )
             try:
                 await end_replaced(
                     memory, guild_id, campaign_id, old, start, ended, held=held, link=c,
@@ -461,6 +502,8 @@ async def keep_all(
                         else ()
                     ),
                     from_session_at=start if old else None,  # (starts as the old one ends)
+                    to_session_at=late_at if late_why else None, end_reason=late_why,
+                    hand_over=c.hand_over, hand_over_from=c.hand_over_from,
                     keep_flags=flags,
                     # (🤫 Keep as secret or Players: hide is the DM's own word, #4524)
                     dm_chose_secret=not keep_flags or players == "hide" or bool(knowers),
@@ -491,6 +534,11 @@ async def keep_all(
                 memory, guild_id, campaign_id, held, by=made.id, start=start,
                 label=c.upload or "", batch=written.batch,
             )  # fmt: skip
+            if late_ask is not None and late_at is not None:
+                await ask_held(
+                    memory, guild_id, campaign_id, [made.id], by=late_ask.id, start=late_at,
+                    label=c.upload or "", batch=written.batch,
+                )  # fmt: skip
             # Where it came from, for the graph's line panel (#2946): only a connection made just
             # now (an older twin's rows are not this upload's), and never a reason to lose the
             # connection.

@@ -306,6 +306,7 @@ from dmbot.ears.protocol import (
 from dmbot.ears.server import EarsServer
 from dmbot.fightbot import FightState
 from dmbot.image_desk import ImageDesk, ImageUseStore
+from dmbot.import_state import LEFT_TOLD, UNCHECKED, ImportState
 from dmbot.install_record import InstallStore
 from dmbot.logs import log_context, set_log_context
 from dmbot.mail import Mailer
@@ -446,6 +447,7 @@ from dmbot.recaps.discord import (
     HINTS_WAIT_S,
     LORE_SWEEP_EVERY_S,
     NAME_ANSWERS_PER_ROUND,
+    RECAP_SLOTS,
     WEB_STYLE_PER_ROUND,
     RecapFeatures,
 )
@@ -457,7 +459,7 @@ from dmbot.recaps.plot_backup import PlotFineSection, PlotIssuesSection
 from dmbot.recaps.plot_talk_run import TalkRunner, TalkStore
 from dmbot.recaps.requests import RequestStore
 from dmbot.recaps.session_split import SessionSplitter, release_recap_lines
-from dmbot.recaps.store import RecapRightsSection, RecapSection, RecapStore
+from dmbot.recaps.store import LEASE_S, RecapRightsSection, RecapSection, RecapStore
 from dmbot.recaps.style import NotesSection, NoteStore, StyleSection, StyleStore
 from dmbot.retention import RetentionJob
 from dmbot.retention_channels import ChannelCounts, HasChannels, retire_channels
@@ -704,6 +706,7 @@ from dmbot.ui.upload_notice import UndoUploadButton, notice_text, notice_view
 from dmbot.ui.world_notes import WorldNotesButton
 from dmbot.upload_notices import Notice as UploadNotice
 from dmbot.upload_notices import UploadNotices
+from dmbot.worker_lease import Slots
 
 REPORT_CALLS = 8  # AI calls a session may spend on the after-session report (grading and sorting)
 MEANING_RUN_CALLS = 50  # Voyage AI calls one after-session run may make (64 texts each)
@@ -1134,6 +1137,12 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.headless = False
         # What a worker wants said in Discord, which the bot delivers (#3843).
         self.outbox = Outbox(recaps.db) if recaps is not None else None
+        # At most three recap jobs at once, across the bot and the worker (#3845).
+        self.recap_slots = (
+            Slots(recaps.db, "recap_slot", RECAP_SLOTS, ttl_s=LEASE_S)
+            if recaps is not None
+            else None
+        )
         self.outbox_wake = asyncio.Event()
         # The lore DMs uploaded on the website, waiting to be read (#3022), and the reads running.
         self.lore_uploads = lore_queue.LoreQueue(recaps.db) if recaps is not None else None
@@ -1261,11 +1270,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self._name_pass_asks: dict[str, list[tuple[str, int]]] = {}  # unsure words (#2628)
         self.audio_waits = recap_audio.AudioWaits()  # the live "Making the audio" lines (#2621)
         self._import_queued: dict[str, list[int]] = {}
-        # campaign -> how many of its import's sessions had their name check given up (told once;
-        # best effort across a restart, the website's progress reads the saved flag)
-        self._import_unchecked: dict[str, int] = {}
+        # What an import's scans leave for its end-of-import report is kept in the database
+        # (#4904): `unchecked` = how many of an import's sessions had their name check given up
+        # (told once), `left_told` = sessions the story read still has, as last told.
+        self.import_state = ImportState(recaps.db) if recaps is not None else None
         self._import_reading: set[int] = set()  # servers whose waiting imports are being read
-        self._import_left_told: dict[str, int] = {}  # campaign -> sessions left, as last told
         # import id -> the sessions of a held group released by answers so far (one line at the end)
         self._group_made: dict[str, list[int]] = {}
         # The earliest hold each import has had (memory only): its waiting emails count their days
@@ -12874,9 +12883,8 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     if await store.release_scan(gid, ready.session_id) >= IMPORT_SCAN_TRIES:
                         log.warning("Import: giving up on a session's name scan")
                         await store.give_up_scan(gid, ready.session_id)
-                        self._import_unchecked[ready.campaign_id] = (
-                            self._import_unchecked.get(ready.campaign_id, 0) + 1
-                        )
+                        if self.import_state is not None:
+                            await self.import_state.bump(gid, ready.campaign_id, UNCHECKED)
                     return 0
 
         # One campaign's sessions are scanned in date order, one after another; up to the server's
@@ -12932,14 +12940,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         """Say, once for each change, how many imported sessions the story read has not reached
         (its call limits ran out): they are read on a later round, so nothing is lost. Only when
         the import's scans are over, in the DM Bot channel (#3874); counts only."""
-        for cid in list(self._import_left_told.keys() | left.keys()):
+        if self.import_state is None:
+            return
+        told = await self.import_state.counted(gid, LEFT_TOLD)  # (as last told)
+        for cid in list(told.keys() | left.keys()):
             now = left.get(cid, 0)
-            if now == self._import_left_told.get(cid, 0) or await store.pending_scans(gid, cid):
+            if now == told.get(cid, 0) or await store.pending_scans(gid, cid):
                 continue
             campaign = await self.campaigns.get(gid, cid)
             channel = self._upkeep_channel(campaign)[0] if campaign is not None else None
             if channel is None:
-                self._import_left_told.pop(cid, None)
+                await self.import_state.put_count(gid, cid, LEFT_TOLD, 0)
                 continue
             if now:
                 one = now == 1
@@ -12949,9 +12960,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     "own; nothing is lost."
                 )
                 await self.post(channel, text)
-            self._import_left_told[cid] = now
-            if not now:
-                self._import_left_told.pop(cid, None)
+            await self.import_state.put_count(gid, cid, LEFT_TOLD, now)
 
     async def _owner_of_campaign(self, gid: int, campaign_id: str) -> int | None:
         """The account that owns a campaign, or None (for the AI credits ledger, #4005)."""
@@ -13347,12 +13356,20 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             party_to = self._upkeep_channel(campaign)[0] if campaign is not None else None
             if party_to is not None:
                 await self.post(party_to, party_notice(characters))  # a count: fine for everyone
-        over = self._import_names.keys() | self._import_unchecked.keys()
+        skipped_by = (
+            await self.import_state.counted(gid, UNCHECKED) if self.import_state is not None else {}
+        )
+        over = self._import_names.keys() | skipped_by.keys()
         for cid in list(over | self._import_speakers.keys() | self._import_entries.keys()):
             if await store.pending_scans(gid, cid):
                 continue  # the import is not over: say it once at the end
+            # (the database read first: if it fails, nothing has been taken from memory yet)
+            skipped = (
+                await self.import_state.take_count(gid, cid, UNCHECKED)
+                if self.import_state is not None
+                else 0
+            )
             names = self._import_names.pop(cid, [])
-            skipped = self._import_unchecked.pop(cid, 0)
             # (taken now so none outlives its import, whichever way the report below goes)
             speakers = self._import_speakers.pop(cid, set())
             entries = self._import_entries.pop(cid, set())

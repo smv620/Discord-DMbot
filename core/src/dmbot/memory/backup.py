@@ -24,6 +24,7 @@ from dmbot.db import Conn
 from dmbot.maps import weather_note
 from dmbot.memory import (
     beliefs,
+    biases,
     evidence,
     map_facts,
     notify,
@@ -199,11 +200,14 @@ _CHOICES: dict[str, Sequence[str]] = {
         "resolved",
         *CLAIM_STATUSES,
         *BELIEF_STATUSES,
+        "read",  # (a bias DMbot read, waiting in World notes, #4229; each table's CHECK holds it)
     ),
     "how": HOWS,
     "knows_how": KNOWS_HOWS,
     "route_state": route_words.STATES,  # (a route's state, #4173 slice 6d)
+    "toward_lineage": tuple(place_peoples.LINEAGES),  # (a bias toward a lineage, #4229 slice 4)
     "end_reason": (*END_REASONS, whereabouts.MOVED),  # (a move, #4173 slice 5)
+    "hand_over": ("", *END_REASONS),  # (a kept hand-over, #4170; "" for any other)
     "place_level": place_levels.LEVELS,
     "place_level_from": place_levels.FROM,
     "form": place_levels.FORMS,  # a place's form (#4173 slice 6a)
@@ -224,7 +228,8 @@ _IDS = {"id", "entity_id", "fact_id", "merged_into", "used_by", "subject_id", "o
         "character_id",
         "relation_id", "other_id", "from_set", "viewer_id", "holder_id", "toward_id",
         "perspective_id", "manipulated_by", "unnamed_anchor", "alias_id",
-        "via_alias_id", "derived_from", "subject_picked", "object_picked"}  # fmt: skip
+        "via_alias_id", "derived_from", "subject_picked", "object_picked",
+        "toward_culture_id"}  # fmt: skip
 _INTS = {"played_by", "speaker_id", "session_started_at", "decided_at", "created_at",
          "from_session_at", "to_session_at", "from_game_time", "to_game_time",
          "game_time", "max_per_subject", "closed_at", "session_at", "recorded_at",
@@ -244,6 +249,7 @@ _NULLABLE = {
     "setting_from",  # (who made it the campaign's setting, #4173 slice 2b)
     "both_ways",  # (the DM's direction, #4154: None is the kind's default)
     "length_words", "length_amount", "length_unit", "length_from",  # (a route's length, #4255)
+    "toward_id", "toward_lineage", "toward_culture_id",  # (an attitude's one target, #4229)
 }  # fmt: skip
 
 
@@ -268,6 +274,8 @@ def _valid(column: str, value: object) -> bool:
         return column in _NULLABLE
     if column in _IDS:
         return is_id(value)
+    if column == "hand_over_from":  # (who a kept hand-over came from, #4170; "" for none)
+        return value == "" or is_id(value)
     if column in _VERSIONS:
         return isinstance(value, int) and not isinstance(value, bool) and 1 <= value <= 10_000
     if column == "played_by":
@@ -609,6 +617,12 @@ def _check_rows(rows: list[Any]) -> dict[str, list[dict[str, Any]]]:
             )
         ):
             raise CampaignError(DAMAGED)
+        # and a kept hand-over is whole, on an owns or carries only (#4170), as the database says
+        if table is RELATIONS and (
+            bool(raw.get("hand_over")) != bool(raw.get("hand_over_from"))
+            or (raw.get("hand_over") and raw.get("predicate") not in ("owns", "carries"))
+        ):
+            raise CampaignError(DAMAGED)
         if table is SHEETS:
             raw = _checked_sheet(raw)
         elif table is EVIDENCE:
@@ -890,6 +904,9 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
             }  # (older files)
         elif isinstance(raw, dict) and raw.get("table") == "alias":
             raw = {"said_as": None, **raw}  # from before the narrator's spelling (#1419)
+        elif isinstance(raw, dict) and raw.get("table") == "attitude":
+            # (from before #4229 slice 4: every attitude was the DM's, toward an entry)
+            raw = {"toward_lineage": None, "toward_culture_id": None, "status": "confirmed", **raw}
         elif isinstance(raw, dict) and raw.get("table") == "map_fact":
             # (from before named cultures, #4257 slice 3b, and road conditions, #4258). The map a
             # row rests on (#4259) is never restored: maps are not in a backup yet (OWED_TO_BACKUP),
@@ -928,6 +945,8 @@ def _with_definition_fields(rows: list[Any]) -> list[Any]:
                 "length_unit": None,
                 "length_approx": False,
                 "length_from": None,
+                "hand_over": "",  # from before #4170: a kept hand-over didn't say how
+                "hand_over_from": "",
                 **raw,
                 "definition_version": version,
             }
@@ -1507,23 +1526,42 @@ def _check_claim(row: Mapping[str, Any]) -> None:
         raise CampaignError(DAMAGED)
 
 
-def _check_standing(by_tag: dict[str, list[dict[str, Any]]]) -> None:
+def _check_standing(onto: Ontology, by_tag: dict[str, list[dict[str, Any]]]) -> None:
     """Impressions and attitudes link entries in the file, between the kinds the screen allows,
     and only one of a pair is current (the database enforces the last; a damaged file must not
     reach it). Dates are checked by `_valid`."""
     kinds = {r["id"]: r["type"] for r in by_tag["entity"]}
     open_pairs: set[tuple[str, str, str]] = set()
+    cultures = {r["id"] for r in by_tag["culture"]}
     for tag, held, aimed in (
         ("impression", "viewer_id", "subject_id"),
         ("attitude", "holder_id", "toward_id"),
     ):
         for r in by_tag[tag]:
+            target = r[aimed]
             # Only what the database holds to: both ends are in the file and differ. (An entry
             # may have changed kind since the DM set this, so the kinds are not checked.)
-            if r[held] not in kinds or r[aimed] not in kinds or r[held] == r[aimed]:
+            if r[held] not in kinds or (
+                target is not None and (target not in kinds or r[held] == target)
+            ):
                 raise CampaignError(DAMAGED)
+            if tag == "attitude":
+                # (exactly one target: an entry, a lineage or a named culture in the file, #4229)
+                others = (r.get("toward_lineage"), r.get("toward_culture_id"))
+                if sum(x is not None for x in (target, *others)) != 1:
+                    raise CampaignError(DAMAGED)
+                if others[1] is not None and others[1] not in cultures:
+                    raise CampaignError(DAMAGED)
+                if r.get("status", biases.CONFIRMED) not in (biases.READ, biases.CONFIRMED):
+                    raise CampaignError(DAMAGED)
+                if target is not None and r.get("status") == biases.READ:
+                    raise CampaignError(DAMAGED)  # (DMbot reads a bias toward a people only)
+                if target is None:
+                    if not biases.may_hold(onto, kinds[r[held]]):
+                        raise CampaignError(DAMAGED)  # (never a person: the owner's rule)
+                    target = f"{others[0] or ''}:{others[1] or ''}"  # (for the one-open check)
             if r["closed_at"] is None:
-                key = (tag, r[held], r[aimed])
+                key = (tag, r[held], target)
                 if key in open_pairs:
                     raise CampaignError(DAMAGED)
                 open_pairs.add(key)
@@ -1566,7 +1604,7 @@ def _check_states(onto: Ontology, by_tag: dict[str, list[dict[str, Any]]]) -> No
         for r in settings
     ):
         raise CampaignError(DAMAGED)  # at most one setting, and it is a place (#4173)
-    _check_standing(by_tag)
+    _check_standing(onto, by_tag)
     open_for: set[str] = set()
     for r in by_tag["state"]:
         if r["entity_id"] not in kinds:

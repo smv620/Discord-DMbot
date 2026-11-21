@@ -792,6 +792,20 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     storyThreads: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/threads`)) as StoryThreads,
     // The open plot threads (#3696, slice 1): read only, DM only (the door answers anyone else with nothing).
     plotThreads: async (ref) => (await call("GET", `/me/campaigns/${encodeURIComponent(ref)}/plot-threads`)) as PlotThreads,
+    // Adds one name to a thread with its part (#3696, slice 2b): queued for the bot (202 {answer}) and waited for; no batch, no Undo.
+    addPlotThreadInvolved: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/plot-threads/involve`, { thread: change.thread, who: change.who, role: change.role })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    // A state change (or "check") is queued for the bot (202 {answer}) and waited for; the answer has no batch, so no Undo (#3696, slice 2a).
+    changePlotThreadState: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/plot-threads/state`, { thread: change.thread, state: change.state })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
     // Queued for the bot (202 {answer}); this waits for it and gives back the batch of a keep, for Undo (#4482).
     changeStoryThreads: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;

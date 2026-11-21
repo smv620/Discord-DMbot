@@ -77,6 +77,22 @@ class Keeping(Base):
         await self.store.release(1, self.one.id, 100)
         self.assertTrue(await self.store.lease(1, self.one.id, 200))
 
+    async def test_due_aged_gives_the_longest_wait_first_and_one_job_for_each_campaign(
+        self,
+    ) -> None:
+        # (#3845) campaign one: an older session that must wait longer, a newer one ready sooner
+        await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)
+        await self.store.update(1, self.one.id, 100, next_at=NOW - 10)
+        await self.store.enqueue(1, self.one.id, 200, dm_user_id=fx.DM)
+        await self.store.update(1, self.one.id, 200, next_at=NOW - 500)
+        await self.store.enqueue(1, self.two.id, 100, dm_user_id=fx.DM)
+        await self.store.update(1, self.two.id, 100, next_at=NOW - 300)
+        got = await self.store.due_aged(1)
+        # one job for each campaign (the campaign's older session), the longest wait first
+        self.assertEqual(got, [(self.two.id, 100, NOW - 300), (self.one.id, 100, NOW - 10)])
+        self.assertEqual(await self.store.due(1), [(self.two.id, 100), (self.one.id, 100)])
+        self.assertEqual(len(await self.store.due_aged(1, limit=1)), 1)
+
     async def test_a_lease_that_runs_out_frees_the_job(self) -> None:
         await self.store.enqueue(1, self.one.id, 100, dm_user_id=fx.DM)
         self.assertTrue(await self.store.lease(1, self.one.id, 100))
