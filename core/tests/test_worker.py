@@ -14,6 +14,7 @@ from dmbot.config import ConfigError, load_settings
 from dmbot.recaps.discord import RecapFeatures
 from dmbot.worker import __main__ as worker
 
+F: Any = RecapFeatures  # (stand-in bots stand in for the class: untyped on purpose)
 BASE = {"DISCORD_TOKEN": "t", "EARS_SHARED_SECRET": "s", "DATABASE_URL": "postgresql://x/y"}
 NO_TOKEN = {k: v for k, v in BASE.items() if k != "DISCORD_TOKEN"}
 
