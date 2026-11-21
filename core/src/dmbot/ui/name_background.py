@@ -71,7 +71,7 @@ from dmbot.memory.backstory_links import (
 )
 from dmbot.memory.end_match import bare, usable_alias
 from dmbot.memory.link_words import link_words
-from dmbot.memory.lookup import CampaignLookup
+from dmbot.memory.lookup import CampaignLookup, NameEntry
 from dmbot.memory.models import BACKGROUND_NOTE as BACKGROUND
 from dmbot.memory.models import (
     BACKGROUND_SOURCE,
@@ -93,7 +93,7 @@ from dmbot.memory.models import (
     Trait,
     name_key,
 )
-from dmbot.memory.ontology import ACTIVE, DISGUISED_AS, FALLBACK_PREDICATE, check_named
+from dmbot.memory.ontology import ACTIVE, DISGUISED_AS, FALLBACK_PREDICATE, Ontology, check_named
 from dmbot.memory.pronouns import is_pronoun
 from dmbot.memory.store import MemoryStore, refusal_for_log
 from dmbot.memory.which_else import COULD_NOT_KEEP, none_of_these
@@ -3241,6 +3241,21 @@ def upload_label(label: str, now: float) -> str:
     return logic.shorten(label, UPLOAD_MAX - len(when)) + when  # (the date is never cut off)
 
 
+def _kept_thing(lookup: CampaignLookup, onto: Ontology, e: NameEntry) -> bool:
+    """A kept item's or place's own main name in small letters ("wolf figurine") is an end too
+    (#4923; Supervisor's ruling): only its main name, never another spelling; only an item or a
+    place (people and groups keep #3431's rule: "the guard"); the only entry with that spelling,
+    so two are a "Which one?", never a guess; and never one starting "the", "a" or "an". The quote
+    must still hold it whole, as every end's does (`background.keep_connections`)."""
+    entity = lookup.entities[e.entity_id]
+    return (
+        e.text == entity.name
+        and (onto.is_a(entity.type, "item") or onto.is_a(entity.type, "place"))
+        and descriptions.kept_thing_alone(e.text)
+        and len({x.entity_id for x in lookup.by_key.get(e.key, ()) if not x.person}) == 1
+    )
+
+
 async def queue_links(
     bot: Any,
     memory: MemoryStore,
@@ -3300,6 +3315,7 @@ async def queue_links(
     if store is None or not (any(answers) or unsettled or unnamed or text):
         return 0
     lookup = CampaignLookup.build(await memory.lookup_data(campaign.guild_id, campaign.id))
+    onto = await memory.ontology(campaign.guild_id, campaign.id)
     ends: dict[str, str] = {}
     for key, entries in lookup.by_key.items():
         for e in entries:
@@ -3310,7 +3326,7 @@ async def queue_links(
                 e.confirmed
                 and not e.secret
                 and not e.person
-                and descriptions.matches_alone(e.text, e.kind, "")
+                and (descriptions.matches_alone(e.text, e.kind, "") or _kept_thing(lookup, onto, e))
             ):
                 ends.setdefault(key, lookup.entities[e.entity_id].name)
     owners: dict[str, set[str]] = {}
