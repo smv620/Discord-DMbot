@@ -147,6 +147,26 @@ class TranscriptStore:
             assert row is not None
             return str(row["id"])
 
+    async def import_for_goodbyes(
+        self, guild_id: int, campaign_id: str, session_id: str, started_at: int
+    ) -> tuple[int | None, bool]:
+        """For a goodbye's question (#4537, ruling V): when this session was imported (None: it
+        was played live) and whether it is the campaign's newest session (none started after
+        it)."""
+        async with self._db.guild(guild_id) as conn:
+            cur = await conn.execute(
+                "SELECT imported_at FROM session_imports WHERE guild_id = %s AND session_id = %s",
+                (guild_id, session_id),
+            )
+            row = await cur.fetchone()
+            cur = await conn.execute(
+                "SELECT 1 FROM transcript_sessions WHERE guild_id = %s AND campaign_id = %s"
+                " AND started_at > %s LIMIT 1",
+                (guild_id, campaign_id, started_at),
+            )
+            newest = await cur.fetchone() is None
+        return (None if row is None else int(row["imported_at"])), newest
+
     async def is_import(self, guild_id: int, session_id: str) -> bool:
         """Was this session loaded from a file? Its lines carry the dates the DM chose, not the
         moments they were spoken at (#3091)."""

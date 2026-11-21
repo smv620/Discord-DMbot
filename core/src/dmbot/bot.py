@@ -10279,8 +10279,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # (a 🤫 question the read asks cites this session, never its words, and is counted on
             # the after-session line: #4524; the short names too, which can ask one)
             from dmbot.memory import secret_questions
+            from dmbot.memory.goodbye_reading import import_refusal
             from dmbot.ui.thread_questions import session_label
 
+            # (#4537 ruling V: an imported session asks about goodbyes only when it is the
+            # campaign's newest and was played within two weeks of its import; never old history)
+            old_import = ""
+            if self.settings.party_leaves_on:
+                imported_at, newest = await transcripts.import_for_goodbyes(
+                    gid, cid, sid, session.started_at
+                )
+                old_import = import_refusal(imported_at, newest, session.started_at)
             with secret_questions.evidence(
                 session_label(session.started_at), session_id=sid
             ) as asked:
@@ -10328,13 +10337,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     progress=progress,
                     languages=self.settings.session_languages_on,
                     weather=self.settings.weather_notes_on,
-                    leaves=self.settings.party_leaves_on,
+                    leaves=self.settings.party_leaves_on and not old_import,
                 )
             log.info(report.line())
             if report.heard_languages:  # (#4229 1d: each a question for the DM, never written)
                 await self._ask_heard_languages(gid, cid, report, session.started_at, sid)
             if report.goodbyes:  # (#4537 6b: each an after-session question, never a leave)
                 await self._ask_goodbyes(gid, cid, report, sid, dm_ids)
+            elif old_import:
+                log.info("Session goodbyes: 0 asked, 1 %s", old_import)
             if report.heard_weather:  # (#4260 10c-2: a private note, after the session)
                 await self._weather_notes(gid, cid, report, session.started_at)
             # Counts and buttons go to the DM Bot channel when the campaign has one (the DM screen

@@ -41,6 +41,7 @@ from dmbot.memory.models import NAME_MAX, name_key
 from dmbot.memory.readings import PRONOUNS
 from dmbot.memory.reveal_reading import GROUP_WORDS
 
+IMPORT_DAYS = 14  # (ruling V: an import of a session played this long before is old history)
 MAX_PER_ANSWER = 5  # one batch of ten lines hears this many goodbyes at most
 QUOTE_WORDS = (2, 25)  # a quote is a few words, never a whole speech
 PROMPT_SUFFIX = "+leave-1"  # added to the claims' prompt version when the addendum is sent
@@ -133,6 +134,19 @@ class Parsed:
 
 def _plain(text: str) -> str:
     return " ".join(text.replace("’", "'").casefold().split())
+
+
+def import_refusal(imported_at: int | None, newest: bool, started_at: int) -> str:
+    """Why an imported session asks about no goodbye, or "" when it may (Supervisor's ruling V on
+    #4537): a live session always may (`imported_at` None). An imported one may only when it is
+    the campaign's newest session and it started at most `IMPORT_DAYS` before it was imported, so
+    a backlog imported oldest first, or an old session imported late, asks about no goodbye that
+    may long be undone. Times in seconds. Pure."""
+    if imported_at is None:
+        return ""
+    if not newest or imported_at - started_at > IMPORT_DAYS * 86_400:
+        return "leave_old_import"
+    return ""
 
 
 def check_who(who: str) -> str:
@@ -313,6 +327,7 @@ __all__ = [
     "Parsed",
     "check_quote",
     "check_who",
+    "import_refusal",
     "names_who",
     "once_each",
     "parse_leaves",
