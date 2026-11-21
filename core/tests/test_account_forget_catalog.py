@@ -121,6 +121,7 @@ NAME_NOT_A_PERSON: Rules = {  # a name of something else, with the reason
     "rule_sets": ("name",),
     "session_imports": ("file_name",),  # an imported file's name
     "trait_answers": ("name_key",),  # the key of a trait name
+    "web_reveals": ("who",),  # the name of a character in the story, never a person (#3863)
     "secret_questions": ("label",),  # an upload's or a session's label, never a person's name
     "thread_suggestions": ("name", "name_key"),  # a story thread's name, built from its parts
     "memory_trait_offers": ("name", "name_key"),  # the trait's name (a language, lineage or class)
