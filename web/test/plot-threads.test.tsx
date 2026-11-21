@@ -419,15 +419,50 @@ describe("add who's involved (#4939)", () => {
     expect(within(c).queryByRole("button", { name: "Mira" })).toBeNull();
   });
 
-  it("Add stays off until a name is picked and a part is typed", async () => {
+  it("Add stays off until a name is picked", async () => {
     const { c } = await withAdds();
     fireEvent.click(within(c).getByRole("button", { name: w.addButton }));
     const add = await within(c).findByRole("button", { name: w.addSubmit });
     expect((add as HTMLButtonElement).disabled).toBe(true);
     fireEvent.click(await within(c).findByRole("button", { name: "Mira" }));
-    expect((add as HTMLButtonElement).disabled).toBe(true);
-    fireEvent.input(within(c).getByLabelText(w.partLabel), { target: { value: "quest giver" } });
     expect((add as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it("a name can be added with no part, and a blank part is sent as empty", async () => {
+    const { sent, c } = await withAdds();
+    fireEvent.click(within(c).getByRole("button", { name: w.addButton }));
+    fireEvent.click(await within(c).findByRole("button", { name: "Mira" }));
+    fireEvent.input(within(c).getByLabelText(w.partLabel), { target: { value: "   " } });
+    fireEvent.click(within(c).getByRole("button", { name: w.addSubmit }));
+    expect(await screen.findByText(w.added)).toBeTruthy();
+    expect(sent).toEqual([{ thread: "a1".repeat(16), who: "n-mira", role: "" }]);
+  });
+
+  it("a name with no part shows the name alone in the involved line", async () => {
+    const api = mockApi("table");
+    api.plotThreads = async () => answer({}, [thread({ name: "The drowned bell", involved: [{ id: "n-mira", name: "Mira", role: "" }] })]);
+    render(<PlotThreadsPanel api={api} refId={REF} />);
+    const c = (await screen.findByText("The drowned bell")).closest("article") as HTMLElement;
+    expect(within(c).getByText(`${w.involved} Mira`)).toBeTruthy();
+  });
+
+  it("a name list that fails to load says so, not nothing called that yet, and loads again when reopened", async () => {
+    const api = mockApi("table");
+    api.plotThreads = async () => answer({}, [thread({ name: "The drowned bell" })]);
+    let loads = 0;
+    api.campaignNames = async () => {
+      loads += 1;
+      throw new ApiError("network");
+    };
+    render(<PlotThreadsPanel api={api} refId={REF} />);
+    const c = (await screen.findByText("The drowned bell")).closest("article") as HTMLElement;
+    fireEvent.click(within(c).getByRole("button", { name: w.addButton }));
+    expect((await within(c).findByRole("alert")).textContent).toBe(w.namesFailed);
+    expect(within(c).queryByText(w.noMatch)).toBeNull();
+    // The toggle and the form both say Close; either closes it.
+    fireEvent.click(within(c).getAllByRole("button", { name: w.closeChange })[0]!);
+    fireEvent.click(within(c).getByRole("button", { name: w.addButton }));
+    await waitFor(() => expect(loads).toBe(2));
   });
 
   it("a suggestion fills the part", async () => {
