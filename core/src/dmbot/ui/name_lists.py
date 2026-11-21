@@ -12,7 +12,7 @@ import io
 import logging
 import re
 import time
-from collections.abc import Sequence
+from collections.abc import Collection, Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import PurePath
@@ -1832,13 +1832,17 @@ def download_files(
     *,
     secrets: bool,
     people: Sequence[tuple[int, list[str], list[str]]] = (),
+    table: Collection[str] | None = None,
 ) -> tuple[list[str], int]:
     """The campaign's confirmed names as list files (the same format Add many reads), and
     how many names they hold. Misheard spellings DMbot learned and old spellings the DM fixed
     aren't other names (adding them again would make DMbot listen for them), so they're left
     out. A big campaign comes as several files, each small enough to add again (#685).
     `people`: who is who at the table (Discord id, characters, table names), listed for the
-    campaign's DMs only, as secret names are (#1559)."""
+    campaign's DMs only, as secret names are (#1559). `table`: the entries the whole table holds,
+    from the gate (party knowledge slice 5, §9 rule 2): an entry outside it is only some people's,
+    and its own name is not listed as a secret one (it is the entry's title). The flags are the
+    DM's switch, never the answer to who holds it."""
     by_entity: dict[str, list[NameEntry]] = {}
     for a in names.names:
         if a.confirmed and a.kind not in ("misheard", "old"):
@@ -1851,7 +1855,11 @@ def download_files(
         mine = by_entity.get(e.id, [])
         others = tuple(a.text for a in mine if not a.secret and a.key != own)
         hidden = (
-            tuple(a.text for a in mine if a.secret and not (e.unseen_by_players and a.key == own))
+            tuple(
+                a.text
+                for a in mine
+                if a.secret and not (table is not None and e.id not in table and a.key == own)
+            )
             if secrets
             else ()
         )
@@ -1899,8 +1907,14 @@ async def send_download(interaction: discord.Interaction, campaign_id: str) -> N
         return
     secrets = sees_secrets(campaign, interaction.user.id)
     people = await _people(interaction, campaign) if secrets else []
+    memory = _memory(interaction)
+    table = (
+        await memory.entries_held(campaign.guild_id, campaign.id)
+        if secrets and memory is not None
+        else None
+    )
     texts, count = await asyncio.to_thread(
-        download_files, names, campaign, secrets=secrets, people=people
+        download_files, names, campaign, secrets=secrets, people=people, table=table
     )
     if not count:
         await _tell(
