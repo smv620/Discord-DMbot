@@ -46,7 +46,7 @@ class TheCases(unittest.TestCase):
     def test_the_key_is_what_the_reader_keeps(self) -> None:
         lines = said()
         names = {k.casefold(): {k} for k in PLAYS}
-        asked = []
+        asked: list[str] = []
         for n, who, quote, _ in self.READ:
             speaker, text = lines[n - 1]
             if check_quote(quote, text) or not names_who(who, text):
