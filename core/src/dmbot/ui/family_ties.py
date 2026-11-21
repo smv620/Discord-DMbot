@@ -51,7 +51,9 @@ PICKED = (
 )
 NEITHER_DONE = "Forgotten. DMbot won't ask about this fact again."
 UNDONE = "Pick taken back. That fact is back on this card."
-GONE_NOW = "Already answered. Showing what is left."
+# (#4908: a question can also be gone because its speaker stopped being recorded or its session's
+# transcript was deleted, not only answered: one sentence true of both, in Supervisor's words)
+GONE_NOW = "This question isn't waiting any more. Showing what is left."
 NOTHING_LEFT = (
     "✅ Nothing left to pick. If DMbot finds more after the next session, it will ask here."
 )

@@ -66,6 +66,8 @@ EVERY_ACTION = (
     "pack-update-undo",
     "join-choices",  # "Let me choose" for the join question (#4799)
     "join-choose",
+    "leave-yes",  # "Still in the party?" for a death or a goodbye (#4895)
+    "leave-no",
 )  # fmt: skip
 
 
