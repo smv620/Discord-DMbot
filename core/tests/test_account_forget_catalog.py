@@ -59,6 +59,7 @@ TRANSCRIPTS: Rules = {
         "thread_suggestions",  # (a session's story threads: `thread_suggestions.forget`, #4522)
         "thread_progress",  # (a session's progress on threads: `thread_progress.forget`, #4522)
         "memory_trait_offers",  # (who said a heard language: `trait_offers.forget_speaker`, #4745)
+        "memory_join_questions",  # (who said a goodbye: `join_questions.forget_speaker`, 0574)
     )
 }  # fmt: skip
 TRANSCRIPTS.update(

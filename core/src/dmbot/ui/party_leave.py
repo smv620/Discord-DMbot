@@ -6,7 +6,7 @@ slice 6, 2026-11-21).
   from the after-session steps beside the join question): "Okthandom is marked dead. Mark
   Okthandom as no longer in the party?" (the ruling's words, the same whether the death came from
   play or from a card edit between sessions), or, for a goodbye heard at the table (slice 6b),
-  "Okthandom said goodbye at the table. Has Okthandom left the party?".
+  "Okthandom said goodbye to the party in the story. Has Okthandom left the party?".
 - **The answers** (each redraws the message with whoever in it still waits): "Left the party"
   closes the character's stretch with the card's own call, one
   change with its ↩️ Undo (which asks again). "Still in the party" writes nothing and is a plain
@@ -37,7 +37,7 @@ from dmbot.ui.party_join import _dm_campaign, _edit, _followup, _names
 log = logging.getLogger(__name__)
 
 DIED_LINE = "**{name} is marked dead.** Mark {name} as no longer in the party?"
-LEAVE_LINE = "**{name} said goodbye at the table.** Has {name} left the party?"
+LEAVE_LINE = "**{name} said goodbye to the party in the story.** Has {name} left the party?"
 LEFT_BUTTON = "Left the party"
 STAYS_BUTTON = "Still in the party"
 LATER_BUTTON = "Later"
