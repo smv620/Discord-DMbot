@@ -67,6 +67,7 @@ from dmbot.web import (
     join_choices,
     join_questions,
     languages,
+    leave_questions,
     line_fixes,
     lore,
     lore_pdf,
@@ -86,6 +87,7 @@ from dmbot.web import (
     pc_icons,
     pictures,
     place_world,
+    plot_threads,
     private_scenes,
     recap_style,
     relationships,
@@ -3115,6 +3117,44 @@ def create_app(
             body = None
         try:
             return {"answer": await join_choices.queue_pick(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/leave-questions")
+    async def me_campaign_leave_questions(ref: str, signed: Signed) -> dict[str, Any]:
+        """The "Still in the party?" questions waiting for the DM (#4895), by character names:
+        DM only."""
+        session, _token = signed
+        try:
+            return await leave_questions.read(db, session, ref)
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.post("/me/campaigns/{ref}/leave-questions/answer", status_code=202)
+    async def me_campaign_leave_answer(
+        ref: str, request: Request, signed: Signed
+    ) -> dict[str, str]:
+        """`{"character", "answer"}`: "Left the party" or "Still in the party" for one character;
+        polled at `.../web/answers/{answer}` (a "left" answer carries its change number)."""
+        session, _token = signed
+        try:
+            body = await request.json()
+        except ValueError:
+            body = None
+        try:
+            return {"answer": await leave_questions.queue_answer(db, session, ref, body)}
+        except RecapError as err:
+            status, detail = relationship_refusals.get(err.code, (404, "not_found"))
+            raise HTTPException(status_code=status, detail=detail) from None
+
+    @app.get("/me/campaigns/{ref}/plot-threads")
+    async def me_campaign_plot_threads(ref: str, signed: Signed) -> dict[str, Any]:
+        """The campaign's story threads, as Discord's threads card shows them (#3696): DM only."""
+        session, _token = signed
+        try:
+            return await plot_threads.read(db, session, ref)
         except RecapError as err:
             status, detail = relationship_refusals.get(err.code, (404, "not_found"))
             raise HTTPException(status_code=status, detail=detail) from None

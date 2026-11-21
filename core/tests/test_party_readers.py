@@ -25,6 +25,9 @@ NOT_READERS = {
     # (#4537 2b) the role there asks "is this still a player character", beside the open stretch
     # that says "in the party": a waiting join question about one made an NPC is not sent
     "memory/join_questions.py",
+    # (#4537 6a) a death asks "is this a player character" and then `party_record.current_members`
+    # for "in the party": the role is the character's kind, the party is the one function's
+    "memory/states.py",
 }
 
 # Files that test the role today, to be checked one by one (slice 5). Alphabetical. (#4537 3a:

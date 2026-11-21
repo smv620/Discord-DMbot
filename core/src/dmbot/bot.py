@@ -600,6 +600,7 @@ from dmbot.ui import (
     party_card,
     party_choose,
     party_join,
+    party_leave,
     party_tell,
     player_id,
     recap_audio,
@@ -1971,6 +1972,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self.add_dynamic_items(*party_card.DYNAMIC_ITEMS)  # 🚪 Has left the party, #4537
         self.add_dynamic_items(*party_tell.DYNAMIC_ITEMS)  # 📖 Catch up's Undo, #4537 4b
         self.add_dynamic_items(*party_join.DYNAMIC_ITEMS)  # the join question, #4537 slice 2b
+        self.add_dynamic_items(*party_leave.DYNAMIC_ITEMS)  # still in the party?, #4537 6a
         self.add_dynamic_items(*party_choose.DYNAMIC_ITEMS)  # Let me choose, #4537 slice 4c
         self.add_dynamic_items(  # a DM shows or hides a map, #4414
             map_show.CampaignSelect, map_show.MapSelect, map_show.ActButton,
@@ -3540,6 +3542,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # Characters who joined the party: "What does Mira know about what came before?",
             # one private message, never during play (#4537 slice 2b; off unless its switch is on)
             ("party join questions", lambda: self.send_join_questions(table)),
+            # A player character marked dead (or, slice 6b, a goodbye heard): "Still in the
+            # party?", one private message, never during play (#4537 slice 6a; no switch)
+            ("party staying questions", lambda: self.send_staying_questions(table)),
             ("heads-ups", lambda: self.warn_about_continuity(table)),
             # The biggest clashes PlotBot graded, up to three; no AI call here (#2660)
             ("big clashes", lambda: self.tell_contradictions(table)),
@@ -7749,6 +7754,43 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         except Exception as exc:
             log.warning("Session languages weren't asked (%s)", type(exc).__name__)
 
+    async def _ask_goodbyes(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        report: extractor.Report,
+        session_id: str,
+        dm_ids: Collection[int],
+    ) -> None:
+        """The goodbyes a session's read heard (#4537 slice 6b; Supervisor's ruling T): each one
+        whose name is one confirmed character in the party now, and whose lines were all said by
+        a DM or that character's own player, becomes a `leave` question, sent with the others
+        after play ("party staying questions"). Nothing leaves the party here (§11). Never
+        raises; counts only in the log."""
+        from dmbot.memory import goodbye_reading
+        from dmbot.memory.models import CONFIRMED
+
+        try:
+            if self.memory is None:
+                return
+            lookup = CampaignLookup.build(await self.memory.lookup_data(guild_id, campaign_id))
+            names: dict[str, set[str]] = {}
+            for said in lookup.names:  # (memory names, not rules entries)
+                who = lookup.entities.get(said.entity_id)
+                if who is not None and who.status == CONFIRMED and who.type == "character":
+                    names.setdefault(name_key(said.text), set()).add(who.id)
+            played = {e.id: e.played_by for e in lookup.entities.values()}
+            members = await self.memory.current_party(guild_id, campaign_id)
+            asks, dropped = goodbye_reading.whose(report.goodbyes, names, members, played, dm_ids)
+            asked = await self.memory.ask_goodbyes(guild_id, campaign_id, asks, session_id)
+            log.info(
+                "Session goodbyes: %d asked%s",
+                asked,
+                "".join(f", {n} {k}" for k, n in sorted(dropped.items()) if n),
+            )
+        except Exception as exc:
+            log.warning("Session goodbyes weren't asked (%s)", type(exc).__name__)
+
     async def _map_check(
         self,
         table: Table,
@@ -10253,8 +10295,17 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             # (a 🤫 question the read asks cites this session, never its words, and is counted on
             # the after-session line: #4524; the short names too, which can ask one)
             from dmbot.memory import secret_questions
+            from dmbot.memory.goodbye_reading import import_refusal
             from dmbot.ui.thread_questions import session_label
 
+            # (#4537 ruling V: an imported session asks about goodbyes only when it is the
+            # campaign's newest and was played within two weeks of its import; never old history)
+            old_import = ""
+            if self.settings.party_leaves_on:
+                imported_at, newest = await transcripts.import_for_goodbyes(
+                    gid, cid, sid, session.started_at
+                )
+                old_import = import_refusal(imported_at, newest, session.started_at)
             with secret_questions.evidence(
                 session_label(session.started_at), session_id=sid
             ) as asked:
@@ -10302,10 +10353,15 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     progress=progress,
                     languages=self.settings.session_languages_on,
                     weather=self.settings.weather_notes_on,
+                    leaves=self.settings.party_leaves_on and not old_import,
                 )
             log.info(report.line())
             if report.heard_languages:  # (#4229 1d: each a question for the DM, never written)
                 await self._ask_heard_languages(gid, cid, report, session.started_at, sid)
+            if report.goodbyes:  # (#4537 6b: each an after-session question, never a leave)
+                await self._ask_goodbyes(gid, cid, report, sid, dm_ids)
+            elif old_import:
+                log.info("Session goodbyes: 0 asked, 1 %s", old_import)
             if report.heard_weather:  # (#4260 10c-2: a private note, after the session)
                 await self._weather_notes(gid, cid, report, session.started_at)
             # Counts and buttons go to the DM Bot channel when the campaign has one (the DM screen
@@ -12633,6 +12689,11 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             if message.id != pressed_message_id:
                 with contextlib.suppress(discord.HTTPException):
                     await message.edit(content=shown, view=None)
+
+    async def send_staying_questions(self, table: Table) -> None:
+        """The after-session step for the goodbye and death questions (#4537 slice 6a)."""
+        if table.campaign_id is not None:
+            await party_leave.send_staying_questions(self, table.guild_id, table.campaign_id)
 
     async def send_join_questions(self, table: Table) -> None:
         """The after-session step for the party join question (#4537 slice 2b)."""
