@@ -191,7 +191,6 @@ class TheImportNamesReport(unittest.IsolatedAsyncioTestCase):
         store = SimpleNamespace(pending_scans=AsyncMock(return_value=[]))
         fake: Any = SimpleNamespace(
             import_state=state,
-            _import_unhonoured={},
             campaigns=SimpleNamespace(get=AsyncMock(return_value=campaign)),
             post=AsyncMock(),
             ask_privately=AsyncMock(return_value=True),

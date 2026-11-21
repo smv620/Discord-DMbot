@@ -1267,11 +1267,6 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         self._short_asks: dict[str, int] = {}  # campaign -> session its open question is about
         # (Each imported session's name-pass report is kept in `import_state` until the import's
         # last session is scanned and then posted as one, #2649, #4904.)
-        # campaign -> who spoke in the lines its import scans read (checked again before adding)
-        # campaign -> the entries its import scans proposed (the only ones the import may add)
-        # campaign -> the starts of the sessions its import scans read (their claims count)
-        # campaign -> the import batches whose scans ended in this report (the notice's source)
-        # campaign -> the sessions of its import whose recap was queued at once (told in one line)
         self._audio_seen: dict[tuple[int, str, int], tuple[int, int]] = {}
         self._name_pass_asks: dict[str, list[tuple[str, int]]] = {}  # unsure words (#2628)
         self.audio_waits = recap_audio.AudioWaits()  # the live "Making the audio" lines (#2621)
@@ -13289,12 +13284,7 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             return
         # said once at the end of the import, with the rest of its news (counts only)
         if characters and self.import_state is not None:
-            await self.import_state.put_count(
-                gid,
-                ready.campaign_id,
-                PARTY,
-                max(characters, await self.import_state.count(gid, ready.campaign_id, PARTY)),
-            )
+            await self.import_state.raise_count(gid, ready.campaign_id, PARTY, characters)
 
     async def _apply_import_plays(self, gid: int, store: ImportStore) -> None:
         """The DM's "plays which character" choices from the import page become links, through a
@@ -13403,23 +13393,25 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
         for cid in sorted(over):
             if await store.pending_scans(gid, cid):
                 continue  # the import is not over: say it once at the end
-            # (the database read first: if it fails, nothing has been taken from memory yet)
-            skipped = (
-                await self.import_state.take_count(gid, cid, UNCHECKED)
-                if self.import_state is not None
-                else 0
-            )
             state = self.import_state
-            # (taken now so none outlives its import, whichever way the report below goes)
-            names = await state.take_strings(gid, cid, ADDED_NAMES) if state else []
-            speakers = (
-                {int(v) for v in await state.take_strings(gid, cid, SPEAKERS)} if state else set()
-            )
-            entries = set(await state.take_strings(gid, cid, ENTRIES)) if state else set()
-            batches = set(await state.take_strings(gid, cid, BATCHES)) if state else set()
-            starts = (
-                {int(v) for v in await state.take_strings(gid, cid, STARTS)} if state else set()
-            )
+            # (taken now so none outlives its import, whichever way the report below goes. A read
+            # that fails costs this campaign's news for this import, never the other campaigns')
+            try:
+                skipped = await state.take_count(gid, cid, UNCHECKED) if state else 0
+                names = await state.take_strings(gid, cid, ADDED_NAMES) if state else []
+                speakers = (
+                    {int(v) for v in await state.take_strings(gid, cid, SPEAKERS)}
+                    if state
+                    else set()
+                )
+                entries = set(await state.take_strings(gid, cid, ENTRIES)) if state else set()
+                batches = set(await state.take_strings(gid, cid, BATCHES)) if state else set()
+                starts = (
+                    {int(v) for v in await state.take_strings(gid, cid, STARTS)} if state else set()
+                )
+            except Exception as exc:
+                log.warning("Import: the kept news could not be read (%s)", type(exc).__name__)
+                continue
             campaign = await self.campaigns.get(gid, cid)
             notice_to, counts_only = self._upkeep_channel(campaign) if campaign else (None, False)
             if campaign is None or notice_to is None:

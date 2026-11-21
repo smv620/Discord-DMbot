@@ -16,6 +16,10 @@ class FakeImportState:
         self.counts[key] = self.counts.get(key, 0) + by
         return self.counts[key]
 
+    async def raise_count(self, gid: int, cid: str, kind: str, to: int) -> None:
+        key = (gid, cid, kind)
+        self.counts[key] = max(self.counts.get(key, 0), to)
+
     async def put_count(self, gid: int, cid: str, kind: str, n: int) -> None:
         if n <= 0:
             self.counts.pop((gid, cid, kind), None)
@@ -43,6 +47,7 @@ class FakeImportState:
         return {c for (g, c, k) in keys if g == gid and k in kinds}
 
     async def add_each(self, gid: int, cid: str, kind: str, values: Sequence[str]) -> None:
+        # (numbered, not uuid-keyed as the real one: a list that keeps alike values, in order)
         self.sets.setdefault((gid, cid, kind), []).extend(f"{i}:{v}" for i, v in enumerate(values))
 
     async def take_each(self, gid: int, cid: str, kind: str) -> list[str]:

@@ -78,6 +78,18 @@ class ImportState:
                 (guild_id, campaign_id, self._kind(kind), n, int(self._now())),
             )
 
+    async def raise_count(self, guild_id: int, campaign_id: str, kind: str, to: int) -> None:
+        """Make a counter at least `to`, in one statement (two processes never lower it)."""
+        async with self._db.guild(guild_id) as conn:
+            await conn.execute(
+                "INSERT INTO import_state (guild_id, campaign_id, kind, data, updated_at)"
+                " VALUES (%s, %s, %s, to_jsonb(%s::int), %s)"
+                " ON CONFLICT (guild_id, campaign_id, kind) DO UPDATE SET"
+                " data = to_jsonb(GREATEST((import_state.data #>> '{}')::int, %s)),"
+                " updated_at = EXCLUDED.updated_at",
+                (guild_id, campaign_id, self._kind(kind), to, int(self._now()), to),
+            )
+
     async def count(self, guild_id: int, campaign_id: str, kind: str) -> int:
         async with self._db.guild(guild_id) as conn:
             cur = await conn.execute(

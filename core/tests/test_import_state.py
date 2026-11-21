@@ -41,6 +41,15 @@ class TheCounters(Base):
         await self.state.put_count(1, self.one.id, "left_told", 1)
         self.assertEqual(await self.state.count(1, self.one.id, "left_told"), 1)
 
+    async def test_raise_count_only_ever_raises(self) -> None:
+        await self.state.raise_count(1, self.one.id, "party", 3)
+        await self.state.raise_count(
+            1, self.one.id, "party", 2
+        )  # (a smaller one does not lower it)
+        self.assertEqual(await self.state.count(1, self.one.id, "party"), 3)
+        await self.state.raise_count(1, self.one.id, "party", 5)
+        self.assertEqual(await self.state.count(1, self.one.id, "party"), 5)
+
     async def test_campaigns_and_servers_are_apart(self) -> None:
         await self.state.bump(1, self.one.id, "unchecked")
         await self.state.bump(2, self.other.id, "unchecked", 5)
