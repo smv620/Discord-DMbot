@@ -1374,6 +1374,7 @@ export function mockApi(scenario: Scenario): AccountApi & { calls: string[] } {
   const leaveState: Record<string, LeaveGroup[]> = {};
   // The open plot threads by campaign (#3696): a state change is kept here, so the next read shows it.
   const plotThreadsOf: Record<string, PlotThreads> = {};
+  let plotThreadSeq = 0; // the ids of threads started in the pretend campaign (#3696, slice 2c)
   // The party record (#4778 a2): Wren is in the party; Ash left and is out. A leave or a return is one change, with one Undo.
   const pretendParty = (): PartyRecordCharacter[] => [
     { id: "p1".repeat(16), name: "Wren", inParty: true, spans: [{ from: 1700000000, to: null, ended: null, session: 2 }] },
@@ -3119,6 +3120,53 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       t.stateWords = plotThreadsWords.stateWord(t.kind === "promise", change.state);
       t.quiet = 0;
       t.stalled = false;
+    },
+    // Starts a thread or a promise (#3696, slice 2c): DM only; the new thread is kept, so the next read shows it.
+    async addPlotThread(ref, change) {
+      calls.push(`addPlotThread:${ref}:${change.kind}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const list = (plotThreadsOf[ref] ??= pretendPlotThreads());
+      const id = (++plotThreadSeq).toString(16).padStart(32, "0");
+      const promise = change.kind === "promise";
+      list.threads.push({
+        id,
+        name: change.name,
+        kind: change.kind,
+        state: change.state,
+        stateWords: plotThreadsWords.stateWord(promise, change.state),
+        history: [],
+        involved: [],
+        movers: [],
+        cameFrom: [],
+        ledTo: [],
+        promise: promise ? { by: [], to: [], due: "" } : null,
+        quiet: 0,
+        stalled: false,
+      });
+      list.total += 1;
+      return { id };
+    },
+    // A promise's due note, and who made it or it was made to (#3696, slice 2c): DM only; a thread that is not a promise is gone.
+    async setPlotThreadDue(ref, change) {
+      calls.push(`setPlotThreadDue:${ref}:${change.promise}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const t = (plotThreadsOf[ref] ??= pretendPlotThreads()).threads.find((x) => x.id === change.promise);
+      if (!t || !t.promise) throw new ApiError("gone");
+      t.promise = { ...t.promise, due: change.due };
+    },
+    async addPlotThreadParty(ref, change) {
+      calls.push(`addPlotThreadParty:${ref}:${change.promise}:${change.side}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const t = (plotThreadsOf[ref] ??= pretendPlotThreads()).threads.find((x) => x.id === change.promise);
+      const who = names.find((n) => n.id === change.who);
+      if (!t || !t.promise || !who) throw new ApiError("gone");
+      t.promise = change.side === "by" ? { ...t.promise, by: [...t.promise.by, who.text] } : { ...t.promise, to: [...t.promise.to, who.text] };
     },
     // Adds one name to a thread with its part (#3696, slice 2b): DM only; a thread or a name not in the list is gone.
     async addPlotThreadInvolved(ref, change) {

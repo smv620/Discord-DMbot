@@ -493,3 +493,144 @@ describe("add who's involved (#4939)", () => {
     expect(await screen.findByText(w.added)).toBeTruthy();
   });
 });
+
+// New story threads and promises (#4944, slice 2c): a thread of four kinds, a promise with its due note and parties.
+describe("new story threads and promises (#4944)", () => {
+  const PROMISE = thread({
+    id: "p1".repeat(16),
+    name: "Mira's word",
+    kind: "promise",
+    state: "open",
+    stateWords: "Open",
+    promise: { by: [], to: [], due: "By the full moon" },
+  });
+  const NAMES_44 = [
+    { id: "n-mira", text: "Mira", kind: "character", saidAs: null },
+    { id: "n-guild", text: "The Guild", kind: "faction", saidAs: null },
+    { id: "n-hall", text: "Old Hall", kind: "place", saidAs: null },
+  ];
+  /** A list of two threads and a server that keeps what is started, promised and set. */
+  async function withNew(opts: { due?: "fail" | "ok"; party?: "gone" } = {}) {
+    const api = mockApi("table");
+    let threads: PlotThread[] = [thread({ name: "The drowned bell", state: "active" }), PROMISE];
+    const reads = { n: 0 };
+    api.plotThreads = async () => {
+      reads.n += 1;
+      return answer({}, threads);
+    };
+    api.campaignNames = async () => NAMES_44;
+    const made: { kind: string; state: string; name: string }[] = [];
+    const dues: { promise: string; due: string }[] = [];
+    const parties: { promise: string; side: string; who: string }[] = [];
+    api.addPlotThread = async (_ref, change) => {
+      made.push(change);
+      return { id: "c3".repeat(16) };
+    };
+    api.setPlotThreadDue = async (_ref, change) => {
+      if (opts.due === "fail") throw new ApiError("network");
+      dues.push(change);
+    };
+    api.addPlotThreadParty = async (_ref, change) => {
+      if (opts.party === "gone") throw new ApiError("gone");
+      parties.push(change);
+    };
+    render(<PlotThreadsPanel api={api} refId={REF} />);
+    await screen.findByText("The drowned bell");
+    return { api, reads, made, dues, parties, setThreads: (t: PlotThread[]) => (threads = t) };
+  }
+  const card = async (name: string) => (await screen.findByText(name)).closest("article") as HTMLElement;
+
+  it("New story thread offers four kinds, defaults to a quest, and creates it", async () => {
+    const { made } = await withNew();
+    fireEvent.click(screen.getByRole("button", { name: w.newButton }));
+    expect((screen.getByRole("radio", { name: "A quest" }) as HTMLInputElement).checked).toBe(true);
+    for (const label of ["A mystery", "A hook (a lead)", "A goal"]) {
+      expect(screen.getByRole("radio", { name: label })).toBeTruthy();
+    }
+    expect(screen.queryByRole("radio", { name: "Just a hint" })).toBeNull();
+    fireEvent.input(screen.getByLabelText(w.newNameLabel), { target: { value: "The Missing Heir" } });
+    fireEvent.click(screen.getByRole("button", { name: w.createIt }));
+    expect(await screen.findByText(w.started)).toBeTruthy();
+    expect(made).toEqual([{ kind: "quest", state: "open", name: "The Missing Heir" }]);
+  });
+
+  it("Add a promise saves the due note after the promise is made when one is typed", async () => {
+    const { made, dues } = await withNew();
+    fireEvent.click(screen.getByRole("button", { name: w.promiseButton }));
+    fireEvent.input(screen.getByLabelText(w.promiseNameLabel), { target: { value: "Bring the healer back" } });
+    fireEvent.input(screen.getByLabelText(w.promiseDueLabel), { target: { value: "By the full moon" } });
+    fireEvent.click(screen.getByRole("button", { name: w.addSubmit }));
+    expect(await screen.findByText(w.promiseDone)).toBeTruthy();
+    expect(made).toEqual([{ kind: "promise", state: "open", name: "Bring the healer back" }]);
+    expect(dues).toEqual([{ promise: "c3".repeat(16), due: "By the full moon" }]);
+  });
+
+  it("Add a promise says so when only the due note fails", async () => {
+    await withNew({ due: "fail" });
+    fireEvent.click(screen.getByRole("button", { name: w.promiseButton }));
+    fireEvent.input(screen.getByLabelText(w.promiseNameLabel), { target: { value: "Bring the healer back" } });
+    fireEvent.input(screen.getByLabelText(w.promiseDueLabel), { target: { value: "By the full moon" } });
+    fireEvent.click(screen.getByRole("button", { name: w.addSubmit }));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.dueFailed);
+  });
+
+  it("a promise offers its due note and both parties; another kind does not", async () => {
+    await withNew();
+    const promise = await card("Mira's word");
+    expect(within(promise).getByRole("button", { name: w.dueButton })).toBeTruthy();
+    expect(within(promise).getByRole("button", { name: w.byButton })).toBeTruthy();
+    expect(within(promise).getByRole("button", { name: w.toButton })).toBeTruthy();
+    const bell = await card("The drowned bell");
+    expect(within(bell).queryByRole("button", { name: w.dueButton })).toBeNull();
+    expect(within(bell).queryByRole("button", { name: w.byButton })).toBeNull();
+  });
+
+  it("Who promised offers only characters and groups; Promised to also offers places", async () => {
+    await withNew();
+    const promise = await card("Mira's word");
+    fireEvent.click(within(promise).getByRole("button", { name: w.byButton }));
+    expect(await within(promise).findByRole("button", { name: "Mira" })).toBeTruthy();
+    expect(within(promise).getByRole("button", { name: "The Guild" })).toBeTruthy();
+    expect(within(promise).queryByRole("button", { name: "Old Hall" })).toBeNull();
+    fireEvent.click(within(promise).getByRole("button", { name: w.byButton }));
+    fireEvent.click(within(promise).getByRole("button", { name: w.toButton }));
+    expect(await within(promise).findByRole("button", { name: "Old Hall" })).toBeTruthy();
+  });
+
+  it("a due note may be empty and clears it", async () => {
+    const { dues } = await withNew();
+    const promise = await card("Mira's word");
+    fireEvent.click(within(promise).getByRole("button", { name: w.dueButton }));
+    const box = (await within(promise).findByLabelText(w.dueLabel)) as HTMLInputElement;
+    expect(box.value).toBe("By the full moon");
+    fireEvent.input(box, { target: { value: "" } });
+    fireEvent.click(within(promise).getByRole("button", { name: w.dueSave }));
+    expect(await screen.findByText(w.saved)).toBeTruthy();
+    expect(dues).toEqual([{ promise: PROMISE.id, due: "" }]);
+  });
+
+  it("a thread or name that is gone says so and re-reads the list", async () => {
+    const { reads } = await withNew({ party: "gone" });
+    const promise = await card("Mira's word");
+    fireEvent.click(within(promise).getByRole("button", { name: w.byButton }));
+    fireEvent.click(await within(promise).findByRole("button", { name: "Mira" }));
+    expect((await screen.findByRole("alert")).textContent).toBe(w.addGone);
+    await waitFor(() => expect(reads.n).toBe(2));
+  });
+
+  it("every form waits while a press is with the bot", async () => {
+    const { api } = await withNew();
+    let release!: () => void;
+    api.addPlotThread = () =>
+      new Promise<{ id: string }>((resolve) => {
+        release = () => resolve({ id: "c4".repeat(16) });
+      });
+    fireEvent.click(screen.getByRole("button", { name: w.newButton }));
+    fireEvent.input(screen.getByLabelText(w.newNameLabel), { target: { value: "The Missing Heir" } });
+    fireEvent.click(screen.getByRole("button", { name: w.createIt }));
+    await waitFor(() => expect((screen.getByLabelText(w.newNameLabel) as HTMLInputElement).disabled).toBe(true));
+    expect((screen.getByRole("button", { name: w.promiseButton }) as HTMLButtonElement).disabled).toBe(true);
+    release();
+    expect(await screen.findByText(w.started)).toBeTruthy();
+  });
+});

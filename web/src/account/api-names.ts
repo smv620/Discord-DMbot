@@ -799,6 +799,28 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
       if (!queued?.answer) throw new ApiError("server");
       await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
     },
+    // A new thread or promise (#3696, slice 2c): queued for the bot and waited for; a done answer carries the new thread's id.
+    addPlotThread: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/plot-threads/new`, { kind: change.kind, state: change.state, name: change.name })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = (await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`)) as { id?: unknown };
+      if (typeof got.id !== "string" || got.id === "") throw new ApiError("server");
+      return { id: got.id };
+    },
+    // A promise's due note (empty clears it), and who made it or it was made to (#3696, slice 2c): queued, waited for, no Undo.
+    setPlotThreadDue: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/plot-threads/due`, { promise: change.promise, due: change.due })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
+    addPlotThreadParty: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/plot-threads/party`, { promise: change.promise, side: change.side, who: change.who })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+    },
     // A state change (or "check") is queued for the bot (202 {answer}) and waited for; the answer has no batch, so no Undo (#3696, slice 2a).
     changePlotThreadState: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;
