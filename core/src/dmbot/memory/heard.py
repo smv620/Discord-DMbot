@@ -20,10 +20,10 @@ def drop_retold(
     """Each (entity id, speaker) key's count of lines, without the lines `is_retold` says were the
     recap read aloud. Line numbers are `Said.number`: 1-based places among the session's stored
     lines. The predicate should be the story reader's own (`extractor.recap_numbers`, which the bot
-    gets from `_recap_lines`), so the two can't drift; `Split.used_as(n) == RECAP` is the same. A key left with
-    no line is dropped, so a name only the recap said is not heard in this session at all. A line
-    counted twice for one key counts once: it was said once. An unsure recap is not retold
-    (`used_as` gives play for it), so a doubt never takes counts away."""
+    gets from `_recap_lines`), so the two can't drift; `Split.used_as(n) == RECAP` is the same.
+    A key left with no line is dropped, so a name only the recap said is not heard in this session
+    at all. A line counted twice for one key counts once: it was said once. An unsure recap is not
+    retold (`used_as` gives play for it), so a doubt never takes counts away."""
     kept: dict[tuple[str, int], int] = {}
     for key, lines in counts.items():
         left = {n for n in lines if not is_retold(n)}
