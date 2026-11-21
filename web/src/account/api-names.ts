@@ -42,7 +42,7 @@ import {
   SIGNED_OUT_EVENT,
 } from "./api";
 import { countsOf, sharedOf } from "./api";
-import type { AccountApi, ApiHelpers, CharacterLanguages, HeardQuestions, JoinChoices, JoinGroup, PartyRecordCharacter, WebAnswer, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, PlotThreads, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes, LeaveGroup } from "./api";
+import type { AccountApi, ApiHelpers, CharacterLanguages, HeardQuestions, JoinChoices, JoinGroup, PartyRecordCharacter, WebAnswer, ThreadGuesses, HandOverQuestion, MapFeatures, MapsRead, MapsResult, NodeSummary, PartyCharacter, PlotThreads, RevealProposal, SecretQuestion, StoryThreads, ThreadCard, ThreadClues, ThreadProgressThread, TraitOffer, UploadNotice, WaitingLook, WorldNotes, LeaveGroup } from "./api";
 
 /** One number from the bot's `counts` text ("shown:1", "kept:3 shown:2"), only when it is above 0: a count of 0 is not said (#3974, #3986). */
 /** The revealed list of an upload notice (#4661): plain lines of at most 200 characters, at most ten; anything else is dropped. */
@@ -663,6 +663,22 @@ export default function namesArea({ call, waitForAnswer, root }: ApiHelpers): Pa
     answerLeave: async (ref, change) => {
       const base = `/me/campaigns/${encodeURIComponent(ref)}`;
       const queued = (await call("POST", `${base}/leave-questions/answer`, { character: change.character, answer: change.answer })) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return { batch: typeof got.batch === "number" ? got.batch : null };
+    },
+    // What the characters learned (#3863 step 2): the bot is asked first and waited for, then the list is read. DM only.
+    revealQuestions: async (ref) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/reveals/ask`, {})) as { answer: string };
+      if (!queued?.answer) throw new ApiError("server");
+      await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
+      return ((await call("GET", `${base}/reveals`)) as { proposals: RevealProposal[] }).proposals;
+    },
+    // Keep or Not this, queued for the bot and waited for; a keep gives its batch for Undo (#3863 step 2).
+    answerReveal: async (ref, change) => {
+      const base = `/me/campaigns/${encodeURIComponent(ref)}`;
+      const queued = (await call("POST", `${base}/reveals/answer`, { id: change.id, answer: change.answer })) as { answer: string };
       if (!queued?.answer) throw new ApiError("server");
       const got = await waitForAnswer(`${base}/web/answers/${encodeURIComponent(queued.answer)}`);
       return { batch: typeof got.batch === "number" ? got.batch : null };

@@ -174,16 +174,25 @@ class TheImportNamesReport(unittest.IsolatedAsyncioTestCase):
         from functools import partial
         from unittest.mock import patch
 
-        report = SimpleNamespace(fixed=[], unsure=[1], new=[2, 3])
+        from dmbot.transcript.name_pass import Candidate, Report, report_to_json
+
+        cand = Candidate("Vane", (), 1, (), ())
+        report = Report(unsure=(cand,), new=(cand, cand))
+        state = FakeImportState()
+        await state.add_strings(
+            GUILD,
+            "c" * 32,
+            "reports",
+            ["damaged-row-with-no-colon", "k:{not json", f"k:{report_to_json(report)}"],
+        )  # (two damaged rows: each costs only itself, the good one is still reported)
         campaign = SimpleNamespace(
             id="c" * 32, guild_id=GUILD, dm_bot_channel_id=UPKEEP, dm_screen_channel_id=SCREEN
         )
         store = SimpleNamespace(pending_scans=AsyncMock(return_value=[]))
         fake: Any = SimpleNamespace(
-            _import_reports={(GUILD, "c" * 32): [report]},
             _import_party={},
             _import_names={},
-            import_state=FakeImportState(),
+            import_state=state,
             _import_speakers={},
             _import_entries={},
             _import_batches={},
@@ -219,7 +228,6 @@ class TheUnhonouredRecapsLine(unittest.IsolatedAsyncioTestCase):
             id="c" * 32, guild_id=GUILD, dm_bot_channel_id=bot_channel, dm_screen_channel_id=SCREEN
         )
         fake: Any = SimpleNamespace(
-            _import_reports={},
             _import_party={},
             _import_names={},
             import_state=FakeImportState(),
