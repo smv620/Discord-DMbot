@@ -318,6 +318,12 @@ AUDIENCE: dict[str, str] = {
             "ui.party_join.SinceButton",
             "ui.party_join.FirstUndoButton",
             "ui.party_join.JoinsOpenButton",
+            # A character who died or left: "Still in the party?" (#4537 slice 6a)
+            "ui.party_leave.LeftButton",
+            "ui.party_leave.StaysButton",
+            "ui.party_leave.LaterButton",
+            "ui.party_leave.StayingUndoButton",
+            "ui.party_leave.LeavesOpenButton",
         ],
         DM,
     ),
