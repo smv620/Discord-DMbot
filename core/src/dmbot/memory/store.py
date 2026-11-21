@@ -3308,6 +3308,32 @@ class MemoryStore:
             if await cur.fetchone() is None:
                 raise join_questions_mod.AlreadyAnswered("Another DM already answered this.")
 
+    async def ask_goodbyes(
+        self,
+        guild_id: int,
+        campaign_id: str,
+        goodbyes: Sequence[tuple[str, Sequence[int]]],
+        session_id: str,
+    ) -> int:
+        """Goodbyes heard in a session (#4537 slice 6b): one `leave` question for each character,
+        with who said it (ids only), asked only of a character in the party now (read in the same
+        transaction) and never twice for one session (`join_questions.ask_heard`). It is sent
+        after play like the others. Nothing closes a stretch here (§11). Returns how many were
+        asked."""
+        if not goodbyes:
+            return 0
+        async with self._db.guild(guild_id) as conn:
+            scope = Scope(conn, guild_id, campaign_id, 0)  # (the version is not read here)
+            members = set(await party_record.current_members(scope))
+            now = int(self._clock())
+            asked = 0
+            for entity_id, speakers in goodbyes:
+                if entity_id in members and await join_questions_mod.ask_heard(
+                    scope, entity_id, speakers, session_id, now
+                ):
+                    asked += 1
+            return asked
+
     async def back_in_party(
         self, guild_id: int, campaign_id: str, entity_id: str
     ) -> Written[tuple[party_record.Span, str | None]]:
