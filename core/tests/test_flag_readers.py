@@ -95,11 +95,6 @@ FILES: dict[str, tuple[str, str, str]] = {
         "the writers: add_entity, set_hidden_from_players; and `_shown_when_said`, which "
         "reads them for what `reveal_said` shows and `ask_world_reveals` asks (#4590)",
     ),
-    "recaps/name_answers.py": (
-        READS,
-        "CloudDev-lead",
-        "the website's join_group refuses a group hidden from the players, as Discord's hints do",
-    ),
     "schema.py": (DEFINES, "GraphEngineer", "the lookup's SQL view over the aliases"),
     "ui/clue_audience.py": (WRITES, "CloudDev-lead", "the DM's audience menu for a clue"),
     "ui/name_card.py": (
@@ -155,4 +150,4 @@ class TheFlagReaders(unittest.TestCase):
     def test_the_readers_still_to_convert_are_counted_for_the_record(self) -> None:
         # (a number to watch go down, not a limit: the slice is done when it reaches zero)
         reading = sorted(path for path, (kind, _, _) in FILES.items() if kind == READS)
-        self.assertEqual(len(reading), 3, reading)
+        self.assertEqual(len(reading), 2, reading)
