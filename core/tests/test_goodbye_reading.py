@@ -21,6 +21,7 @@ from dmbot.memory.goodbye_reading import (
     Goodbye,
     check_quote,
     check_who,
+    import_refusal,
     once_each,
     parse_leaves,
     whose,
@@ -246,7 +247,7 @@ class InTheClaimsCall(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(report.goodbyes, [])
         self.assertIn("leave_speaker_gone", report.line())
 
-    async def test_a_line_voiced_as_an_npc_is_no_ones_and_an_import_asks_nothing(self) -> None:
+    async def test_a_line_voiced_as_an_npc_is_no_ones(self) -> None:
         lines = [
             line(1, DM, "Farewell, Okthandom says goodbye to everyone!", entity="Mayor Brask"),
             *dm_session(10)[1:],
@@ -255,10 +256,6 @@ class InTheClaimsCall(unittest.IsolatedAsyncioTestCase):
         report = await go(LeaveAnswer(quote), Kept(), lines, leaves=True)
         self.assertEqual(report.goodbyes, [Goodbye("Okthandom", ("1",), (None,))])
         self.assertEqual(whose(report.goodbyes, {"okthandom": {"e"}}, {"e"}, {}, {DM})[0], [])
-        ai = LeaveAnswer(quote)
-        imported = await go(ai, Kept(), lines, leaves=True, imported=True)
-        self.assertNotIn(goodbye_reading.LEAVE_ADDENDUM, ai.systems[0])
-        self.assertEqual(imported.goodbyes, [])
 
     async def test_a_cut_answer_is_counted_and_family_only_asks_nothing(self) -> None:
         report = await go(LeaveAnswer('{"claims": [{"sub', cut=True), Kept(), dm_session(10),
@@ -267,6 +264,25 @@ class InTheClaimsCall(unittest.IsolatedAsyncioTestCase):
         ai = LeaveAnswer(self.GOODBYE)
         await go(ai, Kept(), dm_session(10), leaves=True, family_only=True)
         self.assertNotIn(goodbye_reading.LEAVE_ADDENDUM, ai.systems[0])
+
+
+class AnImport(unittest.TestCase):
+    """Ruling V: an imported session asks about goodbyes only when it is the campaign's newest
+    and was played at most 14 days before its import; anything else is old history."""
+
+    DAY = 86_400
+
+    def test_the_three_cases_and_a_live_session(self) -> None:
+        start = 1_700_000_000
+        self.assertEqual(import_refusal(None, False, start), "")  # (played live)
+        self.assertEqual(import_refusal(start + 2 * self.DAY, True, start), "")
+        self.assertEqual(
+            import_refusal(start + 2 * self.DAY, False, start), "leave_old_import"
+        )  # (a later session exists: a backlog imported oldest first)
+        self.assertEqual(
+            import_refusal(start + 15 * self.DAY, True, start), "leave_old_import"
+        )  # (the newest, but played long before its import)
+        self.assertEqual(import_refusal(start + 14 * self.DAY, True, start), "")
 
 
 class TheSwitch(unittest.TestCase):
@@ -406,6 +422,25 @@ class TheQuestion(Party):
             [(self.vell, join_questions.DIED, "waiting", [], None),
              (self.tuck, LEAVE, "stays", [DM_ID], sid)],
         )  # fmt: skip
+
+    async def test_the_import_facts_for_a_session(self) -> None:
+        live = await self.session(9_000, 9_500)
+        self.assertEqual(
+            await self.sessions.import_for_goodbyes(GUILD, self.c, live, 9_000), (None, True)
+        )
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute(
+                "INSERT INTO session_imports (guild_id, campaign_id, session_id, import_id,"
+                " file_name, imported_by, imported_at) VALUES (%s, %s, %s, %s, 'x.txt', %s, %s)",
+                (GUILD, self.c, live, "b" * 32, DM_ID, 20_000),
+            )
+        self.assertEqual(
+            await self.sessions.import_for_goodbyes(GUILD, self.c, live, 9_000), (20_000, True)
+        )
+        await self.session(12_000, 13_000)  # (a later session: no longer the newest)
+        self.assertEqual(
+            await self.sessions.import_for_goodbyes(GUILD, self.c, live, 9_000), (20_000, False)
+        )
 
     async def test_a_whole_session_with_goodbyes_closes_no_stretch(self) -> None:
         # (§11 and Supervisor's ruling: only the DM's answer or the card's button ends one)

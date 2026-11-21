@@ -702,8 +702,8 @@ async def run(
     a quote checked against the cited lines. What holds is only gathered (`Report.goodbyes`, names
     and line numbers with who spoke each, no words; a line voiced as an NPC is no one's): the
     caller keeps the DM's and the character's own player's lines and asks the DM, after play.
-    Nothing closes a stretch here (§11). Never in `family_only`, nor for an imported session (old
-    history: a goodbye in it may have been undone long since)."""
+    Nothing closes a stretch here (§11). Never in `family_only`. The caller leaves it off for an
+    imported session that is old history (`goodbye_reading.import_refusal`, ruling V)."""
     report = Report()
     # (theories are the first kind of reading: asked when either switch is on, the rest only with
     # the readings switch)
@@ -724,8 +724,7 @@ async def run(
     met = met and not family_only
     languages = languages and not family_only
     weather = weather and not family_only
-    # (an imported session is old history: a goodbye in it may be long undone, so none is asked)
-    leaves = leaves and not family_only and not imported
+    leaves = leaves and not family_only  # (an old import is the caller's: `import_refusal`)
     voiced: set[str] = set()  # (with `leaves`: lines the DM said as a named NPC, no one's goodbye)
     system = (
         SYSTEM
