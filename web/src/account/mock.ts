@@ -3168,6 +3168,39 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       if (!t || !t.promise || !who) throw new ApiError("gone");
       t.promise = change.side === "by" ? { ...t.promise, by: [...t.promise.by, who.text] } : { ...t.promise, to: [...t.promise.to, who.text] };
     },
+    // Links an event to a thread (#3696, slice 2d): DM only; a thread or an event not in the lists is gone. A new event joins the names.
+    async linkPlotThreadEvent(ref, change) {
+      calls.push(`linkPlotThreadEvent:${ref}:${change.thread}:${change.how}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const t = (plotThreadsOf[ref] ??= pretendPlotThreads()).threads.find((x) => x.id === change.thread);
+      if (!t) throw new ApiError("gone");
+      let event: CampaignName | undefined;
+      if ("newEvent" in change) {
+        event = { id: (++plotThreadSeq).toString(16).padStart(32, "0"), text: change.newEvent, kind: "event", saidAs: null };
+        names.push(event);
+      } else {
+        event = names.find((n) => n.id === change.event && n.kind === "event");
+      }
+      if (!event) throw new ApiError("gone");
+      t.movers = [...t.movers, { id: event.id, name: event.text, endsIt: change.how === "ended", session: null }];
+    },
+    // One thread led to another (#3696, slice 2d): DM only; a thread not in the list is gone. A thread target also lists the origin as came from.
+    async plotThreadLedTo(ref, change) {
+      calls.push(`plotThreadLedTo:${ref}:${change.from}:${change.to}`);
+      await reachable();
+      signedIn();
+      if (webView(ref) !== "dm") throw new ApiError("not-allowed");
+      const list = (plotThreadsOf[ref] ??= pretendPlotThreads());
+      const from = list.threads.find((x) => x.id === change.from);
+      const toThread = list.threads.find((x) => x.id === change.to);
+      const toName = names.find((n) => n.id === change.to);
+      if (!from || (!toThread && !toName)) throw new ApiError("gone");
+      const to = toThread ?? { id: change.to, name: toName!.text };
+      from.ledTo = [...from.ledTo, { id: to.id, name: to.name }];
+      if (toThread) toThread.cameFrom = [...toThread.cameFrom, { id: from.id, name: from.name }];
+    },
     // Adds one name to a thread with its part (#3696, slice 2b): DM only; a thread or a name not in the list is gone.
     async addPlotThreadInvolved(ref, change) {
       calls.push(`addPlotThreadInvolved:${ref}:${change.thread}:${change.who}`);
