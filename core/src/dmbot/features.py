@@ -36,6 +36,14 @@ class Feature:
 
 FEATURES: tuple[Feature, ...] = (
     Feature(
+        "worker",
+        "Background work away from Discord",
+        "",
+        lambda s: s.worker_on,
+        ("worker_on",),
+        for_dms=False,  # for whoever runs DMbot: on only while dev1 tests the worker (#2128)
+    ),
+    Feature(
         "party join question",
         "Catching up a new party member",
         "When a character joins the party, DMbot asks you what they know about what came before.",

@@ -28,6 +28,7 @@ from collections.abc import (
     Awaitable,
     Callable,
     Collection,
+    Mapping,
     Sequence,
 )
 from functools import partial
@@ -36,7 +37,7 @@ from typing import TYPE_CHECKING, Any
 
 import discord
 
-from dmbot import ai_feed
+from dmbot import ai_feed, outbox_delivery
 from dmbot.audio.segmenter import Utterance
 from dmbot.campaigns import Campaign
 from dmbot.dm_screen import upkeep
@@ -57,6 +58,7 @@ from dmbot.memory.models import (
 from dmbot.memory.recall import DM_SCREEN, PLAYERS, RecallService
 from dmbot.memory.scene import SceneTracker, scene_hints
 from dmbot.memory.scene import prepare as prepare_hints
+from dmbot.outbox import RECAP_READY, Outbox
 from dmbot.recaps import allowance as recap_allowance
 from dmbot.recaps import critics, cues, name_answers, short, uploaded, voice
 from dmbot.recaps import feedback as recap_feedback
@@ -263,6 +265,8 @@ class RecapFeatures:
         recap_styles: StyleStore | None
         recap_worker: RecapWorker | None
         recaps: RecapStore | None
+        outbox: Outbox | None
+        outbox_wake: asyncio.Event
         settings: Settings
         tables: dict[int, Table]
         transcripts: TranscriptStore | None
@@ -372,6 +376,25 @@ class RecapFeatures:
             *(
                 [self._watched(self._recap_loop(), "recaps")]
                 if self.recap_worker is not None
+                else []
+            ),
+            *(
+                [
+                    self._watched(
+                        outbox_delivery.run(
+                            self.outbox,
+                            lambda: [g.id for g in self.guilds],
+                            {RECAP_READY: self.deliver_recap_ready},
+                            self.outbox_wake,
+                        ),
+                        "outbox",
+                    ),
+                    self._watched(
+                        outbox_delivery.listen_and_wake(self.outbox.listen, self.outbox_wake),
+                        "outbox-listen",
+                    ),
+                ]
+                if self.outbox is not None
                 else []
             ),
             *(
@@ -1688,21 +1711,11 @@ class RecapFeatures:
         )
         if campaign is not None and channel is not None:
             if job.state == "ready":
-                try:
-                    why = await self.recap_audio_why(gid, cid)  # the audio button's greyed reason
-                except Exception:  # the recap still goes up, with the button off
-                    log.exception("Recap: couldn't tell why audio is off")
-                    why = "unavailable"
-                await self.post(
-                    channel,
-                    ready_text(
-                        "" if counts_only else job.title, link, AUDIO_WHY[why] if why else ""
-                    ),
-                    view=ready_view(
-                        cid, job.session_at, self.settings.site_url, link, audio_off=bool(why)
-                    ),
-                    remember=("recap", cid, job.session_at),
-                )
+                if self.settings.worker_on and self.outbox is not None:
+                    # (#3843) said by the bot's delivery round, built there from the ids alone
+                    await self.outbox.add_now(gid, cid, RECAP_READY, {"session_at": job.session_at})
+                else:
+                    await self._post_recap_ready(gid, cid, job, channel, counts_only, link)
             elif not campaign.recaps_email:
                 where = f": {link}" if link else " on the website"
                 await self.post(
@@ -1730,6 +1743,42 @@ class RecapFeatures:
                 job,
                 campaign.dm_accounts if campaign is not None else (),
             )
+
+    async def _post_recap_ready(
+        self, gid: int, cid: str, job: Job, channel: int, counts_only: bool, link: str
+    ) -> bool:
+        """The "recap ready" line with its buttons. True when Discord accepted it."""
+        try:
+            why = await self.recap_audio_why(gid, cid)  # the audio button's greyed reason
+        except Exception:  # the recap still goes up, with the button off
+            log.exception("Recap: couldn't tell why audio is off")
+            why = "unavailable"
+        return await self.post(
+            channel,
+            ready_text("" if counts_only else job.title, link, AUDIO_WHY[why] if why else ""),
+            view=ready_view(cid, job.session_at, self.settings.site_url, link, audio_off=bool(why)),
+            remember=("recap", cid, job.session_at),
+        )
+
+    async def deliver_recap_ready(self, gid: int, cid: str, payload: Mapping[str, Any]) -> None:
+        """The outbox's "recap ready" (#3843): the same line `recap_told` posts itself with the
+        worker off, built from the recap's id. Nothing to say (the recap is gone, or not ready any
+        more, or the campaign has no channel) is done, not failed; a refused post raises, so the
+        row is tried again."""
+        job = await self.recaps.get(gid, cid, int(payload["session_at"])) if self.recaps else None
+        campaign = await self.campaigns.get(gid, cid)
+        if job is None or job.state != "ready" or campaign is None:
+            return
+        channel, counts_only = self._upkeep_channel(campaign)
+        if channel is None:
+            return
+        link = (
+            page_link(self.settings.site_url, gid, cid, job.session_at)
+            if self.settings.site_url
+            else ""
+        )
+        if not await self._post_recap_ready(gid, cid, job, channel, counts_only, link):
+            raise RuntimeError("not-posted")
 
     async def _queue_recap_names(self, gid: int, cid: str, job: Job, campaign: Campaign) -> None:
         """Names the recap kept that DMbot didn't know (#2027) go into the after-session name
