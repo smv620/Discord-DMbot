@@ -35,7 +35,6 @@ SWITCH = "the DM's 'shown to the table now' switch, on a path whose output only 
 
 # path (under src/dmbot) → (kind, owner, why). One line each, in alphabetical order.
 FILES: dict[str, tuple[str, str, str]] = {
-    "bot.py": (READS, "CloudDev-lead", "the clue reveal reads `unseen_by_players` from the lookup"),
     "devtools/sample_run/counts.py": (
         COUNTS,
         "GraphEngineer",
@@ -150,4 +149,4 @@ class TheFlagReaders(unittest.TestCase):
     def test_the_readers_still_to_convert_are_counted_for_the_record(self) -> None:
         # (a number to watch go down, not a limit: the slice is done when it reaches zero)
         reading = sorted(path for path, (kind, _, _) in FILES.items() if kind == READS)
-        self.assertEqual(len(reading), 2, reading)
+        self.assertEqual(len(reading), 1, reading)
