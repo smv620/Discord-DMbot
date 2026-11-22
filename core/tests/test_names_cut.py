@@ -43,14 +43,16 @@ class TheWords(unittest.TestCase):
     def test_the_upload_line_says_how_many_and_what_to_do(self) -> None:
         self.assertEqual(names_over_cap_line({}), "")
         line = names_over_cap_line({bg.NAMES_OVER_CAP: 12})
-        self.assertIn("12 more names were found", line)
-        self.assertIn(f"({bg.MAX_NAMES})", line)
-        self.assertIn("Split the document", line)
-        self.assertIn("1 more name was found", names_over_cap_line({bg.NAMES_OVER_CAP: 1}))
+        self.assertIn(f"lists up to {bg.MAX_NAMES} names from one document", line)
+        self.assertIn("It found 12 more names and left them out", line)
+        self.assertIn("split the document", line)
+        one = names_over_cap_line({bg.NAMES_OVER_CAP: 1})
+        self.assertIn("found 1 more name and left it out", one)
 
     def test_the_import_line_is_a_count_and_says_what_to_do(self) -> None:
-        self.assertIn("1 more possible name was heard", names_cut_note(1))
-        self.assertIn("3 more possible names were heard", names_cut_note(3))
+        self.assertIn("up to 10 new names from each session", names_cut_note(3))
+        self.assertIn("had up to 1 more name, so it was left out", names_cut_note(1))
+        self.assertIn("had up to 3 more names, so they were left out", names_cut_note(3))
         self.assertIn("➕ Add a name", names_cut_note(3))
 
 

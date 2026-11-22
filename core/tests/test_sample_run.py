@@ -581,12 +581,11 @@ class Steps(DatabaseTest):
         sleep = await self.sleep_then(
             "UPDATE session_imports SET state = 'done', scan_finished = TRUE,"
             " story_state = 'read', step_total = 2, step_done = 2, words_done = 11, calls_made = 1,"
-            " names_cut = 4"
+            " scan_cut = 4, story_held = 2"
         )
         got = await steps.wait_import(self.db, GUILD, sid, say=self.say, sleep=sleep, poll_s=0)
-        self.assertEqual(
-            got, {"lines": 2, "words": 11, "calls": 1, "story": "read", "names cut": 4}
-        )
+        want = {"lines": 2, "words": 11, "calls": 1, "story": "read"}
+        self.assertEqual(got, {**want, "scan cut": 4, "reader held": 2})
 
     async def done_scan(self, story: str) -> None:
         async with self.db.guild(GUILD) as conn:

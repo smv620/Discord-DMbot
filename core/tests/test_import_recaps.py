@@ -544,12 +544,34 @@ class TheCrashAndTheNews(WithImports):
         await bot._tell_import_news(GUILD, self.store)
         channel, text = bot.post.await_args.args[:2]
         self.assertEqual(channel, 88)
-        self.assertIn("12 more possible names were heard in your imported sessions", text)
+        self.assertIn("Your imported sessions had up to 12 more names", text)
         self.assertIn("➕ Add a name", text)
         self.assertIsNone(bot.post.await_args.kwargs["view"])  # (no names, so no Check button)
         bot.post.reset_mock()
         await bot._tell_import_news(GUILD, self.store)  # (taken: told once)
         bot.post.assert_not_awaited()
+
+    async def test_a_scan_given_back_and_run_again_tells_its_cut_once(self) -> None:
+        # (#5055 A) the cut is counted on the scan's success, so a retried scan is not counted twice
+        sid = await self.imported(1)
+        bot, campaign = fake_bot(self.store)
+        campaign.id = self.campaign.id
+        tries = [0]
+
+        async def scan(gid: int, ready: Any) -> list[str]:
+            await self.store.set_scan_cut(gid, ready.session_id, 12)
+            tries[0] += 1
+            if tries[0] == 1:
+                raise RuntimeError("down")  # given back after the cut was kept
+            return []
+
+        bot._scan_import = scan
+        await rounds(bot, 5)
+        told = [c.args[1] for c in bot.post.await_args_list if "more names" in c.args[1]]
+        self.assertEqual(tries[0], 2)
+        self.assertEqual(len(told), 1)
+        self.assertIn("up to 12 more names", told[0])
+        self.assertEqual(await self.store.scan_cut(GUILD, sid), 12)
 
     async def test_the_dm_is_told_once_when_a_name_check_was_given_up(self) -> None:
         await self.imported(1)

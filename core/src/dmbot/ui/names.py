@@ -43,7 +43,7 @@ from dmbot.memory.models import (
     name_key,
 )
 from dmbot.memory.name_longer import longer_names, widens
-from dmbot.memory.scan import Match, near_match_in, sound_keys
+from dmbot.memory.scan import MAX_SUGGESTIONS, Match, near_match_in, sound_keys
 from dmbot.memory.scenes import ENTITY, Scenes
 from dmbot.memory.sounds import sound_codes
 from dmbot.ui import all_names, logic, name_origin, name_places, player_id, split_words
@@ -2605,12 +2605,14 @@ def after_session_text(names: list[str], where: str = "this session") -> str:
 
 
 def names_cut_note(count: int) -> str:
-    """The import notice's line for names a cap left out (#5055 A; Supervisor's ruling): DMbot
-    lists only so many new names from each session, and says how many more it heard rather than
-    dropping them silently. A count, never a name: the notice may be in the DM Bot channel."""
-    one = count == 1
+    """The import notice's line for names the name scan left out past its limit (#5055 A;
+    Supervisor's ruling): DMbot says how many it did not list rather than dropping them silently.
+    The count is summed over the import's sessions, so a name said in several of them can count
+    more than once: hence "up to". A count, never a name: the notice may be in the DM Bot
+    channel."""
+    more = "1 more name" if count == 1 else f"{count} more names"
     return (
-        f"{_plural(count, 'more possible name')} {'was' if one else 'were'} heard in your imported "
-        "sessions but not listed: DMbot lists only so many new names from each session. Add any "
-        "you know with ➕ Add a name on the names panel."
+        f"DMbot lists up to {MAX_SUGGESTIONS} new names from each session. Your imported sessions "
+        f"had up to {more}, so {'it was' if count == 1 else 'they were'} left out. Add any you "
+        "know with ➕ Add a name on the names panel."
     )

@@ -56,28 +56,23 @@ class TheStore(WithImports):
         )
         self.assertEqual([r.session_id for r in await self.store.unextracted(GUILD)], [late])
 
-    async def test_names_cut_add_up_on_the_import_and_a_live_session_keeps_none(self) -> None:
-        # (#5055 A) a count the sample run reads after the notice is gone
+    async def test_the_scan_cut_is_set_not_added_and_held_names_add_up(self) -> None:
+        # (#5055 A) counts the sample run reads after the notice is gone: a retried scan counts
+        # once; the story reader's held names add up part by part; a live session keeps none
         sid = await self.imported(1)
-        self.assertTrue(await self.store.add_names_cut(GUILD, sid, 3))
-        self.assertTrue(await self.store.add_names_cut(GUILD, sid, 2))
-        self.assertFalse(await self.store.add_names_cut(GUILD, sid, 0))  # (nothing to add)
-        self.assertFalse(await self.store.add_names_cut(GUILD, "live-session", 4))  # (no import)
+        await self.store.set_scan_cut(GUILD, sid, 3)
+        await self.store.set_scan_cut(GUILD, sid, 3)  # (the same scan, run again)
+        self.assertEqual(await self.store.scan_cut(GUILD, sid), 3)
+        await self.store.add_story_held(GUILD, sid, 2)
+        await self.store.add_story_held(GUILD, sid, 1)
+        await self.store.add_story_held(GUILD, "live-session", 4)  # (no import row: nothing)
+        self.assertEqual(await self.store.scan_cut(GUILD, "live-session"), 0)
         async with self.db.guild(GUILD) as conn:
             cur = await conn.execute(
-                "SELECT names_cut FROM session_imports WHERE session_id = %s", (sid,)
+                "SELECT story_held FROM session_imports WHERE session_id = %s", (sid,)
             )
             r: Any = await cur.fetchone()
-        self.assertEqual(r["names_cut"], 5)
-
-    async def test_the_bot_counts_a_cut_for_the_notice_only_for_an_import(self) -> None:
-        sid = await self.imported(1)
-        bot: Any = SimpleNamespace(
-            import_job=SimpleNamespace(store=self.store), import_state=FakeImportState()
-        )
-        await BOT._note_names_cut(bot, GUILD, "c1", sid, 4)
-        await BOT._note_names_cut(bot, GUILD, "c1", "live-session", 6)  # (a live session: log only)
-        self.assertEqual(await bot.import_state.take_count(GUILD, "c1", "names_cut"), 4)
+        self.assertEqual(r["story_held"], 3)
 
     async def test_renewing_keeps_the_window_start_where_the_scan_began(self) -> None:
         sid = await self.imported(1)

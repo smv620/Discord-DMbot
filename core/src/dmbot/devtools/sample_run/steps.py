@@ -430,7 +430,7 @@ async def wait_lore(
                 "words": int(row["words_done"]),
                 "calls": int(row["calls_made"]),
                 # names past the one-document limit (#5055 A): a loss to the cap, not a miss
-                "names cut": int(row.get("names_cut") or 0),
+                "names cut": int(row["names_cut"]),
             }
         if row["state"] == "failed":
             raise SampleError(f"the lore read failed ({row['error'] or 'no reason'})")
@@ -541,7 +541,8 @@ async def _import_row(db: Database, guild: int, session: str) -> dict[str, Any]:
     async with db.guild(guild, snapshot=True) as conn:
         cur = await conn.execute(
             "SELECT state, reason, scanned, scan_finished, step_done, step_total, words_done,"
-            " calls_made, story_state, story_part, story_parts, names_cut FROM session_imports"
+            " calls_made, story_state, story_part, story_parts, scan_cut, story_held"
+            " FROM session_imports"
             " WHERE guild_id = %s AND session_id = %s",
             (guild, session),
         )
@@ -613,8 +614,10 @@ async def wait_import(
         "words": int(row["words_done"]),
         "calls": int(row["calls_made"]),
         "story": str(row["story_state"] or "not read"),
-        # names past the scan's and the story reader's limits (#5055 A): a loss to a cap
-        "names cut": int(row.get("names_cut") or 0),
+        # (#5055 A) names past the name scan's limit (left out), and new names past the story
+        # reader's (held for a later session): kept apart, as they mean different things
+        "scan cut": int(row["scan_cut"]),
+        "reader held": int(row["story_held"]),
     }
 
 
