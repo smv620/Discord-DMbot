@@ -40,6 +40,23 @@ def _row(r: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _condition(row: dict[str, Any]) -> dict[str, Any]:
+    """`condition` (the DM's view of `road_conditions.attach`) for a route place, or nothing when
+    it has none yet."""
+    if row.get("value") is None:
+        return {}
+    return {
+        "condition": {
+            "value": str(row["value"]),
+            "words": str(row.get("words") or ""),
+            "since": row.get("since"),
+            "before": row.get("before"),
+            "read": bool(row.get("read")),
+            "shown": bool(row.get("shown")),
+        }
+    }
+
+
 async def read(db: Database, session: Session, ref: str, place_id: str) -> dict[str, Any]:
     """`{rows: [...], groups: [{id, name}]}` for one place. `not_allowed` for anyone who is not a DM
     of the campaign; `not_found` for a name that is not a confirmed place there."""
@@ -53,12 +70,23 @@ async def read(db: Database, session: Session, ref: str, place_id: str) -> dict[
             "SELECT dmbot_web_place_world(%s, %s, %s) AS r", (guild_id, campaign_id, place_id)
         )
         found = await cur.fetchone()
-    got = found["r"] if found else None
+        got = found["r"] if found else None
+        road: dict[str, Any] | None = None
+        if got is not None and got.get("status") == "ok" and got.get("form") == "route":
+            # a route place's condition with the session it began in and the one it ended
+            # (#5010): the same door and words as a road's on the story graph
+            cur = await conn.execute(
+                "SELECT dmbot_web_road_conditions(%s, %s, %s) AS r",
+                (guild_id, campaign_id, [place_id]),
+            )
+            rows = ((await cur.fetchone()) or {}).get("r") or []
+            road = next((r for r in rows if str(r["id"]) == place_id), None)
     if got is None:
         raise RecapError("not_allowed")
     if got.get("status") != "ok":
         raise RecapError("not_found")
     return {
+        **({"road": True, **_condition(road)} if road is not None else {}),
         "level": got.get("level"),  # the place's size and form decide what may be set on it
         "form": got.get("form"),
         "rows": [_row(r) for r in got["rows"]],
