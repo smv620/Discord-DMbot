@@ -441,7 +441,13 @@ from dmbot.memory.web_reveals import RevealsStore
 from dmbot.memory.who_answers import WhoAnswers
 from dmbot.mentions import NO_PINGS
 from dmbot.off_the_record import NOT_TOLD, WAKE_MINUTES, OffTheRecord, Paused, paused_text
-from dmbot.outbox import IMPORT_CLOCK_OFFER, Outbox
+from dmbot.outbox import (
+    IMPORT_CLOCK_OFFER,
+    STORY_MET_LIST,
+    STORY_RECAP_LINES,
+    STORY_SECRET_COUNT,
+    Outbox,
+)
 from dmbot.pictures import sweep as picture_sweep
 from dmbot.pictures.actions import PictureActions
 from dmbot.pictures.bucket import Bucket, BucketError
@@ -10388,11 +10394,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                 # Said once, with the way back, before anything else is relied on (#3298): counts
                 # only. Only an imported session is ever split by the story reader.
                 try:
-                    await self.post(
-                        counts_channel,
-                        recap_lines_ui.note(report.recap_lines),
-                        view=recap_lines_ui.undo_view(cid, sid),
-                    )
+                    if not await _story_note(
+                        self, gid, cid, STORY_RECAP_LINES, {"sid": sid, "n": report.recap_lines}
+                    ):
+                        await self.post(
+                            counts_channel,
+                            recap_lines_ui.note(report.recap_lines),
+                            view=recap_lines_ui.undo_view(cid, sid),
+                        )
                 except Exception as exc:
                     log.warning("Recap lines: the note was not posted (%s)", type(exc).__name__)
             try:  # what a restart resumes from, and what the day's limit counts
@@ -10420,7 +10429,9 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
 
                 try:
                     left = await self.memory.secret_questions_still_waiting(gid, cid, asked)
-                    if left:
+                    if left and not await _story_note(
+                        self, gid, cid, STORY_SECRET_COUNT, {"sid": sid, "n": left}
+                    ):
                         await self.post(
                             counts_channel,
                             secret_questions_ui.count_line(left).strip(),
@@ -10430,11 +10441,14 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
                     log.warning("Secret questions: no note (%s)", type(exc).__name__)
             if report.met_made and counts_channel is not None:  # (#4045: counts only)
                 try:
-                    await self.post(
-                        counts_channel,
-                        met_list_ui.notice(report.met_made),
-                        view=met_list_ui.notice_view(cid),
-                    )
+                    if not await _story_note(
+                        self, gid, cid, STORY_MET_LIST, {"sid": sid, "n": report.met_made}
+                    ):
+                        await self.post(
+                            counts_channel,
+                            met_list_ui.notice(report.met_made),
+                            view=met_list_ui.notice_view(cid),
+                        )
                 except Exception as exc:
                     log.warning("Met list: the note was not posted (%s)", type(exc).__name__)
             return "limit" if report.stopped or report.failed else "done"
@@ -13256,6 +13270,44 @@ class DMBot(RecapFeatures, commands.AutoShardedBot):
             campaign, screen, int(payload["minute"]), bool(payload["split"])
         ):
             raise RuntimeError("not-posted")
+
+    async def _say_story_note(
+        self, gid: int, cid: str, kind: str, payload: Mapping[str, Any]
+    ) -> None:
+        """The outbox's counts-only notes after a story read (#4904 3b-4a): the line and button
+        the read posts itself with the worker off, built from the row's count. A campaign that is
+        gone or has no channel has nothing to say; a refused post raises, so the row is tried
+        again. Nothing but a count and a session id rides in the row."""
+        campaign = await self.campaigns.get(gid, cid)
+        channel = self._upkeep_channel(campaign)[0] if campaign is not None else None
+        if channel is None:
+            return
+        n = int(payload["n"])
+        if kind == STORY_RECAP_LINES:
+            text = recap_lines_ui.note(n)
+            view = recap_lines_ui.undo_view(cid, str(payload["sid"]))
+        elif kind == STORY_SECRET_COUNT:
+            from dmbot.ui import secret_questions as secret_questions_ui
+
+            text = secret_questions_ui.count_line(n).strip()
+            view = secret_questions_ui.notice_view(cid)
+        else:
+            text, view = met_list_ui.notice(n), met_list_ui.notice_view(cid)
+        if text and not await self.post(channel, text, view=view):
+            raise RuntimeError("not-posted")
+
+    async def deliver_story_recap_lines(
+        self, gid: int, cid: str, payload: Mapping[str, Any]
+    ) -> None:
+        await self._say_story_note(gid, cid, STORY_RECAP_LINES, payload)
+
+    async def deliver_story_secret_count(
+        self, gid: int, cid: str, payload: Mapping[str, Any]
+    ) -> None:
+        await self._say_story_note(gid, cid, STORY_SECRET_COUNT, payload)
+
+    async def deliver_story_met_list(self, gid: int, cid: str, payload: Mapping[str, Any]) -> None:
+        await self._say_story_note(gid, cid, STORY_MET_LIST, payload)
 
     async def _keep_import_clock_offer(
         self, gid: int, campaign_id: str, session_id: str, minute: int, *, split: bool
@@ -16854,6 +16906,18 @@ async def fill_parties(
         ended,
     )  # (both: a #3036 party besides the flagged one; ended: #3998; both for Supervisor)
     return steps
+
+
+async def _story_note(bot: Any, gid: int, cid: str, kind: str, payload: Mapping[str, Any]) -> bool:
+    """With no Discord (the worker, #4904 3b-4a) a story read's counts-only note is an outbox row
+    the bot posts, once for each kind, session and count; True when it was queued, False when the
+    read posts it itself (the bot, or no outbox). The payload is a session id and a count, never
+    a word of the story."""
+    outbox = getattr(bot, "outbox", None)
+    if not getattr(bot, "headless", False) or outbox is None:
+        return False
+    await outbox.add_now(gid, cid, kind, payload, unique=True)
+    return True
 
 
 async def build_bot(settings: Settings, db: Database, *, headless: bool = False) -> DMBot:

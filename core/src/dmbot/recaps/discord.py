@@ -67,6 +67,9 @@ from dmbot.outbox import (
     RECAP_NAMES,
     RECAP_READY,
     RECAP_UNCHECKED,
+    STORY_MET_LIST,
+    STORY_RECAP_LINES,
+    STORY_SECRET_COUNT,
     Outbox,
 )
 from dmbot.recaps import allowance as recap_allowance
@@ -311,6 +314,15 @@ class RecapFeatures:
         ): ...
         async def fetch_user(self, user_id: int, /) -> discord.User: ...
         async def run_web_backups(self) -> None: ...
+        async def deliver_story_recap_lines(
+            self, gid: int, cid: str, payload: Mapping[str, Any]
+        ) -> None: ...
+        async def deliver_story_secret_count(
+            self, gid: int, cid: str, payload: Mapping[str, Any]
+        ) -> None: ...
+        async def deliver_story_met_list(
+            self, gid: int, cid: str, payload: Mapping[str, Any]
+        ) -> None: ...
         async def deliver_import_clock_offer(
             self, gid: int, cid: str, payload: Mapping[str, Any]
         ) -> None: ...
@@ -408,6 +420,9 @@ class RecapFeatures:
                                 RECAP_ALLOWANCE: self.deliver_recap_allowance,
                                 IMPORT_CLOCK_OFFER: self.deliver_import_clock_offer,
                                 IMPORT_RECAP_HOLD: self.deliver_import_recap_hold,
+                                STORY_RECAP_LINES: self.deliver_story_recap_lines,
+                                STORY_SECRET_COUNT: self.deliver_story_secret_count,
+                                STORY_MET_LIST: self.deliver_story_met_list,
                             },
                             self.outbox_wake,
                         ),
