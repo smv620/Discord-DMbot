@@ -29,11 +29,18 @@ def load() -> tuple[list[WhoItem], dict[str, Any]]:
     return items, key
 
 
-def read(case: dict[str, Any], items: list[WhoItem]) -> tuple[Answer, ...]:
+def answers(case: dict[str, Any], items: list[WhoItem]) -> dict[int, tuple[Answer, ...]]:
     answer = json.dumps({"answers": [{"item": case["item"], "ranked": [case["entry"]]}]})
-    got = who_reading.parse_answers(answer, items).answers
-    number = case["item"]
-    return got.get(number, ()) if isinstance(number, int) and not isinstance(number, bool) else ()
+    return who_reading.parse_answers(answer, items).answers
+
+
+def read(case: dict[str, Any], items: list[WhoItem]) -> tuple[Answer, ...]:
+    return answers(case, items).get(case["item"], ())
+
+
+def got_through(case: dict[str, Any], items: list[WhoItem]) -> bool:
+    """Any answer kept for any item (an item number `true` would find item 1 without its guard)."""
+    return any(answers(case, items).values())
 
 
 def score(items: list[WhoItem], key: dict[str, Any]) -> dict[str, int]:
@@ -46,7 +53,7 @@ def score(items: list[WhoItem], key: dict[str, Any]) -> dict[str, int]:
             counts["wrong"] += 1
         else:
             counts["found"] += 1
-    counts["must_not_said"] = sum(bool(read(m, items)) for m in key["must_not"])
+    counts["must_not_said"] = sum(got_through(m, items) for m in key["must_not"])
     return counts
 
 

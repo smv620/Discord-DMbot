@@ -35,6 +35,7 @@ def score(key: dict[str, Any]) -> dict[str, int]:
         elif (
             got[0].effect != deed_reading.VERBS[item["effect"].casefold()]
             or got[0].kind != item["want_kind"]
+            or list(got[0].viewers) != item.get("want_viewers", item["mattered_to"])
         ):
             counts["wrong"] += 1
         else:

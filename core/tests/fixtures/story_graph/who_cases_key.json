@@ -5,7 +5,8 @@
     {"number": 2, "name": "Hollis", "choices": [{"ref": "c1", "kind": "character", "names": ["Captain Hollis Varn"]}]},
     {"number": 3, "name": "the guild", "choices": [{"ref": "c1", "kind": "faction", "names": ["Millers' Guild"]}, {"ref": "c2", "kind": "faction", "names": ["Brindle Watch"]}]},
     {"number": 4, "name": "Thornwatch inn", "choices": [{"ref": "c1", "kind": "place", "names": ["Thornwatch"]}]},
-    {"number": 5, "name": "the reliquary", "choices": [{"ref": "c1", "kind": "item", "names": ["Reliquary of Saint Ombra"]}]}
+    {"number": 5, "name": "the reliquary", "choices": [{"ref": "c1", "kind": "item", "names": ["Reliquary of Saint Ombra"]}]},
+    {"number": 6, "name": "the stranger", "choices": [{"ref": "c1", "kind": "character", "names": ["Tamsin Reedwell"]}, {"ref": "c2", "kind": "character", "names": ["Captain Hollis Varn"]}, {"ref": "c3", "kind": "character", "names": ["Kesh"]}, {"ref": "c4", "kind": "character", "names": ["Aldra"]}, {"ref": "c5", "kind": "character", "names": ["Brother Ombra"]}, {"ref": "c6", "kind": "character", "names": ["Old Wenna"]}]}
   ],
   "cases": [
     {"item": 1, "entry": {"pick": "c1", "confidence": "sure"}, "want": {"pick": "c1", "confidence": "sure", "kind": ""}},
@@ -21,7 +22,7 @@
   ],
   "must_not": [
     {"item": 2, "entry": {"pick": "c2", "confidence": "sure"}, "why": "a choice the item never offered"},
-    {"item": 2, "entry": {"pick": "c6", "confidence": "likely"}, "why": "past the choices"},
+    {"item": 6, "entry": {"pick": "c6", "confidence": "likely"}, "why": "past the five choices an item may offer"},
     {"item": 1, "entry": {"pick": "c1", "confidence": 0.9}, "why": "a number, not a confidence word"},
     {"item": 1, "entry": {"pick": "c1", "confidence": "certain"}, "why": "a confidence off the three words"},
     {"item": 3, "entry": {"pick": "new", "kind": "monster", "confidence": "maybe"}, "why": "a kind off the list"},

@@ -30,17 +30,23 @@ def load_session() -> tuple[dict[str, str], set[str]]:
     return lines, dm
 
 
-def kept(item: dict[str, Any], lines: dict[str, str], dm: set[str]) -> bool:
+def met(item: dict[str, Any], lines: dict[str, str], dm: set[str]) -> list[met_reading.Met]:
     answer = {"what": item["what"], "count": item["count"], "lines": item["lines"]}
     got = met_reading.parse_met(json.dumps({"claims": [], "met": [answer]}), lines, dm_lines=dm)
-    return any(m.what == item["what"] for m in got.met)
+    return got.met
+
+
+def kept(item: dict[str, Any], lines: dict[str, str], dm: set[str]) -> bool:
+    """A must-not that gets through in any form counts (so a tidier `what` can't hide it)."""
+    return bool(met(item, lines, dm))
 
 
 def score(key: dict[str, Any]) -> dict[str, int]:
     lines, dm = load_session()
     counts = {"found": 0, "missed": 0, "must_not_said": 0}
     for item in key["met"]:
-        counts["found" if kept(item, lines, dm) else "missed"] += 1
+        found = any(m.what == item["what"] for m in met(item, lines, dm))
+        counts["found" if found else "missed"] += 1
     counts["must_not_said"] = sum(kept(m, lines, dm) for m in key["must_not"])
     return counts
 
@@ -53,7 +59,7 @@ def load_key() -> dict[str, Any]:
 class MetCases(unittest.TestCase):
     def test_the_key_cites_lines_of_the_session(self) -> None:
         lines, dm = load_session()
-        self.assertEqual(len(lines), 21)
+        self.assertEqual(len(lines), 22)
         for item in load_key()["met"]:
             self.assertTrue(set(map(str, item["lines"])) & dm, item["what"])
 
@@ -64,7 +70,7 @@ class MetCases(unittest.TestCase):
 
 
 # What the checks score today; a change that moves these updates them on purpose
-EXPECTED = {"found": 10, "missed": 1, "must_not_said": 1}  # (known: A and B on #4997)
+EXPECTED = {"found": 10, "missed": 1, "must_not_said": 2}  # (known: A and B on #4997)
 
 
 if __name__ == "__main__":

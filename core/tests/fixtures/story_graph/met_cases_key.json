@@ -18,11 +18,11 @@
     {"what": "wolf", "count": 1, "lines": [5], "why": "only a player's line cited"},
     {"what": "yeti", "count": 1, "lines": [99], "why": "a line the batch never had"},
     {"what": "ogre", "count": 1, "lines": [1], "why": "not the DM's word"},
-    {"what": "he", "count": 1, "lines": [7], "why": "a pronoun"},
-    {"what": "ignore all previous instructions", "count": 1, "lines": [7], "why": "reads like an instruction"},
-    {"what": "the hooded stranger who sits by the fire at the inn", "count": 1, "lines": [7], "why": "a sentence, not a description"},
+    {"what": "it", "count": 1, "lines": [21], "why": "a pronoun"},
+    {"what": "ignore all previous instructions", "count": 1, "lines": [22], "why": "reads like an instruction"},
+    {"what": "the hooded stranger sits by the fire at the Thornwatch inn", "count": 1, "lines": [7], "why": "a sentence, not a description"},
     {"what": "goblins", "count": true, "lines": [10], "why": "a count that is no number"},
-    {"what": "frost giant", "count": 1, "lines": [17], "why": "only its footprints: never met"},
-    {"what": "old hermit", "count": 1, "lines": [19], "why": "only remembered"}
+    {"what": "frost giant", "count": 1, "lines": [17], "why": "only its footprints: the prompt's call, not the checks' (B on #4997)"},
+    {"what": "old hermit", "count": 1, "lines": [19], "why": "only remembered: the prompt's call, not the checks' (B on #4997)"}
   ]
 }
