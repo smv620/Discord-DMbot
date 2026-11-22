@@ -91,25 +91,37 @@ class TheWords(unittest.TestCase):
 
     def test_a_scene_line_says_the_session_the_day_and_what_was_happening(self) -> None:
         text = cl.when_line(
-            3, self.FIRST, beat("The party reached the Northlook inn.", (1,), "Bryn Shander")
+            cl.FIRST_MET,
+            3,
+            self.FIRST,
+            beat("The party reached the Northlook inn.", (1,), "Bryn Shander"),
         )
         self.assertEqual(
-            text, "Session 3, 14 Nov: The party reached the Northlook inn in Bryn Shander."
+            text,
+            "First met: Session 3, 14 Nov. The party reached the Northlook inn in Bryn Shander.",
         )
 
     def test_the_place_is_not_said_twice(self) -> None:
-        text = cl.when_line(1, self.FIRST, beat("They reached Bryn Shander", (1,), "Bryn Shander"))
-        self.assertEqual(text, "Session 1, 14 Nov: They reached Bryn Shander.")
+        text = cl.when_line(
+            cl.LAST_MENTIONED,
+            1,
+            self.FIRST,
+            beat("They reached Bryn Shander", (1,), "Bryn Shander"),
+        )
+        self.assertEqual(text, "Last mentioned: Session 1, 14 Nov. They reached Bryn Shander.")
 
     def test_a_session_with_no_recap_says_the_day_alone(self) -> None:
-        self.assertEqual(cl.when_line(7, self.FIRST, None), "Session 7, 14 Nov.")
+        self.assertEqual(
+            cl.when_line(cl.LAST_MENTIONED, 7, self.FIRST, None),
+            "Last mentioned: Session 7, 14 Nov.",
+        )
 
     def test_the_lore_line_names_the_document_and_the_heading(self) -> None:
         self.assertEqual(
             cl.lore_line("Icewind Dale notes", "Bryn Shander"),
-            "In your lore: *Icewind Dale notes*, under 'Bryn Shander'.",
+            "First met: in your lore, *Icewind Dale notes*, under 'Bryn Shander'.",
         )
-        self.assertEqual(cl.lore_line("Notes"), "In your lore: *Notes*.")
+        self.assertEqual(cl.lore_line("Notes"), "First met: in your lore, *Notes*.")
 
     def test_the_who_line_is_the_sentence_or_says_why_there_is_none(self) -> None:
         self.assertEqual(cl.who_line("A halfling innkeeper.\n", "Shafina"), "A halfling innkeeper.")
@@ -125,7 +137,7 @@ class TheWords(unittest.TestCase):
 
     def test_the_words_are_plain(self) -> None:
         lines = [
-            cl.when_line(1, self.FIRST, beat("They met", (1,), "the inn")),
+            cl.when_line(cl.FIRST_MET, 1, self.FIRST, beat("They met", (1,), "the inn")),
             cl.lore_line("Notes", "Inn"),
             cl.NEVER_AT_THE_TABLE,
             cl.STILL_WRITING,

@@ -20,6 +20,8 @@ from dmbot.memory import heard
 if TYPE_CHECKING:
     from dmbot.transcript.models import Line
 
+FIRST_MET = "First met"
+LAST_MENTIONED = "Last mentioned"
 NEVER_AT_THE_TABLE = "Not mentioned at the table yet."
 STILL_WRITING = "DMbot is still writing this."
 WHO_MAX = 300  # the sentence is cut here at the end of a word, if the AI went long
@@ -101,20 +103,22 @@ def scene_words(beat: SceneLike | None) -> str:
     return what
 
 
-def when_line(number: int, started_at: int, beat: SceneLike | None) -> str:
-    """ "Session 3, 15 Nov: the party reached the Northlook inn in Bryn Shander." The scene is
-    left off, with the date kept, when the session has no recap beats."""
-    head = f"Session {number}, {day(started_at)}"
+def when_line(label: str, number: int, started_at: int, beat: SceneLike | None) -> str:
+    """The finished line, label and all, for the card and the website to draw as it is:
+    "First met: Session 3, 15 Nov. The party reached the Northlook inn in Bryn Shander." The
+    scene is left off, with the date kept, when the session has no recap beats."""
+    head = f"{label}: Session {number}, {day(started_at)}."
     scene = scene_words(beat)
-    return f"{head}: {scene}." if scene else f"{head}."
+    return f"{head} {scene[0].upper()}{scene[1:]}." if scene else head
 
 
 def lore_line(document: str, heading: str = "") -> str:
-    """ "In your lore: *Icewind Dale notes*, under 'Bryn Shander'." The heading is left off when
-    the lore reader kept none."""
+    """ "First met: in your lore, *Icewind Dale notes*, under 'Bryn Shander'." The heading is left
+    off when the lore reader kept none."""
     doc = " ".join(document.split())
     head = " ".join(heading.split())
-    return f"In your lore: *{doc}*, under '{head}'." if head else f"In your lore: *{doc}*."
+    where = f"*{doc}*, under '{head}'" if head else f"*{doc}*"
+    return f"{FIRST_MET}: in your lore, {where}."
 
 
 def who_line(sentence: str | None, name: str, *, pending: bool = False) -> str:
