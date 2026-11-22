@@ -4360,6 +4360,10 @@ export interface PlaceWorld {
   form: "water" | "route" | null;
   rows: PlaceWorldRow[];
   groups: { id: string; name: string }[];
+  /** A route place (#5010): the DM may set its condition. Absent for any other place. */
+  road?: boolean;
+  /** The route place's condition (#5010), the same shape as a road link's (#4996). */
+  condition?: RoadCondition;
 }
 
 /** What the table may be told of a place's land, climate and ruler: words only, no DM-only mark and no group the reader may not know. */

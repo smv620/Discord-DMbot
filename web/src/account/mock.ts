@@ -3033,7 +3033,9 @@ const settingAnswers = new Map<string, { ref: string; setting: QueuedSetting; va
       calls.push(`placeWorld:${ref}:${placeId}`);
       const named = memory.find((n) => n.id === placeId);
       if (!named || named.kind !== "place") throw new ApiError("not-found");
-      return { level: worldLevel(named.name), form: null, rows: (worldRows.get(placeId) ?? []).map((r) => ({ ...r })), groups: worldGroups.map((g) => ({ ...g })) };
+      // A route place (#5010): Greywatch is a road with a hard going condition the DM set; other places are not roads.
+      const route = named.name === "Greywatch" ? { road: true, condition: { value: "hard" as const, words: "", since: 3, before: null, read: false, shown: false } } : {};
+      return { level: worldLevel(named.name), form: null, rows: (worldRows.get(placeId) ?? []).map((r) => ({ ...r })), groups: worldGroups.map((g) => ({ ...g })), ...route };
     },
     // The quest sheet of the mock's kept thread (#4547): the example the spec gives, for its one thread node.
     async threadCard(ref, thread) {
