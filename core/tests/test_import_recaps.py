@@ -134,6 +134,17 @@ class TheStore(WithImports):
         self.assertFalse(await self.store.recap_waiting(GUILD, self.campaign.id))
         self.assertTrue(await self.store.recap_waiting(GUILD, other.id))
 
+    async def test_an_import_whose_session_was_deleted_is_not_waited_for(self) -> None:
+        # (as `ready_for_recap` leaves it out: nothing is left to write a recap of)
+        sid = await self.imported(1, recap=True)
+        await self.store.claim_scan(GUILD, sid, int(time.time()))
+        await self.store.finish_scan(GUILD, sid, int(time.time()))
+        self.assertTrue(await self.store.recap_waiting(GUILD, self.campaign.id))
+        async with self.db.guild(GUILD) as conn:
+            await conn.execute("DELETE FROM transcript_sessions WHERE id = %s", (sid,))
+        self.assertEqual(await self.store.ready_for_recap(GUILD), [])
+        self.assertFalse(await self.store.recap_waiting(GUILD, self.campaign.id))
+
     async def test_the_choice_travels_with_the_session(self) -> None:
         await self.imported(1, recap=True)
         (ready,) = await self.store.ready_for_scan(GUILD)
