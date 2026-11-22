@@ -67,6 +67,14 @@ describe("the list", () => {
     expect(w.place({ ...base, layer: "climate", value: "other", words: "Always misty", how: "wet" })).toBe("Saltmarsh: Always misty and wet");
     expect(w.place({ ...base, layer: "climate", value: "cold", how: "dry" })).toBe("Saltmarsh: Cold and dry");
   });
+  it("says a road's condition by its road, with the table's own words for an \"other\" value (#5003)", () => {
+    const base = { name: "the road between Targos and Bryn Shander", words: "", how: null, ruler: null, layer: "condition" };
+    expect(w.place({ ...base, value: "closed" })).toBe("the road between Targos and Bryn Shander: Closed");
+    expect(w.place({ ...base, value: "hard" })).toBe("the road between Targos and Bryn Shander: Hard going");
+    expect(w.place({ ...base, value: "other", words: "Half washed out" })).toBe("the road between Targos and Bryn Shander: Half washed out");
+    expect(w.kindHint.condition).toBe("Road condition");
+  });
+
   it("is not there while the switch is off", async () => {
     live.on = false;
     const api = mockApi("table");
